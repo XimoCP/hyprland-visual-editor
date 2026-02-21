@@ -1,0 +1,248 @@
+{
+  "meta": {
+    "lang": "de",
+    "name": "Deutsch",
+    "author": "Ximo & AI"
+  },
+  "widget": {
+    "tooltip": "Noctalia Visual Layer",
+    "menu_settings": "Plugin-Einstellungen"
+  },
+  "panel": {
+    "header_title": "Noctalia Visual",
+    "header_subtitle": "Ästhetisches Kontrollzentrum",
+    "tabs": {
+      "home": "Start",
+      "animations": "Animationen",
+      "borders": "Ränder",
+      "effects": "Effekte"
+    }
+  },
+  "welcome": {
+    "activation_title": "Systemaktivierung",
+    "system_active": "System aktiv. Effekte verwaltet von Noctalia.",
+    "system_inactive": "System angehalten. Zustimmung erforderlich.",
+    "enable_label": "Visual Layer aktivieren",
+    "warning": {
+      "title": "NUTZUNGSVEREINBARUNG",
+      "text": "Bei Aktivierung ändert Noctalia Ihre <code>hyprland.conf</code>."
+    },
+    "features": {
+      "title": "Funktionen",
+      "description": "Die Evolution Ihres Desktops.",
+      "list": {
+        "fluid_anim": "✨ <b>Flüssige Animationen</b>",
+        "smart_borders": "🎨 <b>Smarte Ränder</b>",
+        "realtime_shaders": "🕶️ <b>Echtzeit-Shader</b>",
+        "non_destructive": "🛡️ <b>Nicht-destruktiv</b>"
+      }
+    },
+    "docs": {
+      "title": "Technische Dokumentation",
+      "description": "Interne Struktur und Guide.",
+      "btn_show": "Struktur anzeigen",
+      "btn_hide": "Struktur verbergen",
+      "content": {
+        "arch_title": "MODULARE ARCHITEKTUR",
+        "arch_desc": "Fragment-System zur Vermeidung von Konflikten.",
+        "struct_title": "DATEISTRUKTUR",
+        "flow_title": "DATENFLUSS",
+        "flow_1": "1. Aktivierung erstellt Datei in <code>fragments/</code>.",
+        "flow_2": "2. Script <code>assemble.sh</code> verbindet alles.",
+        "flow_3": "3. Saubere <code>overlay.conf</code> wird generiert.",
+        "flow_4": "4. Hyprland lädt ohne Fehler neu.",
+        "debug_title": "DEBUGGING",
+        "debug_desc": "Bei Fehlern <code>overlay.conf</code> prüfen."
+      }
+    },
+    "credits": {
+      "title": "Credits",
+      "description": "Dank an <b>HyDE Project</b>.",
+      "btn_hyde": "Inspiriert von HyDE",
+      "ai_title": "Co-Coded mit KI",
+      "ai_desc": "Danke an Gemini für QML-Support."
+    }
+  },
+  "animations": {
+    "header_title": "Bewegungsbibliothek",
+    "header_subtitle": "Wählen Sie den Animationsstil für Ihren Desktop",
+    "presets": {
+      "01_relampago": {
+        "title": "Blitz",
+        "desc": "Maximale visuelle Reaktion."
+      },
+      "02_inercia_elastica": {
+        "title": "Elastische Trägheit",
+        "desc": "Organische Bewegung. Schwung beim Beenden und Abprallen beim Eintritt."
+      },
+      "03_seda_minimalista": {
+        "title": "Minimalistische Seide",
+        "desc": "Absolute Sanftheit. Perfekte Landungen im macOS-Stil."
+      },
+      "04_minimalismo_snappy": {
+        "title": "Snappy-Minimalismus",
+        "desc": "Optimiert für maximale Geschwindigkeit."
+      },
+      "05_material_moderno": {
+        "title": "Modernes Material",
+        "desc": "Google Pixel Ästhetik. Organische Animationen."
+      },
+      "06_impacto_clasico": {
+        "title": "Klassischer Aufprall",
+        "desc": "\"Jelly\"-Effekt. Elastisches Abprallen und Antizipation."
+      },
+      "07_lineal": {
+        "title": "Linear",
+        "desc": "Mathematische Präzision. \"Sci-Fi HUD\"-Stil."
+      },
+      "08_cristal": {
+        "title": "Glas",
+        "desc": "Ätherisches Gleiten. Gefühl von schwebendem Glas."
+      },
+      "09_seda_silk": {
+        "title": "Seide (Silk)",
+        "desc": "Verfeinerter JaKooLit-Stil. Energische Einträge."
+      },
+      "10_retro_arcade": {
+        "title": "Retro Arcade",
+        "desc": "\"Toon\"-Effekt. Übertriebenes Springen und Abprallen."
+      },
+      "11_futurista": {
+        "title": "Futuristisch",
+        "desc": "Holografisches Interface. Digitaler vertikaler Fluss."
+      },
+      "12_rebote": {
+        "title": "Abprall",
+        "desc": "Vertikale Federphysik. Fenster fallen und prallen ab."
+      },
+      "13_organico": {
+        "title": "Organisch",
+        "desc": "Sanftes vertikales Wachstum und langsames Verblassen."
+      },
+      "14_elastico": {
+        "title": "Elastisch",
+        "desc": "Gummiband-Physik. Dynamische Dehnung."
+      },
+      "15_desvanecido": {
+        "title": "Verblassen",
+        "desc": "Spektrale Materialisierung ohne Bewegung."
+      },
+      "16_dinamico": {
+        "title": "Dynamisch",
+        "desc": "Organischer Rhythmus. Geschwindigkeit und Sanftheit."
+      },
+      "17_sutil": {
+        "title": "Subtil",
+        "desc": "Keine Ablenkungen. Absolute Sanftheit."
+      },
+      "18_energico": {
+        "title": "Energisch",
+        "desc": "Maximaler visueller Effekt. Rückstoß-Exits."
+      }
+    }
+  },
+  "borders": {
+    "geometry": {
+      "title": "Dicke",
+      "desc": "Breite (0-3px)"
+    },
+    "header_title": "Visuelle Stile",
+    "header_subtitle": "Fensterpersönlichkeit",
+    "presets": {
+      "01_cascade": {
+        "title": "Kaskade",
+        "desc": "Sanfter Verlauf."
+      },
+      "02_diagonal": {
+        "title": "Diagonal",
+        "desc": "Winkelverlauf."
+      },
+      "03_duo": {
+        "title": "Duo",
+        "desc": "Starker Kontrast."
+      },
+      "04_tri": {
+        "title": "Dreizack",
+        "desc": "Dreifarbige Eleganz."
+      },
+      "05_spectrum": {
+        "title": "Spektrum",
+        "desc": "Vier Farben."
+      },
+      "06_pulse": {
+        "title": "Puls",
+        "desc": "Rotiert bei Auswahl."
+      },
+      "07_infinity": {
+        "title": "Unendlich",
+        "desc": "Konstante Rotation."
+      },
+      "08_neon": {
+        "title": "Neon",
+        "desc": "Langsame Oszillation."
+      },
+      "09_glitch": {
+        "title": "Cyber Glitch",
+        "desc": "Aggressiv, schnell."
+      },
+      "10_golden": {
+        "title": "Gold",
+        "desc": "Metallische Reflexe."
+      },
+      "11_toxic": {
+        "title": "Giftgrün",
+        "desc": "Fluoreszierende Reflexe."
+      },
+      "12_neon_cyberpunk": {
+        "title": "Neon Cyber-Glow (Dual)",
+        "desc": "Simulation zweifarbiger Helligkeit mit einer weiß-violetten Lichtbasis."
+      },
+      "13_the_joker": {
+        "title": "Der Joker",
+        "desc": "Joker-Ästhetik: Säuregrün und tiefes Lila mit elektrischem Leuchten."
+      }
+    }
+  },
+  "shaders": {
+    "header_title": "Bildschirmfilter",
+    "header_subtitle": "Echtzeit-Verarbeitung",
+    "presets": {
+      "01_night": {
+        "title": "Nachtlicht",
+        "desc": "Augenschutz."
+      },
+      "02_mono": {
+        "title": "Monochrom",
+        "desc": "Graustufen."
+      },
+      "03_vibrant": {
+        "title": "Lebendig",
+        "desc": "Verstärkt Farben."
+      },
+      "04_sharp": {
+        "title": "Schärfe",
+        "desc": "Verbessert Kanten."
+      },
+      "05_ink": {
+        "title": "E-Ink",
+        "desc": "Papier-Textur."
+      },
+      "06_invert": {
+        "title": "Invertiert",
+        "desc": "Invertiert Farben."
+      },
+      "07_oled": {
+        "title": "OLED",
+        "desc": "Reines Schwarz."
+      },
+      "08_vision": {
+        "title": "Nachtsicht",
+        "desc": "Militärgrün."
+      },
+      "09_hybrid": {
+        "title": "Hybrid",
+        "desc": "Balance."
+      }
+    }
+  }
+}

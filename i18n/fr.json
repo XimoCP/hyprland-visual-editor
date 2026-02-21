@@ -1,0 +1,248 @@
+{
+  "meta": {
+    "lang": "fr",
+    "name": "Français",
+    "author": "Ximo & AI"
+  },
+  "widget": {
+    "tooltip": "Noctalia Visual Layer",
+    "menu_settings": "Paramètres du Plugin"
+  },
+  "panel": {
+    "header_title": "Noctalia Visual",
+    "header_subtitle": "Centre de Contrôle Esthétique",
+    "tabs": {
+      "home": "Accueil",
+      "animations": "Animations",
+      "borders": "Bordures",
+      "effects": "Effets"
+    }
+  },
+  "welcome": {
+    "activation_title": "Activation du Système",
+    "system_active": "Système opérationnel. Effets gérés par Noctalia.",
+    "system_inactive": "Système arrêté. Acceptation requise pour continuer.",
+    "enable_label": "Activer Visual Layer",
+    "warning": {
+      "title": "ACCORD D'UTILISATION IMPLICITE",
+      "text": "En activant, Noctalia modifiera votre <code>hyprland.conf</code> pour injecter <code>overlay.conf</code>."
+    },
+    "features": {
+      "title": "Caractéristiques",
+      "description": "Noctalia Visual Layer est l'évolution esthétique de votre bureau.",
+      "list": {
+        "fluid_anim": "✨ <b>Animations Fluides</b>",
+        "smart_borders": "🎨 <b>Bordures Intelligentes</b>",
+        "realtime_shaders": "🕶️ <b>Shaders Temps Réel</b>",
+        "non_destructive": "🛡️ <b>Non Destructif</b>"
+      }
+    },
+    "docs": {
+      "title": "Documentation Technique",
+      "description": "Structure interne et guide développeur.",
+      "btn_show": "Voir Structure",
+      "btn_hide": "Masquer Structure",
+      "content": {
+        "arch_title": "ARCHITECTURE MODULAIRE (Système de Fragments)",
+        "arch_desc": "Ce plugin utilise un système de construction dynamique pour éviter les conflits.",
+        "struct_title": "STRUCTURE DES FICHIERS",
+        "flow_title": "FLUX DE DONNÉES",
+        "flow_1": "1. L'activation crée un fichier dans <code>fragments/</code>.",
+        "flow_2": "2. Le script <code>assemble.sh</code> joint tous les fragments.",
+        "flow_3": "3. Un fichier <code>overlay.conf</code> propre est généré.",
+        "flow_4": "4. Hyprland recharge la configuration sans erreurs.",
+        "debug_title": "DÉBOGAGE",
+        "debug_desc": "Si quelque chose échoue, vérifiez <code>overlay.conf</code>."
+      }
+    },
+    "credits": {
+      "title": "Crédits",
+      "description": "Merci au <b>Projet HyDE</b>.",
+      "btn_hyde": "Inspiré par HyDE Project",
+      "ai_title": "Co-Codé avec IA",
+      "ai_desc": "Merci à Gemini pour l'assistance QML."
+    }
+  },
+  "animations": {
+    "header_title": "Bibliothèque de Mouvement",
+    "header_subtitle": "Sélectionnez le style d’animation pour votre bureau",
+    "presets": {
+      "01_relampago": {
+        "title": "Éclair",
+        "desc": "Réponse visuelle maximale."
+      },
+      "02_inercia_elastica": {
+        "title": "Inertie Élastique",
+        "desc": "Mouvement organique. Élan en sortie et rebond à l’entrée."
+      },
+      "03_seda_minimalista": {
+        "title": "Soie Minimaliste",
+        "desc": "Douceur absolue. Atterrissages parfaits style macOS."
+      },
+      "04_minimalismo_snappy": {
+        "title": "Minimalisme Snappy",
+        "desc": "Vitesse maximale. Gestion pure des fenêtres et espaces."
+      },
+      "05_material_moderno": {
+        "title": "Matériel Moderne",
+        "desc": "Esthétique Google Pixel. Animations organiques et tactiles."
+      },
+      "06_impacto_clasico": {
+        "title": "Impact Classique",
+        "desc": "Effet \"Jelly\". Rebond élastique et anticipation."
+      },
+      "07_lineal": {
+        "title": "Linéaire",
+        "desc": "Précision mathématique. Style \"Sci-Fi HUD\"."
+      },
+      "08_cristal": {
+        "title": "Cristal",
+        "desc": "Glissement éthéré. Sensation de verre en apesanteur."
+      },
+      "09_seda_silk": {
+        "title": "Soie (Silk)",
+        "desc": "Le style JaKooLit raffiné. Entrées énergiques."
+      },
+      "10_retro_arcade": {
+        "title": "Rétro Arcade",
+        "desc": "Effet \"Toon\". Sauts et rebonds exagérés."
+      },
+      "11_futurista": {
+        "title": "Futuriste",
+        "desc": "Interface holographique. Flux de données vertical."
+      },
+      "12_rebote": {
+        "title": "Rebond",
+        "desc": "Physique de ressort. Les fenêtres tombent et rebondissent."
+      },
+      "13_organico": {
+        "title": "Organique",
+        "desc": "Croissance verticale douce et fondus lents."
+      },
+      "14_elastico": {
+        "title": "Élastique",
+        "desc": "Physique de bande élastique. Étirement dynamique."
+      },
+      "15_desvanecido": {
+        "title": "Fondu",
+        "desc": "Matérialisation spectrale sans mouvement."
+      },
+      "16_dinamico": {
+        "title": "Dynamique",
+        "desc": "Rythme organique. Vitesse et stabilité."
+      },
+      "17_sutil": {
+        "title": "Subtil",
+        "desc": "Zéro distraction. Douceur absolue."
+      },
+      "18_energico": {
+        "title": "Énergique",
+        "desc": "Impact visuel maximal. Sorties avec recul."
+      }
+    }
+  },
+  "borders": {
+    "geometry": {
+      "title": "Épaisseur",
+      "desc": "Largeur (0-3px)"
+    },
+    "header_title": "Styles Visuels",
+    "header_subtitle": "Personnalité des fenêtres",
+    "presets": {
+      "01_cascade": {
+        "title": "Cascade",
+        "desc": "Dégradé vertical doux."
+      },
+      "02_diagonal": {
+        "title": "Diagonale",
+        "desc": "Fondu dynamique en angle."
+      },
+      "03_duo": {
+        "title": "Duo Contraste",
+        "desc": "Fort contraste Primaire/Secondaire."
+      },
+      "04_tri": {
+        "title": "Trident",
+        "desc": "Élégance tricolor dorée."
+      },
+      "05_spectrum": {
+        "title": "Spectre",
+        "desc": "Quatre couleurs pour visibilité max."
+      },
+      "06_pulse": {
+        "title": "Pulsation",
+        "desc": "Tourne une fois à la sélection."
+      },
+      "07_infinity": {
+        "title": "Infini",
+        "desc": "Rotation constante des couleurs."
+      },
+      "08_neon": {
+        "title": "Souffle Néon",
+        "desc": "Oscillation lente et relaxante."
+      },
+      "09_glitch": {
+        "title": "Cyber Glitch",
+        "desc": "Agressif, rapide, couleurs d'erreur."
+      },
+      "10_golden": {
+        "title": "Luxe Doré",
+        "desc": "Reflets métalliques dorés."
+      },
+      "11_toxic": {
+        "title": "Vert Toxique",
+        "desc": "Reflets métalliques vert fluo."
+      },
+      "12_neon_cyberpunk": {
+        "title": "Néon Cyber-Glow (Dual)",
+        "desc": "Simulation de luminosité bicolore utilisant une base de lumière blanche et violette."
+      },
+      "13_the_joker": {
+        "title": "Le Joker",
+        "desc": "Esthétique Joker : Vert acide et violet profond avec un éclat électrique."
+      }
+    }
+  },
+  "shaders": {
+    "header_title": "Filtres d'Écran",
+    "header_subtitle": "Post-traitement temps réel",
+    "presets": {
+      "01_night": {
+        "title": "Lumière Nocturne",
+        "desc": "Filtre chaud protecteur."
+      },
+      "02_mono": {
+        "title": "Monochrome",
+        "desc": "Niveaux de gris pour focus."
+      },
+      "03_vibrant": {
+        "title": "Vibrant",
+        "desc": "Rehausse les couleurs."
+      },
+      "04_sharp": {
+        "title": "Netteté HD",
+        "desc": "Améliore bords et textes."
+      },
+      "05_ink": {
+        "title": "Papier E-Ink",
+        "desc": "Texture papier sépia."
+      },
+      "06_invert": {
+        "title": "Inversé",
+        "desc": "Inverse toutes les couleurs."
+      },
+      "07_oled": {
+        "title": "Mode OLED",
+        "desc": "Noirs purs et contraste."
+      },
+      "08_vision": {
+        "title": "Vision Nocturne",
+        "desc": "Effet phosphore vert."
+      },
+      "09_hybrid": {
+        "title": "Hybride",
+        "desc": "Équilibre correction et style."
+      }
+    }
+  }
+}

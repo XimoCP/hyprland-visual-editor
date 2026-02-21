@@ -1,0 +1,248 @@
+{
+  "meta": {
+    "lang": "pt",
+    "name": "Português",
+    "author": "Ximo & AI"
+  },
+  "widget": {
+    "tooltip": "Noctalia Visual Layer",
+    "menu_settings": "Configurações"
+  },
+  "panel": {
+    "header_title": "Noctalia Visual",
+    "header_subtitle": "Centro de Controle",
+    "tabs": {
+      "home": "Início",
+      "animations": "Animações",
+      "borders": "Bordas",
+      "effects": "Efeitos"
+    }
+  },
+  "welcome": {
+    "activation_title": "Ativação do Sistema",
+    "system_active": "Sistema operacional. Efeitos geridos por Noctalia.",
+    "system_inactive": "Sistema parado. Aceitação necessária.",
+    "enable_label": "Ativar Visual Layer",
+    "warning": {
+      "title": "ACORDO IMPLÍCITO",
+      "text": "Ao ativar, Noctalia modificará seu <code>hyprland.conf</code>."
+    },
+    "features": {
+      "title": "Recursos",
+      "description": "A evolução estética do desktop.",
+      "list": {
+        "fluid_anim": "✨ <b>Animações Fluidas</b>",
+        "smart_borders": "🎨 <b>Bordas Inteligentes</b>",
+        "realtime_shaders": "🕶️ <b>Shaders Tempo Real</b>",
+        "non_destructive": "🛡️ <b>Não Destrutivo</b>"
+      }
+    },
+    "docs": {
+      "title": "Documentação",
+      "description": "Guia técnico.",
+      "btn_show": "Ver Estrutura",
+      "btn_hide": "Ocultar Estrutura",
+      "content": {
+        "arch_title": "ARQUITETURA MODULAR",
+        "arch_desc": "Sistema de fragmentos para evitar conflitos.",
+        "struct_title": "ESTRUTURA DE ARQUIVOS",
+        "flow_title": "FLUXO DE DADOS",
+        "flow_1": "1. Ativação cria arquivo em <code>fragments/</code>.",
+        "flow_2": "2. Script <code>assemble.sh</code> une tudo.",
+        "flow_3": "3. <code>overlay.conf</code> limpo é gerado.",
+        "flow_4": "4. Hyprland recarrega sem erros.",
+        "debug_title": "DEBUG",
+        "debug_desc": "Se falhar, verifique <code>overlay.conf</code>."
+      }
+    },
+    "credits": {
+      "title": "Créditos",
+      "description": "Obrigado ao <b>HyDE Project</b>.",
+      "btn_hyde": "Inspirado no HyDE",
+      "ai_title": "Co-Codificado com IA",
+      "ai_desc": "Obrigado ao Gemini pela ajuda QML."
+    }
+  },
+  "animations": {
+    "header_title": "Biblioteca de Movimento",
+    "header_subtitle": "Selecione o estilo de animação para o seu desktop",
+    "presets": {
+      "01_relampago": {
+        "title": "Relâmpago",
+        "desc": "Resposta visual máxima."
+      },
+      "02_inercia_elastica": {
+        "title": "Inércia Elástica",
+        "desc": "Movimento orgânico. Impulso na saída e ressalto na entrada."
+      },
+      "03_seda_minimalista": {
+        "title": "Seda Minimalista",
+        "desc": "Suavidade absoluta. Aterragens perfeitas estilo macOS."
+      },
+      "04_minimalismo_snappy": {
+        "title": "Minimalismo Snappy",
+        "desc": "Otimizado para a velocidade máxima."
+      },
+      "05_material_moderno": {
+        "title": "Material Moderno",
+        "desc": "Estética Google Pixel. Animações orgânicas e táteis."
+      },
+      "06_impacto_clasico": {
+        "title": "Impacto Clássico",
+        "desc": "Efeito \"Jelly\". Ressalto elástico e antecipação."
+      },
+      "07_lineal": {
+        "title": "Linear",
+        "desc": "Precisão matemática. Estilo \"Sci-Fi HUD\"."
+      },
+      "08_cristal": {
+        "title": "Cristal",
+        "desc": "Deslizamento etéreo. Sensação de vidro flutuante."
+      },
+      "09_seda_silk": {
+        "title": "Seda (Silk)",
+        "desc": "Estilo JaKooLit refinado. Entradas enérgicas."
+      },
+      "10_retro_arcade": {
+        "title": "Retro Arcade",
+        "desc": "Efeito \"Toon\". Saltos e ressaltos exagerados."
+      },
+      "11_futurista": {
+        "title": "Futurista",
+        "desc": "Interface holográfica. Fluxo de dados vertical."
+      },
+      "12_rebote": {
+        "title": "Ressalto",
+        "desc": "Física de mola vertical. As janelas caem e ressaltam."
+      },
+      "13_organico": {
+        "title": "Orgânico",
+        "desc": "Crescimento vertical suave e desvanecimentos lentos."
+      },
+      "14_elastico": {
+        "title": "Elástico",
+        "desc": "Física de banda elástica. Estiramento dinâmico."
+      },
+      "15_desvanecido": {
+        "title": "Desvanecido",
+        "desc": "Materialização espetral sem movimento."
+      },
+      "16_dinamico": {
+        "title": "Dinâmico",
+        "desc": "Ritmo orgânico. Velocidade e suavidade."
+      },
+      "17_sutil": {
+        "title": "Sutil",
+        "desc": "Zero distrações. Suavidade absoluta."
+      },
+      "18_energico": {
+        "title": "Enérgico",
+        "desc": "Impacto visual máximo. Saídas com recuo."
+      }
+    }
+  },
+  "borders": {
+    "geometry": {
+      "title": "Espessura",
+      "desc": "Largura (0-3px)"
+    },
+    "header_title": "Estilos Visuais",
+    "header_subtitle": "Personalidade das janelas",
+    "presets": {
+      "01_cascade": {
+        "title": "Cascata",
+        "desc": "Degradê vertical."
+      },
+      "02_diagonal": {
+        "title": "Diagonal",
+        "desc": "Em ângulo."
+      },
+      "03_duo": {
+        "title": "Duo",
+        "desc": "Forte contraste."
+      },
+      "04_tri": {
+        "title": "Tridente",
+        "desc": "Tricolor dourado."
+      },
+      "05_spectrum": {
+        "title": "Espectro",
+        "desc": "Quatro cores."
+      },
+      "06_pulse": {
+        "title": "Pulso",
+        "desc": "Gira ao selecionar."
+      },
+      "07_infinity": {
+        "title": "Infinito",
+        "desc": "Rotação constante."
+      },
+      "08_neon": {
+        "title": "Neon",
+        "desc": "Oscilação lenta."
+      },
+      "09_glitch": {
+        "title": "Glitch",
+        "desc": "Agressivo, erro."
+      },
+      "10_golden": {
+        "title": "Luxo Dourado",
+        "desc": "Reflexos metálicos."
+      },
+      "11_toxic": {
+        "title": "Tóxico",
+        "desc": "Verde flúor."
+      },
+      "12_neon_cyberpunk": {
+        "title": "Neon Cyber-Glow (Dual)",
+        "desc": "Simulação de brilho bicolor usando uma base de luz branca e violeta."
+      },
+      "13_the_joker": {
+        "title": "O Joker",
+        "desc": "Estética Joker: Verde ácido e roxo profundo com um brilho elétrico."
+      }
+    }
+  },
+  "shaders": {
+    "header_title": "Filtros de Tela",
+    "header_subtitle": "Pós-processamento",
+    "presets": {
+      "01_night": {
+        "title": "Luz Noturna",
+        "desc": "Filtro quente."
+      },
+      "02_mono": {
+        "title": "Monocromático",
+        "desc": "Escala de cinza."
+      },
+      "03_vibrant": {
+        "title": "Vibrante",
+        "desc": "Realça cores."
+      },
+      "04_sharp": {
+        "title": "Nitidez",
+        "desc": "Melhora textos."
+      },
+      "05_ink": {
+        "title": "Papel E-Ink",
+        "desc": "Textura sépia."
+      },
+      "06_invert": {
+        "title": "Invertido",
+        "desc": "Inverte cores."
+      },
+      "07_oled": {
+        "title": "OLED",
+        "desc": "Pretos puros."
+      },
+      "08_vision": {
+        "title": "Visão Noturna",
+        "desc": "Fósforo verde."
+      },
+      "09_hybrid": {
+        "title": "Híbrido",
+        "desc": "Balanço."
+      }
+    }
+  }
+}
