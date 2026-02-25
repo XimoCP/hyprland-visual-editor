@@ -109,11 +109,12 @@ NScrollView {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 4
                             NText {
-                                text: tr("welcome.warning.title", "CONTRATO IMPLÍCITO")
+                                text: tr("welcome.warning.title", "CONTRATO DE PERSISTENCIA")
                                 font.weight: Font.Bold; color: "#ef4444"; pointSize: Style.fontSizeS
                             }
                             NText {
-                                text: tr("welcome.warning.text", "Se modificará hyprland.conf")
+                                // CAMBIO: Texto actualizado para reflejar la nueva seguridad
+                                text: tr("welcome.warning.text", "Se creará un escudo guardián y se añadirá una línea segura a <b>hyprland.conf</b>. Si desinstalas el plugin, el sistema se limpiará automáticamente en el siguiente reinicio sin generar errores.")
                                 color: Color.mOnSurfaceVariant; wrapMode: Text.WordWrap; textFormat: Text.RichText; Layout.fillWidth: true; pointSize: Style.fontSizeS
                             }
                         }

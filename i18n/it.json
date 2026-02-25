@@ -19,13 +19,13 @@
     }
   },
   "welcome": {
-    "activation_title": "Attivazione Sistema",
-    "system_active": "Sistema operativo. Effetti gestiti da Noctalia.",
-    "system_inactive": "Sistema fermo. Accettazione richiesta.",
+    "activation_title": "Attivazione del Sistema",
+    "system_active": "Il sistema è operativo. Gli effetti visivi sono gestiti da NVL in modo sicuro.",
+    "system_inactive": "Sistema fermo. Richiede l'accettazione del contratto di persistenza per continuare.",
     "enable_label": "Abilita Visual Layer",
     "warning": {
-      "title": "ACCORDO IMPLICITO",
-      "text": "Attivando, Noctalia modificherà il tuo <code>hyprland.conf</code>."
+      "title": "CONTRATTO DI PERSISTENZA SICURA",
+      "text": "All'attivazione, NVL distribuirà uno <b>scudo guardiano</b> e inietterà un percorso sicuro nel tuo <code>hyprland.conf</code>. Se disinstalli il plugin dalla Shell, il sistema si auto-pulirà al prossimo riavvio senza causare errori in Hyprland."
     },
     "features": {
       "title": "Caratteristiche",

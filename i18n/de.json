@@ -20,12 +20,12 @@
   },
   "welcome": {
     "activation_title": "Systemaktivierung",
-    "system_active": "System aktiv. Effekte verwaltet von Noctalia.",
-    "system_inactive": "System angehalten. Zustimmung erforderlich.",
-    "enable_label": "Visual Layer aktivieren",
+    "system_active": "Das System ist betriebsbereit. Visuelle Effekte werden sicher von NVL verwaltet.",
+    "system_inactive": "System angehalten. Erfordert die Annahme des Persistenzvertrags, um fortzufahren.",
+    "enable_label": "Visual Layer Aktivieren",
     "warning": {
-      "title": "NUTZUNGSVEREINBARUNG",
-      "text": "Bei Aktivierung ändert Noctalia Ihre <code>hyprland.conf</code>."
+      "title": "SICHERER PERSISTENZVERTRAG",
+      "text": "Bei Aktivierung wird NVL einen <b>Wächterschild</b> einsetzen und einen sicheren Pfad in Ihre <code>hyprland.conf</code> einfügen. Wenn Sie das Plugin über die Shell deinstallieren, reinigt sich das System beim nächsten Neustart selbst, ohne Hyprland-Fehler zu verursachen."
     },
     "features": {
       "title": "Funktionen",

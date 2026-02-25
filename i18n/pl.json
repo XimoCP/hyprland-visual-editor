@@ -20,12 +20,12 @@
   },
   "welcome": {
     "activation_title": "System Activation",
-    "system_active": "System is operational. Visual effects are managed by Noctalia.",
-    "system_inactive": "System stopped. Requires implicit contract acceptance to proceed.",
+    "system_active": "The system is operational. Visual effects are safely managed by NVL.",
+    "system_inactive": "System halted. Requires acceptance of the persistence contract to continue.",
     "enable_label": "Enable Visual Layer",
     "warning": {
-      "title": "IMPLICIT USAGE CONTRACT",
-      "text": "Upon activation, Noctalia will modify your <code>hyprland.conf</code> to inject <code>overlay.conf</code>."
+      "title": "SECURE PERSISTENCE CONTRACT",
+      "text": "Upon activation, NVL will deploy a <b>guardian shield</b> and inject a secure path into your <code>hyprland.conf</code>. If you uninstall the plugin from the Shell, the system will self-clean on the next reboot without causing Hyprland errors."
     },
     "features": {
       "title": "Features & Benefits",

@@ -1,10 +1,10 @@
+<p align="center">
+<img src="preview.png" alt="Noctalia Visual Layer Banner" width="800">
+</p>
 
 # 🦉 Noctalia Visual Layer
-### El Controlador Estético Definitivo para Hyprland
 
-![Version](https://img.shields.io/badge/version-1.0.0-blueviolet?style=for-the-badge)
-![Hyprland](https://img.shields.io/badge/Hyprland-Supported-2ea44f?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-orange?style=for-the-badge)
+### El Controlador Estético Definitivo para Hyprland
 
 **Noctalia Visual Layer (NVL)** es un ecosistema de personalización dinámica y no destructiva para **Hyprland** y **Noctalia Shell**, desarrollado con **Quickshell (QML)** y **Bash**. Permite cambiar animaciones, bordes, shaders y geometría al instante, sin riesgo de corromper la configuración principal del usuario.
 
@@ -13,8 +13,8 @@
 ## ✨ Características Principales
 
 | Característica | Descripción |
-| :--- | :--- |
-| **🛡️ Arquitectura No-Destructiva** | NVL nunca toca tu configuración personal. Trabaja sobre una capa superior encapsulada. |
+| --- | --- |
+| **🛡️ Escudo Guardián (Watchdog)** | NVL despliega una ruta externa segura y un script de autolimpieza. Si desinstalas el plugin, el sistema se autolimpia al reiniciar sin romper Hyprland. |
 | **⚡ Aplicación Instantánea** | La lógica reactiva aplica cualquier cambio en milisegundos, sin necesidad de recargar. |
 | **🎬 Biblioteca de Movimiento** | Desde la suavidad de *Seda* hasta la agresividad de *Cyber Glitch*. |
 | **🎨 Bordes Inteligentes** | Degradados dinámicos y efectos reactivos al foco de la ventana. |
@@ -25,27 +25,33 @@
 
 ## 📂 Estructura del Proyecto
 
+Para garantizar la máxima estabilidad, NVL separa la lógica del plugin de la configuración que se inyecta en el sistema:
+
 ```text
-noctalia-visual-layer/
-├── manifest.json           # Metadatos y definición del plugin
-├── BarWidget.qml           # Punto de entrada: Botón disparador en la barra
-├── Panel.qml               # Interfaz principal (Contenedor de módulos)
-├── overlay.conf            # ARCHIVO MAESTRO (Sourced por Hyprland)
+~/.config/noctalia/
+├── NVL/                        # 🛡️ REFUGIO SEGURO (Generado al activar)
+│   ├── overlay.conf            # ARCHIVO MAESTRO: Sourced directamente por Hyprland
+│   └── nvl_watchdog.sh         # Script guardián para autolimpieza pasiva
 │
-├── modules/                # Lógica de la Interfaz (QML)
-│   ├── WelcomeModule.qml   # Panel de bienvenida y persistencia
-│   ├── BorderModule.qml    # Selector de estilos y colores
-│   └── ...                 # Otros módulos (Animation, Shader, etc.)
-│
-├── assets/                 # El "Motor" y Recursos
-│   ├── nvl-colors.conf     # DINÁMICO: Colores procesados con Alpha (Mustache)
-│   ├── borders/            # Biblioteca de estilos (.conf)
-│   ├── animations/         # Biblioteca de curvas de movimiento (.conf)
-│   ├── shaders/            # Filtros de post-procesado (.frag)
-│   ├── fragments/          # Estado actual (Simlinks de los estilos activos)
-│   └── scripts/            # Bash Engine (Ensamblado y lógica de aplicación)
-│
-└── i18n/                   # Traducciones (Soporte multi-idioma)
+└── plugins/noctalia-visual-layer/
+    ├── manifest.json           # Metadatos y definición del plugin
+    ├── BarWidget.qml           # Punto de entrada: Botón disparador en la barra
+    ├── Panel.qml               # Interfaz principal (Contenedor de módulos)
+    │
+    ├── modules/                # Lógica de la Interfaz (QML)
+    │   ├── WelcomeModule.qml   # Panel de bienvenida y persistencia
+    │   ├── BorderModule.qml    # Selector de estilos y colores
+    │   └── ...                 # Otros módulos (Animation, Shader, etc.)
+    │
+    ├── assets/                 # El "Motor" y Recursos
+    │   ├── nvl-colors.conf     # DINÁMICO: Colores procesados con Alpha (Mustache)
+    │   ├── borders/            # Biblioteca de estilos (.conf)
+    │   ├── animations/         # Biblioteca de curvas de movimiento (.conf)
+    │   ├── shaders/            # Filtros de post-procesado (.frag)
+    │   ├── fragments/          # Estado actual (Simlinks de los estilos activos)
+    │   └── scripts/            # Bash Engine (Ensamblado y lógica de aplicación)
+    │
+    └── i18n/                   # Traducciones (Soporte para más de 16 idiomas)
 
 ```
 
@@ -56,29 +62,31 @@ noctalia-visual-layer/
 Es necesario tener **Noctalia Shell** y **Hyprland** para poder utilizar este plugin. Aquí tienes los pasos exactos para su correcta instalación:
 
 1. Descarga este repositorio en la ruta `~/.config/noctalia/plugins/`.
-2. Una vez tengas el plugin en la ruta correcta, debes ir a la **Configuración** de Noctalia Shell e ir al apartado de **Plugins**, donde debería aparecer en la lista de instalados para poder activarlo. Una vez activo, debe aparecer en la barra de Noctalia. 
+2. Una vez tengas el plugin en la ruta correcta, debes ir a la **Configuración** de Noctalia Shell e ir al apartado de **Plugins**, donde debería aparecer en la lista de instalados para poder activarlo. Una vez activo, debe aparecer en la barra de Noctalia.
 3. Una vez dentro del panel, para que las modificaciones funcionen, debes activar el interruptor **"Habilitar Visual Layer"**.
 
 > [!NOTE]
-> Al activarlo, el sistema inyectará automáticamente una línea segura (`source = .../overlay.conf`) en tu `hyprland.conf`. Al apagarlo, limpiará tu configuración dejándola en su estado original.
+> Al activarlo, NVL desplegará automáticamente el escudo guardián e inyectará una ruta externa segura (`source = ~/.config/noctalia/NVL/overlay.conf`) en tu `hyprland.conf`. Al apagarlo, limpiará tu configuración y eliminará el refugio seguro, dejándolo en su estado original inmaculado.
 
 ---
 
 ## 🧠 Arquitectura Técnica (El Sistema de Fragmentos)
 
-A diferencia de otros gestores que editan archivos estáticos, NVL utiliza un flujo de **construcción dinámica**:
+A diferencia de otros gestores que editan archivos estáticos, NVL utiliza un flujo de **construcción dinámica** combinado con un recolector de basura pasivo:
 
 1. **Escaneo Dinámico:** El script `scan.sh` extrae metadatos directamente de los comentarios en los archivos de `assets/`.
 2. **Generación de Fragmentos:** Al seleccionar un estilo en QML, se clona en `assets/fragments/`.
-3. **Ensamblaje:** `assemble.sh` unifica todos los fragmentos activos.
-4. **Inyección:** Se genera el `overlay.conf` y Hyprland lo recarga al instante.
+3. **Ensamblaje:** `assemble.sh` unifica todos los fragmentos activos y los escribe en la ruta externa segura (`NVL/overlay.conf`).
+4. **Inyección y Protección:** Hyprland recarga el nuevo overlay externo, mientras `nvl_watchdog.sh` vigila silenciosamente la existencia del plugin en cada arranque.
 
 ```mermaid
 graph LR
     A[UI QML] -->|Calcula Intención| B(Script Bash)
     B -->|Genera| C[Fragmento .conf]
-    C -->|assemble.sh| D[overlay.conf]
+    B -->|Despliega| W[nvl_watchdog.sh]
+    C -->|assemble.sh| D[NVL/overlay.conf]
     D -->|reload| E[Hyprland Core]
+    W -->|Protege| E
 
 ```
 

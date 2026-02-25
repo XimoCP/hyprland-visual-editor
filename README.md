@@ -1,13 +1,10 @@
 <p align="center">
-  <img src="preview.png" alt="Noctalia Visual Layer Banner" width="800">
+<img src="preview.png" alt="Noctalia Visual Layer Banner" width="800">
 </p>
 
 # 🦉 Noctalia Visual Layer
-### Dynamic Visual Layer for Hyprland Customization
 
-![Version](https://img.shields.io/badge/version-1.0.0-blueviolet?style=for-the-badge)
-![Hyprland](https://img.shields.io/badge/Hyprland-Supported-2ea44f?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-orange?style=for-the-badge)
+### Dynamic Visual Layer for Hyprland Customization
 
 **Noctalia Visual Layer (NVL)** is a dynamic and non-destructive customization ecosystem for **Hyprland** and **Noctalia Shell**, developed with **Quickshell (QML)** and **Bash**. It allows you to instantly change animations, borders, shaders, and geometry, without any risk of corrupting the user's main configuration.
 
@@ -16,8 +13,8 @@
 ## ✨ Key Features
 
 | Feature | Description |
-| :--- | :--- |
-| **🛡️ Non-Destructive Architecture** | NVL never touches your personal config. It works entirely on a safe, encapsulated top layer. |
+| --- | --- |
+| **🛡️ Guardian Shield (Watchdog)** | NVL deploys a secure external path and an auto-cleanup script. If you uninstall the plugin, the system self-cleans on the next reboot without crashing Hyprland. |
 | **⚡ Instant Application** | The reactive logic applies any change in milliseconds, without the need to reload the session. |
 | **🎬 Motion Library** | From the smoothness of *Silk* to the aggressiveness of *Cyber Glitch*. |
 | **🎨 Smart Borders** | Dynamic gradients and reactive effects tied to window focus. |
@@ -28,27 +25,33 @@
 
 ## 📂 Project Structure
 
+To ensure maximum stability, NVL separates the plugin logic from the configuration injected into the system:
+
 ```text
-noctalia-visual-layer/
-├── manifest.json           # Plugin metadata and definitions
-├── BarWidget.qml           # Entry Point: Taskbar trigger icon
-├── Panel.qml               # Main UI Container (Module host)
-├── overlay.conf            # MASTER CONFIG: Sourced directly by Hyprland
+~/.config/noctalia/
+├── NVL/                        # 🛡️ THE SAFE REFUGE (Generated on activation)
+│   ├── overlay.conf            # MASTER CONFIG: Sourced directly by Hyprland
+│   └── nvl_watchdog.sh         # Guardian script for passive auto-cleanup
 │
-├── modules/                # UI Components (QML)
-│   ├── WelcomeModule.qml   # Persistence & Welcome screen
-│   ├── BorderModule.qml    # Style & Geometry selector
-│   └── ...                 # Animation and Shader modules
-│
-├── assets/                 # The "Engine" & Resources
-│   ├── nvl-colors.conf     # DYNAMIC: Processed colors with Alpha support
-│   ├── borders/            # Border styles library (.conf)
-│   ├── animations/         # Movement & Bezier curves library (.conf)
-│   ├── shaders/            # GLSL Post-processing filters (.frag)
-│   ├── fragments/          # Symlinks of current active styles
-│   └── scripts/            # Bash Engine (Assembly and logic)
-│
-└── i18n/                   # Multilingual support (Translations)
+└── plugins/noctalia-visual-layer/
+    ├── manifest.json           # Plugin metadata and definitions
+    ├── BarWidget.qml           # Entry Point: Taskbar trigger icon
+    ├── Panel.qml               # Main UI Container (Module host)
+    │
+    ├── modules/                # UI Components (QML)
+    │   ├── WelcomeModule.qml   # Persistence & Welcome screen
+    │   ├── BorderModule.qml    # Style & Geometry selector
+    │   └── ...                 # Animation and Shader modules
+    │
+    ├── assets/                 # The "Engine" & Resources
+    │   ├── nvl-colors.conf     # DYNAMIC: Processed colors with Alpha support
+    │   ├── borders/            # Border styles library (.conf)
+    │   ├── animations/         # Movement & Bezier curves library (.conf)
+    │   ├── shaders/            # GLSL Post-processing filters (.frag)
+    │   ├── fragments/          # Symlinks of current active styles
+    │   └── scripts/            # Bash Engine (Assembly and logic)
+    │
+    └── i18n/                   # Multilingual support (16+ Translations)
 
 ```
 
@@ -63,25 +66,27 @@ noctalia-visual-layer/
 3. Open the plugin panel and toggle the **"Enable Visual Layer"** switch to allow the modifications to take effect.
 
 > [!NOTE]
-> When activated, the system will automatically inject a secure source line (`source = .../overlay.conf`) into your `hyprland.conf`. When deactivated, it will clean up your configuration, leaving it in its original state.
+> When activated, NVL will automatically deploy the guardian shield and inject a secure source line (`source = ~/.config/noctalia/NVL/overlay.conf`) into your `hyprland.conf`. When deactivated, it will clean up your configuration and delete the safe refuge, leaving your system in its pristine original state.
 
 ---
 
 ## 🧠 Technical Architecture (The Fragment System)
 
-Unlike other managers that edit static files directly, NVL uses a **dynamic construction** flow:
+Unlike other managers that edit static files directly, NVL uses a **dynamic construction** flow combined with a passive garbage collector:
 
 1. **Dynamic Scanning:** The `scan.sh` script extracts metadata directly from the comments within the `assets/` files.
 2. **Fragment Generation:** When a style is selected via QML, it is cloned into `assets/fragments/`.
-3. **Assembly:** The `assemble.sh` script unifies all active fragments.
-4. **Injection:** The `overlay.conf` is generated and Hyprland reloads it instantly.
+3. **Assembly:** The `assemble.sh` script unifies all active fragments and writes them to the external safe directory (`NVL/overlay.conf`).
+4. **Injection & Protection:** Hyprland reloads the new external overlay, while `nvl_watchdog.sh` silently monitors the plugin's existence on every boot.
 
 ```mermaid
 graph LR
     A[UI QML] -->|Calculates Intent| B(Bash Script)
     B -->|Generates| C[.conf Fragment]
-    C -->|assemble.sh| D[overlay.conf]
+    B -->|Deploys| W[nvl_watchdog.sh]
+    C -->|assemble.sh| D[NVL/overlay.conf]
     D -->|reload| E[Hyprland Core]
+    W -->|Protects| E
 
 ```
 
