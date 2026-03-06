@@ -1,53 +1,53 @@
 #!/bin/bash
 
-# --- RUTAS AUTOCONTENIDAS ---
-PLUGIN_DIR="$HOME/.config/noctalia/plugins/noctalia-visual-layer"
+# --- SELF-CONTAINED PATHS ---
+PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"
 SCRIPTS_DIR="$PLUGIN_DIR/assets/scripts"
 SHADERS_DIR="$PLUGIN_DIR/assets/shaders"
 
-# Asegurar que la carpeta interna de fragmentos existe
+# Ensure the internal fragments folder exists
 mkdir -p "$FRAGMENTS_DIR"
 
-# El preset es el nombre del archivo (ej: 02_monocromo.frag)
+# The preset is the filename (e.g., 02_monocromo.frag)
 PRESET=$1
 
-# --- LÓGICA DE SHADERS ---
+# --- SHADER LOGIC ---
 
-# Caso 1: Desactivar (None, vacío o el shader 'limpio')
+# Case 1: Disable (None, empty, or 'clean' shader)
 if [ "$PRESET" == "none" ] || [ -z "$PRESET" ] || [ "$PRESET" == "00_limpio.frag" ]; then
 
-    # Borramos el fragmento interno
+    # Delete the internal fragment
     rm -f "$FRAGMENTS_DIR/shader.conf"
 
-    # TRUCO PRO: Forzamos a Hyprland a vaciar el shader en memoria inmediatamente
-    # para que el cambio sea instantáneo al hacer clic.
+    # PRO TIP: Force Hyprland to clear the shader in memory immediately
+    # so the change is instant upon clicking.
     hyprctl keyword decoration:screen_shader ""
 
-    echo "Sincronizando: Shaders desactivados."
+    echo "Syncing: Shaders disabled."
 
-# Caso 2: Activar un filtro específico
+# Case 2: Enable a specific filter
 else
     SHADER_PATH="$SHADERS_DIR/$PRESET"
 
-    # Verificación de seguridad en la ruta interna
+    # Security check in the internal path
     if [ ! -f "$SHADER_PATH" ]; then
-        notify-send "Noctalia Error" "No se encuentra el shader: $PRESET" -i dialog-error
+        notify-send "HVE Error" "Shader not found: $PRESET" -i dialog-error
         exit 1
     fi
 
-    # Escribimos el fragmento en la nueva ruta interna
+    # Write the fragment in the new internal path
     echo "decoration {
     screen_shader = $SHADER_PATH
 }" > "$FRAGMENTS_DIR/shader.conf"
 
-    echo "Sincronizando: Aplicando shader $PRESET"
+    echo "Syncing: Applying shader $PRESET"
 fi
 
-# --- LLAMADA AL MAESTRO ENSAMBLADOR ---
+# --- CALL THE MASTER ASSEMBLER ---
 if [ -f "$SCRIPTS_DIR/assemble.sh" ]; then
     bash "$SCRIPTS_DIR/assemble.sh"
 else
-    # Fallback si por algún motivo assemble.sh no está
+    # Fallback in case assemble.sh is missing for some reason
     hyprctl reload
 fi

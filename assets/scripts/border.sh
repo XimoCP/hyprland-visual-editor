@@ -1,33 +1,33 @@
 #!/bin/bash
 
-# --- RUTAS ---
-PLUGIN_DIR="$HOME/.config/noctalia/plugins/noctalia-visual-layer"
-PRESETS_DIR="$PLUGIN_DIR/assets/borders"      # Donde el usuario guarda sus .conf
-FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"  # Donde se genera el temporal
+# --- PATHS ---
+PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
+PRESETS_DIR="$PLUGIN_DIR/assets/borders"      # Where the user saves their .conf files
+FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"  # Where the temporary fragment is generated
 SCRIPTS_DIR="$PLUGIN_DIR/assets/scripts"
 
 mkdir -p "$FRAGMENTS_DIR"
 PRESET_NAME=$1
 
-# 1. LÓGICA DE APAGADO (None o vacío)
+# 1. SHUTDOWN LOGIC (None or empty)
 if [ "$PRESET_NAME" == "none" ] || [ -z "$PRESET_NAME" ]; then
     rm -f "$FRAGMENTS_DIR/border.conf"
-    echo "Borde desactivado."
+    echo "Border disabled."
 else
-    # 2. CARGA DINÁMICA
-    # Buscamos el archivo .conf en la carpeta assets/borders/
+    # 2. DYNAMIC LOADING
+    # We look for the .conf file in the assets/borders/ folder
     TARGET_FILE="$PRESETS_DIR/$PRESET_NAME"
 
     if [ -f "$TARGET_FILE" ]; then
-        # Copiamos el contenido del preset al fragmento
+        # Copy the preset content to the fragment
         cat "$TARGET_FILE" > "$FRAGMENTS_DIR/border.conf"
-        echo "Aplicado preset de borde: $PRESET_NAME"
+        echo "Border preset applied: $PRESET_NAME"
     else
-        # Fallback de seguridad: si el archivo no existe, usa el color base
+        # Security fallback: if the file doesn't exist, use the base color
         echo "general { col.active_border = \$primary }" > "$FRAGMENTS_DIR/border.conf"
-        echo "Advertencia: Preset $PRESET_NAME no encontrado."
+        echo "Warning: Preset $PRESET_NAME not found."
     fi
 fi
 
-# 3. ENSAMBLAJE
+# 3. ASSEMBLY
 bash "$SCRIPTS_DIR/assemble.sh"

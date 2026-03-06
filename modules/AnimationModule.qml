@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import Qt.labs.settings 1.0 as LabSettings
 import Quickshell
 import Quickshell.Io
 import qs.Widgets
 import qs.Commons
+import qs.Services.UI // Para ToastService
 
 NScrollView {
     id: animRoot
@@ -14,33 +14,21 @@ NScrollView {
     property var runHypr: null
     property var runScript: null
 
+    // Centralized plugin directory path
+    readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
+
+    // --- OFFICIAL PERSISTENCE BOUND PROPERTIES ---
+    property string activeAnimFile: pluginApi?.pluginSettings?.activeAnimFile || ""
+
     Layout.fillWidth: true
     Layout.fillHeight: true
     contentHeight: mainLayout.implicitHeight + 50
     clip: true
 
-    // --- LÓGICA DE TRADUCCIÓN HÍBRIDA (ANTI-EXCLAMACIONES) ---
-    function tr(key, fallback) {
-        if (pluginApi && pluginApi.tr) {
-            var t = pluginApi.tr(key);
-            if (t !== key && t !== "" && t.indexOf("!!") === -1) {
-                return t;
-            }
-        }
-        return fallback || key;
-    }
-
-    // --- PERSISTENCIA ---
-    LabSettings.Settings {
-        id: animSettings
-        fileName: Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/assets/animations/store.conf"
-        property string activeAnimFile: ""
-    }
-
-    // --- ESCÁNER ---
+    // --- SCANNER ---
     Process {
         id: scanner
-        command: ["bash", Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/assets/scripts/scan.sh", "animations"]
+        command: ["bash", pluginDir + "/assets/scripts/scan.sh", "animations"]
         property string outputData: ""
         stdout: SplitParser { onRead: function(data) { scanner.outputData += data; } }
         onExited: (code) => {
@@ -49,13 +37,15 @@ NScrollView {
                     var data = JSON.parse(scanner.outputData);
                     animModel.clear();
                     for (var i = 0; i < data.length; i++) { animModel.append(data[i]); }
-                } catch (e) { console.error("JSON Error: " + e); }
+                } catch (e) { 
+                    Logger.e("HVE", "JSON Parsing Error in Animations: " + e); 
+                }
             }
         }
     }
     Component.onCompleted: scanner.running = true
 
-    // --- DELEGADO ---
+    // --- DELEGATE ---
     Component {
         id: animDelegate
         NBox {
@@ -64,18 +54,15 @@ NScrollView {
             Layout.preferredHeight: 85 * Style.uiScaleRatio
             radius: Style.radiusM
 
-            // 1. MAPEO DE PROPIEDADES
-            property string cTitleKey: model.title || ""
-            property string cDescKey: model.desc || ""
-            property string cRawTitle: model.rawTitle || ""
-            property string cRawDesc: model.rawDesc || ""
+            // Safe property bindings for ListModel data
+            property string cTitleKey: model.title !== undefined ? model.title : ""
+            property string cDescKey: model.desc !== undefined ? model.desc : ""
+            property string cFile: model.file !== undefined ? model.file : ""
+            property string cTag: model.tag !== undefined ? model.tag : "USER"
+            property color cColor: model.color !== undefined ? model.color : "#888888"
+            property string cIcon: model.icon !== undefined ? model.icon : "help"
 
-            property string cFile: model.file || ""
-            property string cTag: model.tag || "USER"
-            property color cColor: model.color || "#888888"
-            property string cIcon: model.icon || "help"
-
-            property bool isActive: animSettings.activeAnimFile === cFile
+            property bool isActive: animRoot.activeAnimFile === cFile
 
             color: isActive ? Qt.alpha(cColor, 0.12) : (hoverArea.containsMouse ? Qt.alpha(cColor, 0.05) : "transparent")
             border.width: isActive ? 2 : 1
@@ -87,20 +74,23 @@ NScrollView {
             MouseArea {
                 id: hoverArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    // 1. CAPTURAR EL ESTADO ACTUAL
                     var wasActive = isActive
-
-                    // 2. CALCULAR LA INTENCIÓN
                     var scriptArg = wasActive ? "none" : cardRoot.cFile
                     var settingArg = wasActive ? "" : cardRoot.cFile
 
-                    // 3. EJECUTAR EL SCRIPT PRIMERO
-                    if (animRoot.runScript) animRoot.runScript("apply_animation.sh", scriptArg)
-
-                        // 4. ACTUALIZAR LA UI AL FINAL
-                        animSettings.activeAnimFile = settingArg
+                    if (animRoot.runScript) {
+                        animRoot.runScript("apply_animation.sh", scriptArg)
+                    }
+                    
+                    // Native state save
+                    if (animRoot.pluginApi) {
+                        animRoot.pluginApi.pluginSettings.activeAnimFile = settingArg
+                        animRoot.pluginApi.saveSettings()
+                        animRoot.activeAnimFile = settingArg
+                    }
                 }
             }
+            
             RowLayout {
                 anchors.fill: parent; anchors.margins: Style.marginM; spacing: Style.marginM
                 NIcon {
@@ -112,9 +102,9 @@ NScrollView {
                     Layout.fillWidth: true; spacing: 2
                     RowLayout {
                         spacing: 8
-                        // 2. USO DE TRADUCCIÓN SEGURA
+                        // Official safe translation call with fallback
                         NText {
-                            text: animRoot.tr(cardRoot.cTitleKey, cardRoot.cRawTitle)
+                            text: cardRoot.cTitleKey !== "" ? (pluginApi?.tr(cardRoot.cTitleKey) || cardRoot.cTitleKey) : ""
                             font.weight: Font.Bold
                             color: cardRoot.isActive ? Color.mOnSurface : Color.mOnSurfaceVariant
                         }
@@ -124,14 +114,14 @@ NScrollView {
                         }
                     }
                     NText {
-                        text: animRoot.tr(cardRoot.cDescKey, cardRoot.cRawDesc)
+                        // Official safe translation call with fallback
+                        text: cardRoot.cDescKey !== "" ? (pluginApi?.tr(cardRoot.cDescKey) || cardRoot.cDescKey) : ""
                         pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant; elide: Text.ElideRight; Layout.fillWidth: true
                     }
                 }
-                // Switch visual para consistencia
                 VisualSwitch {
                     checked: cardRoot.isActive
-                    onToggled: hoverArea.clicked(null)
+                    // Logic moved entirely to MouseArea to avoid infinite loops and maintain single source of truth
                 }
             }
         }
@@ -147,13 +137,12 @@ NScrollView {
 
         ColumnLayout {
             Layout.fillWidth: true; spacing: 4; Layout.margins: Style.marginL
-            // CABECERAS TRADUCIBLES
             NText {
-                text: animRoot.tr("animations.header_title", "Biblioteca de Movimiento")
+                text: pluginApi?.tr("animations.header_title") || "Animations"
                 font.weight: Font.Bold; pointSize: Style.fontSizeL; color: Color.mPrimary
             }
             NText {
-                text: animRoot.tr("animations.header_subtitle", "Selecciona el estilo de animación")
+                text: pluginApi?.tr("animations.header_subtitle") || "Motion dynamics for your desktop"
                 pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant
             }
         }

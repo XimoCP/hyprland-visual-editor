@@ -1,32 +1,32 @@
 #!/bin/bash
 
-# geometry.sh - Controla solo el tamaño físico (Encapsulado)
+# geometry.sh - Controls only physical size (Encapsulated)
 
-# --- RUTAS AUTOCONTENIDAS ---
-PLUGIN_DIR="$HOME/.config/noctalia/plugins/noctalia-visual-layer"
+# --- SELF-CONTAINED PATHS ---
+PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"
 SCRIPTS_DIR="$PLUGIN_DIR/assets/scripts"
 
-# Aseguramos que la carpeta interna exista
+# Ensure the internal folder exists
 mkdir -p "$FRAGMENTS_DIR"
 
 SIZE=$1
 
-# Validación básica
+# Basic validation
 if [ -z "$SIZE" ]; then
     SIZE=2
 fi
 
-# 1. GENERACIÓN DEL FRAGMENTO INTERNO
-# Mantenemos el FIX de no usar 'no_border_on_floating'
+# 1. INTERNAL FRAGMENT GENERATION
+# Keep the FIX of not using 'no_border_on_floating'
 echo "general {
     border_size = $SIZE
 }" > "$FRAGMENTS_DIR/geometry.conf"
 
-# 2. RECONSTRUCCIÓN CON EL ENSAMBLADOR INTERNO
+# 2. RECONSTRUCTION WITH INTERNAL ASSEMBLER
 if [ -f "$SCRIPTS_DIR/assemble.sh" ]; then
     bash "$SCRIPTS_DIR/assemble.sh"
 else
-    echo "Error: No se encuentra el script ensamblador en $SCRIPTS_DIR"
+    echo "Error: Assembler script not found in $SCRIPTS_DIR"
     exit 1
 fi

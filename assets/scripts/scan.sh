@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# --- RUTAS ---
+# --- PATHS ---
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 ASSETS_DIR="$SCRIPT_DIR/.."
 TARGET_FOLDER="$1"
@@ -14,18 +14,18 @@ FIRST=true
 while read -r filepath; do
     filename=$(basename "$filepath")
 
-    # Saltamos archivos de sistema
+    # Skip system files
     if [[ "$filename" == *"store"* || "$filename" == "geometry.conf" ]]; then continue; fi
 
     ID_NAME="${filename%.*}"
 
-    # 1. Claves para traducción (Lo que ya tenías)
+    # 1. Translation keys
     KEY_T="${TARGET_FOLDER}.presets.${ID_NAME}.title"
     KEY_D="${TARGET_FOLDER}.presets.${ID_NAME}.desc"
 
-    # 2. LECTURA REAL DEL ARCHIVO (¡ESTO ES LO QUE FALTABA!)
+    # 2. ACTUAL FILE READING (Metadata extraction)
     function get_meta() {
-        # El 2>/dev/null evita errores si el archivo es raro
+        # 2>/dev/null prevents errors on weird files
         grep -m1 -E "^[ \t]*(#|//) @$1:" "$filepath" 2>/dev/null | cut -d: -f2- | sed 's/^[ \t]*//;s/[ \t]*$//;s/"/\\"/g' | tr -d '\r'
     }
 
@@ -35,7 +35,7 @@ while read -r filepath; do
     COLOR=$(get_meta "Color")
     TAG=$(get_meta "Tag")
 
-    # Valores por defecto de seguridad
+    # Safe default values
     [ -z "$RAW_T" ] && RAW_T="$ID_NAME"
     [ -z "$ICON" ] && ICON="help"
     [ -z "$COLOR" ] && COLOR="#888888"
@@ -43,7 +43,7 @@ while read -r filepath; do
 
     if [ "$FIRST" = true ]; then FIRST=false; else echo ","; fi
 
-    # 3. Salida JSON con TODO (Claves + Texto Real)
+    # 3. JSON Output with EVERYTHING (Keys + Raw Text)
     cat <<EOF
     {
         "file": "$filename",

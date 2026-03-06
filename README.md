@@ -1,12 +1,12 @@
 <p align="center">
-<img src="preview.png" alt="Noctalia Visual Layer Banner" width="800">
+<img src="preview.png" alt="Hyprland Visual Editor Banner" width="800">
 </p>
 
-# 🦉 Noctalia Visual Layer
+# 🦉 Hyprland Visual Editor (HVE)
 
-### Dynamic Visual Layer for Hyprland Customization
+### Dynamic Visual Control for Hyprland Customization
 
-**Noctalia Visual Layer (NVL)** is a dynamic and non-destructive customization ecosystem for **Hyprland** and **Noctalia Shell**, developed with **Quickshell (QML)** and **Bash**. It allows you to instantly change animations, borders, shaders, and geometry, without any risk of corrupting the user's main configuration.
+**Hyprland Visual Editor** is a professional-grade, non-destructive customization ecosystem for **Hyprland**, built as a native plugin for **Noctalia Shell**. It allows you to instantly change animations, borders, shaders, and geometry, without any risk of corrupting your main `hyprland.conf`.
 
 ---
 
@@ -14,44 +14,43 @@
 
 | Feature | Description |
 | --- | --- |
-| **🛡️ Guardian Shield (Watchdog)** | NVL deploys a secure external path and an auto-cleanup script. If you uninstall the plugin, the system self-cleans on the next reboot without crashing Hyprland. |
-| **⚡ Instant Application** | The reactive logic applies any change in milliseconds, without the need to reload the session. |
-| **🎬 Motion Library** | From the smoothness of *Silk* to the aggressiveness of *Cyber Glitch*. |
+| **🛡️ Guardian Shield** | Deploys a secure external path. If the plugin is disabled, the system self-cleans on reboot. |
+| **⚡ Native Integration** | Uses the official Noctalia Plugin API (3.6.0+) for settings and state persistence. |
+| **🎬 Motion Library** | Swap between animation styles (Silk, Cyber Glitch, etc.) in milliseconds. |
 | **🎨 Smart Borders** | Dynamic gradients and reactive effects tied to window focus. |
-| **🕶️ Real-Time Shaders** | Post-processing filters (Night, CRT, Monochrome, OLED) applied on the fly. |
-| **🌍 Internationalization** | Native multilingual support. The system automatically adapts to your system's language. |
+| **🕶️ Real-Time Shaders** | Post-processing filters (CRT, OLED, Night) applied on the fly via GLSL. |
+| **🌍 Native i18n** | Full multilingual support using Noctalia's native translation engine via `i18n/`. |
 
 ---
 
 ## 📂 Project Structure
 
-To ensure maximum stability, NVL separates the plugin logic from the configuration injected into the system:
+To ensure maximum stability, HVE follows the official Noctalia plugin architecture:
 
 ```text
 ~/.config/noctalia/
-├── NVL/                        # 🛡️ THE SAFE REFUGE (Generated on activation)
+├── HVE/                        # 🛡️ THE SAFE REFUGE (Generated on activation)
 │   ├── overlay.conf            # MASTER CONFIG: Sourced directly by Hyprland
-│   └── nvl_watchdog.sh         # Guardian script for passive auto-cleanup
+│   └── hve_watchdog.sh         # Guardian script for passive auto-cleanup
 │
-└── plugins/noctalia-visual-layer/
-    ├── manifest.json           # Plugin metadata and definitions
+└── plugins/hyprland-visual-editor/
+    ├── manifest.json           # Plugin metadata and Entry Points
     ├── BarWidget.qml           # Entry Point: Taskbar trigger icon
-    ├── Panel.qml               # Main UI Container (Module host)
+    ├── Panel.qml               # Main UI & SmartPanel configuration
     │
     ├── modules/                # UI Components (QML)
-    │   ├── WelcomeModule.qml   # Persistence & Welcome screen
-    │   ├── BorderModule.qml    # Style & Geometry selector
+    │   ├── WelcomeModule.qml   # Activation logic & Native Persistence
+    │   ├── BorderModule.qml    # Style & Geometry selectors
     │   └── ...                 # Animation and Shader modules
     │
     ├── assets/                 # The "Engine" & Resources
-    │   ├── nvl-colors.conf     # DYNAMIC: Processed colors with Alpha support
-    │   ├── borders/            # Border styles library (.conf)
-    │   ├── animations/         # Movement & Bezier curves library (.conf)
+    │   ├── borders/            # Style library (.conf)
+    │   ├── animations/         # Movement library (.conf)
     │   ├── shaders/            # GLSL Post-processing filters (.frag)
-    │   ├── fragments/          # Symlinks of current active styles
     │   └── scripts/            # Bash Engine (Assembly and logic)
     │
-    └── i18n/                   # Multilingual support (16+ Translations)
+    ├── i18n/                   # Official Translation Files (.json)
+    └── settings.json           # Native Persistence (Managed by Noctalia)
 
 ```
 
@@ -59,42 +58,41 @@ To ensure maximum stability, NVL separates the plugin logic from the configurati
 
 ## 🚀 Installation and Activation
 
-**Noctalia Shell** and **Hyprland** are required to use this plugin. Here are the exact steps for a proper installation:
+1. Download this repository into `~/.config/noctalia/plugins/hyprland-visual-editor`.
+2. Go to Noctalia Shell's **Settings > Plugins** and enable it.
+3. Open the plugin panel and toggle the **"Enable Visual Editor"** switch.
 
-1. Download this repository into the path `~/.config/noctalia/plugins/`.
-2. Once the plugin is in the correct directory, go to Noctalia Shell's **Settings** and navigate to the **Plugins** section. It should appear in the installed list, where you can enable it. Once active, the plugin icon will appear in your Noctalia bar.
-3. Open the plugin panel and toggle the **"Enable Visual Layer"** switch to allow the modifications to take effect.
-
-> [!NOTE]
-> When activated, NVL will automatically deploy the guardian shield and inject a secure source line (`source = ~/.config/noctalia/NVL/overlay.conf`) into your `hyprland.conf`. When deactivated, it will clean up your configuration and delete the safe refuge, leaving your system in its pristine original state.
+> [!IMPORTANT]
+> Ensure you have the following line in your `hyprland.conf` to allow HVE to inject styles:
+> `source = ~/.config/noctalia/HVE/overlay.conf`
 
 ---
 
-## 🧠 Technical Architecture (The Fragment System)
+## ⌨️ IPC & Keybinds (Pro Features)
 
-Unlike other managers that edit static files directly, NVL uses a **dynamic construction** flow combined with a passive garbage collector:
+HVE supports native IPC calls. You can open the panel with a Hyprland keybind:
 
-1. **Dynamic Scanning:** The `scan.sh` script extracts metadata directly from the comments within the `assets/` files.
-2. **Fragment Generation:** When a style is selected via QML, it is cloned into `assets/fragments/`.
-3. **Assembly:** The `assemble.sh` script unifies all active fragments and writes them to the external safe directory (`NVL/overlay.conf`).
-4. **Injection & Protection:** Hyprland reloads the new external overlay, while `nvl_watchdog.sh` silently monitors the plugin's existence on every boot.
-
-```mermaid
-graph LR
-    A[UI QML] -->|Calculates Intent| B(Bash Script)
-    B -->|Generates| C[.conf Fragment]
-    B -->|Deploys| W[nvl_watchdog.sh]
-    C -->|assemble.sh| D[NVL/overlay.conf]
-    D -->|reload| E[Hyprland Core]
-    W -->|Protects| E
+```bash
+bind = $mainMod, V, exec, qs -c noctalia-shell ipc call plugin:hyprland-visual-editor openPanel
 
 ```
 
 ---
 
+## 🧠 Technical Architecture
+
+HVE uses a **dynamic construction** flow combined with Noctalia's native API:
+
+1. **Native State:** All user preferences are handled via `pluginApi.pluginSettings`.
+2. **Dynamic Scanning:** The `scan.sh` script extracts metadata from style headers.
+3. **Assembly:** The engine unifies all active fragments into the external `HVE/overlay.conf`.
+4. **Protection:** A watchdog script monitors the plugin state on every boot.
+
+---
+
 ## 🛠️ Modding Guide (Metadata Protocol)
 
-To add your own custom files and have them automatically appear in the panel, use the following header format:
+To add your own custom styles and have them automatically appear in the panel, use these formats:
 
 ### For Animations and Borders (`.conf`)
 
@@ -124,31 +122,26 @@ void main() { ... }
 
 ```
 
-### 🎨 Iconography
-
-The system utilizes **Tabler Icons**. To add new icons, browse the catalog at [tabler-icons.io](https://tabler-icons.io/) and use the exact icon name (e.g., `brand-github`, `bolt`).
-
 ---
 
 ## ⚠️ Troubleshooting
 
-**The panel displays exclamation marks `!!text!!` in a style name/description.**
+**How to see debug logs?**
+Launch Noctalia from the terminal to see HVE specific logs:
 
-* The system cannot find the official translation key. If the issue persists, the system will safely fallback to the raw text provided in your file.
+```bash
+NOCTALIA_DEBUG=1 qs -c noctalia-shell | grep HVE
 
-**I created a custom style and Hyprland throws an error.**
+```
 
-* NVL isolates all errors within `overlay.conf`. If a custom style fails to load, double-check the Hyprland syntax in your personal `.conf` file.
-
-**Border animations stop looping and freeze.**
-
-* This is a known limitation of the Hyprland engine when hot-reloading the configuration on currently drawn windows. The immediate solution is to simply reopen the affected window. Regardless, this issue will naturally fade away as you open new windows during your regular workflow, and the looping effect will apply flawlessly across the board upon your next session restart.
+**Border animations freeze?**
+This is a known Hyprland limitation during hot-reloads. Simply reopen the affected window to restore the loop effect.
 
 ---
 
-## ❤️ Credits and Authorship
+## ❤️ Credits
 
 * **Architecture & Core:** Ximo
-* **Technical Assistance:** Co-programmed with AI (Gemini - Google)
+* **Technical Assistance:** Co-programmed with AI
 * **Inspiration:** HyDE Project & JaKooLit.
 * **Community:** Thanks to all Noctalia users.

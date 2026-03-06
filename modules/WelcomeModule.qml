@@ -1,39 +1,29 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import Qt.labs.settings 1.0 as LabSettings
 import Quickshell
 import Quickshell.Io
 import qs.Widgets
 import qs.Commons
+import qs.Services.UI // Added for ToastService
 
 NScrollView {
     id: welcomeRoot
 
-    // CAMBIO: Renombrado a pluginApi
     property var pluginApi: null
     property var runHypr: null
     property var runScript: null
+
+    // Official and clean route for Noctalia
+    readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
+
+    // Property bound directly to the official pluginSettings
+    property bool isSystemActive: pluginApi?.pluginSettings?.isSystemActive || false
 
     Layout.fillWidth: true
     Layout.fillHeight: true
     contentHeight: mainLayout.implicitHeight + 100
     clip: true
-
-    // Función helper segura para traducir (si pluginApi es null, devuelve key)
-    function tr(key, defaultText) {
-        if (welcomeRoot.pluginApi && welcomeRoot.pluginApi.tr) {
-            return welcomeRoot.pluginApi.tr(key);
-        }
-        return defaultText || key;
-    }
-
-    // --- PERSISTENCIA ---
-    LabSettings.Settings {
-        id: welcomeSettings
-        fileName: Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/assets/welcome.conf"
-        property bool isSystemActive: false
-    }
 
     ColumnLayout {
         id: mainLayout
@@ -41,7 +31,7 @@ NScrollView {
         spacing: Style.marginXL
         Layout.margins: Style.marginL
 
-        // --- CABECERA ---
+        // --- HEADER ---
         ColumnLayout {
             Layout.fillWidth: true
             Layout.topMargin: Style.marginXL
@@ -60,14 +50,14 @@ NScrollView {
 
         NDivider { Layout.fillWidth: true }
 
-        // --- ACTIVACIÓN ---
+        // --- ACTIVATION SECTION ---
         ProCard {
-            title: tr("welcome.activation_title", "Activación del Sistema")
+            title: pluginApi?.tr("welcome.activation_title") || "System Activation"
             iconName: "power"
-            accentColor: welcomeSettings.isSystemActive ? Color.mPrimary : "#ef4444"
-            description: welcomeSettings.isSystemActive
-            ? tr("welcome.system_active", "Sistema operativo.")
-            : tr("welcome.system_inactive", "Sistema detenido.")
+            accentColor: welcomeRoot.isSystemActive ? Color.mPrimary : "#ef4444"
+            description: welcomeRoot.isSystemActive
+                ? (pluginApi?.tr("welcome.system_active") || "System Active")
+                : (pluginApi?.tr("welcome.system_inactive") || "System Inactive")
 
             extraContent: ColumnLayout {
                 spacing: Style.marginM
@@ -77,25 +67,38 @@ NScrollView {
                     Layout.fillWidth: true
                     Layout.margins: 15
                     NText {
-                        text: tr("welcome.enable_label", "Habilitar Visual Layer")
+                        text: pluginApi?.tr("welcome.enable_label") || "Enable Visual Editor"
                         font.weight: Font.Bold
                         pointSize: Style.fontSizeL
                         color: Color.mOnSurface
                     }
                     Item { Layout.fillWidth: true }
+                    
+                    // ACTIVATION BUTTON
                     VisualSwitch {
-                        checked: welcomeSettings.isSystemActive
+                        checked: welcomeRoot.isSystemActive
                         onToggled: {
-                            welcomeSettings.isSystemActive = checked
+                            var newState = !welcomeRoot.isSystemActive
+                            welcomeRoot.isSystemActive = newState
+                            
+                            // Official native save
+                            if (welcomeRoot.pluginApi) {
+                                welcomeRoot.pluginApi.pluginSettings.isSystemActive = newState
+                                welcomeRoot.pluginApi.saveSettings()
+                                
+                                var statusMsg = newState ? "Visual Editor Enabled" : "Visual Editor Disabled"
+                                ToastService.showNotice(statusMsg)
+                            }
+
                             if (welcomeRoot.runScript) {
-                                welcomeRoot.runScript("init.sh", checked ? "enable" : "disable")
+                                welcomeRoot.runScript("init.sh", newState ? "enable" : "disable")
                             }
                         }
                     }
                 }
 
                 Rectangle {
-                    visible: !welcomeSettings.isSystemActive
+                    visible: !welcomeRoot.isSystemActive
                     Layout.fillWidth: true
                     implicitHeight: warnCol.implicitHeight + 24
                     color: Qt.alpha("#ef4444", 0.08)
@@ -109,12 +112,11 @@ NScrollView {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 4
                             NText {
-                                text: tr("welcome.warning.title", "CONTRATO DE PERSISTENCIA")
+                                text: pluginApi?.tr("welcome.warning.title") || "WARNING"
                                 font.weight: Font.Bold; color: "#ef4444"; pointSize: Style.fontSizeS
                             }
                             NText {
-                                // CAMBIO: Texto actualizado para reflejar la nueva seguridad
-                                text: tr("welcome.warning.text", "Se creará un escudo guardián y se añadirá una línea segura a <b>hyprland.conf</b>. Si desinstalas el plugin, el sistema se limpiará automáticamente en el siguiente reinicio sin generar errores.")
+                                text: pluginApi?.tr("welcome.warning.text") || "Safety Notice"
                                 color: Color.mOnSurfaceVariant; wrapMode: Text.WordWrap; textFormat: Text.RichText; Layout.fillWidth: true; pointSize: Style.fontSizeS
                             }
                         }
@@ -123,20 +125,19 @@ NScrollView {
             }
         }
 
-        // --- CARACTERÍSTICAS ---
+        // --- FEATURES ---
         ProCard {
-            title: tr("welcome.features.title", "Características")
+            title: pluginApi?.tr("welcome.features.title") || "Features & Benefits"
             iconName: "star"; accentColor: "#fbbf24"
-            description: tr("welcome.features.description", "La evolución estética.")
+            description: pluginApi?.tr("welcome.features.description") || "Evolution of your desktop"
             extraContent: ColumnLayout {
                 spacing: 6
                 Repeater {
-                    // Usamos las claves del JSON para la lista
                     model: [
-                        tr("welcome.features.list.fluid_anim", "Animaciones"),
-                        tr("welcome.features.list.smart_borders", "Bordes"),
-                        tr("welcome.features.list.realtime_shaders", "Shaders"),
-                        tr("welcome.features.list.non_destructive", "No Destructivo")
+                        pluginApi?.tr("welcome.features.list.fluid_anim") || "Fluid Animations",
+                        pluginApi?.tr("welcome.features.list.smart_borders") || "Smart Borders",
+                        pluginApi?.tr("welcome.features.list.realtime_shaders") || "Real-Time Shaders",
+                        pluginApi?.tr("welcome.features.list.non_destructive") || "Non-Destructive"
                     ]
                     delegate: RowLayout {
                         spacing: 8
@@ -146,63 +147,56 @@ NScrollView {
                 }
             }
         }
-        // --- DOCUMENTACIÓN TÉCNICA ---
+        
+        // --- TECHNICAL DOCUMENTATION ---
         ProCard {
-            title: tr("welcome.docs.title", "Arquitectura y Documentación")
+            title: pluginApi?.tr("welcome.docs.title") || "Architecture & Documentation"
             iconName: "book"; accentColor: "#38bdf8"
-            description: tr("welcome.docs.description", "Descubre cómo funciona NVL por debajo.")
+            description: pluginApi?.tr("welcome.docs.description") || "How HVE works"
 
             extraContent: ColumnLayout {
                 spacing: 15
 
-                // Resumen Técnico Elegante
                 NText {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     color: "#a9b1d6"
                     font.pointSize: 10
                     textFormat: Text.RichText
-                    text: tr("welcome.docs.summary", "<b>Noctalia Visual Layer</b> utiliza un sistema de <i>Fragmentos y Ensamblaje</i> en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro <code>overlay.conf</code> aislado.")
+                    text: pluginApi?.tr("welcome.docs.summary") || "Uses fragments system"
                 }
 
-                // Fila de Botones de Acción
                 RowLayout {
                     spacing: 10
                     Layout.fillWidth: true
 
                     NButton {
-                        text: tr("welcome.docs.btn_readme", "Leer Manual Completo")
+                        text: pluginApi?.tr("welcome.docs.btn_readme") || "Read Manual"
                         icon: "external-link"
                         Layout.fillWidth: true
-                        onClicked: {
-                            // Abre el LEEME.md (o README.md) con la aplicación por defecto del sistema
-                            Qt.openUrlExternally("file://" + Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/LEEME.md")
-                        }
+                        onClicked: Qt.openUrlExternally("file://" + pluginDir + "/README.md")
                     }
 
                     NButton {
-                        text: tr("welcome.docs.btn_folder", "Explorar Archivos")
+                        text: pluginApi?.tr("welcome.docs.btn_folder") || "Browse Files"
                         icon: "folder"
                         Layout.fillWidth: true
-                        onClicked: {
-                            // Abre el gestor de archivos directamente en la carpeta del plugin
-                            Qt.openUrlExternally("file://" + Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/")
-                        }
+                        onClicked: Qt.openUrlExternally("file://" + pluginDir + "/")
                     }
                 }
             }
         }
 
-        // --- CRÉDITOS ---
+        // --- CREDITS ---
         ProCard {
-            title: tr("welcome.credits.title", "Créditos")
+            title: pluginApi?.tr("welcome.credits.title") || "Credits"
             iconName: "heart"; accentColor: "#f472b6"
-            description: tr("welcome.credits.description", "Gracias a HyDE.")
+            description: pluginApi?.tr("welcome.credits.description") || "Thanks to HyDE"
 
             extraContent: ColumnLayout {
                 spacing: Style.marginM
                 NButton {
-                    text: tr("welcome.credits.btn_hyde", "Inspirado en HyDE")
+                    text: pluginApi?.tr("welcome.credits.btn_hyde") || "Inspired by HyDE"
                     icon: "brand-github"; Layout.fillWidth: true
                     onClicked: Qt.openUrlExternally("https://github.com/HyDE-Project/")
                 }
@@ -212,9 +206,9 @@ NScrollView {
                     NIcon { icon: "code"; color: Color.mOnSurfaceVariant; pointSize: Style.fontSizeL }
                     ColumnLayout {
                         spacing: 2
-                        NText { text: tr("welcome.credits.ai_title", "IA"); font.weight: Font.Bold }
+                        NText { text: pluginApi?.tr("welcome.credits.ai_title") || "AI Co-Programmed"; font.weight: Font.Bold }
                         NText {
-                            text: tr("welcome.credits.ai_desc", "Gracias a Gemini.");
+                            text: pluginApi?.tr("welcome.credits.ai_desc") || "Thanks to Gemini"
                             color: Color.mOnSurfaceVariant; wrapMode: Text.Wrap; Layout.fillWidth: true; pointSize: Style.fontSizeS
                         }
                     }
@@ -224,7 +218,7 @@ NScrollView {
         Item { Layout.preferredHeight: 50 }
     }
 
-    // --- COMPONENTES AUXILIARES ---
+    // --- HELPER COMPONENTS ---
     component ProCard : NBox {
         id: cardRoot
         property string title; property string iconName; property string description
@@ -263,6 +257,10 @@ NScrollView {
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
             }
         }
-        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { sw.checked = !sw.checked; sw.toggled() } }
+        MouseArea { 
+            anchors.fill: parent; 
+            cursorShape: Qt.PointingHandCursor; 
+            onClicked: { sw.toggled() } // Swapped state logic handled in parent to ensure sync
+        }
     }
 }

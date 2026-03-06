@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import Qt.labs.settings 1.0 as LabSettings
 import Quickshell
 import Quickshell.Io
 import qs.Widgets
 import qs.Commons
+import qs.Services.UI // Para ToastService
 
 NScrollView {
     id: shaderRoot
@@ -14,34 +14,20 @@ NScrollView {
     property var runHypr: null
     property var runScript: null
 
+    readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
+
+    // --- OFFICIAL PERSISTENCE BOUND PROPERTIES ---
+    property string activeShaderFile: pluginApi?.pluginSettings?.activeShaderFile || ""
+
     Layout.fillWidth: true
     Layout.fillHeight: true
     contentHeight: mainLayout.implicitHeight + 50
     clip: true
 
-    // --- LÓGICA DE TRADUCCIÓN HÍBRIDA (ANTI-EXCLAMACIONES) ---
-    function tr(key, fallback) {
-        if (pluginApi && pluginApi.tr) {
-            var t = pluginApi.tr(key);
-            // Si es distinto a la clave Y no contiene exclamaciones de error
-            if (t !== key && t !== "" && t.indexOf("!!") === -1) {
-                return t;
-            }
-        }
-        return fallback || key;
-    }
-
-    // --- PERSISTENCIA ---
-    LabSettings.Settings {
-        id: shaderSettings
-        fileName: Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/assets/shaders/store.conf"
-        property string activeShaderFile: ""
-    }
-
-    // --- ESCÁNER ---
+    // --- SCANNER ---
     Process {
         id: scanner
-        command: ["bash", Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/assets/scripts/scan.sh", "shaders"]
+        command: ["bash", pluginDir + "/assets/scripts/scan.sh", "shaders"]
         property string outputData: ""
         stdout: SplitParser { onRead: function(data) { scanner.outputData += data; } }
         onExited: (code) => {
@@ -50,13 +36,15 @@ NScrollView {
                     var data = JSON.parse(scanner.outputData);
                     shaderModel.clear();
                     for (var i = 0; i < data.length; i++) { shaderModel.append(data[i]); }
-                } catch (e) { console.error("JSON Error: " + e); }
+                } catch (e) { 
+                    Logger.e("HVE", "JSON Parsing Error in Shaders: " + e); 
+                }
             }
         }
     }
     Component.onCompleted: scanner.running = true
 
-    // --- DELEGADO ---
+    // --- DELEGATE ---
     Component {
         id: shaderDelegate
         NBox {
@@ -65,18 +53,15 @@ NScrollView {
             Layout.preferredHeight: 85 * Style.uiScaleRatio
             radius: Style.radiusM
 
-            // 1. MAPEO DE PROPIEDADES (Raw + Key)
-            property string cTitleKey: model.title || ""
-            property string cDescKey: model.desc || ""
-            property string cRawTitle: model.rawTitle || ""
-            property string cRawDesc: model.rawDesc || ""
+            // Safe property bindings for ListModel data
+            property string cTitleKey: model.title !== undefined ? model.title : ""
+            property string cDescKey: model.desc !== undefined ? model.desc : ""
+            property string cFile: model.file !== undefined ? model.file : ""
+            property string cTag: model.tag !== undefined ? model.tag : "USER"
+            property color cColor: model.color !== undefined ? model.color : "#888888"
+            property string cIcon: model.icon !== undefined ? model.icon : "help"
 
-            property string cFile: model.file || ""
-            property string cTag: model.tag || "USER"
-            property color cColor: model.color || "#888888"
-            property string cIcon: model.icon || "help"
-
-            property bool isActive: shaderSettings.activeShaderFile === cFile
+            property bool isActive: shaderRoot.activeShaderFile === cFile
 
             color: isActive ? Qt.alpha(cColor, 0.12) : (hoverArea.containsMouse ? Qt.alpha(cColor, 0.05) : "transparent")
             border.width: isActive ? 2 : 1
@@ -88,18 +73,20 @@ NScrollView {
             MouseArea {
                 id: hoverArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    // 1. CAPTURAR EL ESTADO ACTUAL
                     var wasActive = isActive
-
-                    // 2. CALCULAR LA INTENCIÓN
                     var scriptArg = wasActive ? "none" : cardRoot.cFile
                     var settingArg = wasActive ? "" : cardRoot.cFile
 
-                    // 3. EJECUTAR EL SCRIPT PRIMERO
-                    if (shaderRoot.runScript) shaderRoot.runScript("shader.sh", scriptArg)
-
-                        // 4. ACTUALIZAR LA UI AL FINAL
-                        shaderSettings.activeShaderFile = settingArg
+                    if (shaderRoot.runScript) {
+                        shaderRoot.runScript("shader.sh", scriptArg)
+                    }
+                    
+                    // Native state save
+                    if (shaderRoot.pluginApi) {
+                        shaderRoot.pluginApi.pluginSettings.activeShaderFile = settingArg
+                        shaderRoot.pluginApi.saveSettings()
+                        shaderRoot.activeShaderFile = settingArg
+                    }
                 }
             }
 
@@ -114,9 +101,9 @@ NScrollView {
                     Layout.fillWidth: true; spacing: 2
                     RowLayout {
                         spacing: 8
-                        // 2. USO DE TRADUCCIÓN SEGURA
                         NText {
-                            text: shaderRoot.tr(cardRoot.cTitleKey, cardRoot.cRawTitle)
+                            // Official safe translation call with fallback
+                            text: cardRoot.cTitleKey !== "" ? (pluginApi?.tr(cardRoot.cTitleKey) || cardRoot.cTitleKey) : ""
                             font.weight: Font.Bold
                             color: cardRoot.isActive ? Color.mOnSurface : Color.mOnSurfaceVariant
                         }
@@ -126,13 +113,14 @@ NScrollView {
                         }
                     }
                     NText {
-                        text: shaderRoot.tr(cardRoot.cDescKey, cardRoot.cRawDesc)
+                        // Official safe translation call with fallback
+                        text: cardRoot.cDescKey !== "" ? (pluginApi?.tr(cardRoot.cDescKey) || cardRoot.cDescKey) : ""
                         pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant; elide: Text.ElideRight; Layout.fillWidth: true
                     }
                 }
                 VisualSwitch {
                     checked: cardRoot.isActive
-                    onToggled: hoverArea.clicked(null)
+                    // Logic moved entirely to MouseArea
                 }
             }
         }
@@ -148,13 +136,12 @@ NScrollView {
 
         ColumnLayout {
             Layout.fillWidth: true; spacing: 4; Layout.margins: Style.marginL
-            // CABECERAS TRADUCIBLES
             NText {
-                text: shaderRoot.tr("shaders.header_title", "Filtros Visuales")
+                text: pluginApi?.tr("shaders.header_title") || "Screen Effects"
                 font.weight: Font.Bold; pointSize: Style.fontSizeL; color: Color.mPrimary
             }
             NText {
-                text: shaderRoot.tr("shaders.header_subtitle", "Post-procesado de imagen")
+                text: pluginApi?.tr("shaders.header_subtitle") || "Post-processing shaders for your windows"
                 pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant
             }
         }

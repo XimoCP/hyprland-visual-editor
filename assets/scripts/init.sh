@@ -1,110 +1,115 @@
 #!/bin/bash
 
-# --- RUTAS PRINCIPALES ---
-PLUGIN_DIR="$HOME/.config/noctalia/plugins/noctalia-visual-layer"
+# --- MAIN PATHS ---
+PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"
 
-# 🌟 NUEVA RUTA SEGURA (El Refugio) 🌟
-NVL_SAFE_DIR="$HOME/.config/noctalia/NVL"
-OVERLAY_FILE="$NVL_SAFE_DIR/overlay.conf" # El overlay ahora vive fuera del plugin
-WATCHDOG_FILE="$NVL_SAFE_DIR/nvl_watchdog.sh"
+# 🌟 NEW SAFE PATH (The Refuge) 🌟
+HVE_SAFE_DIR="$HOME/.config/noctalia/HVE"
+OVERLAY_FILE="$HVE_SAFE_DIR/overlay.conf" # The overlay now lives outside the plugin
+WATCHDOG_FILE="$HVE_SAFE_DIR/hve_watchdog.sh"
 
-# Mantenemos la ruta de tus colores
+# Keep the colors path
 COLORS_FILE="$HOME/.config/hypr/noctalia/noctalia-colors.conf"
 HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
 
-# Ruta interna del ensamblador
+# Internal assembler path
 ASSEMBLE_SCRIPT="$PLUGIN_DIR/assets/scripts/assemble.sh"
 
-# --- MARCADORES PARA HYPRLAND ---
-MARKER_START="# >>> NOCTALIA VISUAL LAYER START <<<"
-MARKER_END="# >>> NOCTALIA VISUAL LAYER END <<<"
+# --- HYPRLAND MARKERS ---
+MARKER_START="# >>> HYPRLAND VISUAL EDITOR START <<<"
+MARKER_END="# >>> HYPRLAND VISUAL EDITOR END <<<"
+# Old markers for cleanup compatibility
+OLD_MARKER_START="# >>> NOCTALIA VISUAL LAYER START <<<"
+OLD_MARKER_END="# >>> NOCTALIA VISUAL LAYER END <<<"
 
-# --- CONTENIDO A INYECTAR ---
-LINE_WATCHDOG="exec-once = $WATCHDOG_FILE" # Inyección del guardián
+# --- CONTENT TO INJECT ---
+LINE_WATCHDOG="exec-once = $WATCHDOG_FILE" # Watchdog injection
 LINE_COLORS="source = $COLORS_FILE"
 LINE_OVERLAY="source = $OVERLAY_FILE"
 
 ACTION=$1
 
-# --- FUNCIÓN DE LIMPIEZA ---
+# --- CLEANUP FUNCTION ---
 clean_hyprland_conf() {
-    # 1. Borrar todo el bloque entre los marcadores
+    # 1. Delete the entire block between markers (both new and old to ensure clean state)
     sed -i "/$MARKER_START/,/$MARKER_END/d" "$HYPR_CONF"
+    sed -i "/$OLD_MARKER_START/,/$OLD_MARKER_END/d" "$HYPR_CONF"
 
-    # 2. Limpieza de seguridad por si quedaron líneas sueltas viejas
+    # 2. Security cleanup in case old loose lines remained
     sed -i "\|source = .*noctalia-visual-layer/overlay.conf|d" "$HYPR_CONF"
+    sed -i "\|source = .*hyprland-visual-editor/overlay.conf|d" "$HYPR_CONF"
     sed -i "\|$LINE_OVERLAY|d" "$HYPR_CONF"
     sed -i "\|$LINE_COLORS|d" "$HYPR_CONF"
 
-    # 3. Eliminar líneas vacías extra al final
+    # 3. Remove extra empty lines at the end
     sed -i '${/^$/d;}' "$HYPR_CONF"
 }
 
-# --- FUNCIÓN DE PREPARACIÓN ---
+# --- SETUP FUNCTION ---
 setup_files() {
-    echo "Preparando entorno seguro y guardián de Noctalia..."
+    echo "Preparing safe environment and watchdog..."
 
-    # Crear carpeta de fragmentos y el nuevo refugio NVL
+    # Create fragments folder and the new HVE refuge
     mkdir -p "$FRAGMENTS_DIR"
-    mkdir -p "$NVL_SAFE_DIR"
+    mkdir -p "$HVE_SAFE_DIR"
 
-    # Dar permisos de ejecución a los scripts internos
+    # Grant execution permissions to internal scripts
     chmod +x "$PLUGIN_DIR/assets/scripts/"*.sh
 
-    # 🛡️ Desplegar el script guardián
-    cp "$PLUGIN_DIR/assets/scripts/nvl_watchdog.sh" "$WATCHDOG_FILE"
+    # 🛡️ Deploy the watchdog script
+    cp "$PLUGIN_DIR/assets/scripts/hve_watchdog.sh" "$WATCHDOG_FILE"
     chmod +x "$WATCHDOG_FILE"
 
-    # Crear fragmentos vacíos internos
+    # Create internal empty fragments
     touch "$FRAGMENTS_DIR/animation.conf"
     touch "$FRAGMENTS_DIR/geometry.conf"
     touch "$FRAGMENTS_DIR/border.conf"
     touch "$FRAGMENTS_DIR/shader.conf"
 
-    # Ejecutar el ensamblador interno
-    # Exportamos la variable para que assemble.sh sepa dónde debe guardar el archivo final
-    export OVERLAY_FILE="$NVL_SAFE_DIR/overlay.conf"
+    # Execute the internal assembler
+    # Export the variable so assemble.sh knows where to save the final file
+    export OVERLAY_FILE="$HVE_SAFE_DIR/overlay.conf"
 
     if [ -f "$ASSEMBLE_SCRIPT" ]; then
         bash "$ASSEMBLE_SCRIPT"
 
-        # PARCHE DE SEGURIDAD: Por si assemble.sh tiene la ruta vieja escrita "a fuego" en su código
+        # SECURITY PATCH: In case assemble.sh has the old hardcoded path
         if [ -f "$PLUGIN_DIR/overlay.conf" ]; then
-            mv "$PLUGIN_DIR/overlay.conf" "$NVL_SAFE_DIR/overlay.conf"
+            mv "$PLUGIN_DIR/overlay.conf" "$HVE_SAFE_DIR/overlay.conf"
         fi
     else
-        echo "# Noctalia Overlay Base" > "$OVERLAY_FILE"
+        echo "# Hyprland Visual Editor Overlay Base" > "$OVERLAY_FILE"
     fi
 }
 
-# --- LÓGICA PRINCIPAL ---
+# --- MAIN LOGIC ---
 
 if [ "$ACTION" == "enable" ]; then
     setup_files
-    clean_hyprland_conf # Limpiar duplicados
+    clean_hyprland_conf # Clean duplicates
 
-    # Inyectamos el BLOQUE COMPLETO apuntando al refugio seguro
+    # Inject the COMPLETE BLOCK pointing to the safe refuge
     echo "" >> "$HYPR_CONF"
     echo "$MARKER_START" >> "$HYPR_CONF"
-    echo "# 1. Guardián de Desinstalación Activo" >> "$HYPR_CONF"
+    echo "# 1. Active Uninstall Watchdog" >> "$HYPR_CONF"
     echo "$LINE_WATCHDOG" >> "$HYPR_CONF"
-    echo "# 2. Definición de Variables (Paleta de Colores)" >> "$HYPR_CONF"
+    echo "# 2. Variable Definition (Color Palette)" >> "$HYPR_CONF"
     echo "$LINE_COLORS" >> "$HYPR_CONF"
-    echo "# 3. Aplicación de Efectos (Visual Layer)" >> "$HYPR_CONF"
+    echo "# 3. Effects Application (Visual Editor)" >> "$HYPR_CONF"
     echo "$LINE_OVERLAY" >> "$HYPR_CONF"
     echo "$MARKER_END" >> "$HYPR_CONF"
 
-    # Recarga final
+    # Final reload
     hyprctl reload
-    notify-send "Noctalia Visual" "Sistema ACTIVADO (Entorno Seguro)" -i system-software-update
+    notify-send "Hyprland Visual Editor" "System ACTIVATED (Safe Environment)" -i system-software-update
 
 elif [ "$ACTION" == "disable" ]; then
-    clean_hyprland_conf # Borra el bloque de hyprland.conf
+    clean_hyprland_conf # Deletes the block from hyprland.conf
 
-    # 🧹 Limpieza total: borramos la carpeta refugio con el overlay y el guardián
-    rm -rf "$NVL_SAFE_DIR"
+    # 🧹 Total cleanup: delete the refuge folder with the overlay and watchdog
+    rm -rf "$HVE_SAFE_DIR"
 
     hyprctl reload
-    notify-send "Noctalia Visual" "Sistema DESACTIVADO" -i system-shutdown
+    notify-send "Hyprland Visual Editor" "System DEACTIVATED" -i system-shutdown
 fi

@@ -1,15 +1,15 @@
 {
   "meta": {
-    "lang": "en",
+    "lang": "pl",
     "name": "English",
-    "author": "Ximo & AI"
+    "author": "Ximo & AI (Gemini)"
   },
   "widget": {
-    "tooltip": "Noctalia Visual Layer",
+    "tooltip": "Hyprland Visual Editor",
     "menu_settings": "Plugin Settings"
   },
   "panel": {
-    "header_title": "Noctalia Visual",
+    "header_title": "Hyprland Visual",
     "header_subtitle": "Aesthetic Control Center",
     "tabs": {
       "home": "Home",
@@ -20,16 +20,16 @@
   },
   "welcome": {
     "activation_title": "System Activation",
-    "system_active": "The system is operational. Visual effects are safely managed by NVL.",
+    "system_active": "The system is operational. Visual effects are safely managed by HVE.",
     "system_inactive": "System halted. Requires acceptance of the persistence contract to continue.",
-    "enable_label": "Enable Visual Layer",
+    "enable_label": "Enable Visual Editor",
     "warning": {
       "title": "SECURE PERSISTENCE CONTRACT",
-      "text": "Upon activation, NVL will deploy a <b>guardian shield</b> and inject a secure path into your <code>hyprland.conf</code>. If you uninstall the plugin from the Shell, the system will self-clean on the next reboot without causing Hyprland errors."
+      "text": "Upon activation, HVE will deploy a <b>guardian shield</b> and inject a secure path into your <code>hyprland.conf</code>. If you uninstall the plugin from the Shell, the system will self-clean on the next reboot without causing Hyprland errors."
     },
     "features": {
       "title": "Features & Benefits",
-      "description": "Noctalia Visual Layer is the aesthetic evolution of your desktop.",
+      "description": "Hyprland Visual Editor is the aesthetic evolution of your desktop.",
       "list": {
         "fluid_anim": "✨ <b>Fluid Animations</b>",
         "smart_borders": "🎨 <b>Smart Borders</b>",
@@ -38,29 +38,18 @@
       }
     },
     "docs": {
-      "title": "Technical Documentation",
-      "description": "Internal plugin structure and developer guide.",
-      "btn_show": "Show File Structure",
-      "btn_hide": "Hide Structure",
-      "content": {
-        "arch_title": "MODULAR ARCHITECTURE (Fragment System)",
-        "arch_desc": "This plugin uses a dynamic construction system to avoid module conflicts.",
-        "struct_title": "FILE STRUCTURE",
-        "flow_title": "DATA FLOW",
-        "flow_1": "1. Activating a module creates its file in <code>fragments/</code>.",
-        "flow_2": "2. The <code>assemble.sh</code> script joins all fragments.",
-        "flow_3": "3. A clean <code>overlay.conf</code> is generated.",
-        "flow_4": "4. Hyprland reloads configuration without errors.",
-        "debug_title": "DEBUGGING",
-        "debug_desc": "If something fails, check the <code>overlay.conf</code> file. It should contain the sum of all active effects."
-      }
+      "title": "Architecture & Documentation",
+      "description": "Discover how HVE works under the hood.",
+      "summary": "<b>Hyprland Visual Editor</b> uses a real-time <i>Fragments and Assembly</i> system. It never touches your main configuration. Everything is safely generated in an isolated <code>overlay.conf</code> master file.",
+      "btn_readme": "Read Full Manual",
+      "btn_folder": "Browse Files"
     },
     "credits": {
       "title": "Credits",
       "description": "Special thanks to the <b>HyDE Project</b>.",
       "btn_hyde": "Inspired by HyDE Project",
       "ai_title": "AI Co-Programmed",
-      "ai_desc": "QML Architecture assistance by Gemini (Google)."
+      "ai_desc": "QML Architecture and path debugging assistance by Gemini (Google)."
     }
   },
   "animations": {
@@ -144,7 +133,7 @@
   "borders": {
     "geometry": {
       "title": "Border Thickness",
-      "desc": "Define line thickness (0-3px)"
+      "desc": "Define line thickness (0-5px)"
     },
     "header_title": "Visual Styles",
     "header_subtitle": "Define your windows' personality",

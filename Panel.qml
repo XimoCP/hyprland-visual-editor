@@ -11,21 +11,31 @@ import "./modules"
 Item {
     id: root
 
-    // IMPORTANTE: Aseguramos el nombre estándar
+    // IMPORTANT: Ensure standard naming for the API
     property var pluginApi: null
     property var runHypr: null
     readonly property int barHeight: 20
 
-    // --- MOTOR DE SCRIPTS ---
+    // --- OFFICIAL SMARTPANEL PROPERTIES ---
+    // Required by Noctalia for proper window sizing and API injection
+    readonly property var geometryPlaceholder: panelContainer
+    readonly property bool allowAttach: true
+
+    // Centralized plugin directory path
+    readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
+
+    // --- SCRIPT ENGINE ---
     Process {
         id: bashProcess
-        onStdoutChanged: console.log("[SCRIPT LOG]: " + stdout)
-        onStderrChanged: console.log("[SCRIPT ERROR]: " + stderr)
+        // Using Lemmy's official Logger syntax
+        onStdoutChanged: Logger.d("HVE", "Script Output: " + stdout)
+        onStderrChanged: Logger.e("HVE", "Script Error: " + stderr)
     }
 
     function runScript(scriptName, args) {
-        var scriptPath = Quickshell.env("HOME") + "/.config/noctalia/plugins/noctalia-visual-layer/assets/scripts/" + scriptName
-        console.log("Ejecutando: " + scriptPath + " " + args)
+        var scriptPath = pluginDir + "/assets/scripts/" + scriptName
+        Logger.i("HVE", "Executing: " + scriptPath + " " + args)
+        
         bashProcess.command = ["bash", scriptPath, args]
         bashProcess.running = true
     }
@@ -35,7 +45,9 @@ Item {
 
     anchors.fill: parent
 
-    NBox {
+    // Main container required by geometryPlaceholder
+    Rectangle {
+        id: panelContainer
         anchors.fill: parent
         anchors.topMargin: root.barHeight
         color: "transparent"
@@ -45,7 +57,7 @@ Item {
             anchors.margins: Style.marginL
             spacing: Style.marginM
 
-            // 1. CABECERA CENTRADA
+            // 1. CENTERED HEADER
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Style.marginS
@@ -63,15 +75,15 @@ Item {
                     spacing: 0
                     Layout.alignment: Qt.AlignCenter
                     NText {
-                        // TRADUCCIÓN: Título principal
-                        text: root.pluginApi ? root.pluginApi.tr("panel.header_title") : "Noctalia Visual"
+                        // Direct translation call without mitigation
+                        text: root.pluginApi.tr("panel.header_title")
                         pointSize: Style.fontSizeXL
                         font.weight: Font.Bold
                         color: Color.mPrimary
                     }
                     NText {
-                        // TRADUCCIÓN: Subtítulo
-                        text: root.pluginApi ? root.pluginApi.tr("panel.header_subtitle") : "Centro de Control Estético"
+                        // Direct translation call without mitigation
+                        text: root.pluginApi.tr("panel.header_subtitle")
                         pointSize: Style.fontSizeS
                         color: Color.mOnSurfaceVariant
                     }
@@ -80,35 +92,34 @@ Item {
                 Item { Layout.fillWidth: true }
             }
 
-            // 2. BARRA DE NAVEGACIÓN
+            // 2. NAVIGATION BAR
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
 
-                // TRADUCCIÓN: Pestañas usando las keys del JSON (panel.tabs.xxxx)
                 TabItem {
-                    label: root.pluginApi ? root.pluginApi.tr("panel.tabs.home") : "Inicio"
+                    label: root.pluginApi.tr("panel.tabs.home")
                     iconName: "home"
                     index: 0
                     accentColor: "#38bdf8"
                     isSelected: stackLayout.currentIndex === 0
                 }
                 TabItem {
-                    label: root.pluginApi ? root.pluginApi.tr("panel.tabs.animations") : "Animaciones"
+                    label: root.pluginApi.tr("panel.tabs.animations")
                     iconName: "movie"
                     index: 1
                     accentColor: "#fbbf24"
                     isSelected: stackLayout.currentIndex === 1
                 }
                 TabItem {
-                    label: root.pluginApi ? root.pluginApi.tr("panel.tabs.borders") : "Bordes"
+                    label: root.pluginApi.tr("panel.tabs.borders")
                     iconName: "border-all"
                     index: 2
                     accentColor: "#10b981"
                     isSelected: stackLayout.currentIndex === 2
                 }
                 TabItem {
-                    label: root.pluginApi ? root.pluginApi.tr("panel.tabs.effects") : "Efectos"
+                    label: root.pluginApi.tr("panel.tabs.effects")
                     iconName: "wand"
                     index: 3
                     accentColor: "#c084fc"
@@ -116,7 +127,7 @@ Item {
                 }
             }
 
-            // 3. ÁREA DE CONTENIDO
+            // 3. CONTENT AREA
             NBox {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -130,7 +141,7 @@ Item {
                     anchors.margins: Style.marginS
                     currentIndex: 0
 
-                    // Pasamos pluginApi correctamente a los hijos
+                    // Passing pluginApi to children
                     WelcomeModule   { pluginApi: root.pluginApi; runScript: root.runScript }
                     AnimationModule { pluginApi: root.pluginApi; runScript: root.runScript }
                     BorderModule    { pluginApi: root.pluginApi; runScript: root.runScript }
@@ -155,13 +166,13 @@ Item {
         readonly property color currentAccent: isSelected ? Color.mPrimary : accentColor
 
         color: isSelected
-        ? Qt.alpha(Color.mPrimary, 0.15)
-        : (tabMouse.containsMouse ? Qt.alpha(accentColor, 0.1) : "transparent")
+            ? Qt.alpha(Color.mPrimary, 0.15)
+            : (tabMouse.containsMouse ? Qt.alpha(accentColor, 0.1) : "transparent")
 
         border.width: 1
         border.color: isSelected
-        ? Color.mPrimary
-        : (tabMouse.containsMouse ? accentColor : Qt.alpha(accentColor, 0.2))
+            ? Color.mPrimary
+            : (tabMouse.containsMouse ? accentColor : Qt.alpha(accentColor, 0.2))
 
         Behavior on color { ColorAnimation { duration: 150 } }
         Behavior on border.color { ColorAnimation { duration: 150 } }

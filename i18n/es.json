@@ -5,11 +5,11 @@
     "author": "Ximo & AI"
   },
   "widget": {
-    "tooltip": "Noctalia Visual Layer",
+    "tooltip": "Hyprland Visual Editor",
     "menu_settings": "Ajustes del Plugin"
   },
   "panel": {
-    "header_title": "Noctalia Visual",
+    "header_title": "Hyprland Visual",
     "header_subtitle": "Centro de Control Estético",
     "tabs": {
       "home": "Inicio",
@@ -20,16 +20,16 @@
   },
   "welcome": {
     "activation_title": "Activación del Sistema",
-    "system_active": "El sistema está operativo. Los efectos visuales están gestionados por NVL de forma segura.",
+    "system_active": "El sistema está operativo. Los efectos visuales están gestionados por HVE de forma segura.",
     "system_inactive": "Sistema detenido. Requiere aceptación del contrato de persistencia para continuar.",
-    "enable_label": "Habilitar Visual Layer",
+    "enable_label": "Habilitar Visual Editor",
     "warning": {
       "title": "CONTRATO DE PERSISTENCIA SEGURA",
-      "text": "Al activar, NVL desplegará un <b>escudo guardián</b> e inyectará una ruta segura en tu <code>hyprland.conf</code>. Si desinstalas el plugin desde la Shell, el sistema se autolimpiará en el próximo reinicio sin causar errores en Hyprland."
+      "text": "Al activar, HVE desplegará un <b>escudo guardián</b> e inyectará una ruta segura en tu <code>hyprland.conf</code>. Si desinstalas el plugin desde la Shell, el sistema se autolimpiará en el próximo reinicio sin causar errores en Hyprland."
     },
     "features": {
       "title": "Características & Bondades",
-      "description": "Noctalia Visual Layer es la evolución estética de tu escritorio.",
+      "description": "Hyprland Visual Editor es la evolución estética de tu escritorio.",
       "list": {
         "fluid_anim": "✨ <b>Animaciones Fluidas</b>",
         "smart_borders": "🎨 <b>Bordes Inteligentes</b>",
@@ -39,8 +39,8 @@
     },
     "docs": {
       "title": "Arquitectura y Documentación",
-      "description": "Descubre cómo funciona NVL por debajo.",
-      "summary": "<b>Noctalia Visual Layer</b> utiliza un sistema de <i>Fragmentos y Ensamblaje</i> en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro <code>overlay.conf</code> aislado.",
+      "description": "Descubre cómo funciona HVE por debajo.",
+      "summary": "<b>Hyprland Visual Editor</b> utiliza un sistema de <i>Fragmentos y Ensamblaje</i> en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro <code>overlay.conf</code> aislado.",
       "btn_readme": "Leer Manual Completo",
       "btn_folder": "Explorar Archivos"
     },
@@ -49,7 +49,7 @@
       "description": "Agradecimientos especiales al <b>HyDE Project</b>.",
       "btn_hyde": "Inspirado en HyDE Project",
       "ai_title": "Co-Programado con IA",
-      "ai_desc": "Agradecimientos a Gemini (Google) por la asistencia en arquitectura QML."
+      "ai_desc": "Gracias a Gemini (Google) por la asistencia en arquitectura y depuración de rutas."
     }
   },
   "animations": {
@@ -133,7 +133,7 @@
   "borders": {
     "geometry": {
       "title": "Grosor del Borde",
-      "desc": "Define el grosor de la línea (0-3px)"
+      "desc": "Define el grosor de la línea (0-5px)"
     },
     "header_title": "Estilos Visuales",
     "header_subtitle": "Define la personalidad de tus ventanas",

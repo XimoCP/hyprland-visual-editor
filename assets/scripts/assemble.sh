@@ -1,84 +1,84 @@
 #!/bin/bash
 
-# --- CONFIGURACIÓN DE RUTAS AUTOCONTENIDAS ---
-PLUGIN_DIR="$HOME/.config/noctalia/plugins/noctalia-visual-layer"
+# --- SELF-CONTAINED PATH CONFIGURATION ---
+PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"
 
-# [CAMBIO 1] Definimos la nueva ruta segura fuera del plugin
-NVL_SAFE_DIR="$HOME/.config/noctalia/NVL"
+# [CHANGE 1] Define the new safe path outside the plugin
+HVE_SAFE_DIR="$HOME/.config/noctalia/HVE"
 
-# [CAMBIO 2] Apuntamos el archivo temporal y el final a la nueva ruta
-FINAL_FILE="$NVL_SAFE_DIR/overlay.conf"
-TEMP_FILE="$NVL_SAFE_DIR/overlay.tmp"
+# [CHANGE 2] Point the temporary and final files to the new path
+FINAL_FILE="$HVE_SAFE_DIR/overlay.conf"
+TEMP_FILE="$HVE_SAFE_DIR/overlay.tmp"
 
-# Ruta de los colores oficiales de Noctalia
+# Official Noctalia colors path
 COLORS_FILE="$HOME/.config/hypr/noctalia/noctalia-colors.conf"
 
-# Aseguramos que la carpeta de fragmentos exista dentro del plugin
+# Ensure the fragments folder exists within the plugin
 mkdir -p "$FRAGMENTS_DIR"
 
-# [CAMBIO 3] Aseguramos que el refugio seguro exista antes de escribir en él
-mkdir -p "$NVL_SAFE_DIR"
+# [CHANGE 3] Ensure the safe refuge exists before writing to it
+mkdir -p "$HVE_SAFE_DIR"
 
-# 1. CREACIÓN DEL ARCHIVO TEMPORAL
-echo "# NOCTALIA VISUAL LAYER - OVERLAY MAESTRO" > "$TEMP_FILE"
-echo "# Generado automáticamente el: $(date)" >> "$TEMP_FILE"
+# 1. TEMPORARY FILE CREATION
+echo "# HYPRLAND VISUAL EDITOR - MASTER OVERLAY" > "$TEMP_FILE"
+echo "# Automatically generated on: $(date)" >> "$TEMP_FILE"
 echo "" >> "$TEMP_FILE"
 
-# --- [CRÍTICO: COLORES PRIMERO] ---
-# Cargamos las variables ($primary, $secondary...) antes que nada.
+# --- [CRITICAL: COLORS FIRST] ---
+# Load variables ($primary, $secondary...) before anything else.
 if [ -f "$COLORS_FILE" ]; then
-    echo "# [SISTEMA: COLORES]" >> "$TEMP_FILE"
+    echo "# [SYSTEM: COLORS]" >> "$TEMP_FILE"
     echo "source = $COLORS_FILE" >> "$TEMP_FILE"
     echo "" >> "$TEMP_FILE"
 else
-    echo "# [ADVERTENCIA] Archivo de colores no encontrado: $COLORS_FILE" >> "$TEMP_FILE"
+    echo "# [WARNING] Colors file not found: $COLORS_FILE" >> "$TEMP_FILE"
 fi
 
-# --- [FIX CRÍTICO: CURVA INMORTAL] ---
-# Inyectamos la curva linear GLOBALMENTE aquí.
+# --- [CRITICAL FIX: IMMORTAL CURVE] ---
+# Inject the linear curve GLOBALLY here.
 echo "bezier = linear, 0, 0, 1, 1" >> "$TEMP_FILE"
 echo "# ----------------------------------------------------" >> "$TEMP_FILE"
 echo "" >> "$TEMP_FILE"
 
 
-# 2. ENSAMBLAJE ORDENADO (JERARQUÍA DE PODER)
+# 2. ORDERED ASSEMBLY (POWER HIERARCHY)
 
-# -- A) ANIMACIONES --
+# -- A) ANIMATIONS --
 if [ -f "$FRAGMENTS_DIR/animation.conf" ]; then
-    echo "# [MÓDULO: ANIMACIONES]" >> "$TEMP_FILE"
+    echo "# [MODULE: ANIMATIONS]" >> "$TEMP_FILE"
     cat "$FRAGMENTS_DIR/animation.conf" >> "$TEMP_FILE"
     echo "" >> "$TEMP_FILE"
 fi
 
-# -- B) BORDES (Estilo y Color) --
+# -- B) BORDERS (Style and Color) --
 if [ -f "$FRAGMENTS_DIR/border.conf" ]; then
-    echo "# [MÓDULO: BORDES]" >> "$TEMP_FILE"
+    echo "# [MODULE: BORDERS]" >> "$TEMP_FILE"
     cat "$FRAGMENTS_DIR/border.conf" >> "$TEMP_FILE"
     echo "" >> "$TEMP_FILE"
 fi
 
 # -- C) SHADERS --
 if [ -f "$FRAGMENTS_DIR/shader.conf" ]; then
-    echo "# [MÓDULO: SHADERS]" >> "$TEMP_FILE"
+    echo "# [MODULE: SHADERS]" >> "$TEMP_FILE"
     cat "$FRAGMENTS_DIR/shader.conf" >> "$TEMP_FILE"
     echo "" >> "$TEMP_FILE"
 fi
 
-# -- D) GEOMETRÍA (El Jefe Supremo) --
-# Lo ponemos AL FINAL para que el slider siempre mande sobre el tamaño,
-# sobrescribiendo cualquier error que venga de los bordes anteriores.
+# -- D) GEOMETRY (The Supreme Boss) --
+# We put this AT THE END so the slider always dictates the size,
+# overriding any errors coming from previous borders.
 if [ -f "$FRAGMENTS_DIR/geometry.conf" ]; then
-    echo "# [MÓDULO: GEOMETRÍA]" >> "$TEMP_FILE"
+    echo "# [MODULE: GEOMETRY]" >> "$TEMP_FILE"
     cat "$FRAGMENTS_DIR/geometry.conf" >> "$TEMP_FILE"
     echo "" >> "$TEMP_FILE"
 fi
 
-# 3. MOVIMIENTO MAESTRO
+# 3. MASTER MOVE
 mv "$TEMP_FILE" "$FINAL_FILE"
 
-# 4. APLICACIÓN
+# 4. APPLICATION
 if pgrep -x "Hyprland" > /dev/null; then
-    # Usamos reload para aplicar cambios sin reiniciar la sesión
+    # Use reload to apply changes without restarting the session
     hyprctl reload
 fi

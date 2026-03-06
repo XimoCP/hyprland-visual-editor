@@ -1,13 +1,13 @@
 {
-  "id": "noctalia-visual-layer",
-  "name": "Noctalia Visual Layer",
+  "id": "hyprland-visual-editor",
+  "name": "Hyprland Visual Editor",
   "version": "1.0.0",
   "minNoctaliaVersion": "3.6.0",
   "author": "XimoCP",
   "license": "MIT",
-  "repository": "https://github.com/XimoCP/noctalia-visual-layer",
-  "description": "Elevate your Hyprland experience. A modular Noctalia Shell plugin to safely inject custom animations, borders, and visual effects on the fly.",
-  "tags": ["Panel", "Bar", "System", "Fun"],
+  "repository": "https://github.com/XimoCP/hyprland-visual-editor",
+  "description": "Elevate your Hyprland experience. A modular plugin to safely inject custom animations, borders, and visual effects on the fly.",
+  "tags": ["Panel", "Bar", "System", "Hyprland"],
   "entryPoints": {
     "panel": "Panel.qml",
     "barWidget": "BarWidget.qml"
@@ -17,7 +17,11 @@
   },
   "metadata": {
     "defaultSettings": {
-      "layer_enabled": false
+      "isSystemActive": false,
+      "borderSize": 2,
+      "activeBorderFile": "",
+      "activeAnimFile": "",
+      "activeShaderFile": ""
     }
   }
 }
