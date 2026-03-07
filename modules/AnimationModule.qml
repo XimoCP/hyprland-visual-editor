@@ -41,6 +41,8 @@ NScrollView {
                     Logger.e("HVE", "JSON Parsing Error in Animations: " + e); 
                 }
             }
+            // EL TOQUE QUIRÚRGICO: Vaciamos la memoria del string al terminar
+            scanner.outputData = ""
         }
     }
     Component.onCompleted: scanner.running = true

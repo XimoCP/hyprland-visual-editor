@@ -24,20 +24,27 @@ Item {
     // Centralized plugin directory path
     readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
 
-    // --- SCRIPT ENGINE ---
-    Process {
-        id: bashProcess
-        // Using Lemmy's official Logger syntax
-        onStdoutChanged: Logger.d("HVE", "Script Output: " + stdout)
-        onStderrChanged: Logger.e("HVE", "Script Error: " + stderr)
+    // --- SCRIPT ENGINE (FIXED MEMORY LEAK) ---
+    Component {
+        id: processFactory
+        Process {
+            id: tempProcess
+            // Solo logueamos errores reales para no inflar la memoria
+            onStderrChanged: if (stderr.trim() !== "") Logger.e("HVE", "Script Error: " + stderr)
+            
+            // Destrucción total al terminar para liberar la RAM
+            onExited: tempProcess.destroy()
+        }
     }
 
     function runScript(scriptName, args) {
         var scriptPath = pluginDir + "/assets/scripts/" + scriptName
         Logger.i("HVE", "Executing: " + scriptPath + " " + args)
         
-        bashProcess.command = ["bash", scriptPath, args]
-        bashProcess.running = true
+        // Creamos una instancia desechable
+        var p = processFactory.createObject(root)
+        p.command = ["bash", scriptPath, args]
+        p.running = true
     }
 
     property real contentPreferredWidth: 700 * Style.uiScaleRatio

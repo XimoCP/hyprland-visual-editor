@@ -1,7 +1,7 @@
 {
   "isSystemActive": true,
   "borderSize": 3,
-  "activeBorderFile": "13_the_joker.conf",
-  "activeShaderFile": "",
-  "activeAnimFile": "09_seda_silk.conf"
+  "activeBorderFile": "08_neon.conf",
+  "activeShaderFile": "03_vibrant.frag",
+  "activeAnimFile": "12_rebote.conf"
 }

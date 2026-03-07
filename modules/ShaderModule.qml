@@ -40,6 +40,8 @@ NScrollView {
                     Logger.e("HVE", "JSON Parsing Error in Shaders: " + e); 
                 }
             }
+            // LIMPIEZA DE MEMORIA: Vaciamos el búfer después de parsear el JSON
+            scanner.outputData = ""
         }
     }
     Component.onCompleted: scanner.running = true
