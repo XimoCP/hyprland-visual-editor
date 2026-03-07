@@ -1,0 +1,10 @@
+# Persistencia de Noctalia
+settings.json
+
+# Persistencia antigua de QML
+assets/welcome.conf
+assets/borders/store.conf
+
+# Archivos generados dinámicamente
+overlay.conf
+assets/fragments/

@@ -5,7 +5,6 @@ import Quickshell
 import Quickshell.Io
 import qs.Widgets
 import qs.Commons
-import qs.Services.UI // Para ToastService
 
 NScrollView {
     id: borderRoot
@@ -42,7 +41,7 @@ NScrollView {
                     Logger.e("HVE", "JSON Parsing Error in Borders: " + e); 
                 }
             }
-            // LIMPIEZA DE MEMORIA: Vaciamos el búfer después de parsear el JSON
+            // Memory management: clear accumulated string after parsing to prevent RAM leaks
             scanner.outputData = ""
         }
     }
@@ -109,8 +108,8 @@ NScrollView {
                     RowLayout {
                         spacing: 8
                         NText {
-                            // Official safe translation call with fallback
-                            text: cardRoot.cTitleKey !== "" ? (pluginApi?.tr(cardRoot.cTitleKey) || cardRoot.cTitleKey) : ""
+                            // Direct translation call
+                            text: cardRoot.cTitleKey !== "" ? pluginApi.tr(cardRoot.cTitleKey) : ""
                             font.weight: Font.Bold
                             color: cardRoot.isActive ? Color.mOnSurface : Color.mOnSurfaceVariant
                         }
@@ -120,8 +119,8 @@ NScrollView {
                         }
                     }
                     NText {
-                        // Official safe translation call with fallback
-                        text: cardRoot.cDescKey !== "" ? (pluginApi?.tr(cardRoot.cDescKey) || cardRoot.cDescKey) : ""
+                        // Direct translation call
+                        text: cardRoot.cDescKey !== "" ? pluginApi.tr(cardRoot.cDescKey) : ""
                         pointSize: Style.fontSizeS
                         color: Color.mOnSurfaceVariant
                         elide: Text.ElideRight
@@ -158,11 +157,11 @@ NScrollView {
         ColumnLayout {
             Layout.fillWidth: true; spacing: 4; Layout.margins: Style.marginL
             NText {
-                text: pluginApi?.tr("borders.header_title") || "Visual Styles"
+                text: pluginApi.tr("borders.header_title")
                 font.weight: Font.Bold; pointSize: Style.fontSizeL; color: Color.mPrimary
             }
             NText {
-                text: pluginApi?.tr("borders.header_subtitle") || "Define the personality of your windows"
+                text: pluginApi.tr("borders.header_subtitle")
                 pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant
             }
         }
@@ -184,7 +183,7 @@ NScrollView {
                     spacing: Style.marginS
                     NIcon { icon: "maximize"; color: Color.mPrimary; pointSize: Style.fontSizeM }
                     NText {
-                        text: pluginApi?.tr("borders.geometry.title") || "Border Thickness"
+                        text: pluginApi.tr("borders.geometry.title")
                         font.weight: Font.Bold; color: Color.mOnSurface
                     }
                     Item { Layout.fillWidth: true }

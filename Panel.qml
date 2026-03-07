@@ -11,28 +11,22 @@ import "./modules"
 Item {
     id: root
 
-    // IMPORTANT: Ensure standard naming for the API
     property var pluginApi: null
     property var runHypr: null
     readonly property int barHeight: 20
 
-    // --- OFFICIAL SMARTPANEL PROPERTIES ---
-    // Required by Noctalia for proper window sizing and API injection
+    // Required by Noctalia for proper window sizing
     readonly property var geometryPlaceholder: panelContainer
     readonly property bool allowAttach: true
 
-    // Centralized plugin directory path
     readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
 
-    // --- SCRIPT ENGINE (FIXED MEMORY LEAK) ---
+    // Script Engine with strict memory management
     Component {
         id: processFactory
         Process {
             id: tempProcess
-            // Solo logueamos errores reales para no inflar la memoria
             onStderrChanged: if (stderr.trim() !== "") Logger.e("HVE", "Script Error: " + stderr)
-            
-            // Destrucción total al terminar para liberar la RAM
             onExited: tempProcess.destroy()
         }
     }
@@ -41,7 +35,6 @@ Item {
         var scriptPath = pluginDir + "/assets/scripts/" + scriptName
         Logger.i("HVE", "Executing: " + scriptPath + " " + args)
         
-        // Creamos una instancia desechable
         var p = processFactory.createObject(root)
         p.command = ["bash", scriptPath, args]
         p.running = true
@@ -52,7 +45,6 @@ Item {
 
     anchors.fill: parent
 
-    // Main container required by geometryPlaceholder
     Rectangle {
         id: panelContainer
         anchors.fill: parent
@@ -64,7 +56,6 @@ Item {
             anchors.margins: Style.marginL
             spacing: Style.marginM
 
-            // 1. CENTERED HEADER
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Style.marginS
@@ -82,14 +73,12 @@ Item {
                     spacing: 0
                     Layout.alignment: Qt.AlignCenter
                     NText {
-                        // Direct translation call without mitigation
                         text: root.pluginApi.tr("panel.header_title")
                         pointSize: Style.fontSizeXL
                         font.weight: Font.Bold
                         color: Color.mPrimary
                     }
                     NText {
-                        // Direct translation call without mitigation
                         text: root.pluginApi.tr("panel.header_subtitle")
                         pointSize: Style.fontSizeS
                         color: Color.mOnSurfaceVariant
@@ -99,7 +88,6 @@ Item {
                 Item { Layout.fillWidth: true }
             }
 
-            // 2. NAVIGATION BAR
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -134,7 +122,6 @@ Item {
                 }
             }
 
-            // 3. CONTENT AREA
             NBox {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -148,7 +135,6 @@ Item {
                     anchors.margins: Style.marginS
                     currentIndex: 0
 
-                    // Passing pluginApi to children
                     WelcomeModule   { pluginApi: root.pluginApi; runScript: root.runScript }
                     AnimationModule { pluginApi: root.pluginApi; runScript: root.runScript }
                     BorderModule    { pluginApi: root.pluginApi; runScript: root.runScript }
@@ -172,14 +158,9 @@ Item {
 
         readonly property color currentAccent: isSelected ? Color.mPrimary : accentColor
 
-        color: isSelected
-            ? Qt.alpha(Color.mPrimary, 0.15)
-            : (tabMouse.containsMouse ? Qt.alpha(accentColor, 0.1) : "transparent")
-
+        color: isSelected ? Qt.alpha(Color.mPrimary, 0.15) : (tabMouse.containsMouse ? Qt.alpha(accentColor, 0.1) : "transparent")
         border.width: 1
-        border.color: isSelected
-            ? Color.mPrimary
-            : (tabMouse.containsMouse ? accentColor : Qt.alpha(accentColor, 0.2))
+        border.color: isSelected ? Color.mPrimary : (tabMouse.containsMouse ? accentColor : Qt.alpha(accentColor, 0.2))
 
         Behavior on color { ColorAnimation { duration: 150 } }
         Behavior on border.color { ColorAnimation { duration: 150 } }

@@ -5,7 +5,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Widgets
 import qs.Commons
-import qs.Services.UI // Para ToastService
+import qs.Services.UI 
 
 NScrollView {
     id: animRoot
@@ -41,7 +41,7 @@ NScrollView {
                     Logger.e("HVE", "JSON Parsing Error in Animations: " + e); 
                 }
             }
-            // EL TOQUE QUIRÚRGICO: Vaciamos la memoria del string al terminar
+            // Memory management: clear accumulated string after parsing to prevent RAM leaks
             scanner.outputData = ""
         }
     }
@@ -104,9 +104,9 @@ NScrollView {
                     Layout.fillWidth: true; spacing: 2
                     RowLayout {
                         spacing: 8
-                        // Official safe translation call with fallback
+                        // Direct translation call without mitigation strings
                         NText {
-                            text: cardRoot.cTitleKey !== "" ? (pluginApi?.tr(cardRoot.cTitleKey) || cardRoot.cTitleKey) : ""
+                            text: cardRoot.cTitleKey !== "" ? pluginApi.tr(cardRoot.cTitleKey) : ""
                             font.weight: Font.Bold
                             color: cardRoot.isActive ? Color.mOnSurface : Color.mOnSurfaceVariant
                         }
@@ -116,14 +116,13 @@ NScrollView {
                         }
                     }
                     NText {
-                        // Official safe translation call with fallback
-                        text: cardRoot.cDescKey !== "" ? (pluginApi?.tr(cardRoot.cDescKey) || cardRoot.cDescKey) : ""
+                        // Direct translation call without mitigation strings
+                        text: cardRoot.cDescKey !== "" ? pluginApi.tr(cardRoot.cDescKey) : ""
                         pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant; elide: Text.ElideRight; Layout.fillWidth: true
                     }
                 }
                 VisualSwitch {
                     checked: cardRoot.isActive
-                    // Logic moved entirely to MouseArea to avoid infinite loops and maintain single source of truth
                 }
             }
         }
@@ -140,11 +139,11 @@ NScrollView {
         ColumnLayout {
             Layout.fillWidth: true; spacing: 4; Layout.margins: Style.marginL
             NText {
-                text: pluginApi?.tr("animations.header_title") || "Animations"
+                text: pluginApi.tr("animations.header_title")
                 font.weight: Font.Bold; pointSize: Style.fontSizeL; color: Color.mPrimary
             }
             NText {
-                text: pluginApi?.tr("animations.header_subtitle") || "Motion dynamics for your desktop"
+                text: pluginApi.tr("animations.header_subtitle")
                 pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant
             }
         }

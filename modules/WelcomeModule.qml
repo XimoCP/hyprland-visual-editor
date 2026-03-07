@@ -49,12 +49,12 @@ NScrollView {
 
         // --- ACTIVATION SECTION ---
         ProCard {
-            title: (pluginApi ? pluginApi.tr("welcome.activation_title") : "") || "System Activation"
+            title: pluginApi.tr("welcome.activation_title")
             iconName: "power"
             accentColor: welcomeRoot.isSystemActive ? Color.mPrimary : "#ef4444"
             description: welcomeRoot.isSystemActive
-                ? ((pluginApi ? pluginApi.tr("welcome.system_active") : "") || "System Active")
-                : ((pluginApi ? pluginApi.tr("welcome.system_inactive") : "") || "System Inactive")
+                ? pluginApi.tr("welcome.system_active")
+                : pluginApi.tr("welcome.system_inactive")
 
             extraContent: ColumnLayout {
                 spacing: Style.marginM
@@ -64,7 +64,7 @@ NScrollView {
                     Layout.fillWidth: true
                     Layout.margins: 15
                     NText {
-                        text: (pluginApi ? pluginApi.tr("welcome.enable_label") : "") || "Enable Visual Editor"
+                        text: pluginApi.tr("welcome.enable_label")
                         font.weight: Font.Bold
                         pointSize: Style.fontSizeL
                         color: Color.mOnSurface
@@ -106,11 +106,11 @@ NScrollView {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 4
                             NText {
-                                text: (pluginApi ? pluginApi.tr("welcome.warning.title") : "") || "WARNING"
+                                text: pluginApi.tr("welcome.warning.title")
                                 font.weight: Font.Bold; color: "#ef4444"; pointSize: Style.fontSizeS
                             }
                             NText {
-                                text: (pluginApi ? pluginApi.tr("welcome.warning.text") : "") || "Safety Notice"
+                                text: pluginApi.tr("welcome.warning.text")
                                 color: Color.mOnSurfaceVariant; wrapMode: Text.WordWrap; textFormat: Text.RichText; Layout.fillWidth: true; pointSize: Style.fontSizeS
                             }
                         }
@@ -121,19 +121,18 @@ NScrollView {
 
         // --- FEATURES ---
         ProCard {
-            title: (pluginApi ? pluginApi.tr("welcome.features.title") : "") || "Features & Benefits"
+            title: pluginApi.tr("welcome.features.title")
             iconName: "star"; accentColor: "#fbbf24"
-            description: (pluginApi ? pluginApi.tr("welcome.features.description") : "") || "Evolution of your desktop"
+            description: pluginApi.tr("welcome.features.description")
             extraContent: ColumnLayout {
                 spacing: 6
                 Repeater {
-                    // Cacheado del modelo para evitar recreación de arrays en RAM
-                    model: pluginApi ? [
-                        pluginApi.tr("welcome.features.list.fluid_anim") || "Fluid Animations",
-                        pluginApi.tr("welcome.features.list.smart_borders") || "Smart Borders",
-                        pluginApi.tr("welcome.features.list.realtime_shaders") || "Real-Time Shaders",
-                        pluginApi.tr("welcome.features.list.non_destructive") || "Non-Destructive"
-                    ] : []
+                    model: [
+                        pluginApi.tr("welcome.features.list.fluid_anim"),
+                        pluginApi.tr("welcome.features.list.smart_borders"),
+                        pluginApi.tr("welcome.features.list.realtime_shaders"),
+                        pluginApi.tr("welcome.features.list.non_destructive")
+                    ]
                     delegate: RowLayout {
                         spacing: 8
                         NIcon { icon: "check"; color: Color.mPrimary; pointSize: 12 }
@@ -145,24 +144,24 @@ NScrollView {
         
         // --- DOCUMENTATION ---
         ProCard {
-            title: (pluginApi ? pluginApi.tr("welcome.docs.title") : "") || "Architecture & Documentation"
+            title: pluginApi.tr("welcome.docs.title")
             iconName: "book"; accentColor: "#38bdf8"
-            description: (pluginApi ? pluginApi.tr("welcome.docs.description") : "") || "How HVE works"
+            description: pluginApi.tr("welcome.docs.description")
             extraContent: ColumnLayout {
                 spacing: 15
                 NText {
                     Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#a9b1d6"; font.pointSize: 10; textFormat: Text.RichText
-                    text: (pluginApi ? pluginApi.tr("welcome.docs.summary") : "") || "Uses fragments system"
+                    text: pluginApi.tr("welcome.docs.summary")
                 }
                 RowLayout {
                     spacing: 10; Layout.fillWidth: true
                     NButton {
-                        text: (pluginApi ? pluginApi.tr("welcome.docs.btn_readme") : "") || "Read Manual"
+                        text: pluginApi.tr("welcome.docs.btn_readme")
                         icon: "external-link"; Layout.fillWidth: true
                         onClicked: Qt.openUrlExternally("file://" + pluginDir + "/README.md")
                     }
                     NButton {
-                        text: (pluginApi ? pluginApi.tr("welcome.docs.btn_folder") : "") || "Browse Files"
+                        text: pluginApi.tr("welcome.docs.btn_folder")
                         icon: "folder"; Layout.fillWidth: true
                         onClicked: Qt.openUrlExternally("file://" + pluginDir + "/")
                     }
@@ -172,13 +171,13 @@ NScrollView {
 
         // --- CREDITS ---
         ProCard {
-            title: (pluginApi ? pluginApi.tr("welcome.credits.title") : "") || "Credits"
+            title: pluginApi.tr("welcome.credits.title")
             iconName: "heart"; accentColor: "#f472b6"
-            description: (pluginApi ? pluginApi.tr("welcome.credits.description") : "") || "Thanks to HyDE"
+            description: pluginApi.tr("welcome.credits.description")
             extraContent: ColumnLayout {
                 spacing: Style.marginM
                 NButton {
-                    text: (pluginApi ? pluginApi.tr("welcome.credits.btn_hyde") : "") || "Inspired by HyDE"
+                    text: pluginApi.tr("welcome.credits.btn_hyde")
                     icon: "brand-github"; Layout.fillWidth: true
                     onClicked: Qt.openUrlExternally("https://github.com/HyDE-Project/")
                 }
@@ -188,9 +187,9 @@ NScrollView {
                     NIcon { icon: "code"; color: Color.mOnSurfaceVariant; pointSize: Style.fontSizeL }
                     ColumnLayout {
                         spacing: 2
-                        NText { text: (pluginApi ? pluginApi.tr("welcome.credits.ai_title") : "") || "AI Co-Programmed"; font.weight: Font.Bold }
+                        NText { text: pluginApi.tr("welcome.credits.ai_title"); font.weight: Font.Bold }
                         NText {
-                            text: (pluginApi ? pluginApi.tr("welcome.credits.ai_desc") : "") || "Thanks to Gemini"
+                            text: pluginApi.tr("welcome.credits.ai_desc")
                             color: Color.mOnSurfaceVariant; wrapMode: Text.Wrap; Layout.fillWidth: true; pointSize: Style.fontSizeS
                         }
                     }
