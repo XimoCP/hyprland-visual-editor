@@ -1,8 +1,8 @@
-// @Title: Luz Nocturna
+// @Title: Night Light
 // @Icon: moon
 // @Color: #fcd34d
 // @Tag: WARM
-// @Desc: Reduce la luz azul para proteger la vista.
+// @Desc: Reduces blue light to protect your eyesight.
 
 // from https://github.com/hyprwm/Hyprland/issues/1140#issuecomment-1335128437
 

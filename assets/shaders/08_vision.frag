@@ -1,11 +1,8 @@
-// @Title: Visión Nocturna
+// @Title: Night Vision
 // @Icon: eye
 // @Color: #4ade80
 // @Tag: NIGHT
-// @Desc: Filtro de fósforo verde de alto contraste.
-
-
-
+// @Desc: High-contrast green phosphor filter.
 
 #version 300 es
 precision highp float;
@@ -15,14 +12,15 @@ out vec4 fragColor;
 uniform sampler2D tex;
 
 void main() {
-    // 1. Muestreo moderno
+    // 1. Modern sampling
+    // Fetch the original color using GLSL 3.0 texture function
     vec4 col = texture(tex, v_texcoord);
 
-    // 2. Cálculo de luminancia
-    // Multiplicamos los colores por la sensibilidad del ojo humano
+    // 2. Luminance calculation
+    // Dot product with human eye sensitivity weights (NTSC standard)
     float lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
 
-    // 3. Reconstrucción de color
-    // R = 0.0, G = lum, B = 0.0, A = original
+    // 3. Color reconstruction
+    // Channel mapping: R=0.0, G=luminance, B=0.0, A=original
     fragColor = vec4(0.0, lum, 0.0, col.a);
 }

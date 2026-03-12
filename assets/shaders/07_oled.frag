@@ -1,8 +1,8 @@
-// @Title: OLED Puro
+// @Title: Pure OLED
 // @Icon: square
 // @Color: #000000
 // @Tag: DARK
-// @Desc: Negros absolutos para pantallas OLED.
+// @Desc: Absolute blacks optimized for OLED screens.
 
 #version 300 es
 precision highp float;
@@ -12,16 +12,16 @@ out vec4 fragColor;
 uniform sampler2D tex;
 
 void main() {
-    // 1. Muestreo moderno
+    // 1. Modern sampling
     vec4 col = texture(tex, v_texcoord);
 
-    // 2. Lógica de umbral (Threshold)
-    // 'length(col.rgb)' mide la intensidad total del color.
-    // Si la intensidad es menor a 0.1, lo forzamos a negro absoluto.
+    // 2. Threshold Logic
+    // 'length(col.rgb)' measures total color intensity.
+    // If the intensity is below 0.1, we force it to absolute black.
     if(length(col.rgb) < 0.1) {
         col.rgb = vec3(0.0);
     }
 
-    // 3. Salida
+    // 3. Output
     fragColor = col;
 }

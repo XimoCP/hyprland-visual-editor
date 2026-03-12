@@ -9,9 +9,9 @@ HVE_SAFE_DIR="$HOME/.config/noctalia/HVE"
 # 2. Check if the original plugin folder has been deleted by the Shell
 if [ ! -d "$PLUGIN_DIR" ]; then
 
-    # 🛡️ Borrado en bloque: Elimina todo desde START hasta END (incluidos)
+    # Block deletion: Safely remove everything from START to END markers
     sed -i '/# >>> HYPRLAND VISUAL EDITOR START <<</,/# >>> HYPRLAND VISUAL EDITOR END <<</d' "$HYPR_CONF"
 
-    # Borra la carpeta segura (y el propio script con ella)
+    # Remove the safe fallback directory and this script itself
     rm -rf "$HVE_SAFE_DIR"
 fi

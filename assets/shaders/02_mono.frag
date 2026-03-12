@@ -1,8 +1,8 @@
-// @Title: Monocromo
+// @Title: Monochrome
 // @Icon: circle-half
 // @Color: #94a3b8
 // @Tag: BW
-// @Desc: Escala de grises para máxima concentración.
+// @Desc: Grayscale effect for maximum concentration.
 
 #version 300 es
 precision highp float;
@@ -14,11 +14,11 @@ uniform sampler2D tex;
 void main() {
     vec4 c = texture(tex, v_texcoord);
 
-    // Fórmula estándar de luminancia (NTSC/PAL)
-    // El ojo humano percibe el verde más brillante que el azul,
-    // por eso usamos estos pesos:
+    // Standard luminance formula (NTSC/PAL)
+    // The human eye perceives green as brighter than blue,
+    // which is why we use these specific weights:
     float gray = dot(c.rgb, vec3(0.299, 0.587, 0.114));
 
-    // Creamos un nuevo color usando el valor gris para R, G y B
+    // Create a new color using the gray value for R, G, and B channels
     fragColor = vec4(vec3(gray), c.a);
 }

@@ -2,7 +2,7 @@
 // @Icon: cpu
 // @Color: #d946ef
 // @Tag: CYBER
-// @Desc: Mezcla de contraste alto y tonos neón.
+// @Desc: High contrast blend with neon tones.
 
 #version 300 es
 precision highp float;
@@ -12,18 +12,18 @@ out vec4 fragColor;
 uniform sampler2D tex;
 
 void main() {
-    // 1. Captura de color moderna
+    // 1. Modern color capture
     vec4 col = texture(tex, v_texcoord);
 
-    // 2. Desaturación controlada (30%)
-    // Calculamos el gris y lo mezclamos con el original para no perder todo el color
+    // 2. Controlled desaturation (30%)
+    // Calculate grayscale and mix with the original to keep some color
     float gray = dot(col.rgb, vec3(0.299, 0.587, 0.114));
     vec3 mixed = mix(col.rgb, vec3(gray), 0.3);
 
-    // 3. Empuje de contraste (Mid-tone boost)
-    // Usamos 0.5 como punto de pivote: lo claro se aclara, lo oscuro se oscurece
+    // 3. Contrast push (Mid-tone boost)
+    // Using 0.5 as the pivot point: lights get brighter, darks get darker
     mixed = mix(vec3(0.5), mixed, 1.2);
 
-    // 4. Salida final
+    // 4. Final output
     fragColor = vec4(mixed, col.a);
 }
