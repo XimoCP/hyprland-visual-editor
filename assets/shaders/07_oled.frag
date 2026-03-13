@@ -2,7 +2,7 @@
 // @Icon: square
 // @Color: #000000
 // @Tag: DARK
-// @Desc: Absolute blacks optimized for OLED screens.
+// @Desc: Absolute blacks for OLED screens.
 
 #version 300 es
 precision highp float;
@@ -15,9 +15,9 @@ void main() {
     // 1. Modern sampling
     vec4 col = texture(tex, v_texcoord);
 
-    // 2. Threshold Logic
-    // 'length(col.rgb)' measures total color intensity.
-    // If the intensity is below 0.1, we force it to absolute black.
+    // 2. Threshold logic
+    // 'length(col.rgb)' measures the total color intensity.
+    // If the intensity is less than 0.1, we force it to absolute black.
     if(length(col.rgb) < 0.1) {
         col.rgb = vec3(0.0);
     }

@@ -1,8 +1,8 @@
-// @Title: Night Light
-// @Icon: moon
-// @Color: #fcd34d
-// @Tag: WARM
-// @Desc: Reduces blue light to protect your eyesight.
+//@Title: Night Light
+//@Icon: moon
+//@Color: #fcd34d
+//@Tag: WARM
+//@Desc: Reduces blue light to protect eyesight.
 
 // from https://github.com/hyprwm/Hyprland/issues/1140#issuecomment-1335128437
 
