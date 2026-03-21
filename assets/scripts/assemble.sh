@@ -5,7 +5,7 @@ PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"
 
 # [CHANGE 1] Define the new safe path outside the plugin
-HVE_SAFE_DIR="$HOME/.config/noctalia/HVE"
+HVE_SAFE_DIR="$HOME/.cache/noctalia/HVE"
 
 # [CHANGE 2] Point the temporary and final files to the new path
 FINAL_FILE="$HVE_SAFE_DIR/overlay.conf"

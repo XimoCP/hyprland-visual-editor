@@ -7,7 +7,7 @@ import qs.Widgets
 import qs.Commons
 
 NScrollView {
-    id: borderRoot
+    id: root
 
     property var pluginApi: null
     property var runHypr: null
@@ -28,6 +28,7 @@ NScrollView {
     // --- SCANNER ---
     Process {
         id: scanner
+        running: true
         command: ["bash", pluginDir + "/assets/scripts/scan.sh", "borders"]
         property string outputData: ""
         stdout: SplitParser { onRead: function(data) { scanner.outputData += data; } }
@@ -45,7 +46,6 @@ NScrollView {
             scanner.outputData = ""
         }
     }
-    Component.onCompleted: scanner.running = true
 
     // --- DELEGATE ---
     Component {
@@ -64,7 +64,7 @@ NScrollView {
             property color cColor: model.color !== undefined ? model.color : "#888888"
             property string cTag: model.tag !== undefined ? model.tag : "USER"
 
-            property bool isActive: borderRoot.activeBorderFile === cFile
+            property bool isActive: root.activeBorderFile === cFile
 
             color: isActive ? Qt.alpha(cColor, 0.12) : (hoverArea.containsMouse ? Qt.alpha(cColor, 0.05) : "transparent")
             border.width: isActive ? 2 : 1
@@ -81,17 +81,17 @@ NScrollView {
                     var settingArg = wasActive ? "" : cardRoot.cFile
 
                     // Script execution
-                    if (borderRoot.runScript) {
-                        borderRoot.runScript("border.sh", scriptArg)
+                    if (root.runScript) {
+                        root.runScript("border.sh", scriptArg)
                     }
                     
                     // Native state save
-                    if (borderRoot.pluginApi) {
-                        borderRoot.pluginApi.pluginSettings.activeBorderFile = settingArg
-                        borderRoot.pluginApi.saveSettings()
+                    if (root.pluginApi) {
+                        root.pluginApi.pluginSettings.activeBorderFile = settingArg
+                        root.pluginApi.saveSettings()
                         
                         // Force UI update
-                        borderRoot.activeBorderFile = settingArg
+                        root.activeBorderFile = settingArg
                     }
                 }
             }
@@ -150,7 +150,7 @@ NScrollView {
 
     ColumnLayout {
         id: mainLayout
-        width: borderRoot.availableWidth
+        width: root.availableWidth
         spacing: Style.marginS
         Layout.margins: Style.marginM
 
@@ -193,17 +193,17 @@ NScrollView {
                     id: thicknessSlider
                     Layout.fillWidth: true
                     from: 1; to: 5; stepSize: 1
-                    value: borderRoot.borderSize
+                    value: root.borderSize
                     onMoved: {
                         // Native state save for slider
-                        if (borderRoot.pluginApi) {
-                            borderRoot.pluginApi.pluginSettings.borderSize = value
-                            borderRoot.pluginApi.saveSettings()
-                            borderRoot.borderSize = value
+                        if (root.pluginApi) {
+                            root.pluginApi.pluginSettings.borderSize = value
+                            root.pluginApi.saveSettings()
+                            root.borderSize = value
                         }
                         
-                        if (borderRoot.runScript) {
-                            borderRoot.runScript("geometry.sh", value.toString())
+                        if (root.runScript) {
+                            root.runScript("geometry.sh", value.toString())
                         }
                     }
                 }

@@ -26,6 +26,7 @@ NScrollView {
     // --- SCANNER ---
     Process {
         id: scanner
+        running: true
         command: ["bash", pluginDir + "/assets/scripts/scan.sh", "shaders"]
         property string outputData: ""
         stdout: SplitParser { onRead: function(data) { scanner.outputData += data; } }
@@ -43,7 +44,6 @@ NScrollView {
             scanner.outputData = ""
         }
     }
-    Component.onCompleted: scanner.running = true
 
     // --- DELEGATE ---
     Component {
@@ -119,7 +119,7 @@ NScrollView {
                         pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant; elide: Text.ElideRight; Layout.fillWidth: true
                     }
                 }
-                VisualSwitch {
+                NToggle {
                     checked: cardRoot.isActive
                     // Logic moved entirely to MouseArea
                 }
@@ -152,23 +152,6 @@ NScrollView {
         Repeater {
             model: shaderModel
             delegate: shaderDelegate
-        }
-    }
-
-    component VisualSwitch : Item {
-        id: sw; property bool checked: false; signal toggled()
-        width: 40 * Style.uiScaleRatio; height: 20 * Style.uiScaleRatio
-        Rectangle {
-            anchors.fill: parent; radius: height / 2
-            color: sw.checked ? Color.mPrimary : "transparent"
-            border.color: sw.checked ? Color.mPrimary : Color.mOutline; border.width: 1
-            Rectangle {
-                width: parent.height - 6; height: width; radius: width / 2
-                color: sw.checked ? Color.mOnPrimary : Color.mOnSurfaceVariant
-                anchors.verticalCenter: parent.verticalCenter
-                x: sw.checked ? (parent.width - width - 3) : 3
-                Behavior on x { NumberAnimation { duration: 200 } }
-            }
         }
     }
 }

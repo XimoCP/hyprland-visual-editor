@@ -5,7 +5,7 @@ PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 FRAGMENTS_DIR="$PLUGIN_DIR/assets/fragments"
 
 # 🌟 NEW SAFE PATH (The Refuge) 🌟
-HVE_SAFE_DIR="$HOME/.config/noctalia/HVE"
+HVE_SAFE_DIR="$HOME/.cache/noctalia/HVE"
 OVERLAY_FILE="$HVE_SAFE_DIR/overlay.conf" # The overlay now lives outside the plugin
 WATCHDOG_FILE="$HVE_SAFE_DIR/hve_watchdog.sh"
 
@@ -19,9 +19,6 @@ ASSEMBLE_SCRIPT="$PLUGIN_DIR/assets/scripts/assemble.sh"
 # --- HYPRLAND MARKERS ---
 MARKER_START="# >>> HYPRLAND VISUAL EDITOR START <<<"
 MARKER_END="# >>> HYPRLAND VISUAL EDITOR END <<<"
-# Old markers for cleanup compatibility
-OLD_MARKER_START="# >>> NOCTALIA VISUAL LAYER START <<<"
-OLD_MARKER_END="# >>> NOCTALIA VISUAL LAYER END <<<"
 
 # --- CONTENT TO INJECT ---
 LINE_WATCHDOG="exec-once = $WATCHDOG_FILE" # Watchdog injection
@@ -32,12 +29,10 @@ ACTION=$1
 
 # --- CLEANUP FUNCTION ---
 clean_hyprland_conf() {
-    # 1. Delete the entire block between markers (both new and old to ensure clean state)
+    # 1. Delete the entire block between markers
     sed -i "/$MARKER_START/,/$MARKER_END/d" "$HYPR_CONF"
-    sed -i "/$OLD_MARKER_START/,/$OLD_MARKER_END/d" "$HYPR_CONF"
 
     # 2. Security cleanup in case old loose lines remained
-    sed -i "\|source = .*noctalia-visual-layer/overlay.conf|d" "$HYPR_CONF"
     sed -i "\|source = .*hyprland-visual-editor/overlay.conf|d" "$HYPR_CONF"
     sed -i "\|$LINE_OVERLAY|d" "$HYPR_CONF"
     sed -i "\|$LINE_COLORS|d" "$HYPR_CONF"
@@ -60,12 +55,6 @@ setup_files() {
     # 🛡️ Deploy the watchdog script
     cp "$PLUGIN_DIR/assets/scripts/hve_watchdog.sh" "$WATCHDOG_FILE"
     chmod +x "$WATCHDOG_FILE"
-
-    # Create internal empty fragments
-    touch "$FRAGMENTS_DIR/animation.conf"
-    touch "$FRAGMENTS_DIR/geometry.conf"
-    touch "$FRAGMENTS_DIR/border.conf"
-    touch "$FRAGMENTS_DIR/shader.conf"
 
     # Execute the internal assembler
     # Export the variable so assemble.sh knows where to save the final file
@@ -102,14 +91,11 @@ if [ "$ACTION" == "enable" ]; then
 
     # Final reload
     hyprctl reload
-    notify-send "Hyprland Visual Editor" "System ACTIVATED (Safe Environment)" -i system-software-update
-
+    
 elif [ "$ACTION" == "disable" ]; then
     clean_hyprland_conf # Deletes the block from hyprland.conf
 
     # 🧹 Total cleanup: delete the refuge folder with the overlay and watchdog
     rm -rf "$HVE_SAFE_DIR"
 
-    hyprctl reload
-    notify-send "Hyprland Visual Editor" "System DEACTIVATED" -i system-shutdown
 fi

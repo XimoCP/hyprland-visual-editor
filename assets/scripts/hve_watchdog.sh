@@ -4,7 +4,7 @@
 # 1. Define paths
 PLUGIN_DIR="$HOME/.config/noctalia/plugins/hyprland-visual-editor"
 HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
-HVE_SAFE_DIR="$HOME/.config/noctalia/HVE"
+HVE_SAFE_DIR="$HOME/.cache/noctalia/HVE"
 
 # 2. Check if the original plugin folder has been deleted by the Shell
 if [ ! -d "$PLUGIN_DIR" ]; then

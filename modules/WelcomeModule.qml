@@ -8,7 +8,7 @@ import qs.Commons
 import qs.Services.UI
 
 NScrollView {
-    id: welcomeRoot
+    id: root
 
     property var pluginApi: null
     property var runHypr: null
@@ -24,7 +24,7 @@ NScrollView {
 
     ColumnLayout {
         id: mainLayout
-        width: welcomeRoot.availableWidth
+        width: root.availableWidth
         spacing: Style.marginXL
         Layout.margins: Style.marginL
 
@@ -51,8 +51,8 @@ NScrollView {
         ProCard {
             title: pluginApi.tr("welcome.activation_title")
             iconName: "power"
-            accentColor: welcomeRoot.isSystemActive ? Color.mPrimary : "#ef4444"
-            description: welcomeRoot.isSystemActive
+            accentColor: root.isSystemActive ? Color.mPrimary : "#ef4444"
+            description: root.isSystemActive
                 ? pluginApi.tr("welcome.system_active")
                 : pluginApi.tr("welcome.system_inactive")
 
@@ -71,28 +71,28 @@ NScrollView {
                     }
                     Item { Layout.fillWidth: true }
                     
-                    VisualSwitch {
-                        checked: welcomeRoot.isSystemActive
+                    NToggle {
+                        checked: root.isSystemActive
                         onToggled: {
-                            var newState = !welcomeRoot.isSystemActive
-                            welcomeRoot.isSystemActive = newState
+                            var newState = !root.isSystemActive
+                            root.isSystemActive = newState
                             
-                            if (welcomeRoot.pluginApi) {
-                                welcomeRoot.pluginApi.pluginSettings.isSystemActive = newState
-                                welcomeRoot.pluginApi.saveSettings()
+                            if (root.pluginApi) {
+                                root.pluginApi.pluginSettings.isSystemActive = newState
+                                root.pluginApi.saveSettings()
                                 var statusMsg = newState ? "Visual Editor Enabled" : "Visual Editor Disabled"
                                 ToastService.showNotice(statusMsg)
                             }
 
-                            if (welcomeRoot.runScript) {
-                                welcomeRoot.runScript("init.sh", newState ? "enable" : "disable")
+                            if (root.runScript) {
+                                root.runScript("init.sh", newState ? "enable" : "disable")
                             }
                         }
                     }
                 }
 
                 Rectangle {
-                    visible: !welcomeRoot.isSystemActive
+                    visible: !root.isSystemActive
                     Layout.fillWidth: true
                     implicitHeight: warnCol.implicitHeight + 24
                     color: Qt.alpha("#ef4444", 0.08)
@@ -219,28 +219,6 @@ NScrollView {
             NDivider { Layout.fillWidth: true; opacity: 0.2 }
             NText { text: cardRoot.description; color: Color.mOnSurface; wrapMode: Text.WordWrap; Layout.fillWidth: true; textFormat: Text.RichText }
             Loader { active: extraContent !== null; sourceComponent: extraContent; Layout.fillWidth: true }
-        }
-    }
-
-    component VisualSwitch : Item {
-        id: sw; property bool checked: false; signal toggled()
-        width: 46 * Style.uiScaleRatio; height: 24 * Style.uiScaleRatio
-        Rectangle {
-            anchors.fill: parent; radius: height / 2
-            color: sw.checked ? Color.mPrimary : Color.mSurface
-            border.color: sw.checked ? Color.mPrimary : Color.mOutline; border.width: 1
-            Rectangle {
-                width: parent.height - 8; height: width; radius: width / 2
-                color: sw.checked ? Color.mOnPrimary : Color.mOnSurfaceVariant
-                anchors.verticalCenter: parent.verticalCenter
-                x: sw.checked ? (parent.width - width - 4) : 4
-                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
-            }
-        }
-        MouseArea { 
-            anchors.fill: parent; 
-            cursorShape: Qt.PointingHandCursor; 
-            onClicked: { sw.toggled() }
         }
     }
 }

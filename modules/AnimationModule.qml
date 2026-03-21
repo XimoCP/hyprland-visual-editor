@@ -8,7 +8,7 @@ import qs.Commons
 import qs.Services.UI 
 
 NScrollView {
-    id: animRoot
+    id: root
 
     property var pluginApi: null
     property var runHypr: null
@@ -28,6 +28,7 @@ NScrollView {
     // --- SCANNER ---
     Process {
         id: scanner
+        running: true
         command: ["bash", pluginDir + "/assets/scripts/scan.sh", "animations"]
         property string outputData: ""
         stdout: SplitParser { onRead: function(data) { scanner.outputData += data; } }
@@ -45,7 +46,6 @@ NScrollView {
             scanner.outputData = ""
         }
     }
-    Component.onCompleted: scanner.running = true
 
     // --- DELEGATE ---
     Component {
@@ -64,7 +64,7 @@ NScrollView {
             property color cColor: model.color !== undefined ? model.color : "#888888"
             property string cIcon: model.icon !== undefined ? model.icon : "help"
 
-            property bool isActive: animRoot.activeAnimFile === cFile
+            property bool isActive: root.activeAnimFile === cFile
 
             color: isActive ? Qt.alpha(cColor, 0.12) : (hoverArea.containsMouse ? Qt.alpha(cColor, 0.05) : "transparent")
             border.width: isActive ? 2 : 1
@@ -80,15 +80,15 @@ NScrollView {
                     var scriptArg = wasActive ? "none" : cardRoot.cFile
                     var settingArg = wasActive ? "" : cardRoot.cFile
 
-                    if (animRoot.runScript) {
-                        animRoot.runScript("apply_animation.sh", scriptArg)
+                    if (root.runScript) {
+                        root.runScript("apply_animation.sh", scriptArg)
                     }
                     
                     // Native state save
-                    if (animRoot.pluginApi) {
-                        animRoot.pluginApi.pluginSettings.activeAnimFile = settingArg
-                        animRoot.pluginApi.saveSettings()
-                        animRoot.activeAnimFile = settingArg
+                    if (root.pluginApi) {
+                        root.pluginApi.pluginSettings.activeAnimFile = settingArg
+                        root.pluginApi.saveSettings()
+                        root.activeAnimFile = settingArg
                     }
                 }
             }
@@ -121,7 +121,7 @@ NScrollView {
                         pointSize: Style.fontSizeS; color: Color.mOnSurfaceVariant; elide: Text.ElideRight; Layout.fillWidth: true
                     }
                 }
-                VisualSwitch {
+                NToggle {
                     checked: cardRoot.isActive
                 }
             }
@@ -132,7 +132,7 @@ NScrollView {
 
     ColumnLayout {
         id: mainLayout
-        width: animRoot.availableWidth
+        width: root.availableWidth
         spacing: Style.marginS
         Layout.margins: Style.marginM
 
@@ -153,23 +153,6 @@ NScrollView {
         Repeater {
             model: animModel
             delegate: animDelegate
-        }
-    }
-
-    component VisualSwitch : Item {
-        id: sw; property bool checked: false; signal toggled()
-        width: 40 * Style.uiScaleRatio; height: 20 * Style.uiScaleRatio
-        Rectangle {
-            anchors.fill: parent; radius: height / 2
-            color: sw.checked ? Color.mPrimary : "transparent"
-            border.color: sw.checked ? Color.mPrimary : Color.mOutline; border.width: 1
-            Rectangle {
-                width: parent.height - 6; height: width; radius: width / 2
-                color: sw.checked ? Color.mOnPrimary : Color.mOnSurfaceVariant
-                anchors.verticalCenter: parent.verticalCenter
-                x: sw.checked ? (parent.width - width - 3) : 3
-                Behavior on x { NumberAnimation { duration: 200 } }
-            }
         }
     }
 }

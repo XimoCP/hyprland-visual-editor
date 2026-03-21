@@ -25,7 +25,7 @@ NIconButton {
   // --- SYSTEM STYLES ---
   tooltipDirection: BarService.getTooltipDirection(screen?.name)
   baseSize: Style.getCapsuleHeightForScreen(screen?.name)
-  applyUiScale: false
+  
 
   customRadius: Style.radiusL 
 

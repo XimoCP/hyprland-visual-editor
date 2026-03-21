@@ -56,15 +56,14 @@ To ensure maximum stability, HVE follows the official Noctalia plugin architectu
 
 ---
 
-## 🚀 Installation and Activation
+## 🚀 Installation
 
-1. Download this repository into `~/.config/noctalia/plugins/hyprland-visual-editor`.
-2. Go to Noctalia Shell's **Settings > Plugins** and enable it.
-3. Open the plugin panel and toggle the **"Enable Visual Editor"** switch.
+1. Open Noctalia Shell's **Settings** and navigate to the **Plugins** section.
+2. Search for **Hyprland Visual Editor** and click **Install**.
+3. That's it! Open the plugin panel from your topbar and enjoy customizing your desktop.
 
-> [!IMPORTANT]
-> Ensure you have the following line in your `hyprland.conf` to allow HVE to inject styles:
-> `source = ~/.config/noctalia/HVE/overlay.conf`
+> [!NOTE]
+> Upon installation, the plugin will automatically and safely inject its configuration path (`source = ~/.cache/noctalia/HVE/overlay.conf`) into your `hyprland.conf`. You don't need to manually edit any files!
 
 ---
 
