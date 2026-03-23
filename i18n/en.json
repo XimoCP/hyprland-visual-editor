@@ -233,5 +233,15 @@
         "desc": "Balance between correction and style."
       }
     }
+  },
+  "settings": {
+    "path": {
+      "label": "Config Path",
+      "desc": "Absolute path for the satellite configuration file."
+    },
+    "autoapply": {
+      "label": "Auto Apply",
+      "desc": "Automatically reload Hyprland when settings change."
+    }
   }
 }

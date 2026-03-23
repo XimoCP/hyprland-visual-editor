@@ -233,5 +233,15 @@
         "desc": "Balance entre corrección y estilo."
       }
     }
+  },
+  "settings": {
+    "path": {
+      "label": "Ruta de Configuración",
+      "desc": "Ruta absoluta para el archivo de configuración satélite."
+    },
+    "autoapply": {
+      "label": "Aplicación Automática",
+      "desc": "Recargar Hyprland automáticamente al cambiar los ajustes."
+    }
   }
 }

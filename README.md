@@ -14,8 +14,8 @@
 
 | Feature | Description |
 | --- | --- |
-| **🛡️ Guardian Shield** | Deploys a secure external path. If the plugin is disabled, the system self-cleans on reboot. |
-| **⚡ Native Integration** | Uses the official Noctalia Plugin API (3.6.0+) for settings and state persistence. |
+| **🛡️ Guardian Shield** | Deploys a secure external path in `~/.cache/noctalia/HVE/`. If the plugin is disabled, the system self-cleans on reboot. |
+| **⚡ Native Integration** | Uses the official Noctalia Plugin API (4.4.1+) for settings and state persistence. |
 | **🎬 Motion Library** | Swap between animation styles (Silk, Cyber Glitch, etc.) in milliseconds. |
 | **🎨 Smart Borders** | Dynamic gradients and reactive effects tied to window focus. |
 | **🕶️ Real-Time Shaders** | Post-processing filters (CRT, OLED, Night) applied on the fly via GLSL. |
@@ -28,30 +28,30 @@
 To ensure maximum stability, HVE follows the official Noctalia plugin architecture:
 
 ```text
-~/.config/noctalia/
-├── HVE/                        # 🛡️ THE SAFE REFUGE (Generated on activation)
-│   ├── overlay.conf            # MASTER CONFIG: Sourced directly by Hyprland
-│   └── hve_watchdog.sh         # Guardian script for passive auto-cleanup
-│
-└── plugins/hyprland-visual-editor/
+~/.cache/noctalia/
+└── HVE/                        # 🛡️ THE SAFE REFUGE (Generated on activation)
+    └── overlay.conf            # MASTER CONFIG: Sourced directly by Hyprland
+
+~/.config/noctalia/plugins/hyprland-visual-editor/
     ├── manifest.json           # Plugin metadata and Entry Points
     ├── BarWidget.qml           # Entry Point: Taskbar trigger icon
-    ├── Panel.qml               # Main UI & SmartPanel configuration
+    ├── Panel.qml               # Main UI & Tab management
+    ├── Settings.qml            # Native Configuration UI
     │
     ├── modules/                # UI Components (QML)
     │   ├── WelcomeModule.qml   # Activation logic & Native Persistence
-    │   ├── BorderModule.qml    # Style & Geometry selectors
-    │   └── ...                 # Animation and Shader modules
+    │   ├── AnimationModule.qml # Motion selector
+    │   ├── BorderModule.qml    # Style & Geometry selector
+    │   └── ShaderModule.qml    # GLSL Filter selector
     │
     ├── assets/                 # The "Engine" & Resources
     │   ├── borders/            # Style library (.conf)
     │   ├── animations/         # Movement library (.conf)
     │   ├── shaders/            # GLSL Post-processing filters (.frag)
-    │   └── scripts/            # Bash Engine (Assembly and logic)
+    │   └── scripts/            # Bash Engine (Logic and assembly)
     │
     ├── i18n/                   # Official Translation Files (.json)
     └── settings.json           # Native Persistence (Managed by Noctalia)
-
 ```
 
 ---
@@ -60,20 +60,20 @@ To ensure maximum stability, HVE follows the official Noctalia plugin architectu
 
 1. Open Noctalia Shell's **Settings** and navigate to the **Plugins** section.
 2. Search for **Hyprland Visual Editor** and click **Install**.
-3. That's it! Open the plugin panel from your topbar and enjoy customizing your desktop.
+3. Open the plugin panel from your topbar.
+4. Go to the **Welcome** tab and click **Activate Persistence**.
 
-> [!NOTE]
-> Upon installation, the plugin will automatically and safely inject its configuration path (`source = ~/.cache/noctalia/HVE/overlay.conf`) into your `hyprland.conf`. You don't need to manually edit any files!
+> [!IMPORTANT]
+> To enable the real-time effects, you must add `source = ~/.cache/noctalia/HVE/overlay.conf` to the end of your `hyprland.conf`. HVE will handle the rest!
 
 ---
 
 ## ⌨️ IPC & Keybinds (Pro Features)
 
-HVE supports native IPC calls. You can open the panel with a Hyprland keybind:
+HVE supports native IPC calls. You can toggle the panel with a Hyprland keybind:
 
 ```bash
-bind = $mainMod, V, exec, qs -c noctalia-shell ipc call plugin:hyprland-visual-editor openPanel
-
+bind = $mainMod, V, exec, qs -c noctalia-shell ipc call plugin:hyprland-visual-editor toggle
 ```
 
 ---
@@ -83,15 +83,15 @@ bind = $mainMod, V, exec, qs -c noctalia-shell ipc call plugin:hyprland-visual-e
 HVE uses a **dynamic construction** flow combined with Noctalia's native API:
 
 1. **Native State:** All user preferences are handled via `pluginApi.pluginSettings`.
-2. **Dynamic Scanning:** The `scan.sh` script extracts metadata from style headers.
-3. **Assembly:** The engine unifies all active fragments into the external `HVE/overlay.conf`.
-4. **Protection:** A watchdog script monitors the plugin state on every boot.
+2. **Dynamic Scanning:** The `scan.sh` script extracts metadata from style headers in real-time.
+3. **Assembly:** The engine unifies all active fragments into the external `~/.cache/noctalia/HVE/overlay.conf`.
+4. **Protection:** The satellite file approach ensures that even if the plugin is uninstalled, your `hyprland.conf` remains intact.
 
 ---
 
 ## 🛠️ Modding Guide (Metadata Protocol)
 
-To add your own custom styles and have them automatically appear in the panel, use these formats:
+HVE scans your asset folders dynamically. To add your own styles, use this header format:
 
 ### For Animations and Borders (`.conf`)
 
@@ -102,10 +102,7 @@ To add your own custom styles and have them automatically appear in the panel, u
 # @Tag: CUSTOM
 # @Desc: A brief description of your creation.
 
-general {
-    col.active_border = rgb(ff0000) rgb(00ff00) 45deg
-}
-
+# Your Hyprland code here...
 ```
 
 ### For Shaders (`.frag`)
@@ -118,7 +115,6 @@ general {
 // @Desc: Post-processing description.
 
 void main() { ... }
-
 ```
 
 ---
@@ -126,21 +122,19 @@ void main() { ... }
 ## ⚠️ Troubleshooting
 
 **How to see debug logs?**
-Launch Noctalia from the terminal to see HVE specific logs:
-
+Launch Noctalia from the terminal to see HVE specific logs using the native Logger:
 ```bash
 NOCTALIA_DEBUG=1 qs -c noctalia-shell | grep HVE
-
 ```
 
 **Border animations freeze?**
-This is a known Hyprland limitation during hot-reloads. Simply reopen the affected window to restore the loop effect.
+This is a known Hyprland behavior during hot-reloads of specific geometry settings. Re-focusing the window or opening a new one usually restores the looping effect.
 
 ---
 
 ## ❤️ Credits
 
-* **Architecture & Core:** Ximo
-* **Technical Assistance:** Co-programmed with AI
+* **Architecture & Core:** XimoCP
+* **Technical Assistance:** Co-programmed with Gemini (AI)
 * **Inspiration:** HyDE Project & JaKooLit.
-* **Community:** Thanks to all Noctalia users.
+* **Community:** Thanks to the Noctalia dev community.

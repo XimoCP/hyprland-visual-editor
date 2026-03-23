@@ -233,5 +233,15 @@
         "desc": "Équilibre entre correction et style."
       }
     }
+  },
+  "settings": {
+    "path": {
+      "label": "Chemin de configuration",
+      "desc": "Chemin absolu pour le fichier de configuration satellite."
+    },
+    "autoapply": {
+      "label": "Application automatique",
+      "desc": "Recharger automatiquement Hyprland lorsque les paramètres changent."
+    }
   }
 }

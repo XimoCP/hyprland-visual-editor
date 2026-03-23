@@ -10,18 +10,15 @@ import "./modules"
 
 Item {
     id: root
-
+    
     property var pluginApi: null
-    property var runHypr: null
+    
     readonly property int barHeight: 20
 
-    // Required by Noctalia for proper window sizing
+    readonly property string pluginDir: pluginApi?.pluginDir || ""
     readonly property var geometryPlaceholder: panelContainer
     readonly property bool allowAttach: true
 
-    readonly property string pluginDir: Settings.configDir + "/plugins/hyprland-visual-editor"
-
-    // Script Engine with strict memory management
     Component {
         id: processFactory
         Process {
@@ -73,13 +70,13 @@ Item {
                     spacing: 0
                     Layout.alignment: Qt.AlignCenter
                     NText {
-                        text: root.pluginApi.tr("panel.header_title")
+                        text: pluginApi?.tr("panel.header_title") || ""
                         pointSize: Style.fontSizeXL
                         font.weight: Font.Bold
                         color: Color.mPrimary
                     }
                     NText {
-                        text: root.pluginApi.tr("panel.header_subtitle")
+                        text: pluginApi?.tr("panel.header_subtitle") || ""
                         pointSize: Style.fontSizeS
                         color: Color.mOnSurfaceVariant
                     }
@@ -93,28 +90,28 @@ Item {
                 spacing: 8
 
                 TabItem {
-                    label: root.pluginApi.tr("panel.tabs.home")
+                    label: pluginApi?.tr("panel.tabs.home") || ""
                     iconName: "home"
                     index: 0
                     accentColor: "#38bdf8"
                     isSelected: stackLayout.currentIndex === 0
                 }
                 TabItem {
-                    label: root.pluginApi.tr("panel.tabs.animations")
+                    label: pluginApi?.tr("panel.tabs.animations") || ""
                     iconName: "movie"
                     index: 1
                     accentColor: "#fbbf24"
                     isSelected: stackLayout.currentIndex === 1
                 }
                 TabItem {
-                    label: root.pluginApi.tr("panel.tabs.borders")
+                    label: pluginApi?.tr("panel.tabs.borders") || ""
                     iconName: "border-all"
                     index: 2
                     accentColor: "#10b981"
                     isSelected: stackLayout.currentIndex === 2
                 }
                 TabItem {
-                    label: root.pluginApi.tr("panel.tabs.effects")
+                    label: pluginApi?.tr("panel.tabs.effects") || ""
                     iconName: "wand"
                     index: 3
                     accentColor: "#c084fc"
@@ -144,7 +141,7 @@ Item {
         }
     }
 
-    component TabItem : Rectangle {
+    component TabItem : NBox {
         id: tabRoot
         property string label
         property string iconName
