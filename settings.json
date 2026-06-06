@@ -1,0 +1,11 @@
+{
+  "isSystemActive": false,
+  "borderSize": 3,
+  "overlayPath": "~/.cache/noctalia/HVE/overlay.conf",
+  "autoApply": true,
+  "activeAnimFile": "",
+  "activeBorderFile": "",
+  "activeShaderFile": "",
+  "iconColor": "none",
+  "icon": "adjustments-horizontal"
+}
