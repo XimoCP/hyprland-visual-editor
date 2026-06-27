@@ -196,29 +196,30 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── IPC server (Unix socket) ──
     ipc::start_ipc_server(window.as_weak(), proj.clone());
 
-    // ── Hide window immediately when running in tray-only mode ──
-    if tray_mode {
-        // Intercept close to just hide instead of destroying the window
-        window.window().on_close_requested(|| {
-            // Hide the window — Slint mantiene el event loop vivo
-            // cuando el callback devuelve HideWindow.
-            slint::CloseRequestResponse::HideWindow
-        });
+    // ── Intercept close events — always hide instead of destroying
+    //     the window so the global event loop keeps running. ──
+    window.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
 
-        // Hide BEFORE run() — the event loop keeps running so the tray
-        // and IPC server continue to function.
-        let _ = window.window().hide();
+    // ── Visibilidad inicial según el modo ──
+    if tray_mode {
+        // En modo tray, la ventana ya nace oculta, pero actualizamos los estados atómicos
         ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
         ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("Starting in tray mode (window hidden)");
+    } else {
+        // En modo normal, DEBEMOS mostrar la ventana explícitamente
+        window.show()?;
+        ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
+        ipc::TRAY_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
-    // ── Run UI (blocks until the event loop exits or window closes) ──
-    let result = window.run();
+    // ── Global event loop (decoupled from window lifecycle) ──
+    slint::run_event_loop_until_quit()?;
 
     // Clean up IPC socket after the event loop stops
     ipc::cleanup();
 
     drop(_color_watcher);
     drop(_lock);
-    result
+    Ok(())
 }
