@@ -201,18 +201,21 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
         if TRAY_MODE.load(Ordering::Relaxed) {
-            // Tray mode: show/hide — on_close_requested con HideWindow
-            // evita que el event loop se cierre al ocultar la ventana.
+            // Tray mode: solo mostramos la ventana si está oculta.
+            // No intentamos ocultarla con hide() porque en Wayland
+            // mata el event loop de Slint/winit (hide() programático
+            // no pasa por on_close_requested).
+            // El usuario oculta la ventana con el WM (SUPER+C), que
+            // ahora dispara on_close_requested → HideWindow.
             if WINDOW_HIDDEN.load(Ordering::Relaxed) {
                 let _ = win.window().show();
                 WINDOW_HIDDEN.store(false, Ordering::Relaxed);
-            } else {
-                let _ = win.window().hide();
-                WINDOW_HIDDEN.store(true, Ordering::Relaxed);
             }
         } else {
-            // Non-tray mode: solo mostrar
-            let _ = win.window().show();
+            // Non-tray mode: mostrar/enfocar la ventana
+            if !win.window().is_visible() {
+                let _ = win.window().show();
+            }
         }
         "ok".to_string()
     }))

@@ -167,27 +167,21 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Separator ──
             ksni::MenuItem::Separator,
-            // ── Toggle Window ──
+            // ── Show Window (no oculta — hide() mata el event loop en Wayland) ──
             StandardItem {
-                label: if crate::ipc::TRAY_MODE.load(Ordering::Relaxed) {
-                    "Toggle Window".to_string()
-                } else {
+                label: if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
                     "Show Window".to_string()
+                } else {
+                    "Window Visible".to_string()
                 },
+                enabled: crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(win) = w.upgrade() {
-                            if crate::ipc::TRAY_MODE.load(Ordering::Relaxed)
-                                && crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed)
-                            {
+                            if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
                                 let _ = win.window().show();
                                 crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
-                            } else if crate::ipc::TRAY_MODE.load(Ordering::Relaxed) {
-                                let _ = win.window().hide();
-                                crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
-                            } else {
-                                let _ = win.window().show();
                             }
                         }
                     });
