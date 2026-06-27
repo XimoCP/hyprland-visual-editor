@@ -201,8 +201,8 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
         if TRAY_MODE.load(Ordering::Relaxed) {
-            // Tray mode: hide/show — la ventana arrancó oculta, el
-            // event loop sigue vivo aunque la ocultemos en runtime.
+            // Tray mode: show/hide — on_close_requested con HideWindow
+            // evita que el event loop se cierre al ocultar la ventana.
             if WINDOW_HIDDEN.load(Ordering::Relaxed) {
                 let _ = win.window().show();
                 WINDOW_HIDDEN.store(false, Ordering::Relaxed);
@@ -211,9 +211,7 @@ fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
                 WINDOW_HIDDEN.store(true, Ordering::Relaxed);
             }
         } else {
-            // Non-tray mode: no podemos ocultar ni minimizar la ventana
-            // (hide() mata el event loop en Wayland, set_minimized es
-            // ignorado por Hyprland). Simplemente mostramos la ventana.
+            // Non-tray mode: solo mostrar
             let _ = win.window().show();
         }
         "ok".to_string()

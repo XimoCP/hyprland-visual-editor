@@ -198,6 +198,13 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Hide window immediately when running in tray-only mode ──
     if tray_mode {
+        // Intercept close to just hide instead of destroying the window
+        window.window().on_close_requested(|| {
+            // Hide the window — Slint mantiene el event loop vivo
+            // cuando el callback devuelve HideWindow.
+            slint::CloseRequestResponse::HideWindow
+        });
+
         // Hide BEFORE run() — the event loop keeps running so the tray
         // and IPC server continue to function.
         let _ = window.window().hide();
