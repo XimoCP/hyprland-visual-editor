@@ -201,6 +201,7 @@ fn main() -> Result<(), slint::PlatformError> {
         // Hide BEFORE run() — the event loop keeps running so the tray
         // and IPC server continue to function.
         let _ = window.window().hide();
+        ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     // ── Run UI (blocks until the event loop exits or window closes) ──

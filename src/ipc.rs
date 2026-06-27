@@ -2,6 +2,10 @@ use slint::ComponentHandle;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Tracks whether the main window has been hidden/minimized via toggle-tray.
+pub(crate) static WINDOW_HIDDEN: AtomicBool = AtomicBool::new(false);
 
 /// Start the IPC server on `$XDG_RUNTIME_DIR/hve.sock` (fallback `/tmp/hve.sock`).
 ///
@@ -194,10 +198,16 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
-        if win.window().is_visible() {
-            let _ = win.window().hide();
-        } else {
+        if WINDOW_HIDDEN.load(Ordering::Relaxed) {
+            // Restore window
             let _ = win.window().show();
+            let _ = win.window().set_minimized(false);
+            WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+        } else {
+            // Minimize instead of hide — Slint's event loop exits when
+            // the only visible window is hidden in non-tray mode.
+            WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+            let _ = win.window().set_minimized(true);
         }
         "ok".to_string()
     }))

@@ -174,10 +174,13 @@ impl ksni::Tray for HveTray {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(win) = w.upgrade() {
-                            if win.window().is_visible() {
-                                let _ = win.window().hide();
-                            } else {
+                            if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
                                 let _ = win.window().show();
+                                let _ = win.window().set_minimized(false);
+                                crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+                            } else {
+                                crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+                                let _ = win.window().set_minimized(true);
                             }
                         }
                     });
