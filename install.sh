@@ -76,39 +76,32 @@ ok "Detected: $DISTRO"
 
 # ── Distro-specific configuration ──────────────────────────────────────────
 REQUIRED_PKGS=()
-NETCAT_PKG=""
 INSTALL_CMD=""
 
 case "$DISTRO" in
     arch)
         INSTALL_CMD="pacman -S --noconfirm"
         REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango)
-        NETCAT_PKG="openbsd-netcat"
         ;;
     debian)
         INSTALL_CMD="apt install -y"
         REQUIRED_PKGS=(inotify-tools pkg-config libgtk-3-dev libglib2.0-dev libcairo2-dev libpango1.0-dev)
-        NETCAT_PKG="netcat-openbsd"
         ;;
     fedora)
         INSTALL_CMD="dnf install -y"
         REQUIRED_PKGS=(inotify-tools pkgconfig gtk3-devel glib2-devel cairo-devel pango-devel)
-        NETCAT_PKG="nc"
         ;;
     opensuse)
         INSTALL_CMD="zypper install -y"
         REQUIRED_PKGS=(inotify-tools pkg-config gtk3-devel glib2-devel cairo-devel pango-devel)
-        NETCAT_PKG="netcat"
         ;;
     void)
         INSTALL_CMD="xbps-install -y"
         REQUIRED_PKGS=(inotify-tools pkg-config gtk3-devel glib2-devel cairo-devel pango-devel)
-        NETCAT_PKG="netcat"
         ;;
     gentoo)
         INSTALL_CMD="emerge -qv"
         REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango)
-        NETCAT_PKG="netcat"
         ;;
     *)
         fail "Unsupported distro ($DISTRO). Install dependencies manually and re-run."
@@ -128,12 +121,6 @@ if ! sudo $INSTALL_CMD "${REQUIRED_PKGS[@]}" 2>/dev/null; then
             warn "Could not install: $pkg (you may need to install it manually)"
         fi
     done
-fi
-
-# Optional: netcat (for hve-ipc)
-if [ -n "$NETCAT_PKG" ] && ! command -v nc &>/dev/null; then
-    sudo $INSTALL_CMD "$NETCAT_PKG" 2>/dev/null && ok "netcat installed" || \
-        warn "netcat not available — hve-ipc needs nc installed separately"
 fi
 
 # Verify key build/run dependencies
@@ -254,10 +241,6 @@ if prompt_yes_no "¿Instalar script hve-ipc para atajos de teclado? [Y/n]" "yes"
     chmod +x "$HVE_IPC"
     ok "IPC script → $HVE_IPC"
     IPC_INSTALLED=true
-
-    if ! command -v nc &>/dev/null; then
-        warn "nc not found — hve-ipc needs netcat (nc) to work"
-    fi
 fi
 
 # ============================================================================
