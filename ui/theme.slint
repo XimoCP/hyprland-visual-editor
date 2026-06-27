@@ -1,0 +1,56 @@
+// Theme — Design tokens for HVE Standalone
+export struct Theme {
+    bg-dark: color,
+    bg-surface: color,
+    bg-card: color,
+    bg-hover: color,
+    text: color,
+    text-muted: color,
+    accent-cyan: color,
+    accent-amber: color,
+    accent-green: color,
+    accent-purple: color,
+    accent-red: color,
+    border: color,
+}
+
+export global HveTheme {
+    in property <Theme> dark: {
+        bg-dark: #0d1117,
+        bg-surface: #161b22,
+        bg-card: #1c2128,
+        bg-hover: #252d38,
+        text: #e6edf3,
+        text-muted: #7d8590,
+        accent-cyan: #38bdf8,
+        accent-amber: #fbbf24,
+        accent-green: #10b981,
+        accent-purple: #c084fc,
+        accent-red: #f87171,
+        border: #30363d,
+    };
+}
+
+// ─── Nav module definition ──────────────────────────────────────────
+export struct NavModule {
+    label: string,
+    icon: string,
+    accent: color,
+    tab-index: int,
+}
+
+// ─── Theme colors (globally accessible, settable from Rust) ──────────
+export global HveColors {
+    in-out property <color> bg-dark: #0d1117;
+    in-out property <color> bg-surface: #161b22;
+    in-out property <color> bg-card: #1c2128;
+    in-out property <color> bg-hover: #252d38;
+    in-out property <color> text: #e6edf3;
+    in-out property <color> text-muted: #7d8590;
+    in-out property <color> accent-cyan: #38bdf8;
+    in-out property <color> accent-amber: #fbbf24;
+    in-out property <color> accent-green: #10b981;
+    in-out property <color> accent-purple: #c084fc;
+    in-out property <color> accent-red: #f87171;
+    in-out property <color> border: #30363d;
+}

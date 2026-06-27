@@ -1,0 +1,177 @@
+import { NavModule, HveColors } from "./theme.slint";
+import { NavButton } from "./components.slint";
+import {
+    HomeModule,
+    AnimationsModule,
+    BordersModule,
+    ShadersModule,
+} from "./modules.slint";
+
+// ─── MAIN WINDOW ────────────────────────────────────────────────────
+export component MainWindow inherits Window {
+    title: "Hyprland Visual Editor";
+    min-width: 800px;
+    min-height: 500px;
+    preferred-width: 900px;
+    preferred-height: 600px;
+
+    // ── Theme (re-exported so Rust can set them via window.set_*) ──
+    in-out property <color> bg-dark <=> HveColors.bg-dark;
+    in-out property <color> bg-surface <=> HveColors.bg-surface;
+    in-out property <color> bg-card <=> HveColors.bg-card;
+    in-out property <color> bg-hover <=> HveColors.bg-hover;
+    in-out property <color> text <=> HveColors.text;
+    in-out property <color> text-muted <=> HveColors.text-muted;
+    in-out property <color> accent-cyan <=> HveColors.accent-cyan;
+    in-out property <color> accent-amber <=> HveColors.accent-amber;
+    in-out property <color> accent-green <=> HveColors.accent-green;
+    in-out property <color> accent-purple <=> HveColors.accent-purple;
+    in-out property <color> accent-red <=> HveColors.accent-red;
+    in-out property <color> border <=> HveColors.border;
+
+    background: HveColors.bg-dark;
+
+    // ── State ──
+    in-out property <int> active-tab: 0;
+    in property <[NavModule]> nav-modules;
+    in-out property <bool> system-active: false;
+
+    // Animation data
+    in property <[string]> anim-titles;
+    in property <[string]> anim-descs;
+    in property <[string]> anim-tags;
+    in property <[string]> anim-files;
+    in-out property <int> active-anim-index: -1;
+
+    // Border data
+    in property <[string]> border-titles;
+    in property <[string]> border-descs;
+    in property <[string]> border-tags;
+    in property <[string]> border-files;
+    in-out property <int> active-border-index: -1;
+    in-out property <int> border-size: 2;
+
+    // Shader data
+    in property <[string]> shader-titles;
+    in property <[string]> shader-descs;
+    in property <[string]> shader-tags;
+    in property <[string]> shader-files;
+    in-out property <int> active-shader-index: -1;
+
+    // ── Callbacks ──
+    callback toggle-system(bool);
+    callback apply-animation(int, string);
+    callback apply-border(int, string);
+    callback apply-shader(int, string);
+    callback apply-geometry(int);
+
+    HorizontalLayout {
+        // ── Sidebar ──
+        Rectangle {
+            width: 200px;
+            background: HveColors.bg-surface;
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                // Logo
+                VerticalLayout {
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    padding-left: 8px;
+                    spacing: 4px;
+
+                    Text {
+                        text: "HVE";
+                        color: HveColors.accent-cyan;
+                        font-size: 28px;
+                        font-weight: 900;
+                    }
+
+                    Text {
+                        text: "Hyprland Visual Editor";
+                        color: HveColors.text-muted;
+                        font-size: 11px;
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: HveColors.border;
+                }
+
+                // Nav (data-driven from Rust)
+                for nav-module in root.nav-modules: NavButton {
+                    label: nav-module.label;
+                    icon-text: nav-module.icon;
+                    accent: nav-module.accent;
+                    selected: root.active-tab == nav-module.tab-index;
+                    clicked => { root.active-tab = nav-module.tab-index; }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: HveColors.border;
+                }
+
+                Text {
+                    text: "v1.0.0 — Standalone";
+                    color: HveColors.text-muted;
+                    font-size: 9px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // ── Sidebar right border ──
+        Rectangle {
+            width: 1px;
+            background: HveColors.border;
+        }
+
+        // ── Content ──
+        Rectangle {
+            background: HveColors.bg-dark;
+            vertical-stretch: 1;
+
+            if active-tab == 0: HomeModule {
+                system-active: root.system-active;
+                toggle-system(v) => { root.toggle-system(v); }
+            }
+
+            if active-tab == 1: AnimationsModule {
+                anim-titles: root.anim-titles;
+                anim-descs: root.anim-descs;
+                anim-tags: root.anim-tags;
+                anim-files: root.anim-files;
+                active-index: root.active-anim-index;
+                anim-toggled(idx, file) => { root.apply-animation(idx, file); }
+            }
+
+            if active-tab == 2: BordersModule {
+                border-titles: root.border-titles;
+                border-descs: root.border-descs;
+                border-tags: root.border-tags;
+                border-files: root.border-files;
+                active-index: root.active-border-index;
+                border-size: root.border-size;
+                border-toggled(idx, file) => { root.apply-border(idx, file); }
+                geometry-changed(v) => { root.apply-geometry(v); }
+            }
+
+            if active-tab == 3: ShadersModule {
+                shader-titles: root.shader-titles;
+                shader-descs: root.shader-descs;
+                shader-tags: root.shader-tags;
+                shader-files: root.shader-files;
+                active-index: root.active-shader-index;
+                shader-toggled(idx, file) => { root.apply-shader(idx, file); }
+            }
+        }
+    }
+}

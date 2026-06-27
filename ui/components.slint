@@ -1,0 +1,333 @@
+import { Slider } from "std-widgets.slint";
+import { HveColors } from "./theme.slint";
+
+// ─── Preset Card ────────────────────────────────────────────────────
+export component PresetCard inherits Rectangle {
+    in property <string> title;
+    in property <string> desc;
+    in property <string> tag;
+    in property <color> accent;
+    in property <bool> active: false;
+    callback toggled(bool);
+
+    height: 64px;
+    border-radius: 8px;
+    background: ta.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+    border-width: active ? 2px : 1px;
+    border-color: active ? accent : HveColors.border;
+
+    ta := TouchArea {
+        clicked => { root.toggled(!root.active); }
+    }
+
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 12px;
+
+        // Left: icon + text
+        Rectangle {
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 12px;
+
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 4px;
+                    background: HveColors.bg-surface;
+
+                    Text {
+                        text: root.active ? "●" : "○";
+                        color: accent;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 2px;
+                    vertical-stretch: 1;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: root.title;
+                            color: HveColors.text;
+                            font-size: 13px;
+                            font-weight: active ? 700 : 400;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        Rectangle {
+                            height: 18px;
+                            width: tag-text.preferred-width + 16px;
+                            border-radius: 9px;
+                            background: HveColors.bg-surface;
+
+                            tag-text := Text {
+                                text: root.tag;
+                                color: accent;
+                                font-size: 9px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.desc;
+                        color: HveColors.text-muted;
+                        font-size: 11px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Right: toggle indicator
+        Rectangle {
+            width: 40px;
+            height: 22px;
+            border-radius: 11px;
+            background: active ? accent : HveColors.border;
+
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                background: HveColors.bg-dark;
+                x: active ? parent.width - self.width - 2px : 2px;
+                y: 2px;
+            }
+        }
+    }
+}
+
+// ─── Nav Button ─────────────────────────────────────────────────────
+export component NavButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon-text;
+    in property <color> accent;
+    in property <bool> selected: false;
+    callback clicked;
+
+    height: 44px;
+    border-radius: 8px;
+    background: nb-ta.has-hover ? HveColors.bg-hover : transparent;
+
+    nb-ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+
+        Text {
+            text: root.icon-text;
+            color: selected ? accent : HveColors.text-muted;
+            font-size: 16px;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.label;
+            color: selected ? HveColors.text : HveColors.text-muted;
+            font-size: 13px;
+            font-weight: selected ? 700 : 400;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ─── Section Header ─────────────────────────────────────────────────
+export component SectionHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <color> accent;
+
+    spacing: 4px;
+
+    Text {
+        text: root.title;
+        color: root.accent;
+        font-size: 18px;
+        font-weight: 700;
+    }
+
+    Text {
+        text: root.subtitle;
+        color: HveColors.text-muted;
+        font-size: 11px;
+    }
+}
+
+// ─── Geometry Slider ────────────────────────────────────────────────
+export component GeometrySlider inherits Rectangle {
+    in property <int> value: 2;
+    in property <int> min: 1;
+    in property <int> max: 5;
+    callback changed(int);
+
+    height: 80px;
+    border-radius: 8px;
+    background: HveColors.bg-card;
+    border-width: 1px;
+    border-color: HveColors.border;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            Text {
+                text: "Border Thickness";
+                color: HveColors.text;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.value + "px";
+                color: HveColors.accent-cyan;
+                font-size: 13px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
+        Slider {
+            minimum: root.min;
+            maximum: root.max;
+            value: root.value;
+            changed(v) => { root.changed(v); }
+        }
+    }
+}
+
+// ─── Welcome Card ───────────────────────────────────────────────────
+export component WelcomeCard inherits Rectangle {
+    in property <string> card-title;
+    in property <string> icon-text;
+    in property <color> accent;
+    in property <string> description;
+
+    border-radius: 12px;
+    background: HveColors.bg-card;
+    border-width: 1px;
+    border-color: HveColors.border;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            Text {
+                text: root.icon-text;
+                color: root.accent;
+                font-size: 18px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.card-title;
+                color: HveColors.text;
+                font-size: 15px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: HveColors.border;
+        }
+
+        Text {
+            text: root.description;
+            color: HveColors.text-muted;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// ─── Activation Toggle Card ─────────────────────────────────────────
+export component ActivationCard inherits Rectangle {
+    in property <bool> active: false;
+    callback toggled(bool);
+
+    height: 100px;
+    border-radius: 12px;
+    background: HveColors.bg-card;
+    border-width: 1px;
+    border-color: active ? HveColors.accent-green : HveColors.border;
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 16px;
+
+        Rectangle {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            background: HveColors.bg-surface;
+
+            Text {
+                text: active ? "⚡" : "⏸";
+                font-size: 22px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 4px;
+            vertical-stretch: 1;
+
+            Text {
+                text: "System Activation";
+                color: HveColors.text;
+                font-size: 15px;
+                font-weight: 700;
+            }
+
+            Text {
+                text: active
+                    ? "Visual effects are safely managed by HVE."
+                    : "System halted. Enable to start.";
+                color: HveColors.text-muted;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+
+        Rectangle {
+            width: 52px;
+            height: 28px;
+            border-radius: 14px;
+            background: active ? HveColors.accent-green : HveColors.border;
+
+            TouchArea {
+                clicked => { root.toggled(!root.active); }
+            }
+
+            Rectangle {
+                width: 22px;
+                height: 22px;
+                border-radius: 11px;
+                background: HveColors.bg-dark;
+                x: active ? parent.width - self.width - 3px : 3px;
+                y: 3px;
+            }
+        }
+    }
+}

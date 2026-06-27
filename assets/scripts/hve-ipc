@@ -1,0 +1,8 @@
+#!/bin/bash
+# HVE IPC Client — send commands to HVE via Unix socket
+SOCKET="${XDG_RUNTIME_DIR:-/tmp}/hve.sock"
+if [ ! -S "$SOCKET" ]; then
+    echo "HVE is not running" >&2
+    exit 1
+fi
+echo "$@" | nc -U "$SOCKET"

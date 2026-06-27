@@ -1,0 +1,134 @@
+import { ScrollView } from "std-widgets.slint";
+import { HveColors } from "./theme.slint";
+import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard } from "./components.slint";
+
+// ─── HOME MODULE ────────────────────────────────────────────────────
+export component HomeModule inherits VerticalLayout {
+    in property <bool> system-active: false;
+    callback toggle-system(bool);
+
+    spacing: 16px;
+    padding: 24px;
+
+    SectionHeader {
+        title: "Welcome";
+        subtitle: "Hyprland Visual Editor — Aesthetic Control Center";
+        accent: HveColors.accent-cyan;
+    }
+
+    ActivationCard {
+        active: root.system-active;
+        toggled(v) => { root.toggle-system(v); }
+    }
+
+    WelcomeCard {
+        card-title: "Features";
+        icon-text: "★";
+        accent: HveColors.accent-amber;
+        description: "Fluid animations • Smart borders • Real-time shaders • Non-destructive";
+    }
+
+    WelcomeCard {
+        card-title: "How it works";
+        icon-text: "⚙";
+        accent: HveColors.accent-purple;
+        description: "HVE uses a Fragments & Assembly system. It never touches your main config. Everything is safely generated in an isolated overlay file, then injected via hyprctl reload.";
+    }
+}
+
+// ─── ANIMATIONS MODULE ──────────────────────────────────────────────
+export component AnimationsModule inherits ScrollView {
+    in property <[string]> anim-titles;
+    in property <[string]> anim-descs;
+    in property <[string]> anim-tags;
+    in property <[string]> anim-files;
+    in property <int> active-index: -1;
+    callback anim-toggled(int, string);
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+
+        SectionHeader {
+            title: "Motion Library";
+            subtitle: "Select the animation style for your desktop";
+            accent: HveColors.accent-amber;
+        }
+
+        for i in root.anim-titles.length: PresetCard {
+            title: root.anim-titles[i];
+            desc: root.anim-descs[i];
+            tag: root.anim-tags[i];
+            accent: HveColors.accent-amber;
+            active: root.active-index == i;
+            toggled(v) => { root.anim-toggled(i, root.anim-files[i]); }
+        }
+    }
+}
+
+// ─── BORDERS MODULE ─────────────────────────────────────────────────
+export component BordersModule inherits ScrollView {
+    in property <[string]> border-titles;
+    in property <[string]> border-descs;
+    in property <[string]> border-tags;
+    in property <[string]> border-files;
+    in property <int> active-index: -1;
+    in property <int> border-size: 2;
+    callback border-toggled(int, string);
+    callback geometry-changed(int);
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+
+        SectionHeader {
+            title: "Visual Styles";
+            subtitle: "Define your windows' personality";
+            accent: HveColors.accent-green;
+        }
+
+        GeometrySlider {
+            value: root.border-size;
+            changed(v) => { root.geometry-changed(v); }
+        }
+
+        for i in root.border-titles.length: PresetCard {
+            title: root.border-titles[i];
+            desc: root.border-descs[i];
+            tag: root.border-tags[i];
+            accent: HveColors.accent-green;
+            active: root.active-index == i;
+            toggled(v) => { root.border-toggled(i, root.border-files[i]); }
+        }
+    }
+}
+
+// ─── SHADERS MODULE ─────────────────────────────────────────────────
+export component ShadersModule inherits ScrollView {
+    in property <[string]> shader-titles;
+    in property <[string]> shader-descs;
+    in property <[string]> shader-tags;
+    in property <[string]> shader-files;
+    in property <int> active-index: -1;
+    callback shader-toggled(int, string);
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+
+        SectionHeader {
+            title: "Screen Filters";
+            subtitle: "Real-time image post-processing";
+            accent: HveColors.accent-purple;
+        }
+
+        for i in root.shader-titles.length: PresetCard {
+            title: root.shader-titles[i];
+            desc: root.shader-descs[i];
+            tag: root.shader-tags[i];
+            accent: HveColors.accent-purple;
+            active: root.active-index == i;
+            toggled(v) => { root.shader-toggled(i, root.shader-files[i]); }
+        }
+    }
+}

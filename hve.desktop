@@ -1,0 +1,10 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Name=Hyprland Visual Editor
+Comment=Dynamic visual control for Hyprland
+Exec=hve
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=Utility;Settings;
+Keywords=hyprland;theme;animation;border;shader;
