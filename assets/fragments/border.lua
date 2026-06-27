@@ -33,6 +33,9 @@ hl.config({
             color_inactive = shadow_off, -- Hyprland hará un fundido hasta volverla invisible
             offset = { 0, 0 }
         }
+    },
+    windowrulev2 = {
+        "noshadow, focus:0"
     }
 })
 
