@@ -190,7 +190,9 @@ fi
 if [ -f "$SCRIPT_DIR/hve.desktop" ]; then
     mkdir -p "$HOME/.local/share/applications"
     cp "$SCRIPT_DIR/hve.desktop" "$HVE_DESKTOP"
-    ok "Desktop entry → $HVE_DESKTOP"
+    # Use the actual binary path so the launcher doesn't depend on PATH
+    sed -i "s|Exec=.*hve|Exec=$HVE_BIN|" "$HVE_DESKTOP"
+    ok "Desktop entry → $HVE_DESKTOP ($HVE_BIN)"
 fi
 
 # ============================================================================

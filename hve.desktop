@@ -1,9 +1,8 @@
-#!/usr/bin/env xdg-open
 [Desktop Entry]
 Type=Application
 Name=Hyprland Visual Editor
 Comment=Dynamic visual control for Hyprland
-Exec=hve
+Exec=/home/ximo/.local/bin/hve
 Icon=preferences-desktop-theme
 Terminal=false
 Categories=Utility;Settings;
