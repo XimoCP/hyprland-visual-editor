@@ -198,7 +198,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Intercept close events — always hide instead of destroying
     //     the window so the global event loop keeps running. ──
-    window.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    window.window().on_close_requested(|| {
+        // Keep the tray menu in sync: the window is now hidden
+        ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+        slint::CloseRequestResponse::HideWindow
+    });
 
     // ── Visibilidad inicial según el modo ──
     if tray_mode {
