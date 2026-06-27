@@ -71,7 +71,7 @@ fn handle_connection(mut stream: UnixStream, window: &slint::Weak<crate::MainWin
 
 fn dispatch_command(cmd: &str, window: &slint::Weak<crate::MainWindow>) -> String {
     match cmd {
-        "toggle-system" => cmd_toggle_system(window),
+        "pause-restart" => cmd_pause_restart(window),
         "next-anim" => cmd_next_anim(window),
         "next-border" => cmd_next_border(window),
         "next-shader" => cmd_next_shader(window),
@@ -124,7 +124,7 @@ fn format_response(result: Result<String, String>) -> String {
 
 // ─── Commands ────────────────────────────────────────────────────────
 
-fn cmd_toggle_system(window: &slint::Weak<crate::MainWindow>) -> String {
+fn cmd_pause_restart(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
         let current = win.get_system_active();
         win.invoke_toggle_system(!current);
@@ -302,7 +302,7 @@ mod tests {
     //
     // dispatch_command() requires a `slint::Weak<crate::MainWindow>` which
     // can only be obtained from a running Slint component. Every matched
-    // command (toggle-system, next-anim, status, quit, …) calls
+    // command (pause-restart, next-anim, status, quit, …) calls
     // invoke_on_main() which needs a live event loop, so those paths
     // cannot be tested here.
     //
