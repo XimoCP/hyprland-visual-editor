@@ -177,8 +177,10 @@ impl Engine {
         Ok(data
             .into_iter()
             .map(|e| PresetInfo {
-                title: e.raw_title.unwrap_or_else(|| e.file.clone()),
-                desc: e.raw_desc.unwrap_or_default(),
+                i18n_title: e.title.unwrap_or_default(),
+                i18n_desc: e.desc.unwrap_or_default(),
+                raw_title: e.raw_title.unwrap_or_else(|| e.file.clone()),
+                raw_desc: e.raw_desc.unwrap_or_default(),
                 file: e.file,
                 tag: e.tag.unwrap_or_else(|| "USER".into()),
             })
@@ -188,8 +190,14 @@ impl Engine {
 
 #[derive(Debug, Clone)]
 pub struct PresetInfo {
-    pub title: String,
-    pub desc: String,
+    /// i18n key path (e.g. "animations.presets.01_relampago.title")
+    pub i18n_title: String,
+    /// i18n key path (e.g. "animations.presets.01_relampago.desc")
+    pub i18n_desc: String,
+    /// Raw fallback title from preset metadata
+    pub raw_title: String,
+    /// Raw fallback description from preset metadata
+    pub raw_desc: String,
     pub file: String,
     pub tag: String,
 }
@@ -198,6 +206,10 @@ pub struct PresetInfo {
 struct ScanEntry {
     #[serde(rename = "file")]
     file: String,
+    #[serde(rename = "title")]
+    title: Option<String>,
+    #[serde(rename = "desc")]
+    desc: Option<String>,
     #[serde(rename = "rawTitle")]
     raw_title: Option<String>,
     #[serde(rename = "rawDesc")]

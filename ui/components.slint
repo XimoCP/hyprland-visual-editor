@@ -172,6 +172,7 @@ export component GeometrySlider inherits Rectangle {
     in property <int> value: 2;
     in property <int> min: 1;
     in property <int> max: 5;
+    in property <string> label: "Border Thickness";
     callback changed(int);
 
     height: 80px;
@@ -186,7 +187,7 @@ export component GeometrySlider inherits Rectangle {
 
         HorizontalLayout {
             Text {
-                text: "Border Thickness";
+                text: root.label;
                 color: HveColors.text;
                 font-size: 13px;
                 font-weight: 600;
@@ -263,6 +264,9 @@ export component WelcomeCard inherits Rectangle {
 // ─── Activation Toggle Card ─────────────────────────────────────────
 export component ActivationCard inherits Rectangle {
     in property <bool> active: false;
+    in property <string> card-title: "System Activation";
+    in property <string> active-text: "Visual effects are safely managed by HVE.";
+    in property <string> inactive-text: "System halted. Enable to start.";
     callback toggled(bool);
 
     height: 100px;
@@ -294,16 +298,14 @@ export component ActivationCard inherits Rectangle {
             vertical-stretch: 1;
 
             Text {
-                text: "System Activation";
+                text: root.card-title;
                 color: HveColors.text;
                 font-size: 15px;
                 font-weight: 700;
             }
 
             Text {
-                text: active
-                    ? "Visual effects are safely managed by HVE."
-                    : "System halted. Enable to start.";
+                text: active ? root.active-text : root.inactive-text;
                 color: HveColors.text-muted;
                 font-size: 11px;
                 wrap: word-wrap;

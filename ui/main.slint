@@ -36,6 +36,25 @@ export component MainWindow inherits Window {
     in property <[NavModule]> nav-modules;
     in-out property <bool> system-active: false;
 
+    // ── i18n strings ──
+    in property <string> sidebar-subtitle;
+    in property <string> home-header-title;
+    in property <string> home-header-subtitle;
+    in property <string> activation-title;
+    in property <string> activation-active-text;
+    in property <string> activation-inactive-text;
+    in property <string> feature-title;
+    in property <string> feature-desc;
+    in property <string> how-title;
+    in property <string> how-desc;
+    in property <string> anim-header-title;
+    in property <string> anim-header-subtitle;
+    in property <string> border-header-title;
+    in property <string> border-header-subtitle;
+    in property <string> border-geometry-label;
+    in property <string> shader-header-title;
+    in property <string> shader-header-subtitle;
+
     // Animation data
     in property <[string]> anim-titles;
     in property <[string]> anim-descs;
@@ -90,7 +109,7 @@ export component MainWindow inherits Window {
                     }
 
                     Text {
-                        text: "Hyprland Visual Editor";
+                        text: root.sidebar-subtitle;
                         color: HveColors.text-muted;
                         font-size: 11px;
                     }
@@ -140,11 +159,22 @@ export component MainWindow inherits Window {
             vertical-stretch: 1;
 
             if active-tab == 0: HomeModule {
+                header-title: root.home-header-title;
+                header-subtitle: root.home-header-subtitle;
+                activation-title: root.activation-title;
+                activation-active-text: root.activation-active-text;
+                activation-inactive-text: root.activation-inactive-text;
+                feature-title: root.feature-title;
+                feature-desc: root.feature-desc;
+                how-title: root.how-title;
+                how-desc: root.how-desc;
                 system-active: root.system-active;
                 toggle-system(v) => { root.toggle-system(v); }
             }
 
             if active-tab == 1: AnimationsModule {
+                header-title: root.anim-header-title;
+                header-subtitle: root.anim-header-subtitle;
                 anim-titles: root.anim-titles;
                 anim-descs: root.anim-descs;
                 anim-tags: root.anim-tags;
@@ -154,6 +184,9 @@ export component MainWindow inherits Window {
             }
 
             if active-tab == 2: BordersModule {
+                header-title: root.border-header-title;
+                header-subtitle: root.border-header-subtitle;
+                geometry-label: root.border-geometry-label;
                 border-titles: root.border-titles;
                 border-descs: root.border-descs;
                 border-tags: root.border-tags;
@@ -165,6 +198,8 @@ export component MainWindow inherits Window {
             }
 
             if active-tab == 3: ShadersModule {
+                header-title: root.shader-header-title;
+                header-subtitle: root.shader-header-subtitle;
                 shader-titles: root.shader-titles;
                 shader-descs: root.shader-descs;
                 shader-tags: root.shader-tags;

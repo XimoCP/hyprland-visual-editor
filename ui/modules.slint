@@ -5,34 +5,46 @@ import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard 
 // ─── HOME MODULE ────────────────────────────────────────────────────
 export component HomeModule inherits VerticalLayout {
     in property <bool> system-active: false;
+    in property <string> header-title;
+    in property <string> header-subtitle;
+    in property <string> activation-title;
+    in property <string> activation-active-text;
+    in property <string> activation-inactive-text;
+    in property <string> feature-title;
+    in property <string> feature-desc;
+    in property <string> how-title;
+    in property <string> how-desc;
     callback toggle-system(bool);
 
     spacing: 16px;
     padding: 24px;
 
     SectionHeader {
-        title: "Welcome";
-        subtitle: "Hyprland Visual Editor — Aesthetic Control Center";
+        title: root.header-title;
+        subtitle: root.header-subtitle;
         accent: HveColors.accent-cyan;
     }
 
     ActivationCard {
+        card-title: root.activation-title;
+        active-text: root.activation-active-text;
+        inactive-text: root.activation-inactive-text;
         active: root.system-active;
         toggled(v) => { root.toggle-system(v); }
     }
 
     WelcomeCard {
-        card-title: "Features";
+        card-title: root.feature-title;
         icon-text: "★";
         accent: HveColors.accent-amber;
-        description: "Fluid animations • Smart borders • Real-time shaders • Non-destructive";
+        description: root.feature-desc;
     }
 
     WelcomeCard {
-        card-title: "How it works";
+        card-title: root.how-title;
         icon-text: "⚙";
         accent: HveColors.accent-purple;
-        description: "HVE uses a Fragments & Assembly system. It never touches your main config. Everything is safely generated in an isolated overlay file, then injected via hyprctl reload.";
+        description: root.how-desc;
     }
 }
 
@@ -43,6 +55,8 @@ export component AnimationsModule inherits ScrollView {
     in property <[string]> anim-tags;
     in property <[string]> anim-files;
     in property <int> active-index: -1;
+    in property <string> header-title;
+    in property <string> header-subtitle;
     callback anim-toggled(int, string);
 
     VerticalLayout {
@@ -50,8 +64,8 @@ export component AnimationsModule inherits ScrollView {
         spacing: 12px;
 
         SectionHeader {
-            title: "Motion Library";
-            subtitle: "Select the animation style for your desktop";
+            title: root.header-title;
+            subtitle: root.header-subtitle;
             accent: HveColors.accent-amber;
         }
 
@@ -74,6 +88,9 @@ export component BordersModule inherits ScrollView {
     in property <[string]> border-files;
     in property <int> active-index: -1;
     in property <int> border-size: 2;
+    in property <string> header-title;
+    in property <string> header-subtitle;
+    in property <string> geometry-label;
     callback border-toggled(int, string);
     callback geometry-changed(int);
 
@@ -82,12 +99,13 @@ export component BordersModule inherits ScrollView {
         spacing: 12px;
 
         SectionHeader {
-            title: "Visual Styles";
-            subtitle: "Define your windows' personality";
+            title: root.header-title;
+            subtitle: root.header-subtitle;
             accent: HveColors.accent-green;
         }
 
         GeometrySlider {
+            label: root.geometry-label;
             value: root.border-size;
             changed(v) => { root.geometry-changed(v); }
         }
@@ -110,6 +128,8 @@ export component ShadersModule inherits ScrollView {
     in property <[string]> shader-tags;
     in property <[string]> shader-files;
     in property <int> active-index: -1;
+    in property <string> header-title;
+    in property <string> header-subtitle;
     callback shader-toggled(int, string);
 
     VerticalLayout {
@@ -117,8 +137,8 @@ export component ShadersModule inherits ScrollView {
         spacing: 12px;
 
         SectionHeader {
-            title: "Screen Filters";
-            subtitle: "Real-time image post-processing";
+            title: root.header-title;
+            subtitle: root.header-subtitle;
             accent: HveColors.accent-purple;
         }
 

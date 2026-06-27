@@ -3,6 +3,7 @@ mod config;
 mod engine;
 mod hypr_ipc;
 mod ipc;
+mod tr;
 mod presets;
 mod theme;
 mod tray;
@@ -15,6 +16,7 @@ use fs2::FileExt;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+use tr::Tr;
 
 slint::include_modules!();
 
@@ -127,6 +129,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let proj = project_dir();
     let engine = Engine::new(&proj);
     let cfg = Config::load();
+    let tr = Tr::new();
+
+    tracing::info!("Locale: {}", tr.lang);
 
     let window = MainWindow::new()?;
 
@@ -139,8 +144,27 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_system_active(cfg.is_system_active);
     window.set_border_size(cfg.border_size);
 
-    // ── Scan presets ──
-    presets::populate_presets(&window, &engine, &cfg);
+    // ── Scan + translate presets ──
+    presets::populate_presets(&window, &engine, &cfg, &tr);
+
+    // ── i18n: static UI strings ──
+    window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual"));
+    window.set_home_header_title(tr.tr_shared("panel.tabs.home", "Home"));
+    window.set_home_header_subtitle(tr.tr_shared("panel.header_subtitle", "Aesthetic Control Center"));
+    window.set_activation_title(tr.tr_shared("welcome.activation_title", "System Activation"));
+    window.set_activation_active_text(tr.tr_shared("welcome.toast.enabled", "Visual Editor Enabled"));
+    window.set_activation_inactive_text(tr.tr_shared("welcome.toast.disabled", "Visual Editor Disabled"));
+    window.set_feature_title(tr.tr_shared("welcome.features.title", "Features & Benefits"));
+    window.set_feature_desc(tr.tr_shared("welcome.features.description", "Fluid animations • Smart borders • Real-time shaders • Non-destructive"));
+    window.set_how_title(tr.tr_shared("welcome.docs.title", "Architecture & Documentation"));
+    window.set_how_desc(tr.tr_shared("welcome.docs.summary", "HVE uses a Fragments & Assembly system..."));
+    window.set_anim_header_title(tr.tr_shared("animations.header_title", "Motion Library"));
+    window.set_anim_header_subtitle(tr.tr_shared("animations.header_subtitle", "Select the animation style for your desktop"));
+    window.set_border_header_title(tr.tr_shared("borders.header_title", "Visual Styles"));
+    window.set_border_header_subtitle(tr.tr_shared("borders.header_subtitle", "Define your windows' personality"));
+    window.set_border_geometry_label(tr.tr_shared("borders.geometry.title", "Border Thickness"));
+    window.set_shader_header_title(tr.tr_shared("shaders.header_title", "Screen Filters"));
+    window.set_shader_header_subtitle(tr.tr_shared("shaders.header_subtitle", "Real-time image post-processing"));
 
     // ── Dynamic theme ──
     match engine.get_colors() {
@@ -157,28 +181,28 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── Callbacks ──
     callbacks::setup_callbacks(&window, &cfg, proj.clone(), tray_active);
 
-    // ── Nav modules (data-driven sidebar) ──
+    // ── Nav modules (data-driven sidebar, translated) ──
     let nav_modules = Vec::from([
         crate::NavModule {
-            label: SharedString::from("Home"),
+            label: SharedString::from(tr.tr_or("panel.tabs.home", "Home")),
             icon: SharedString::from("⌂"),
             accent: theme::parse_hex("#38bdf8"),
             tab_index: 0,
         },
         crate::NavModule {
-            label: SharedString::from("Animations"),
+            label: SharedString::from(tr.tr_or("panel.tabs.animations", "Animations")),
             icon: SharedString::from("▶"),
             accent: theme::parse_hex("#fbbf24"),
             tab_index: 1,
         },
         crate::NavModule {
-            label: SharedString::from("Borders"),
+            label: SharedString::from(tr.tr_or("panel.tabs.borders", "Borders")),
             icon: SharedString::from("◻"),
             accent: theme::parse_hex("#10b981"),
             tab_index: 2,
         },
         crate::NavModule {
-            label: SharedString::from("Effects"),
+            label: SharedString::from(tr.tr_or("panel.tabs.effects", "Effects")),
             icon: SharedString::from("◆"),
             accent: theme::parse_hex("#c084fc"),
             tab_index: 3,
