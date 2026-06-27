@@ -169,18 +169,25 @@ impl ksni::Tray for HveTray {
             ksni::MenuItem::Separator,
             // ── Toggle Window visibility ──
             StandardItem {
-                label: "Toggle Window".to_string(),
+                label: if crate::ipc::TRAY_MODE.load(Ordering::Relaxed) {
+                    "Toggle Window".to_string()
+                } else {
+                    "Show Window".to_string()
+                },
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(win) = w.upgrade() {
-                            if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
-                                // show() es suficiente — set_minimized(false) no funciona en Wayland
-                                let _ = win.window().show();
-                                crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+                            if crate::ipc::TRAY_MODE.load(Ordering::Relaxed) {
+                                if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
+                                    let _ = win.window().show();
+                                    crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+                                } else {
+                                    let _ = win.window().hide();
+                                    crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+                                }
                             } else {
-                                crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
-                                let _ = win.window().set_minimized(true);
+                                let _ = win.window().show();
                             }
                         }
                     });

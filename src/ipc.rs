@@ -4,8 +4,10 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Tracks whether the main window has been hidden/minimized via toggle-tray.
+/// Tracks whether the main window has been hidden via toggle-tray (tray mode).
 pub(crate) static WINDOW_HIDDEN: AtomicBool = AtomicBool::new(false);
+/// Whether HVE was started with --tray (window starts hidden before run()).
+pub(crate) static TRAY_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Start the IPC server on `$XDG_RUNTIME_DIR/hve.sock` (fallback `/tmp/hve.sock`).
 ///
@@ -198,16 +200,21 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
-        if WINDOW_HIDDEN.load(Ordering::Relaxed) {
-            // Restore window — show() es suficiente, set_minimized(false)
-            // no funciona en Wayland (ignorado por el protocolo).
-            let _ = win.window().show();
-            WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+        if TRAY_MODE.load(Ordering::Relaxed) {
+            // Tray mode: hide/show — la ventana arrancó oculta, el
+            // event loop sigue vivo aunque la ocultemos en runtime.
+            if WINDOW_HIDDEN.load(Ordering::Relaxed) {
+                let _ = win.window().show();
+                WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+            } else {
+                let _ = win.window().hide();
+                WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+            }
         } else {
-            // Minimize instead of hide — Slint's event loop exits when
-            // the only visible window is hidden in non-tray mode.
-            WINDOW_HIDDEN.store(true, Ordering::Relaxed);
-            let _ = win.window().set_minimized(true);
+            // Non-tray mode: no podemos ocultar ni minimizar la ventana
+            // (hide() mata el event loop en Wayland, set_minimized es
+            // ignorado por Hyprland). Simplemente mostramos la ventana.
+            let _ = win.window().show();
         }
         "ok".to_string()
     }))

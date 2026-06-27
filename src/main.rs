@@ -202,6 +202,7 @@ fn main() -> Result<(), slint::PlatformError> {
         // and IPC server continue to function.
         let _ = window.window().hide();
         ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+        ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     // ── Run UI (blocks until the event loop exits or window closes) ──
