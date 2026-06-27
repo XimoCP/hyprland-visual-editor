@@ -199,9 +199,9 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
         if WINDOW_HIDDEN.load(Ordering::Relaxed) {
-            // Restore window
+            // Restore window — show() es suficiente, set_minimized(false)
+            // no funciona en Wayland (ignorado por el protocolo).
             let _ = win.window().show();
-            let _ = win.window().set_minimized(false);
             WINDOW_HIDDEN.store(false, Ordering::Relaxed);
         } else {
             // Minimize instead of hide — Slint's event loop exits when

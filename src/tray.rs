@@ -175,8 +175,8 @@ impl ksni::Tray for HveTray {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(win) = w.upgrade() {
                             if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
+                                // show() es suficiente — set_minimized(false) no funciona en Wayland
                                 let _ = win.window().show();
-                                let _ = win.window().set_minimized(false);
                                 crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
                             } else {
                                 crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
