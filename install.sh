@@ -243,6 +243,18 @@ if prompt_yes_no "¿Instalar script hve-ipc para atajos de teclado? [Y/n]" "yes"
     IPC_INSTALLED=true
 fi
 
+# Si se instaló hve-ipc, ofrecer symlink global (para Hyprland/Noctalia)
+if [ "$IPC_INSTALLED" = true ]; then
+    if prompt_yes_no "¿Crear symlink en /usr/local/bin/ (necesita sudo)? [y/N]" "no"; then
+        if sudo ln -sf "$HVE_IPC" /usr/local/bin/hve-ipc 2>/dev/null; then
+            ok "Symlink → /usr/local/bin/hve-ipc"
+        else
+            warn "No se pudo crear el symlink — crealo manualmente:"
+            info "  sudo ln -sf $HVE_IPC /usr/local/bin/hve-ipc"
+        fi
+    fi
+fi
+
 # ============================================================================
 # 8. AUTOSTART (optional)
 # ============================================================================
