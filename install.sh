@@ -250,16 +250,7 @@ echo ""
 IPC_INSTALLED=false
 if prompt_yes_no "¿Instalar script hve-ipc para atajos de teclado? [Y/n]" "yes"; then
     mkdir -p "$(dirname "$HVE_IPC")"
-    cat > "$HVE_IPC" << 'IPC_EOF'
-#!/bin/bash
-# HVE IPC — sends commands to the HVE UNIX socket
-SOCKET="${XDG_RUNTIME_DIR:-/tmp}/hve.sock"
-if [ ! -S "$SOCKET" ]; then
-    echo "HVE no está corriendo" >&2
-    exit 1
-fi
-echo "$@" | nc -U "$SOCKET"
-IPC_EOF
+    cp "$SCRIPT_DIR/assets/scripts/hve-ipc" "$HVE_IPC"
     chmod +x "$HVE_IPC"
     ok "IPC script → $HVE_IPC"
     IPC_INSTALLED=true
