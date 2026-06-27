@@ -56,12 +56,7 @@ pub fn setup_callbacks(
         let eng = eng.clone();
         let cfg = cfg.clone();
         let weak = window.as_weak();
-        let mut sys_init = true;
         window.on_toggle_system(move |active| {
-            if sys_init {
-                sys_init = false;
-                return;
-            }
             tray_active.store(active, Ordering::Relaxed);
             {
                 let mut cfg = cfg.lock().unwrap();
