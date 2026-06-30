@@ -14,6 +14,118 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# ── Language detection ──────────────────────────────────────────────────────
+detect_lang() {
+    local lang="${LANG:-en}"
+    lang="${lang:0:2}"
+    case "$lang" in
+        es) echo "es" ;;
+        *)  echo "en" ;;
+    esac
+}
+LANG_CODE=$(detect_lang)
+
+# ── i18n messages ──────────────────────────────────────────────────────────
+if [ "$LANG_CODE" = "es" ]; then
+    # ── Generales ──
+    MSG_DETECTING_OS="Detectando sistema operativo..."
+    MSG_DETECTED="Detectado:"
+    MSG_UNSUPPORTED="Distribución no soportada (%s). Instala las dependencias manualmente y vuelve a ejecutar."
+    MSG_INSTALLING_DEPS="Instalando dependencias del sistema..."
+    MSG_BATCH_FAIL="Fallo la instalación por lote — probando una por una..."
+    MSG_COULD_NOT_INSTALL="No se pudo instalar %s (puede que necesites instalarlo manualmente)"
+    MSG_FOUND="encontrado"
+    MSG_NOT_FOUND="no encontrado — algunas funciones pueden no funcionar"
+    MSG_CHECKING_RUST="Verificando Rust..."
+    MSG_RUST_OK="Rust %s"
+    MSG_RUST_NOT_FOUND="Rust no encontrado — instalando rustup..."
+    MSG_RUST_INSTALLED="Rust instalado: %s"
+    MSG_RUST_FAIL="Fallo la instalación de Rust. Intenta manualmente: https://rustup.rs"
+    MSG_BUILDING="Compilando HVE (esto puede llevar un rato)..."
+    MSG_BUILD_DONE="Compilación completada"
+    MSG_INSTALLING="Instalando HVE..."
+    MSG_BINARY_TO="Binario → %s"
+    MSG_ASSETS_TO="Assets → ~/.local/bin/assets/"
+    MSG_DESKTOP_TO="Acceso directo → %s (%s)"
+    MSG_DETECTING_COLOR="Detectando herramienta de colores..."
+    MSG_COLOR_TOOL="Herramienta de colores: %s"
+    MSG_WATCHING="Vigilando:  %s"
+    MSG_IPC_TITLE="Instalando script hve-ipc..."
+    MSG_IPC_TO="Script IPC → %s"
+    MSG_IPC_PROMPT="¿Instalar script hve-ipc para atajos de teclado? [Y/n]"
+    MSG_SYMLINK_PROMPT="¿Crear symlink en /usr/local/bin/ (necesita sudo)? [y/N]"
+    MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
+    MSG_SYMLINK_FAIL="No se pudo crear el symlink — créalo manualmente:"
+    MSG_AUTOSTART_PROMPT="¿Agregar al autostart (inicia con --tray)? [y/N]"
+    MSG_AUTOSTART_TO="Autostart → %s"
+    MSG_LAUNCH_PROMPT="¿Iniciar HVE ahora? [y/N]"
+    MSG_LAUNCHED="HVE iniciado"
+    MSG_NOT_FOUND_AT="Binario no encontrado en %s"
+    MSG_INSTALLED="HVE instalado!"
+    MSG_PATH_WARN="~/.local/bin no está en tu PATH. Agrega esto a tu configuración del shell:"
+    MSG_RUN="Ejecutar:   hve"
+    MSG_SHORTCUTS="Atajos:    hve-ipc toggle-system"
+    MSG_YES="sí"
+    MSG_NO="no"
+else
+    # ── General ──
+    MSG_DETECTING_OS="Detecting operating system..."
+    MSG_DETECTED="Detected:"
+    MSG_UNSUPPORTED="Unsupported distro (%s). Install dependencies manually and re-run."
+    MSG_INSTALLING_DEPS="Installing system dependencies..."
+    MSG_BATCH_FAIL="Batch install failed — trying individually..."
+    MSG_COULD_NOT_INSTALL="Could not install: %s (you may need to install it manually)"
+    MSG_FOUND="found"
+    MSG_NOT_FOUND="not found — some features may not work"
+    MSG_CHECKING_RUST="Checking Rust toolchain..."
+    MSG_RUST_OK="Rust %s"
+    MSG_RUST_NOT_FOUND="Rust not found — installing rustup..."
+    MSG_RUST_INSTALLED="Rust installed: %s"
+    MSG_RUST_FAIL="Rust installation failed. Try manually: https://rustup.rs"
+    MSG_BUILDING="Building HVE (this may take a while)..."
+    MSG_BUILD_DONE="Build complete"
+    MSG_INSTALLING="Installing HVE..."
+    MSG_BINARY_TO="Binary → %s"
+    MSG_ASSETS_TO="Assets → ~/.local/bin/assets/"
+    MSG_DESKTOP_TO="Desktop entry → %s (%s)"
+    MSG_DETECTING_COLOR="Detecting color tool..."
+    MSG_COLOR_TOOL="Color tool: %s"
+    MSG_WATCHING="Watching:    %s"
+    MSG_IPC_TITLE="Installing IPC script..."
+    MSG_IPC_TO="IPC script → %s"
+    MSG_IPC_PROMPT="Install hve-ipc script for keyboard shortcuts? [Y/n]"
+    MSG_SYMLINK_PROMPT="Create symlink in /usr/local/bin/ (requires sudo)? [y/N]"
+    MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
+    MSG_SYMLINK_FAIL="Could not create symlink — create it manually:"
+    MSG_AUTOSTART_PROMPT="Add to autostart (starts with --tray)? [y/N]"
+    MSG_AUTOSTART_TO="Autostart → %s"
+    MSG_LAUNCH_PROMPT="Launch HVE now? [y/N]"
+    MSG_LAUNCHED="HVE launched"
+    MSG_NOT_FOUND_AT="Binary not found at %s"
+    MSG_INSTALLED="HVE installed!"
+    MSG_PATH_WARN="~/.local/bin is not in your PATH. Add this to your shell config:"
+    MSG_RUN="Run:        hve"
+    MSG_SHORTCUTS="Shortcuts:  hve-ipc toggle-system"
+    MSG_YES="yes"
+    MSG_NO="no"
+fi
+
+# sprintf helper for messages with arguments
+msg_fmt() {
+    local fmt="$1"; shift
+    # shellcheck disable=SC2059
+    printf "$fmt" "$@"
+}
+
+# ── Sudo guard ─────────────────────────────────────────────────────────────
+check_sudo() {
+    if [ "$(id -u)" -eq 0 ]; then
+        echo -e "${RED}❌ No ejecutes este script con sudo o como root.${NC}"
+        echo "   El script pedirá sudo cuando sea necesario."
+        exit 1
+    fi
+}
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HVE_BIN="$HOME/.local/bin/hve"
@@ -42,24 +154,38 @@ prompt_yes_no() {
 }
 
 # ============================================================================
+# 0. SUDO GUARD
+# ============================================================================
+check_sudo
+
+# ============================================================================
 # 1. DETECT DISTRO AND PACKAGE MANAGER
 # ============================================================================
 echo ""
-info "Detecting operating system..."
+info "$MSG_DETECTING_OS"
 
 DISTRO=""
 if [ -f /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
     case "$ID" in
-        arch|manjaro|endeavouros|artix)        DISTRO="arch"    ;;
-        debian|ubuntu|pop|linuxmint|elementary) DISTRO="debian"  ;;
-        fedora)                                 DISTRO="fedora"  ;;
-        opensuse*|suse)                         DISTRO="opensuse" ;;
-        void)                                   DISTRO="void"    ;;
-        gentoo)                                 DISTRO="gentoo"  ;;
-        *)                                      DISTRO="unknown" ;;
+        arch|manjaro|endeavouros|artix|cachyos)       DISTRO="arch"    ;;
+        debian|ubuntu|pop|linuxmint|elementary)        DISTRO="debian"  ;;
+        fedora)                                         DISTRO="fedora"  ;;
+        opensuse*|suse)                                 DISTRO="opensuse" ;;
+        void)                                           DISTRO="void"    ;;
+        gentoo)                                         DISTRO="gentoo"  ;;
+        *)                                              DISTRO="unknown" ;;
     esac
+    # Fallback: check ID_LIKE for derivatives not in the explicit list
+    if [ "$DISTRO" = "unknown" ] && [ -n "${ID_LIKE:-}" ]; then
+        case "$ID_LIKE" in
+            *arch*)   DISTRO="arch"    ;;
+            *debian*) DISTRO="debian"  ;;
+            *fedora*) DISTRO="fedora"  ;;
+            *suse*)   DISTRO="opensuse" ;;
+        esac
+    fi
 elif [ -f /etc/arch-release ]; then
     DISTRO="arch"
 elif [ -f /etc/debian_version ]; then
@@ -72,7 +198,7 @@ else
     DISTRO="unknown"
 fi
 
-ok "Detected: $DISTRO"
+ok "$MSG_DETECTED $DISTRO"
 
 # ── Distro-specific configuration ──────────────────────────────────────────
 REQUIRED_PKGS=()
@@ -104,7 +230,7 @@ case "$DISTRO" in
         REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango)
         ;;
     *)
-        fail "Unsupported distro ($DISTRO). Install dependencies manually and re-run."
+        fail "$(msg_fmt "$MSG_UNSUPPORTED" "$DISTRO")"
         ;;
 esac
 
@@ -112,13 +238,13 @@ esac
 # 2. INSTALL SYSTEM DEPENDENCIES
 # ============================================================================
 echo ""
-info "Installing system dependencies..."
+info "$MSG_INSTALLING_DEPS"
 
 if ! sudo $INSTALL_CMD "${REQUIRED_PKGS[@]}" 2>/dev/null; then
-    warn "Batch install failed — trying individually..."
+    warn "$MSG_BATCH_FAIL"
     for pkg in "${REQUIRED_PKGS[@]}"; do
         if ! sudo $INSTALL_CMD "$pkg" 2>/dev/null; then
-            warn "Could not install: $pkg (you may need to install it manually)"
+            warn "$(msg_fmt "$MSG_COULD_NOT_INSTALL" "$pkg")"
         fi
     done
 fi
@@ -126,9 +252,9 @@ fi
 # Verify key build/run dependencies
 for cmd in inotifywait pkg-config; do
     if command -v "$cmd" &>/dev/null; then
-        ok "$cmd found"
+        ok "$cmd $MSG_FOUND"
     else
-        warn "$cmd not found — some features may not work"
+        warn "$cmd $MSG_NOT_FOUND"
     fi
 done
 
@@ -136,21 +262,21 @@ done
 # 3. VERIFY / INSTALL RUST
 # ============================================================================
 echo ""
-info "Checking Rust toolchain..."
+info "$MSG_CHECKING_RUST"
 
 if command -v rustc &>/dev/null; then
-    ok "Rust $(rustc --version)"
+    ok "$(msg_fmt "$MSG_RUST_OK" "$(rustc --version)")"
 else
-    warn "Rust not found — installing rustup..."
+    warn "$MSG_RUST_NOT_FOUND"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     if [ -f "$HOME/.cargo/env" ]; then
         # shellcheck disable=SC1091
         source "$HOME/.cargo/env"
     fi
     if command -v rustc &>/dev/null; then
-        ok "Rust installed: $(rustc --version)"
+        ok "$(msg_fmt "$MSG_RUST_INSTALLED" "$(rustc --version)")"
     else
-        fail "Rust installation failed. Try manually: https://rustup.rs"
+        fail "$MSG_RUST_FAIL"
     fi
 fi
 
@@ -158,22 +284,22 @@ fi
 # 4. BUILD
 # ============================================================================
 echo ""
-info "Building HVE (this may take a while)..."
+info "$MSG_BUILDING"
 cd "$SCRIPT_DIR"
 cargo build --release
-ok "Build complete"
+ok "$MSG_BUILD_DONE"
 
 # ============================================================================
 # 5. INSTALL BINARY + ASSETS + DESKTOP
 # ============================================================================
 echo ""
-info "Installing HVE..."
+info "$MSG_INSTALLING"
 
 # Binary
 mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/target/release/hve" "$HVE_BIN"
 chmod +x "$HVE_BIN"
-ok "Binary → $HVE_BIN"
+ok "$(msg_fmt "$MSG_BINARY_TO" "$HVE_BIN")"
 
 # Assets
 if [ -d "$SCRIPT_DIR/assets" ]; then
@@ -183,7 +309,7 @@ if [ -d "$SCRIPT_DIR/assets" ]; then
             cp -r "$SCRIPT_DIR/assets/$dir" "$HOME/.local/bin/assets/"
         fi
     done
-    ok "Assets → ~/.local/bin/assets/"
+    ok "$MSG_ASSETS_TO"
 fi
 
 # Desktop entry
@@ -192,14 +318,14 @@ if [ -f "$SCRIPT_DIR/hve.desktop" ]; then
     cp "$SCRIPT_DIR/hve.desktop" "$HVE_DESKTOP"
     # Use the actual binary path so the launcher doesn't depend on PATH
     sed -i "s|Exec=.*hve|Exec=$HVE_BIN|" "$HVE_DESKTOP"
-    ok "Desktop entry → $HVE_DESKTOP ($HVE_BIN)"
+    ok "$(msg_fmt "$MSG_DESKTOP_TO" "$HVE_DESKTOP" "$HVE_BIN")"
 fi
 
 # ============================================================================
 # 6. DETECT COLOR TOOL (cosmetic — runtime detection is in color_watcher.sh)
 # ============================================================================
 echo ""
-info "Detecting color tool..."
+info "$MSG_DETECTING_COLOR"
 
 DETECTED_TOOL=""
 WATCH_TARGET=""
@@ -229,29 +355,29 @@ else
     fi
 fi
 
-ok "Color tool: $DETECTED_TOOL"
-info "Watching:    $WATCH_TARGET"
+ok "$(msg_fmt "$MSG_COLOR_TOOL" "$DETECTED_TOOL")"
+info "$(msg_fmt "$MSG_WATCHING" "$WATCH_TARGET")"
 
 # ============================================================================
 # 7. INSTALL IPC SCRIPT (optional)
 # ============================================================================
 echo ""
 IPC_INSTALLED=false
-if prompt_yes_no "¿Instalar script hve-ipc para atajos de teclado? [Y/n]" "yes"; then
+if prompt_yes_no "$MSG_IPC_PROMPT" "yes"; then
     mkdir -p "$(dirname "$HVE_IPC")"
     cp "$SCRIPT_DIR/assets/scripts/hve-ipc" "$HVE_IPC"
     chmod +x "$HVE_IPC"
-    ok "IPC script → $HVE_IPC"
+    ok "$(msg_fmt "$MSG_IPC_TO" "$HVE_IPC")"
     IPC_INSTALLED=true
 fi
 
-# Si se instaló hve-ipc, ofrecer symlink global (para Hyprland/Noctalia)
+# If hve-ipc was installed, offer global symlink (for Hyprland/Noctalia)
 if [ "$IPC_INSTALLED" = true ]; then
-    if prompt_yes_no "¿Crear symlink en /usr/local/bin/ (necesita sudo)? [y/N]" "no"; then
+    if prompt_yes_no "$MSG_SYMLINK_PROMPT" "no"; then
         if sudo ln -sf "$HVE_IPC" /usr/local/bin/hve-ipc 2>/dev/null; then
-            ok "Symlink → /usr/local/bin/hve-ipc"
+            ok "$MSG_SYMLINK_OK"
         else
-            warn "No se pudo crear el symlink — crealo manualmente:"
+            warn "$MSG_SYMLINK_FAIL"
             info "  sudo ln -sf $HVE_IPC /usr/local/bin/hve-ipc"
         fi
     fi
@@ -262,7 +388,7 @@ fi
 # ============================================================================
 echo ""
 AUTOSTART_INSTALLED=false
-if prompt_yes_no "¿Agregar al autostart (inicia con --tray)? [y/N]" "no"; then
+if prompt_yes_no "$MSG_AUTOSTART_PROMPT" "no"; then
     mkdir -p "$HVE_AUTOSTART_DIR"
     cat > "$HVE_AUTOSTART" << 'AUTOSTART_EOF'
 [Desktop Entry]
@@ -272,7 +398,7 @@ Exec=hve --tray
 Hidden=false
 X-GNOME-Autostart-enabled=true
 AUTOSTART_EOF
-    ok "Autostart → $HVE_AUTOSTART"
+    ok "$(msg_fmt "$MSG_AUTOSTART_TO" "$HVE_AUTOSTART")"
     AUTOSTART_INSTALLED=true
 fi
 
@@ -280,12 +406,12 @@ fi
 # 9. LAUNCH NOW (optional)
 # ============================================================================
 echo ""
-if prompt_yes_no "¿Iniciar HVE ahora? [y/N]" "no"; then
+if prompt_yes_no "$MSG_LAUNCH_PROMPT" "no"; then
     if [ -x "$HVE_BIN" ]; then
         "$HVE_BIN" &
-        ok "HVE iniciado"
+        ok "$MSG_LAUNCHED"
     else
-        warn "Binary not found at $HVE_BIN"
+        warn "$(msg_fmt "$MSG_NOT_FOUND_AT" "$HVE_BIN")"
     fi
 fi
 
@@ -294,27 +420,29 @@ fi
 # ============================================================================
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  ✅ HVE installed!${NC}"
+echo -e "${GREEN}  ✅ $MSG_INSTALLED${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
 echo ""
-echo "   Binary:    $HVE_BIN"
-echo "   Assets:    ~/.local/bin/assets/"
-echo "   Desktop:   $HVE_DESKTOP"
+
+# Build summary lines from translated templates
+echo "   $(msg_fmt "$MSG_BINARY_TO" "$HVE_BIN")"
+echo "   $(msg_fmt "$MSG_ASSETS_TO")"
+echo "   $(msg_fmt "$MSG_DESKTOP_TO" "$HVE_DESKTOP" "$HVE_BIN")"
 if [ "$AUTOSTART_INSTALLED" = true ]; then
-    echo "   Autostart: $HVE_AUTOSTART"
+    echo "   $(msg_fmt "$MSG_AUTOSTART_TO" "$HVE_AUTOSTART")"
 fi
 if [ "$IPC_INSTALLED" = true ]; then
-    echo "   IPC:       $HVE_IPC"
+    echo "   $(msg_fmt "$MSG_IPC_TO" "$HVE_IPC")"
 fi
 echo ""
-echo "   Run:       hve"
+echo "   $MSG_RUN"
 if [ "$IPC_INSTALLED" = true ]; then
-    echo "   Atajos:    hve-ipc toggle-system"
+    echo "   $MSG_SHORTCUTS"
 fi
 echo ""
 
 # Warn if ~/.local/bin not in PATH
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    warn '~/.local/bin is not in PATH. Add this to your shell config:'
+    warn "$MSG_PATH_WARN"
     echo '  export PATH="$HOME/.local/bin:$PATH"'
 fi
