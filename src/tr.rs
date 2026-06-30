@@ -54,11 +54,6 @@ impl Tr {
         self.tr(key).unwrap_or(fallback)
     }
 
-    /// Resolve a key, falling back to an empty string if not found.
-    pub fn tr_opt(&self, key: &str) -> &str {
-        self.tr(key).unwrap_or("")
-    }
-
     /// Convenience: resolve a key and return as `SharedString` for Slint bindings.
     pub fn tr_shared(&self, key: &str, fallback: &str) -> slint::SharedString {
         slint::SharedString::from(self.tr_or(key, fallback))
@@ -162,12 +157,6 @@ mod tests {
         let v = load_embedded("en").unwrap();
         assert_eq!(v["meta"]["lang"].as_str(), Some("en"));
         assert_eq!(v["panel"]["tabs"]["home"].as_str(), Some("Home"));
-    }
-
-    #[test]
-    fn test_tr_opt_returns_empty_for_missing() {
-        let t = Tr::new();
-        assert_eq!(t.tr_opt("nothing.here"), "");
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use crate::engine::Engine;
+use crate::theme;
 use slint::ComponentHandle;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -13,7 +15,7 @@ pub(crate) static TRAY_MODE: AtomicBool = AtomicBool::new(false);
 ///
 /// Spawns a background thread that listens for commands and dispatches them
 /// onto the Slint event loop via `slint::invoke_from_event_loop`.
-pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, _proj: PathBuf) {
+pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
     let socket_path = get_socket_path();
 
     // Remove stale socket from previous run
@@ -36,7 +38,7 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, _proj: PathBuf) 
 
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => handle_connection(stream, &window),
+                Ok(stream) => handle_connection(stream, &window, &proj),
                 Err(e) => eprintln!("[HVE IPC] Connection error: {}", e),
             }
         }
@@ -57,7 +59,11 @@ fn get_socket_path() -> PathBuf {
 
 // ─── Connection handler ──────────────────────────────────────────────
 
-fn handle_connection(mut stream: UnixStream, window: &slint::Weak<crate::MainWindow>) {
+fn handle_connection(
+    mut stream: UnixStream,
+    window: &slint::Weak<crate::MainWindow>,
+    proj: &PathBuf,
+) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
     let mut reader = BufReader::new(&stream);
@@ -67,7 +73,7 @@ fn handle_connection(mut stream: UnixStream, window: &slint::Weak<crate::MainWin
         Ok(_) => {}
     }
 
-    let response = dispatch_command(line.trim(), window);
+    let response = dispatch_command(line.trim(), window, proj);
 
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
@@ -75,7 +81,11 @@ fn handle_connection(mut stream: UnixStream, window: &slint::Weak<crate::MainWin
 
 // ─── Dispatch ────────────────────────────────────────────────────────
 
-fn dispatch_command(cmd: &str, window: &slint::Weak<crate::MainWindow>) -> String {
+fn dispatch_command(
+    cmd: &str,
+    window: &slint::Weak<crate::MainWindow>,
+    proj: &PathBuf,
+) -> String {
     match cmd {
         "pause-restart" => cmd_pause_restart(window),
         "next-anim" => cmd_next_anim(window),
@@ -84,6 +94,7 @@ fn dispatch_command(cmd: &str, window: &slint::Weak<crate::MainWindow>) -> Strin
         "toggle-tray" => cmd_toggle_tray(window),
         "status" => cmd_status(window),
         "quit" => cmd_quit(window),
+        "refresh-theme" => cmd_refresh_theme(window, proj),
         _ => format!("error: unknown command '{}'\n", cmd),
     }
 }
@@ -224,6 +235,19 @@ fn cmd_status(window: &slint::Weak<crate::MainWindow>) -> String {
             active, anim_idx, border_idx, shader_idx
         )
     }))
+}
+
+fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &PathBuf) -> String {
+    let eng = Engine::new(proj);
+    match eng.get_colors() {
+        Ok(colors) => {
+            format_response(invoke_on_main(window, move |win| {
+                theme::apply_theme(&win, &colors);
+                "ok".to_string()
+            }))
+        }
+        Err(e) => format!("error: {}\n", e),
+    }
 }
 
 fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {

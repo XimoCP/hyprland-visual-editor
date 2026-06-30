@@ -10,67 +10,99 @@ export component PresetCard inherits Rectangle {
     in property <bool> active: false;
     callback toggled(bool);
 
-    height: 64px;
-    border-radius: 8px;
-    background: ta.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+    height: (active || ta.has-hover || fs.has-focus) ? 120px : 68px;
+    border-radius: 10px;
+    clip: true;
+    background: active ? HveColors.bg-hover : ((ta.has-hover || fs.has-focus) ? HveColors.bg-hover : HveColors.bg-card);
     border-width: active ? 2px : 1px;
-    border-color: active ? accent : HveColors.border;
+    border-color: active ? accent : ((ta.has-hover || fs.has-focus) ? accent.transparentize(0.6) : HveColors.border);
+
+    // Glow sutil al estar activo
+    drop-shadow-blur: active ? 12px : 0px;
+    drop-shadow-color: active ? accent.transparentize(0.8) : transparent;
+
+    animate background { duration: 200ms; easing: ease-in-out; }
+    animate border-color { duration: 200ms; easing: ease-in-out; }
+    animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
+    animate height { duration: 250ms; easing: ease-in-out-back; }
 
     ta := TouchArea {
         clicked => { root.toggled(!root.active); }
     }
 
+    fs := FocusScope {
+        focus-on-tab-navigation: true;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.toggled(!root.active);
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+
     HorizontalLayout {
-        padding: 12px;
-        spacing: 12px;
+        padding: 14px;
+        spacing: 16px;
 
         // Left: icon + text
         Rectangle {
             horizontal-stretch: 1;
             HorizontalLayout {
-                spacing: 12px;
+                spacing: 16px;
 
+                // Icon indicator
                 Rectangle {
-                    width: 36px;
-                    height: 36px;
-                    border-radius: 4px;
-                    background: HveColors.bg-surface;
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 8px;
+                    background: active ? accent.transparentize(0.85) : HveColors.bg-surface;
+                    animate background { duration: 200ms; }
 
                     Text {
                         text: root.active ? "●" : "○";
                         color: accent;
-                        font-size: 16px;
+                        font-size: 18px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
                 }
 
                 VerticalLayout {
-                    spacing: 2px;
+                    spacing: 4px;
                     vertical-stretch: 1;
+                    alignment: center;
 
+                    // Title row + tag
                     HorizontalLayout {
                         spacing: 8px;
 
                         Text {
                             text: root.title;
-                            color: HveColors.text;
-                            font-size: 13px;
-                            font-weight: active ? 700 : 400;
+                            color: active ? HveColors.text : ((ta.has-hover || fs.has-focus) ? HveColors.text : HveColors.text-muted);
+                            font-size: 14px;
+                            font-weight: active ? 700 : 500;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
+                            animate color { duration: 200ms; }
                         }
 
+                        // Tag pill
                         Rectangle {
-                            height: 18px;
+                            height: 20px;
                             width: tag-text.preferred-width + 16px;
-                            border-radius: 9px;
-                            background: HveColors.bg-surface;
+                            border-radius: 10px;
+                            background: active ? accent.transparentize(0.8) : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: active ? accent.transparentize(0.5) : transparent;
+                            animate background { duration: 200ms; }
+                            animate border-color { duration: 200ms; }
 
                             tag-text := Text {
                                 text: root.tag;
-                                color: accent;
-                                font-size: 9px;
+                                color: active ? accent : HveColors.text-muted;
+                                font-size: 10px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -81,27 +113,30 @@ export component PresetCard inherits Rectangle {
                     Text {
                         text: root.desc;
                         color: HveColors.text-muted;
-                        font-size: 11px;
+                        font-size: 12px;
                         overflow: elide;
+                        wrap: (active || ta.has-hover || fs.has-focus) ? word-wrap : no-wrap;
                     }
                 }
             }
         }
 
-        // Right: toggle indicator
+        // Right: toggle switch animado con rebote
         Rectangle {
-            width: 40px;
-            height: 22px;
-            border-radius: 11px;
+            width: 44px;
+            height: 24px;
+            border-radius: 12px;
             background: active ? accent : HveColors.border;
+            animate background { duration: 250ms; easing: ease-in-out; }
 
             Rectangle {
                 width: 18px;
                 height: 18px;
                 border-radius: 9px;
                 background: HveColors.bg-dark;
-                x: active ? parent.width - self.width - 2px : 2px;
-                y: 2px;
+                x: active ? parent.width - self.width - 3px : 3px;
+                y: 3px;
+                animate x { duration: 350ms; easing: ease-in-out-back; }
             }
         }
     }
@@ -115,32 +150,58 @@ export component NavButton inherits Rectangle {
     in property <bool> selected: false;
     callback clicked;
 
-    height: 44px;
+    height: 48px;
     border-radius: 8px;
-    background: nb-ta.has-hover ? HveColors.bg-hover : transparent;
+    background: selected ? HveColors.bg-hover : ((nb-ta.has-hover || nb-fs.has-focus) ? HveColors.bg-hover.transparentize(0.5) : transparent);
+    animate background { duration: 200ms; }
 
     nb-ta := TouchArea {
         clicked => { root.clicked(); }
     }
 
+    nb-fs := FocusScope {
+        focus-on-tab-navigation: true;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+
+    // Indicador lateral animado — se expande desde 0 cuando está seleccionado
+    Rectangle {
+        width: 4px;
+        height: selected ? parent.height * 0.6 : 0px;
+        x: 0px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 2px;
+        background: accent;
+        animate height { duration: 250ms; easing: ease-in-out-back; }
+    }
+
     HorizontalLayout {
-        padding-left: 16px;
+        padding-left: 20px;
         padding-right: 16px;
-        spacing: 12px;
+        spacing: 14px;
 
         Text {
             text: root.icon-text;
             color: selected ? accent : HveColors.text-muted;
-            font-size: 16px;
+            font-size: 18px;
             vertical-alignment: center;
+            animate color { duration: 200ms; }
         }
 
         Text {
             text: root.label;
             color: selected ? HveColors.text : HveColors.text-muted;
-            font-size: 13px;
-            font-weight: selected ? 700 : 400;
+            font-size: 14px;
+            font-weight: selected ? 800 : 500;
             vertical-alignment: center;
+            animate color { duration: 200ms; }
         }
     }
 }
@@ -269,66 +330,83 @@ export component ActivationCard inherits Rectangle {
     in property <string> inactive-text: "System halted. Enable to start.";
     callback toggled(bool);
 
-    height: 100px;
+    height: 110px;
     border-radius: 12px;
-    background: HveColors.bg-card;
-    border-width: 1px;
+    background: active ? HveColors.bg-card : HveColors.bg-surface;
+    border-width: active ? 2px : 1px;
     border-color: active ? HveColors.accent-green : HveColors.border;
 
-    HorizontalLayout {
-        padding: 16px;
-        spacing: 16px;
+    // Glow verde cuando activo
+    drop-shadow-blur: active ? 16px : 0px;
+    drop-shadow-color: active ? HveColors.accent-green.transparentize(0.85) : transparent;
 
+    animate background { duration: 300ms; }
+    animate border-color { duration: 300ms; }
+    animate drop-shadow-blur { duration: 400ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding: 20px;
+        spacing: 20px;
+
+        // Icon
         Rectangle {
-            width: 48px;
-            height: 48px;
-            border-radius: 8px;
-            background: HveColors.bg-surface;
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            background: active ? HveColors.accent-green.transparentize(0.8) : HveColors.bg-dark;
+            animate background { duration: 300ms; }
 
             Text {
                 text: active ? "⚡" : "⏸";
-                font-size: 22px;
+                font-size: 26px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
 
+        // Text
         VerticalLayout {
-            spacing: 4px;
+            spacing: 6px;
             vertical-stretch: 1;
+            alignment: center;
 
             Text {
                 text: root.card-title;
-                color: HveColors.text;
-                font-size: 15px;
-                font-weight: 700;
+                color: active ? HveColors.text : HveColors.text-muted;
+                font-size: 18px;
+                font-weight: 800;
+                animate color { duration: 300ms; }
             }
 
             Text {
                 text: active ? root.active-text : root.inactive-text;
                 color: HveColors.text-muted;
-                font-size: 11px;
+                font-size: 12px;
                 wrap: word-wrap;
             }
         }
 
+        // Toggle master — vertical center
         Rectangle {
-            width: 52px;
-            height: 28px;
-            border-radius: 14px;
+            width: 60px;
+            height: 32px;
+            border-radius: 16px;
             background: active ? HveColors.accent-green : HveColors.border;
+            y: (parent.height - self.height) / 2;
+            animate background { duration: 300ms; }
 
             TouchArea {
                 clicked => { root.toggled(!root.active); }
             }
 
             Rectangle {
-                width: 22px;
-                height: 22px;
-                border-radius: 11px;
-                background: HveColors.bg-dark;
-                x: active ? parent.width - self.width - 3px : 3px;
-                y: 3px;
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                background: HveColors.text;
+                x: active ? parent.width - self.width - 4px : 4px;
+                y: 4px;
+                animate x { duration: 400ms; easing: ease-in-out-back; }
             }
         }
     }

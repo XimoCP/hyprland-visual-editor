@@ -97,11 +97,19 @@ _write_color_signal() {
     fi
 }
 
+# Notify the running HVE app to refresh its in-memory theme
+_notify_hve() {
+    if [ -x "$HVE_SCRIPTS_DIR/hve-ipc" ]; then
+        "$HVE_SCRIPTS_DIR/hve-ipc" refresh-theme 2>/dev/null
+    fi
+}
+
 # Force initial refresh: ensure overlay is up-to-date when watcher starts
 _log "Initial overlay refresh..."
 if bash "$ASSEMBLE_SCRIPT" >> "$LOG_FILE" 2>&1; then
     _log "Initial overlay refresh OK"
     _write_color_signal
+    _notify_hve
     _log "Color signal written"
 else
     _log "WARN: initial overlay refresh had issues (see log above)"
@@ -114,30 +122,37 @@ while true; do
     # shellcheck disable=SC2086
     inotifywait -q -e close_write -t 30 $WATCH_FILES 2>/dev/null
 
-    # Check if any file's content actually changed (hash-based detection)
-    changed=false
-    while IFS= read -r file; do
-        if [ -f "$file" ]; then
-            current_hash=$(md5sum "$file" 2>/dev/null | cut -d' ' -f1)
-            if [ "$current_hash" != "${LAST_HASHES[$file]}" ]; then
-                LAST_HASHES["$file"]="$current_hash"
-                changed=true
-                _log "Change detected: $file"
+    # Inner loop: keep processing while rapid changes are detected, so events
+    # that happen during processing don't get lost (inotifywait is one-shot).
+    while true; do
+        # Check if any file's content actually changed (hash-based detection)
+        changed=false
+        while IFS= read -r file; do
+            if [ -f "$file" ]; then
+                current_hash=$(md5sum "$file" 2>/dev/null | cut -d' ' -f1)
+                if [ "$current_hash" != "${LAST_HASHES[$file]}" ]; then
+                    LAST_HASHES["$file"]="$current_hash"
+                    changed=true
+                    _log "Change detected: $file"
+                fi
+            else
+                _log "WARN: watched file no longer exists: $file"
             fi
-        else
-            _log "WARN: watched file no longer exists: $file"
-        fi
-    done <<< "$WATCH_FILES"
+        done <<< "$WATCH_FILES"
 
-    if [ "$changed" = true ]; then
+        if [ "$changed" = false ]; then
+            break
+        fi
+
         _log "Regenerating overlay..."
         # Run assemble.sh — stderr goes to log so we can see if it fails
         if bash "$ASSEMBLE_SCRIPT" >> "$LOG_FILE" 2>&1; then
             _log "Overlay regenerated OK"
             _write_color_signal
-            _log "Color signal written"
+            _notify_hve
+            _log "Color signal written, IPC sent"
         else
             _log "ERROR: assemble.sh failed (see log above)"
         fi
-    fi
+    done
 done
