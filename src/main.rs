@@ -230,15 +230,21 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Visibilidad inicial según el modo ──
     if tray_mode {
-        // En modo tray, la ventana ya nace oculta, pero actualizamos los estados atómicos
         ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
         ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("Starting in tray mode (window hidden)");
     } else {
-        // En modo normal, DEBEMOS mostrar la ventana explícitamente
         window.show()?;
         ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
         ipc::TRAY_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        // En Wayland/Hyprland, show() no garantiza foco automático.
+        // Forzamos foco via hyprctl para evitar el doble-click inicial.
+        slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
+            let _ = std::process::Command::new("hyprctl")
+                .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
+                .output();
+        });
     }
 
     // ── Global event loop (decoupled from window lifecycle) ──
