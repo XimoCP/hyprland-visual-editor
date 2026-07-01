@@ -10,12 +10,12 @@ export component PresetCard inherits Rectangle {
     in property <bool> active: false;
     callback toggled(bool);
 
-    height: (active || ta.has-hover) ? 120px : 68px;
+    height: (active || ta.has-hover || fs.has-focus) ? 120px : 68px;
     border-radius: 10px;
     clip: true;
-    background: active ? HveColors.bg-hover : (ta.has-hover ? HveColors.bg-hover : HveColors.bg-card);
+    background: active ? HveColors.bg-hover : ((ta.has-hover || fs.has-focus) ? HveColors.bg-hover : HveColors.bg-card);
     border-width: active ? 2px : 1px;
-    border-color: active ? accent : (ta.has-hover ? accent.transparentize(0.6) : HveColors.border);
+    border-color: active ? accent : ((ta.has-hover || fs.has-focus) ? accent.transparentize(0.6) : HveColors.border);
 
     // Glow sutil al estar activo
     drop-shadow-blur: active ? 12px : 0px;
@@ -63,7 +63,7 @@ export component PresetCard inherits Rectangle {
 
                         Text {
                             text: root.title;
-                            color: active ? HveColors.text : (ta.has-hover ? HveColors.text : HveColors.text-muted);
+                            color: active ? HveColors.text : ((ta.has-hover || fs.has-focus) ? HveColors.text : HveColors.text-muted);
                             font-size: 14px;
                             font-weight: active ? 700 : 500;
                             vertical-alignment: center;
@@ -97,7 +97,7 @@ export component PresetCard inherits Rectangle {
                         color: HveColors.text-muted;
                         font-size: 12px;
                         overflow: elide;
-                        wrap: (active || ta.has-hover) ? word-wrap : no-wrap;
+                        wrap: (active || ta.has-hover || fs.has-focus) ? word-wrap : no-wrap;
                     }
                 }
             }
@@ -123,11 +123,30 @@ export component PresetCard inherits Rectangle {
         }
     }
 
+    // ── FocusScope (workaround: focus-on-click: false) ──
+    fs := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: true;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.toggled(!root.active);
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+
     // ── TouchArea (encima de todo) ──
     ta := TouchArea {
         width: 100%;
         height: 100%;
         clicked => { root.toggled(!root.active); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                fs.focus();
+            }
+        }
     }
 }
 
@@ -141,7 +160,7 @@ export component NavButton inherits Rectangle {
 
     height: 48px;
     border-radius: 8px;
-    background: selected ? HveColors.bg-hover : (nb-ta.has-hover ? HveColors.bg-hover.transparentize(0.5) : transparent);
+    background: selected ? HveColors.bg-hover : ((nb-ta.has-hover || nb-fs.has-focus) ? HveColors.bg-hover.transparentize(0.5) : transparent);
     animate background { duration: 200ms; }
 
     // ── Indicador lateral + contenido (detrás) ──
@@ -162,7 +181,7 @@ export component NavButton inherits Rectangle {
 
         Text {
             text: root.icon-text;
-            color: selected ? accent : HveColors.text-muted;
+            color: selected ? accent : (nb-fs.has-focus ? accent : HveColors.text-muted);
             font-size: 18px;
             vertical-alignment: center;
             animate color { duration: 200ms; }
@@ -170,11 +189,25 @@ export component NavButton inherits Rectangle {
 
         Text {
             text: root.label;
-            color: selected ? HveColors.text : HveColors.text-muted;
+            color: selected ? HveColors.text : ((nb-ta.has-hover || nb-fs.has-focus) ? HveColors.text : HveColors.text-muted);
             font-size: 14px;
-            font-weight: selected ? 800 : 500;
+            font-weight: selected ? 800 : (nb-fs.has-focus ? 700 : 500);
             vertical-alignment: center;
             animate color { duration: 200ms; }
+        }
+    }
+
+    // ── FocusScope (workaround: focus-on-click: false) ──
+    nb-fs := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: true;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                accept
+            } else {
+                reject
+            }
         }
     }
 
@@ -183,6 +216,11 @@ export component NavButton inherits Rectangle {
         width: 100%;
         height: 100%;
         clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                nb-fs.focus();
+            }
+        }
     }
 }
 
