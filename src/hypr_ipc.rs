@@ -150,6 +150,8 @@ where
         }
     };
 
+    tracing::info!("[focus] Focus listener connecting to {:?}", ipc.socket_path);
+
     let lost = std::sync::Arc::new(on_focus_lost);
     let gained = std::sync::Arc::new(on_focus_gained);
 
@@ -189,17 +191,21 @@ where
         .write_all(b"subscribe\n")
         .map_err(|e| format!("Cannot subscribe: {}", e))?;
 
+    tracing::info!("[focus] Connected and subscribed to Hyprland events");
+
     let reader = BufReader::new(stream);
     for line in reader.lines() {
         match line {
             Ok(line) => {
-                // `activewindow` event → "activewindow>>window_title"
+                // `activewindow` event → "activewindow>>CLASS,TITLE"
                 if line.starts_with("activewindow>>") {
+                    tracing::debug!("[focus] activewindow event: {}", line);
                     let title = line.trim_start_matches("activewindow>>");
                     if title.contains(HVE_WINDOW_TITLE) {
+                        tracing::info!("[focus] Foco GANADO (HVE)");
                         on_focus_gained();
                     } else if !title.is_empty() {
-                        // Cualquier otra ventana activa → perdimos foco
+                        tracing::info!("[focus] Foco PERDIDO -> '{}'", title);
                         on_focus_lost();
                     }
                     // Si title está vacío, no actuar (transición entre escritorios)

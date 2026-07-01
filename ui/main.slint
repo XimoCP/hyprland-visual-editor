@@ -91,22 +91,7 @@ export component MainWindow inherits Window {
     callback apply-geometry(int);
     callback close-button-clicked();
 
-    VerticalLayout {
-        // ── Close button bar (top-right of the full window) ──
-        HorizontalLayout {
-            padding-right: 12px;
-            padding-top: 8px;
-            height: 36px;
-            alignment: end;
-
-            CloseButton {
-                countdown-active: root.countdown-active;
-                countdown-seconds: root.countdown-seconds;
-                countdown-progress: root.countdown-progress;
-                clicked => { root.close-button-clicked(); }
-            }
-        }
-
+    Rectangle {
         // ── Main content (sidebar + content area) ──
         HorizontalLayout {
             // ── Sidebar ──
@@ -240,6 +225,16 @@ export component MainWindow inherits Window {
                     shader-toggled(idx, file) => { root.apply-shader(idx, file); }
                 }
             }
+        }
+
+        // ── Close button floating at top-right (absolute, overlays content) ──
+        CloseButton {
+            x: parent.width - self.width - 12px;
+            y: 12px;
+            countdown-active: root.countdown-active;
+            countdown-seconds: root.countdown-seconds;
+            countdown-progress: root.countdown-progress;
+            clicked => { root.close-button-clicked(); }
         }
     }
 }
