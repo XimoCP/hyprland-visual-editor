@@ -1,69 +1,231 @@
 import { ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
-import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard, AccordionCard } from "./components.slint";
+import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard, AccordionCard, NavCard } from "./components.slint";
 
-// �── HOME MODULE ────────────────────────────────────────────────────
+// ─── HOME MODULE �───────────────────────────────────────────────────
 export component HomeModule inherits ScrollView {
     in property <bool> system-active: false;
-    in property <string> header-title;
-    in property <string> header-subtitle;
+    in property <[string]> anim-titles;
+    in property <[string]> border-titles;
+    in property <[string]> shader-titles;
+    in property <int> active-anim-index: -1;
+    in property <int> active-border-index: -1;
+    in property <int> active-shader-index: -1;
     in property <string> activation-title;
     in property <string> activation-active-text;
     in property <string> activation-inactive-text;
-    in property <string> feature-title;
-    in property <string> feature-desc;
-    in property <string> how-title;
-    in property <string> how-desc;
     callback toggle-system(bool);
-
-    // ── Accordion state (0=none, 1=features, 2=architecture) ──
-    in-out property <int> expanded-index: 0;
+    callback navigate-to(int);
 
     VerticalLayout {
-        padding: 24px;
-        spacing: 12px;
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 32px;
+        padding-bottom: 24px;
+        spacing: 20px;
 
-        SectionHeader {
-            title: root.header-title;
-            subtitle: root.header-subtitle;
+        // ── Hero ──
+        VerticalLayout {
+            spacing: 2px;
+
+            Text {
+                text: "HVE";
+                font-size: 36px;
+                font-weight: 900;
+                color: HveColors.accent-green;
+                letter-spacing: 4px;
+            }
+
+            Text {
+                text: "Hyprland Visual Editor";
+                font-size: 14px;
+                color: HveColors.text-muted;
+            }
+        }
+
+        // ── Status Card ──
+        Rectangle {
+            border-radius: 14px;
+            background: root.system-active ? HveColors.bg-card : HveColors.bg-surface;
+            border-width: 2px;
+            border-color: root.system-active ? HveColors.accent-green : HveColors.accent-red;
+            drop-shadow-blur: root.system-active ? 16px : 0px;
+            drop-shadow-color: root.system-active ? HveColors.accent-green.transparentize(0.85) : transparent;
+
+            animate background { duration: 300ms; }
+            animate border-color { duration: 300ms; }
+            animate drop-shadow-blur { duration: 400ms; easing: ease-out; }
+
+            HorizontalLayout {
+                padding: 24px;
+                spacing: 20px;
+
+                Rectangle {
+                    width: 52px;
+                    height: 52px;
+                    border-radius: 14px;
+                    background: root.system-active ? HveColors.accent-green.transparentize(0.8) : HveColors.accent-red.transparentize(0.85);
+                    animate background { duration: 300ms; }
+
+                    Text {
+                        text: root.system-active ? "�" : "⏸";
+                        font-size: 26px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: root.system-active ? "Sistema Activo" : "Sistema Detenido";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: HveColors.text;
+                    }
+
+                    Text {
+                        text: root.system-active ? root.activation-active-text : root.activation-inactive-text;
+                        font-size: 12px;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Rectangle {
+                    width: 56px;
+                    height: 30px;
+                    border-radius: 15px;
+                    background: root.system-active ? HveColors.accent-green : HveColors.border;
+                    y: (parent.height - self.height) / 2;
+                    animate background { duration: 300ms; }
+
+                    TouchArea {
+                        clicked => { root.toggle-system(!root.system-active); }
+                    }
+
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 12px;
+                        background: HveColors.text;
+                        x: root.system-active ? parent.width - self.width - 3px : 3px;
+                        y: 3px;
+                        animate x { duration: 400ms; easing: ease-in-out-back; }
+                    }
+                }
+            }
+        }
+
+        // ── Quick Nav Cards ──
+        HorizontalLayout {
+            spacing: 12px;
+
+            NavCard {
+                icon-text: "▶";
+                label: "Animaciones";
+                count-text: root.anim-titles.length + " estilos";
+                accent: HveColors.accent-amber;
+                clicked => { root.navigate-to(1); }
+            }
+
+            NavCard {
+                icon-text: "◻";
+                label: "Bordes";
+                count-text: root.border-titles.length + " estilos";
+                accent: HveColors.accent-green;
+                clicked => { root.navigate-to(2); }
+            }
+
+            NavCard {
+                icon-text: "◆";
+                label: "Shaders";
+                count-text: root.shader-titles.length + " filtros";
+                accent: HveColors.accent-purple;
+                clicked => { root.navigate-to(3); }
+            }
+        }
+
+        // ── Active Configuration ──
+        if root.system-active: Rectangle {
+            border-radius: 10px;
+            background: HveColors.bg-card;
+            border-width: 1px;
+            border-color: HveColors.border;
+
+            VerticalLayout {
+                padding: 18px;
+                spacing: 10px;
+
+                Text {
+                    text: "Configuración Activa";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: HveColors.text-muted;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        width: 8px; height: 8px; border-radius: 4px;
+                        background: HveColors.accent-amber; y: 4px;
+                    }
+                    Text {
+                        text: "Animación:";
+                        font-size: 12px; color: HveColors.text-muted;
+                    }
+                    Text {
+                        text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : "Ninguna";
+                        font-size: 12px; font-weight: 600; color: HveColors.text;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        width: 8px; height: 8px; border-radius: 4px;
+                        background: HveColors.accent-green; y: 4px;
+                    }
+                    Text {
+                        text: "Borde:";
+                        font-size: 12px; color: HveColors.text-muted;
+                    }
+                    Text {
+                        text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : "Ninguno";
+                        font-size: 12px; font-weight: 600; color: HveColors.text;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        width: 8px; height: 8px; border-radius: 4px;
+                        background: HveColors.accent-purple; y: 4px;
+                    }
+                    Text {
+                        text: "Shader:";
+                        font-size: 12px; color: HveColors.text-muted;
+                    }
+                    Text {
+                        text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : "Ninguno";
+                        font-size: 12px; font-weight: 600; color: HveColors.text;
+                    }
+                }
+            }
+        }
+
+        // �─ About ──
+        AccordionCard {
+            card-title: "Acerca de HVE";
+            icon-text: "💡";
             accent: HveColors.accent-cyan;
-        }
-
-        // ── Activation (always visible, not in accordion) ──
-        ActivationCard {
-            card-title: root.activation-title;
-            active-text: root.activation-active-text;
-            inactive-text: root.activation-inactive-text;
-            active: root.system-active;
-            toggled(v) => { root.toggle-system(v); }
-        }
-
-        // ── Features accordion card ──
-        AccordionCard {
-            card-title: "Características & Bondades";
-            icon-text: "★";
-            accent: HveColors.accent-amber;
-            border: root.expanded-index == 1 ? HveColors.accent-amber : HveColors.accent-red.transparentize(0.3);
+            border: self.expanded ? HveColors.accent-cyan : HveColors.accent-red.transparentize(0.3);
             short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
-            full-desc: "✨ Animaciones Fluidas\n🎨 Bordes Inteligentes\n🕶️ Shaders en Tiempo Real\n🛡️ No Destructivo";
-            expanded: root.expanded-index == 1;
-            toggled => {
-                root.expanded-index = (root.expanded-index == 1) ? 0 : 1;
-            }
-        }
-
-        // ── Architecture accordion card ──
-        AccordionCard {
-            card-title: "Arquitectura y Documentación";
-            icon-text: "⚙";
-            accent: HveColors.accent-purple;
-            border: root.expanded-index == 2 ? HveColors.accent-purple : HveColors.accent-red.transparentize(0.3);
-            short-desc: "Descubre cómo funciona HVE por debajo.";
-            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado.";
-            expanded: root.expanded-index == 2;
-            toggled => {
-                root.expanded-index = (root.expanded-index == 2) ? 0 : 2;
-            }
+            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n① Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
+            expanded: false;
+            toggled => { }
         }
     }
 }

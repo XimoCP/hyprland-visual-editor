@@ -176,17 +176,18 @@ export component MainWindow inherits Window {
                 vertical-stretch: 1;
 
                 if active-tab == 0: HomeModule {
-                    header-title: root.home-header-title;
-                    header-subtitle: root.home-header-subtitle;
+                    anim-titles: root.anim-titles;
+                    border-titles: root.border-titles;
+                    shader-titles: root.shader-titles;
+                    active-anim-index: root.active-anim-index;
+                    active-border-index: root.active-border-index;
+                    active-shader-index: root.active-shader-index;
                     activation-title: root.activation-title;
                     activation-active-text: root.activation-active-text;
                     activation-inactive-text: root.activation-inactive-text;
-                    feature-title: root.feature-title;
-                    feature-desc: root.feature-desc;
-                    how-title: root.how-title;
-                    how-desc: root.how-desc;
                     system-active: root.system-active;
                     toggle-system(v) => { root.toggle-system(v); }
+                    navigate-to(tab) => { root.active-tab = tab; }
                 }
 
                 if active-tab == 1: AnimationsModule {
