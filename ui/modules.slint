@@ -1,9 +1,9 @@
 import { ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
-import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard } from "./components.slint";
+import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard, ExpandableCard } from "./components.slint";
 
 // ─── HOME MODULE ────────────────────────────────────────────────────
-export component HomeModule inherits VerticalLayout {
+export component HomeModule inherits ScrollView {
     in property <bool> system-active: false;
     in property <string> header-title;
     in property <string> header-subtitle;
@@ -16,35 +16,37 @@ export component HomeModule inherits VerticalLayout {
     in property <string> how-desc;
     callback toggle-system(bool);
 
-    spacing: 16px;
-    padding: 24px;
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
 
-    SectionHeader {
-        title: root.header-title;
-        subtitle: root.header-subtitle;
-        accent: HveColors.accent-cyan;
-    }
+        SectionHeader {
+            title: root.header-title;
+            subtitle: root.header-subtitle;
+            accent: HveColors.accent-cyan;
+        }
 
-    ActivationCard {
-        card-title: root.activation-title;
-        active-text: root.activation-active-text;
-        inactive-text: root.activation-inactive-text;
-        active: root.system-active;
-        toggled(v) => { root.toggle-system(v); }
-    }
+        ActivationCard {
+            card-title: root.activation-title;
+            active-text: root.activation-active-text;
+            inactive-text: root.activation-inactive-text;
+            active: root.system-active;
+            toggled(v) => { root.toggle-system(v); }
+        }
 
-    WelcomeCard {
-        card-title: root.feature-title;
-        icon-text: "★";
-        accent: HveColors.accent-amber;
-        description: root.feature-desc;
-    }
+        ExpandableCard {
+            card-title: root.feature-title;
+            icon-text: "★";
+            accent: HveColors.accent-amber;
+            description: "✨ Animaciones fluidas — cambiá entre estilos en milisegundos.\n🎨 Bordes inteligentes — gradientes dinámicos reactivos.\n🕶️ Shaders en tiempo real — filtros GLSL post-procesado.\n🛡️ No destructivo — nunca toca tu config principal. Sandbox seguro.";
+        }
 
-    WelcomeCard {
-        card-title: root.how-title;
-        icon-text: "⚙";
-        accent: HveColors.accent-purple;
-        description: root.how-desc;
+        ExpandableCard {
+            card-title: root.how-title;
+            icon-text: "⚙";
+            accent: HveColors.accent-purple;
+            description: "HVE usa un sistema de Fragmentos y Ensamblado en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en ~/.cache/hve/.\n\n① Detección de entorno — identifica formato Lua vs Conf\n② Ensamblado atómico — fusiona módulos activos en un archivo maestro\n③ Hot Reload — aplica cambios al instante vía hyprctl\n④ Guardian Shield — limpia todo al desactivar, sin errores en Hyprland";
+        }
     }
 }
 

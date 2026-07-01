@@ -521,3 +521,105 @@ export component ActivationCard inherits Rectangle {
         }
     }
 }
+
+// ─── Expandable Card ─────────────────────────────────────────────────
+export component ExpandableCard inherits Rectangle {
+    in property <string> card-title;
+    in property <string> icon-text;
+    in property <color> accent;
+    in property <string> description;
+    in-out property <bool> expanded: false;
+
+    height: expanded ? 200px : 52px;
+    border-radius: 10px;
+    background: HveColors.bg-card;
+    border-width: 1px;
+    border-color: expanded ? accent.transparentize(0.5) : (ec-ta.has-hover || ec-fs.has-focus ? accent.transparentize(0.3) : HveColors.border);
+    clip: true;
+
+    animate height { duration: 300ms; easing: ease-in-out-back; }
+    animate border-color { duration: 250ms; }
+
+    // ── Header (always visible) ──
+    Rectangle {
+        height: 52px;
+        background: (ec-ta.has-hover || ec-fs.has-focus) ? HveColors.bg-hover : transparent;
+        animate background { duration: 200ms; }
+
+        HorizontalLayout {
+            padding: 14px;
+            spacing: 12px;
+            vertical-stretch: 1;
+
+            Text {
+                text: root.icon-text;
+                font-size: 16px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.card-title;
+                color: HveColors.text;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            Text {
+                text: root.expanded ? "▲" : "▼";
+                color: accent;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    // ── Content (below header) ──
+    VerticalLayout {
+        y: 52px;
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-bottom: 16px;
+        spacing: 8px;
+        width: 100%;
+
+        Rectangle {
+            height: 1px;
+            background: HveColors.border;
+        }
+
+        Text {
+            text: root.description;
+            color: HveColors.text-muted;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+
+    // ── TouchArea (header click) ──
+    ec-ta := TouchArea {
+        width: 100%;
+        height: 52px;
+        clicked => { root.expanded = !root.expanded; }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                ec-fs.focus();
+            }
+        }
+    }
+
+    // ── FocusScope (keyboard) ──
+    ec-fs := FocusScope {
+        width: 100%;
+        height: 52px;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) {
+                root.expanded = !root.expanded;
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+}
