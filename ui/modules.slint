@@ -60,7 +60,7 @@ export component HomeModule inherits ScrollView {
                 padding: 24px;
                 spacing: 20px;
 
-                Rectangle {
+Rectangle {
                     width: 52px;
                     height: 52px;
                     border-radius: 14px;
@@ -68,8 +68,9 @@ export component HomeModule inherits ScrollView {
                     animate background { duration: 300ms; }
 
                     Text {
-                        text: root.system-active ? "�" : "⏸";
-                        font-size: 26px;
+                        text: root.system-active ? "●" : "○";
+                        font-size: 28px;
+                        color: root.system-active ? HveColors.accent-green : HveColors.accent-red;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -132,7 +133,7 @@ export component HomeModule inherits ScrollView {
             }
 
             NavCard {
-                icon-text: "◻";
+                icon-text: "□";
                 label: "Bordes";
                 count-text: root.border-titles.length + " estilos";
                 accent: HveColors.accent-green;
@@ -140,7 +141,7 @@ export component HomeModule inherits ScrollView {
             }
 
             NavCard {
-                icon-text: "◆";
+                icon-text: "◇";
                 label: "Shaders";
                 count-text: root.shader-titles.length + " filtros";
                 accent: HveColors.accent-purple;
@@ -175,10 +176,13 @@ export component HomeModule inherits ScrollView {
                     Text {
                         text: "Animación:";
                         font-size: 12px; color: HveColors.text-muted;
+                        width: 80px;
                     }
                     Text {
                         text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : "Ninguna";
                         font-size: 12px; font-weight: 600; color: HveColors.text;
+                        horizontal-stretch: 1;
+                        horizontal-alignment: right;
                     }
                 }
 
@@ -191,10 +195,13 @@ export component HomeModule inherits ScrollView {
                     Text {
                         text: "Borde:";
                         font-size: 12px; color: HveColors.text-muted;
+                        width: 80px;
                     }
                     Text {
                         text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : "Ninguno";
                         font-size: 12px; font-weight: 600; color: HveColors.text;
+                        horizontal-stretch: 1;
+                        horizontal-alignment: right;
                     }
                 }
 
@@ -207,10 +214,13 @@ export component HomeModule inherits ScrollView {
                     Text {
                         text: "Shader:";
                         font-size: 12px; color: HveColors.text-muted;
+                        width: 80px;
                     }
                     Text {
                         text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : "Ninguno";
                         font-size: 12px; font-weight: 600; color: HveColors.text;
+                        horizontal-stretch: 1;
+                        horizontal-alignment: right;
                     }
                 }
             }
@@ -221,9 +231,9 @@ export component HomeModule inherits ScrollView {
             card-title: "Acerca de HVE";
             icon-text: "💡";
             accent: HveColors.accent-cyan;
-            border: self.expanded ? HveColors.accent-cyan : HveColors.accent-red.transparentize(0.3);
+            border: HveColors.border;
             short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
-            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n① Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
+            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
             expanded: false;
             toggled => { }
         }

@@ -628,7 +628,7 @@ export component NavCard inherits Rectangle {
 
     height: nc-ta.has-hover ? 84px : 64px;
     border-radius: 10px;
-    background: nc-ta.has-hover ? accent.transparentize(0.92) : HveColors.bg-surface;
+    background: nc-ta.has-hover ? accent.transparentize(0.92) : HveColors.bg-card;
     border-width: 1px;
     border-color: nc-ta.has-hover ? accent : HveColors.border;
 
@@ -647,7 +647,7 @@ export component NavCard inherits Rectangle {
 
         Text {
             text: root.icon-text;
-            font-size: 20px;
+            font-size: 24px;
             color: accent;
             horizontal-alignment: center;
         }
