@@ -523,34 +523,40 @@ export component ActivationCard inherits Rectangle {
 }
 
 
-// ─── Expandable Card (Accordion, hover-triggered) ────────────────────
-export component ExpandableCard inherits Rectangle {
+// �── Accordion Card ──────────────────────────────────────────────────
+// Click to expand. Parent manages accordion via `expanded` property.
+// Border color is set by parent to support activation red/green states.
+export component AccordionCard inherits Rectangle {
     in property <string> card-title;
     in property <string> icon-text;
     in property <color> accent;
+    in property <color> border;
     in property <string> short-desc;
     in property <string> full-desc;
     in property <bool> expanded: false;
-    callback hovered();
+    callback toggled();
 
-    height: expanded ? 160px : 80px;
+    height: expanded ? 160px : 68px;
     border-radius: 10px;
     background: HveColors.bg-card;
     border-width: 1.5px;
-    border-color: expanded ? accent : HveColors.accent-red;
+    border-color: border;
     clip: true;
 
-    animate height { duration: 300ms; easing: ease-in-out-back; }
+    animate height { duration: 250ms; easing: ease-in-out-back; }
     animate border-color { duration: 250ms; }
 
     // ── Header ──
     Rectangle {
-        height: 40px;
+        height: 44px;
         background: expanded ? HveColors.bg-hover : transparent;
         animate background { duration: 200ms; }
 
         HorizontalLayout {
-            padding: 12px;
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 12px;
+            padding-bottom: 12px;
             spacing: 10px;
             vertical-stretch: 1;
 
@@ -571,7 +577,7 @@ export component ExpandableCard inherits Rectangle {
 
             Text {
                 text: root.expanded ? "▲" : "▼";
-                color: expanded ? accent : HveColors.accent-red;
+                color: root.border;
                 font-size: 9px;
                 vertical-alignment: center;
             }
@@ -580,10 +586,10 @@ export component ExpandableCard inherits Rectangle {
 
     // ── Short description (always visible) ──
     Text {
-        y: 40px;
-        x: 12px;
-        width: parent.width - 24px;
-        height: 32px;
+        y: 44px;
+        x: 14px;
+        width: parent.width - 28px;
+        height: 24px;
         text: root.short-desc;
         color: HveColors.text-muted;
         font-size: 11px;
@@ -593,10 +599,10 @@ export component ExpandableCard inherits Rectangle {
 
     // ── Full content (only when expanded) ──
     if expanded: VerticalLayout {
-        y: 72px;
-        padding-left: 12px;
-        padding-right: 12px;
-        padding-bottom: 8px;
+        y: 68px;
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-bottom: 10px;
         spacing: 4px;
         width: 100%;
 
@@ -613,18 +619,10 @@ export component ExpandableCard inherits Rectangle {
         }
     }
 
-    // ─ TouchArea for hover detection ──
-    ec-ta := TouchArea {
+    // ── TouchArea ──
+    ac-ta := TouchArea {
         width: 100%;
         height: 100%;
-        property <bool> was-hovered: false;
-        pointer-event(event) => {
-            if ec-ta.has-hover && !ec-ta.was-hovered {
-                ec-ta.was-hovered = true;
-                root.hovered();
-            } else if !ec-ta.has-hover {
-                ec-ta.was-hovered = false;
-            }
-        }
+        clicked => { root.toggled(); }
     }
 }

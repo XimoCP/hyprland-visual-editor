@@ -1,8 +1,8 @@
 import { ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
-import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard, ExpandableCard } from "./components.slint";
+import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard, AccordionCard } from "./components.slint";
 
-// ─── HOME MODULE ────────────────────────────────────────────────────
+// �── HOME MODULE ────────────────────────────────────────────────────
 export component HomeModule inherits ScrollView {
     in property <bool> system-active: false;
     in property <string> header-title;
@@ -16,7 +16,7 @@ export component HomeModule inherits ScrollView {
     in property <string> how-desc;
     callback toggle-system(bool);
 
-    // ─ Accordion state: which card is expanded (0=none, 1=features, 2=architecture) ──
+    // ── Accordion state (0=none, 1=features, 2=architecture) ──
     in-out property <int> expanded-index: 0;
 
     VerticalLayout {
@@ -29,6 +29,7 @@ export component HomeModule inherits ScrollView {
             accent: HveColors.accent-cyan;
         }
 
+        // ── Activation (always visible, not in accordion) ──
         ActivationCard {
             card-title: root.activation-title;
             active-text: root.activation-active-text;
@@ -37,24 +38,32 @@ export component HomeModule inherits ScrollView {
             toggled(v) => { root.toggle-system(v); }
         }
 
-        ExpandableCard {
-            card-title: root.feature-title;
+        // ── Features accordion card ──
+        AccordionCard {
+            card-title: "Características & Bondades";
             icon-text: "★";
             accent: HveColors.accent-amber;
+            border: root.expanded-index == 1 ? HveColors.accent-amber : HveColors.accent-red.transparentize(0.3);
             short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
-            full-desc: "✨ Animaciones fluidas — cambiá entre estilos en milisegundos.\n🎨 Bordes inteligentes — gradientes dinámicos reactivos.\n🕶️ Shaders en tiempo real — filtros GLSL post-procesado.\n🛡️ No destructivo — nunca toca tu config principal. Sandbox seguro.";
+            full-desc: "✨ Animaciones Fluidas\n🎨 Bordes Inteligentes\n🕶️ Shaders en Tiempo Real\n🛡️ No Destructivo";
             expanded: root.expanded-index == 1;
-            hovered => { root.expanded-index = 1; }
+            toggled => {
+                root.expanded-index = (root.expanded-index == 1) ? 0 : 1;
+            }
         }
 
-        ExpandableCard {
-            card-title: root.how-title;
+        // ── Architecture accordion card ──
+        AccordionCard {
+            card-title: "Arquitectura y Documentación";
             icon-text: "⚙";
             accent: HveColors.accent-purple;
-            short-desc: "Descubrí cómo HVE funciona por dentro.";
-            full-desc: "① Detección de entorno — identifica formato Lua vs Conf\n② Ensamblado atómico — fusiona módulos activos en un archivo maestro\n③ Hot Reload — aplica cambios al instante vía hyprctl\n④ Guardian Shield — limpia todo al desactivar, sin errores en Hyprland";
+            border: root.expanded-index == 2 ? HveColors.accent-purple : HveColors.accent-red.transparentize(0.3);
+            short-desc: "Descubre cómo funciona HVE por debajo.";
+            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado.";
             expanded: root.expanded-index == 2;
-            hovered => { root.expanded-index = 2; }
+            toggled => {
+                root.expanded-index = (root.expanded-index == 2) ? 0 : 2;
+            }
         }
     }
 }
