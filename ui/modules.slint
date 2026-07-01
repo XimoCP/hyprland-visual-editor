@@ -16,6 +16,9 @@ export component HomeModule inherits ScrollView {
     in property <string> how-desc;
     callback toggle-system(bool);
 
+    // ─ Accordion state: which card is expanded (0=none, 1=features, 2=architecture) ──
+    in-out property <int> expanded-index: 0;
+
     VerticalLayout {
         padding: 24px;
         spacing: 12px;
@@ -38,14 +41,20 @@ export component HomeModule inherits ScrollView {
             card-title: root.feature-title;
             icon-text: "★";
             accent: HveColors.accent-amber;
-            description: "✨ Animaciones fluidas — cambiá entre estilos en milisegundos.\n🎨 Bordes inteligentes — gradientes dinámicos reactivos.\n🕶️ Shaders en tiempo real — filtros GLSL post-procesado.\n🛡️ No destructivo — nunca toca tu config principal. Sandbox seguro.";
+            short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
+            full-desc: "✨ Animaciones fluidas — cambiá entre estilos en milisegundos.\n🎨 Bordes inteligentes — gradientes dinámicos reactivos.\n🕶️ Shaders en tiempo real — filtros GLSL post-procesado.\n🛡️ No destructivo — nunca toca tu config principal. Sandbox seguro.";
+            expanded: root.expanded-index == 1;
+            hovered => { root.expanded-index = 1; }
         }
 
         ExpandableCard {
             card-title: root.how-title;
             icon-text: "⚙";
             accent: HveColors.accent-purple;
-            description: "HVE usa un sistema de Fragmentos y Ensamblado en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en ~/.cache/hve/.\n\n① Detección de entorno — identifica formato Lua vs Conf\n② Ensamblado atómico — fusiona módulos activos en un archivo maestro\n③ Hot Reload — aplica cambios al instante vía hyprctl\n④ Guardian Shield — limpia todo al desactivar, sin errores en Hyprland";
+            short-desc: "Descubrí cómo HVE funciona por dentro.";
+            full-desc: "① Detección de entorno — identifica formato Lua vs Conf\n② Ensamblado atómico — fusiona módulos activos en un archivo maestro\n③ Hot Reload — aplica cambios al instante vía hyprctl\n④ Guardian Shield — limpia todo al desactivar, sin errores en Hyprland";
+            expanded: root.expanded-index == 2;
+            hovered => { root.expanded-index = 2; }
         }
     }
 }

@@ -522,45 +522,48 @@ export component ActivationCard inherits Rectangle {
     }
 }
 
-// ─── Expandable Card ─────────────────────────────────────────────────
+
+// ─── Expandable Card (Accordion, hover-triggered) ────────────────────
 export component ExpandableCard inherits Rectangle {
     in property <string> card-title;
     in property <string> icon-text;
     in property <color> accent;
-    in property <string> description;
-    in-out property <bool> expanded: false;
+    in property <string> short-desc;
+    in property <string> full-desc;
+    in property <bool> expanded: false;
+    callback hovered();
 
-    height: expanded ? 200px : 52px;
+    height: expanded ? 160px : 80px;
     border-radius: 10px;
     background: HveColors.bg-card;
-    border-width: 1px;
-    border-color: expanded ? accent.transparentize(0.5) : (ec-ta.has-hover || ec-fs.has-focus ? accent.transparentize(0.3) : HveColors.border);
+    border-width: 1.5px;
+    border-color: expanded ? accent : HveColors.accent-red;
     clip: true;
 
     animate height { duration: 300ms; easing: ease-in-out-back; }
     animate border-color { duration: 250ms; }
 
-    // ── Header (always visible) ──
+    // ── Header ──
     Rectangle {
-        height: 52px;
-        background: (ec-ta.has-hover || ec-fs.has-focus) ? HveColors.bg-hover : transparent;
+        height: 40px;
+        background: expanded ? HveColors.bg-hover : transparent;
         animate background { duration: 200ms; }
 
         HorizontalLayout {
-            padding: 14px;
-            spacing: 12px;
+            padding: 12px;
+            spacing: 10px;
             vertical-stretch: 1;
 
             Text {
                 text: root.icon-text;
-                font-size: 16px;
+                font-size: 14px;
                 vertical-alignment: center;
             }
 
             Text {
                 text: root.card-title;
                 color: HveColors.text;
-                font-size: 14px;
+                font-size: 13px;
                 font-weight: 600;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
@@ -568,20 +571,33 @@ export component ExpandableCard inherits Rectangle {
 
             Text {
                 text: root.expanded ? "▲" : "▼";
-                color: accent;
-                font-size: 10px;
+                color: expanded ? accent : HveColors.accent-red;
+                font-size: 9px;
                 vertical-alignment: center;
             }
         }
     }
 
-    // ── Content (below header) ──
-    VerticalLayout {
-        y: 52px;
-        padding-left: 20px;
-        padding-right: 20px;
-        padding-bottom: 16px;
-        spacing: 8px;
+    // ── Short description (always visible) ──
+    Text {
+        y: 40px;
+        x: 12px;
+        width: parent.width - 24px;
+        height: 32px;
+        text: root.short-desc;
+        color: HveColors.text-muted;
+        font-size: 11px;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    // ── Full content (only when expanded) ──
+    if expanded: VerticalLayout {
+        y: 72px;
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-bottom: 8px;
+        spacing: 4px;
         width: 100%;
 
         Rectangle {
@@ -590,35 +606,24 @@ export component ExpandableCard inherits Rectangle {
         }
 
         Text {
-            text: root.description;
+            text: root.full-desc;
             color: HveColors.text-muted;
-            font-size: 12px;
+            font-size: 11px;
             wrap: word-wrap;
         }
     }
 
-    // ── TouchArea (header click) ──
+    // ─ TouchArea for hover detection ──
     ec-ta := TouchArea {
         width: 100%;
-        height: 52px;
-        clicked => { root.expanded = !root.expanded; }
+        height: 100%;
+        property <bool> was-hovered: false;
         pointer-event(event) => {
-            if event.kind == PointerEventKind.down {
-                ec-fs.focus();
-            }
-        }
-    }
-
-    // ── FocusScope (keyboard) ──
-    ec-fs := FocusScope {
-        width: 100%;
-        height: 52px;
-        key-pressed(event) => {
-            if (event.text == Key.Return || event.text == Key.Space) {
-                root.expanded = !root.expanded;
-                accept
-            } else {
-                reject
+            if ec-ta.has-hover && !ec-ta.was-hovered {
+                ec-ta.was-hovered = true;
+                root.hovered();
+            } else if !ec-ta.has-hover {
+                ec-ta.was-hovered = false;
             }
         }
     }
