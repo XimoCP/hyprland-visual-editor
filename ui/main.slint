@@ -91,149 +91,154 @@ export component MainWindow inherits Window {
     callback apply-geometry(int);
     callback close-button-clicked();
 
-    HorizontalLayout {
-        // ── Sidebar ──
-        Rectangle {
-            width: 240px;
-            background: HveColors.bg-surface;
+    VerticalLayout {
+        // ── Close button bar (top-right of the full window) ──
+        HorizontalLayout {
+            padding-right: 12px;
+            padding-top: 8px;
+            height: 36px;
+            alignment: end;
 
-            // Sombra lateral para separar del contenido
-            drop-shadow-blur: 15px;
-            drop-shadow-color: #00000040;
-            drop-shadow-offset-x: 5px;
+            CloseButton {
+                countdown-active: root.countdown-active;
+                countdown-seconds: root.countdown-seconds;
+                countdown-progress: root.countdown-progress;
+                clicked => { root.close-button-clicked(); }
+            }
+        }
 
-            VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 32px;
-                padding-bottom: 24px;
-                spacing: 12px;
+        // ── Main content (sidebar + content area) ──
+        HorizontalLayout {
+            // ── Sidebar ──
+            Rectangle {
+                width: 240px;
+                background: HveColors.bg-surface;
 
-                // ── Close button (top-right corner) ──
-                HorizontalLayout {
-                    padding-bottom: 8px;
-                    alignment: end;
+                // Sombra lateral para separar del contenido
+                drop-shadow-blur: 15px;
+                drop-shadow-color: #00000040;
+                drop-shadow-offset-x: 5px;
 
-                    CloseButton {
-                        countdown-active: root.countdown-active;
-                        countdown-seconds: root.countdown-seconds;
-                        countdown-progress: root.countdown-progress;
-                        clicked => { root.close-button-clicked(); }
-                    }
-                }
-
-                // Logo
                 VerticalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    padding-top: 32px;
                     padding-bottom: 24px;
-                    padding-left: 12px;
-                    spacing: 6px;
+                    spacing: 12px;
 
-                    Text {
-                        text: "HVE";
-                        color: HveColors.accent-green;
-                        font-size: 36px;
-                        font-weight: 900;
-                        letter-spacing: 3px;
+                    // Logo
+                    VerticalLayout {
+                        padding-bottom: 24px;
+                        padding-left: 12px;
+                        spacing: 6px;
+
+                        Text {
+                            text: "HVE";
+                            color: HveColors.accent-green;
+                            font-size: 36px;
+                            font-weight: 900;
+                            letter-spacing: 3px;
+                        }
+
+                        Text {
+                            text: root.sidebar-subtitle;
+                            color: HveColors.text-muted;
+                            font-size: 12px;
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: HveColors.border;
+                    }
+
+                    // Nav (data-driven from Rust)
+                    for nav-module in root.nav-modules: NavButton {
+                        label: nav-module.label;
+                        icon-text: nav-module.icon;
+                        accent: nav-module.accent;
+                        selected: root.active-tab == nav-module.tab-index;
+                        clicked => { root.active-tab = nav-module.tab-index; }
+                    }
+
+                    Rectangle {
+                        vertical-stretch: 1;
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: HveColors.border;
                     }
 
                     Text {
-                        text: root.sidebar-subtitle;
+                        text: "v1.0.0 — Standalone";
                         color: HveColors.text-muted;
-                        font-size: 12px;
+                        font-size: 9px;
+                        horizontal-alignment: center;
                     }
                 }
-
-                Rectangle {
-                    height: 1px;
-                    background: HveColors.border;
-                }
-
-                // Nav (data-driven from Rust)
-                for nav-module in root.nav-modules: NavButton {
-                    label: nav-module.label;
-                    icon-text: nav-module.icon;
-                    accent: nav-module.accent;
-                    selected: root.active-tab == nav-module.tab-index;
-                    clicked => { root.active-tab = nav-module.tab-index; }
-                }
-
-                Rectangle {
-                    vertical-stretch: 1;
-                }
-
-                Rectangle {
-                    height: 1px;
-                    background: HveColors.border;
-                }
-
-                Text {
-                    text: "v1.0.0 — Standalone";
-                    color: HveColors.text-muted;
-                    font-size: 9px;
-                    horizontal-alignment: center;
-                }
-            }
-        }
-
-        // ── Sidebar right border ──
-        Rectangle {
-            width: 1px;
-            background: HveColors.border;
-        }
-
-        // ── Content ──
-        Rectangle {
-            background: HveColors.bg-dark;
-            vertical-stretch: 1;
-
-            if active-tab == 0: HomeModule {
-                header-title: root.home-header-title;
-                header-subtitle: root.home-header-subtitle;
-                activation-title: root.activation-title;
-                activation-active-text: root.activation-active-text;
-                activation-inactive-text: root.activation-inactive-text;
-                feature-title: root.feature-title;
-                feature-desc: root.feature-desc;
-                how-title: root.how-title;
-                how-desc: root.how-desc;
-                system-active: root.system-active;
-                toggle-system(v) => { root.toggle-system(v); }
             }
 
-            if active-tab == 1: AnimationsModule {
-                header-title: root.anim-header-title;
-                header-subtitle: root.anim-header-subtitle;
-                anim-titles: root.anim-titles;
-                anim-descs: root.anim-descs;
-                anim-tags: root.anim-tags;
-                anim-files: root.anim-files;
-                active-index: root.active-anim-index;
-                anim-toggled(idx, file) => { root.apply-animation(idx, file); }
+            // ── Sidebar right border ──
+            Rectangle {
+                width: 1px;
+                background: HveColors.border;
             }
 
-            if active-tab == 2: BordersModule {
-                header-title: root.border-header-title;
-                header-subtitle: root.border-header-subtitle;
-                geometry-label: root.border-geometry-label;
-                border-titles: root.border-titles;
-                border-descs: root.border-descs;
-                border-tags: root.border-tags;
-                border-files: root.border-files;
-                active-index: root.active-border-index;
-                border-size: root.border-size;
-                border-toggled(idx, file) => { root.apply-border(idx, file); }
-                geometry-changed(v) => { root.apply-geometry(v); }
-            }
+            // ── Content ──
+            Rectangle {
+                background: HveColors.bg-dark;
+                vertical-stretch: 1;
 
-            if active-tab == 3: ShadersModule {
-                header-title: root.shader-header-title;
-                header-subtitle: root.shader-header-subtitle;
-                shader-titles: root.shader-titles;
-                shader-descs: root.shader-descs;
-                shader-tags: root.shader-tags;
-                shader-files: root.shader-files;
-                active-index: root.active-shader-index;
-                shader-toggled(idx, file) => { root.apply-shader(idx, file); }
+                if active-tab == 0: HomeModule {
+                    header-title: root.home-header-title;
+                    header-subtitle: root.home-header-subtitle;
+                    activation-title: root.activation-title;
+                    activation-active-text: root.activation-active-text;
+                    activation-inactive-text: root.activation-inactive-text;
+                    feature-title: root.feature-title;
+                    feature-desc: root.feature-desc;
+                    how-title: root.how-title;
+                    how-desc: root.how-desc;
+                    system-active: root.system-active;
+                    toggle-system(v) => { root.toggle-system(v); }
+                }
+
+                if active-tab == 1: AnimationsModule {
+                    header-title: root.anim-header-title;
+                    header-subtitle: root.anim-header-subtitle;
+                    anim-titles: root.anim-titles;
+                    anim-descs: root.anim-descs;
+                    anim-tags: root.anim-tags;
+                    anim-files: root.anim-files;
+                    active-index: root.active-anim-index;
+                    anim-toggled(idx, file) => { root.apply-animation(idx, file); }
+                }
+
+                if active-tab == 2: BordersModule {
+                    header-title: root.border-header-title;
+                    header-subtitle: root.border-header-subtitle;
+                    geometry-label: root.border-geometry-label;
+                    border-titles: root.border-titles;
+                    border-descs: root.border-descs;
+                    border-tags: root.border-tags;
+                    border-files: root.border-files;
+                    active-index: root.active-border-index;
+                    border-size: root.border-size;
+                    border-toggled(idx, file) => { root.apply-border(idx, file); }
+                    geometry-changed(v) => { root.apply-geometry(v); }
+                }
+
+                if active-tab == 3: ShadersModule {
+                    header-title: root.shader-header-title;
+                    header-subtitle: root.shader-header-subtitle;
+                    shader-titles: root.shader-titles;
+                    shader-descs: root.shader-descs;
+                    shader-tags: root.shader-tags;
+                    shader-files: root.shader-files;
+                    active-index: root.active-shader-index;
+                    shader-toggled(idx, file) => { root.apply-shader(idx, file); }
+                }
             }
         }
     }

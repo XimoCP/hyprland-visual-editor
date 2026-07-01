@@ -21,7 +21,8 @@ thread_local! {
 /// Inicia el countdown. Debe llamarse desde el thread principal.
 pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
     if COUNTDOWN_ACTIVE.swap(true, Ordering::Relaxed) {
-        return; // ya hay uno corriendo
+        tracing::debug!("[countdown] Ya activo, ignorando start");
+        return;
     }
 
     let Some(window) = window_weak.upgrade() else {
@@ -29,19 +30,17 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
         return;
     };
 
-    // Estado inicial de la UI
+    tracing::info!("[countdown] Iniciando countdown de {}s", COUNTDOWN_SECONDS);
     window.set_countdown_active(true);
     window.set_countdown_seconds(COUNTDOWN_SECONDS);
     window.set_countdown_progress(1.0);
 
-    // Crear el Timer
     let weak = window.as_weak();
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, Duration::from_millis(1000), move || {
         tick(&weak);
     });
 
-    // Guardar el Timer en thread_local
     COUNTDOWN_TIMER.with(|t| {
         *t.borrow_mut() = Some(timer);
     });
@@ -53,12 +52,12 @@ pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
         return;
     }
 
-    // Destruir el Timer
+    tracing::info!("[countdown] Cancelado");
+
     COUNTDOWN_TIMER.with(|t| {
         *t.borrow_mut() = None;
     });
 
-    // Resetear UI
     if let Some(window) = window_weak.upgrade() {
         window.set_countdown_active(false);
         window.set_countdown_seconds(COUNTDOWN_SECONDS);
@@ -68,9 +67,19 @@ pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
 
 /// Click en el botón X → minimiza inmediatamente.
 pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
+    tracing::info!("[countdown] Minimizando ventana...");
     cancel_countdown(window_weak.clone());
+
     if let Some(window) = window_weak.upgrade() {
-        let _ = window.window().hide();
+        // hide() en Wayland con run_event_loop_until_quit funciona
+        match window.window().hide() {
+            Ok(_) => tracing::info!("[countdown] Window hidden OK"),
+            Err(e) => tracing::error!("[countdown] hide() falló: {:?}", e),
+        }
+        // Best-effort: también pedir a Hyprland que minimice
+        let _ = std::process::Command::new("hyprctl")
+            .args(["dispatch", "movetoworkspacesilent", "special:minimized"])
+            .output();
         crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
     }
 }
@@ -88,16 +97,23 @@ fn tick(window_weak: &Weak<crate::MainWindow>) {
     let current = window.get_countdown_seconds();
     let next = current - 1;
     let progress = next as f32 / COUNTDOWN_SECONDS as f32;
+    tracing::debug!("[countdown] Tick: {}s, progress: {:.2}", next, progress);
     window.set_countdown_seconds(next);
     window.set_countdown_progress(progress);
 
     if next <= 0 {
         COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
-        // Destruir el Timer
         COUNTDOWN_TIMER.with(|t| {
             *t.borrow_mut() = None;
         });
-        let _ = window.window().hide();
+        tracing::info!("[countdown] Cuenta regresiva terminada, ocultando ventana");
+        match window.window().hide() {
+            Ok(_) => tracing::info!("[countdown] Window hidden OK"),
+            Err(e) => tracing::error!("[countdown] hide() falló: {:?}", e),
+        }
+        let _ = std::process::Command::new("hyprctl")
+            .args(["dispatch", "movetoworkspacesilent", "special:minimized"])
+            .output();
         window.set_countdown_active(false);
         window.set_countdown_seconds(COUNTDOWN_SECONDS);
         window.set_countdown_progress(1.0);
@@ -112,12 +128,20 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) {
 
     crate::hypr_ipc::spawn_focus_listener(
         move || {
+            tracing::info!("[countdown] Foco perdido, iniciando countdown");
             let w = weak_for_lost.clone();
-            let _ = slint::invoke_from_event_loop(move || start_countdown(w));
+            match slint::invoke_from_event_loop(move || start_countdown(w)) {
+                Ok(_) => {}
+                Err(e) => tracing::error!("[countdown] invoke_from_event_loop falló (lost): {:?}", e),
+            }
         },
         move || {
+            tracing::info!("[countdown] Foco recuperado, cancelando countdown");
             let w = weak_for_gained.clone();
-            let _ = slint::invoke_from_event_loop(move || cancel_countdown(w));
+            match slint::invoke_from_event_loop(move || cancel_countdown(w)) {
+                Ok(_) => {}
+                Err(e) => tracing::error!("[countdown] invoke_from_event_loop falló (gained): {:?}", e),
+            }
         },
     );
 }
