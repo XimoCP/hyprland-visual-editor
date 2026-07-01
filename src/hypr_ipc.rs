@@ -4,7 +4,9 @@ use slint::ComponentHandle;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::thread;
+use std::time::{Duration, Instant};
 
 pub struct HyprIpc {
     socket_path: PathBuf,
@@ -60,14 +62,22 @@ impl HyprIpc {
 
         // socket2.sock auto-subscribes — no handshake needed
 
+        // Throttle config reload — assemble.sh triggers another reload event
+        let last_reload: Mutex<Option<Instant>> = Mutex::new(None);
+
         let reader = BufReader::new(stream);
         for line in reader.lines() {
             match line {
                 Ok(line) => {
                     // Events come as: "eventname>>data"
                     if line.starts_with("configreloaded") {
-                        println!("[HVE] Config reloaded, regenerating overlay...");
-                        on_config_reload();
+                        let mut last = last_reload.lock().unwrap();
+                        let now = Instant::now();
+                        if last.map_or(true, |t| now.duration_since(t) > Duration::from_secs(3)) {
+                            *last = Some(now);
+                            println!("[HVE] Config reloaded, regenerating overlay...");
+                            on_config_reload();
+                        }
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
