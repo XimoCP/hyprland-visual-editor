@@ -1,7 +1,7 @@
 use crate::engine::Engine;
 use crate::theme;
 use slint::ComponentHandle;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::thread;
@@ -16,7 +16,7 @@ impl HyprIpc {
         let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
             .unwrap_or_else(|_| "/run/user/1000".to_string());
         let socket = PathBuf::from(format!(
-            "{}/hypr/{}/.socket.sock",
+            "{}/hypr/{}/.socket2.sock",
             runtime_dir, instance
         ));
         if socket.exists() {
@@ -58,14 +58,7 @@ impl HyprIpc {
             .set_read_timeout(Some(std::time::Duration::from_secs(30)))
             .map_err(|e| format!("Cannot set timeout: {}", e))?;
 
-        let mut writer = stream
-            .try_clone()
-            .map_err(|e| format!("Cannot clone stream: {}", e))?;
-
-        // Subscribe to events
-        writer
-            .write_all(b"subscribe\n")
-            .map_err(|e| format!("Cannot subscribe: {}", e))?;
+        // socket2.sock auto-subscribes — no handshake needed
 
         let reader = BufReader::new(stream);
         for line in reader.lines() {
@@ -184,12 +177,7 @@ where
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
         .map_err(|e| format!("Cannot set timeout: {}", e))?;
 
-    let mut writer = stream
-        .try_clone()
-        .map_err(|e| format!("Cannot clone stream: {}", e))?;
-    writer
-        .write_all(b"subscribe\n")
-        .map_err(|e| format!("Cannot subscribe: {}", e))?;
+    // socket2.sock auto-subscribes — no handshake needed
 
     tracing::info!("[focus] Connected and subscribed to Hyprland events");
 
