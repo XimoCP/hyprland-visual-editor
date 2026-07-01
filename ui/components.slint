@@ -432,6 +432,7 @@ export component CloseButton inherits Rectangle {
     }
 }
 
+
 // ─── Activation Toggle Card ─────────────────────────────────────────
 export component ActivationCard inherits Rectangle {
     in property <bool> active: false;
@@ -440,13 +441,12 @@ export component ActivationCard inherits Rectangle {
     in property <string> inactive-text: "System halted. Enable to start.";
     callback toggled(bool);
 
-    height: 110px;
+    height: 88px;
     border-radius: 12px;
     background: active ? HveColors.bg-card : HveColors.bg-surface;
-    border-width: active ? 2px : 1px;
+    border-width: 2px;
     border-color: active ? HveColors.accent-green : HveColors.accent-red;
 
-    // Glow verde cuando activo
     drop-shadow-blur: active ? 16px : 0px;
     drop-shadow-color: active ? HveColors.accent-green.transparentize(0.85) : transparent;
 
@@ -455,52 +455,50 @@ export component ActivationCard inherits Rectangle {
     animate drop-shadow-blur { duration: 400ms; easing: ease-out; }
 
     HorizontalLayout {
-        padding: 20px;
-        spacing: 20px;
+        padding: 14px;
+        spacing: 14px;
 
-        // Icon
         Rectangle {
-            width: 56px;
-            height: 56px;
-            border-radius: 12px;
-            background: active ? HveColors.accent-green.transparentize(0.8) : HveColors.bg-dark;
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            background: active ? HveColors.accent-green.transparentize(0.8) : HveColors.accent-red.transparentize(0.85);
             animate background { duration: 300ms; }
 
             Text {
                 text: active ? "⚡" : "⏸";
-                font-size: 26px;
+                font-size: 22px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
 
-        // Text
         VerticalLayout {
-            spacing: 6px;
+            spacing: 2px;
             vertical-stretch: 1;
             alignment: center;
 
             Text {
                 text: root.card-title;
-                color: active ? HveColors.text : HveColors.text-muted;
-                font-size: 18px;
-                font-weight: 800;
+                color: HveColors.text;
+                font-size: 16px;
+                font-weight: 700;
                 animate color { duration: 300ms; }
             }
 
             Text {
-                text: active ? root.active-text : root.inactive-text;
+                text: root.active ? root.active-text : root.inactive-text;
                 color: HveColors.text-muted;
-                font-size: 12px;
+                font-size: 11px;
                 wrap: word-wrap;
+                overflow: elide;
             }
         }
 
-        // Toggle master — vertical center
         Rectangle {
-            width: 60px;
-            height: 32px;
-            border-radius: 16px;
+            width: 52px;
+            height: 28px;
+            border-radius: 14px;
             background: active ? HveColors.accent-green : HveColors.border;
             y: (parent.height - self.height) / 2;
             animate background { duration: 300ms; }
@@ -510,22 +508,19 @@ export component ActivationCard inherits Rectangle {
             }
 
             Rectangle {
-                width: 24px;
-                height: 24px;
-                border-radius: 12px;
+                width: 22px;
+                height: 22px;
+                border-radius: 11px;
                 background: HveColors.text;
-                x: active ? parent.width - self.width - 4px : 4px;
-                y: 4px;
+                x: active ? parent.width - self.width - 3px : 3px;
+                y: 3px;
                 animate x { duration: 400ms; easing: ease-in-out-back; }
             }
         }
     }
 }
 
-
-// �── Accordion Card ──────────────────────────────────────────────────
-// Click to expand. Parent manages accordion via `expanded` property.
-// Border color is set by parent to support activation red/green states.
+// ─── Accordion Card ──────────────────────────────────────────────────
 export component AccordionCard inherits Rectangle {
     in property <string> card-title;
     in property <string> icon-text;
@@ -546,7 +541,6 @@ export component AccordionCard inherits Rectangle {
     animate height { duration: 250ms; easing: ease-in-out-back; }
     animate border-color { duration: 250ms; }
 
-    // ── Header ──
     Rectangle {
         height: 44px;
         background: expanded ? HveColors.bg-hover : transparent;
@@ -584,7 +578,6 @@ export component AccordionCard inherits Rectangle {
         }
     }
 
-    // ── Short description (always visible) ──
     Text {
         y: 44px;
         x: 14px;
@@ -597,7 +590,6 @@ export component AccordionCard inherits Rectangle {
         overflow: elide;
     }
 
-    // ── Full content (only when expanded) ──
     if expanded: VerticalLayout {
         y: 68px;
         padding-left: 14px;
@@ -619,7 +611,6 @@ export component AccordionCard inherits Rectangle {
         }
     }
 
-    // ── TouchArea ──
     ac-ta := TouchArea {
         width: 100%;
         height: 100%;
