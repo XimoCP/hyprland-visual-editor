@@ -1,5 +1,5 @@
 import { NavModule, HveColors } from "./theme.slint";
-import { NavButton } from "./components.slint";
+import { NavButton, CloseButton } from "./components.slint";
 import {
     HomeModule,
     AnimationsModule,
@@ -78,12 +78,18 @@ export component MainWindow inherits Window {
     in property <[string]> shader-files;
     in-out property <int> active-shader-index: -1;
 
+    // Countdown (auto-minimize cuando pierde foco)
+    in-out property <bool> countdown-active: false;
+    in-out property <int> countdown-seconds: 5;
+    in-out property <float> countdown-progress: 1.0;
+
     // ── Callbacks ──
     callback toggle-system(bool);
     callback apply-animation(int, string);
     callback apply-border(int, string);
     callback apply-shader(int, string);
     callback apply-geometry(int);
+    callback close-button-clicked();
 
     HorizontalLayout {
         // ── Sidebar ──
@@ -102,6 +108,19 @@ export component MainWindow inherits Window {
                 padding-top: 32px;
                 padding-bottom: 24px;
                 spacing: 12px;
+
+                // ── Close button (top-right corner) ──
+                HorizontalLayout {
+                    padding-bottom: 8px;
+                    alignment: end;
+
+                    CloseButton {
+                        countdown-active: root.countdown-active;
+                        countdown-seconds: root.countdown-seconds;
+                        countdown-progress: root.countdown-progress;
+                        clicked => { root.close-button-clicked(); }
+                    }
+                }
 
                 // Logo
                 VerticalLayout {

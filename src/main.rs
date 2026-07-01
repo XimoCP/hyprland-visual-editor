@@ -1,5 +1,6 @@
 mod callbacks;
 mod config;
+mod countdown;
 mod engine;
 mod hypr_ipc;
 mod ipc;
@@ -212,6 +213,17 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Start Hyprland IPC listener ──
     hypr_ipc::start_listener(&window, proj.clone());
+
+    // ── Countdown auto-minimize on focus loss ──
+    countdown::setup_countdown(window.as_weak());
+
+    // ── Close button callback ──
+    {
+        let weak = window.as_weak();
+        window.on_close_button_clicked(move || {
+            countdown::minimize_now(weak.clone());
+        });
+    }
 
     // ── Start color watcher (bash inotify) ──
     // The bash-based watcher uses inotify for efficient file monitoring.

@@ -128,3 +128,92 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) {
         eprintln!("[HVE] Could not find Hyprland IPC socket");
     }
 }
+
+// ─── Focus listener ────────────────────────────────────────────────
+// Escucha el evento `activewindow` de Hyprland. Llama a on_focus_lost
+// cuando la ventana activa deja de ser "Hyprland Visual Editor".
+const HVE_WINDOW_TITLE: &str = "Hyprland Visual Editor";
+
+/// Spawn a thread that listens for Hyprland `activewindow` events.
+/// Calls `on_focus_lost` when the active window is NOT HVE.
+/// Calls `on_focus_gained` when the active window IS HVE.
+pub fn spawn_focus_listener<F, G>(on_focus_lost: F, on_focus_gained: G)
+where
+    F: Fn() + Send + Sync + 'static,
+    G: Fn() + Send + Sync + 'static,
+{
+    let ipc = match HyprIpc::new() {
+        Some(i) => i,
+        None => {
+            eprintln!("[HVE] Could not find Hyprland IPC socket (focus listener skipped)");
+            return;
+        }
+    };
+
+    let lost = std::sync::Arc::new(on_focus_lost);
+    let gained = std::sync::Arc::new(on_focus_gained);
+
+    thread::spawn(move || {
+        loop {
+            match connect_and_listen_focus(&ipc, &lost, &gained) {
+                Ok(_) => break,
+                Err(e) => {
+                    eprintln!("[HVE] Focus listener error: {}, reconnecting in 2s...", e);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        }
+    });
+    println!("[HVE] Hyprland focus listener started");
+}
+
+fn connect_and_listen_focus<F, G>(
+    ipc: &HyprIpc,
+    on_focus_lost: &std::sync::Arc<F>,
+    on_focus_gained: &std::sync::Arc<G>,
+) -> Result<(), String>
+where
+    F: Fn() + Send + Sync,
+    G: Fn() + Send + Sync,
+{
+    let stream = UnixStream::connect(&ipc.socket_path)
+        .map_err(|e| format!("Cannot connect to Hyprland IPC: {}", e))?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .map_err(|e| format!("Cannot set timeout: {}", e))?;
+
+    let mut writer = stream
+        .try_clone()
+        .map_err(|e| format!("Cannot clone stream: {}", e))?;
+    writer
+        .write_all(b"subscribe\n")
+        .map_err(|e| format!("Cannot subscribe: {}", e))?;
+
+    let reader = BufReader::new(stream);
+    for line in reader.lines() {
+        match line {
+            Ok(line) => {
+                // `activewindow` event → "activewindow>>window_title"
+                if line.starts_with("activewindow>>") {
+                    let title = line.trim_start_matches("activewindow>>");
+                    if title.contains(HVE_WINDOW_TITLE) {
+                        on_focus_gained();
+                    } else if !title.is_empty() {
+                        // Cualquier otra ventana activa → perdimos foco
+                        on_focus_lost();
+                    }
+                    // Si title está vacío, no actuar (transición entre escritorios)
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue;
+            }
+            Err(e) => {
+                return Err(format!("Read error: {}", e));
+            }
+        }
+    }
+    Ok(())
+}

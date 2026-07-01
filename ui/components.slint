@@ -340,6 +340,78 @@ export component WelcomeCard inherits Rectangle {
     }
 }
 
+// ─── Close Button ───────────────────────────────────────────────────
+export component CloseButton inherits Rectangle {
+    in property <bool> countdown-active: false;
+    in property <int> countdown-seconds: 5;
+    in property <float> countdown-progress: 1.0;
+    callback clicked();
+
+    width: 36px;
+    height: 36px;
+    border-radius: 18px;
+    background: cb-ta.has-hover ? HveColors.accent-red.transparentize(0.8) : HveColors.bg-surface;
+    border-width: 1px;
+    border-color: countdown-active ? HveColors.accent-red : (cb-ta.has-hover ? HveColors.accent-red.transparentize(0.5) : HveColors.border);
+    clip: true;
+
+    animate background { duration: 200ms; }
+    animate border-color { duration: 200ms; }
+
+    // ── Icono X (normal) ──
+    if !countdown-active: Rectangle {
+        width: 14px;
+        height: 14px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        Path {
+            width: 100%;
+            height: 100%;
+            stroke: cb-ta.has-hover ? HveColors.accent-red : HveColors.text-muted;
+            stroke-width: 2px;
+            fill: transparent;
+            animate stroke { duration: 200ms; }
+            commands: "M 0 0 L 14 14 M 0 14 L 14 0";
+        }
+    }
+
+    // ── Countdown (circular progress + número) ──
+    if countdown-active: Rectangle {
+        width: parent.width;
+        height: parent.height;
+
+        // Fondo circular de progreso
+        Rectangle {
+            width: parent.width - 4px;
+            height: parent.height - 4px;
+            x: 2px;
+            y: 2px;
+            border-radius: (parent.width - 4px) / 2;
+            background: transparent;
+            border-width: 2px;
+            border-color: HveColors.accent-red.transparentize(0.3);
+        }
+
+        // Número
+        Text {
+            text: root.countdown-seconds + "s";
+            color: HveColors.accent-red;
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // ── TouchArea (encima de todo) ──
+    cb-ta := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.clicked(); }
+    }
+}
+
 // ─── Activation Toggle Card ─────────────────────────────────────────
 export component ActivationCard inherits Rectangle {
     in property <bool> active: false;
