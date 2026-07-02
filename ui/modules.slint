@@ -1,6 +1,14 @@
 import { ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
-import { PresetCard, SectionHeader, GeometrySlider, WelcomeCard, ActivationCard, AccordionCard, NavCard } from "./components.slint";
+import {
+    PresetCard,
+    SectionHeader,
+    GeometrySlider,
+    WelcomeCard,
+    ActivationCard,
+    AccordionCard,
+    NavCard,
+} from "./components.slint";
 
 // ─── HOME MODULE �───────────────────────────────────────────────────
 export component HomeModule inherits ScrollView {
@@ -24,25 +32,6 @@ export component HomeModule inherits ScrollView {
         padding-bottom: 24px;
         spacing: 20px;
 
-        // ── Hero ──
-        VerticalLayout {
-            spacing: 2px;
-
-            Text {
-                text: "HVE";
-                font-size: 36px;
-                font-weight: 900;
-                color: HveColors.accent-green;
-                letter-spacing: 4px;
-            }
-
-            Text {
-                text: "Hyprland Visual Editor";
-                font-size: 14px;
-                color: HveColors.text-muted;
-            }
-        }
-
         // ── Status Card ──
         Rectangle {
             border-radius: 14px;
@@ -54,13 +43,16 @@ export component HomeModule inherits ScrollView {
 
             animate background { duration: 300ms; }
             animate border-color { duration: 300ms; }
-            animate drop-shadow-blur { duration: 400ms; easing: ease-out; }
+            animate drop-shadow-blur {
+                duration: 400ms;
+                easing: ease-out;
+            }
 
             HorizontalLayout {
                 padding: 24px;
                 spacing: 20px;
 
-Rectangle {
+                Rectangle {
                     width: 52px;
                     height: 52px;
                     border-radius: 14px;
@@ -114,7 +106,10 @@ Rectangle {
                         background: HveColors.text;
                         x: root.system-active ? parent.width - self.width - 3px : 3px;
                         y: 3px;
-                        animate x { duration: 400ms; easing: ease-in-out-back; }
+                        animate x {
+                            duration: 400ms;
+                            easing: ease-in-out-back;
+                        }
                     }
                 }
             }
@@ -170,17 +165,25 @@ Rectangle {
                 HorizontalLayout {
                     spacing: 10px;
                     Rectangle {
-                        width: 8px; height: 8px; border-radius: 4px;
-                        background: HveColors.accent-amber; y: 4px;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: HveColors.accent-amber;
+                        y: 4px;
                     }
+
                     Text {
                         text: "Animación:";
-                        font-size: 12px; color: HveColors.text-muted;
+                        font-size: 12px;
+                        color: HveColors.text-muted;
                         width: 80px;
                     }
+
                     Text {
                         text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : "Ninguna";
-                        font-size: 12px; font-weight: 600; color: HveColors.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: HveColors.text;
                         horizontal-stretch: 1;
                         horizontal-alignment: right;
                     }
@@ -189,17 +192,25 @@ Rectangle {
                 HorizontalLayout {
                     spacing: 10px;
                     Rectangle {
-                        width: 8px; height: 8px; border-radius: 4px;
-                        background: HveColors.accent-green; y: 4px;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: HveColors.accent-green;
+                        y: 4px;
                     }
+
                     Text {
                         text: "Borde:";
-                        font-size: 12px; color: HveColors.text-muted;
+                        font-size: 12px;
+                        color: HveColors.text-muted;
                         width: 80px;
                     }
+
                     Text {
                         text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : "Ninguno";
-                        font-size: 12px; font-weight: 600; color: HveColors.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: HveColors.text;
                         horizontal-stretch: 1;
                         horizontal-alignment: right;
                     }
@@ -208,17 +219,25 @@ Rectangle {
                 HorizontalLayout {
                     spacing: 10px;
                     Rectangle {
-                        width: 8px; height: 8px; border-radius: 4px;
-                        background: HveColors.accent-purple; y: 4px;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: HveColors.accent-purple;
+                        y: 4px;
                     }
+
                     Text {
                         text: "Shader:";
-                        font-size: 12px; color: HveColors.text-muted;
+                        font-size: 12px;
+                        color: HveColors.text-muted;
                         width: 80px;
                     }
+
                     Text {
                         text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : "Ninguno";
-                        font-size: 12px; font-weight: 600; color: HveColors.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: HveColors.text;
                         horizontal-stretch: 1;
                         horizontal-alignment: right;
                     }
@@ -235,7 +254,7 @@ Rectangle {
             short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
             full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
             expanded: false;
-            toggled => { }
+            toggled => {}
         }
     }
 }

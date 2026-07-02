@@ -21,10 +21,22 @@ export component PresetCard inherits Rectangle {
     drop-shadow-blur: active ? 12px : 0px;
     drop-shadow-color: active ? accent.transparentize(0.8) : transparent;
 
-    animate background { duration: 200ms; easing: ease-in-out; }
-    animate border-color { duration: 200ms; easing: ease-in-out; }
-    animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
-    animate height { duration: 250ms; easing: ease-in-out-back; }
+    animate background {
+        duration: 200ms;
+        easing: ease-in-out;
+    }
+    animate border-color {
+        duration: 200ms;
+        easing: ease-in-out;
+    }
+    animate drop-shadow-blur {
+        duration: 300ms;
+        easing: ease-out;
+    }
+    animate height {
+        duration: 250ms;
+        easing: ease-in-out-back;
+    }
 
     // ── Contenido visual (declarado primero, queda detrás) ──
     HorizontalLayout {
@@ -78,8 +90,12 @@ export component PresetCard inherits Rectangle {
                             background: active ? accent.transparentize(0.8) : HveColors.bg-surface;
                             border-width: 1px;
                             border-color: active ? accent.transparentize(0.5) : transparent;
-                            animate background { duration: 200ms; }
-                            animate border-color { duration: 200ms; }
+    animate horizontal-stretch {
+        duration: 200ms;
+        easing: ease-out;
+    }
+    animate background { duration: 200ms; }
+    animate border-color { duration: 200ms; }
 
                             tag-text := Text {
                                 text: root.tag;
@@ -109,7 +125,10 @@ export component PresetCard inherits Rectangle {
             height: 24px;
             border-radius: 12px;
             background: active ? accent : HveColors.border;
-            animate background { duration: 250ms; easing: ease-in-out; }
+            animate background {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
 
             Rectangle {
                 width: 18px;
@@ -118,7 +137,10 @@ export component PresetCard inherits Rectangle {
                 background: HveColors.bg-dark;
                 x: active ? parent.width - self.width - 3px : 3px;
                 y: 3px;
-                animate x { duration: 350ms; easing: ease-in-out-back; }
+                animate x {
+                    duration: 350ms;
+                    easing: ease-in-out-back;
+                }
             }
         }
     }
@@ -171,7 +193,10 @@ export component NavButton inherits Rectangle {
         y: (parent.height - self.height) / 2;
         border-radius: 2px;
         background: accent;
-        animate height { duration: 250ms; easing: ease-in-out-back; }
+        animate height {
+            duration: 250ms;
+            easing: ease-in-out-back;
+        }
     }
 
     HorizontalLayout {
@@ -273,6 +298,7 @@ export component GeometrySlider inherits Rectangle {
                 vertical-alignment: center;
                 horizontal-stretch: 1;
             }
+
             Text {
                 text: root.value + "px";
                 color: HveColors.accent-cyan;
@@ -357,13 +383,22 @@ export component CloseButton inherits Rectangle {
 
     animate background { duration: 200ms; }
     animate border-color { duration: 200ms; }
-    animate border-radius { duration: 300ms; easing: ease-in-out; }
-    animate width { duration: 300ms; easing: ease-in-out; }
-    animate height { duration: 300ms; easing: ease-in-out; }
+    animate border-radius {
+        duration: 300ms;
+        easing: ease-in-out;
+    }
+    animate width {
+        duration: 300ms;
+        easing: ease-in-out;
+    }
+    animate height {
+        duration: 300ms;
+        easing: ease-in-out;
+    }
 
     // Expand slightly during countdown for visibility
     states [
-        countdown when root.countdown-active : {
+        countdown when root.countdown-active: {
             width: 28px;
             height: 28px;
             border-radius: 14px;
@@ -410,7 +445,10 @@ export component CloseButton inherits Rectangle {
             height: parent.height * (1.0 - root.countdown-progress);
             y: parent.height - self.height;
             background: HveColors.accent-red.transparentize(0.4);
-            animate height { duration: 300ms; easing: ease-in-out; }
+            animate height {
+                duration: 300ms;
+                easing: ease-in-out;
+            }
         }
 
         // Seconds number
@@ -452,7 +490,10 @@ export component ActivationCard inherits Rectangle {
 
     animate background { duration: 300ms; }
     animate border-color { duration: 300ms; }
-    animate drop-shadow-blur { duration: 400ms; easing: ease-out; }
+    animate drop-shadow-blur {
+        duration: 400ms;
+        easing: ease-out;
+    }
 
     HorizontalLayout {
         padding: 14px;
@@ -514,7 +555,10 @@ export component ActivationCard inherits Rectangle {
                 background: HveColors.text;
                 x: active ? parent.width - self.width - 3px : 3px;
                 y: 3px;
-                animate x { duration: 400ms; easing: ease-in-out-back; }
+                animate x {
+                    duration: 400ms;
+                    easing: ease-in-out-back;
+                }
             }
         }
     }
@@ -538,7 +582,10 @@ export component AccordionCard inherits Rectangle {
     border-color: border;
     clip: true;
 
-    animate height { duration: 250ms; easing: ease-in-out-back; }
+    animate height {
+        duration: 250ms;
+        easing: ease-in-out-back;
+    }
     animate border-color { duration: 250ms; }
 
     Rectangle {
@@ -626,8 +673,9 @@ export component NavCard inherits Rectangle {
     in property <color> accent;
     callback clicked;
 
-    height: nc-ta.has-hover ? 84px : 64px;
+    height: nc-ta.has-hover ? 96px : 86px;
     border-radius: 10px;
+    horizontal-stretch: nc-ta.has-hover ? 1.3 : 1.0;
     background: nc-ta.has-hover ? accent.transparentize(0.92) : HveColors.bg-card;
     border-width: 1px;
     border-color: nc-ta.has-hover ? accent : HveColors.border;
@@ -635,14 +683,24 @@ export component NavCard inherits Rectangle {
     drop-shadow-blur: nc-ta.has-hover ? 12px : 0px;
     drop-shadow-color: nc-ta.has-hover ? accent.transparentize(0.85) : transparent;
 
-    animate height { duration: 200ms; easing: ease-in-out-back; }
+    animate height {
+        duration: 200ms;
+        easing: ease-in-out-back;
+    }
+    animate horizontal-stretch {
+        duration: 200ms;
+        easing: ease-out;
+    }
     animate background { duration: 200ms; }
     animate border-color { duration: 200ms; }
-    animate drop-shadow-blur { duration: 250ms; easing: ease-out; }
+    animate drop-shadow-blur {
+        duration: 250ms;
+        easing: ease-out;
+    }
 
     VerticalLayout {
-        padding: 12px;
-        spacing: 3px;
+        padding: 10px;
+        spacing: 2px;
         alignment: center;
 
         Text {
