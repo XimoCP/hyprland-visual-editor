@@ -200,10 +200,10 @@ where
                     tracing::debug!("[focus] activewindow event: {}", line);
                     let title = line.trim_start_matches("activewindow>>");
                     if title.contains(HVE_WINDOW_TITLE) {
-                        tracing::info!("[focus] Foco GANADO (HVE)");
+                        tracing::debug!("[focus] Foco GANADO (HVE)");
                         on_focus_gained();
                     } else if !title.is_empty() {
-                        tracing::info!("[focus] Foco PERDIDO -> '{}'", title);
+                        tracing::debug!("[focus] Foco PERDIDO -> '{}'", title);
                         on_focus_lost();
                     }
                     // Si title está vacío, no actuar (transición entre escritorios)

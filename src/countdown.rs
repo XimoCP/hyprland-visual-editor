@@ -25,6 +25,12 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
         return;
     }
 
+    if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
+        COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
+        tracing::debug!("[countdown] Ventana oculta, ignorando start");
+        return;
+    }
+
     let Some(window) = window_weak.upgrade() else {
         COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
         return;
@@ -128,6 +134,9 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) {
 
     crate::hypr_ipc::spawn_focus_listener(
         move || {
+            if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
+                return;
+            }
             tracing::info!("[countdown] Foco perdido, iniciando countdown");
             let w = weak_for_lost.clone();
             match slint::invoke_from_event_loop(move || start_countdown(w)) {

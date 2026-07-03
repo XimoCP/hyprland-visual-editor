@@ -16,6 +16,7 @@ use engine::Engine;
 use fs2::FileExt;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use tr::Tr;
 
@@ -130,7 +131,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let proj = project_dir();
     let engine = Engine::new(&proj);
     let cfg = Config::load();
-    let tr = Tr::new();
+    let tr = Arc::new(Tr::new());
 
     tracing::info!("Locale: {}", tr.lang);
 
@@ -149,7 +150,7 @@ fn main() -> Result<(), slint::PlatformError> {
     presets::populate_presets(&window, &engine, &cfg, &tr);
 
     // ── i18n: static UI strings ──
-    window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual"));
+    window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual Editor"));
     window.set_home_header_title(tr.tr_shared("panel.tabs.home", "Home"));
     window.set_home_header_subtitle(tr.tr_shared("panel.header_subtitle", "Aesthetic Control Center"));
     window.set_activation_title(tr.tr_shared("welcome.activation_title", "System Activation"));
@@ -177,7 +178,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     // ── System tray (start before callbacks so the shared atomic exists) ──
-    let tray_active = tray::start_tray(window.as_weak());
+    let tray_active = tray::start_tray(window.as_weak(), tr.clone());
 
     // ── Callbacks ──
     callbacks::setup_callbacks(&window, &cfg, proj.clone(), tray_active);

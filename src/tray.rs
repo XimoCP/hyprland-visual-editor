@@ -3,6 +3,8 @@ use slint::ComponentHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::tr::Tr;
+
 /// Start the system tray icon in a background thread.
 ///
 /// Creates a `ksni` tray with a programmatic 32×32 icon (does not depend on
@@ -11,11 +13,12 @@ use std::sync::Arc;
 ///
 /// Returns an `Arc<AtomicBool>` that the caller can share with callbacks
 /// to keep the tray icon and status label in sync with system state.
-pub fn start_tray(window: slint::Weak<crate::MainWindow>) -> Arc<AtomicBool> {
+pub fn start_tray(window: slint::Weak<crate::MainWindow>, tr: Arc<Tr>) -> Arc<AtomicBool> {
     let system_active = Arc::new(AtomicBool::new(false));
     let service = TrayService::new(HveTray {
         window,
         system_active: system_active.clone(),
+        tr,
     });
     service.spawn();
     system_active
@@ -24,6 +27,7 @@ pub fn start_tray(window: slint::Weak<crate::MainWindow>) -> Arc<AtomicBool> {
 struct HveTray {
     window: slint::Weak<crate::MainWindow>,
     system_active: Arc<AtomicBool>,
+    tr: Arc<Tr>,
 }
 
 impl ksni::Tray for HveTray {
@@ -50,16 +54,10 @@ impl ksni::Tray for HveTray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::StandardItem;
 
-        let status_label = if self.system_active.load(Ordering::Relaxed) {
-            "HVE — System Active ⚡"
-        } else {
-            "HVE — System Halted ⏸"
-        };
-
         vec![
-            // ── System status (read-only, informational) ──
+            // ── App title (read-only) ──
             StandardItem {
-                label: status_label.to_string(),
+                label: "Hyprland Visual Editor".to_string(),
                 enabled: false,
                 ..Default::default()
             }
@@ -68,7 +66,7 @@ impl ksni::Tray for HveTray {
             ksni::MenuItem::Separator,
             // ── Toggle System ──
             StandardItem {
-                label: "Toggle System".to_string(),
+                label: self.tr.tr_or("tray.toggle_system", "Toggle System").to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let next_active = !tray.system_active.load(Ordering::Relaxed);
@@ -83,7 +81,7 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Next Animation ──
             StandardItem {
-                label: "Next Animation".to_string(),
+                label: self.tr.tr_or("tray.next_animation", "Next Animation").to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -111,7 +109,7 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Next Border ──
             StandardItem {
-                label: "Next Border".to_string(),
+                label: self.tr.tr_or("tray.next_border", "Next Border").to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -139,7 +137,7 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Next Shader ──
             StandardItem {
-                label: "Next Shader".to_string(),
+                label: self.tr.tr_or("tray.next_shader", "Next Shader").to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -170,9 +168,9 @@ impl ksni::Tray for HveTray {
             // ── Toggle Window (hide/show) — seguro con run_event_loop_until_quit ──
             StandardItem {
                 label: if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
-                    "Show Window".to_string()
+                    self.tr.tr_or("tray.show_window", "Show Window").to_string()
                 } else {
-                    "Hide Window".to_string()
+                    self.tr.tr_or("tray.hide_window", "Hide Window").to_string()
                 },
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
@@ -195,7 +193,7 @@ impl ksni::Tray for HveTray {
             ksni::MenuItem::Separator,
             // ── Quit ──
             StandardItem {
-                label: "Quit".to_string(),
+                label: self.tr.tr_or("tray.quit", "Quit").to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {

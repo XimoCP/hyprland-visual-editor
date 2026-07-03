@@ -25,6 +25,13 @@ export component HomeModule inherits ScrollView {
     callback toggle-system(bool);
     callback navigate-to(int);
 
+    // Scroll suave al expandir el acordeón: viewport-y animado
+    // + desplazamiento relativo para evitar el clamping pre-layout
+    animate viewport-y {
+        duration: 250ms;
+        easing: ease-in-out;
+    }
+
     VerticalLayout {
         padding-left: 32px;
         padding-right: 32px;
@@ -60,8 +67,9 @@ export component HomeModule inherits ScrollView {
                     animate background { duration: 300ms; }
 
                     Text {
-                        text: root.system-active ? "●" : "○";
-                        font-size: 28px;
+                        text: root.system-active ? "ON" : "OFF";
+                        font-size: 20px;
+                        font-weight: 700;
                         color: root.system-active ? HveColors.accent-green : HveColors.accent-red;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -87,28 +95,32 @@ export component HomeModule inherits ScrollView {
                     }
                 }
 
-                Rectangle {
+                VerticalLayout {
                     width: 56px;
-                    height: 30px;
-                    border-radius: 15px;
-                    background: root.system-active ? HveColors.accent-green : HveColors.border;
-                    y: (parent.height - self.height) / 2;
-                    animate background { duration: 300ms; }
-
-                    TouchArea {
-                        clicked => { root.toggle-system(!root.system-active); }
-                    }
+                    alignment: center;
 
                     Rectangle {
-                        width: 24px;
-                        height: 24px;
-                        border-radius: 12px;
-                        background: HveColors.text;
-                        x: root.system-active ? parent.width - self.width - 3px : 3px;
-                        y: 3px;
-                        animate x {
-                            duration: 400ms;
-                            easing: ease-in-out-back;
+                        width: 56px;
+                        height: 30px;
+                        border-radius: 15px;
+                        background: root.system-active ? HveColors.accent-green : HveColors.border;
+                        animate background { duration: 300ms; }
+
+                        TouchArea {
+                            clicked => { root.toggle-system(!root.system-active); }
+                        }
+
+                        Rectangle {
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: HveColors.text;
+                            x: root.system-active ? parent.width - self.width - 3px : 3px;
+                            y: 3px;
+                            animate x {
+                                duration: 400ms;
+                                easing: ease-in-out-back;
+                            }
                         }
                     }
                 }
@@ -162,99 +174,129 @@ export component HomeModule inherits ScrollView {
                     color: HveColors.text-muted;
                 }
 
-                HorizontalLayout {
-                    spacing: 10px;
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: HveColors.accent-amber;
-                        y: 4px;
-                    }
-
-                    Text {
-                        text: "Animación:";
-                        font-size: 12px;
-                        color: HveColors.text-muted;
-                        width: 80px;
-                    }
-
-                    Text {
-                        text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : "Ninguna";
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: HveColors.text;
-                        horizontal-stretch: 1;
-                        horizontal-alignment: right;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 10px;
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: HveColors.accent-green;
-                        y: 4px;
-                    }
-
-                    Text {
-                        text: "Borde:";
-                        font-size: 12px;
-                        color: HveColors.text-muted;
-                        width: 80px;
-                    }
-
-                    Text {
-                        text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : "Ninguno";
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: HveColors.text;
-                        horizontal-stretch: 1;
-                        horizontal-alignment: right;
+                // ── Animación status ──
+                Rectangle {
+                    height: 34px;
+                    border-radius: 6px;
+                    background: HveColors.accent-amber.transparentize(0.85);
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.active-anim-index >= 0 ? HveColors.accent-amber : HveColors.text-muted;
+                            }
+                        }
+                        Text {
+                            text: "Animación:";
+                            font-size: 12px;
+                            color: HveColors.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : "Ninguna";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: HveColors.text;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 
-                HorizontalLayout {
-                    spacing: 10px;
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: HveColors.accent-purple;
-                        y: 4px;
+                // ── Borde status ──
+                Rectangle {
+                    height: 34px;
+                    border-radius: 6px;
+                    background: HveColors.accent-green.transparentize(0.85);
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.active-border-index >= 0 ? HveColors.accent-green : HveColors.text-muted;
+                            }
+                        }
+                        Text {
+                            text: "Borde:";
+                            font-size: 12px;
+                            color: HveColors.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : "Ninguno";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: HveColors.text;
+                            vertical-alignment: center;
+                        }
                     }
+                }
 
-                    Text {
-                        text: "Shader:";
-                        font-size: 12px;
-                        color: HveColors.text-muted;
-                        width: 80px;
-                    }
-
-                    Text {
-                        text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : "Ninguno";
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: HveColors.text;
-                        horizontal-stretch: 1;
-                        horizontal-alignment: right;
+                // ── Shader status ──
+                Rectangle {
+                    height: 34px;
+                    border-radius: 6px;
+                    background: HveColors.accent-purple.transparentize(0.85);
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.active-shader-index >= 0 ? HveColors.accent-purple : HveColors.text-muted;
+                            }
+                        }
+                        Text {
+                            text: "Shader:";
+                            font-size: 12px;
+                            color: HveColors.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : "Ninguno";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: HveColors.text;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }
         }
 
         // �─ About ──
-        AccordionCard {
+        acerca := AccordionCard {
             card-title: "Acerca de HVE";
             icon-text: "💡";
             accent: HveColors.accent-cyan;
             border: HveColors.border;
             short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
-            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
-            expanded: false;
-            toggled => {}
+            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n① Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
+            toggled => {
+                acerca.expanded = !acerca.expanded;
+                if acerca.expanded {
+                    // Delta relativo: baja ~140px para revelar el contenido expandido
+                    // sin salirse de los límites del viewport (coordenada negativa en Slint)
+                    root.viewport-y = root.viewport-y - 140px;
+                }
+            }
         }
     }
 }

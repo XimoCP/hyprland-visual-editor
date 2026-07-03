@@ -20,7 +20,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [build-dependencies]
 slint-build = "1.17"
 
+[profile.dev]
+codegen-units = 256
+incremental = true
+
 [profile.release]
 opt-level = "s"
-lto = true
+lto = "thin"
 strip = true

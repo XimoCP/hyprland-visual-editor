@@ -129,6 +129,7 @@ export component MainWindow inherits Window {
                             text: root.sidebar-subtitle;
                             color: HveColors.text-muted;
                             font-size: 12px;
+                            wrap: word-wrap;
                         }
                     }
 
@@ -175,62 +176,98 @@ export component MainWindow inherits Window {
                 background: HveColors.bg-dark;
                 vertical-stretch: 1;
 
-                if active-tab == 0: HomeModule {
-                    anim-titles: root.anim-titles;
-                    border-titles: root.border-titles;
-                    shader-titles: root.shader-titles;
-                    active-anim-index: root.active-anim-index;
-                    active-border-index: root.active-border-index;
-                    active-shader-index: root.active-shader-index;
-                    activation-title: root.activation-title;
-                    activation-active-text: root.activation-active-text;
-                    activation-inactive-text: root.activation-inactive-text;
-                    system-active: root.system-active;
-                    toggle-system(v) => { root.toggle-system(v); }
-                    navigate-to(tab) => { root.active-tab = tab; }
+                // ── Home ──────────────────────────────────────────────────
+                Rectangle {
+                    width: root.active-tab == 0 ? 100% : 0%;
+                    height: root.active-tab == 0 ? 100% : 0%;
+                    clip: true;
+
+                    HomeModule {
+                        width: 100%;
+                        height: 100%;
+                        anim-titles: root.anim-titles;
+                        border-titles: root.border-titles;
+                        shader-titles: root.shader-titles;
+                        active-anim-index: root.active-anim-index;
+                        active-border-index: root.active-border-index;
+                        active-shader-index: root.active-shader-index;
+                        activation-title: root.activation-title;
+                        activation-active-text: root.activation-active-text;
+                        activation-inactive-text: root.activation-inactive-text;
+                        system-active: root.system-active;
+                        toggle-system(v) => { root.toggle-system(v); }
+                        navigate-to(tab) => { root.active-tab = tab; }
+                    }
                 }
 
-                if active-tab == 1: AnimationsModule {
-                    header-title: root.anim-header-title;
-                    header-subtitle: root.anim-header-subtitle;
-                    anim-titles: root.anim-titles;
-                    anim-descs: root.anim-descs;
-                    anim-tags: root.anim-tags;
-                    anim-files: root.anim-files;
-                    active-index: root.active-anim-index;
-                    anim-toggled(idx, file) => { root.apply-animation(idx, file); }
+                // ── Animaciones ──────────────────────────────────────
+                Rectangle {
+                    width: root.active-tab == 1 ? 100% : 0%;
+                    height: root.active-tab == 1 ? 100% : 0%;
+                    clip: true;
+
+                    AnimationsModule {
+                        width: 100%;
+                        height: 100%;
+                        header-title: root.anim-header-title;
+                        header-subtitle: root.anim-header-subtitle;
+                        anim-titles: root.anim-titles;
+                        anim-descs: root.anim-descs;
+                        anim-tags: root.anim-tags;
+                        anim-files: root.anim-files;
+                        active-index: root.active-anim-index;
+                        anim-toggled(idx, file) => { root.apply-animation(idx, file); }
+                    }
                 }
 
-                if active-tab == 2: BordersModule {
-                    header-title: root.border-header-title;
-                    header-subtitle: root.border-header-subtitle;
-                    geometry-label: root.border-geometry-label;
-                    border-titles: root.border-titles;
-                    border-descs: root.border-descs;
-                    border-tags: root.border-tags;
-                    border-files: root.border-files;
-                    active-index: root.active-border-index;
-                    border-size: root.border-size;
-                    border-toggled(idx, file) => { root.apply-border(idx, file); }
-                    geometry-changed(v) => { root.apply-geometry(v); }
+                // ── Bordes ───────────────────────────────────────────
+                Rectangle {
+                    width: root.active-tab == 2 ? 100% : 0%;
+                    height: root.active-tab == 2 ? 100% : 0%;
+                    clip: true;
+
+                    BordersModule {
+                        width: 100%;
+                        height: 100%;
+                        header-title: root.border-header-title;
+                        header-subtitle: root.border-header-subtitle;
+                        geometry-label: root.border-geometry-label;
+                        border-titles: root.border-titles;
+                        border-descs: root.border-descs;
+                        border-tags: root.border-tags;
+                        border-files: root.border-files;
+                        active-index: root.active-border-index;
+                        border-size: root.border-size;
+                        border-toggled(idx, file) => { root.apply-border(idx, file); }
+                        geometry-changed(v) => { root.apply-geometry(v); }
+                    }
                 }
 
-                if active-tab == 3: ShadersModule {
-                    header-title: root.shader-header-title;
-                    header-subtitle: root.shader-header-subtitle;
-                    shader-titles: root.shader-titles;
-                    shader-descs: root.shader-descs;
-                    shader-tags: root.shader-tags;
-                    shader-files: root.shader-files;
-                    active-index: root.active-shader-index;
-                    shader-toggled(idx, file) => { root.apply-shader(idx, file); }
+                // ── Shaders ──────────────────────────────────────────
+                Rectangle {
+                    width: root.active-tab == 3 ? 100% : 0%;
+                    height: root.active-tab == 3 ? 100% : 0%;
+                    clip: true;
+
+                    ShadersModule {
+                        width: 100%;
+                        height: 100%;
+                        header-title: root.shader-header-title;
+                        header-subtitle: root.shader-header-subtitle;
+                        shader-titles: root.shader-titles;
+                        shader-descs: root.shader-descs;
+                        shader-tags: root.shader-tags;
+                        shader-files: root.shader-files;
+                        active-index: root.active-shader-index;
+                        shader-toggled(idx, file) => { root.apply-shader(idx, file); }
+                    }
                 }
             }
         }
 
-        // ── Close button floating at top-right (absolute, overlays content) ──
+        // ── Close button floating at top-left (absolute, overlays sidebar) ──
         CloseButton {
-            x: parent.width - self.width - 12px;
+            x: 12px;
             y: 12px;
             countdown-active: root.countdown-active;
             countdown-seconds: root.countdown-seconds;

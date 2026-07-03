@@ -9,7 +9,7 @@
     "menu_settings": "Plugin Settings"
   },
   "panel": {
-    "header_title": "Hyprland Visual",
+    "header_title": "Hyprland Visual Editor",
     "header_subtitle": "Aesthetic Control Center",
     "tabs": {
       "home": "Home",
@@ -241,6 +241,15 @@
         "desc": "Balance between correction and style."
       }
     }
+  },
+  "tray": {
+    "toggle_system": "Toggle System",
+    "next_animation": "Next Animation",
+    "next_border": "Next Border",
+    "next_shader": "Next Shader",
+    "show_window": "Show Window",
+    "hide_window": "Hide Window",
+    "quit": "Quit"
   },
   "settings": {
     "preview_label": "Preview",
