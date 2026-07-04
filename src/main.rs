@@ -90,6 +90,220 @@ fn setup_autostart() {
     }
 }
 
+/// Detect whether HVE is in lua or conf mode by reading the format cache.
+fn hve_format() -> &'static str {
+    let format_path = hve_cache_dir().join("hve_format");
+    if let Ok(content) = std::fs::read_to_string(&format_path) {
+        if content.trim() == "lua" {
+            return "lua";
+        }
+    }
+    "conf"
+}
+
+/// HVE cache directory: ~/.cache/hve/
+fn hve_cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(home).join(".cache")
+        })
+        .join("hve")
+}
+
+/// Path to the HVE window rules file (hve-windowrules.lua or .conf).
+/// This file controls how HVE's own window behaves (float/tile).
+/// Separate from overlay.lua which is managed by assemble.sh.
+fn hve_windowrules_path() -> PathBuf {
+    let ext = if hve_format() == "lua" { "lua" } else { "conf" };
+    hve_cache_dir().join(format!("hve-windowrules.{}", ext))
+}
+
+/// Ensure the window rules file exists with a default float rule.
+/// Called once at startup — does NOT overwrite an existing file.
+fn ensure_windowrules() {
+    let path = hve_windowrules_path();
+    if path.exists() {
+        return;
+    }
+
+    let format = hve_format();
+    let marker_start = if format == "lua" {
+        "-- >>> HVE WINDOW RULES <<<"
+    } else {
+        "# >>> HVE WINDOW RULES <<<"
+    };
+    let marker_end = if format == "lua" {
+        "-- >>> HVE WINDOW RULES END <<<"
+    } else {
+        "# >>> HVE WINDOW RULES END <<<"
+    };
+    let _ = std::fs::create_dir_all(hve_cache_dir());
+
+    let content = if format == "lua" {
+        format!(
+            r#"{marker_start}
+hl.window_rule({{
+  name  = "hve-floating",
+  match = {{ title = "^Hyprland Visual Editor$" }},
+  float = true,
+  size  = {{ "95%", "95%" }},
+  move  = {{ "center", "center" }},
+}})
+{marker_end}
+"#,
+        )
+    } else {
+        format!(
+            r#"{marker_start}
+windowrulev2 = float, title:^(Hyprland Visual Editor)$
+windowrulev2 = center, title:^(Hyprland Visual Editor)$
+windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
+{marker_end}
+"#,
+        )
+    };
+
+    match std::fs::write(&path, content) {
+        Ok(_) => tracing::info!("[windowrules] Created at {}", path.display()),
+        Err(e) => tracing::error!("[windowrules] Failed to create: {}", e),
+    }
+}
+
+/// Toggle HVE window rules between float (default) and tile.
+///
+/// Operates on hve-windowrules.lua/.conf — a dedicated file separate from
+/// the overlay (which is managed by assemble.sh). This file is loaded AFTER
+/// the user's windowrules.lua so its rule wins.
+///
+/// When `tiling` is false (default): `float = true` → window floats
+/// When `tiling` is true:           `tile  = true` → window tiles
+fn set_tiling_window_rules(tiling: bool) {
+    let path = hve_windowrules_path();
+    if !path.exists() {
+        tracing::warn!("[windowrules] File not found — creating default");
+        ensure_windowrules();
+    }
+
+    let format = hve_format();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("[windowrules] Failed to read: {}", e);
+            return;
+        }
+    };
+
+    let marker_start = if format == "lua" {
+        "-- >>> HVE WINDOW RULES <<<"
+    } else {
+        "# >>> HVE WINDOW RULES <<<"
+    };
+    let marker_end = if format == "lua" {
+        "-- >>> HVE WINDOW RULES END <<<"
+    } else {
+        "# >>> HVE WINDOW RULES END <<<"
+    };
+
+    // Build the replacement block
+    let rules_block: String = if tiling {
+        // Tiling ON → tile rule (overrides float from user's windowrules.lua)
+        if format == "lua" {
+            format!(
+                r#"{marker_start}
+hl.window_rule({{
+  name  = "hve-floating",
+  match = {{ title = "^Hyprland Visual Editor$" }},
+  tile  = true,
+}})
+{marker_end}"#,
+            )
+        } else {
+            format!(
+                r#"{marker_start}
+windowrulev2 = tile, title:^(Hyprland Visual Editor)$
+{marker_end}"#,
+            )
+        }
+    } else {
+        // Tiling OFF → float rule (default)
+        if format == "lua" {
+            format!(
+                r#"{marker_start}
+hl.window_rule({{
+  name  = "hve-floating",
+  match = {{ title = "^Hyprland Visual Editor$" }},
+  float = true,
+  size  = {{ "95%", "95%" }},
+  move  = {{ "center", "center" }},
+}})
+{marker_end}"#,
+            )
+        } else {
+            format!(
+                r#"{marker_start}
+windowrulev2 = float, title:^(Hyprland Visual Editor)$
+windowrulev2 = center, title:^(Hyprland Visual Editor)$
+windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
+{marker_end}"#,
+            )
+        }
+    };
+
+    // Replace content between markers
+    let new_content = if content.contains(marker_start) {
+        let mut result = String::new();
+        let mut in_block = false;
+        let mut replaced = false;
+        for line in content.lines() {
+            if line.trim() == marker_start {
+                in_block = true;
+                if !replaced {
+                    result.push_str(&rules_block);
+                    result.push('\n');
+                    replaced = true;
+                }
+                continue;
+            }
+            if line.trim() == marker_end {
+                in_block = false;
+                continue;
+            }
+            if !in_block {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        result
+    } else {
+        // No markers yet → append the block
+        let mut result = content;
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push('\n');
+        result.push_str(&rules_block);
+        result.push('\n');
+        result
+    };
+
+    match std::fs::write(&path, new_content) {
+        Ok(_) => {
+            tracing::info!(
+                "[windowrules] {} mode applied (tile={})",
+                if tiling { "TILING" } else { "FLOATING" },
+                tiling,
+            );
+            let _ = std::process::Command::new("hyprctl")
+                .arg("reload")
+                .output();
+        }
+        Err(e) => {
+            tracing::error!("[windowrules] Failed to write: {}", e);
+        }
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
@@ -104,6 +318,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .init();
 
     // ── Multi-instance protection ──
+    // Use Arc<Mutex<Option>> so restart callback can release the lock before spawning
     let lock_dir = dirs::cache_dir()
         .unwrap_or_else(|| {
             let home = std::env::var("HOME").unwrap_or_default();
@@ -124,16 +339,25 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         std::process::exit(1);
     }
-    let _lock = lock_file;
+    let lock = Arc::new(std::sync::Mutex::new(Some(lock_file)));
 
     let tray_mode = cli.tray;
 
     let proj = project_dir();
     let engine = Engine::new(&proj);
     let cfg = Config::load();
-    let tr = Arc::new(Tr::new());
+    // Use saved language, or auto-detect from system locale
+    let tr_lang = if cfg.language.is_empty() {
+        tr::detect_language()
+    } else {
+        cfg.language.clone()
+    };
+    let tr = Arc::new(Tr::with_lang(&tr_lang));
 
     tracing::info!("Locale: {}", tr.lang);
+
+    // ── Ensure hve-windowrules exists with default float rule ──
+    ensure_windowrules();
 
     let window = MainWindow::new()?;
 
@@ -145,6 +369,13 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
     window.set_border_size(cfg.border_size);
+    window.set_auto_minimize(cfg.auto_minimize_enabled);
+    window.set_minimize_seconds(cfg.minimize_seconds);
+    window.set_language(tr_lang.clone().into());
+    window.set_tiling_mode(cfg.tiling_mode);
+    window.set_autostart(cfg.auto_start);
+    window.set_theme(cfg.theme.clone().into());
+    window.set_restart_required(false);
 
     // ── Scan + translate presets ──
     presets::populate_presets(&window, &engine, &cfg, &tr);
@@ -168,11 +399,35 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_shader_header_title(tr.tr_shared("shaders.header_title", "Screen Filters"));
     window.set_shader_header_subtitle(tr.tr_shared("shaders.header_subtitle", "Real-time image post-processing"));
 
+    // ── i18n: Home module strings ──
+    window.set_home_status_active(tr.tr_shared("home.status_active", "System Active"));
+    window.set_home_status_inactive(tr.tr_shared("home.status_inactive", "System Stopped"));
+    window.set_home_nav_animations(tr.tr_shared("home.nav_animations", "Animations"));
+    window.set_home_nav_borders(tr.tr_shared("home.nav_borders", "Borders"));
+    window.set_home_nav_shaders(tr.tr_shared("home.nav_shaders", "Shaders"));
+    window.set_home_count_styles(tr.tr_shared("home.count_styles", " styles"));
+    window.set_home_count_filters(tr.tr_shared("home.count_filters", " filters"));
+    window.set_home_active_config_title(tr.tr_shared("home.active_config", "Active Configuration"));
+    window.set_home_active_anim_label(tr.tr_shared("home.active_anim", "Animation:"));
+    window.set_home_active_border_label(tr.tr_shared("home.active_border", "Border:"));
+    window.set_home_active_shader_label(tr.tr_shared("home.active_shader", "Shader:"));
+    window.set_home_none_anim(tr.tr_shared("home.none_anim", "None"));
+    window.set_home_none_border(tr.tr_shared("home.none_border", "None"));
+    window.set_home_none_shader(tr.tr_shared("home.none_shader", "None"));
+    window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
+    window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
+    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE uses a real-time Fragments and Assembly system. It never touches your main configuration. Everything is safely generated in an isolated overlay.conf master file inside ~/.cache/hve/.\n\n① Environment detection\n② Atomic assembly\n③ Hot Reload\n④ Guardian Shield"));
+
+    // ── i18n: Settings strings ──
+    window.set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
+    window.set_settings_restart_button(tr.tr_shared("settings.restart_button", "Restart"));
+
     // ── Dynamic theme ──
     match engine.get_colors() {
         Ok(colors) => {
-            theme::apply_theme(&window, &colors);
-            tracing::info!("Theme loaded: primary={}", colors.primary);
+            let resolved = theme::resolve_scheme(&colors, &cfg.theme);
+            theme::apply_theme(&window, &resolved);
+            tracing::info!("Theme loaded: {} (pref={})", colors.primary, cfg.theme);
         }
         Err(e) => tracing::error!("Could not load theme: {}", e),
     }
@@ -226,6 +481,180 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // ── Settings callbacks ──
+    // We use clone-then-save since all Slint callbacks run on the same thread
+    {
+        let window_weak = window.as_weak();
+        window.on_toggle_settings(move || {
+            let w = window_weak.upgrade().unwrap();
+            w.set_settings_open(!w.get_settings_open());
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_auto_minimize(move |enabled| {
+            settings_cfg.auto_minimize_enabled = enabled;
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                w.set_auto_minimize(enabled);
+            }
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_change_minimize_seconds(move |secs| {
+            settings_cfg.minimize_seconds = secs;
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                w.set_minimize_seconds(secs);
+            }
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_change_language(move |lang| {
+            let lang_str = lang.to_string();
+            settings_cfg.language = lang_str.clone();
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                w.set_language(lang);
+                w.set_restart_required(true);
+            }
+            tracing::info!("Language changed to {}. Restart to apply fully.", lang_str);
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_tiling_mode(move |enabled| {
+            settings_cfg.tiling_mode = enabled;
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                w.set_tiling_mode(enabled);
+                w.set_restart_required(false);
+            }
+
+            // Toggle window rules in hyprland.conf — this persists across restarts
+            set_tiling_window_rules(enabled);
+
+            // Try to toggle the CURRENT window immediately
+            let _ = std::process::Command::new("hyprctl")
+                .args(["dispatch", "togglefloating", "title:Hyprland Visual Editor"])
+                .output();
+
+            // Show restart banner explaining that full effect requires restart
+            if let Some(w) = weak.upgrade() {
+                w.set_restart_required(true);
+            }
+            tracing::info!(
+                "[settings] Tiling mode {} — config updated + togglefloating dispatched",
+                if enabled { "ON" } else { "OFF" }
+            );
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_autostart(move |enabled| {
+            settings_cfg.auto_start = enabled;
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                w.set_autostart(enabled);
+            }
+            if enabled {
+                crate::setup_autostart();
+            } else {
+                // Remove autostart desktop file
+                let autostart_path = dirs::config_dir()
+                    .unwrap_or_else(|| {
+                        let home = std::env::var("HOME").unwrap_or_default();
+                        PathBuf::from(home).join(".config")
+                    })
+                    .join("autostart")
+                    .join("hve.desktop");
+                let _ = std::fs::remove_file(autostart_path);
+            }
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        let eng = engine.clone();
+        window.on_change_theme(move |theme| {
+            let theme_str = theme.to_string();
+            settings_cfg.theme = theme_str.clone();
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                // Apply new palette immediately (no restart needed)
+                if let Ok(colors) = eng.get_colors() {
+                    let resolved = theme::resolve_scheme(&colors, &theme_str);
+                    theme::apply_theme(&w, &resolved);
+                }
+                w.set_theme(theme);
+            }
+            tracing::info!("Theme changed to {}", theme_str);
+        });
+    }
+
+    {
+        let restart_lock = lock.clone();
+        window.on_restart_app(move || {
+            tracing::info!("[settings] Restarting app...");
+            // 1. Release the exclusive lock so the new instance can start
+            if let Ok(mut guard) = restart_lock.lock() {
+                drop(guard.take());
+            }
+            // 2. Spawn the new instance
+            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hve"));
+            match std::process::Command::new(&exe)
+                .args(std::env::args().skip(1))
+                .spawn()
+            {
+                Ok(child) => {
+                    tracing::info!(
+                        "[settings] New instance spawned (PID: {}), quitting event loop",
+                        child.id()
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("[settings] Failed to restart: {}", e);
+                    return;
+                }
+            }
+            // 3. Gracefully quit the event loop — the main function continues past
+            //    run_event_loop_until_quit() and returns Ok(()), letting the process
+            //    die naturally. The new instance already has the lock released.
+            let _ = slint::quit_event_loop();
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_reset_presets(move || {
+            tracing::info!("[settings] Resetting presets...");
+            if let Some(w) = weak.upgrade() {
+                w.set_active_anim_index(-1);
+                w.set_active_border_index(-1);
+                w.set_active_shader_index(-1);
+            }
+            settings_cfg.active_anim_file = String::new();
+            settings_cfg.active_border_file = String::new();
+            settings_cfg.active_shader_file = String::new();
+            let _ = settings_cfg.save();
+            tracing::info!("[settings] Presets reset complete.");
+        });
+    }
+
     // ── Start color watcher (bash inotify) ──
     // The bash-based watcher uses inotify for efficient file monitoring.
     let _color_watcher = watcher::spawn_color_watcher(&proj);
@@ -253,10 +682,31 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via hyprctl para evitar el doble-click inicial.
+        let startup_tiling = cfg.tiling_mode;
+        let startup_weak = window.as_weak();
+        // First timer: focus window + sync config rules
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
             let _ = std::process::Command::new("hyprctl")
                 .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
                 .output();
+
+            // ── Ensure hyprland.conf rules match saved config ──
+            set_tiling_window_rules(startup_tiling);
+
+            // ── Second timer: toggle current window if tiling mode is ON ──
+            // The config file change only affects NEW windows. For the already-mapped
+            // window, we dispatch togglefloating after a short delay to let the
+            // config reload complete.
+            if startup_tiling {
+                let weak2 = startup_weak.clone();
+                slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
+                    let _w = weak2.upgrade();
+                    let _ = std::process::Command::new("hyprctl")
+                        .args(["dispatch", "togglefloating", "title:Hyprland Visual Editor"])
+                        .output();
+                    tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
+                });
+            }
         });
     }
 
@@ -267,6 +717,5 @@ fn main() -> Result<(), slint::PlatformError> {
     ipc::cleanup();
 
     drop(_color_watcher);
-    drop(_lock);
     Ok(())
 }

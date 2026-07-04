@@ -14,6 +14,7 @@ pub struct Tr {
 }
 
 impl Tr {
+    #[allow(dead_code)]
     /// Detect system language and load the matching translation.
     /// Falls back to English if the detected language isn't available.
     pub fn new() -> Self {
@@ -64,7 +65,7 @@ impl Tr {
 ///
 /// Parses formats like `es_AR.UTF-8`, `en_US`, `es` and normalises to
 /// a two‑letter ISO 639‑1 code. Currently supports `es` and `en`.
-fn detect_language() -> String {
+pub fn detect_language() -> String {
     let lang = std::env::var("LANG").unwrap_or_default();
     let code = lang
         .split('.')

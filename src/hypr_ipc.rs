@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme;
 use slint::ComponentHandle;
@@ -121,7 +122,9 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) {
                 let w = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(window) = w.upgrade() {
-                        theme::apply_theme(&window, &colors);
+                        let cfg = Config::load();
+                        let resolved = theme::resolve_scheme(&colors, &cfg.theme);
+                        theme::apply_theme(&window, &resolved);
                     }
                 });
             }

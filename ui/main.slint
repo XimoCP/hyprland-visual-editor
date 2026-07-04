@@ -1,5 +1,5 @@
 import { NavModule, HveColors } from "./theme.slint";
-import { NavButton, CloseButton } from "./components.slint";
+import { NavButton, CloseButton, SettingsButton, SettingsPanel } from "./components.slint";
 import {
     HomeModule,
     AnimationsModule,
@@ -55,6 +55,27 @@ export component MainWindow inherits Window {
     in property <string> border-geometry-label;
     in property <string> shader-header-title;
     in property <string> shader-header-subtitle;
+    // ── i18n: Home strings ──
+    in property <string> home-status-active;
+    in property <string> home-status-inactive;
+    in property <string> home-nav-animations;
+    in property <string> home-nav-borders;
+    in property <string> home-nav-shaders;
+    in property <string> home-count-styles;
+    in property <string> home-count-filters;
+    in property <string> home-active-config-title;
+    in property <string> home-active-anim-label;
+    in property <string> home-active-border-label;
+    in property <string> home-active-shader-label;
+    in property <string> home-none-anim;
+    in property <string> home-none-border;
+    in property <string> home-none-shader;
+    in property <string> home-about-title;
+    in property <string> home-about-short;
+    in property <string> home-about-full;
+    // ── i18n: Settings strings ──
+    in property <string> settings-restart-banner;
+    in property <string> settings-restart-button;
 
     // Animation data
     in property <[string]> anim-titles;
@@ -83,6 +104,16 @@ export component MainWindow inherits Window {
     in-out property <int> countdown-seconds: 5;
     in-out property <float> countdown-progress: 1.0;
 
+    // ── Settings ──
+    in-out property <bool> settings-open: false;
+    in-out property <bool> auto-minimize: true;
+    in-out property <int> minimize-seconds: 5;
+    in property <string> language: "en";
+    in-out property <bool> tiling-mode: false;
+    in-out property <bool> autostart: false;
+    in property <string> theme: "system";
+    in-out property <bool> restart-required: false;
+
     // ── Callbacks ──
     callback toggle-system(bool);
     callback apply-animation(int, string);
@@ -90,6 +121,15 @@ export component MainWindow inherits Window {
     callback apply-shader(int, string);
     callback apply-geometry(int);
     callback close-button-clicked();
+    callback toggle-settings();
+    callback toggle-auto-minimize(bool);
+    callback change-minimize-seconds(int);
+    callback change-language(string);
+    callback toggle-tiling-mode(bool);
+    callback toggle-autostart(bool);
+    callback change-theme(string);
+    callback reset-presets();
+    callback restart-app();
 
     Rectangle {
         // ── Main content (sidebar + content area) ──
@@ -156,11 +196,22 @@ export component MainWindow inherits Window {
                         background: HveColors.border;
                     }
 
-                    Text {
-                        text: "v1.0.0 — Standalone";
-                        color: HveColors.text-muted;
-                        font-size: 9px;
-                        horizontal-alignment: center;
+                    // ── Gear button + version ──
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        SettingsButton {
+                            settings-open: root.settings-open;
+                            clicked => { root.toggle-settings(); }
+                        }
+
+                        Text {
+                            text: "v1.0.0 — Standalone";
+                            color: HveColors.text-muted;
+                            font-size: 9px;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }
@@ -195,6 +246,24 @@ export component MainWindow inherits Window {
                         activation-active-text: root.activation-active-text;
                         activation-inactive-text: root.activation-inactive-text;
                         system-active: root.system-active;
+                        // i18n wired properties
+                        status-active: root.home-status-active;
+                        status-inactive: root.home-status-inactive;
+                        nav-animations: root.home-nav-animations;
+                        nav-borders: root.home-nav-borders;
+                        nav-shaders: root.home-nav-shaders;
+                        count-styles: root.home-count-styles;
+                        count-filters: root.home-count-filters;
+                        active-config-title: root.home-active-config-title;
+                        active-anim-label: root.home-active-anim-label;
+                        active-border-label: root.home-active-border-label;
+                        active-shader-label: root.home-active-shader-label;
+                        none-anim: root.home-none-anim;
+                        none-border: root.home-none-border;
+                        none-shader: root.home-none-shader;
+                        about-title: root.home-about-title;
+                        about-short: root.home-about-short;
+                        about-full: root.home-about-full;
                         toggle-system(v) => { root.toggle-system(v); }
                         navigate-to(tab) => { root.active-tab = tab; }
                     }
@@ -273,6 +342,30 @@ export component MainWindow inherits Window {
             countdown-seconds: root.countdown-seconds;
             countdown-progress: root.countdown-progress;
             clicked => { root.close-button-clicked(); }
+        }
+
+        // ── Settings Panel overlay ──
+        if root.settings-open : SettingsPanel {
+            is-open: root.settings-open;
+            auto-minimize: root.auto-minimize;
+            minimize-seconds: root.minimize-seconds;
+            language: root.language;
+            tiling-mode: root.tiling-mode;
+            autostart: root.autostart;
+            theme: root.theme;
+            restart-banner-text: root.settings-restart-banner;
+            restart-button-text: root.settings-restart-button;
+
+            restart-required: root.restart-required;
+            close-panel => { root.toggle-settings(); }
+            toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+            change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+            change-language(v) => { root.change-language(v); }
+            toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
+            toggle-autostart(v) => { root.toggle-autostart(v); }
+            change-theme(v) => { root.change-theme(v); }
+            reset-presets => { root.reset-presets(); }
+            restart-app => { root.restart-app(); }
         }
     }
 }

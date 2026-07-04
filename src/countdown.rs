@@ -8,8 +8,6 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-const COUNTDOWN_SECONDS: i32 = 5;
-
 /// Bandera compartida para indicar si el countdown está activo.
 static COUNTDOWN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -36,15 +34,23 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
         return;
     };
 
-    tracing::info!("[countdown] Iniciando countdown de {}s", COUNTDOWN_SECONDS);
+    // If auto-minimize is disabled, don't start countdown
+    if !window.get_auto_minimize() {
+        COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
+        return;
+    }
+
+    let seconds = window.get_minimize_seconds();
+    tracing::info!("[countdown] Iniciando countdown de {}s", seconds);
     window.set_countdown_active(true);
-    window.set_countdown_seconds(COUNTDOWN_SECONDS);
+    window.set_countdown_seconds(seconds);
     window.set_countdown_progress(1.0);
 
     let weak = window.as_weak();
+    let total = seconds; // capture for tick closure
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, Duration::from_millis(1000), move || {
-        tick(&weak);
+        tick(&weak, total);
     });
 
     COUNTDOWN_TIMER.with(|t| {
@@ -65,8 +71,9 @@ pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
     });
 
     if let Some(window) = window_weak.upgrade() {
+        let seconds = window.get_minimize_seconds();
         window.set_countdown_active(false);
-        window.set_countdown_seconds(COUNTDOWN_SECONDS);
+        window.set_countdown_seconds(seconds);
         window.set_countdown_progress(1.0);
     }
 }
@@ -91,7 +98,7 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
 }
 
 /// Tick interno: decrementa el contador; al llegar a 0 minimiza.
-fn tick(window_weak: &Weak<crate::MainWindow>) {
+fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
     if !COUNTDOWN_ACTIVE.load(Ordering::Relaxed) {
         return;
     }
@@ -102,7 +109,7 @@ fn tick(window_weak: &Weak<crate::MainWindow>) {
 
     let current = window.get_countdown_seconds();
     let next = current - 1;
-    let progress = next as f32 / COUNTDOWN_SECONDS as f32;
+    let progress = next as f32 / total_seconds as f32;
     tracing::debug!("[countdown] Tick: {}s, progress: {:.2}", next, progress);
     window.set_countdown_seconds(next);
     window.set_countdown_progress(progress);
@@ -121,7 +128,7 @@ fn tick(window_weak: &Weak<crate::MainWindow>) {
             .args(["dispatch", "movetoworkspacesilent", "special:minimized"])
             .output();
         window.set_countdown_active(false);
-        window.set_countdown_seconds(COUNTDOWN_SECONDS);
+        window.set_countdown_seconds(total_seconds);
         window.set_countdown_progress(1.0);
         crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
     }

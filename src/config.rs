@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 2;
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
@@ -21,6 +21,11 @@ pub struct Config {
     pub active_border_file: String,
     pub active_shader_file: String,
     pub auto_start: bool,
+    pub auto_minimize_enabled: bool,
+    pub minimize_seconds: i32,
+    pub language: String,
+    pub tiling_mode: bool,
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -33,6 +38,11 @@ impl Default for Config {
             active_border_file: String::new(),
             active_shader_file: String::new(),
             auto_start: false,
+            auto_minimize_enabled: true,
+            minimize_seconds: 5,
+            language: String::new(),
+            tiling_mode: false,
+            theme: "system".to_string(),
         }
     }
 }
@@ -46,9 +56,15 @@ fn migrate(mut cfg: Config) -> Config {
         cfg.config_version = 1;
     }
 
-    // Future migrations follow the same pattern:
-    // if cfg.config_version < 2 { /* add or rename fields */ cfg.config_version = 2; }
-    // if cfg.config_version < 3 { /* ... */ cfg.config_version = 3; }
+    // v1 → v2: add settings panel fields (auto_minimize, language, tiling_mode, theme)
+    if cfg.config_version < 2 {
+        cfg.auto_minimize_enabled = true;
+        cfg.minimize_seconds = 5;
+        cfg.language = String::new();
+        cfg.tiling_mode = false;
+        cfg.theme = "system".to_string();
+        cfg.config_version = 2;
+    }
 
     cfg.config_version = CONFIG_VERSION;
     cfg
@@ -187,6 +203,11 @@ mod tests {
         assert!(!cfg.is_system_active, "system_active should default to false");
         assert_eq!(cfg.border_size, 2, "border_size should default to 2");
         assert!(!cfg.auto_start, "auto_start should default to false");
+        assert!(cfg.auto_minimize_enabled, "auto_minimize_enabled should default to true");
+        assert_eq!(cfg.minimize_seconds, 5, "minimize_seconds should default to 5");
+        assert_eq!(cfg.theme, "system", "theme should default to system");
+        assert!(!cfg.tiling_mode, "tiling_mode should default to false");
+        assert!(cfg.language.is_empty(), "language should default to empty (auto-detect)");
         assert_eq!(
             cfg.config_version, CONFIG_VERSION,
             "config_version should match CONFIG_VERSION"
@@ -221,6 +242,11 @@ mod tests {
             active_border_file: "sharp.json".into(),
             active_shader_file: "rgb.json".into(),
             config_version: CONFIG_VERSION,
+            auto_minimize_enabled: false,
+            minimize_seconds: 10,
+            language: "es".into(),
+            tiling_mode: true,
+            theme: "light".into(),
         };
 
         cfg.save().expect("save should succeed");
@@ -229,6 +255,11 @@ mod tests {
         assert!(loaded.is_system_active);
         assert_eq!(loaded.border_size, 6);
         assert!(loaded.auto_start);
+        assert!(!loaded.auto_minimize_enabled);
+        assert_eq!(loaded.minimize_seconds, 10);
+        assert_eq!(loaded.language, "es");
+        assert!(loaded.tiling_mode);
+        assert_eq!(loaded.theme, "light");
         assert_eq!(loaded.active_anim_file, "glow.json");
         assert_eq!(loaded.active_border_file, "sharp.json");
         assert_eq!(loaded.active_shader_file, "rgb.json");

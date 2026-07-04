@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme;
 use slint::ComponentHandle;
@@ -241,8 +242,10 @@ fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &PathBuf) ->
     let eng = Engine::new(proj);
     match eng.get_colors() {
         Ok(colors) => {
+            let cfg = Config::load();
+            let resolved = theme::resolve_scheme(&colors, &cfg.theme);
             format_response(invoke_on_main(window, move |win| {
-                theme::apply_theme(&win, &colors);
+                theme::apply_theme(&win, &resolved);
                 "ok".to_string()
             }))
         }

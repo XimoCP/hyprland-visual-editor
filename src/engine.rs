@@ -3,6 +3,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[derive(Clone)]
 pub struct Engine {
     scripts_dir: PathBuf,
 }

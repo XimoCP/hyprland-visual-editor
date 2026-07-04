@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use slint::Color;
 
 use crate::engine::ColorScheme;
@@ -61,6 +63,94 @@ pub fn blend(c1: &Color, c2: &Color, t: f32) -> Color {
         (c1.green() as f32 * (1.0 - t) + c2.green() as f32 * t) as u8,
         (c1.blue() as f32 * (1.0 - t) + c2.blue() as f32 * t) as u8,
     )
+}
+
+// ─── Theme preference ──────────────────────────────────────────
+
+/// Detect whether the system prefers dark mode.
+/// Tries `gsettings` first (GNOME/GTK), falls back to dark.
+pub fn detect_system_dark() -> bool {
+    let output = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output();
+    match output {
+        Ok(out) => {
+            let s = String::from_utf8_lossy(&out.stdout);
+            // "prefer-dark" → dark, anything else ("default") → light
+            s.contains("prefer-dark")
+        }
+        Err(_) => {
+            // No gsettings → try darkman indicator file
+            let darkman = PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                .join(".cache")
+                .join("darkman")
+                .join("mode");
+            if let Ok(mode) = std::fs::read_to_string(&darkman) {
+                mode.trim() == "dark"
+            } else {
+                true // default to dark
+            }
+        }
+    }
+}
+
+/// Built-in dark palette (Tailwind-inspired).
+/// Used when user explicitly selects "dark" mode.
+fn dark_palette() -> ColorScheme {
+    ColorScheme {
+        primary: "#38bdf8".to_string(),    // sky-400
+        secondary: "#fbbf24".to_string(),  // amber-400
+        tertiary: "#c084fc".to_string(),   // violet-400
+        accent: "#34d399".to_string(),     // emerald-400
+        surface: "#1e293b".to_string(),    // slate-800
+        surface_lowest: "#0f172a".to_string(), // slate-900
+    }
+}
+
+/// Built-in light palette (Tailwind-inspired).
+/// Used when user explicitly selects "light" mode.
+fn light_palette() -> ColorScheme {
+    ColorScheme {
+        primary: "#0284c7".to_string(),    // sky-600
+        secondary: "#d97706".to_string(),  // amber-600
+        tertiary: "#7c3aed".to_string(),   // violet-600
+        accent: "#059669".to_string(),     // emerald-600
+        surface: "#f5f5f4".to_string(),    // stone-100
+        surface_lowest: "#ffffff".to_string(), // white
+    }
+}
+
+/// Derive a light version of a dark color scheme.
+/// Keeps accent colors but flips surfaces to light.
+fn light_from_base(base: &ColorScheme) -> ColorScheme {
+    ColorScheme {
+        primary: base.primary.clone(),
+        secondary: base.secondary.clone(),
+        tertiary: base.tertiary.clone(),
+        accent: base.accent.clone(),
+        surface: "#f5f5f4".to_string(),
+        surface_lowest: "#ffffff".to_string(),
+    }
+}
+
+/// Resolve a `ColorScheme` according to the user's theme preference.
+///
+/// - `"dark"` → built-in dark palette (no Noctalia)
+/// - `"light"` → built-in light palette (no Noctalia)
+/// - `"system"` → use `base` (Noctalia) for dark, derive light from it
+pub fn resolve_scheme(base: &ColorScheme, preference: &str) -> ColorScheme {
+    match preference {
+        "dark" => dark_palette(),
+        "light" => light_palette(),
+        _ => {
+            // "system" → follow system preference, use Noctalia as source
+            if detect_system_dark() {
+                base.clone()
+            } else {
+                light_from_base(base)
+            }
+        }
+    }
 }
 
 // ─── Theme application ──────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { Slider } from "std-widgets.slint";
+import { Slider, ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
 
 // ─── Preset Card ────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ export component PresetCard inherits Rectangle {
     in property <bool> active: false;
     callback toggled(bool);
 
-    height: (active || ta.has-hover || fs.has-focus) ? 100px : 54px;
+    height: (active || ta.has-hover || fs.has-focus) ? 100px : 58px;
     border-radius: 10px;
     clip: true;
     background: active ? HveColors.bg-hover : ((ta.has-hover || fs.has-focus) ? HveColors.bg-hover : HveColors.bg-card);
@@ -87,7 +87,7 @@ export component PresetCard inherits Rectangle {
                         Text {
                             text: root.title;
                             color: active ? HveColors.text : ((ta.has-hover || fs.has-focus) ? HveColors.text : HveColors.text-muted);
-                            font-size: 13px;
+                            font-size: 14px;
                             font-weight: active ? 700 : 500;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
@@ -111,7 +111,7 @@ export component PresetCard inherits Rectangle {
                             tag-text := Text {
                                 text: root.tag;
                                 color: active ? accent : HveColors.text-muted;
-                                font-size: 9px;
+                                font-size: 11px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -122,7 +122,7 @@ export component PresetCard inherits Rectangle {
                     Text {
                         text: root.desc;
                         color: HveColors.text-muted;
-                        font-size: 11px;
+                        font-size: 12px;
                         overflow: elide;
                         wrap: (active || ta.has-hover || fs.has-focus) ? word-wrap : no-wrap;
                     }
@@ -704,7 +704,7 @@ export component AccordionCard inherits Rectangle {
     }
 }
 
-// ─── Quick Nav Card (hover-lift) ─────────────────────────────────────
+// ─── Quick Nav Card (Optimizado para Nitidez) ─────────────────────────
 export component NavCard inherits Rectangle {
     in property <string> icon-text;
     in property <string> label;
@@ -712,7 +712,8 @@ export component NavCard inherits Rectangle {
     in property <color> accent;
     callback clicked;
 
-    height: nc-ta.has-hover ? 96px : 86px;
+    // Alto base 96px para compensar texto más grande sin hinting. Hover sube a 106px.
+    height: nc-ta.has-hover ? 106px : 96px;
     border-radius: 10px;
     horizontal-stretch: nc-ta.has-hover ? 1.3 : 1.0;
     background: nc-ta.has-hover ? accent.transparentize(0.92) : HveColors.bg-card;
@@ -738,12 +739,11 @@ export component NavCard inherits Rectangle {
     }
 
     VerticalLayout {
-        padding-top: 12px;
-        padding-bottom: 12px;
-        spacing: 4px;
-        alignment: center; // Centrado simétrico vertical completo
+        padding-top: 14px;
+        padding-bottom: 14px;
+        spacing: 6px; // Más aire entre icono, label y count
+        alignment: center;
 
-        // Espacio reservado idéntico para cualquier icono geométrico
         Rectangle {
             height: 28px;
 
@@ -758,16 +758,15 @@ export component NavCard inherits Rectangle {
 
         Text {
             text: root.label;
-            font-size: 12px;
+            font-size: 14px;       // 12→14px: más píxeles para rasterizar sin hinting
             font-weight: 600;
-            color: nc-ta.has-hover ? HveColors.text : HveColors.text-muted;
+            color: HveColors.text; // Siempre blanco, contraste ~7.8:1 contra bg-card
             horizontal-alignment: center;
-            animate color { duration: 200ms; }
         }
 
         Text {
             text: root.count-text;
-            font-size: 10px;
+            font-size: 11px;       // 10→11px: mejora legibilidad sin hinting
             color: HveColors.text-muted;
             horizontal-alignment: center;
         }
@@ -777,5 +776,509 @@ export component NavCard inherits Rectangle {
         width: 100%;
         height: 100%;
         clicked => { root.clicked(); }
+    }
+}
+
+// ─── Settings Button (Gear) ──────────────────────────────────────────
+export component SettingsButton inherits Rectangle {
+    in property <bool> settings-open: false;
+    callback clicked;
+
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: sb-ta.has-hover ? HveColors.bg-hover : (root.settings-open ? HveColors.bg-hover : transparent);
+    animate background { duration: 200ms; }
+
+    Text {
+        text: "⚙";
+        color: root.settings-open ? HveColors.accent-cyan : (sb-ta.has-hover ? HveColors.text : HveColors.text-muted);
+        font-size: 18px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color { duration: 200ms; }
+    }
+
+    sb-ta := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ─── Settings Panel ──────────────────────────────────────────────────
+export component SettingsPanel inherits Rectangle {
+    in-out property <bool> is-open: false;
+    in property <bool> auto-minimize: true;
+    in property <int> minimize-seconds: 5;
+    in property <string> language: "en";
+    in property <bool> tiling-mode: false;
+    in property <bool> autostart: false;
+    in property <string> theme: "system";
+    in-out property <bool> restart-required: false;
+    in property <string> restart-banner-text: "⚠ Restart required";
+    in property <string> restart-button-text: "Restart";
+
+    callback close-panel();
+    callback toggle-auto-minimize(bool);
+    callback change-minimize-seconds(int);
+    callback change-language(string);
+    callback toggle-tiling-mode(bool);
+    callback toggle-autostart(bool);
+    callback change-theme(string);
+    callback reset-presets();
+    callback restart-app();
+
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    // ── Overlay semitransparente (detrás) ──
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000060;
+
+        ta := TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { root.close-panel(); }
+        }
+    }
+
+    // ── Panel en sí (centrado) ──
+    Rectangle {
+        width: min(400px, parent.width - 48px);
+        height: min(480px, parent.height - 48px);
+        border-radius: 16px;
+        background: HveColors.bg-surface;
+        border-width: 1px;
+        border-color: HveColors.border;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        drop-shadow-blur: 30px;
+        drop-shadow-color: #00000060;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+
+            // ── Header ──
+            HorizontalLayout {
+                spacing: 12px;
+
+                Text {
+                    text: "Settings";
+                    color: HveColors.text;
+                    font-size: 20px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+
+                // Close X button
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 6px;
+                    background: sp-close.has-hover ? HveColors.accent-red.transparentize(0.8) : transparent;
+                    animate background { duration: 200ms; }
+
+                    Text {
+                        text: "✕";
+                        color: sp-close.has-hover ? HveColors.accent-red : HveColors.text-muted;
+                        font-size: 14px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        animate color { duration: 200ms; }
+                    }
+
+                    sp-close := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.close-panel(); }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // ── Restart required banner ──
+            if root.restart-required : Rectangle {
+                height: 32px;
+                border-radius: 8px;
+                background: HveColors.accent-amber.transparentize(0.85);
+                border-width: 1px;
+                border-color: HveColors.accent-amber.transparentize(0.4);
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 8px;
+                    spacing: 8px;
+
+                    Text {
+                        text: root.restart-banner-text;
+                        color: HveColors.accent-amber;
+                        font-size: 12px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 60px;
+                            height: 24px;
+                            border-radius: 6px;
+                            background: rr-btn.has-hover ? HveColors.accent-amber : HveColors.bg-card;
+                            animate background { duration: 150ms; }
+
+                            Text {
+                                text: root.restart-button-text;
+                                color: rr-btn.has-hover ? HveColors.bg-dark : HveColors.accent-amber;
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                animate color { duration: 150ms; }
+                            }
+
+                            rr-btn := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.restart-app(); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Scroll de opciones ──
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 20px;
+                    padding-bottom: 8px;
+
+                    // ── Auto-minimize ──
+                    VerticalLayout {
+                        spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Auto-minimize";
+                            color: HveColors.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        // Toggle switch mini
+                        Rectangle {
+                                width: 40px;
+                                height: 22px;
+                                border-radius: 11px;
+                                background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
+                                animate background { duration: 250ms; }
+
+                                Rectangle {
+                                    width: 16px;
+                                    height: 16px;
+                                    border-radius: 8px;
+                                    background: HveColors.bg-dark;
+                                    x: root.auto-minimize ? parent.width - self.width - 3px : 3px;
+                                    y: 3px;
+                                    animate x { duration: 350ms; easing: ease-in-out-back; }
+                                }
+
+                                TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    clicked => { root.toggle-auto-minimize(!root.auto-minimize); }
+                                }
+                            }
+                        }
+
+                        // Time selector (visible only when auto-minimize is on)
+                        if root.auto-minimize : HorizontalLayout {
+                            spacing: 8px;
+                            padding-left: 4px;
+
+                            Text {
+                                text: "Timer:";
+                                color: HveColors.text-muted;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+
+                            for sec in [3, 5, 10] : Rectangle {
+                                width: 36px;
+                                height: 28px;
+                                border-radius: 6px;
+                                background: root.minimize-seconds == sec ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.border;
+                                animate background { duration: 150ms; }
+                                animate border-color { duration: 150ms; }
+
+                                Text {
+                                    text: sec;
+                                    color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.text;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    clicked => { root.change-minimize-seconds(sec); }
+                                }
+                            }
+
+                            Text {
+                                text: "s";
+                                color: HveColors.text-muted;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // ── Language ──
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Language";
+                            color: HveColors.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 60px;
+                            height: 28px;
+                            border-radius: 6px;
+                            background: HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+
+                            HorizontalLayout {
+                                spacing: 0px;
+
+                                Rectangle {
+                                    width: 50%;
+                                    height: 100%;
+                                    border-radius: root.language == "en" ? 5px : 0px;
+                                    background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
+                                    animate background { duration: 150ms; }
+
+                                    Text {
+                                        text: "EN";
+                                        color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        clicked => { root.change-language("en"); }
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 50%;
+                                    height: 100%;
+                                    border-radius: root.language == "es" ? 5px : 0px;
+                                    background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
+                                    animate background { duration: 150ms; }
+
+                                    Text {
+                                        text: "ES";
+                                        color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        clicked => { root.change-language("es"); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Tiling Mode ──
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Tiling mode";
+                            color: HveColors.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: root.tiling-mode ? HveColors.accent-cyan : HveColors.border;
+                            animate background { duration: 250ms; }
+
+                            Rectangle {
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: HveColors.bg-dark;
+                                x: root.tiling-mode ? parent.width - self.width - 3px : 3px;
+                                y: 3px;
+                                animate x { duration: 350ms; easing: ease-in-out-back; }
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.toggle-tiling-mode(!root.tiling-mode); }
+                            }
+                        }
+                    }
+
+                    // ── Autostart ──
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Autostart";
+                            color: HveColors.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: root.autostart ? HveColors.accent-cyan : HveColors.border;
+                            animate background { duration: 250ms; }
+
+                            Rectangle {
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: HveColors.bg-dark;
+                                x: root.autostart ? parent.width - self.width - 3px : 3px;
+                                y: 3px;
+                                animate x { duration: 350ms; easing: ease-in-out-back; }
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.toggle-autostart(!root.autostart); }
+                            }
+                        }
+                    }
+
+                    // ── Theme ──
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Theme";
+                            color: HveColors.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 4px;
+
+                            for t in ["dark", "light", "system"] : Rectangle {
+                                width: 56px;
+                                height: 28px;
+                                border-radius: 6px;
+                                background: root.theme == t ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.theme == t ? HveColors.accent-cyan : HveColors.border;
+                                animate background { duration: 150ms; }
+                                animate border-color { duration: 150ms; }
+
+                                Text {
+                                    text: t;
+                                    color: root.theme == t ? HveColors.accent-cyan : HveColors.text;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    clicked => { root.change-theme(t); }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Reset Presets ──
+                    Rectangle {
+                        height: 1px;
+                        background: HveColors.border;
+                    }
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 8px;
+                        background: rp-ta.has-hover ? HveColors.accent-red.transparentize(0.85) : HveColors.bg-card;
+                        border-width: 1px;
+                        border-color: rp-ta.has-hover ? HveColors.accent-red.transparentize(0.5) : HveColors.border;
+                        animate background { duration: 200ms; }
+                        animate border-color { duration: 200ms; }
+
+                        Text {
+                            text: "Reset presets";
+                            color: rp-ta.has-hover ? HveColors.accent-red : HveColors.text-muted;
+                            font-size: 13px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            animate color { duration: 200ms; }
+                        }
+
+                        rp-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.reset-presets(); }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

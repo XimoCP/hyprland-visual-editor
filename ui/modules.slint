@@ -22,6 +22,24 @@ export component HomeModule inherits ScrollView {
     in property <string> activation-title;
     in property <string> activation-active-text;
     in property <string> activation-inactive-text;
+    // ── i18n: translated labels ──
+    in property <string> status-active;
+    in property <string> status-inactive;
+    in property <string> nav-animations;
+    in property <string> nav-borders;
+    in property <string> nav-shaders;
+    in property <string> count-styles;
+    in property <string> count-filters;
+    in property <string> active-config-title;
+    in property <string> active-anim-label;
+    in property <string> active-border-label;
+    in property <string> active-shader-label;
+    in property <string> none-anim;
+    in property <string> none-border;
+    in property <string> none-shader;
+    in property <string> about-title;
+    in property <string> about-short;
+    in property <string> about-full;
     callback toggle-system(bool);
     callback navigate-to(int);
 
@@ -33,11 +51,12 @@ export component HomeModule inherits ScrollView {
     }
 
     VerticalLayout {
-        padding-left: 32px;
-        padding-right: 32px;
-        padding-top: 32px;
-        padding-bottom: 24px;
-        spacing: 20px;
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 24px;
+        padding-bottom: 16px;
+        spacing: 14px;
+        alignment: start;
 
         // ── Status Card ──
         Rectangle {
@@ -81,7 +100,7 @@ export component HomeModule inherits ScrollView {
                     horizontal-stretch: 1;
 
                     Text {
-                        text: root.system-active ? "Sistema Activo" : "Sistema Detenido";
+                        text: root.system-active ? root.status-active : root.status-inactive;
                         font-size: 18px;
                         font-weight: 700;
                         color: HveColors.text;
@@ -133,24 +152,24 @@ export component HomeModule inherits ScrollView {
 
             NavCard {
                 icon-text: "▶";
-                label: "Animaciones";
-                count-text: root.anim-titles.length + " estilos";
+                label: root.nav-animations;
+                count-text: root.anim-titles.length + root.count-styles;
                 accent: HveColors.accent-amber;
                 clicked => { root.navigate-to(1); }
             }
 
             NavCard {
                 icon-text: "□";
-                label: "Bordes";
-                count-text: root.border-titles.length + " estilos";
+                label: root.nav-borders;
+                count-text: root.border-titles.length + root.count-styles;
                 accent: HveColors.accent-green;
                 clicked => { root.navigate-to(2); }
             }
 
             NavCard {
                 icon-text: "◇";
-                label: "Shaders";
-                count-text: root.shader-titles.length + " filtros";
+                label: root.nav-shaders;
+                count-text: root.shader-titles.length + root.count-filters;
                 accent: HveColors.accent-purple;
                 clicked => { root.navigate-to(3); }
             }
@@ -164,11 +183,11 @@ export component HomeModule inherits ScrollView {
             border-color: HveColors.border;
 
             VerticalLayout {
-                padding: 18px;
-                spacing: 10px;
+                padding: 12px;
+                spacing: 6px;
 
                 Text {
-                    text: "Configuración Activa";
+                    text: root.active-config-title;
                     font-size: 13px;
                     font-weight: 600;
                     color: HveColors.text-muted;
@@ -176,7 +195,7 @@ export component HomeModule inherits ScrollView {
 
                 // ── Animación status ──
                 Rectangle {
-                    height: 34px;
+                    height: 32px;
                     border-radius: 6px;
                     background: HveColors.accent-amber.transparentize(0.85);
                     HorizontalLayout {
@@ -193,14 +212,14 @@ export component HomeModule inherits ScrollView {
                             }
                         }
                         Text {
-                            text: "Animación:";
+                            text: root.active-anim-label;
                             font-size: 12px;
                             color: HveColors.text-muted;
                             vertical-alignment: center;
                         }
                         Rectangle { horizontal-stretch: 1; }
                         Text {
-                            text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : "Ninguna";
+                            text: root.active-anim-index >= 0 ? root.anim-titles[root.active-anim-index] : root.none-anim;
                             font-size: 12px;
                             font-weight: 600;
                             color: HveColors.text;
@@ -211,7 +230,7 @@ export component HomeModule inherits ScrollView {
 
                 // ── Borde status ──
                 Rectangle {
-                    height: 34px;
+                    height: 32px;
                     border-radius: 6px;
                     background: HveColors.accent-green.transparentize(0.85);
                     HorizontalLayout {
@@ -228,14 +247,14 @@ export component HomeModule inherits ScrollView {
                             }
                         }
                         Text {
-                            text: "Borde:";
+                            text: root.active-border-label;
                             font-size: 12px;
                             color: HveColors.text-muted;
                             vertical-alignment: center;
                         }
                         Rectangle { horizontal-stretch: 1; }
                         Text {
-                            text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : "Ninguno";
+                            text: root.active-border-index >= 0 ? root.border-titles[root.active-border-index] : root.none-border;
                             font-size: 12px;
                             font-weight: 600;
                             color: HveColors.text;
@@ -246,7 +265,7 @@ export component HomeModule inherits ScrollView {
 
                 // ── Shader status ──
                 Rectangle {
-                    height: 34px;
+                    height: 32px;
                     border-radius: 6px;
                     background: HveColors.accent-purple.transparentize(0.85);
                     HorizontalLayout {
@@ -263,14 +282,14 @@ export component HomeModule inherits ScrollView {
                             }
                         }
                         Text {
-                            text: "Shader:";
+                            text: root.active-shader-label;
                             font-size: 12px;
                             color: HveColors.text-muted;
                             vertical-alignment: center;
                         }
                         Rectangle { horizontal-stretch: 1; }
                         Text {
-                            text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : "Ninguno";
+                            text: root.active-shader-index >= 0 ? root.shader-titles[root.active-shader-index] : root.none-shader;
                             font-size: 12px;
                             font-weight: 600;
                             color: HveColors.text;
@@ -283,18 +302,20 @@ export component HomeModule inherits ScrollView {
 
         // �─ About ──
         acerca := AccordionCard {
-            card-title: "Acerca de HVE";
+            card-title: root.about-title;
             icon-text: "💡";
             accent: HveColors.accent-cyan;
             border: HveColors.border;
-            short-desc: "Hyprland Visual Editor es la evolución estética de tu escritorio.";
-            full-desc: "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n① Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield";
+            short-desc: root.about-short;
+            full-desc: root.about-full;
             toggled => {
                 acerca.expanded = !acerca.expanded;
                 if acerca.expanded {
-                    // Delta relativo: baja ~140px para revelar el contenido expandido
-                    // sin salirse de los límites del viewport (coordenada negativa en Slint)
+                    // Baja ~140px para revelar el contenido expandido
                     root.viewport-y = root.viewport-y - 140px;
+                } else {
+                    // Al cerrar, volver al inicio — evita acumulación negativa
+                    root.viewport-y = 0px;
                 }
             }
         }
@@ -315,6 +336,7 @@ export component AnimationsModule inherits ScrollView {
     VerticalLayout {
         padding: 24px;
         spacing: 12px;
+        alignment: start;
 
         SectionHeader {
             title: root.header-title;
@@ -350,6 +372,7 @@ export component BordersModule inherits ScrollView {
     VerticalLayout {
         padding: 24px;
         spacing: 12px;
+        alignment: start;
 
         SectionHeader {
             title: root.header-title;
@@ -388,6 +411,7 @@ export component ShadersModule inherits ScrollView {
     VerticalLayout {
         padding: 24px;
         spacing: 12px;
+        alignment: start;
 
         SectionHeader {
             title: root.header-title;
