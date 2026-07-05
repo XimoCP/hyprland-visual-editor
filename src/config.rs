@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 2;
+pub const CONFIG_VERSION: u32 = 3;
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
@@ -26,6 +26,7 @@ pub struct Config {
     pub language: String,
     pub tiling_mode: bool,
     pub theme: String,
+    pub keybinds_enabled: bool,
 }
 
 impl Default for Config {
@@ -43,6 +44,7 @@ impl Default for Config {
             language: String::new(),
             tiling_mode: false,
             theme: "system".to_string(),
+            keybinds_enabled: false,
         }
     }
 }
@@ -64,6 +66,12 @@ fn migrate(mut cfg: Config) -> Config {
         cfg.tiling_mode = false;
         cfg.theme = "system".to_string();
         cfg.config_version = 2;
+    }
+
+    // v2 → v3: add keybinds toggle
+    if cfg.config_version < 3 {
+        cfg.keybinds_enabled = false;
+        cfg.config_version = 3;
     }
 
     cfg.config_version = CONFIG_VERSION;
@@ -207,6 +215,10 @@ mod tests {
         assert_eq!(cfg.minimize_seconds, 5, "minimize_seconds should default to 5");
         assert_eq!(cfg.theme, "system", "theme should default to system");
         assert!(!cfg.tiling_mode, "tiling_mode should default to false");
+        assert!(
+            !cfg.keybinds_enabled,
+            "keybinds_enabled should default to false"
+        );
         assert!(cfg.language.is_empty(), "language should default to empty (auto-detect)");
         assert_eq!(
             cfg.config_version, CONFIG_VERSION,
@@ -247,6 +259,7 @@ mod tests {
             language: "es".into(),
             tiling_mode: true,
             theme: "light".into(),
+            keybinds_enabled: true,
         };
 
         cfg.save().expect("save should succeed");
@@ -260,6 +273,7 @@ mod tests {
         assert_eq!(loaded.language, "es");
         assert!(loaded.tiling_mode);
         assert_eq!(loaded.theme, "light");
+        assert!(loaded.keybinds_enabled);
         assert_eq!(loaded.active_anim_file, "glow.json");
         assert_eq!(loaded.active_border_file, "sharp.json");
         assert_eq!(loaded.active_shader_file, "rgb.json");
@@ -308,6 +322,44 @@ mod tests {
         );
         assert!(cfg.is_system_active, "v0 field should be preserved");
         assert_eq!(cfg.border_size, 3, "v0 field should be preserved");
+    }
+
+    // ── migration from v2 → v3 (keybinds_enabled) ────────────────────
+
+    #[test]
+    fn test_migration_from_v2_to_v3_adds_keybinds_enabled() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        // A v2 config exists without keybinds_enabled
+        let v2_json = r#"{
+            "config_version": 2,
+            "is_system_active": true,
+            "border_size": 3,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system"
+        }"#;
+        std::fs::write(&path, v2_json).expect("write v2 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v2 config should be migrated to v{CONFIG_VERSION}"
+        );
+        assert!(cfg.is_system_active, "v2 field should be preserved");
+        assert_eq!(
+            cfg.keybinds_enabled, false,
+            "keybinds_enabled should default to false after migration"
+        );
     }
 
     // ── deny_unknown_fields catches unexpected fields ─────────────────
