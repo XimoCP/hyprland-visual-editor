@@ -43,13 +43,13 @@ macro_rules! make_toggle_callback {
 
 pub fn setup_callbacks(
     window: &crate::MainWindow,
-    cfg: &crate::config::Config,
+    cfg: &Arc<Mutex<crate::config::Config>>,
     proj: PathBuf,
     tray_active: Arc<AtomicBool>,
 ) {
     // Single Engine + Config instances shared across all callbacks
     let eng = Arc::new(Engine::new(&proj));
-    let cfg = Arc::new(Mutex::new(cfg.clone()));
+    let cfg = cfg.clone();
 
     // System toggle — skip first call (UI fires on init)
     {

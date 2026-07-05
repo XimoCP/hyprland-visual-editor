@@ -110,12 +110,17 @@ impl Config {
 
         match serde_json::from_str::<Config>(&data) {
             Ok(cfg) => {
+                tracing::info!("[config] Loaded config: version={}, theme={:?}, tiling={}, keybinds={}, active={}",
+                    cfg.config_version, cfg.theme, cfg.tiling_mode, cfg.keybinds_enabled, cfg.is_system_active);
                 if cfg.config_version < CONFIG_VERSION {
                     eprintln!(
                         "[hve] Info: migrating config from v{} to v{}.",
                         cfg.config_version, CONFIG_VERSION
                     );
-                    migrate(cfg)
+                    let migrated = migrate(cfg);
+                    tracing::info!("[config] Migrated config: version={}, theme={:?}, tiling={}, keybinds={}",
+                        migrated.config_version, migrated.theme, migrated.tiling_mode, migrated.keybinds_enabled);
+                    migrated
                 } else {
                     cfg
                 }
@@ -126,6 +131,7 @@ impl Config {
                     path.display(),
                     e
                 );
+                tracing::warn!("[config] Parse error: {} — falling back to defaults", e);
                 Self::default()
             }
         }
@@ -156,6 +162,10 @@ impl Config {
         fs::write(&path, data).map_err(|e| {
             format!("Failed to write config to '{}': {}", path.display(), e)
         })?;
+        tracing::info!(
+            "[config] Saved config: version={}, theme={:?}, tiling={}, keybinds={}, active={}",
+            self.config_version, self.theme, self.tiling_mode, self.keybinds_enabled, self.is_system_active
+        );
         Ok(())
     }
 }

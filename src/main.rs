@@ -649,6 +649,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── System tray (start before callbacks so the shared atomic exists) ──
     let tray_active = tray::start_tray(window.as_weak(), tr.clone());
 
+    // ── Shared config for all callbacks (prevents stale clones from overwriting each other) ──
+    let cfg = Arc::new(std::sync::Mutex::new(cfg));
+
     // ── Callbacks ──
     callbacks::setup_callbacks(&window, &cfg, proj.clone(), tray_active);
 
@@ -706,11 +709,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_toggle_auto_minimize(move |enabled| {
-            settings_cfg.auto_minimize_enabled = enabled;
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.auto_minimize_enabled = enabled;
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_auto_minimize(enabled);
             }
@@ -718,11 +724,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_change_minimize_seconds(move |secs| {
-            settings_cfg.minimize_seconds = secs;
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.minimize_seconds = secs;
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_minimize_seconds(secs);
             }
@@ -730,12 +739,15 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_change_language(move |lang| {
             let lang_str = lang.to_string();
-            settings_cfg.language = lang_str.clone();
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.language = lang_str.clone();
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_language(lang);
                 w.set_restart_required(true);
@@ -745,11 +757,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_toggle_tiling_mode(move |enabled| {
-            settings_cfg.tiling_mode = enabled;
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.tiling_mode = enabled;
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_tiling_mode(enabled);
                 w.set_restart_required(false);
@@ -775,11 +790,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_toggle_keybinds(move |enabled| {
-            settings_cfg.keybinds_enabled = enabled;
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.keybinds_enabled = enabled;
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_keybinds_mode(enabled);
             }
@@ -789,11 +807,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_toggle_autostart(move |enabled| {
-            settings_cfg.auto_start = enabled;
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.auto_start = enabled;
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_autostart(enabled);
             }
@@ -814,13 +835,16 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         let eng = engine.clone();
         window.on_change_theme(move |theme| {
             let theme_str = theme.to_string();
-            settings_cfg.theme = theme_str.clone();
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.theme = theme_str.clone();
+                let _ = c.save();
+            }
             if let Some(w) = weak.upgrade() {
                 // Apply new palette immediately (no restart needed)
                 if let Ok(colors) = eng.get_colors() {
@@ -866,7 +890,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
-        let mut settings_cfg = cfg.clone();
+        let settings_cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_reset_presets(move || {
             tracing::info!("[settings] Resetting presets...");
@@ -875,10 +899,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_active_border_index(-1);
                 w.set_active_shader_index(-1);
             }
-            settings_cfg.active_anim_file = String::new();
-            settings_cfg.active_border_file = String::new();
-            settings_cfg.active_shader_file = String::new();
-            let _ = settings_cfg.save();
+            {
+                let mut c = settings_cfg.lock().unwrap();
+                c.active_anim_file = String::new();
+                c.active_border_file = String::new();
+                c.active_shader_file = String::new();
+                let _ = c.save();
+            }
             tracing::info!("[settings] Presets reset complete.");
         });
     }
@@ -900,10 +927,12 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Startup: cleanup keybinds.lua + sync keybinds from saved config ──
     cleanup_keybinds_lua();
-    if cfg.keybinds_enabled {
+    let cfg_guard = cfg.lock().unwrap();
+    if cfg_guard.keybinds_enabled {
         set_keybinds(true);
     }
-    window.set_keybinds_mode(cfg.keybinds_enabled);
+    window.set_keybinds_mode(cfg_guard.keybinds_enabled);
+    drop(cfg_guard);
 
     // ── Visibilidad inicial según el modo ──
     if tray_mode {
@@ -917,7 +946,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via hyprctl para evitar el doble-click inicial.
-        let startup_tiling = cfg.tiling_mode;
+        let startup_tiling = cfg.lock().unwrap().tiling_mode;
         let startup_weak = window.as_weak();
         // First timer: focus window + sync config rules
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
