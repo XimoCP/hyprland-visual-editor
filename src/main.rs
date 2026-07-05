@@ -111,38 +111,66 @@ fn hve_cache_dir() -> PathBuf {
         .join("hve")
 }
 
-/// Path to the HVE window rules file (hve-windowrules.lua or .conf).
-/// This file controls how HVE's own window behaves (float/tile).
-/// Separate from overlay.lua which is managed by assemble.sh.
-fn hve_windowrules_path() -> PathBuf {
+/// Path to the HVE settings file (hve-settings.lua or .conf).
+/// This file controls HVE's window rules and keyboard shortcuts.
+/// Replaces the old hve-windowrules.{lua,conf} naming.
+/// Migrates the old file to the new name on first call if it exists.
+fn hve_settings_path() -> PathBuf {
     let ext = if hve_format() == "lua" { "lua" } else { "conf" };
-    hve_cache_dir().join(format!("hve-windowrules.{}", ext))
+    let new_path = hve_cache_dir().join(format!("hve-settings.{}", ext));
+    let old_path = hve_cache_dir().join(format!("hve-windowrules.{}", ext));
+
+    // Migrate old hve-windowrules file to hve-settings if it exists and new one doesn't
+    if old_path.exists() && !new_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&old_path) {
+            if std::fs::write(&new_path, &content).is_ok() {
+                let _ = std::fs::remove_file(&old_path);
+                tracing::info!(
+                    "[settings] Migrated {} → {}",
+                    old_path.display(),
+                    new_path.display()
+                );
+            }
+        }
+    }
+
+    new_path
 }
 
-/// Ensure the window rules file exists with a default float rule.
+/// Ensure the settings file exists with a default float rule and empty keybinds section.
 /// Called once at startup — does NOT overwrite an existing file.
-fn ensure_windowrules() {
-    let path = hve_windowrules_path();
+fn ensure_settings_file() {
+    let path = hve_settings_path();
     if path.exists() {
         return;
     }
 
     let format = hve_format();
-    let marker_start = if format == "lua" {
+    let wr_marker_start = if format == "lua" {
         "-- >>> HVE WINDOW RULES <<<"
     } else {
         "# >>> HVE WINDOW RULES <<<"
     };
-    let marker_end = if format == "lua" {
+    let wr_marker_end = if format == "lua" {
         "-- >>> HVE WINDOW RULES END <<<"
     } else {
         "# >>> HVE WINDOW RULES END <<<"
+    };
+    let kb_marker_start = if format == "lua" {
+        "-- >>> HVE KEYBINDS <<<"
+    } else {
+        "# >>> HVE KEYBINDS <<<"
+    };
+    let kb_marker_end = if format == "lua" {
+        "-- >>> HVE KEYBINDS END <<<"
+    } else {
+        "# >>> HVE KEYBINDS END <<<"
     };
     let _ = std::fs::create_dir_all(hve_cache_dir());
 
     let content = if format == "lua" {
         format!(
-            r#"{marker_start}
+            r#"{wr_marker_start}
 hl.window_rule({{
   name  = "hve-floating",
   match = {{ title = "^Hyprland Visual Editor$" }},
@@ -150,39 +178,43 @@ hl.window_rule({{
   size  = {{ "95%", "95%" }},
   move  = {{ "center", "center" }},
 }})
-{marker_end}
+{wr_marker_end}
+{kb_marker_start}
+{kb_marker_end}
 "#,
         )
     } else {
         format!(
-            r#"{marker_start}
+            r#"{wr_marker_start}
 windowrulev2 = float, title:^(Hyprland Visual Editor)$
 windowrulev2 = center, title:^(Hyprland Visual Editor)$
 windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
-{marker_end}
+{wr_marker_end}
+{kb_marker_start}
+{kb_marker_end}
 "#,
         )
     };
 
     match std::fs::write(&path, content) {
-        Ok(_) => tracing::info!("[windowrules] Created at {}", path.display()),
-        Err(e) => tracing::error!("[windowrules] Failed to create: {}", e),
+        Ok(_) => tracing::info!("[settings] Created at {}", path.display()),
+        Err(e) => tracing::error!("[settings] Failed to create: {}", e),
     }
 }
 
 /// Toggle HVE window rules between float (default) and tile.
 ///
-/// Operates on hve-windowrules.lua/.conf — a dedicated file separate from
+/// Operates on hve-settings.lua/.conf — a dedicated file separate from
 /// the overlay (which is managed by assemble.sh). This file is loaded AFTER
 /// the user's windowrules.lua so its rule wins.
 ///
 /// When `tiling` is false (default): `float = true` → window floats
 /// When `tiling` is true:           `tile  = true` → window tiles
 fn set_tiling_window_rules(tiling: bool) {
-    let path = hve_windowrules_path();
+    let path = hve_settings_path();
     if !path.exists() {
         tracing::warn!("[windowrules] File not found — creating default");
-        ensure_windowrules();
+        ensure_settings_file();
     }
 
     let format = hve_format();
@@ -356,8 +388,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     tracing::info!("Locale: {}", tr.lang);
 
-    // ── Ensure hve-windowrules exists with default float rule ──
-    ensure_windowrules();
+    // ── Ensure hve-settings exists with default window rules and keybinds section ──
+    ensure_settings_file();
 
     let window = MainWindow::new()?;
 
