@@ -59,37 +59,6 @@ fn project_dir() -> PathBuf {
 
 /// Create or update the autostart desktop entry at
 /// `~/.config/autostart/hve.desktop`.
-fn setup_autostart() {
-    let autostart_dir = dirs::config_dir()
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(home).join(".config")
-        })
-        .join("autostart");
-
-    let _ = std::fs::create_dir_all(&autostart_dir);
-    let desktop_path = autostart_dir.join("hve.desktop");
-
-    let exe_path =
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hve"));
-
-    let content = format!(
-        "[Desktop Entry]\n\
-         Type=Application\n\
-         Name=HVE\n\
-         Comment=Hyprland Visual Editor\n\
-         Exec={} --tray\n\
-         Terminal=false\n\
-         X-GNOME-Autostart-enabled=true\n",
-        exe_path.display()
-    );
-
-    match std::fs::write(&desktop_path, content) {
-        Ok(_) => tracing::info!("Autostart entry created at {}", desktop_path.display()),
-        Err(e) => tracing::error!("Failed to create autostart entry: {}", e),
-    }
-}
-
 /// Detect whether HVE is in lua or conf mode by reading the format cache.
 fn hve_format() -> &'static str {
     let format_path = hve_cache_dir().join("hve_format");
@@ -166,6 +135,16 @@ fn ensure_settings_file() {
     } else {
         "# >>> HVE KEYBINDS END <<<"
     };
+    let as_marker_start = if format == "lua" {
+        "-- >>> HVE AUTOSTART <<<"
+    } else {
+        "# >>> HVE AUTOSTART <<<"
+    };
+    let as_marker_end = if format == "lua" {
+        "-- >>> HVE AUTOSTART END <<<"
+    } else {
+        "# >>> HVE AUTOSTART END <<<"
+    };
     let _ = std::fs::create_dir_all(hve_cache_dir());
 
     let content = if format == "lua" {
@@ -181,6 +160,8 @@ hl.window_rule({{
 {wr_marker_end}
 {kb_marker_start}
 {kb_marker_end}
+{as_marker_start}
+{as_marker_end}
 "#,
         )
     } else {
@@ -192,6 +173,8 @@ windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
 {wr_marker_end}
 {kb_marker_start}
 {kb_marker_end}
+{as_marker_start}
+{as_marker_end}
 "#,
         )
     };
@@ -450,61 +433,118 @@ bind = SUPER ALT, S, exec, hve-ipc next-shader
     }
 }
 
-/// One-time cleanup: remove the 5 HVE keybind lines (section 17, lines 127-132)
-/// from `~/.config/hypr/configs/keybinds.lua`.
+/// Toggle HVE autostart in hve-settings.lua.
 ///
-/// This is a migration cleanup — after this, HVE keybinds live in hve-settings.
-/// If the file doesn't exist, or the section is absent, this is a no-op.
-fn cleanup_keybinds_lua() {
-    let keybinds_path = dirs::config_dir()
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(home).join(".config")
-        })
-        .join("hypr")
-        .join("configs")
-        .join("keybinds.lua");
-
-    if !keybinds_path.exists() {
-        tracing::info!("[cleanup] keybinds.lua not found — nothing to clean up");
-        return;
+/// When enabled, writes `hl.on("hyprland.start", ...)` with `hl.exec_cmd("hve --tray")`
+/// between markers. When disabled, removes the block entirely (markers stay in the
+/// template for next enable).
+///
+/// This avoids touching the user's exec.lua — everything lives in our managed file,
+/// which is dofile'd from hyprland.lua. Clean uninstall: delete hve-settings.lua
+/// and remove the dofile line from hyprland.lua.
+fn set_autostart(enabled: bool) {
+    let path = hve_settings_path();
+    if !path.exists() {
+        tracing::warn!("[autostart] hve-settings not found — creating default");
+        ensure_settings_file();
     }
 
-    let content = match std::fs::read_to_string(&keybinds_path) {
+    let format = hve_format();
+    let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!("[cleanup] Failed to read keybinds.lua: {}", e);
+            tracing::error!("[autostart] Failed to read hve-settings: {}", e);
             return;
         }
     };
 
-    let lines: Vec<&str> = content.lines().collect();
-    // Lines 127-132 (1-indexed) = indices 126-131 (0-indexed)
-    if lines.len() < 132 {
-        tracing::info!("[cleanup] keybinds.lua too short — no HVE section to remove");
-        return;
-    }
+    let marker_start = if format == "lua" {
+        "-- >>> HVE AUTOSTART <<<"
+    } else {
+        "# >>> HVE AUTOSTART <<<"
+    };
+    let marker_end = if format == "lua" {
+        "-- >>> HVE AUTOSTART END <<<"
+    } else {
+        "# >>> HVE AUTOSTART END <<<"
+    };
 
-    // Verify the content at those lines actually looks like HVE binds
-    let section_text = lines[126..132].join("\n");
-    if !section_text.contains("hve-ipc") {
-        tracing::info!("[cleanup] Lines 127-132 don't contain HVE binds — no-op");
-        return;
-    }
+    let exe = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("hve"))
+        .display()
+        .to_string();
 
-    // Remove lines 126-131 (0-indexed)
-    let mut new_content = String::new();
-    for (i, line) in lines.iter().enumerate() {
-        if i >= 126 && i <= 131 {
-            continue;
+    let autostart_block: String = if enabled {
+        if format == "lua" {
+            format!(
+                r#"{marker_start}
+hl.on("hyprland.start", function()
+    hl.exec_cmd("{} --tray")
+end)
+{marker_end}"#,
+                exe
+            )
+        } else {
+            format!(
+                r#"{marker_start}
+exec-once = {} --tray
+{marker_end}"#,
+                exe
+            )
         }
-        new_content.push_str(line);
-        new_content.push('\n');
-    }
+    } else {
+        String::new()
+    };
 
-    match std::fs::write(&keybinds_path, &new_content) {
-        Ok(_) => tracing::info!("[cleanup] Removed HVE section (lines 127-132) from keybinds.lua"),
-        Err(e) => tracing::error!("[cleanup] Failed to write keybinds.lua: {}", e),
+    // Replace or remove content between markers
+    let new_content = if content.contains(marker_start) {
+        let mut result = String::new();
+        let mut in_block = false;
+        for line in content.lines() {
+            if line.trim() == marker_start {
+                in_block = true;
+                if enabled {
+                    result.push_str(&autostart_block);
+                    result.push('\n');
+                }
+                continue;
+            }
+            if line.trim() == marker_end {
+                in_block = false;
+                continue;
+            }
+            if !in_block {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        result
+    } else if enabled {
+        // No markers yet → append the block
+        let mut result = content;
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push('\n');
+        result.push_str(&autostart_block);
+        result.push('\n');
+        result
+    } else {
+        // Disabled with no markers → nothing to do
+        content
+    };
+
+    match std::fs::write(&path, new_content) {
+        Ok(_) => {
+            tracing::info!(
+                "[autostart] {} in hve-settings.lua",
+                if enabled { "Enabled" } else { "Disabled" }
+            );
+            let _ = std::process::Command::new("hyprctl")
+                .arg("reload")
+                .output();
+        }
+        Err(e) => tracing::error!("[autostart] Failed to write hve-settings: {}", e),
     }
 }
 
@@ -564,11 +604,6 @@ fn main() -> Result<(), slint::PlatformError> {
     ensure_settings_file();
 
     let window = MainWindow::new()?;
-
-    // ── Autostart ──
-    if cfg.auto_start {
-        setup_autostart();
-    }
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
@@ -818,19 +853,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(w) = weak.upgrade() {
                 w.set_autostart(enabled);
             }
-            if enabled {
-                crate::setup_autostart();
-            } else {
-                // Remove autostart desktop file
-                let autostart_path = dirs::config_dir()
-                    .unwrap_or_else(|| {
-                        let home = std::env::var("HOME").unwrap_or_default();
-                        PathBuf::from(home).join(".config")
-                    })
-                    .join("autostart")
-                    .join("hve.desktop");
-                let _ = std::fs::remove_file(autostart_path);
-            }
+            set_autostart(enabled);
         });
     }
 
@@ -925,13 +948,13 @@ fn main() -> Result<(), slint::PlatformError> {
         slint::CloseRequestResponse::HideWindow
     });
 
-    // ── Startup: cleanup keybinds.lua + sync keybinds from saved config ──
-    cleanup_keybinds_lua();
+    // ── Startup: sync keybinds + autostart from saved config ──
     let cfg_guard = cfg.lock().unwrap();
     if cfg_guard.keybinds_enabled {
         set_keybinds(true);
     }
     window.set_keybinds_mode(cfg_guard.keybinds_enabled);
+    set_autostart(cfg_guard.auto_start);
     drop(cfg_guard);
 
     // ── Visibilidad inicial según el modo ──
@@ -1111,98 +1134,4 @@ mod tests {
         assert_eq!(before, after, "disabling when markers absent should be no-op");
     }
 
-    // ── cleanup_keybinds_lua ──────────────────────────────────────────
-
-    #[test]
-    fn test_cleanup_keybinds_lua_removes_section_17() {
-        let _env = TempEnv::new();
-
-        let config_dir = dirs::config_dir().unwrap();
-        let keybinds_path = config_dir.join("hypr").join("configs").join("keybinds.lua");
-        std::fs::create_dir_all(keybinds_path.parent().unwrap()).unwrap();
-
-        // Build a file with 126 filler lines + HVE section at lines 127-132 + more lines
-        let mut lines: Vec<String> = Vec::new();
-        for i in 1..=126 {
-            lines.push(format!("-- line {}", i));
-        }
-        // Lines 127-132 (1-indexed): HVE section
-        lines.push("-- 17. HVE".to_string());
-        lines.push("hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))".to_string());
-        lines
-            .push("hl.bind(\"SUPER + ALT + Q\", hl.dsp.exec_cmd(\"hve-ipc pause-restart\"))".to_string());
-        lines
-            .push("hl.bind(\"SUPER + ALT + N\", hl.dsp.exec_cmd(\"hve-ipc next-anim\"))".to_string());
-        lines
-            .push("hl.bind(\"SUPER + ALT + B\", hl.dsp.exec_cmd(\"hve-ipc next-border\"))".to_string());
-        lines
-            .push("hl.bind(\"SUPER + ALT + S\", hl.dsp.exec_cmd(\"hve-ipc next-shader\"))".to_string());
-        // Line 133+
-        lines.push("-- line 133".to_string());
-
-        let content = lines.join("\n");
-        std::fs::write(&keybinds_path, &content).unwrap();
-
-        // Run cleanup — should remove lines 127-132
-        cleanup_keybinds_lua();
-
-        let new_content = std::fs::read_to_string(&keybinds_path).unwrap();
-        assert!(!new_content.contains("hve-ipc"), "HVE binds should be removed");
-        assert!(!new_content.contains("17. HVE"), "HVE comment should be removed");
-        assert!(new_content.contains("line 126"), "line 126 should be preserved");
-        assert!(new_content.contains("line 133"), "line 133 should be preserved");
-
-        // Second call should be no-op (already cleaned)
-        let content_after_first = std::fs::read_to_string(&keybinds_path).unwrap();
-        cleanup_keybinds_lua();
-        let content_after_second = std::fs::read_to_string(&keybinds_path).unwrap();
-        assert_eq!(
-            content_after_first, content_after_second,
-            "second call should be no-op"
-        );
-    }
-
-    #[test]
-    fn test_cleanup_keybinds_lua_absent_section_noop() {
-        let _env = TempEnv::new();
-
-        let config_dir = dirs::config_dir().unwrap();
-        let keybinds_path = config_dir.join("hypr").join("configs").join("keybinds.lua");
-        std::fs::create_dir_all(keybinds_path.parent().unwrap()).unwrap();
-
-        // File with too few lines → no-op
-        let content = "-- just a normal keybinds file\n-- no HVE here\n";
-        std::fs::write(&keybinds_path, content).unwrap();
-
-        cleanup_keybinds_lua();
-        let after = std::fs::read_to_string(&keybinds_path).unwrap();
-        assert_eq!(
-            content, after,
-            "absent section should be no-op (short file)"
-        );
-
-        // File with enough lines but no hve-ipc content → no-op
-        let mut lines: Vec<String> = Vec::new();
-        for i in 1..=140 {
-            lines.push(format!("-- line {}", i));
-        }
-        let big_content = lines.join("\n");
-        std::fs::write(&keybinds_path, &big_content).unwrap();
-
-        cleanup_keybinds_lua();
-        let after_big = std::fs::read_to_string(&keybinds_path).unwrap();
-        assert_eq!(
-            big_content, after_big,
-            "absent section should be no-op (no hve-ipc at lines 127-132)"
-        );
-    }
-
-    #[test]
-    fn test_cleanup_keybinds_lua_missing_file_noop() {
-        let _env = TempEnv::new();
-
-        // File doesn't exist → should not panic
-        cleanup_keybinds_lua();
-        // If we got here, no panic — test passes
-    }
 }
