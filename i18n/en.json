@@ -271,7 +271,8 @@
     "theme_light": "light",
     "theme_system": "system",
     "restart_banner": "⚠ Restart required",
-    "restart_button": "Restart"
+    "restart_button": "Restart",
+    "keybinds": "Keyboard shortcuts"
   },
   "home": {
     "status_active": "System Active",

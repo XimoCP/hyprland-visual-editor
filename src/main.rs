@@ -625,6 +625,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── i18n: Settings strings ──
     window.set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
     window.set_settings_restart_button(tr.tr_shared("settings.restart_button", "Restart"));
+    window.set_settings_title(tr.tr_shared("settings.title", "Settings"));
+    window.set_auto_minimize_label(tr.tr_shared("settings.auto_minimize", "Auto-minimize"));
+    window.set_timer_label(tr.tr_shared("settings.timer", "Timer:"));
+    window.set_language_label(tr.tr_shared("settings.language", "Language"));
+    window.set_tiling_label(tr.tr_shared("settings.tiling_mode", "Tiling mode"));
+    window.set_autostart_label(tr.tr_shared("settings.autostart", "Autostart"));
+    window.set_theme_label(tr.tr_shared("settings.theme", "Theme"));
+    window.set_reset_label(tr.tr_shared("settings.reset_presets", "Reset presets"));
+    window.set_keybinds_label(tr.tr_shared("settings.keybinds", "Keyboard shortcuts"));
+    window.set_keybinds_mode(cfg.keybinds_enabled);
 
     // ── Dynamic theme ──
     match engine.get_colors() {
@@ -767,6 +777,20 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let mut settings_cfg = cfg.clone();
         let weak = window.as_weak();
+        window.on_toggle_keybinds(move |enabled| {
+            settings_cfg.keybinds_enabled = enabled;
+            let _ = settings_cfg.save();
+            if let Some(w) = weak.upgrade() {
+                w.set_keybinds_mode(enabled);
+            }
+            set_keybinds(enabled);
+            tracing::info!("[settings] Keyboard shortcuts {}", if enabled { "ON" } else { "OFF" });
+        });
+    }
+
+    {
+        let mut settings_cfg = cfg.clone();
+        let weak = window.as_weak();
         window.on_toggle_autostart(move |enabled| {
             settings_cfg.auto_start = enabled;
             let _ = settings_cfg.save();
@@ -873,6 +897,13 @@ fn main() -> Result<(), slint::PlatformError> {
         ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
         slint::CloseRequestResponse::HideWindow
     });
+
+    // ── Startup: cleanup keybinds.lua + sync keybinds from saved config ──
+    cleanup_keybinds_lua();
+    if cfg.keybinds_enabled {
+        set_keybinds(true);
+    }
+    window.set_keybinds_mode(cfg.keybinds_enabled);
 
     // ── Visibilidad inicial según el modo ──
     if tray_mode {

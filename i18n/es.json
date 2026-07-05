@@ -271,7 +271,8 @@
     "theme_light": "claro",
     "theme_system": "sistema",
     "restart_banner": "⚠ Reinicio requerido",
-    "restart_button": "Reiniciar"
+    "restart_button": "Reiniciar",
+    "keybinds": "Atajos de teclado"
   },
   "home": {
     "status_active": "Sistema Activo",

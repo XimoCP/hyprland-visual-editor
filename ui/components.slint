@@ -818,6 +818,17 @@ export component SettingsPanel inherits Rectangle {
     in-out property <bool> restart-required: false;
     in property <string> restart-banner-text: "⚠ Restart required";
     in property <string> restart-button-text: "Restart";
+    in property <string> settings-title: "Settings";
+    in property <string> auto-minimize-label: "Auto-minimize";
+    in property <string> timer-label: "Timer:";
+    in property <string> language-label: "Language";
+    in property <string> tiling-label: "Tiling mode";
+    in property <string> autostart-label: "Autostart";
+    in property <string> theme-label: "Theme";
+    in property <string> reset-label: "Reset presets";
+    in property <string> keybinds-label: "Keyboard shortcuts";
+    in property <bool> keybinds-mode: false;
+    callback toggle-keybinds(bool);
 
     callback close-panel();
     callback toggle-auto-minimize(bool);
@@ -869,7 +880,7 @@ export component SettingsPanel inherits Rectangle {
                 spacing: 12px;
 
                 Text {
-                    text: "Settings";
+                    text: root.settings-title;
                     color: HveColors.text;
                     font-size: 20px;
                     font-weight: 700;
@@ -972,7 +983,7 @@ export component SettingsPanel inherits Rectangle {
                         spacing: 8px;
 
                         Text {
-                            text: "Auto-minimize";
+                            text: root.auto-minimize-label;
                             color: HveColors.text;
                             font-size: 14px;
                             font-weight: 600;
@@ -1012,7 +1023,7 @@ export component SettingsPanel inherits Rectangle {
                             padding-left: 4px;
 
                             Text {
-                                text: "Timer:";
+                                text: root.timer-label;
                                 color: HveColors.text-muted;
                                 font-size: 12px;
                                 vertical-alignment: center;
@@ -1058,7 +1069,7 @@ export component SettingsPanel inherits Rectangle {
                         spacing: 8px;
 
                         Text {
-                            text: "Language";
+                            text: root.language-label;
                             color: HveColors.text;
                             font-size: 14px;
                             font-weight: 600;
@@ -1131,7 +1142,7 @@ export component SettingsPanel inherits Rectangle {
                         spacing: 8px;
 
                         Text {
-                            text: "Tiling mode";
+                            text: root.tiling-label;
                             color: HveColors.text;
                             font-size: 14px;
                             font-weight: 600;
@@ -1164,12 +1175,50 @@ export component SettingsPanel inherits Rectangle {
                         }
                     }
 
+                    // ── Keyboard Shortcuts ──
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: root.keybinds-label;
+                            color: HveColors.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: root.keybinds-mode ? HveColors.accent-cyan : HveColors.border;
+                            animate background { duration: 250ms; }
+
+                            Rectangle {
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: HveColors.bg-dark;
+                                x: root.keybinds-mode ? parent.width - self.width - 3px : 3px;
+                                y: 3px;
+                                animate x { duration: 350ms; easing: ease-in-out-back; }
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.toggle-keybinds(!root.keybinds-mode); }
+                            }
+                        }
+                    }
+
                     // ── Autostart ──
                     HorizontalLayout {
                         spacing: 8px;
 
                         Text {
-                            text: "Autostart";
+                            text: root.autostart-label;
                             color: HveColors.text;
                             font-size: 14px;
                             font-weight: 600;
@@ -1207,7 +1256,7 @@ export component SettingsPanel inherits Rectangle {
                         spacing: 8px;
 
                         Text {
-                            text: "Theme";
+                            text: root.theme-label;
                             color: HveColors.text;
                             font-size: 14px;
                             font-weight: 600;
@@ -1262,7 +1311,7 @@ export component SettingsPanel inherits Rectangle {
                         animate border-color { duration: 200ms; }
 
                         Text {
-                            text: "Reset presets";
+                            text: root.reset-label;
                             color: rp-ta.has-hover ? HveColors.accent-red : HveColors.text-muted;
                             font-size: 13px;
                             font-weight: 600;

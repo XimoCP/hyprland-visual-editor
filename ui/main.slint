@@ -76,6 +76,15 @@ export component MainWindow inherits Window {
     // ── i18n: Settings strings ──
     in property <string> settings-restart-banner;
     in property <string> settings-restart-button;
+    in property <string> settings-title;
+    in property <string> auto-minimize-label;
+    in property <string> timer-label;
+    in property <string> language-label;
+    in property <string> tiling-label;
+    in property <string> autostart-label;
+    in property <string> theme-label;
+    in property <string> reset-label;
+    in property <string> keybinds-label;
 
     // Animation data
     in property <[string]> anim-titles;
@@ -110,6 +119,7 @@ export component MainWindow inherits Window {
     in-out property <int> minimize-seconds: 5;
     in property <string> language: "en";
     in-out property <bool> tiling-mode: false;
+    in property <bool> keybinds-mode: false;
     in-out property <bool> autostart: false;
     in property <string> theme: "system";
     in-out property <bool> restart-required: false;
@@ -126,6 +136,7 @@ export component MainWindow inherits Window {
     callback change-minimize-seconds(int);
     callback change-language(string);
     callback toggle-tiling-mode(bool);
+    callback toggle-keybinds(bool);
     callback toggle-autostart(bool);
     callback change-theme(string);
     callback reset-presets();
@@ -351,10 +362,20 @@ export component MainWindow inherits Window {
             minimize-seconds: root.minimize-seconds;
             language: root.language;
             tiling-mode: root.tiling-mode;
+            keybinds-mode: root.keybinds-mode;
             autostart: root.autostart;
             theme: root.theme;
             restart-banner-text: root.settings-restart-banner;
             restart-button-text: root.settings-restart-button;
+            settings-title: root.settings-title;
+            auto-minimize-label: root.auto-minimize-label;
+            timer-label: root.timer-label;
+            language-label: root.language-label;
+            tiling-label: root.tiling-label;
+            autostart-label: root.autostart-label;
+            theme-label: root.theme-label;
+            reset-label: root.reset-label;
+            keybinds-label: root.keybinds-label;
 
             restart-required: root.restart-required;
             close-panel => { root.toggle-settings(); }
@@ -362,6 +383,7 @@ export component MainWindow inherits Window {
             change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
             change-language(v) => { root.change-language(v); }
             toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
+            toggle-keybinds(v) => { root.toggle-keybinds(v); }
             toggle-autostart(v) => { root.toggle-autostart(v); }
             change-theme(v) => { root.change-theme(v); }
             reset-presets => { root.reset-presets(); }
