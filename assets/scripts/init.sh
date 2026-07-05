@@ -11,13 +11,13 @@ export HVE_FORMAT=$(detect_format 2>/dev/null || echo "conf")
 # Safe directory and overlay
 WATCHDOG_FILE="$HVE_SAFE_DIR/hve_watchdog.sh"
 
-# Window rules extension matches HVE format (lua or conf)
+# Settings extension matches HVE format (lua or conf)
 if [ "$HVE_FORMAT" = "lua" ]; then
-    WINDOWRULES_EXT="lua"
+    SETTINGS_EXT="lua"
 else
-    WINDOWRULES_EXT="conf"
+    SETTINGS_EXT="conf"
 fi
-WINDOWRULES_FILE="$HVE_SAFE_DIR/hve-windowrules.${WINDOWRULES_EXT}"
+SETTINGS_FILE="$HVE_SAFE_DIR/hve-settings.${SETTINGS_EXT}"
 
 # Hyprland config files
 HYPR_CONF="$HVE_HYPR_DIR/hyprland.conf"
@@ -99,11 +99,11 @@ setup_files() {
         fi
     fi
 
-    # ── Create hve-windowrules with default float rule (if not exists) ──
-    if [ ! -f "$WINDOWRULES_FILE" ]; then
-        echo "Creating default window rules at $WINDOWRULES_FILE..."
+    # ── Create hve-settings with default window rules and keybinds section (if not exists) ──
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo "Creating default settings at $SETTINGS_FILE..."
         if [ "$HVE_FORMAT" = "lua" ]; then
-            cat > "$WINDOWRULES_FILE" << 'WINEOF'
+            cat > "$SETTINGS_FILE" << 'SETEOF'
 -- >>> HVE WINDOW RULES <<<
 hl.window_rule({
   name  = "hve-floating",
@@ -113,15 +113,19 @@ hl.window_rule({
   move  = { "center", "center" },
 })
 -- >>> HVE WINDOW RULES END <<<
-WINEOF
+-- >>> HVE KEYBINDS <<<
+-- >>> HVE KEYBINDS END <<<
+SETEOF
         else
-            cat > "$WINDOWRULES_FILE" << 'WINEOF'
+            cat > "$SETTINGS_FILE" << 'SETEOF'
 # >>> HVE WINDOW RULES <<<
 windowrulev2 = float, title:^(Hyprland Visual Editor)$
 windowrulev2 = center, title:^(Hyprland Visual Editor)$
 windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
 # >>> HVE WINDOW RULES END <<<
-WINEOF
+# >>> HVE KEYBINDS <<<
+# >>> HVE KEYBINDS END <<<
+SETEOF
         fi
     fi
 }
@@ -143,8 +147,8 @@ $MARKER_START_LUA
 -- 2. Effects Application (Visual Editor)
 --    Colors already loaded via require('configs/noctalia-colors') above
 dofile("$HVE_SAFE_DIR/overlay.lua")
--- 3. HVE Window Rules (float/tile toggle)
-dofile("$WINDOWRULES_FILE")
+-- 3. HVE Settings (window rules + keybinds)
+dofile("$SETTINGS_FILE")
 hl.on("hyprland.start", function()
     hl.exec_cmd("$WATCHDOG_FILE")
 end)
@@ -166,8 +170,8 @@ EOF
             fi
             echo "# Effects Application (Visual Editor)"
             echo "source = $HVE_SAFE_DIR/overlay.conf"
-            echo "# HVE Window Rules (float/tile toggle)"
-            echo "source = $WINDOWRULES_FILE"
+            echo "# HVE Settings (window rules + keybinds)"
+            echo "source = $SETTINGS_FILE"
             echo "$MARKER_END_CONF"
         } >> "$HYPR_CONF"
     fi
@@ -178,11 +182,11 @@ elif [ "$ACTION" == "disable" ]; then
     clean_hyprland_conf
     clean_hyprland_lua
 
-    # Remove everything except hve-windowrules (which persists across disable/enable)
+    # Remove everything except hve-settings (which persists across disable/enable)
     if [ -d "$HVE_SAFE_DIR" ]; then
         for item in "$HVE_SAFE_DIR"/* "$HVE_SAFE_DIR"/.*; do
             [ -e "$item" ] || continue
-            basename "$item" | grep -q '^hve-windowrules\.' && continue
+            basename "$item" | grep -q '^hve-settings\.' && continue
             [ "$(basename "$item")" = "." ] || [ "$(basename "$item")" = ".." ] && continue
             rm -rf "$item"
         done
