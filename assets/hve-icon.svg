@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg-active" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#33dd77"/>
+      <stop offset="100%" stop-color="#22bb66"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect x="2" y="2" width="60" height="60" rx="14" ry="14" fill="#2a2a2a"/>
+  <!-- Highlight gloss top-left -->
+  <rect x="2" y="2" width="60" height="30" rx="14" ry="14" fill="#ffffff" opacity="0.06"/>
+  <!-- H: left bar -->
+  <rect x="9" y="14" width="6" height="36" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- H: right bar -->
+  <rect x="20" y="14" width="6" height="36" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- H: crossbar -->
+  <rect x="9" y="29" width="17" height="6" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- V: left stroke -->
+  <polygon points="28,30 34,30 40,44 40,50 34,50 28,36" fill="#ffffff" opacity="0.92"/>
+  <!-- V: right stroke -->
+  <polygon points="40,30 46,30 52,44 52,50 46,50 40,36" fill="#ffffff" opacity="0.92"/>
+  <!-- E: vertical bar (shared with V right) -->
+  <rect x="49" y="14" width="6" height="36" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- E: top bar -->
+  <rect x="49" y="14" width="14" height="6" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- E: middle bar -->
+  <rect x="49" y="29" width="11" height="6" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- E: bottom bar -->
+  <rect x="49" y="44" width="14" height="6" rx="3" fill="#ffffff" opacity="0.92"/>
+</svg>

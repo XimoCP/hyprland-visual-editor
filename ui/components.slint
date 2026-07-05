@@ -872,7 +872,10 @@ export component SettingsPanel inherits Rectangle {
         drop-shadow-color: #00000060;
 
         VerticalLayout {
-            padding: 24px;
+            padding-left: 24px;
+            padding-right: 4px;
+            padding-top: 24px;
+            padding-bottom: 24px;
             spacing: 16px;
 
             // ── Header ──
@@ -974,6 +977,7 @@ export component SettingsPanel inherits Rectangle {
                 VerticalLayout {
                     spacing: 20px;
                     padding-bottom: 8px;
+                    padding-right: 24px;
 
                     // ── Auto-minimize ──
                     VerticalLayout {
