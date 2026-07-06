@@ -52,12 +52,12 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_WATCHING="Vigilando:  %s"
     MSG_IPC_TITLE="Instalando script hve-ipc..."
     MSG_IPC_TO="Script IPC → %s"
-    MSG_IPC_PROMPT="¿Instalar script hve-ipc para atajos de teclado? [Y/n]"
-    MSG_SYMLINK_PROMPT="¿Crear symlink en /usr/local/bin/ (necesita sudo)? [y/N]"
+    MSG_IPC_PROMPT="¿Instalar hve-ipc? Te permite controlar HVE desde atajos de teclado de Hyprland (toggle system tray, pause, cambiar animaciones, etc.). Sin esto, los atajos no funcionan. [Y/n]"
+    MSG_SYMLINK_PROMPT="¿Crear symlink en /usr/local/bin/? Si Hyprland/Noctalia ejecuta hve-ipc desde una ruta fija, el symlink evita tener que configurar el PATH. (necesita sudo) [y/N]"
     MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
     MSG_SYMLINK_FAIL="No se pudo crear el symlink — créalo manualmente:"
-    MSG_AUTOSTART_PROMPT="¿Agregar al autostart (inicia con --tray)? [y/N]"
-    MSG_AUTOSTART_TO="Autostart → %s"
+    MSG_AUTOSTART_PROMPT="¿Iniciar HVE con el sistema (bandeja)? HVE se ejecuta en segundo plano como icono en la bandeja del sistema para cambiar temas, animaciones, bordes al instante. Se activa via exec-once en hve-settings (Hyprland nativo). Sin autostart, tenés que ejecutar 'hve --tray' manualmente cada vez. [y/N]"
+    MSG_AUTOSTART_TO="Autostart → exec-once en hve-settings (Hyprland nativo)"
     MSG_LAUNCH_PROMPT="¿Iniciar HVE ahora? [y/N]"
     MSG_LAUNCHED="HVE iniciado"
     MSG_NOT_FOUND_AT="Binario no encontrado en %s"
@@ -93,12 +93,12 @@ else
     MSG_WATCHING="Watching:    %s"
     MSG_IPC_TITLE="Installing IPC script..."
     MSG_IPC_TO="IPC script → %s"
-    MSG_IPC_PROMPT="Install hve-ipc script for keyboard shortcuts? [Y/n]"
-    MSG_SYMLINK_PROMPT="Create symlink in /usr/local/bin/ (requires sudo)? [y/N]"
+    MSG_IPC_PROMPT="Install hve-ipc? Enables Hyprland keyboard shortcuts to control HVE (toggle system tray, pause, switch animations, etc.). Without this, keybinds won't work. [Y/n]"
+    MSG_SYMLINK_PROMPT="Create symlink in /usr/local/bin/? If Hyprland/Noctalia calls hve-ipc from a fixed path, the symlink ensures keybinds work without PATH config. (requires sudo) [y/N]"
     MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
     MSG_SYMLINK_FAIL="Could not create symlink — create it manually:"
-    MSG_AUTOSTART_PROMPT="Add to autostart (starts with --tray)? [y/N]"
-    MSG_AUTOSTART_TO="Autostart → %s"
+    MSG_AUTOSTART_PROMPT="Start HVE on login (system tray)? HVE runs in the background as a tray icon for quick theme, animation, border, and shader switching. Uses exec-once in hve-settings (Hyprland-native). Without autostart, you'll need to run 'hve --tray' manually each session. [y/N]"
+    MSG_AUTOSTART_TO="Autostart → exec-once in hve-settings (Hyprland-native)"
     MSG_LAUNCH_PROMPT="Launch HVE now? [y/N]"
     MSG_LAUNCHED="HVE launched"
     MSG_NOT_FOUND_AT="Binary not found at %s"
@@ -131,8 +131,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HVE_BIN="$HOME/.local/bin/hve"
 HVE_SCRIPTS="$HOME/.local/bin/assets/scripts"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
-HVE_AUTOSTART_DIR="$HOME/.config/autostart"
-HVE_AUTOSTART="$HVE_AUTOSTART_DIR/hve.desktop"
+HVE_CONFIG_DIR="$HOME/.config/hve"
+HVE_CONFIG_JSON="$HVE_CONFIG_DIR/config.json"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
 HYPR_DIR="$HOME/.config/hypr"
 
@@ -389,16 +389,21 @@ fi
 echo ""
 AUTOSTART_INSTALLED=false
 if prompt_yes_no "$MSG_AUTOSTART_PROMPT" "no"; then
-    mkdir -p "$HVE_AUTOSTART_DIR"
-    cat > "$HVE_AUTOSTART" << 'AUTOSTART_EOF'
-[Desktop Entry]
-Type=Application
-Name=HVE (System Tray)
-Exec=hve --tray
-Hidden=false
-X-GNOME-Autostart-enabled=true
-AUTOSTART_EOF
-    ok "$(msg_fmt "$MSG_AUTOSTART_TO" "$HVE_AUTOSTART")"
+    # HVE's set_autostart() writes the Hyprland-native autostart block into
+    # hve-settings.{lua,conf} as exec-once = /path/to/hve --tray.
+    #
+    # We write auto_start:true to config.json. On next launch, HVE reads it
+    # and calls set_autostart(true), which handles the hve-settings injection.
+    mkdir -p "$HVE_CONFIG_DIR"
+    if [ -f "$HVE_CONFIG_JSON" ]; then
+        # Replace auto_start value (HVE-generated JSON always has it)
+        sed -i 's/"auto_start"\s*:\s*\(true\|false\)/"auto_start": true/' "$HVE_CONFIG_JSON" 2>/dev/null || {
+            echo '{"config_version":3,"auto_start":true}' > "$HVE_CONFIG_JSON"
+        }
+    else
+        echo '{"config_version":3,"auto_start":true}' > "$HVE_CONFIG_JSON"
+    fi
+    ok "$MSG_AUTOSTART_TO"
     AUTOSTART_INSTALLED=true
 fi
 
@@ -429,7 +434,7 @@ echo "   $(msg_fmt "$MSG_BINARY_TO" "$HVE_BIN")"
 echo "   $(msg_fmt "$MSG_ASSETS_TO")"
 echo "   $(msg_fmt "$MSG_DESKTOP_TO" "$HVE_DESKTOP" "$HVE_BIN")"
 if [ "$AUTOSTART_INSTALLED" = true ]; then
-    echo "   $(msg_fmt "$MSG_AUTOSTART_TO" "$HVE_AUTOSTART")"
+    echo "   $MSG_AUTOSTART_TO"
 fi
 if [ "$IPC_INSTALLED" = true ]; then
     echo "   $(msg_fmt "$MSG_IPC_TO" "$HVE_IPC")"
