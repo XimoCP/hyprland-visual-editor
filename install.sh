@@ -386,15 +386,8 @@ if [ "$IPC_INSTALLED" = true ]; then
 fi
 
 # ============================================================================
-# 7b. INSTALL FIRST-TOGGLE WORKAROUND SCRIPT
-# ============================================================================
-echo ""
-HVE_FIRST_TOGGLE_PATH="$HOME/.local/bin/hve-first-toggle"
-mkdir -p "$(dirname "$HVE_FIRST_TOGGLE_PATH")"
-cp "$SCRIPT_DIR/assets/scripts/hve-first-toggle.sh" "$HVE_FIRST_TOGGLE_PATH"
-chmod +x "$HVE_FIRST_TOGGLE_PATH"
-ok "$(msg_fmt "$MSG_FIRST_TOGGLE_TO" "$HVE_FIRST_TOGGLE_PATH")"
-
+# NOTE: HVE now handles Wayland first-toggle priming internally
+#       (show + xdg-shell minimize via winit). No external script needed.
 # ============================================================================
 # 8. AUTOSTART (optional)
 # ============================================================================

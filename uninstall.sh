@@ -89,7 +89,7 @@ HVE_ASSETS="$HOME/.local/bin/assets"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
 HVE_AUTOSTART="$HOME/.config/autostart/hve.desktop"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
-HVE_FIRST_TOGGLE="$HOME/.local/bin/hve-first-toggle"
+# HVE_FIRST_TOGGLE removed — priming is now internal via winit/xdg-shell
 HVE_IPC_SYMLINK="/usr/local/bin/hve-ipc"
 HVE_CACHE="$HOME/.cache/hve"
 HVE_CONFIG="$HOME/.config/hve"
@@ -146,8 +146,7 @@ remove_file "$HVE_AUTOSTART" "Autostart (.config/autostart/hve.desktop)"
 # ── 5. IPC script ──────────────────────────────────────────────────────────
 remove_file "$HVE_IPC" "IPC script (~/.local/bin/hve-ipc)"
 
-# ── 5b. First-toggle workaround ─────────────────────────────────────────────
-remove_file "$HVE_FIRST_TOGGLE" "First-toggle script (~/.local/bin/hve-first-toggle)"
+# ── NOTE: First-toggle script removed — priming is internal via winit/xdg-shell
 
 # ── 6. System symlink (needs sudo) ─────────────────────────────────────────
 echo ""

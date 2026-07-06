@@ -480,7 +480,6 @@ fn set_autostart(enabled: bool) {
                 r#"{marker_start}
 hl.on("hyprland.start", function()
     hl.exec_cmd("{} --tray")
-    hl.exec_cmd("hve-first-toggle")
 end)
 {marker_end}"#,
                 exe
@@ -489,7 +488,6 @@ end)
             format!(
                 r#"{marker_start}
 exec-once = {} --tray
-exec-once = hve-first-toggle
 {marker_end}"#,
                 exe
             )
@@ -961,9 +959,28 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Visibilidad inicial según el modo ──
     if tray_mode {
-        ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Mostramos la ventana para forzar la creación del xdg_toplevel
+        // y completar el roundtrip con el compositor Wayland.
+        // Luego la minimizamos vía protocolo xdg-shell estándar.
+        // Esto NO destruye el xdg_toplevel, solo pide al compositor
+        // que retire la ventana de la vista (funciona en cualquier WM).
+        window.show()?;
+        ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        // Timer se dispara cuando el event loop está corriendo (sin race)
+        let weak = window.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(300), move || {
+            if let Some(win) = weak.upgrade() {
+                use i_slint_backend_winit::WinitWindowAccessor;
+                win.window().with_winit_window(|winit_window| {
+                    winit_window.set_minimized(true);
+                });
+                ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+
         ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!("Starting in tray mode (window hidden)");
+        tracing::info!("Starting in tray mode (window primed + minimized)");
     } else {
         window.show()?;
         ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
