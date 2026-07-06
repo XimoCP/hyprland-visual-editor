@@ -56,6 +56,7 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_SYMLINK_PROMPT="¿Crear symlink en /usr/local/bin/? Si Hyprland/Noctalia ejecuta hve-ipc desde una ruta fija, el symlink evita tener que configurar el PATH. (necesita sudo) [y/N]"
     MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
     MSG_SYMLINK_FAIL="No se pudo crear el symlink — créalo manualmente:"
+    MSG_FIRST_TOGGLE_TO="Script workaround → %s"
     MSG_AUTOSTART_PROMPT="¿Iniciar HVE con el sistema (bandeja)? HVE se ejecuta en segundo plano como icono en la bandeja del sistema para cambiar temas, animaciones, bordes al instante. Se activa via exec-once en hve-settings (Hyprland nativo). Sin autostart, tenés que ejecutar 'hve --tray' manualmente cada vez. [y/N]"
     MSG_AUTOSTART_TO="Autostart → exec-once en hve-settings (Hyprland nativo)"
     MSG_LAUNCH_PROMPT="¿Iniciar HVE ahora? [y/N]"
@@ -97,6 +98,7 @@ else
     MSG_SYMLINK_PROMPT="Create symlink in /usr/local/bin/? If Hyprland/Noctalia calls hve-ipc from a fixed path, the symlink ensures keybinds work without PATH config. (requires sudo) [y/N]"
     MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
     MSG_SYMLINK_FAIL="Could not create symlink — create it manually:"
+    MSG_FIRST_TOGGLE_TO="Toggle workaround script → %s"
     MSG_AUTOSTART_PROMPT="Start HVE on login (system tray)? HVE runs in the background as a tray icon for quick theme, animation, border, and shader switching. Uses exec-once in hve-settings (Hyprland-native). Without autostart, you'll need to run 'hve --tray' manually each session. [y/N]"
     MSG_AUTOSTART_TO="Autostart → exec-once in hve-settings (Hyprland-native)"
     MSG_LAUNCH_PROMPT="Launch HVE now? [y/N]"
@@ -382,6 +384,16 @@ if [ "$IPC_INSTALLED" = true ]; then
         fi
     fi
 fi
+
+# ============================================================================
+# 7b. INSTALL FIRST-TOGGLE WORKAROUND SCRIPT
+# ============================================================================
+echo ""
+HVE_FIRST_TOGGLE_PATH="$HOME/.local/bin/hve-first-toggle"
+mkdir -p "$(dirname "$HVE_FIRST_TOGGLE_PATH")"
+cp "$SCRIPT_DIR/assets/scripts/hve-first-toggle.sh" "$HVE_FIRST_TOGGLE_PATH"
+chmod +x "$HVE_FIRST_TOGGLE_PATH"
+ok "$(msg_fmt "$MSG_FIRST_TOGGLE_TO" "$HVE_FIRST_TOGGLE_PATH")"
 
 # ============================================================================
 # 8. AUTOSTART (optional)

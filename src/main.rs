@@ -480,6 +480,7 @@ fn set_autostart(enabled: bool) {
                 r#"{marker_start}
 hl.on("hyprland.start", function()
     hl.exec_cmd("{} --tray")
+    hl.exec_cmd("hve-first-toggle")
 end)
 {marker_end}"#,
                 exe
@@ -488,6 +489,7 @@ end)
             format!(
                 r#"{marker_start}
 exec-once = {} --tray
+exec-once = hve-first-toggle
 {marker_end}"#,
                 exe
             )
