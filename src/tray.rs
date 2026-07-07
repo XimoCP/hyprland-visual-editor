@@ -176,8 +176,11 @@ impl ksni::Tray for HveTray {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(win) = w.upgrade() {
+                            // WINDOW_HIDDEN única fuente de verdad.
+                            // is_visible() no es fiable en Wayland.
                             if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
                                 let _ = win.window().show();
+                                win.window().request_redraw();
                                 crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
                             } else {
                                 let _ = win.window().hide();

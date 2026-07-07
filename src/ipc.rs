@@ -218,9 +218,7 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 }
 
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
-    // Debounce: ignorar toggles repetidos dentro de la ventana de
-    // 400ms para darle tiempo al xdg_toplevel de completar el roundtrip
-    // con el compositor Wayland (especialmente en el primer show()).
+    // Debounce: solo para dedup keybind spam (~80ms entre pulsaciones humanas).
     {
         let mut last = LAST_TOGGLE.lock().unwrap();
         let now = Instant::now();
@@ -233,12 +231,19 @@ fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     }
 
     format_response(invoke_on_main(window, |win| {
-        if win.window().is_visible() {
+        // Usamos WINDOW_HIDDEN como única fuente de verdad.
+        // is_visible() no es fiable: Slint lo pone a true inmediatamente
+        // después de show(), antes de que el compositor Wayland mapee
+        // realmente la ventana. Eso hacía que el toggle llamara hide()
+        // sobre una ventana que nunca terminó de aparecer —→ 3 pulsaciones.
+        let hidden = WINDOW_HIDDEN.load(Ordering::Relaxed);
+        if hidden {
+            let _ = win.window().show();
+            win.window().request_redraw();
+            WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+        } else {
             let _ = win.window().hide();
             WINDOW_HIDDEN.store(true, Ordering::Relaxed);
-        } else {
-            let _ = win.window().show();
-            WINDOW_HIDDEN.store(false, Ordering::Relaxed);
         }
         "ok".to_string()
     }))
