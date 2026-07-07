@@ -6,11 +6,18 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
 
 /// Tracks whether the main window has been hidden via toggle-tray (tray mode).
 pub(crate) static WINDOW_HIDDEN: AtomicBool = AtomicBool::new(false);
 /// Whether HVE was started with --tray (window starts hidden before run()).
 pub(crate) static TRAY_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Debounce: evita que pulsaciones rápidas de SUPER+H saboteen el
+/// roundtrip de Wayland al crear el xdg_toplevel por primera vez.
+static LAST_TOGGLE: Mutex<Option<Instant>> = Mutex::new(None);
+const DEBOUNCE_MS: u64 = 400;
 
 /// Start the IPC server on `$XDG_RUNTIME_DIR/hve.sock` (fallback `/tmp/hve.sock`).
 ///
@@ -211,9 +218,21 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 }
 
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
+    // Debounce: ignorar toggles repetidos dentro de la ventana de
+    // 400ms para darle tiempo al xdg_toplevel de completar el roundtrip
+    // con el compositor Wayland (especialmente en el primer show()).
+    {
+        let mut last = LAST_TOGGLE.lock().unwrap();
+        let now = Instant::now();
+        if let Some(prev) = *last {
+            if now.duration_since(prev).as_millis() < DEBOUNCE_MS as u128 {
+                return "debounced\n".to_string();
+            }
+        }
+        *last = Some(now);
+    }
+
     format_response(invoke_on_main(window, |win| {
-        // Como ya usamos slint::run_event_loop(), llamar a hide() 
-        // no matará el proceso en Wayland. Es totalmente seguro.
         if win.window().is_visible() {
             let _ = win.window().hide();
             WINDOW_HIDDEN.store(true, Ordering::Relaxed);
