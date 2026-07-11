@@ -175,17 +175,7 @@ impl Engine {
                 source: Some(e),
             })?;
 
-        Ok(data
-            .into_iter()
-            .map(|e| PresetInfo {
-                i18n_title: e.title.unwrap_or_default(),
-                i18n_desc: e.desc.unwrap_or_default(),
-                raw_title: e.raw_title.unwrap_or_else(|| e.file.clone()),
-                raw_desc: e.raw_desc.unwrap_or_default(),
-                file: e.file,
-                tag: e.tag.unwrap_or_else(|| "USER".into()),
-            })
-            .collect())
+        Ok(data.into_iter().map(scan_entry_to_preset_info).collect())
     }
 }
 
@@ -203,8 +193,9 @@ pub struct PresetInfo {
     pub tag: String,
 }
 
-#[derive(serde::Deserialize)]
-struct ScanEntry {
+/// An entry produced by the scan script JSON output.
+#[derive(serde::Deserialize, Debug)]
+pub(crate) struct ScanEntry {
     #[serde(rename = "file")]
     file: String,
     #[serde(rename = "title")]
@@ -217,6 +208,24 @@ struct ScanEntry {
     raw_desc: Option<String>,
     #[serde(rename = "tag")]
     tag: Option<String>,
+}
+
+/// Convert a single [`ScanEntry`] into a [`PresetInfo`], applying the
+/// i18n fallback rules:
+///
+/// * `i18n_title` / `i18n_desc` — empty string if the source field is `None`
+/// * `raw_title` — the source `raw_title`, or the `file` name as fallback
+/// * `raw_desc` — empty string if the source field is `None`
+/// * `tag` — `"USER"` if the source field is `None`
+pub(crate) fn scan_entry_to_preset_info(e: ScanEntry) -> PresetInfo {
+    PresetInfo {
+        i18n_title: e.title.unwrap_or_default(),
+        i18n_desc: e.desc.unwrap_or_default(),
+        raw_title: e.raw_title.unwrap_or_else(|| e.file.clone()),
+        raw_desc: e.raw_desc.unwrap_or_default(),
+        file: e.file,
+        tag: e.tag.unwrap_or_else(|| "USER".into()),
+    }
 }
 
 #[cfg(test)]
@@ -381,5 +390,206 @@ mod tests {
         let engine = Engine::new(&proj);
         let expected = PathBuf::from("/some/project/assets/scripts");
         assert_eq!(engine.scripts_dir, expected);
+    }
+
+    // ── ScanEntry deserialisation ─────────────────────────────────────
+
+    #[test]
+    fn test_scan_entry_deserialise_all_fields() {
+        let json = r##"{
+            "file": "wobbly.ron",
+            "title": "Wobbly Animations",
+            "desc": "Smooth wobbly animation effects",
+            "rawTitle": "Wobbly",
+            "rawDesc": "Wobbly animations desc",
+            "tag": "SYSTEM"
+        }"##;
+        let entry: ScanEntry = serde_json::from_str(json).expect("valid JSON should parse");
+        assert_eq!(entry.file, "wobbly.ron");
+        assert_eq!(entry.title.as_deref(), Some("Wobbly Animations"));
+        assert_eq!(entry.desc.as_deref(), Some("Smooth wobbly animation effects"));
+        assert_eq!(entry.raw_title.as_deref(), Some("Wobbly"));
+        assert_eq!(entry.raw_desc.as_deref(), Some("Wobbly animations desc"));
+        assert_eq!(entry.tag.as_deref(), Some("SYSTEM"));
+    }
+
+    #[test]
+    fn test_scan_entry_deserialise_minimal_only_file() {
+        let json = r##"{ "file": "my-preset.ron" }"##;
+        let entry: ScanEntry = serde_json::from_str(json).expect("file-only JSON should parse");
+        assert_eq!(entry.file, "my-preset.ron");
+        assert!(entry.title.is_none());
+        assert!(entry.desc.is_none());
+        assert!(entry.raw_title.is_none());
+        assert!(entry.raw_desc.is_none());
+        assert!(entry.tag.is_none());
+    }
+
+    #[test]
+    fn test_scan_entry_deserialise_some_optionals_present() {
+        let json = r##"{
+            "file": "transp.ron",
+            "title": "Transparency",
+            "tag": "SYSTEM"
+        }"##;
+        let entry: ScanEntry = serde_json::from_str(json).expect("partial JSON should parse");
+        assert_eq!(entry.file, "transp.ron");
+        assert_eq!(entry.title.as_deref(), Some("Transparency"));
+        assert!(entry.desc.is_none());
+        assert!(entry.raw_title.is_none());
+        assert!(entry.raw_desc.is_none());
+        assert_eq!(entry.tag.as_deref(), Some("SYSTEM"));
+    }
+
+    #[test]
+    fn test_scan_entry_deserialise_empty_vec() {
+        let json = "[]";
+        let entries: Vec<ScanEntry> =
+            serde_json::from_str(json).expect("empty array should parse");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_scan_entry_deserialise_invalid_json_returns_err() {
+        let result: Result<ScanEntry, _> = serde_json::from_str("not json at all");
+        assert!(result.is_err(), "invalid JSON should fail to deserialise");
+    }
+
+    #[test]
+    fn test_scan_entry_deserialise_missing_required_file_field_fails() {
+        let json = r##"{ "title": "foo" }"##;
+        let result: Result<ScanEntry, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "missing required 'file' field should cause a parse error"
+        );
+    }
+
+    #[test]
+    fn test_scan_entry_deserialise_multiple_entries() {
+        let json = r##"[
+            { "file": "a.ron", "title": "A" },
+            { "file": "b.ron", "title": "B" }
+        ]"##;
+        let entries: Vec<ScanEntry> =
+            serde_json::from_str(json).expect("valid array should parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].file, "a.ron");
+        assert_eq!(entries[1].file, "b.ron");
+    }
+
+    // ── scan_entry_to_preset_info transformation ──────────────────────
+
+    #[test]
+    fn test_transform_all_fields() {
+        let entry = ScanEntry {
+            file: "wobbly.ron".into(),
+            title: Some("Wobbly Animations".into()),
+            desc: Some("Smooth wobbly effects".into()),
+            raw_title: Some("Wobbly".into()),
+            raw_desc: Some("Wobbly desc".into()),
+            tag: Some("SYSTEM".into()),
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.i18n_title, "Wobbly Animations");
+        assert_eq!(info.i18n_desc, "Smooth wobbly effects");
+        assert_eq!(info.raw_title, "Wobbly");
+        assert_eq!(info.raw_desc, "Wobbly desc");
+        assert_eq!(info.file, "wobbly.ron");
+        assert_eq!(info.tag, "SYSTEM");
+    }
+
+    #[test]
+    fn test_transform_no_i18n_fields_defaults_to_empty() {
+        let entry = ScanEntry {
+            file: "minimal.ron".into(),
+            title: None,
+            desc: None,
+            raw_title: None,
+            raw_desc: None,
+            tag: None,
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.i18n_title, "");
+        assert_eq!(info.i18n_desc, "");
+        assert_eq!(info.raw_title, "minimal.ron");
+        assert_eq!(info.raw_desc, "");
+        assert_eq!(info.file, "minimal.ron");
+        assert_eq!(info.tag, "USER");
+    }
+
+    #[test]
+    fn test_transform_raw_title_fallback_to_file() {
+        let entry = ScanEntry {
+            file: "custom.ron".into(),
+            title: Some("Custom".into()),
+            desc: None,
+            raw_title: None,
+            raw_desc: None,
+            tag: Some("CUSTOM".into()),
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.raw_title, "custom.ron");
+    }
+
+    #[test]
+    fn test_transform_raw_title_uses_source_when_present() {
+        let entry = ScanEntry {
+            file: "custom.ron".into(),
+            title: None,
+            desc: None,
+            raw_title: Some("My Custom".into()),
+            raw_desc: None,
+            tag: None,
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.raw_title, "My Custom");
+    }
+
+    #[test]
+    fn test_transform_tag_defaults_to_user() {
+        let entry = ScanEntry {
+            file: "user-preset.ron".into(),
+            title: Some("My Preset".into()),
+            desc: Some("A user preset".into()),
+            raw_title: None,
+            raw_desc: None,
+            tag: None,
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.tag, "USER");
+    }
+
+    #[test]
+    fn test_transform_tag_preserved_when_set() {
+        let entry = ScanEntry {
+            file: "system-preset.ron".into(),
+            title: None,
+            desc: None,
+            raw_title: None,
+            raw_desc: None,
+            tag: Some("SYSTEM".into()),
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.tag, "SYSTEM");
+    }
+
+    #[test]
+    fn test_transform_only_file_minimal_entry() {
+        let entry = ScanEntry {
+            file: "bare.ron".into(),
+            title: None,
+            desc: None,
+            raw_title: None,
+            raw_desc: None,
+            tag: None,
+        };
+        let info = scan_entry_to_preset_info(entry);
+        assert_eq!(info.i18n_title, "");
+        assert_eq!(info.i18n_desc, "");
+        assert_eq!(info.raw_title, "bare.ron");
+        assert_eq!(info.raw_desc, "");
+        assert_eq!(info.file, "bare.ron");
+        assert_eq!(info.tag, "USER");
     }
 }

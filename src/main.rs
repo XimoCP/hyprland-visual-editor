@@ -61,13 +61,15 @@ fn project_dir() -> PathBuf {
 /// `~/.config/autostart/hve.desktop`.
 /// Detect whether HVE is in lua or conf mode by reading the format cache.
 fn hve_format() -> &'static str {
-    let format_path = hve_cache_dir().join("hve_format");
-    if let Ok(content) = std::fs::read_to_string(&format_path) {
-        if content.trim() == "lua" {
-            return "lua";
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let format_path = hve_cache_dir().join("hve_format");
+        match std::fs::read_to_string(&format_path) {
+            Ok(content) if content.trim() == "lua" => "lua".to_string(),
+            _ => "conf".to_string(),
         }
-    }
-    "conf"
+    })
 }
 
 /// HVE cache directory: ~/.cache/hve/
@@ -309,9 +311,13 @@ windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
                 if tiling { "TILING" } else { "FLOATING" },
                 tiling,
             );
-            let _ = std::process::Command::new("hyprctl")
+            if let Err(e) = std::process::Command::new("hyprctl")
                 .arg("reload")
-                .output();
+                .output()
+                .map(|_| ())
+            {
+                tracing::warn!("[hve] hyprctl reload failed: {}", e);
+            }
         }
         Err(e) => {
             tracing::error!("[windowrules] Failed to write: {}", e);
@@ -423,9 +429,13 @@ bind = SUPER ALT, S, exec, hve-ipc next-shader
                 "[keybinds] {}",
                 if enabled { "WRITTEN" } else { "REMOVED" }
             );
-            let _ = std::process::Command::new("hyprctl")
+            if let Err(e) = std::process::Command::new("hyprctl")
                 .arg("reload")
-                .output();
+                .output()
+                .map(|_| ())
+            {
+                tracing::warn!("[hve] hyprctl reload failed: {}", e);
+            }
         }
         Err(e) => {
             tracing::error!("[keybinds] Failed to write: {}", e);
@@ -540,9 +550,13 @@ exec-once = {} --tray
                 "[autostart] {} in hve-settings.lua",
                 if enabled { "Enabled" } else { "Disabled" }
             );
-            let _ = std::process::Command::new("hyprctl")
+            if let Err(e) = std::process::Command::new("hyprctl")
                 .arg("reload")
-                .output();
+                .output()
+                .map(|_| ())
+            {
+                tracing::warn!("[hve] hyprctl reload failed: {}", e);
+            }
         }
         Err(e) => tracing::error!("[autostart] Failed to write hve-settings: {}", e),
     }
@@ -719,11 +733,12 @@ fn main() -> Result<(), slint::PlatformError> {
     ]);
     window.set_nav_modules(ModelRc::new(VecModel::from(nav_modules)));
 
-    // ── Start Hyprland IPC listener ──
-    hypr_ipc::start_listener(&window, proj.clone());
+    // ── Start Hyprland IPC listener (handle kept alive so threads
+    //     don't outlive the app on quit/restart) ──
+    let _ipc_listener = hypr_ipc::start_listener(&window, proj.clone());
 
     // ── Countdown auto-minimize on focus loss ──
-    countdown::setup_countdown(window.as_weak());
+    let _focus_listener = countdown::setup_countdown(window.as_weak());
 
     // ── Close button callback ──
     {
@@ -973,6 +988,27 @@ fn main() -> Result<(), slint::PlatformError> {
         window.show()?;
         ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
         ipc::TRAY_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        // ── Pre-warm tab layouts ──
+        // Slint no calcula el layout de tabs inactivos (width: 0%)
+        // hasta que se renderizan por primera vez. Esto causa un delay
+        // en el primer click. Solución: mostrar cada tab brevemente
+        // durante el startup para que Slint cachem los layouts.
+        fn prewarm_tabs(weak: slint::Weak<crate::MainWindow>, step: u8) {
+            if step > 3 {
+                if let Some(win) = weak.upgrade() {
+                    win.set_active_tab(0);
+                }
+                return;
+            }
+            if let Some(win) = weak.upgrade() {
+                win.set_active_tab(step as i32);
+            }
+            slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
+                prewarm_tabs(weak, step + 1);
+            });
+        }
+        prewarm_tabs(window.as_weak(), 1);
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via hyprctl para evitar el doble-click inicial.

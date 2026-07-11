@@ -97,6 +97,45 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     }
 }
 
+/// Resultado de procesar un tick de countdown.
+///
+/// Este struct es puro (sin side effects) y permite testear la lógica
+/// de countdown sin necesidad de mockear Slint ni IPC.
+pub(crate) struct CountdownTick {
+    /// Nuevo valor de segundos restantes tras decrementar.
+    pub(crate) next_seconds: i32,
+    /// Progreso normalizado 0.0..1.0 (1.0 = completo, 0.0 = terminado).
+    pub(crate) progress: f32,
+    /// true cuando el countdown llegó a 0 y hay que minimizar.
+    pub(crate) should_minimize: bool,
+}
+
+/// Procesa un tick del countdown: decrementa, calcula progreso,
+/// decide si debe minimizar.
+///
+/// Esta función es pura (sin side effects) y testeable:
+/// - `next_seconds` = current_seconds - 1
+/// - `progress` = next_seconds / total_seconds (0.0 si total == 0)
+/// - `should_minimize` = true si next_seconds <= 0
+///
+/// Para casos inválidos (current > total, current < 0) mantiene
+/// coherencia: decrementa y calcula progress como f32 division.
+pub(crate) fn process_tick(current_seconds: i32, total_seconds: i32) -> CountdownTick {
+    let next_seconds = current_seconds - 1;
+    let progress = if total_seconds == 0 {
+        0.0
+    } else {
+        next_seconds as f32 / total_seconds as f32
+    };
+    let should_minimize = next_seconds <= 0;
+
+    CountdownTick {
+        next_seconds,
+        progress,
+        should_minimize,
+    }
+}
+
 /// Tick interno: decrementa el contador; al llegar a 0 minimiza.
 fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
     if !COUNTDOWN_ACTIVE.load(Ordering::Relaxed) {
@@ -108,13 +147,12 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
     };
 
     let current = window.get_countdown_seconds();
-    let next = current - 1;
-    let progress = next as f32 / total_seconds as f32;
-    tracing::debug!("[countdown] Tick: {}s, progress: {:.2}", next, progress);
-    window.set_countdown_seconds(next);
-    window.set_countdown_progress(progress);
+    let result = process_tick(current, total_seconds);
+    tracing::debug!("[countdown] Tick: {}s, progress: {:.2}", result.next_seconds, result.progress);
+    window.set_countdown_seconds(result.next_seconds);
+    window.set_countdown_progress(result.progress);
 
-    if next <= 0 {
+    if result.should_minimize {
         COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
         COUNTDOWN_TIMER.with(|t| {
             *t.borrow_mut() = None;
@@ -134,8 +172,99 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Casos normales ────────────────────────────────────────────────
+
+    #[test]
+    fn test_process_tick_normal_decrement() {
+        let result = process_tick(5, 10);
+        assert_eq!(result.next_seconds, 4, "debe decrementar en 1");
+        assert_eq!(result.progress, 0.4, "progress = 4/10");
+        assert!(!result.should_minimize, "no debe minimizar con segundos restantes");
+    }
+
+    #[test]
+    fn test_process_tick_one_second_remaining() {
+        let result = process_tick(1, 10);
+        assert_eq!(result.next_seconds, 0, "decrementa a 0");
+        assert_eq!(result.progress, 0.0, "progress = 0/10");
+        assert!(result.should_minimize, "debe minimizar al llegar a 0");
+    }
+
+    #[test]
+    fn test_process_tick_at_zero() {
+        let result = process_tick(0, 10);
+        assert_eq!(result.next_seconds, -1);
+        assert_eq!(result.progress, -0.1);
+        assert!(result.should_minimize, "debe minimizar cuando ya está en 0");
+    }
+
+    // ── Edge cases ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_process_tick_current_exceeds_total() {
+        let result = process_tick(15, 10);
+        assert_eq!(result.next_seconds, 14, "decrementa igual");
+        assert!(result.progress > 1.0, "progress > 1.0 cuando current > total");
+        assert!(!result.should_minimize, "no debe minimizar con current > total");
+    }
+
+    #[test]
+    fn test_process_tick_total_is_zero() {
+        let result = process_tick(5, 0);
+        assert_eq!(result.next_seconds, 4, "decrementa igual");
+        assert_eq!(result.progress, 0.0, "progress = 0.0 para evitar división por cero");
+        assert!(!result.should_minimize, "no minimiza aún: next > 0");
+    }
+
+    #[test]
+    fn test_process_tick_total_zero_and_current_zero() {
+        let result = process_tick(0, 0);
+        assert_eq!(result.next_seconds, -1);
+        assert_eq!(result.progress, 0.0, "progress = 0.0 para evitar división por cero");
+        assert!(result.should_minimize, "minimiza cuando next <= 0");
+    }
+
+    #[test]
+    fn test_process_tick_current_negative() {
+        let result = process_tick(-3, 10);
+        assert_eq!(result.next_seconds, -4, "decrementa consistentemente");
+        assert!(result.progress < 0.0, "progress negativo cuando current es negativo");
+        assert!(result.should_minimize, "debe minimizar con current negativo");
+    }
+
+    #[test]
+    fn test_process_tick_current_equals_one_and_total_equals_ten() {
+        let result = process_tick(1, 10);
+        assert_eq!(result.next_seconds, 0);
+        assert_eq!(result.progress, 0.0);
+        assert!(result.should_minimize);
+    }
+
+    #[test]
+    fn test_process_tick_last_second() {
+        let result = process_tick(1, 1);
+        assert_eq!(result.next_seconds, 0);
+        assert_eq!(result.progress, 0.0);
+        assert!(result.should_minimize);
+    }
+
+    #[test]
+    fn test_process_tick_full_countdown() {
+        let result = process_tick(3, 3);
+        assert_eq!(result.next_seconds, 2);
+        assert_eq!(result.progress, 2.0 / 3.0);
+        assert!(!result.should_minimize);
+    }
+}
+
 /// Wrapper para conectar el listener de Hyprland.
-pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) {
+/// Returns a `ListenerHandle` that keeps the focus listener thread alive.
+/// When the handle is dropped (app shutdown), the thread stops cleanly.
+pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc::ListenerHandle {
     let weak_for_lost = window_weak.clone();
     let weak_for_gained = window_weak.clone();
 
@@ -159,5 +288,5 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) {
                 Err(e) => tracing::error!("[countdown] invoke_from_event_loop falló (gained): {:?}", e),
             }
         },
-    );
+    )
 }

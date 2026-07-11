@@ -81,7 +81,8 @@ fn migrate(mut cfg: Config) -> Config {
 impl Config {
     pub fn config_path() -> PathBuf {
         let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".config"));
+            .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
         config_dir.join("hve").join("config.json")
     }
 

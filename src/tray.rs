@@ -95,11 +95,7 @@ impl ksni::Tray for HveTray {
                                 return;
                             }
                             let current = win.get_active_anim_index();
-                            let next = if current < 0 || current + 1 >= count as i32 {
-                                0
-                            } else {
-                                current + 1
-                            };
+                            let next = crate::ipc::get_next_index(current, count);
                             if let Some(file) = files.row_data(next as usize) {
                                 win.invoke_apply_animation(next, file);
                             }
@@ -123,11 +119,7 @@ impl ksni::Tray for HveTray {
                                 return;
                             }
                             let current = win.get_active_border_index();
-                            let next = if current < 0 || current + 1 >= count as i32 {
-                                0
-                            } else {
-                                current + 1
-                            };
+                            let next = crate::ipc::get_next_index(current, count);
                             if let Some(file) = files.row_data(next as usize) {
                                 win.invoke_apply_border(next, file);
                             }
@@ -151,11 +143,7 @@ impl ksni::Tray for HveTray {
                                 return;
                             }
                             let current = win.get_active_shader_index();
-                            let next = if current < 0 || current + 1 >= count as i32 {
-                                0
-                            } else {
-                                current + 1
-                            };
+                            let next = crate::ipc::get_next_index(current, count);
                             if let Some(file) = files.row_data(next as usize) {
                                 win.invoke_apply_shader(next, file);
                             }

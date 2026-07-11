@@ -5,12 +5,28 @@ use slint::ComponentHandle;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub struct HyprIpc {
     socket_path: PathBuf,
+}
+
+/// Opaque handle to a background listener thread.
+/// Dropping the handle sets an atomic shutdown flag so the loop exits cleanly
+/// on its next reconnect iteration.
+pub struct ListenerHandle {
+    shutdown: std::sync::Arc<AtomicBool>,
+    _thread: JoinHandle<()>,
+}
+
+impl Drop for ListenerHandle {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
 }
 
 impl HyprIpc {
@@ -30,23 +46,44 @@ impl HyprIpc {
     }
 
     /// Spawn a thread that listens for Hyprland IPC events.
+    /// Returns a `ListenerHandle` that, when dropped, signals the thread to
+    /// stop on its next reconnect attempt.
+    ///
     /// Calls `on_config_reload` when `configreloaded` event fires.
-    pub fn spawn_listener<F>(self, on_config_reload: F)
+    pub fn spawn_listener<F>(self, on_config_reload: F) -> ListenerHandle
     where
         F: Fn() + Send + Sync + 'static,
     {
         let callback = std::sync::Arc::new(on_config_reload);
-        thread::spawn(move || {
+        let shutdown = std::sync::Arc::new(AtomicBool::new(false));
+
+        let shutdown_clone = shutdown.clone();
+        let handle = thread::spawn(move || {
             loop {
+                // Check shutdown flag before every reconnect attempt
+                if shutdown_clone.load(Ordering::Relaxed) {
+                    break;
+                }
                 match self.connect_and_listen(&callback) {
-                    Ok(_) => break, // Clean exit
+                    Ok(_) => break, // Clean exit from Hyprland
                     Err(e) => {
                         eprintln!("[HVE] IPC listener error: {}, reconnecting in 2s...", e);
-                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        // Respect shutdown during the sleep too
+                        for _ in 0..20 {
+                            if shutdown_clone.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
                     }
                 }
             }
         });
+
+        ListenerHandle {
+            shutdown,
+            _thread: handle,
+        }
     }
 
     fn connect_and_listen<F>(&self, on_config_reload: &std::sync::Arc<F>) -> Result<(), String>
@@ -98,11 +135,12 @@ impl HyprIpc {
 }
 
 /// Start the IPC listener that auto-refreshes colors on config reload.
-pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) {
+/// Returns a handle so the caller can keep it alive for the app lifetime.
+pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHandle {
     let weak = window.as_weak();
     let proj_for_ipc = proj;
     if let Some(ipc) = HyprIpc::new() {
-        ipc.spawn_listener(move || {
+        let handle = ipc.spawn_listener(move || {
             // 1. Re-run assemble.sh when config reloads
             let script = proj_for_ipc
                 .join("assets")
@@ -130,8 +168,15 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) {
             }
         });
         println!("[HVE] Hyprland IPC listener started");
+        handle
     } else {
         eprintln!("[HVE] Could not find Hyprland IPC socket");
+        // Return a dummy handle that does nothing on drop (no listener to stop)
+        let shutdown = std::sync::Arc::new(AtomicBool::new(true));
+        ListenerHandle {
+            shutdown,
+            _thread: thread::spawn(move || {}),
+        }
     }
 }
 
@@ -141,9 +186,12 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) {
 const HVE_WINDOW_TITLE: &str = "Hyprland Visual Editor";
 
 /// Spawn a thread that listens for Hyprland `activewindow` events.
+/// Returns a `ListenerHandle` that, when dropped, signals the thread to
+/// stop on its next reconnect attempt.
+///
 /// Calls `on_focus_lost` when the active window is NOT HVE.
 /// Calls `on_focus_gained` when the active window IS HVE.
-pub fn spawn_focus_listener<F, G>(on_focus_lost: F, on_focus_gained: G)
+pub fn spawn_focus_listener<F, G>(on_focus_lost: F, on_focus_gained: G) -> ListenerHandle
 where
     F: Fn() + Send + Sync + 'static,
     G: Fn() + Send + Sync + 'static,
@@ -152,7 +200,12 @@ where
         Some(i) => i,
         None => {
             eprintln!("[HVE] Could not find Hyprland IPC socket (focus listener skipped)");
-            return;
+            // Return a dummy handle
+            let shutdown = std::sync::Arc::new(AtomicBool::new(true));
+            return ListenerHandle {
+                shutdown,
+                _thread: thread::spawn(move || {}),
+            };
         }
     };
 
@@ -160,19 +213,36 @@ where
 
     let lost = std::sync::Arc::new(on_focus_lost);
     let gained = std::sync::Arc::new(on_focus_gained);
+    let shutdown = std::sync::Arc::new(AtomicBool::new(false));
 
-    thread::spawn(move || {
+    let shutdown_clone = shutdown.clone();
+    let handle = thread::spawn(move || {
         loop {
+            // Check shutdown flag before every reconnect attempt
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
             match connect_and_listen_focus(&ipc, &lost, &gained) {
                 Ok(_) => break,
                 Err(e) => {
                     eprintln!("[HVE] Focus listener error: {}, reconnecting in 2s...", e);
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    // Respect shutdown during the sleep too
+                    for _ in 0..20 {
+                        if shutdown_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
                 }
             }
         }
     });
+
     println!("[HVE] Hyprland focus listener started");
+    ListenerHandle {
+        shutdown,
+        _thread: handle,
+    }
 }
 
 fn connect_and_listen_focus<F, G>(

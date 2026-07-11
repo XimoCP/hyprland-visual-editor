@@ -12,26 +12,19 @@ macro_rules! make_toggle_callback {
     ($eng:expr, $cfg:expr, $weak:expr, $active_field:ident, $apply_method:ident, $set_ui:ident, $err_label:expr) => {
         move |idx, file| {
             let file_str = file.to_string();
-            let is_deactivate = {
-                let cfg = $cfg.lock().unwrap();
-                cfg.$active_field == file_str
-            };
-            let new_file = if is_deactivate {
-                String::new()
-            } else {
-                file_str
+            let (is_deactivate, new_file) = {
+                let mut cfg = $cfg.lock().unwrap();
+                let is_deact = cfg.$active_field == file_str;
+                let new = if is_deact { String::new() } else { file_str.clone() };
+                cfg.$active_field = new.clone();
+                let _ = cfg.save();
+                (is_deact, new)
             };
 
             let arg = if is_deactivate { "none" } else { &new_file };
             let result = $eng.$apply_method(arg);
             if let Err(e) = result {
                 eprintln!("[HVE] {} error: {}", $err_label, e);
-            }
-
-            {
-                let mut cfg = $cfg.lock().unwrap();
-                cfg.$active_field = new_file;
-                let _ = cfg.save();
             }
 
             if let Some(w) = $weak.upgrade() {

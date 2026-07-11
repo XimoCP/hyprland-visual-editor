@@ -34,7 +34,8 @@ mkdir -p "$HVE_FRAGMENTS_DIR"
 BORDER_SIZE=$1
 
 # Basic validation (Fallback to 2 if QML fails)
-if [ -z "$BORDER_SIZE" ]; then
+if [ -z "$BORDER_SIZE" ] || ! [[ "$BORDER_SIZE" =~ ^-?[0-9]+$ ]]; then
+    echo "[HVE] Warning: invalid BORDER_SIZE '$BORDER_SIZE', falling back to 2" >&2
     BORDER_SIZE=2
 fi
 

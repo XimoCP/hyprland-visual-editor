@@ -37,10 +37,10 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
                 return;
             }
         };
-        // Allow any user in the session to connect
+        // Allow only the owner to connect (sufficient for local Unix socket)
         let _ = std::fs::set_permissions(
             &socket_path,
-            std::os::unix::fs::PermissionsExt::from_mode(0o777),
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
         );
         println!("[HVE IPC] Listening on {}", socket_path.display());
 
@@ -129,7 +129,7 @@ where
         .map_err(|_| "timeout waiting for event loop".to_string())
 }
 
-fn get_next_index(current: i32, count: usize) -> i32 {
+pub(crate) fn get_next_index(current: i32, count: usize) -> i32 {
     if count == 0 {
         return -1;
     }
