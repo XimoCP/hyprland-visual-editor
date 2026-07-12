@@ -222,6 +222,131 @@ pub fn apply_theme(window: &crate::MainWindow, colors: &ColorScheme) {
     window.set_border(border);
 }
 
+// ─── Logo rendering ────────────────────────────────────────────
+
+const LOGO_SVG: &str = include_str!("../assets/hve_logo.svg");
+const LOGO_WIDTH: u32 = 140;
+
+/// Convert a Slint Color to a hex string like `"#ff8800"`.
+fn color_to_hex(c: &Color) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.red(), c.green(), c.blue())
+}
+
+/// Build the SVG string by substituting per-letter color placeholders.
+fn build_logo_svg(h: &str, hv: &str, v: &str, e: &str) -> String {
+    // ⚠️ %HV% must be replaced BEFORE %H% because "%H%" is a substring of "%HV%"
+    LOGO_SVG
+        .replace("%HV%", hv)
+        .replace("%H%", h)
+        .replace("%V%", v)
+        .replace("%E%", e)
+}
+
+/// Parse the logo SVG with 4 palette colors and return the usvg tree.
+///
+/// Colors by letter:
+/// - H  → secondary (amber/orange)
+/// - HV → tertiary darkened (darker purple, high contrast on dark bg) — interlaced part
+/// - V  → tertiary (purple)
+/// - E  → accent (green)
+fn parse_logo_svg(h: &str, hv: &str, v: &str, e: &str) -> Option<usvg::Tree> {
+    let svg = build_logo_svg(h, hv, v, e);
+    let opt = usvg::Options::default();
+    match usvg::Tree::from_data(svg.as_bytes(), &opt) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            tracing::error!("[logo] SVG parse error: {e}");
+            None
+        }
+    }
+}
+
+/// Render the HVE logo SVG to raw RGBA bytes at the given width, maintaining aspect ratio.
+///
+/// Each letter gets a different palette color:
+/// - `secondary` → H (amber/orange)
+/// - `primary`   → HV (cyan, interlaced)
+/// - `tertiary`  → V (purple)
+/// - `accent`    → E (green)
+///
+/// Returns `None` if parsing or rendering fails.
+pub fn render_logo_rgba(
+    _surface_lowest: &Color,
+    secondary: &Color,
+    tertiary: &Color,
+    accent: &Color,
+    width: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    let hv_dark = darken(tertiary, 0.3); // interlaced part: darker purple for visibility
+    let tree = parse_logo_svg(
+        &color_to_hex(secondary), // H → amber
+        &color_to_hex(&hv_dark),  // HV → tertiary darkened (not surface_lowest)
+        &color_to_hex(tertiary),  // V → purple
+        &color_to_hex(accent),    // E → green
+    )?;
+
+    let scale = width as f32 / tree.size().width() as f32;
+    let height = (tree.size().height() as f32 * scale).ceil() as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+
+    let transform = tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    Some((pixmap.take(), width, height))
+}
+
+/// Pad RGBA data to a square canvas, centering the image with transparent margins.
+fn pad_rgba_to_square(data: &[u8], w: u32, h: u32, size: u32) -> Vec<u8> {
+    let mut square = vec![0u8; (size * size * 4) as usize];
+    let x_offset = (size.saturating_sub(w)) / 2;
+    let y_offset = (size.saturating_sub(h)) / 2;
+    for y in 0..h.min(size) {
+        for x in 0..w.min(size) {
+            let src = ((y * w + x) * 4) as usize;
+            let dst = (((y_offset + y) * size + (x_offset + x)) * 4) as usize;
+            square[dst..dst + 4].copy_from_slice(&data[src..src + 4]);
+        }
+    }
+    square
+}
+
+/// Render the HVE logo to a square RGBA canvas using a single accent color for all paths.
+///
+/// Useful for tray icons where multi-color is too small to distinguish.
+pub fn render_logo_square_mono(accent: &Color, size: u32) -> Option<Vec<u8>> {
+    let hex = color_to_hex(accent);
+    let tree = parse_logo_svg(&hex, &hex, &hex, &hex)?;
+    let scale = size as f32 / tree.size().width() as f32;
+    let height = (tree.size().height() as f32 * scale).ceil() as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(size, height)?;
+    let transform = tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    Some(pad_rgba_to_square(&pixmap.take(), size, height, size))
+}
+
+/// Render the HVE logo with 4 palette colors and return a Slint Image.
+///
+/// - H  → `secondary` (amber/orange)
+/// - HV → `surface_lowest` (lightest palette color)
+/// - V  → `tertiary` (purple)
+/// - E  → `accent` (green)
+pub fn render_logo_image(
+    surface_lowest: &Color,
+    secondary: &Color,
+    tertiary: &Color,
+    accent: &Color,
+) -> slint::Image {
+    let (data, w, h) = match render_logo_rgba(surface_lowest, secondary, tertiary, accent, LOGO_WIDTH) {
+        Some(r) => r,
+        None => return slint::Image::default(),
+    };
+
+    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+    buf.make_mut_bytes().copy_from_slice(&data);
+    slint::Image::from_rgba8(buf)
+}
+
 // ─── Tests ──────────────────────────────────────────────────────
 
 #[cfg(test)]

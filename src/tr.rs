@@ -94,6 +94,7 @@ fn load_embedded(lang: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_tr_resolves_top_level() {
@@ -129,18 +130,21 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_detect_language_parses_full_locale() {
         std::env::set_var("LANG", "es_AR.UTF-8");
         assert_eq!(detect_language(), "es");
     }
 
     #[test]
+    #[serial]
     fn test_detect_language_parses_short() {
         std::env::set_var("LANG", "en_US");
         assert_eq!(detect_language(), "en");
     }
 
     #[test]
+    #[serial]
     fn test_detect_language_defaults_to_en() {
         std::env::remove_var("LANG");
         assert_eq!(detect_language(), "en");

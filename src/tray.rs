@@ -1,47 +1,101 @@
-use ksni::{self, TrayService};
+use ksni::{self, Handle, TrayService};
 use slint::ComponentHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::tr::Tr;
 
-/// The 32×32 raw RGBA data of the tray icon, embedded at compile time.
-const TRAY_ICON_DATA: &[u8] = include_bytes!("../assets/hve_logo_raw.rgba");
+/// Global tray handle so IPC commands (refresh-theme) can update the tray icon.
+static GLOBAL_TRAY: OnceLock<Mutex<TrayHandle>> = OnceLock::new();
+
+/// Handle to control the tray icon after creation.
+pub struct TrayHandle {
+    pub system_active: Arc<AtomicBool>,
+    handle: Handle<HveTray>,
+}
+
+impl TrayHandle {
+    /// Update the tray icon with new RGBA pixel data (will be converted to BGRA internally).
+    pub fn update_icon(&self, rgba: Vec<u8>) {
+        let bgra: Vec<u8> = rgba
+            .chunks(4)
+            .flat_map(|p| [p[2], p[1], p[0], p[3]])
+            .collect();
+        self.handle.update(move |tray: &mut HveTray| {
+            tray.icon_bgra = bgra;
+        });
+    }
+}
+
+/// Register a tray handle as the global instance, so IPC commands (refresh-theme)
+/// can update the tray icon.
+pub fn init_global(handle: TrayHandle) {
+    let _ = GLOBAL_TRAY.set(Mutex::new(handle));
+}
+
+/// Try to update the tray icon via the global handle. Does nothing if no handle
+/// has been registered yet.
+pub fn update_global_icon(rgba: Vec<u8>) {
+    if let Some(tray) = GLOBAL_TRAY.get() {
+        if let Ok(tray) = tray.lock() {
+            tray.update_icon(rgba);
+        }
+    }
+}
 
 /// Start the system tray icon in a background thread.
 ///
-/// Creates a `ksni` tray with a 32×32 RGBA tray icon embedded in the binary.
-/// No runtime file access needed — the icon is baked at compile time.
+/// `icon_rgba` is the raw RGBA pixel data rendered from the SVG template,
+/// at the given `icon_w × icon_h` resolution.
 ///
-/// Returns an `Arc<AtomicBool>` that the caller can share with callbacks
-/// to keep the tray icon and status label in sync with system state.
-pub fn start_tray(window: slint::Weak<crate::MainWindow>, tr: Arc<Tr>) -> Arc<AtomicBool> {
+/// Returns a `TrayHandle` that can be used to update the icon later.
+pub fn start_tray(
+    window: slint::Weak<crate::MainWindow>,
+    tr: Arc<Tr>,
+    icon_rgba: Vec<u8>,
+    icon_w: u32,
+    icon_h: u32,
+) -> TrayHandle {
+    // Convert RGBA → BGRA (ksni expects Cairo ARGB32 = BGRA in LE)
+    let icon_bgra: Vec<u8> = icon_rgba
+        .chunks(4)
+        .flat_map(|p| [p[2], p[1], p[0], p[3]])
+        .collect();
+
     let system_active = Arc::new(AtomicBool::new(false));
-    let service = TrayService::new(HveTray {
+    let tray = HveTray {
         window,
         system_active: system_active.clone(),
         tr,
-    });
+        icon_bgra,
+        icon_w,
+        icon_h,
+    };
+    let service = TrayService::new(tray);
+    let handle = service.handle();
     service.spawn();
-    system_active
+    TrayHandle { system_active, handle }
 }
 
 struct HveTray {
     window: slint::Weak<crate::MainWindow>,
     system_active: Arc<AtomicBool>,
     tr: Arc<Tr>,
+    icon_bgra: Vec<u8>,
+    icon_w: u32,
+    icon_h: u32,
 }
 
 impl ksni::Tray for HveTray {
     fn icon_name(&self) -> String {
-        "applications-graphics".to_string()
+        String::new() // empty → use icon_pixmap data
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         vec![ksni::Icon {
-            width: 32,
-            height: 32,
-            data: TRAY_ICON_DATA.to_vec(),
+            width: self.icon_w as i32,
+            height: self.icon_h as i32,
+            data: self.icon_bgra.clone(),
         }]
     }
 

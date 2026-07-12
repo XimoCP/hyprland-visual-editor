@@ -270,6 +270,18 @@ fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &PathBuf) ->
             let resolved = theme::resolve_scheme(&colors, &cfg.theme);
             format_response(invoke_on_main(window, move |win| {
                 theme::apply_theme(&win, &resolved);
+                // Regenerate logo with new theme colors
+                let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
+                let secondary = theme::parse_hex(&resolved.secondary);
+                let tertiary = theme::parse_hex(&resolved.tertiary);
+                let accent = theme::parse_hex(&resolved.accent);
+                let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
+                win.set_logo_image(logo);
+                // Update tray icon
+                let tray_color = theme::lighten(&accent, 0.6);
+                if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
+                    crate::tray::update_global_icon(icon);
+                }
                 "ok".to_string()
             }))
         }

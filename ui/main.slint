@@ -36,6 +36,7 @@ export component MainWindow inherits Window {
     in-out property <int> active-tab: 0;
     in property <[NavModule]> nav-modules;
     in-out property <bool> system-active: false;
+    in property <image> logo-image;
 
     // ── i18n strings ──
     in property <string> sidebar-subtitle;
@@ -162,25 +163,41 @@ export component MainWindow inherits Window {
                     padding-bottom: 24px;
                     spacing: 12px;
 
-                    // Logo
-                    VerticalLayout {
-                        padding-bottom: 24px;
-                        padding-left: 12px;
-                        spacing: 6px;
+                    // Logo (SVG con colores del tema, centrado en el sidebar)
+                    HorizontalLayout {
+                        padding-top: 0px;
+                        padding-bottom: 0px;
+                        alignment: center;
 
-                        Text {
-                            text: "HVE";
-                            color: HveColors.accent-green;
-                            font-size: 36px;
-                            font-weight: 900;
-                            letter-spacing: 3px;
+                        VerticalLayout {
+                            spacing: 6px;
+                            alignment: center;
+
+                            Rectangle {
+                                width: 140px;
+                                height: 73px;
+
+                                Image {
+                                    source: root.logo-image;
+                                    x: 0;
+                                    y: 0;
+                                    width: 140px;
+                                    height: 73px;
+                                }
+                            }
+
+                        // Subtitle "Hyprland Visual Editor" con iniciales coloreadas como el logo
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 0px;
+
+                            Text { text: "H"; color: HveColors.accent-amber; font-weight: 700; font-size: 14px; }
+                            Text { text: "yprland "; color: HveColors.text-muted; font-size: 14px; }
+                            Text { text: "V"; color: HveColors.accent-purple; font-weight: 700; font-size: 14px; }
+                            Text { text: "isual "; color: HveColors.text-muted; font-size: 14px; }
+                            Text { text: "E"; color: HveColors.accent-green; font-weight: 700; font-size: 14px; }
+                            Text { text: "ditor"; color: HveColors.text-muted; font-size: 14px; }
                         }
-
-                        Text {
-                            text: root.sidebar-subtitle;
-                            color: HveColors.text-muted;
-                            font-size: 12px;
-                            wrap: word-wrap;
                         }
                     }
 

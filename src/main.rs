@@ -685,24 +685,35 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_keybinds_label(tr.tr_shared("settings.keybinds", "Keyboard shortcuts"));
     window.set_keybinds_mode(cfg.keybinds_enabled);
 
-    // ── Dynamic theme ──
-    match engine.get_colors() {
+    // ── Dynamic theme + logo + tray icon ──
+    let tray_handle = match engine.get_colors() {
         Ok(colors) => {
             let resolved = theme::resolve_scheme(&colors, &cfg.theme);
             theme::apply_theme(&window, &resolved);
+            let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
+            let secondary = theme::parse_hex(&resolved.secondary);
+            let tertiary = theme::parse_hex(&resolved.tertiary);
+            let accent = theme::parse_hex(&resolved.accent);
+            // Sidebar logo (multi-color)
+            let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
+            window.set_logo_image(logo);
+            // Tray icon (48x48 square, centered — tray scales down)
+            // Lighten accent so the tray icon is visible on dark panels
+                    let tray_color = theme::lighten(&accent, 0.6);
+            let icon = theme::render_logo_square_mono(&tray_color, 48)
+                .unwrap_or_default();
             tracing::info!("Theme loaded: {} (pref={})", colors.primary, cfg.theme);
+            tray::start_tray(window.as_weak(), tr.clone(), icon, 48, 48)
         }
-        Err(e) => tracing::error!("Could not load theme: {}", e),
-    }
-
-    // ── System tray (start before callbacks so the shared atomic exists) ──
-    let tray_active = tray::start_tray(window.as_weak(), tr.clone());
+        Err(_) => tray::start_tray(window.as_weak(), tr.clone(), Vec::new(), 48, 48),
+    };
+    let tray_system_active = tray_handle.system_active.clone();
+    tray::init_global(tray_handle);
 
     // ── Shared config for all callbacks (prevents stale clones from overwriting each other) ──
     let cfg = Arc::new(std::sync::Mutex::new(cfg));
 
-    // ── Callbacks ──
-    callbacks::setup_callbacks(&window, &cfg, proj.clone(), tray_active);
+    callbacks::setup_callbacks(&window, &cfg, proj.clone(), tray_system_active);
 
     // ── Nav modules (data-driven sidebar, translated) ──
     let nav_modules = Vec::from([
@@ -888,6 +899,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Ok(colors) = eng.get_colors() {
                     let resolved = theme::resolve_scheme(&colors, &theme_str);
                     theme::apply_theme(&w, &resolved);
+                    // Regenerate logo with new theme colors (multi-color)
+                    let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
+                    let secondary = theme::parse_hex(&resolved.secondary);
+                    let tertiary = theme::parse_hex(&resolved.tertiary);
+                    let accent = theme::parse_hex(&resolved.accent);
+                    let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
+                    w.set_logo_image(logo);
+                    // Update tray icon too
+            let tray_color = theme::lighten(&accent, 0.6);
+                    if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
+                        tray::update_global_icon(icon);
+                    }
                 }
                 w.set_theme(theme);
             }
