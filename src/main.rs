@@ -1081,11 +1081,14 @@ fn main() -> Result<(), slint::PlatformError> {
         );
 
     let _panel_handle: Option<panel::PanelHandle> = if use_panel_mode {
-        match panel::ui::PanelUi::new(window.as_weak()) {
+        match panel::ui::PanelUi::new(window.as_weak(), cfg.clone()) {
             Ok(panel_ui) => {
                 let panel_weak = panel_ui.weak();
-                let edge = cfg.lock().unwrap().panel_edge;
-                let handle = panel::thread::run(edge, panel_weak, window.as_weak());
+                let cfg_guard = cfg.lock().unwrap();
+                let edge = cfg_guard.panel_edge;
+                let panel_width = cfg_guard.panel_width.expanded as i32;
+                drop(cfg_guard);
+                let handle = panel::thread::run(edge, panel_weak, window.as_weak(), panel_width);
                 tracing::info!(
                     "[panel] Started in {} mode (edge={:?})",
                     if cli.panel { "CLI-override" } else { "config" },

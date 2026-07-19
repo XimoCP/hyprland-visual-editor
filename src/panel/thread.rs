@@ -59,6 +59,7 @@ pub fn run(
     edge: PanelEdge,
     panel_weak: slint::Weak<crate::PanelWindow>,
     _main_weak: slint::Weak<crate::MainWindow>,
+    expanded_width: i32,
 ) -> PanelHandle {
     let shutdown = Arc::new(AtomicBool::new(false));
     let visible = Arc::new(AtomicBool::new(false));
@@ -80,6 +81,7 @@ pub fn run(
                     edge_visible,
                     edge_expanded,
                     edge_panel,
+                    expanded_width,
                 );
             }));
             tracing::info!("[panel] Edge detection thread exited");
@@ -124,6 +126,7 @@ fn edge_loop(
     visible: Arc<AtomicBool>,
     expanded: Arc<AtomicBool>,
     panel_weak: slint::Weak<crate::PanelWindow>,
+    expanded_width: i32,
 ) {
     let mut last_trigger: Option<Instant> = None;
     let mut was_visible = false;
@@ -149,11 +152,20 @@ fn edge_loop(
 
                     if !was_visible {
                         was_visible = true;
-                        show_panel_and_expand(&panel_weak, &monitors, &edge);
+                        show_panel_and_expand(
+                            &panel_weak,
+                            cursor,
+                            &monitors,
+                            &edge,
+                            expanded_width,
+                        );
                     }
                 } else if was_visible && far_from_edge {
-                    // Cursor left the zone → start or check collapse timer
-                    if last_trigger.map_or(false, |t| t.elapsed() >= COLLAPSE_DELAY) {
+                    // Cursor is far from edge → check collapse timer
+                    // If last_trigger was reset in twilight zone, collapse immediately.
+                    let should_collapse = last_trigger
+                        .map_or(true, |t| t.elapsed() >= COLLAPSE_DELAY);
+                    if should_collapse {
                         was_visible = false;
                         visible.store(false, Ordering::Relaxed);
                         expanded.store(false, Ordering::Relaxed);
@@ -161,8 +173,11 @@ fn edge_loop(
                         last_trigger = None;
                     }
                 } else if was_visible {
-                    // Still near the edge but not in trigger zone — keep shown
-                    last_trigger = None;
+                    // Cursor in twilight zone (between trigger and collapse threshold):
+                    // start the collapse timer if not already running.
+                    // DO NOT reset it — that would break the timer when cursor
+                    // later moves into far_from_edge territory.
+                    last_trigger.get_or_insert_with(Instant::now);
                 }
             }
             (_, _) => {
@@ -380,18 +395,20 @@ pub fn is_near_edge(
 
 fn show_panel_and_expand(
     panel_weak: &slint::Weak<crate::PanelWindow>,
+    cursor: (i32, i32),
     monitors: &[Monitor],
     edge: &PanelEdge,
+    expanded_width: i32,
 ) {
     let w = panel_weak.clone();
-    let monitor_geo = get_trigger_monitor(monitors, edge);
+    let monitor_geo = get_trigger_monitor(cursor, monitors, edge);
     let edge_type = *edge;
 
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(panel) = w.upgrade() {
             // Position at the configured edge of the trigger monitor
             if let Some(geo) = monitor_geo {
-                let (px, py) = position_at_edge(geo, edge_type);
+                let (px, py) = position_at_edge(geo, edge_type, expanded_width);
                 let _ = panel
                     .window()
                     .set_position(slint::PhysicalPosition { x: px, y: py });
@@ -413,20 +430,47 @@ fn hide_panel(panel_weak: &slint::Weak<crate::PanelWindow>) {
     });
 }
 
-/// Find the monitor whose edge triggered the panel. Prefers the focused one.
-fn get_trigger_monitor(monitors: &[Monitor], _edge: &PanelEdge) -> Option<Monitor> {
-    monitors.first().cloned()
+/// Find the monitor whose edge the cursor is near.
+/// Returns the monitor that contains the cursor within COLLAPSE_THRESHOLD
+/// pixels of the configured edge. Falls back to the first monitor if none match.
+fn get_trigger_monitor(
+    cursor: (i32, i32),
+    monitors: &[Monitor],
+    edge: &PanelEdge,
+) -> Option<Monitor> {
+    let (cx, cy) = cursor;
+    let matched = monitors.iter().find(|m| match edge {
+        PanelEdge::Left => {
+            cx >= m.x && cx <= m.x + COLLAPSE_THRESHOLD && cy >= m.y && cy <= m.y + m.height
+        }
+        PanelEdge::Right => {
+            let right_edge = m.x + m.width;
+            cx >= right_edge - COLLAPSE_THRESHOLD
+                && cx <= right_edge
+                && cy >= m.y
+                && cy <= m.y + m.height
+        }
+        PanelEdge::Top => {
+            cy >= m.y && cy <= m.y + COLLAPSE_THRESHOLD && cx >= m.x && cx <= m.x + m.width
+        }
+        PanelEdge::Bottom => {
+            let bottom_edge = m.y + m.height;
+            cy >= bottom_edge - COLLAPSE_THRESHOLD
+                && cy <= bottom_edge
+                && cx >= m.x
+                && cx <= m.x + m.width
+        }
+    });
+    matched.or_else(|| monitors.first()).cloned()
 }
 
 /// Calculate the (x, y) position for the panel at the given edge of a monitor.
-fn position_at_edge(monitor: Monitor, edge: PanelEdge) -> (i32, i32) {
-    const PANEL_WIDTH: i32 = 300;
-
+fn position_at_edge(monitor: Monitor, edge: PanelEdge, expanded_width: i32) -> (i32, i32) {
     match edge {
         PanelEdge::Left => (monitor.x, monitor.y),
-        PanelEdge::Right => (monitor.x + monitor.width - PANEL_WIDTH, monitor.y),
+        PanelEdge::Right => (monitor.x + monitor.width - expanded_width, monitor.y),
         PanelEdge::Top => (monitor.x, monitor.y),
-        PanelEdge::Bottom => (monitor.x, monitor.y + monitor.height - PANEL_WIDTH),
+        PanelEdge::Bottom => (monitor.x, monitor.y + monitor.height - expanded_width),
     }
 }
 
@@ -534,8 +578,21 @@ mod tests {
             width: 1920,
             height: 1080,
         };
-        let (x, y) = position_at_edge(m, PanelEdge::Right);
+        let (x, y) = position_at_edge(m, PanelEdge::Right, 300);
         assert_eq!(x, 1920 - 300);
+        assert_eq!(y, 0);
+    }
+
+    #[test]
+    fn test_position_at_right_edge_custom_width() {
+        let m = Monitor {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let (x, y) = position_at_edge(m, PanelEdge::Right, 350);
+        assert_eq!(x, 1920 - 350);
         assert_eq!(y, 0);
     }
 
@@ -547,7 +604,7 @@ mod tests {
             width: 1920,
             height: 1080,
         };
-        let (x, y) = position_at_edge(m, PanelEdge::Left);
+        let (x, y) = position_at_edge(m, PanelEdge::Left, 300);
         assert_eq!(x, 1920);
         assert_eq!(y, 0);
     }

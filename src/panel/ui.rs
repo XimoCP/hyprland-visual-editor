@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use slint::ComponentHandle;
+use std::sync::{Arc, Mutex};
 
 /// Opaque handle that keeps the panel window alive for the app lifetime.
 /// Drop hides the window.
@@ -15,7 +16,12 @@ impl PanelUi {
     ///
     /// `main_weak` is the MainWindow weak reference used to dispatch
     /// quick-control callbacks (toggle-system, next-anim, etc.).
-    pub fn new(main_weak: slint::Weak<crate::MainWindow>) -> Result<Self, slint::PlatformError> {
+    /// `cfg` is the shared application config (Arc<Mutex>) to avoid
+    /// periodic disk reads for preset name updates.
+    pub fn new(
+        main_weak: slint::Weak<crate::MainWindow>,
+        cfg: Arc<Mutex<Config>>,
+    ) -> Result<Self, slint::PlatformError> {
         let window = crate::PanelWindow::new()?;
 
         // ── Wire callbacks ──
@@ -119,23 +125,25 @@ impl PanelUi {
         }
 
         // ── Periodic preset indicator updater ──
+        // Uses shared config (in-memory) instead of Config::load() from disk.
         {
             let w = window.as_weak();
+            let cfg = cfg.clone();
             let timer = slint::Timer::default();
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_secs(1),
                 move || {
                     if let Some(panel) = w.upgrade() {
-                        let cfg = Config::load();
+                        let c = cfg.lock().unwrap();
                         panel.set_active_anim_name(
-                            extract_preset_name(&cfg.active_anim_file).into(),
+                            extract_preset_name(&c.active_anim_file).into(),
                         );
                         panel.set_active_border_name(
-                            extract_preset_name(&cfg.active_border_file).into(),
+                            extract_preset_name(&c.active_border_file).into(),
                         );
                         panel.set_active_shader_name(
-                            extract_preset_name(&cfg.active_shader_file).into(),
+                            extract_preset_name(&c.active_shader_file).into(),
                         );
                     }
                 },
