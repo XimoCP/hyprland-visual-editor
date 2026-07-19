@@ -18,6 +18,18 @@
       "effects": "Efectos"
     }
   },
+  "panel_edge": {
+    "toggle_system": "Alternar Sistema",
+    "next_animation": "Siguiente Animación",
+    "next_border": "Siguiente Borde",
+    "next_shader": "Siguiente Shader",
+    "open_hve": "Abrir HVE",
+    "open_settings": "Abrir Ajustes",
+    "preset_anim": "Anim:",
+    "preset_border": "Borde:",
+    "preset_shader": "Shader:",
+    "none": "Ninguno"
+  },
   "welcome": {
     "toast": {
     "enabled": "Editor Visual Habilitado",
@@ -291,6 +303,6 @@
     "none_shader": "Ninguno",
     "about_title": "Acerca de HVE",
     "about_short": "Hyprland Visual Editor es la evolución estética de tu escritorio.",
-    "about_full": "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n① Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield"
+    "about_full": "HVE genera la configuración de Hyprland mediante un sistema de Fragmentos y Ensamblaje en tiempo real — completamente aislado de tu configuración principal. Tu configuración original nunca se toca.\n\nHVE se adapta a tu versión de Hyprland:\n• Sintaxis .conf clásica → overlay.conf\n• Lua moderno (0.55+) → overlay.lua\n\nEl formato de salida se auto-detecta según tu versión de Hyprland.\n\n① Detección de entorno — escanea tu versión de Hyprland y adapta el formato de salida\n② Ensamblado atómico — los fragmentos se combinan en un archivo overlay coherente\n③ Hot Reload — los cambios se aplican al instante sin reiniciar Hyprland\n④ Guardian Shield — tu configuración principal nunca se toca, rollback seguro garantizado"
   }
 }

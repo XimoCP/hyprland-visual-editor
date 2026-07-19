@@ -1,0 +1,185 @@
+// ─── PANEL WINDOW ──────────────────────────────────────────────────
+// Second Slint window: auto-hiding edge panel for quick HVE controls.
+// Shares the main event loop. Width animates 48↔300 with spring easing.
+
+export component PanelWindow inherits Window {
+    title: "HVE Panel";
+
+    // ── Properties ──
+    in-out property <bool> panel-expanded: false;
+    in property <string> active-anim-name: "";
+    in property <string> active-border-name: "";
+    in property <string> active-shader-name: "";
+
+    // ── Callbacks ──
+    callback toggle-system();
+    callback next-anim();
+    callback next-border();
+    callback next-shader();
+    callback open-settings();
+
+    // ── Width animation: 48px collapsed, 300px expanded ──
+    min-width: 48px;
+    max-width: 300px;
+
+    // Spring-like easing per spec: cubic-bezier(0.34, 1.56, 0.64, 1)
+    animate width { duration: 250ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+    // ── Background ──
+    background: #1e1e2e;
+
+    // ── Main container ──
+    Rectangle {
+        width: 100%;
+        height: 100%;
+
+        VerticalLayout {
+            padding: 8px;
+            spacing: 8px;
+
+            // ── Quick Controls ──
+            // Toggle System
+            Rectangle {
+                height: 40px;
+                border-radius: 8px;
+                background: ts-ta.has-hover ? #45475a : #313244;
+                animate background { duration: 150ms; }
+
+                Text {
+                    text: "⏻";
+                    color: #cdd6f4;
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                ts-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.toggle-system(); }
+                }
+            }
+
+            // Next Animation
+            Rectangle {
+                height: 40px;
+                border-radius: 8px;
+                background: na-ta.has-hover ? #45475a : #313244;
+                animate background { duration: 150ms; }
+
+                Text {
+                    text: "▶";
+                    color: #cdd6f4;
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                na-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.next-anim(); }
+                }
+            }
+
+            // Next Border
+            Rectangle {
+                height: 40px;
+                border-radius: 8px;
+                background: nb-ta.has-hover ? #45475a : #313244;
+                animate background { duration: 150ms; }
+
+                Text {
+                    text: "◻";
+                    color: #cdd6f4;
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                nb-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.next-border(); }
+                }
+            }
+
+            // Next Shader
+            Rectangle {
+                height: 40px;
+                border-radius: 8px;
+                background: ns-ta.has-hover ? #45475a : #313244;
+                animate background { duration: 150ms; }
+
+                Text {
+                    text: "◆";
+                    color: #cdd6f4;
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                ns-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.next-shader(); }
+                }
+            }
+
+            // ── Spacer ──
+            Rectangle { height: 0px; vertical-stretch: 1; }
+
+            // ── Preset Indicators (visible only when expanded) ──
+            if root.panel-expanded : Rectangle {
+                border-radius: 8px;
+                background: #313244;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 4px;
+
+                    Text {
+                        text: "Anim: " + root.active-anim-name;
+                        color: #a6adc8;
+                        font-size: 11px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "Border: " + root.active-border-name;
+                        color: #a6adc8;
+                        font-size: 11px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "Shader: " + root.active-shader-name;
+                        color: #a6adc8;
+                        font-size: 11px;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            // ── Settings button ──
+            Rectangle {
+                height: 40px;
+                border-radius: 8px;
+                background: os-ta.has-hover ? #45475a : #313244;
+                animate background { duration: 150ms; }
+
+                Text {
+                    text: "⚙";
+                    color: #cdd6f4;
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                os-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.open-settings(); }
+                }
+            }
+        }
+    }
+}
