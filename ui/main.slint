@@ -143,6 +143,23 @@ export component MainWindow inherits Window {
     callback reset-presets();
     callback restart-app();
 
+    // ── Root FocusScope for tab switching (Left/Right arrows) ──
+    forward-focus: root-kbd;
+
+    root-kbd := FocusScope {
+        KeyBinding {
+            keys: @keys(LeftArrow);
+            enabled: root.active-tab != 0;
+            activated => { root.active-tab -= 1; }
+        }
+
+        KeyBinding {
+            keys: @keys(RightArrow);
+            enabled: root.active-tab != 3;
+            activated => { root.active-tab += 1; }
+        }
+    }
+
     Rectangle {
         // ── Main content (sidebar + content area) ──
         HorizontalLayout {
@@ -313,6 +330,7 @@ export component MainWindow inherits Window {
                         anim-tags: root.anim-tags;
                         anim-files: root.anim-files;
                         active-index: root.active-anim-index;
+                        is-active: root.active-tab == 1;
                         anim-toggled(idx, file) => { root.apply-animation(idx, file); }
                     }
                 }
@@ -335,6 +353,7 @@ export component MainWindow inherits Window {
                         border-files: root.border-files;
                         active-index: root.active-border-index;
                         border-size: root.border-size;
+                        is-active: root.active-tab == 2;
                         border-toggled(idx, file) => { root.apply-border(idx, file); }
                         geometry-changed(v) => { root.apply-geometry(v); }
                     }
@@ -356,6 +375,7 @@ export component MainWindow inherits Window {
                         shader-tags: root.shader-tags;
                         shader-files: root.shader-files;
                         active-index: root.active-shader-index;
+                        is-active: root.active-tab == 3;
                         shader-toggled(idx, file) => { root.apply-shader(idx, file); }
                     }
                 }

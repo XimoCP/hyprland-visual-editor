@@ -10,7 +10,7 @@ import {
     NavCard,
 } from "./components.slint";
 
-// ─── HOME MODULE �───────────────────────────────────────────────────
+// ─── HOME MODULE ────────────────────────────────────────────────────
 export component HomeModule inherits ScrollView {
     in property <bool> system-active: false;
     in property <[string]> anim-titles;
@@ -300,7 +300,7 @@ export component HomeModule inherits ScrollView {
             }
         }
 
-        // �─ About ──
+        // ── About ──
         acerca := AccordionCard {
             card-title: root.about-title;
             icon-text: "💡";
@@ -311,10 +311,8 @@ export component HomeModule inherits ScrollView {
             toggled => {
                 acerca.expanded = !acerca.expanded;
                 if acerca.expanded {
-                    // Baja ~140px para revelar el contenido expandido
                     root.viewport-y = root.viewport-y - 140px;
                 } else {
-                    // Al cerrar, volver al inicio — evita acumulación negativa
                     root.viewport-y = 0px;
                 }
             }
@@ -323,7 +321,7 @@ export component HomeModule inherits ScrollView {
 }
 
 // ─── ANIMATIONS MODULE ──────────────────────────────────────────────
-export component AnimationsModule inherits ScrollView {
+export component AnimationsModule inherits Rectangle {
     in property <[string]> anim-titles;
     in property <[string]> anim-descs;
     in property <[string]> anim-tags;
@@ -333,30 +331,98 @@ export component AnimationsModule inherits ScrollView {
     in property <string> header-subtitle;
     callback anim-toggled(int, string);
 
-    VerticalLayout {
-        padding: 24px;
-        spacing: 12px;
-        alignment: start;
+    // Keyboard navigation state
+    in-out property <int> focused-index: -1;
+    in property <bool> is-active: false;
 
-        SectionHeader {
-            title: root.header-title;
-            subtitle: root.header-subtitle;
-            accent: HveColors.accent-amber;
+    // Root FocusScope captures keyboard events for this module
+    kbd := FocusScope {
+        visible: root.is-active;
+        forward-focus: scroll-target;
+
+        KeyBinding {
+            keys: @keys(UpArrow);
+            enabled: root.is-active && root.anim-titles.length > 0;
+            activated => {
+                if (root.focused-index <= 0) {
+                    root.focused-index = root.anim-titles.length - 1;
+                } else {
+                    root.focused-index -= 1;
+                }
+            }
         }
 
-        for i in root.anim-titles.length: PresetCard {
-            title: root.anim-titles[i];
-            desc: root.anim-descs[i];
-            tag: root.anim-tags[i];
-            accent: HveColors.accent-amber;
-            active: root.active-index == i;
-            toggled(v) => { root.anim-toggled(i, root.anim-files[i]); }
+        KeyBinding {
+            keys: @keys(DownArrow);
+            enabled: root.is-active && root.anim-titles.length > 0;
+            activated => {
+                if (root.focused-index >= root.anim-titles.length - 1) {
+                    root.focused-index = 0;
+                } else {
+                    root.focused-index += 1;
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Return);
+            enabled: root.is-active && root.focused-index >= 0 && root.focused-index < root.anim-titles.length;
+            activated => {
+                root.anim-toggled(root.focused-index, root.anim-files[root.focused-index]);
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Space);
+            enabled: root.is-active && root.focused-index >= 0 && root.focused-index < root.anim-titles.length;
+            activated => {
+                root.anim-toggled(root.focused-index, root.anim-files[root.focused-index]);
+            }
+        }
+    }
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        // Named target so forward-focus can reach inside ScrollView
+        scroll-target := FocusScope {
+            forward-focus: inner-focus;
+
+            inner-focus := FocusScope {
+                inner-content := VerticalLayout {
+                    padding: 24px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    SectionHeader {
+                        title: root.header-title;
+                        subtitle: root.header-subtitle;
+                        accent: HveColors.accent-amber;
+                    }
+
+                    for i in root.anim-titles.length: PresetCard {
+                        title: root.anim-titles[i];
+                        desc: root.anim-descs[i];
+                        tag: root.anim-tags[i];
+                        accent: HveColors.accent-amber;
+                        active: root.active-index == i;
+                        index: i;
+                        keyboard-focused: root.is-active && root.focused-index == i;
+                        toggled => { root.anim-toggled(i, root.anim-files[i]); }
+                        focus-requested(idx) => {
+                            if (root.is-active) {
+                                root.focused-index = idx;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 // ─── BORDERS MODULE ─────────────────────────────────────────────────
-export component BordersModule inherits ScrollView {
+export component BordersModule inherits Rectangle {
     in property <[string]> border-titles;
     in property <[string]> border-descs;
     in property <[string]> border-tags;
@@ -369,36 +435,104 @@ export component BordersModule inherits ScrollView {
     callback border-toggled(int, string);
     callback geometry-changed(int);
 
-    VerticalLayout {
-        padding: 24px;
-        spacing: 12px;
-        alignment: start;
+    // Keyboard navigation state
+    in-out property <int> focused-index: -1;
+    in property <bool> is-active: false;
 
-        SectionHeader {
-            title: root.header-title;
-            subtitle: root.header-subtitle;
-            accent: HveColors.accent-green;
+    // Root FocusScope captures keyboard events for this module
+    kbd := FocusScope {
+        visible: root.is-active;
+        forward-focus: scroll-target;
+
+        KeyBinding {
+            keys: @keys(UpArrow);
+            enabled: root.is-active && root.border-titles.length > 0;
+            activated => {
+                if (root.focused-index <= 0) {
+                    root.focused-index = root.border-titles.length - 1;
+                } else {
+                    root.focused-index -= 1;
+                }
+            }
         }
 
-        GeometrySlider {
-            label: root.geometry-label;
-            value: root.border-size;
-            changed(v) => { root.geometry-changed(v); }
+        KeyBinding {
+            keys: @keys(DownArrow);
+            enabled: root.is-active && root.border-titles.length > 0;
+            activated => {
+                if (root.focused-index >= root.border-titles.length - 1) {
+                    root.focused-index = 0;
+                } else {
+                    root.focused-index += 1;
+                }
+            }
         }
 
-        for i in root.border-titles.length: PresetCard {
-            title: root.border-titles[i];
-            desc: root.border-descs[i];
-            tag: root.border-tags[i];
-            accent: HveColors.accent-green;
-            active: root.active-index == i;
-            toggled(v) => { root.border-toggled(i, root.border-files[i]); }
+        KeyBinding {
+            keys: @keys(Return);
+            enabled: root.is-active && root.focused-index >= 0 && root.focused-index < root.border-titles.length;
+            activated => {
+                root.border-toggled(root.focused-index, root.border-files[root.focused-index]);
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Space);
+            enabled: root.is-active && root.focused-index >= 0 && root.focused-index < root.border-titles.length;
+            activated => {
+                root.border-toggled(root.focused-index, root.border-files[root.focused-index]);
+            }
+        }
+    }
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        // Named target so forward-focus can reach inside ScrollView
+        scroll-target := FocusScope {
+            forward-focus: inner-focus;
+
+            inner-focus := FocusScope {
+                inner-content := VerticalLayout {
+                    padding: 24px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    SectionHeader {
+                        title: root.header-title;
+                        subtitle: root.header-subtitle;
+                        accent: HveColors.accent-green;
+                    }
+
+                    GeometrySlider {
+                        label: root.geometry-label;
+                        value: root.border-size;
+                        changed(v) => { root.geometry-changed(v); }
+                    }
+
+                    for i in root.border-titles.length: PresetCard {
+                        title: root.border-titles[i];
+                        desc: root.border-descs[i];
+                        tag: root.border-tags[i];
+                        accent: HveColors.accent-green;
+                        active: root.active-index == i;
+                        index: i;
+                        keyboard-focused: root.is-active && root.focused-index == i;
+                        toggled => { root.border-toggled(i, root.border-files[i]); }
+                        focus-requested(idx) => {
+                            if (root.is-active) {
+                                root.focused-index = idx;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 // ─── SHADERS MODULE ─────────────────────────────────────────────────
-export component ShadersModule inherits ScrollView {
+export component ShadersModule inherits Rectangle {
     in property <[string]> shader-titles;
     in property <[string]> shader-descs;
     in property <[string]> shader-tags;
@@ -408,24 +542,92 @@ export component ShadersModule inherits ScrollView {
     in property <string> header-subtitle;
     callback shader-toggled(int, string);
 
-    VerticalLayout {
-        padding: 24px;
-        spacing: 12px;
-        alignment: start;
+    // Keyboard navigation state
+    in-out property <int> focused-index: -1;
+    in property <bool> is-active: false;
 
-        SectionHeader {
-            title: root.header-title;
-            subtitle: root.header-subtitle;
-            accent: HveColors.accent-purple;
+    // Root FocusScope captures keyboard events for this module
+    kbd := FocusScope {
+        visible: root.is-active;
+        forward-focus: scroll-target;
+
+        KeyBinding {
+            keys: @keys(UpArrow);
+            enabled: root.is-active && root.shader-titles.length > 0;
+            activated => {
+                if (root.focused-index <= 0) {
+                    root.focused-index = root.shader-titles.length - 1;
+                } else {
+                    root.focused-index -= 1;
+                }
+            }
         }
 
-        for i in root.shader-titles.length: PresetCard {
-            title: root.shader-titles[i];
-            desc: root.shader-descs[i];
-            tag: root.shader-tags[i];
-            accent: HveColors.accent-purple;
-            active: root.active-index == i;
-            toggled(v) => { root.shader-toggled(i, root.shader-files[i]); }
+        KeyBinding {
+            keys: @keys(DownArrow);
+            enabled: root.is-active && root.shader-titles.length > 0;
+            activated => {
+                if (root.focused-index >= root.shader-titles.length - 1) {
+                    root.focused-index = 0;
+                } else {
+                    root.focused-index += 1;
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Return);
+            enabled: root.is-active && root.focused-index >= 0 && root.focused-index < root.shader-titles.length;
+            activated => {
+                root.shader-toggled(root.focused-index, root.shader-files[root.focused-index]);
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Space);
+            enabled: root.is-active && root.focused-index >= 0 && root.focused-index < root.shader-titles.length;
+            activated => {
+                root.shader-toggled(root.focused-index, root.shader-files[root.focused-index]);
+            }
+        }
+    }
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        // Named target so forward-focus can reach inside ScrollView
+        scroll-target := FocusScope {
+            forward-focus: inner-focus;
+
+            inner-focus := FocusScope {
+                inner-content := VerticalLayout {
+                    padding: 24px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    SectionHeader {
+                        title: root.header-title;
+                        subtitle: root.header-subtitle;
+                        accent: HveColors.accent-purple;
+                    }
+
+                    for i in root.shader-titles.length: PresetCard {
+                        title: root.shader-titles[i];
+                        desc: root.shader-descs[i];
+                        tag: root.shader-tags[i];
+                        accent: HveColors.accent-purple;
+                        active: root.active-index == i;
+                        index: i;
+                        keyboard-focused: root.is-active && root.focused-index == i;
+                        toggled => { root.shader-toggled(i, root.shader-files[i]); }
+                        focus-requested(idx) => {
+                            if (root.is-active) {
+                                root.focused-index = idx;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

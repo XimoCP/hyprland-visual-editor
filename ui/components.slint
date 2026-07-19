@@ -8,14 +8,17 @@ export component PresetCard inherits Rectangle {
     in property <string> tag;
     in property <color> accent;
     in property <bool> active: false;
-    callback toggled(bool);
+    in property <int> index: 0;
+    in-out property <bool> keyboard-focused: false;
+    callback toggled();
+    callback focus-requested(int);
 
-    height: (active || ta.has-hover || fs.has-focus) ? 100px : 58px;
+    height: (active || ta.has-hover || root.keyboard-focused) ? 100px : 58px;
     border-radius: 10px;
     clip: true;
-    background: active ? HveColors.bg-hover : ((ta.has-hover || fs.has-focus) ? HveColors.bg-hover : HveColors.bg-card);
+    background: active ? HveColors.bg-hover : ((ta.has-hover || root.keyboard-focused) ? HveColors.bg-hover : HveColors.bg-card);
     border-width: active ? 2px : 1px;
-    border-color: active ? accent : ((ta.has-hover || fs.has-focus) ? accent.transparentize(0.6) : HveColors.border);
+    border-color: active ? accent : ((ta.has-hover || root.keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
 
     // Glow sutil al estar activo
     drop-shadow-blur: active ? 12px : 0px;
@@ -86,7 +89,7 @@ export component PresetCard inherits Rectangle {
 
                         Text {
                             text: root.title;
-                            color: active ? HveColors.text : ((ta.has-hover || fs.has-focus) ? HveColors.text : HveColors.text-muted);
+                            color: active ? HveColors.text : ((ta.has-hover || root.keyboard-focused) ? HveColors.text : HveColors.text-muted);
                             font-size: 14px;
                             font-weight: active ? 700 : 500;
                             vertical-alignment: center;
@@ -124,7 +127,7 @@ export component PresetCard inherits Rectangle {
                         color: HveColors.text-muted;
                         font-size: 12px;
                         overflow: elide;
-                        wrap: (active || ta.has-hover || fs.has-focus) ? word-wrap : no-wrap;
+                        wrap: (active || ta.has-hover || root.keyboard-focused) ? word-wrap : no-wrap;
                     }
                 }
             }
@@ -159,28 +162,15 @@ export component PresetCard inherits Rectangle {
         }
     }
 
-    // ── FocusScope (workaround: focus-on-click: false) ──
-    fs := FocusScope {
-        focus-on-click: false;
-        focus-on-tab-navigation: true;
-        key-pressed(event) => {
-            if (event.text == Key.Return || event.text == Key.Space) {
-                root.toggled(!root.active);
-                accept
-            } else {
-                reject
-            }
-        }
-    }
-
     // ── TouchArea (encima de todo) ──
     ta := TouchArea {
         width: 100%;
         height: 100%;
-        clicked => { root.toggled(!root.active); }
+        clicked => { root.toggled(); }
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
-                fs.focus();
+                root.focus-requested(root.index);
+                root.toggled();
             }
         }
     }
@@ -192,12 +182,13 @@ export component NavButton inherits Rectangle {
     in property <string> icon-text;
     in property <color> accent;
     in property <bool> selected: false;
+    in property <bool> keyboard-focused: false;
     callback clicked;
 
     height: 48px;
     border-radius: 8px;
-    // selected -> activo; has-hover -> hover ratón; has-focus -> tab navegación teclado
-    background: selected ? HveColors.bg-hover : ((nb-ta.has-hover || nb-fs.has-focus) ? HveColors.bg-hover.transparentize(0.5) : transparent);
+    // selected -> activo; has-hover -> hover ratón; keyboard-focused -> navegación teclado
+    background: selected ? HveColors.bg-hover : ((nb-ta.has-hover || root.keyboard-focused) ? HveColors.bg-hover.transparentize(0.5) : transparent);
     animate background { duration: 200ms; }
 
     // ── Indicador lateral ──
@@ -226,49 +217,35 @@ export component NavButton inherits Rectangle {
             Rectangle {
                 width: 20px;
                 height: 20px;
-                Text {
-                    text: root.icon-text;
-                    color: (selected || nb-fs.has-focus) ? accent : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
-                    font-size: 16px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    animate color { duration: 200ms; }
+                    Text {
+                        text: root.icon-text;
+                        color: (selected || root.keyboard-focused) ? accent : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        animate color { duration: 200ms; }
+                    }
                 }
             }
-        }
 
-        // El texto se centra verticalmente con su propiedad nativa
-        Text {
-            text: root.label;
-            color: selected ? HveColors.text : ((nb-ta.has-hover || nb-fs.has-focus) ? HveColors.text : HveColors.text-muted);
-            font-size: 14px;
-            font-weight: selected ? 700 : 500;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            animate color { duration: 200ms; }
-        }
-    }
-
-    // ── FocusScope (workaround: focus-on-click: false) ──
-    nb-fs := FocusScope {
-        focus-on-click: false;
-        focus-on-tab-navigation: true;
-        key-pressed(event) => {
-            if (event.text == Key.Return || event.text == Key.Space) {
-                root.clicked();
-                accept
-            } else {
-                reject
+            // El texto se centra verticalmente con su propiedad nativa
+            Text {
+                text: root.label;
+                color: selected ? HveColors.text : ((nb-ta.has-hover || root.keyboard-focused) ? HveColors.text : HveColors.text-muted);
+                font-size: 14px;
+                font-weight: selected ? 700 : 500;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                animate color { duration: 200ms; }
             }
         }
-    }
 
-    // ── TouchArea (encima de todo) ──
-    nb-ta := TouchArea {
-        width: 100%;
-        height: 100%;
-        clicked => { root.clicked(); }
-    }
+        // ── TouchArea (encima de todo) ──
+        nb-ta := TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { root.clicked(); }
+        }
 }
 
 // ─── Section Header ─────────────────────────────────────────────────
