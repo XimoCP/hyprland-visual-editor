@@ -4,9 +4,8 @@ mod countdown;
 mod engine;
 mod hypr_ipc;
 mod ipc;
-mod panel;
-mod presets;
 mod tr;
+mod presets;
 mod theme;
 mod tray;
 mod watcher;
@@ -29,10 +28,6 @@ struct Cli {
     /// Run in tray-only mode (start minimized to system tray)
     #[arg(long)]
     tray: bool,
-
-    /// Force panel mode (override config ui_mode to Panel)
-    #[arg(long)]
-    panel: bool,
 
     /// Enable verbose logging (-v for DEBUG, -vv for TRACE)
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -674,7 +669,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_none_shader(tr.tr_shared("home.none_shader", "None"));
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
-    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE generates Hyprland configuration through a real-time Fragments and Assembly system — completely isolated from your main config. Your original configuration is never touched.\n\nHVE adapts to your Hyprland version:\n• Legacy .conf syntax → overlay.conf\n• Modern Lua (0.55+) → overlay.lua\n\nThe output format auto-detects your Hyprland version.\n\n① Environment detection — scans your Hyprland version and adapts the output format\n② Atomic assembly — fragments are combined into a coherent overlay file\n③ Hot Reload — changes apply instantly without restarting Hyprland\n④ Guardian Shield — your main configuration is never touched, safe rollback guaranteed"));
+    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE uses a real-time Fragments and Assembly system. It never touches your main configuration. Everything is safely generated in an isolated overlay.conf master file inside ~/.cache/hve/.\n\n① Environment detection\n② Atomic assembly\n③ Hot Reload\n④ Guardian Shield"));
 
     // ── i18n: Settings strings ──
     window.set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
@@ -1025,12 +1020,12 @@ fn main() -> Result<(), slint::PlatformError> {
         fn prewarm_tabs(weak: slint::Weak<crate::MainWindow>, step: u8) {
             if step > 3 {
                 if let Some(win) = weak.upgrade() {
-                    win.set_selected_module(0);
+                    win.set_active_tab(0);
                 }
                 return;
             }
             if let Some(win) = weak.upgrade() {
-                win.set_selected_module(step as i32);
+                win.set_active_tab(step as i32);
             }
             slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
                 prewarm_tabs(weak, step + 1);
@@ -1067,45 +1062,6 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
-
-    // ── Panel initialization (mode determined by config + CLI flag) ──
-    //
-    // ui_mode precedence: --panel flag > config ui_mode
-    //   Tray  → no panel thread, tray operates as before (default)
-    //   Panel → panel thread spawns, tray is NOT started
-    //   Both  → panel thread + tray both active (migration safety)
-    let use_panel_mode = cli.panel
-        || matches!(
-            cfg.lock().unwrap().ui_mode,
-            config::UiMode::Panel | config::UiMode::Both
-        );
-
-    let _panel_handle: Option<panel::PanelHandle> = if use_panel_mode {
-        match panel::ui::PanelUi::new(window.as_weak()) {
-            Ok(panel_ui) => {
-                let panel_weak = panel_ui.weak();
-                let edge = cfg.lock().unwrap().panel_edge;
-                let handle = panel::thread::run(edge, panel_weak, window.as_weak());
-                tracing::info!(
-                    "[panel] Started in {} mode (edge={:?})",
-                    if cli.panel { "CLI-override" } else { "config" },
-                    edge
-                );
-                if matches!(cfg.lock().unwrap().ui_mode, config::UiMode::Panel) {
-                    crate::ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-                // Keep PanelUi alive (prevent Drop before event loop ends)
-                std::mem::forget(panel_ui);
-                Some(handle)
-            }
-            Err(e) => {
-                tracing::error!("[panel] Failed to create PanelWindow: {:?}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
 
     // ── Global event loop (decoupled from window lifecycle) ──
     slint::run_event_loop_until_quit()?;

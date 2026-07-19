@@ -18,18 +18,6 @@
       "effects": "Effects"
     }
   },
-  "panel_edge": {
-    "toggle_system": "Toggle System",
-    "next_animation": "Next Animation",
-    "next_border": "Next Border",
-    "next_shader": "Next Shader",
-    "open_hve": "Open HVE",
-    "open_settings": "Open Settings",
-    "preset_anim": "Anim:",
-    "preset_border": "Border:",
-    "preset_shader": "Shader:",
-    "none": "None"
-  },
   "welcome": {
     "toast": {
     "enabled": "Visual Editor Enabled",
@@ -303,6 +291,6 @@
     "none_shader": "None",
     "about_title": "About HVE",
     "about_short": "Hyprland Visual Editor makes your desktop truly yours.",
-    "about_full": "HVE generates Hyprland configuration through a real-time Fragments and Assembly system — completely isolated from your main config. Your original configuration is never touched.\n\nHVE adapts to your Hyprland version:\n• Legacy .conf syntax → overlay.conf\n• Modern Lua (0.55+) → overlay.lua\n\nThe output format auto-detects your Hyprland version.\n\n① Environment detection — scans your Hyprland version and adapts the output format\n② Atomic assembly — fragments are combined into a coherent overlay file\n③ Hot Reload — changes apply instantly without restarting Hyprland\n④ Guardian Shield — your main configuration is never touched, safe rollback guaranteed"
+    "about_full": "HVE uses a real-time Fragments and Assembly system. It never touches your main configuration. Everything is safely generated in an isolated overlay.conf master file inside ~/.cache/hve/.\n\n① Environment detection\n② Atomic assembly\n③ Hot Reload\n④ Guardian Shield"
   }
 }
