@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 /// Drop hides the window.
 pub struct PanelUi {
     window: slint::Weak<crate::PanelWindow>,
+    _strong: crate::PanelWindow,
 }
 
 impl PanelUi {
@@ -152,8 +153,10 @@ impl PanelUi {
             std::mem::forget(timer);
         }
 
+        let weak = window.as_weak();
         Ok(Self {
-            window: window.as_weak(),
+            _strong: window,
+            window: weak,
         })
     }
 

@@ -94,13 +94,14 @@ pub fn run(
     // ── Focus loss thread ──
     let focus_shutdown = shutdown.clone();
     let focus_visible = visible.clone();
+    let focus_expanded = expanded.clone();
     let focus_panel = panel_weak.clone();
 
     let focus_thread = thread::Builder::new()
         .name("hve-panel-focus".into())
         .spawn(move || {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                focus_loop(focus_shutdown, focus_visible, focus_panel);
+                focus_loop(focus_shutdown, focus_visible, focus_expanded, focus_panel);
             }));
             tracing::info!("[panel] Focus listener thread exited");
         });
@@ -144,7 +145,19 @@ fn edge_loop(
                 let in_zone = is_in_trigger_zone(cursor, &monitors, &edge);
                 let far_from_edge = !is_near_edge(cursor, &monitors, &edge, COLLAPSE_THRESHOLD);
 
+                // Detect external hide (e.g. focus thread hid the panel between poll cycles)
+                if was_visible && !visible.load(Ordering::Relaxed) {
+                    tracing::debug!("[panel] Detected external hide, resetting was_visible");
+                    was_visible = false;
+                    expanded.store(false, Ordering::Relaxed);
+                }
+
                 if in_zone {
+                    tracing::debug!(
+                        "[panel] Edge trigger zone! cursor=({},{}), was_visible={}",
+                        cursor.0, cursor.1, was_visible
+                    );
+
                     // Cursor is in the trigger zone → show + expand
                     last_trigger = Some(Instant::now());
                     visible.store(true, Ordering::Relaxed);
@@ -152,6 +165,7 @@ fn edge_loop(
 
                     if !was_visible {
                         was_visible = true;
+                        tracing::debug!("[panel] Calling show_panel_and_expand");
                         show_panel_and_expand(
                             &panel_weak,
                             cursor,
@@ -194,6 +208,7 @@ fn edge_loop(
 fn focus_loop(
     shutdown: Arc<AtomicBool>,
     visible: Arc<AtomicBool>,
+    expanded: Arc<AtomicBool>,
     panel_weak: slint::Weak<crate::PanelWindow>,
 ) {
     let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok();
@@ -218,7 +233,7 @@ fn focus_loop(
             break;
         }
 
-        match connect_and_listen_focus(&socket_path, &shutdown, &visible, &panel_weak) {
+        match connect_and_listen_focus(&socket_path, &shutdown, &visible, &expanded, &panel_weak) {
             Ok(_) => break,
             Err(e) => {
                 tracing::warn!("[panel] Focus listener error: {}, reconnecting in 2s", e);
@@ -237,6 +252,7 @@ fn connect_and_listen_focus(
     socket_path: &std::path::Path,
     shutdown: &AtomicBool,
     visible: &AtomicBool,
+    expanded: &AtomicBool,
     panel_weak: &slint::Weak<crate::PanelWindow>,
 ) -> Result<(), String> {
     use std::io::BufReader;
@@ -262,15 +278,18 @@ fn connect_and_listen_focus(
                         title.contains("Hyprland Visual Editor") || title.contains("HVE Panel");
 
                     if !is_hve && !title.is_empty() {
-                        // Non-HVE window focused → hide panel immediately
-                        visible.store(false, Ordering::Relaxed);
+                        // Non-HVE window focused → only hide if NOT edge-triggered.
+                        // Edge detection owns show/hide when expanded.
+                        if !expanded.load(Ordering::Relaxed) {
+                            visible.store(false, Ordering::Relaxed);
 
-                        let w = panel_weak.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(panel) = w.upgrade() {
-                                let _ = panel.window().hide();
-                            }
-                        });
+                            let w = panel_weak.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(panel) = w.upgrade() {
+                                    let _ = panel.window().hide();
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -404,11 +423,15 @@ fn show_panel_and_expand(
     let monitor_geo = get_trigger_monitor(cursor, monitors, edge);
     let edge_type = *edge;
 
+    tracing::debug!("[panel] show_panel_and_expand queued via invoke_from_event_loop");
     let _ = slint::invoke_from_event_loop(move || {
+        tracing::debug!("[panel] show_panel_and_expand executing on event loop");
         if let Some(panel) = w.upgrade() {
+            tracing::debug!("[panel] PanelWindow upgraded OK");
             // Position at the configured edge of the trigger monitor
             if let Some(geo) = monitor_geo {
                 let (px, py) = position_at_edge(geo, edge_type, expanded_width);
+                tracing::debug!("[panel] Position: ({}, {})", px, py);
                 let _ = panel
                     .window()
                     .set_position(slint::PhysicalPosition { x: px, y: py });
@@ -416,6 +439,7 @@ fn show_panel_and_expand(
             panel.set_panel_expanded(true);
             let _ = panel.window().show();
             panel.window().request_redraw();
+            tracing::debug!("[panel] PanelWindow show() called");
         }
     });
 }
@@ -424,6 +448,7 @@ fn hide_panel(panel_weak: &slint::Weak<crate::PanelWindow>) {
     let w = panel_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(panel) = w.upgrade() {
+            tracing::debug!("[panel] Hiding panel window");
             panel.set_panel_expanded(false);
             let _ = panel.window().hide();
         }
