@@ -4,7 +4,46 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 3;
+pub const CONFIG_VERSION: u32 = 4;
+
+// ── Panel config types ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum UiMode {
+    #[default]
+    Tray,
+    Panel,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum PanelEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Default for PanelEdge {
+    fn default() -> Self {
+        Self::Right
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PanelWidth {
+    pub collapsed: u32,
+    pub expanded: u32,
+}
+
+impl Default for PanelWidth {
+    fn default() -> Self {
+        Self {
+            collapsed: 48,
+            expanded: 300,
+        }
+    }
+}
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
@@ -27,6 +66,12 @@ pub struct Config {
     pub tiling_mode: bool,
     pub theme: String,
     pub keybinds_enabled: bool,
+    #[serde(default)]
+    pub ui_mode: UiMode,
+    #[serde(default)]
+    pub panel_edge: PanelEdge,
+    #[serde(default)]
+    pub panel_width: PanelWidth,
 }
 
 impl Default for Config {
@@ -45,6 +90,9 @@ impl Default for Config {
             tiling_mode: false,
             theme: "system".to_string(),
             keybinds_enabled: false,
+            ui_mode: UiMode::Tray,
+            panel_edge: PanelEdge::Right,
+            panel_width: PanelWidth::default(),
         }
     }
 }
@@ -72,6 +120,14 @@ fn migrate(mut cfg: Config) -> Config {
     if cfg.config_version < 3 {
         cfg.keybinds_enabled = false;
         cfg.config_version = 3;
+    }
+
+    // v3 → v4: add panel config fields
+    if cfg.config_version < 4 {
+        cfg.ui_mode = UiMode::Tray;
+        cfg.panel_edge = PanelEdge::Right;
+        cfg.panel_width = PanelWidth::default();
+        cfg.config_version = 4;
     }
 
     cfg.config_version = CONFIG_VERSION;
@@ -238,6 +294,10 @@ mod tests {
         assert!(cfg.active_anim_file.is_empty());
         assert!(cfg.active_border_file.is_empty());
         assert!(cfg.active_shader_file.is_empty());
+        assert!(matches!(cfg.ui_mode, UiMode::Tray));
+        assert!(matches!(cfg.panel_edge, PanelEdge::Right));
+        assert_eq!(cfg.panel_width.collapsed, 48);
+        assert_eq!(cfg.panel_width.expanded, 300);
     }
 
     // ── config_path() ────────────────────────────────────────────────
@@ -271,6 +331,9 @@ mod tests {
             tiling_mode: true,
             theme: "light".into(),
             keybinds_enabled: true,
+            ui_mode: UiMode::Panel,
+            panel_edge: PanelEdge::Left,
+            panel_width: PanelWidth { collapsed: 60, expanded: 320 },
         };
 
         cfg.save().expect("save should succeed");
@@ -285,6 +348,10 @@ mod tests {
         assert!(loaded.tiling_mode);
         assert_eq!(loaded.theme, "light");
         assert!(loaded.keybinds_enabled);
+        assert!(matches!(loaded.ui_mode, UiMode::Panel), "panel roundtrip: ui_mode");
+        assert!(matches!(loaded.panel_edge, PanelEdge::Left), "panel roundtrip: panel_edge");
+        assert_eq!(loaded.panel_width.collapsed, 60, "panel roundtrip: collapsed");
+        assert_eq!(loaded.panel_width.expanded, 320, "panel roundtrip: expanded");
         assert_eq!(loaded.active_anim_file, "glow.json");
         assert_eq!(loaded.active_border_file, "sharp.json");
         assert_eq!(loaded.active_shader_file, "rgb.json");
@@ -371,6 +438,79 @@ mod tests {
             cfg.keybinds_enabled, false,
             "keybinds_enabled should default to false after migration"
         );
+    }
+
+    // ── migration from v3 → v4 (panel fields) ────────────────────────
+
+    #[test]
+    fn test_migration_from_v3_to_v4_adds_panel_fields() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        // A v3 config exists without panel fields
+        let v3_json = r#"{
+            "config_version": 3,
+            "is_system_active": true,
+            "border_size": 2,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "keybinds_enabled": false
+        }"#;
+        std::fs::write(&path, v3_json).expect("write v3 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v3 config should be migrated to v{CONFIG_VERSION}"
+        );
+        // Check panel defaults after migration
+        assert!(matches!(cfg.ui_mode, UiMode::Tray));
+        assert!(matches!(cfg.panel_edge, PanelEdge::Right));
+        assert_eq!(cfg.panel_width.collapsed, 48);
+        assert_eq!(cfg.panel_width.expanded, 300);
+        // v3 fields preserved
+        assert!(cfg.is_system_active);
+    }
+
+    #[test]
+    fn test_v4_config_roundtrip_preserves_panel_fields() {
+        let _env = TempEnv::new();
+
+        let cfg = Config {
+            config_version: CONFIG_VERSION,
+            is_system_active: false,
+            border_size: 2,
+            active_anim_file: String::new(),
+            active_border_file: String::new(),
+            active_shader_file: String::new(),
+            auto_start: false,
+            auto_minimize_enabled: true,
+            minimize_seconds: 5,
+            language: String::new(),
+            tiling_mode: false,
+            theme: "system".to_string(),
+            keybinds_enabled: false,
+            ui_mode: UiMode::Panel,
+            panel_edge: PanelEdge::Left,
+            panel_width: PanelWidth { collapsed: 64, expanded: 350 },
+        };
+
+        cfg.save().expect("save should succeed");
+        let loaded = Config::load();
+        assert!(matches!(loaded.ui_mode, UiMode::Panel));
+        assert!(matches!(loaded.panel_edge, PanelEdge::Left));
+        assert_eq!(loaded.panel_width.collapsed, 64);
+        assert_eq!(loaded.panel_width.expanded, 350);
+        assert_eq!(loaded.config_version, CONFIG_VERSION);
     }
 
     // ── deny_unknown_fields catches unexpected fields ─────────────────
