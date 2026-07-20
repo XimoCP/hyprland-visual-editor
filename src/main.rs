@@ -14,7 +14,7 @@ use clap::Parser;
 use config::Config;
 use engine::Engine;
 use fs2::FileExt;
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{Color, ComponentHandle, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -669,7 +669,26 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_none_shader(tr.tr_shared("home.none_shader", "None"));
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
-    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE uses a real-time Fragments and Assembly system. It never touches your main configuration. Everything is safely generated in an isolated overlay.conf master file inside ~/.cache/hve/.\n\n① Environment detection\n② Atomic assembly\n③ Hot Reload\n④ Guardian Shield"));
+    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE customizes Hyprland animations, borders, and shaders from a visual interface, in real time.\n\nTo apply changes, HVE adds a block at the end of your hyprland.lua (or hyprland.conf), delimited by markers. That block only includes (dofile / source) our overlay files in ~/.cache/hve/ — it never rewrites your personal config.\n\nWhen you disable the system, the markers are removed. If you uninstall, a watchdog cleans them on the next Hyprland start. Your original config always stays intact."));
+    let about_items: Vec<AboutItem> = vec![
+        AboutItem {
+            text: tr.tr_shared("home.about_line_1", "Live preview — tweak and see it instantly").into(),
+            color: Color::from_rgb_u8(251, 191, 36),
+        },
+        AboutItem {
+            text: tr.tr_shared("home.about_line_2", "Safe assembly — zero risk to your configs").into(),
+            color: Color::from_rgb_u8(16, 185, 129),
+        },
+        AboutItem {
+            text: tr.tr_shared("home.about_line_3", "Hot reload — apply without restarting Hyprland").into(),
+            color: Color::from_rgb_u8(56, 189, 248),
+        },
+        AboutItem {
+            text: tr.tr_shared("home.about_line_4", "Fragments — composable pieces, not one huge file").into(),
+            color: Color::from_rgb_u8(192, 132, 252),
+        },
+    ];
+    window.set_home_about_items(ModelRc::new(VecModel::from(about_items)));
 
     // ── i18n: Settings strings ──
     window.set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));

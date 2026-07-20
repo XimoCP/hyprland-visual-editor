@@ -1,6 +1,11 @@
 import { Slider, ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
 
+export struct AboutItem {
+    text: string,
+    color: color,
+}
+
 // ─── Preset Card ────────────────────────────────────────────────────
 export component PresetCard inherits Rectangle {
     in property <string> title;
@@ -182,12 +187,14 @@ export component NavButton inherits Rectangle {
     in property <string> icon-text;
     in property <color> accent;
     in property <bool> selected: false;
+    in property <bool> sidebar-mode: true;
     callback clicked;
 
     height: 48px;
     border-radius: 8px;
-    // selected -> activo; has-hover -> hover ratón
-    background: selected ? HveColors.bg-hover : (nb-ta.has-hover ? HveColors.bg-hover.transparentize(0.5) : transparent);
+    background: selected && sidebar-mode ? HveColors.bg-hover :
+                selected ? HveColors.bg-hover.transparentize(0.6) :
+                (nb-ta.has-hover ? HveColors.bg-hover.transparentize(0.5) : transparent);
     animate background { duration: 200ms; }
 
     // ── Indicador lateral ──
@@ -197,20 +204,19 @@ export component NavButton inherits Rectangle {
         x: 0px;
         y: (parent.height - self.height) / 2;
         border-radius: 2px;
-        background: accent;
+        background: selected && sidebar-mode ? accent : accent.transparentize(0.5);
         animate height {
             duration: 250ms;
             easing: ease-in-out-back;
         }
+        animate background { duration: 200ms; }
     }
 
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 16px;
         spacing: 14px;
-        // Sin alignment — por defecto alinea a la izquierda (start), que es lo que queremos
 
-        // Contenedor vertical: centra el icono verticalmente sin tocar el eje horizontal
         VerticalLayout {
             alignment: center;
             Rectangle {
@@ -218,7 +224,9 @@ export component NavButton inherits Rectangle {
                 height: 20px;
                     Text {
                         text: root.icon-text;
-                        color: selected ? accent : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
+                        color: selected && sidebar-mode ? accent :
+                               selected ? accent.transparentize(0.4) :
+                               (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
                         font-size: 16px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -227,12 +235,13 @@ export component NavButton inherits Rectangle {
                 }
             }
 
-            // El texto se centra verticalmente con su propiedad nativa
             Text {
                 text: root.label;
-                color: selected ? HveColors.text : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
+                color: selected && sidebar-mode ? HveColors.text :
+                       selected ? HveColors.text.transparentize(0.4) :
+                       (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
                 font-size: 14px;
-                font-weight: selected ? 700 : 500;
+                font-weight: selected && sidebar-mode ? 700 : 500;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
                 animate color { duration: 200ms; }
@@ -576,7 +585,7 @@ export component ActivationCard inherits Rectangle {
     }
 }
 
-// ─── Accordion Card (Optimizado) ─────────────────────────────────────
+// ─── Accordion Card ───────────────────────────────────────────────────
 export component AccordionCard inherits Rectangle {
     in property <string> card-title;
     in property <string> icon-text;
@@ -585,66 +594,79 @@ export component AccordionCard inherits Rectangle {
     in property <string> short-desc;
     in property <string> full-desc;
     in property <bool> expanded: false;
+    in property <[AboutItem]> about-items: [];
     callback toggled();
 
-    // Dejamos que la altura responda de forma fluida al contenido interno
     height: lv.preferred-height;
-    border-radius: 10px;
-    background: HveColors.bg-card;
-    border-width: 1.5px;
-    border-color: border;
+    border-radius: 12px;
+    background: expanded ? accent.transparentize(0.93) : HveColors.bg-card;
+    border-width: expanded ? 2px : 1.5px;
+    border-color: expanded ? accent : border;
     clip: true;
 
-    animate border-color { duration: 250ms; }
+    drop-shadow-blur: expanded ? 16px : 0px;
+    drop-shadow-color: expanded ? accent.transparentize(0.85) : transparent;
 
-    // Un solo contenedor vertical controla todo el aire del componente
+    animate background { duration: 250ms; }
+    animate border-color { duration: 250ms; }
+    animate border-width { duration: 250ms; }
+    animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
+    animate height { duration: 250ms; easing: ease-in-out; }
+
     lv := VerticalLayout {
         padding-top: 12px;
         padding-bottom: 12px;
         padding-left: 16px;
         padding-right: 16px;
-        spacing: 6px; // <-- Este es el truco: controla la separación exacta entre título y subtítulo
+        spacing: expanded ? 10px : 6px;
 
-        // ── Línea del Header (Icono + Título + Flecha) ──
+        animate spacing { duration: 200ms; }
+
+        // ── Header (Icono + Título + Flecha) ──
         HorizontalLayout {
-            spacing: 10px;
+            spacing: 12px;
 
-            // Centramos la bombilla verticalmente
-            VerticalLayout {
-                alignment: center;
+            // Icono con fondo circular
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 16px;
+                background: accent.transparentize(0.85);
+                animate background { duration: 200ms; }
+
                 Text {
                     text: root.icon-text;
                     color: root.accent;
-                    font-size: 13px;
+                    font-size: 16px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
             }
 
-            // Centramos el título
             Text {
                 text: root.card-title;
-                color: root.accent;
-                font-size: 14px;
+                color: expanded ? root.accent : HveColors.text;
+                font-size: expanded ? 15px : 14px;
                 font-weight: 700;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
+                animate color { duration: 200ms; }
+                animate font-size { duration: 200ms; }
             }
 
-            // Centramos la flecha del desplegable
+            // Flecha
             VerticalLayout {
                 alignment: center;
                 Text {
                     text: root.expanded ? "▲" : "▼";
-                    color: root.border.transparentize(0.3);
-                    font-size: 9px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                    color: expanded ? root.accent : HveColors.text-muted;
+                    font-size: 10px;
+                    animate color { duration: 200ms; }
                 }
             }
         }
 
-        // ── Descripción Corta (Sólo visible si está colapsado) ──
+        // ── Descripción corta (colapsado) ──
         if !expanded : Text {
             text: root.short-desc;
             color: HveColors.text-muted;
@@ -653,26 +675,66 @@ export component AccordionCard inherits Rectangle {
             overflow: elide;
         }
 
-        // ── Cuerpo Expandido ──
-        if expanded : VerticalLayout {
+        // ── Cuerpo expandido ──
+        if expanded && root.about-items.length > 0 : VerticalLayout {
             spacing: 8px;
-            padding-top: 6px;
+            padding-top: 8px;
 
             Rectangle {
                 height: 1px;
-                background: HveColors.border.transparentize(0.5);
+                background: accent.transparentize(0.3);
+            }
+
+            for item in root.about-items: Rectangle {
+                height: 32px;
+                border-radius: 6px;
+                background: item.color.transparentize(0.85);
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 10px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: item.color;
+                        }
+                    }
+
+                    Text {
+                        text: item.text;
+                        color: HveColors.text;
+                        font-size: 12px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
+
+        if expanded && root.about-items.length == 0 : VerticalLayout {
+            spacing: 10px;
+            padding-top: 8px;
+
+            Rectangle {
+                height: 1px;
+                background: accent.transparentize(0.3);
             }
 
             Text {
                 text: root.full-desc;
-                color: HveColors.text-muted;
+                color: HveColors.text;
                 font-size: 13px;
                 wrap: word-wrap;
             }
         }
     }
 
-    // Área de interacción total sobre la tarjeta
     ac-ta := TouchArea {
         width: 100%;
         height: 100%;

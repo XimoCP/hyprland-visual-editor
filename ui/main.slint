@@ -1,5 +1,5 @@
 import { NavModule, HveColors } from "./theme.slint";
-import { NavButton, CloseButton, SettingsButton, SettingsPanel } from "./components.slint";
+import { NavButton, CloseButton, SettingsButton, SettingsPanel, AboutItem } from "./components.slint";
 import {
     HomeModule,
     AnimationsModule,
@@ -37,6 +37,7 @@ export component MainWindow inherits Window {
     in-out property <int> anim-focused-index: -1;
     in-out property <int> border-focused-index: -1;
     in-out property <int> shader-focused-index: -1;
+    property <bool> sidebar-mode: anim-focused-index == -1 && border-focused-index == -1 && shader-focused-index == -1;
     in property <[NavModule]> nav-modules;
     in-out property <bool> system-active: false;
     in property <image> logo-image;
@@ -77,6 +78,7 @@ export component MainWindow inherits Window {
     in property <string> home-about-title;
     in property <string> home-about-short;
     in property <string> home-about-full;
+    in property <[AboutItem]> home-about-items;
     // ── i18n: Settings strings ──
     in property <string> settings-restart-banner;
     in property <string> settings-restart-button;
@@ -337,6 +339,7 @@ export component MainWindow inherits Window {
                         icon-text: nav-module.icon;
                         accent: nav-module.accent;
                         selected: root.active-tab == nav-module.tab-index;
+                        sidebar-mode: root.sidebar-mode;
                         clicked => {
                             root.anim-focused-index = -1;
                             root.border-focused-index = -1;
@@ -422,6 +425,7 @@ export component MainWindow inherits Window {
                         about-title: root.home-about-title;
                         about-short: root.home-about-short;
                         about-full: root.home-about-full;
+                        about-items: root.home-about-items;
                         toggle-system(v) => { root.toggle-system(v); }
                         navigate-to(tab) => {
                             root.anim-focused-index = -1;

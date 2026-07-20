@@ -8,6 +8,7 @@ import {
     ActivationCard,
     AccordionCard,
     NavCard,
+    AboutItem,
 } from "./components.slint";
 
 // ─── HOME MODULE ────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ export component HomeModule inherits ScrollView {
     in property <string> about-title;
     in property <string> about-short;
     in property <string> about-full;
+    in property <[AboutItem]> about-items: [];
     callback toggle-system(bool);
     callback navigate-to(int);
 
@@ -308,6 +310,7 @@ export component HomeModule inherits ScrollView {
             border: HveColors.border;
             short-desc: root.about-short;
             full-desc: root.about-full;
+            about-items: root.about-items;
             toggled => {
                 acerca.expanded = !acerca.expanded;
                 if acerca.expanded {
@@ -337,7 +340,7 @@ export component AnimationsModule inherits Rectangle {
     ScrollView {
         vertical-stretch: 1;
         viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 200ms; easing: ease-out; }
+        animate viewport-y { duration: 400ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
@@ -389,7 +392,7 @@ export component BordersModule inherits Rectangle {
     ScrollView {
         vertical-stretch: 1;
         viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 200ms; easing: ease-out; }
+        animate viewport-y { duration: 400ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
@@ -444,7 +447,7 @@ export component ShadersModule inherits Rectangle {
     ScrollView {
         vertical-stretch: 1;
         viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 200ms; easing: ease-out; }
+        animate viewport-y { duration: 400ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;

@@ -291,6 +291,10 @@
     "none_shader": "Ninguno",
     "about_title": "Acerca de HVE",
     "about_short": "Hyprland Visual Editor es la evolución estética de tu escritorio.",
-    "about_full": "HVE utiliza un sistema de Fragmentos y Ensamblaje en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro overlay.conf aislado dentro de ~/.cache/hve/.\n\n① Detección de entorno\n② Ensamblado atómico\n③ Hot Reload\n④ Guardian Shield"
+    "about_full": "HVE modifica animaciones, bordes y shaders de Hyprland desde una interfaz visual, en tiempo real.\n\nPara aplicar los cambios, HVE añade un bloque al final de tu hyprland.lua (o hyprland.conf), delimitado por marcadores. Ese bloque solo incluye (dofile / source) nuestros archivos de overlay en ~/.cache/hve/ — nunca reescribe tu configuración personal.\n\nAl desactivar el sistema, los marcadores se eliminan. Si desinstalás, un watchdog los limpia en el próximo inicio de Hyprland. Tu configuración original siempre queda intacta.",
+    "about_line_1": "Vista previa en vivo — ajustá y mirá al instante",
+    "about_line_2": "Ensamblado seguro — cero riesgo para tus configs",
+    "about_line_3": "Recarga en caliente — aplicá sin reiniciar Hyprland",
+    "about_line_4": "Fragmentos — piezas reutilizables, no un archivo enorme"
   }
 }
