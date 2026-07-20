@@ -34,6 +34,9 @@ export component MainWindow inherits Window {
 
     // ── State ──
     in-out property <int> active-tab: 0;
+    in-out property <int> anim-focused-index: -1;
+    in-out property <int> border-focused-index: -1;
+    in-out property <int> shader-focused-index: -1;
     in property <[NavModule]> nav-modules;
     in-out property <bool> system-active: false;
     in property <image> logo-image;
@@ -143,20 +146,125 @@ export component MainWindow inherits Window {
     callback reset-presets();
     callback restart-app();
 
-    // ── Root FocusScope for tab switching (Left/Right arrows) ──
+    // ── Root FocusScope — centralized keyboard handler ──
     forward-focus: root-kbd;
 
     root-kbd := FocusScope {
+        // Down: navigate presets if inside module, else cycle tabs
         KeyBinding {
-            keys: @keys(LeftArrow);
-            enabled: root.active-tab != 0;
-            activated => { root.active-tab -= 1; }
+            keys: @keys(DownArrow);
+            activated => {
+                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
+                    if (root.anim-focused-index >= root.anim-titles.length - 1) {
+                        root.anim-focused-index = 0;
+                    } else {
+                        root.anim-focused-index += 1;
+                    }
+                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
+                    if (root.border-focused-index >= root.border-titles.length - 1) {
+                        root.border-focused-index = 0;
+                    } else {
+                        root.border-focused-index += 1;
+                    }
+                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
+                    if (root.shader-focused-index >= root.shader-titles.length - 1) {
+                        root.shader-focused-index = 0;
+                    } else {
+                        root.shader-focused-index += 1;
+                    }
+                } else {
+                    if (root.active-tab >= 3) {
+                        root.active-tab = 0;
+                    } else {
+                        root.active-tab += 1;
+                    }
+                }
+            }
         }
 
+        // Up: navigate presets if inside module, else cycle tabs
+        KeyBinding {
+            keys: @keys(UpArrow);
+            activated => {
+                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
+                    if (root.anim-focused-index <= 0) {
+                        root.anim-focused-index = root.anim-titles.length - 1;
+                    } else {
+                        root.anim-focused-index -= 1;
+                    }
+                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
+                    if (root.border-focused-index <= 0) {
+                        root.border-focused-index = root.border-titles.length - 1;
+                    } else {
+                        root.border-focused-index -= 1;
+                    }
+                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
+                    if (root.shader-focused-index <= 0) {
+                        root.shader-focused-index = root.shader-titles.length - 1;
+                    } else {
+                        root.shader-focused-index -= 1;
+                    }
+                } else {
+                    if (root.active-tab <= 0) {
+                        root.active-tab = 3;
+                    } else {
+                        root.active-tab -= 1;
+                    }
+                }
+            }
+        }
+
+        // Right: enter module (select first preset)
         KeyBinding {
             keys: @keys(RightArrow);
-            enabled: root.active-tab != 3;
-            activated => { root.active-tab += 1; }
+            enabled: root.active-tab != 0;
+            activated => {
+                if (root.active-tab == 1) {
+                    root.anim-focused-index = 0;
+                } else if (root.active-tab == 2) {
+                    root.border-focused-index = 0;
+                } else if (root.active-tab == 3) {
+                    root.shader-focused-index = 0;
+                }
+            }
+        }
+
+        // Left: exit module (back to tab nav)
+        KeyBinding {
+            keys: @keys(LeftArrow);
+            activated => {
+                root.anim-focused-index = -1;
+                root.border-focused-index = -1;
+                root.shader-focused-index = -1;
+            }
+        }
+
+        // Enter: toggle preset if inside module
+        KeyBinding {
+            keys: @keys(Return);
+            activated => {
+                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
+                    root.apply-animation(root.anim-focused-index, root.anim-files[root.anim-focused-index]);
+                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
+                    root.apply-border(root.border-focused-index, root.border-files[root.border-focused-index]);
+                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
+                    root.apply-shader(root.shader-focused-index, root.shader-files[root.shader-focused-index]);
+                }
+            }
+        }
+
+        // Space: toggle preset if inside module
+        KeyBinding {
+            keys: @keys(Space);
+            activated => {
+                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
+                    root.apply-animation(root.anim-focused-index, root.anim-files[root.anim-focused-index]);
+                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
+                    root.apply-border(root.border-focused-index, root.border-files[root.border-focused-index]);
+                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
+                    root.apply-shader(root.shader-focused-index, root.shader-files[root.shader-focused-index]);
+                }
+            }
         }
     }
 
@@ -229,7 +337,12 @@ export component MainWindow inherits Window {
                         icon-text: nav-module.icon;
                         accent: nav-module.accent;
                         selected: root.active-tab == nav-module.tab-index;
-                        clicked => { root.active-tab = nav-module.tab-index; }
+                        clicked => {
+                            root.anim-focused-index = -1;
+                            root.border-focused-index = -1;
+                            root.shader-focused-index = -1;
+                            root.active-tab = nav-module.tab-index;
+                        }
                     }
 
                     Rectangle {
@@ -310,7 +423,12 @@ export component MainWindow inherits Window {
                         about-short: root.home-about-short;
                         about-full: root.home-about-full;
                         toggle-system(v) => { root.toggle-system(v); }
-                        navigate-to(tab) => { root.active-tab = tab; }
+                        navigate-to(tab) => {
+                            root.anim-focused-index = -1;
+                            root.border-focused-index = -1;
+                            root.shader-focused-index = -1;
+                            root.active-tab = tab;
+                        }
                     }
                 }
 
@@ -330,7 +448,9 @@ export component MainWindow inherits Window {
                         anim-tags: root.anim-tags;
                         anim-files: root.anim-files;
                         active-index: root.active-anim-index;
+                        focused-index: root.anim-focused-index;
                         is-active: root.active-tab == 1;
+                        focus-requested(idx) => { root.anim-focused-index = idx; }
                         anim-toggled(idx, file) => { root.apply-animation(idx, file); }
                     }
                 }
@@ -353,7 +473,9 @@ export component MainWindow inherits Window {
                         border-files: root.border-files;
                         active-index: root.active-border-index;
                         border-size: root.border-size;
+                        focused-index: root.border-focused-index;
                         is-active: root.active-tab == 2;
+                        focus-requested(idx) => { root.border-focused-index = idx; }
                         border-toggled(idx, file) => { root.apply-border(idx, file); }
                         geometry-changed(v) => { root.apply-geometry(v); }
                     }
@@ -375,7 +497,9 @@ export component MainWindow inherits Window {
                         shader-tags: root.shader-tags;
                         shader-files: root.shader-files;
                         active-index: root.active-shader-index;
+                        focused-index: root.shader-focused-index;
                         is-active: root.active-tab == 3;
+                        focus-requested(idx) => { root.shader-focused-index = idx; }
                         shader-toggled(idx, file) => { root.apply-shader(idx, file); }
                     }
                 }

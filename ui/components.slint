@@ -182,13 +182,12 @@ export component NavButton inherits Rectangle {
     in property <string> icon-text;
     in property <color> accent;
     in property <bool> selected: false;
-    in property <bool> keyboard-focused: false;
     callback clicked;
 
     height: 48px;
     border-radius: 8px;
-    // selected -> activo; has-hover -> hover ratón; keyboard-focused -> navegación teclado
-    background: selected ? HveColors.bg-hover : ((nb-ta.has-hover || root.keyboard-focused) ? HveColors.bg-hover.transparentize(0.5) : transparent);
+    // selected -> activo; has-hover -> hover ratón
+    background: selected ? HveColors.bg-hover : (nb-ta.has-hover ? HveColors.bg-hover.transparentize(0.5) : transparent);
     animate background { duration: 200ms; }
 
     // ── Indicador lateral ──
@@ -219,7 +218,7 @@ export component NavButton inherits Rectangle {
                 height: 20px;
                     Text {
                         text: root.icon-text;
-                        color: (selected || root.keyboard-focused) ? accent : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
+                        color: selected ? accent : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
                         font-size: 16px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -231,7 +230,7 @@ export component NavButton inherits Rectangle {
             // El texto se centra verticalmente con su propiedad nativa
             Text {
                 text: root.label;
-                color: selected ? HveColors.text : ((nb-ta.has-hover || root.keyboard-focused) ? HveColors.text : HveColors.text-muted);
+                color: selected ? HveColors.text : (nb-ta.has-hover ? HveColors.text : HveColors.text-muted);
                 font-size: 14px;
                 font-weight: selected ? 700 : 500;
                 vertical-alignment: center;
@@ -687,18 +686,19 @@ export component NavCard inherits Rectangle {
     in property <string> label;
     in property <string> count-text;
     in property <color> accent;
+    in property <bool> keyboard-focused: false;
     callback clicked;
 
-    // Alto base 96px para compensar texto más grande sin hinting. Hover sube a 106px.
-    height: nc-ta.has-hover ? 106px : 96px;
+    // Alto base 96px para compensar texto más grande sin hinting. Hover/keyboard-focused sube a 106px.
+    height: (nc-ta.has-hover || root.keyboard-focused) ? 106px : 96px;
     border-radius: 10px;
-    horizontal-stretch: nc-ta.has-hover ? 1.3 : 1.0;
-    background: nc-ta.has-hover ? accent.transparentize(0.92) : HveColors.bg-card;
-    border-width: 1px;
-    border-color: nc-ta.has-hover ? accent : HveColors.border;
+    horizontal-stretch: (nc-ta.has-hover || root.keyboard-focused) ? 1.3 : 1.0;
+    background: (nc-ta.has-hover || root.keyboard-focused) ? accent.transparentize(0.92) : HveColors.bg-card;
+    border-width: (nc-ta.has-hover || root.keyboard-focused) ? 2px : 1px;
+    border-color: (nc-ta.has-hover || root.keyboard-focused) ? accent : HveColors.border;
 
-    drop-shadow-blur: nc-ta.has-hover ? 12px : 0px;
-    drop-shadow-color: nc-ta.has-hover ? accent.transparentize(0.85) : transparent;
+    drop-shadow-blur: (nc-ta.has-hover || root.keyboard-focused) ? 12px : 0px;
+    drop-shadow-color: (nc-ta.has-hover || root.keyboard-focused) ? accent.transparentize(0.85) : transparent;
 
     animate height {
         duration: 200ms;
