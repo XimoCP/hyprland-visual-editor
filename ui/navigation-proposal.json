@@ -1,0 +1,106 @@
+{
+  "project": "HVE (Hyprland Visual Editor)",
+  "ui_framework": "Slint 1.x (Rust backend)",
+  "goal": "Arrow-key navigation to replace pure Tab-based keyboard navigation",
+  "current_state": {
+    "navigation_mechanism": "Tab key cycles forward through all focusable elements in order. No Shift+Tab or Up/Down support. Home/Settings are mouse-only.",
+    "tab_switching": "active-tab property (int: 0=Home, 1=Animations, 2=Borders, 3=Shaders). Each tab is a Rectangle with `width: root.active-tab == N ? 100% : 0%` (triggers Slint layout recomputation). Sidebar NavButtons set active-tab via `clicked => { root.active-tab = nav-module.tab-index; }`.",
+    "focus_management": "Each NavButton and PresetCard has a FocusScope with `focus-on-click: false; focus-on-tab-navigation: true;`. Tab navigation works but is forward-only. Enter/Space activate the item. FocusScopes reject unknown keys (propagating to parent)."
+  },
+  "desired_behavior": {
+    "left_right_arrows": {
+      "context": "Global — works from anywhere in the content area",
+      "behavior": "Left = previous tab, Right = next tab. Cycle through tabs 1-2-3 (Animations, Borders, Shaders). Home (tab 0) and Settings are mouse-only — no arrow access."
+    },
+    "up_down_arrows": {
+      "context": "Only within Animations, Borders, or Shaders tabs",
+      "behavior": "Up = move keyboard focus to previous PresetCard in the list, Down = move keyboard focus to next PresetCard. Should NOT navigate through non-card elements (SectionHeader, GeometrySlider, etc.). Should visually indicate which card has keyboard focus (separate from `active`/selected state). Enter/Space toggles the focused card."
+    },
+    "tab_shift_tab": {
+      "behavior": "Tab and Shift+Tab should continue to cycle through ALL focusable elements (standard focus order), with Shift+Tab going backward. Up/Down are the fast path for PresetCard-only navigation."
+    }
+  },
+  "architecture": {
+    "file_layout": {
+      "ui/main.slint": "MainWindow: contains sidebar + content area with 4 tab Rectangles. Owns active-tab property, nav-modules data, and all i18n/callbacks.",
+      "ui/components.slint": "NavButton (sidebar), PresetCard (preset list items), SectionHeader, GeometrySlider, etc.",
+      "ui/modules.slint": "AnimationsModule (line 326), BordersModule (line 359), ShadersModule (line 401). Each has a ScrollView with for-loop rendering PresetCards.",
+      "src/main.rs": "Rust entry point, sets up Slint window and connects callbacks.",
+      "src/callbacks.rs": "Rust-side callback handlers."
+    },
+    "key_components": {
+      "NavButton": {
+        "file": "components.slint:190-272",
+        "structure": "Rectangle with FocusScope(nb-fs) + TouchArea(nb-ta). Handles Enter/Space to fire clicked(). Rejects other keys. focus-on-tab-navigation: true.",
+        "navigation_role": "Selecting with Left/Right would be nice but not primary — mouse/sidebar is fine."
+      },
+      "PresetCard": {
+        "file": "components.slint:5-187",
+        "structure": "Rectangle with FocusScope(fs) + TouchArea(ta). active property controls visual state (applied preset). Has acordeón-like expand on active/hover. Handles Enter/Space to fire toggled(). Rejects other keys. focus-on-tab-navigation: true.",
+        "navigation_role": "Primary target for Up/Down navigation. Needs keyboard-focused visual distinct from active."
+      },
+      "AnimationsModule": {
+        "file": "modules.slint:326-356",
+        "structure": "ScrollView > VerticalLayout > SectionHeader + for-loop of PresetCards. Each card has: title, desc, tag, accent, active, toggled(). No arrow handling at all.",
+        "navigation_role": "Nearest common ancestor for PresetCards — ideal place for focused-index management."
+      }
+    }
+  },
+  "challenges": {
+    "slint_for_loop_references": "In Slint, `for i in model: Element { ... }` does not expose individual iterations as named references that can be used with `forward-focus`. This makes it hard to programmatically jump focus to a specific card based on index.",
+    "focus_movement_api": "Slint's FocusScope has no built-in 'focus_next_sibling()' or 'focus_previous_sibling()' method. Tab/Shift+Tab work natively but only through the full document order. There is no Slint-side API to restrict focus movement to items within a specific container.",
+    "focus_vs_selection": "Need to distinguish between 'keyboard focus indicator' (which card responds to Enter/Space) and 'active/selected state' (which preset is applied). Currently only active exists.",
+    "key_event_propagation": "If PresetCard handles Up/Down, it must accept the event (prevent propagation to parent FocusScopes). But if at the END of the list, Up at index 0 could be propagated to MainWindow for tab switching. Non-trivial event routing.",
+    "scroll_view_integration": "Each module is a ScrollView. If Up/Down moves focus to a card outside the visible viewport, the ScrollView should auto-scroll. Slint's ScrollView does NOT auto-scroll to focused elements — requires manual viewport-y calculation.",
+    "slint_focus_on_for_loop_children": "Calling .focus() on a FocusScope inside a for loop from the parent is not straightforward — no direct element reference available."
+  },
+  "proposed_approaches": [
+    {
+      "name": "Minimal — Left/Right via MainWindow FocusScope",
+      "complexity": "trivial (15 lines)",
+      "description": "Add a FocusScope at MainWindow level that handles Left/Right arrow keys to change active-tab. Up/Down are not touched — Tab continues to be the only way through presets. Shift+Tab assumed to work natively.",
+      "limitations": "Does not solve the unidirectional Tab problem. User still has to Tab through everything to go back up.",
+      "slint_code_snippet": "// In MainWindow, before the main HorizontalLayout or after it\nfs := FocusScope {\n    key-pressed(event) => {\n        if (event.text == Key.Left) {\n            if (root.active-tab > 0) { root.active-tab -= 1; }\n            accept\n        } else if (event.text == Key.Right) {\n            if (root.active-tab < 3) { root.active-tab += 1; }\n            accept\n        } else {\n            reject\n        }\n    }\n}"
+    },
+    {
+      "name": "Focused-index approach",
+      "complexity": "medium (30-40 min per module)",
+      "description": "Each module gets a `focused-index` property. PresetCards get `focus-up` and `focus-down` callbacks. The module handles these to update focused-index. Visual keyboard-focus indicator on the matching card. Actual Slint keyboard focus is handled by mounting a FocusScope PER CARD with conditional forward-focus, or by using a trick with a named FocusScope at the module level whose forward-focus targets change based on focused-index.",
+      "key_mechanism": "Since Slint's for-loop elements can't be referenced directly, use a pattern where each PresetCard checks `keyboard-focused: root.focused-index == i` and changes its visual state. The REAL keyboard focus stays on a container FocusScope, and Enter/Space at the container level is forwarded to the right card based on focused-index. Up/Down change focused-index, which changes the visual indicator + the target of Enter/Space.",
+      "limitations": "The actual keyboard focus (blue ring or default Slint focus indicator) may not match the visual focused-index. Two indicators could be confusing. Also, if user clicks a card with the mouse, the focused-index must sync.",
+      "open_questions": [
+        "Does Slint support `forward-focus` pointing to child items of a `for` loop by index?",
+        "Can we call `.focus()` on a for-loop child from Rust via the Slint runtime API?",
+        "Does the ScrollView support programmatic scroll-to-element?"
+      ]
+    },
+    {
+      "name": "Rust-side keyboard handling",
+      "complexity": "medium-high",
+      "description": "Handle all keyboard events in Rust (via slint::Window::on_key_pressed or similar). Track focused-index in Rust state. Move Slint focus programmatically via the component tree.",
+      "pros": "Full control, no Slint expression limitations. Can sync focus and visual state easily.",
+      "cons": "More boilerplate. Need to expose Slint internal element references to Rust (possible via `global().get_ property` and `slint::ComponentHandle`).",
+      "open_questions": [
+        "Can Rust iterate over for-loop generated elements and call focus() on them?",
+        "What's the best way to get a reference to a specific FocusScope inside a repeated component?"
+      ]
+    }
+  ],
+  "specific_questions_for_consultation": [
+    "1. In Slint, what is the idiomatic way to move keyboard focus between items in a `for` loop using Arrow keys (Up/Down)?",
+    "2. Can a named element inside a `for` loop (e.g., `for i in model: card := PresetCard { ... }`) be referenced by index (e.g., `card[index]`) for `forward-focus` purposes?",
+    "3. Does Slint's FocusScope support calling `.focus()` from Rust on a specific element inside a repeated component? If so, what's the API?",
+    "4. Does Slint's ScrollView provide any automatic scroll-to-focused-element behavior, or must viewport-y be manually set on focus change?",
+    "5. How can a FocusScope handle Up/Down to move focus to the previous/next sibling FocusScope within the same parent? Is there a built-in focus-traversal API beyond Tab/Shift+Tab?",
+    "6. Is there a way to restrict Tab/Shift+Tab focus order to a subset of elements (e.g., only PresetCards within a module, skipping SectionHeader)?"
+  ],
+  "success_criteria": {
+    "left_right": "Arrow keys switch between tabs 1-2-3 without layout glitches or focus loss.",
+    "up_down": "Up/Down keys move a visible keyboard-focus indicator between PresetCards within the active tab. Cards outside viewport cause auto-scroll.",
+    "focus_indicator": "Keyboard-focused card has a clear visual distinction from the active/selected card (e.g., a bright focus ring or different background).",
+    "enter_space": "Activate/toggle the keyboard-focused PresetCard.",
+    "tab_shift_tab": "Continue to work for full-document focus traversal, backward and forward.",
+    "click_sync": "Clicking a card with the mouse moves keyboard focus there as well.",
+    "no_regression": "Existing mouse and Tab navigation continues to work unchanged."
+  }
+}

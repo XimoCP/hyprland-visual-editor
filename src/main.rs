@@ -938,6 +938,30 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        fn resolve_exe() -> PathBuf {
+            if let Ok(path) = std::env::current_exe() {
+                if path.is_file() {
+                    return path;
+                }
+            }
+            if let Some(arg0) = std::env::args().next() {
+                let p = PathBuf::from(&arg0);
+                if p.is_absolute() {
+                    if p.is_file() {
+                        return p;
+                    }
+                } else if let Ok(paths) = std::env::var("PATH") {
+                    for dir in std::env::split_paths(&paths) {
+                        let candidate = dir.join(&arg0);
+                        if candidate.is_file() {
+                            return candidate;
+                        }
+                    }
+                }
+            }
+            PathBuf::from("hve")
+        }
+
         let restart_lock = lock.clone();
         window.on_restart_app(move || {
             tracing::info!("[settings] Restarting app...");
@@ -946,7 +970,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 drop(guard.take());
             }
             // 2. Spawn the new instance
-            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hve"));
+            let exe = resolve_exe();
             match std::process::Command::new(&exe)
                 .args(std::env::args().skip(1))
                 .spawn()
