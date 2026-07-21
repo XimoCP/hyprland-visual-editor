@@ -12,9 +12,9 @@ import {
 export component MainWindow inherits Window {
     title: "Hyprland Visual Editor";
     min-width: 800px;
-    min-height: 500px;
+    min-height: 580px;
     preferred-width: 900px;
-    preferred-height: 600px;
+    preferred-height: 680px;
     default-font-family: "Inter, sans-serif";
 
     // ── Theme (re-exported so Rust can set them via window.set_*) ──
@@ -28,6 +28,7 @@ export component MainWindow inherits Window {
     in-out property <color> accent-amber <=> HveColors.accent-amber;
     in-out property <color> accent-green <=> HveColors.accent-green;
     in-out property <color> accent-purple <=> HveColors.accent-purple;
+    in-out property <color> accent-pink <=> HveColors.accent-pink;
     in-out property <color> accent-red <=> HveColors.accent-red;
     in-out property <color> border <=> HveColors.border;
 
@@ -73,6 +74,8 @@ export component MainWindow inherits Window {
     in property <string> home-active-anim-label;
     in property <string> home-active-border-label;
     in property <string> home-active-shader-label;
+    in property <string> home-active-theme-label;
+    in property <string> home-none-theme;
     in property <string> home-none-anim;
     in property <string> home-none-border;
     in property <string> home-none-shader;
@@ -141,6 +144,7 @@ export component MainWindow inherits Window {
     in-out property <string> theme-error-text: "";
     in-out property <bool> include-noctalia: true;
     in-out property <bool> include-hve-presets: true;
+    in-out property <string> home-active-theme-name: "";
 
     // Countdown (auto-minimize cuando pierde foco)
     in-out property <bool> countdown-active: false;
@@ -367,8 +371,9 @@ export component MainWindow inherits Window {
                         background: HveColors.border;
                     }
 
-                    // Nav (data-driven from Rust)
+                    // Nav (data-driven from Rust) — se reparten el espacio vertical
                     for nav-module in root.nav-modules: NavButton {
+                        vertical-stretch: 1;
                         label: nav-module.label;
                         icon-text: nav-module.icon;
                         accent: nav-module.accent;
@@ -380,10 +385,6 @@ export component MainWindow inherits Window {
                             root.shader-focused-index = -1;
                             root.active-tab = nav-module.tab-index;
                         }
-                    }
-
-                    Rectangle {
-                        vertical-stretch: 1;
                     }
 
                     Rectangle {
@@ -453,9 +454,12 @@ export component MainWindow inherits Window {
                         active-anim-label: root.home-active-anim-label;
                         active-border-label: root.home-active-border-label;
                         active-shader-label: root.home-active-shader-label;
+                        active-theme-label: root.home-active-theme-label;
                         none-anim: root.home-none-anim;
                         none-border: root.home-none-border;
                         none-shader: root.home-none-shader;
+                        none-theme: root.home-none-theme;
+                        active-theme-name: root.home-active-theme-name;
                         about-title: root.home-about-title;
                         about-short: root.home-about-short;
                         about-full: root.home-about-full;

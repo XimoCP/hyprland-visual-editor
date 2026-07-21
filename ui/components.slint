@@ -189,7 +189,9 @@ export component NavButton inherits Rectangle {
     in property <bool> sidebar-mode: true;
     callback clicked;
 
-    height: 48px;
+    min-height: 40px;
+    max-height: 64px;
+    vertical-stretch: 1;
     border-radius: 8px;
     background: selected && sidebar-mode ? HveColors.bg-hover :
                 selected ? HveColors.bg-hover.transparentize(0.6) :
@@ -199,7 +201,7 @@ export component NavButton inherits Rectangle {
     // ── Indicador lateral ──
     Rectangle {
         width: 4px;
-        height: selected ? parent.height * 0.6 : 0px;
+        height: selected ? parent.height * 0.8 : 0px;
         x: 0px;
         y: (parent.height - self.height) / 2;
         border-radius: 2px;

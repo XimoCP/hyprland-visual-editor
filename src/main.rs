@@ -569,7 +569,7 @@ fn refresh_theme_list(
     window: &crate::MainWindow,
     tm: &crate::theme_manager::ThemeManager,
 ) {
-    use slint::{ModelRc, SharedString, VecModel};
+    use slint::{ModelRc, SharedString};
     let themes = tm.list().unwrap_or_default();
 
     let names: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.name)).collect();
@@ -736,6 +736,9 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_none_anim(tr.tr_shared("home.none_anim", "None"));
     window.set_home_none_border(tr.tr_shared("home.none_border", "None"));
     window.set_home_none_shader(tr.tr_shared("home.none_shader", "None"));
+    window.set_home_active_theme_label(tr.tr_shared("home.active_theme", "Theme:"));
+    window.set_home_none_theme(tr.tr_shared("home.none_theme", "None"));
+    window.set_home_active_theme_name(cfg.last_applied_theme.clone().into());
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
     window.set_home_about_full(tr.tr_shared("home.about_full", "HVE customizes Hyprland animations, borders, and shaders from a visual interface, in real time.\n\nTo apply changes, HVE adds a block at the end of your hyprland.lua (or hyprland.conf), delimited by markers. That block only includes (dofile / source) our overlay files in ~/.cache/hve/ — it never rewrites your personal config.\n\nWhen you disable the system, the markers are removed. If you uninstall, a watchdog cleans them on the next Hyprland start. Your original config always stays intact."));
@@ -850,8 +853,8 @@ fn main() -> Result<(), slint::PlatformError> {
         },
         crate::NavModule {
             label: SharedString::from(tr.tr_or("panel.tabs.themes", "Themes")),
-            icon: SharedString::from("◈"),
-            accent: theme::parse_hex("#c084fc"),
+            icon: SharedString::from("✦"),
+            accent: theme::parse_hex("#f472b6"),
             tab_index: 4,
         },
     ]);
@@ -1111,7 +1114,6 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── Theme callbacks ──
     {
         let tm = theme_manager.clone();
-        let cfg = cfg.clone();
         let weak = window.as_weak();
         window.on_save_theme(move |name| {
             let name_str = name.to_string();
@@ -1168,6 +1170,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         sync_preset_indices(&w, &updated_cfg);
                         let tm = tm.lock().unwrap();
                         refresh_theme_list(&w, &tm);
+                        w.set_home_active_theme_name(name_str.clone().into());
                     }
                 }
                 Err(e) => {
@@ -1212,6 +1215,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Some(w) = weak.upgrade() {
                         let tm = tm.lock().unwrap();
                         refresh_theme_list(&w, &tm);
+                        w.set_home_active_theme_name((&tm.last_applied).clone().into());
                     }
                 }
                 Err(e) => {
@@ -1264,10 +1268,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let tm = theme_manager.clone();
         let weak = window.as_weak();
         window.on_refresh_themes(move || {
-            if let Some(w) = weak.upgrade() {
-                let tm = tm.lock().unwrap();
-                refresh_theme_list(&w, &tm);
-            }
+                    if let Some(w) = weak.upgrade() {
+                        let tm = tm.lock().unwrap();
+                        refresh_theme_list(&w, &tm);
+                        w.set_home_active_theme_name((&tm.last_applied).clone().into());
+                    }
         });
     }
 

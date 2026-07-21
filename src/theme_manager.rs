@@ -10,7 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// `{theme_dir}/providers/{id}/`.
 pub trait ThemeProvider: Send + Sync {
     fn id(&self) -> &str;
+    #[allow(dead_code)]
     fn display_name_key(&self) -> &str;
+    #[allow(dead_code)]
     fn icon(&self) -> &str;
 
     /// Capture current state into `{theme_dir}/providers/{id}/`.
@@ -58,14 +60,17 @@ impl ThemeManager {
         self.providers.push(provider);
     }
 
+    #[allow(dead_code)]
     pub fn providers(&self) -> &[Box<dyn ThemeProvider>] {
         &self.providers
     }
 
+    #[allow(dead_code)]
     pub fn themes_dir(&self) -> &Path {
         &self.themes_dir
     }
 
+    #[allow(dead_code)]
     fn provider_dir(theme_dir: &Path, provider_id: &str) -> PathBuf {
         theme_dir.join("providers").join(provider_id)
     }
@@ -94,7 +99,7 @@ impl ThemeManager {
 
         // Civil date from days since 1970-01-01 (Rata Die algorithm)
         let z = days + 719468;
-        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let era = z / 146097;
         let doe = z - era * 146097;
         let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
         let y = yoe + era * 400;
@@ -256,6 +261,7 @@ impl ThemeManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn name_for_index(&self, index: i32) -> Option<String> {
         let themes = self.list().ok()?;
         themes.into_iter().nth(index as usize).map(|t| t.name)

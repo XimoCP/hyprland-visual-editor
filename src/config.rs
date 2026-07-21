@@ -279,6 +279,7 @@ mod tests {
             tiling_mode: true,
             theme: "light".into(),
             keybinds_enabled: true,
+            last_applied_theme: String::new(),
         };
 
         cfg.save().expect("save should succeed");

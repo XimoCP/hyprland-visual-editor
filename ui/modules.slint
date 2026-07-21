@@ -35,9 +35,12 @@ export component HomeModule inherits ScrollView {
     in property <string> active-anim-label;
     in property <string> active-border-label;
     in property <string> active-shader-label;
+    in property <string> active-theme-label;
     in property <string> none-anim;
     in property <string> none-border;
     in property <string> none-shader;
+    in property <string> none-theme;
+    in property <string> active-theme-name;
     in property <string> about-title;
     in property <string> about-short;
     in property <string> about-full;
@@ -299,6 +302,41 @@ export component HomeModule inherits ScrollView {
                         }
                     }
                 }
+
+                // ── Theme status ──
+                Rectangle {
+                    height: 32px;
+                    border-radius: 6px;
+                    background: HveColors.accent-cyan.transparentize(0.85);
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.active-theme-name != "" ? HveColors.accent-cyan : HveColors.text-muted;
+                            }
+                        }
+                        Text {
+                            text: root.active-theme-label;
+                            font-size: 12px;
+                            color: HveColors.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.active-theme-name != "" ? root.active-theme-name : root.none-theme;
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: HveColors.text;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
             }
         }
 
@@ -522,12 +560,11 @@ export component ThemesModule inherits Rectangle {
         VerticalLayout {
             padding: 24px;
             spacing: 14px;
-            alignment: start;
 
             SectionHeader {
                 title: root.header-title;
                 subtitle: root.header-subtitle;
-                accent: HveColors.accent-purple;
+                accent: HveColors.accent-pink;
             }
 
             Rectangle {
@@ -552,7 +589,7 @@ export component ThemesModule inherits Rectangle {
                         width: 80px;
                         height: 32px;
                         border-radius: 6px;
-                        background: sb-ta.has-hover ? HveColors.accent-purple.transparentize(0.2) : HveColors.accent-purple;
+                        background: sb-ta.has-hover ? HveColors.accent-pink.transparentize(0.2) : HveColors.accent-pink;
                         animate background { duration: 150ms; }
 
                         Text {
@@ -600,9 +637,9 @@ export component ThemesModule inherits Rectangle {
                     width: 120px;
                     height: 28px;
                     border-radius: 6px;
-                    background: root.include-noctalia ? HveColors.accent-purple.transparentize(0.85) : HveColors.bg-surface;
+                    background: root.include-noctalia ? HveColors.accent-pink.transparentize(0.85) : HveColors.bg-surface;
                     border-width: 1px;
-                    border-color: root.include-noctalia ? HveColors.accent-purple.transparentize(0.5) : HveColors.border;
+                    border-color: root.include-noctalia ? HveColors.accent-pink.transparentize(0.5) : HveColors.border;
                     animate background { duration: 150ms; }
                     animate border-color { duration: 150ms; }
 
@@ -616,7 +653,7 @@ export component ThemesModule inherits Rectangle {
                             width: 10px;
                             height: 10px;
                             border-radius: 5px;
-                            background: root.include-noctalia ? HveColors.accent-purple : HveColors.text-muted;
+                            background: root.include-noctalia ? HveColors.accent-pink : HveColors.text-muted;
                         }
 
                         Text {
@@ -638,9 +675,9 @@ export component ThemesModule inherits Rectangle {
                     width: 120px;
                     height: 28px;
                     border-radius: 6px;
-                    background: root.include-hve-presets ? HveColors.accent-purple.transparentize(0.85) : HveColors.bg-surface;
+                    background: root.include-hve-presets ? HveColors.accent-pink.transparentize(0.85) : HveColors.bg-surface;
                     border-width: 1px;
-                    border-color: root.include-hve-presets ? HveColors.accent-purple.transparentize(0.5) : HveColors.border;
+                    border-color: root.include-hve-presets ? HveColors.accent-pink.transparentize(0.5) : HveColors.border;
                     animate background { duration: 150ms; }
                     animate border-color { duration: 150ms; }
 
@@ -654,7 +691,7 @@ export component ThemesModule inherits Rectangle {
                             width: 10px;
                             height: 10px;
                             border-radius: 5px;
-                            background: root.include-hve-presets ? HveColors.accent-purple : HveColors.text-muted;
+                            background: root.include-hve-presets ? HveColors.accent-pink : HveColors.text-muted;
                         }
 
                         Text {
@@ -732,7 +769,7 @@ export component ThemesModule inherits Rectangle {
                 border-radius: 10px;
                 background: root.theme-is-actives[i] ? HveColors.bg-hover : HveColors.bg-card;
                 border-width: root.theme-is-actives[i] ? 2px : 1px;
-                border-color: root.theme-is-actives[i] ? HveColors.accent-purple : HveColors.border;
+                border-color: root.theme-is-actives[i] ? HveColors.accent-pink : HveColors.border;
                 visible: true;
                 animate background { duration: 200ms; }
                 animate border-color { duration: 200ms; }
@@ -746,7 +783,7 @@ export component ThemesModule inherits Rectangle {
                         width: root.theme-is-actives[i] ? 24px : 0px;
                         height: 24px;
                         border-radius: 12px;
-                        background: HveColors.accent-purple;
+                        background: HveColors.accent-pink;
                         visible: root.theme-is-actives[i];
                         opacity: root.theme-is-actives[i] ? 1 : 0;
                         animate width { duration: 200ms; easing: ease-in-out-back; }
@@ -769,7 +806,7 @@ export component ThemesModule inherits Rectangle {
 
                         Text {
                             text: root.theme-names[i];
-                            color: root.theme-is-actives[i] ? HveColors.accent-purple : HveColors.text;
+                            color: root.theme-is-actives[i] ? HveColors.accent-pink : HveColors.text;
                             font-size: 13px;
                             font-weight: 600;
                             overflow: elide;
@@ -966,7 +1003,7 @@ export component ThemesModule inherits Rectangle {
                         width: 80px;
                         height: 30px;
                         border-radius: 6px;
-                        background: apply-rn.has-hover ? HveColors.accent-purple.transparentize(0.2) : HveColors.accent-purple;
+                        background: apply-rn.has-hover ? HveColors.accent-pink.transparentize(0.2) : HveColors.accent-pink;
 
                         Text {
                             text: root.rename-text;

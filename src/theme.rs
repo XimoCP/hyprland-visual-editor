@@ -218,6 +218,7 @@ pub fn apply_theme(window: &crate::MainWindow, colors: &ColorScheme) {
     window.set_accent_amber(s);
     window.set_accent_green(acc);
     window.set_accent_purple(t);
+    window.set_accent_pink(t);
     window.set_accent_red(accent_red);
     window.set_border(border);
 }
