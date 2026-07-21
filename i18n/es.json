@@ -15,7 +15,8 @@
       "home": "Inicio",
       "animations": "Animaciones",
       "borders": "Bordes",
-      "effects": "Efectos"
+      "effects": "Efectos",
+      "themes": "Temas"
     }
   },
   "welcome": {
@@ -296,5 +297,25 @@
     "about_line_2": "Ensamblado seguro — cero riesgo para tus configs",
     "about_line_3": "Recarga en caliente — aplicá sin reiniciar Hyprland",
     "about_line_4": "Fragmentos — piezas reutilizables, no un archivo enorme"
+  },
+  "themes": {
+    "header_title": "Gestor de Temas",
+    "header_subtitle": "Guardá y aplicá temas completos del escritorio",
+    "save_placeholder": "Nombre del tema...",
+    "save_button": "Guardar",
+    "search_placeholder": "Buscar temas...",
+    "empty": "Todavía no hay temas. Guardá tu configuración actual como un tema.",
+    "apply": "Aplicar",
+    "rename": "Renombrar",
+    "delete": "Eliminar",
+    "confirm_delete": "Eliminar tema",
+    "confirm_delete_msg": "¿Estás seguro de que querés eliminar",
+    "rename_title": "Renombrar tema",
+    "include": "Incluir:",
+    "action_overwrite": "Sobrescribir",
+    "provider": {
+      "noctalia": "Noctalia",
+      "hve-presets": "Presets HVE"
+    }
   }
 }

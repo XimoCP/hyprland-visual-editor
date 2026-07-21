@@ -4,9 +4,11 @@ mod countdown;
 mod engine;
 mod hypr_ipc;
 mod ipc;
-mod tr;
 mod presets;
+mod providers;
 mod theme;
+mod theme_manager;
+mod tr;
 mod tray;
 mod watcher;
 
@@ -562,6 +564,53 @@ exec-once = {} --tray
     }
 }
 
+/// Refresh the Slint theme list UI from the ThemeManager state.
+fn refresh_theme_list(
+    window: &crate::MainWindow,
+    tm: &crate::theme_manager::ThemeManager,
+) {
+    use slint::{ModelRc, SharedString, VecModel};
+    let themes = tm.list().unwrap_or_default();
+
+    let names: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.name)).collect();
+    let saved_ats: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.saved_at)).collect();
+    let is_actives: Vec<bool> = themes.iter().map(|t| t.is_active).collect();
+
+    window.set_theme_names(ModelRc::from(names.as_slice()));
+    window.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
+    window.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
+
+    // Update active theme index
+    let active_idx = themes.iter().position(|t| t.is_active).map(|i| i as i32).unwrap_or(-1);
+    window.set_active_theme_index(active_idx);
+}
+
+/// After applying a theme, sync the GUI preset indices (anim, border, shader, border-size)
+/// so they reflect what the theme restored, not the stale values from before apply.
+fn sync_preset_indices(
+    window: &crate::MainWindow,
+    cfg: &Config,
+) {
+    use slint::Model;
+
+    let find = |files: &slint::ModelRc<slint::SharedString>, target: &str| -> i32 {
+        if target.is_empty() {
+            return -1;
+        }
+        for i in 0..files.row_count() {
+            if files.row_data(i).as_ref().map(|s| s.as_str()) == Some(target) {
+                return i as i32;
+            }
+        }
+        -1
+    };
+
+    window.set_active_anim_index(find(&window.get_anim_files(), &cfg.active_anim_file));
+    window.set_active_border_index(find(&window.get_border_files(), &cfg.active_border_file));
+    window.set_active_shader_index(find(&window.get_shader_files(), &cfg.active_shader_file));
+    window.set_border_size(cfg.border_size);
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
@@ -570,7 +619,8 @@ fn main() -> Result<(), slint::PlatformError> {
         0 => EnvFilter::new("info"),
         1 => EnvFilter::new("debug"),
         _ => EnvFilter::new("trace"),
-    };
+    }
+    .add_directive("calloop=off".parse().unwrap());
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .init();
@@ -632,6 +682,25 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Scan + translate presets ──
     presets::populate_presets(&window, &engine, &cfg, &tr);
+
+    // ── Theme Manager init ──
+    let config_dir = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
+    let mut theme_manager = crate::theme_manager::ThemeManager::new(&config_dir);
+    theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaProvider));
+    theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new(engine.clone())));
+    // Restore last applied theme from config
+    if !cfg!(test) {
+        theme_manager.last_applied = cfg.last_applied_theme.clone();
+    }
+    let theme_manager = Arc::new(std::sync::Mutex::new(theme_manager));
+
+    // Refresh UI theme list
+    {
+        let tm = theme_manager.lock().unwrap();
+        refresh_theme_list(&window, &tm);
+    }
 
     // ── i18n: static UI strings ──
     window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual Editor"));
@@ -704,6 +773,25 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_keybinds_label(tr.tr_shared("settings.keybinds", "Keyboard shortcuts"));
     window.set_keybinds_mode(cfg.keybinds_enabled);
 
+    // ── i18n: Theme strings ──
+    window.set_theme_header_title(tr.tr_shared("themes.header_title", "Theme Manager"));
+    window.set_theme_header_subtitle(tr.tr_shared("themes.header_subtitle", "Save and apply full desktop themes"));
+    window.set_theme_save_placeholder(tr.tr_shared("themes.save_placeholder", "Theme name..."));
+    window.set_theme_save_button(tr.tr_shared("themes.save_button", "Save"));
+    window.set_theme_search_placeholder(tr.tr_shared("themes.search_placeholder", "Search themes..."));
+    window.set_theme_empty_text(tr.tr_shared("themes.empty", "No themes yet. Save your current setup as a theme."));
+    window.set_theme_apply_text(tr.tr_shared("themes.apply", "Apply"));
+    window.set_theme_rename_text(tr.tr_shared("themes.rename", "Rename"));
+    window.set_theme_delete_text(tr.tr_shared("themes.delete", "Delete"));
+    window.set_theme_cancel_text(tr.tr_shared("common.cancel", "Cancel"));
+    window.set_theme_confirm_delete(tr.tr_shared("themes.confirm_delete", "Delete theme"));
+    window.set_theme_confirm_delete_msg(tr.tr_shared("themes.confirm_delete_msg", "Are you sure you want to delete"));
+    window.set_theme_rename_title(tr.tr_shared("themes.rename_title", "Rename theme"));
+    window.set_theme_include_label(tr.tr_shared("themes.include", "Include:"));
+    window.set_theme_provider_noctalia(tr.tr_shared("themes.provider.noctalia", "Noctalia"));
+    window.set_theme_provider_hve_presets(tr.tr_shared("themes.provider.hve-presets", "HVE Presets"));
+    window.set_theme_action_overwrite(tr.tr_shared("themes.action_overwrite", "Overwrite"));
+
     // ── Dynamic theme + logo + tray icon ──
     let tray_handle = match engine.get_colors() {
         Ok(colors) => {
@@ -759,6 +847,12 @@ fn main() -> Result<(), slint::PlatformError> {
             icon: SharedString::from("◆"),
             accent: theme::parse_hex("#c084fc"),
             tab_index: 3,
+        },
+        crate::NavModule {
+            label: SharedString::from(tr.tr_or("panel.tabs.themes", "Themes")),
+            icon: SharedString::from("◈"),
+            accent: theme::parse_hex("#c084fc"),
+            tab_index: 4,
         },
     ]);
     window.set_nav_modules(ModelRc::new(VecModel::from(nav_modules)));
@@ -1011,6 +1105,169 @@ fn main() -> Result<(), slint::PlatformError> {
                 let _ = c.save();
             }
             tracing::info!("[settings] Presets reset complete.");
+        });
+    }
+
+    // ── Theme callbacks ──
+    {
+        let tm = theme_manager.clone();
+        let cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_save_theme(move |name| {
+            let name_str = name.to_string();
+            let provider_ids = {
+                let w = weak.upgrade();
+                w.map(|win| {
+                    let mut ids: Vec<String> = Vec::new();
+                    if win.get_include_noctalia() { ids.push("noctalia".into()); }
+                    if win.get_include_hve_presets() { ids.push("hve-presets".into()); }
+                    ids
+                }).unwrap_or_default()
+            };
+
+            let result = tm.lock().unwrap().save(&name_str, &provider_ids);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Saved theme: {}", name_str);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_busy(true);
+                        let tm = tm.lock().unwrap();
+                        refresh_theme_list(&w, &tm);
+                        w.set_theme_busy(false);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Save failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let tm = theme_manager.clone();
+        let cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_apply_theme(move |name| {
+            let name_str = name.to_string();
+            let result = tm.lock().unwrap().apply(&name_str);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Applied theme: {}", name_str);
+                    // Reload config from disk — the provider may have updated it
+                    let updated_cfg = Config::load();
+                    // Update in-memory config and persist
+                    if let Ok(mut c) = cfg.lock() {
+                        *c = updated_cfg.clone();
+                        c.last_applied_theme = name_str.clone();
+                        let _ = c.save();
+                    }
+                    if let Some(w) = weak.upgrade() {
+                        sync_preset_indices(&w, &updated_cfg);
+                        let tm = tm.lock().unwrap();
+                        refresh_theme_list(&w, &tm);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Apply failed: {}", e);
+                }
+            }
+        });
+    }
+
+    {
+        let tm = theme_manager.clone();
+        let weak = window.as_weak();
+        window.on_delete_theme(move |name| {
+            let name_str = name.to_string();
+            match tm.lock().unwrap().delete(&name_str) {
+                Ok(_) => {
+                    tracing::info!("[themes] Deleted theme: {}", name_str);
+                    if let Some(w) = weak.upgrade() {
+                        let tm = tm.lock().unwrap();
+                        refresh_theme_list(&w, &tm);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Delete failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let tm = theme_manager.clone();
+        let weak = window.as_weak();
+        window.on_rename_theme(move |old, new| {
+            let old_str = old.to_string();
+            let new_str = new.to_string();
+            match tm.lock().unwrap().rename(&old_str, &new_str) {
+                Ok(_) => {
+                    tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
+                    if let Some(w) = weak.upgrade() {
+                        let tm = tm.lock().unwrap();
+                        refresh_theme_list(&w, &tm);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Rename failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let tm = theme_manager.clone();
+        let weak = window.as_weak();
+        window.on_overwrite_theme(move |name| {
+            let name_str = name.to_string();
+            let provider_ids = {
+                let w = weak.upgrade();
+                w.map(|win| {
+                    let mut ids: Vec<String> = Vec::new();
+                    if win.get_include_noctalia() { ids.push("noctalia".into()); }
+                    if win.get_include_hve_presets() { ids.push("hve-presets".into()); }
+                    ids
+                }).unwrap_or_default()
+            };
+
+            let result = tm.lock().unwrap().save(&name_str, &provider_ids);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Overwritten theme: {}", name_str);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_busy(true);
+                        let tm = tm.lock().unwrap();
+                        refresh_theme_list(&w, &tm);
+                        w.set_theme_busy(false);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Overwrite failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let tm = theme_manager.clone();
+        let weak = window.as_weak();
+        window.on_refresh_themes(move || {
+            if let Some(w) = weak.upgrade() {
+                let tm = tm.lock().unwrap();
+                refresh_theme_list(&w, &tm);
+            }
         });
     }
 

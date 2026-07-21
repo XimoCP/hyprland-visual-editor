@@ -15,7 +15,8 @@
       "home": "Home",
       "animations": "Animations",
       "borders": "Borders",
-      "effects": "Effects"
+      "effects": "Effects",
+      "themes": "Themes"
     }
   },
   "welcome": {
@@ -296,5 +297,25 @@
     "about_line_2": "Safe assembly — zero risk to your configs",
     "about_line_3": "Hot reload — apply without restarting Hyprland",
     "about_line_4": "Fragments — composable pieces, not one huge file"
+  },
+  "themes": {
+    "header_title": "Theme Manager",
+    "header_subtitle": "Save and apply full desktop themes",
+    "save_placeholder": "Theme name...",
+    "save_button": "Save",
+    "search_placeholder": "Search themes...",
+    "empty": "No themes yet. Save your current setup as a theme.",
+    "apply": "Apply",
+    "rename": "Rename",
+    "delete": "Delete",
+    "confirm_delete": "Delete theme",
+    "confirm_delete_msg": "Are you sure you want to delete",
+    "rename_title": "Rename theme",
+    "include": "Include:",
+    "action_overwrite": "Overwrite",
+    "provider": {
+      "noctalia": "Noctalia",
+      "hve-presets": "HVE Presets"
+    }
   }
 }

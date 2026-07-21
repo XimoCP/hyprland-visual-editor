@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, LineEdit } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
 import {
     PresetCard,
@@ -472,6 +472,617 @@ export component ShadersModule inherits Rectangle {
                 focus-requested(idx) => {
                     if (root.is-active) {
                         root.focus-requested(idx);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── THEMES MODULE ──────────────────────────────────────────────────
+export component ThemesModule inherits Rectangle {
+    in property <[string]> theme-names;
+    in property <[string]> theme-saved-ats;
+    in property <[bool]> theme-is-actives;
+    in property <bool> is-busy: false;
+    in property <string> header-title;
+    in property <string> header-subtitle;
+    in property <string> save-placeholder;
+    in property <string> save-button;
+    in property <string> search-placeholder;
+    in property <string> empty-text;
+    in property <string> apply-text;
+    in property <string> rename-text;
+    in property <string> delete-text;
+    in property <string> cancel-text;
+    in property <string> confirm-delete;
+    in property <string> confirm-delete-msg;
+    in property <string> rename-title;
+    in property <string> include-label;
+    in property <string> provider-noctalia;
+    in property <string> provider-hve-presets;
+    in property <string> action-overwrite;
+    in-out property <bool> include-noctalia: true;
+    in-out property <bool> include-hve-presets: true;
+    callback save-theme(string);
+    callback apply-theme(string);
+    callback delete-theme(string);
+    callback rename-theme(string, string);
+    callback overwrite-theme(string);
+
+    in-out property <string> dialog-mode: "";
+    in-out property <string> dialog-target: "";
+    in-out property <string> rename-input: "";
+    in-out property <string> error-text: "";
+    in-out property <string> search-query: "";
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+            alignment: start;
+
+            SectionHeader {
+                title: root.header-title;
+                subtitle: root.header-subtitle;
+                accent: HveColors.accent-purple;
+            }
+
+            Rectangle {
+                height: 48px;
+                border-radius: 10px;
+                background: HveColors.bg-card;
+                border-width: 1px;
+                border-color: HveColors.border;
+
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        placeholder-text: root.save-placeholder;
+                        font-size: 13px;
+                        text <=> root.rename-input;
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        height: 32px;
+                        border-radius: 6px;
+                        background: sb-ta.has-hover ? HveColors.accent-purple.transparentize(0.2) : HveColors.accent-purple;
+                        animate background { duration: 150ms; }
+
+                        Text {
+                            text: root.save-button;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        sb-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.error-text = "";
+                                if (root.rename-input != "") {
+                                    root.save-theme(root.rename-input);
+                                    root.rename-input = "";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: root.error-text;
+                color: HveColors.accent-red;
+                font-size: 11px;
+                visible: root.error-text != "";
+            }
+
+            Text {
+                text: root.include-label;
+                color: HveColors.text-muted;
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Rectangle {
+                    width: 120px;
+                    height: 28px;
+                    border-radius: 6px;
+                    background: root.include-noctalia ? HveColors.accent-purple.transparentize(0.85) : HveColors.bg-surface;
+                    border-width: 1px;
+                    border-color: root.include-noctalia ? HveColors.accent-purple.transparentize(0.5) : HveColors.border;
+                    animate background { duration: 150ms; }
+                    animate border-color { duration: 150ms; }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 5px;
+                            background: root.include-noctalia ? HveColors.accent-purple : HveColors.text-muted;
+                        }
+
+                        Text {
+                            text: root.provider-noctalia;
+                            color: root.include-noctalia ? HveColors.text : HveColors.text-muted;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+                    }
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.include-noctalia = !root.include-noctalia; }
+                    }
+                }
+
+                Rectangle {
+                    width: 120px;
+                    height: 28px;
+                    border-radius: 6px;
+                    background: root.include-hve-presets ? HveColors.accent-purple.transparentize(0.85) : HveColors.bg-surface;
+                    border-width: 1px;
+                    border-color: root.include-hve-presets ? HveColors.accent-purple.transparentize(0.5) : HveColors.border;
+                    animate background { duration: 150ms; }
+                    animate border-color { duration: 150ms; }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 5px;
+                            background: root.include-hve-presets ? HveColors.accent-purple : HveColors.text-muted;
+                        }
+
+                        Text {
+                            text: root.provider-hve-presets;
+                            color: root.include-hve-presets ? HveColors.text : HveColors.text-muted;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+                    }
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.include-hve-presets = !root.include-hve-presets; }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 36px;
+                border-radius: 8px;
+                background: HveColors.bg-card;
+                border-width: 1px;
+                border-color: HveColors.border;
+                visible: root.theme-names.length > 0;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    alignment: center;
+
+                    Text {
+                        text: "⌕";
+                        color: HveColors.text-muted;
+                        font-size: 14px;
+                    }
+
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        placeholder-text: root.search-placeholder;
+                        font-size: 12px;
+                        text <=> root.search-query;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 120px;
+                visible: root.theme-names.length == 0;
+
+                VerticalLayout {
+                    spacing: 8px;
+                    alignment: center;
+
+                    Text {
+                        text: "◈";
+                        color: HveColors.text-muted;
+                        font-size: 32px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: root.empty-text;
+                        color: HveColors.text-muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            for i in root.theme-names.length: Rectangle {
+                height: 56px;
+                border-radius: 10px;
+                background: root.theme-is-actives[i] ? HveColors.bg-hover : HveColors.bg-card;
+                border-width: root.theme-is-actives[i] ? 2px : 1px;
+                border-color: root.theme-is-actives[i] ? HveColors.accent-purple : HveColors.border;
+                visible: true;
+                animate background { duration: 200ms; }
+                animate border-color { duration: 200ms; }
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 8px;
+                    spacing: 10px;
+
+                    Rectangle {
+                        width: root.theme-is-actives[i] ? 24px : 0px;
+                        height: 24px;
+                        border-radius: 12px;
+                        background: HveColors.accent-purple;
+                        visible: root.theme-is-actives[i];
+                        opacity: root.theme-is-actives[i] ? 1 : 0;
+                        animate width { duration: 200ms; easing: ease-in-out-back; }
+                        animate opacity { duration: 200ms; }
+
+                        Text {
+                            text: "✓";
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        alignment: center;
+
+                        Text {
+                            text: root.theme-names[i];
+                            color: root.theme-is-actives[i] ? HveColors.accent-purple : HveColors.text;
+                            font-size: 13px;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: root.theme-saved-ats[i];
+                            color: HveColors.text-muted;
+                            font-size: 10px;
+                            visible: root.theme-saved-ats[i] != "";
+                            overflow: elide;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 70px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: apply-ta.has-hover ? HveColors.accent-green : HveColors.accent-green.transparentize(0.8);
+                        animate background { duration: 150ms; }
+
+                        Text {
+                            text: root.apply-text;
+                            color: HveColors.accent-green;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        apply-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                if (!root.is-busy) {
+                                    root.apply-theme(root.theme-names[i]);
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: ov-ta.has-hover ? HveColors.bg-hover : transparent;
+                        animate background { duration: 150ms; }
+
+                        Text {
+                            text: "↻";
+                            color: HveColors.text-muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        ov-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.overwrite-theme(root.theme-names[i]); }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: rn-ta.has-hover ? HveColors.bg-hover : transparent;
+                        animate background { duration: 150ms; }
+
+                        Text {
+                            text: "✎";
+                            color: HveColors.text-muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        rn-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.rename-input = root.theme-names[i];
+                                root.dialog-target = root.theme-names[i];
+                                root.dialog-mode = "rename";
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: del-ta.has-hover ? HveColors.accent-red.transparentize(0.8) : transparent;
+                        animate background { duration: 150ms; }
+
+                        Text {
+                            text: "✕";
+                            color: del-ta.has-hover ? HveColors.accent-red : HveColors.text-muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        del-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.dialog-target = root.theme-names[i];
+                                root.dialog-mode = "delete";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.dialog-mode == "rename": Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000060;
+
+        Rectangle {
+            width: 300px;
+            height: 180px;
+            border-radius: 12px;
+            background: HveColors.bg-surface;
+            border-width: 1px;
+            border-color: HveColors.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000060;
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: root.rename-title;
+                    color: HveColors.text;
+                    font-size: 15px;
+                    font-weight: 700;
+                }
+
+                LineEdit {
+                    height: 32px;
+                    placeholder-text: root.save-placeholder;
+                    font-size: 13px;
+                    text <=> root.rename-input;
+                }
+
+                Text {
+                    text: root.error-text;
+                    color: HveColors.accent-red;
+                    font-size: 11px;
+                    visible: root.error-text != "";
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: cancel-rn.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                        border-width: 1px;
+                        border-color: HveColors.border;
+
+                        Text {
+                            text: root.cancel-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        cancel-rn := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.dialog-mode = "";
+                                root.error-text = "";
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: apply-rn.has-hover ? HveColors.accent-purple.transparentize(0.2) : HveColors.accent-purple;
+
+                        Text {
+                            text: root.rename-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        apply-rn := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                if (root.rename-input != "" && root.rename-input != root.dialog-target) {
+                                    root.rename-theme(root.dialog-target, root.rename-input);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.dialog-mode == "delete": Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000060;
+
+        Rectangle {
+            width: 300px;
+            height: 160px;
+            border-radius: 12px;
+            background: HveColors.bg-surface;
+            border-width: 1px;
+            border-color: HveColors.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000060;
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: root.confirm-delete;
+                    color: HveColors.accent-red;
+                    font-size: 15px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: root.confirm-delete-msg + " \"" + root.dialog-target + "\"?";
+                    color: HveColors.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: cancel-del.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                        border-width: 1px;
+                        border-color: HveColors.border;
+
+                        Text {
+                            text: root.cancel-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        cancel-del := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.dialog-mode = "";
+                                root.error-text = "";
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: apply-del.has-hover ? HveColors.accent-red : HveColors.accent-red.transparentize(0.2);
+
+                        Text {
+                            text: root.delete-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        apply-del := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.delete-theme(root.dialog-target);
+                                root.dialog-mode = "";
+                                root.error-text = "";
+                            }
+                        }
                     }
                 }
             }

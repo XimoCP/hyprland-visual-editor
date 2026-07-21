@@ -175,7 +175,6 @@ export component PresetCard inherits Rectangle {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down {
                 root.focus-requested(root.index);
-                root.toggled();
             }
         }
     }

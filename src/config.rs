@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 3;
+pub const CONFIG_VERSION: u32 = 4;
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
@@ -26,6 +26,7 @@ pub struct Config {
     pub language: String,
     pub tiling_mode: bool,
     pub theme: String,
+    pub last_applied_theme: String,
     pub keybinds_enabled: bool,
 }
 
@@ -44,6 +45,7 @@ impl Default for Config {
             language: String::new(),
             tiling_mode: false,
             theme: "system".to_string(),
+            last_applied_theme: String::new(),
             keybinds_enabled: false,
         }
     }
@@ -72,6 +74,12 @@ fn migrate(mut cfg: Config) -> Config {
     if cfg.config_version < 3 {
         cfg.keybinds_enabled = false;
         cfg.config_version = 3;
+    }
+
+    // v3 → v4: add last_applied_theme field
+    if cfg.config_version < 4 {
+        cfg.last_applied_theme = String::new();
+        cfg.config_version = 4;
     }
 
     cfg.config_version = CONFIG_VERSION;
