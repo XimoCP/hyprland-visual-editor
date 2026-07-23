@@ -167,16 +167,11 @@ export component PresetCard inherits Rectangle {
         }
     }
 
-    // ── TouchArea (encima de todo) ──
+    // ── TouchArea (solo toggle, sin pointer-event para evitar foco atascado) ──
     ta := TouchArea {
         width: 100%;
         height: 100%;
         clicked => { root.toggled(); }
-        pointer-event(event) => {
-            if event.kind == PointerEventKind.down {
-                root.focus-requested(root.index);
-            }
-        }
     }
 }
 
@@ -191,7 +186,6 @@ export component NavButton inherits Rectangle {
 
     min-height: 40px;
     max-height: 64px;
-    vertical-stretch: 1;
     border-radius: 8px;
     background: selected && sidebar-mode ? HveColors.bg-hover :
                 selected ? HveColors.bg-hover.transparentize(0.6) :

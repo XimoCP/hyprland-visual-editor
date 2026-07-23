@@ -517,6 +517,232 @@ export component ShadersModule inherits Rectangle {
     }
 }
 
+// ─── THEME ITEM ─────────────────────────────────────────────────────
+export component ThemeItem inherits Rectangle {
+    in property <string> theme-name;
+    in property <string> theme-saved-at;
+    in property <bool> is-active: false;
+    in property <bool> is-busy: false;
+    in property <bool> keyboard-focused: false;
+    in property <color> accent;
+    in property <string> apply-text;
+    in property <int> index: 0;
+    callback apply-theme(string);
+    callback overwrite-theme(string);
+    callback open-rename(string);
+    callback open-delete(string);
+    callback focus-requested(int);
+    callback refresh-themes();
+
+    property <bool> _expanded: is-active || card-ta.has-hover || keyboard-focused;
+
+    height: _expanded ? 100px : 56px;
+    border-radius: 10px;
+    background: is-active ? HveColors.bg-hover : (card-ta.has-hover || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
+    border-width: is-active ? 2px : 1px;
+    border-color: is-active ? accent : ((card-ta.has-hover || keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
+    visible: true;
+
+    // TouchArea de fondo solo para capturar foco/hover de la tarjeta
+    card-ta := TouchArea {
+        width: 100%;
+        height: 100%;
+    }
+
+    // Glow sutil al estar activo
+    drop-shadow-blur: is-active ? 12px : 0px;
+    drop-shadow-color: is-active ? accent.transparentize(0.8) : transparent;
+
+    animate background {
+        duration: 200ms;
+        easing: ease-in-out;
+    }
+    animate border-color {
+        duration: 200ms;
+        easing: ease-in-out;
+    }
+    animate drop-shadow-blur {
+        duration: 300ms;
+        easing: ease-out;
+    }
+    animate height {
+        duration: 250ms;
+        easing: ease-in-out-back;
+    }
+
+    // ── LAYOUT PRINCIPAL (Ocupa todo el ancho) ──
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+
+        // 1. CHECK DE ACTIVO (Pegado al principio y centrado verticalmente)
+        if is-active : VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: 8px;
+                background: accent;
+
+                Text {
+                    text: "✓";
+                    color: HveColors.text;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // 2. TEXTO (Ocupa todo el espacio sobrante con horizontal-stretch: 1)
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center; // Centra verticalmente los textos
+            spacing: 2px;
+
+            Text {
+                text: root.theme-name;
+                color: is-active ? accent : HveColors.text;
+                font-size: 14px;
+                font-weight: is-active ? 700 : 600;
+                overflow: elide;
+            }
+
+            if root.theme-saved-at != "" : Text {
+                text: root.theme-saved-at;
+                color: HveColors.text-muted;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+
+        // 3. BOTONES DE ACCIÓN (Pegados al final y centrados verticalmente)
+        VerticalLayout {
+            alignment: center; // Asegura centrado Y independientemente de la altura de la tarjeta
+
+            HorizontalLayout {
+                spacing: 6px;
+
+                // Apply
+                Rectangle {
+                    width: apply-ta.has-hover ? 88px : 32px;
+                    height: 32px;
+                    border-radius: 8px;
+                    background: apply-ta.has-hover ? HveColors.accent-green.transparentize(0.2) : HveColors.accent-green;
+                    animate width { duration: 200ms; easing: ease-in-out-back; }
+                    animate background { duration: 150ms; }
+                    clip: true;
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        alignment: center;
+
+                        Text {
+                            text: "▶";
+                            color: HveColors.text;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        if apply-ta.has-hover : Text {
+                            text: root.apply-text;
+                            color: HveColors.text;
+                            font-size: 11px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    apply-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => {
+                            if (!root.is-busy) {
+                                root.apply-theme(root.theme-name);
+                            }
+                        }
+                    }
+                }
+
+                // Refresh
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 8px;
+                    background: ref-ta.has-hover ? HveColors.accent-purple.transparentize(0.2) : HveColors.accent-purple;
+                    animate background { duration: 150ms; }
+
+                    Text {
+                        text: "↻";
+                        color: HveColors.text;
+                        font-size: 15px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    ref-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.refresh-themes(); }
+                    }
+                }
+
+                // Rename
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 8px;
+                    background: rn-ta.has-hover ? HveColors.accent-amber.transparentize(0.2) : HveColors.accent-amber;
+                    animate background { duration: 150ms; }
+
+                    Text {
+                        text: "✎";
+                        color: HveColors.text;
+                        font-size: 15px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    rn-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.open-rename(root.theme-name); }
+                    }
+                }
+
+                // Delete (siempre rojo, hardcodeado)
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 8px;
+                    background: del-ta.has-hover ? #f87171.transparentize(0.2) : #f87171;
+                    animate background { duration: 150ms; }
+
+                    Text {
+                        text: "✕";
+                        color: HveColors.text;
+                        font-size: 15px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    del-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.open-delete(root.theme-name); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─── THEMES MODULE ──────────────────────────────────────────────────
 export component ThemesModule inherits Rectangle {
     in property <[string]> theme-names;
@@ -540,6 +766,9 @@ export component ThemesModule inherits Rectangle {
     in property <string> provider-noctalia;
     in property <string> provider-hve-presets;
     in property <string> action-overwrite;
+    in property <int> focused-index: -1;
+    in property <bool> is-active: false;
+    callback focus-requested(int);
     in-out property <bool> include-noctalia: true;
     in-out property <bool> include-hve-presets: true;
     callback save-theme(string);
@@ -547,6 +776,8 @@ export component ThemesModule inherits Rectangle {
     callback delete-theme(string);
     callback rename-theme(string, string);
     callback overwrite-theme(string);
+    callback refresh-themes();
+    callback search-query-changed(string);
 
     in-out property <string> dialog-mode: "";
     in-out property <string> dialog-target: "";
@@ -556,10 +787,13 @@ export component ThemesModule inherits Rectangle {
 
     ScrollView {
         vertical-stretch: 1;
+        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
+        animate viewport-y { duration: 400ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
             spacing: 14px;
+            alignment: start; // <--- VITAL: Mantiene los elementos apilados arriba de forma fluida
 
             SectionHeader {
                 title: root.header-title;
@@ -567,6 +801,7 @@ export component ThemesModule inherits Rectangle {
                 accent: HveColors.accent-pink;
             }
 
+            // ── Bloque para guardar tema ──
             Rectangle {
                 height: 48px;
                 border-radius: 10px;
@@ -616,11 +851,10 @@ export component ThemesModule inherits Rectangle {
                 }
             }
 
-            Text {
+            if (root.error-text != "") : Text {
                 text: root.error-text;
                 color: HveColors.accent-red;
                 font-size: 11px;
-                visible: root.error-text != "";
             }
 
             Text {
@@ -630,12 +864,12 @@ export component ThemesModule inherits Rectangle {
                 font-weight: 600;
             }
 
+            // ── Chips "Incluir" con padding dinámico en lugar de width fijo ──
             HorizontalLayout {
                 spacing: 8px;
 
+                // Chip Noctalia
                 Rectangle {
-                    width: 120px;
-                    height: 28px;
                     border-radius: 6px;
                     background: root.include-noctalia ? HveColors.accent-pink.transparentize(0.85) : HveColors.bg-surface;
                     border-width: 1px;
@@ -644,15 +878,17 @@ export component ThemesModule inherits Rectangle {
                     animate border-color { duration: 150ms; }
 
                     HorizontalLayout {
-                        spacing: 6px;
-                        padding-left: 8px;
-                        padding-right: 8px;
+                        spacing: 8px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
                         alignment: center;
 
                         Rectangle {
-                            width: 10px;
-                            height: 10px;
-                            border-radius: 5px;
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
                             background: root.include-noctalia ? HveColors.accent-pink : HveColors.text-muted;
                         }
 
@@ -671,9 +907,8 @@ export component ThemesModule inherits Rectangle {
                     }
                 }
 
+                // Chip Presets HVE
                 Rectangle {
-                    width: 120px;
-                    height: 28px;
                     border-radius: 6px;
                     background: root.include-hve-presets ? HveColors.accent-pink.transparentize(0.85) : HveColors.bg-surface;
                     border-width: 1px;
@@ -682,15 +917,17 @@ export component ThemesModule inherits Rectangle {
                     animate border-color { duration: 150ms; }
 
                     HorizontalLayout {
-                        spacing: 6px;
-                        padding-left: 8px;
-                        padding-right: 8px;
+                        spacing: 8px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
                         alignment: center;
 
                         Rectangle {
-                            width: 10px;
-                            height: 10px;
-                            border-radius: 5px;
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
                             background: root.include-hve-presets ? HveColors.accent-pink : HveColors.text-muted;
                         }
 
@@ -710,38 +947,31 @@ export component ThemesModule inherits Rectangle {
                 }
             }
 
-            Rectangle {
-                height: 36px;
-                border-radius: 8px;
+            // ── Buscador con el mismo padding interno que el bloque de guardar ──
+            if (root.theme-names.length > 0) : Rectangle {
+                height: 48px;
+                border-radius: 10px;
                 background: HveColors.bg-card;
                 border-width: 1px;
                 border-color: HveColors.border;
-                visible: root.theme-names.length > 0;
 
                 HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
+                    padding: 8px;
                     spacing: 8px;
-                    alignment: center;
-
-                    Text {
-                        text: "⌕";
-                        color: HveColors.text-muted;
-                        font-size: 14px;
-                    }
 
                     LineEdit {
                         horizontal-stretch: 1;
                         placeholder-text: root.search-placeholder;
                         font-size: 12px;
                         text <=> root.search-query;
+                        edited => { root.search-query-changed(root.search-query); }
                     }
                 }
             }
 
-            Rectangle {
+            // ── Mensaje de estado vacío ──
+            if (root.theme-names.length == 0) : Rectangle {
                 height: 120px;
-                visible: root.theme-names.length == 0;
 
                 VerticalLayout {
                     spacing: 8px;
@@ -764,167 +994,34 @@ export component ThemesModule inherits Rectangle {
                 }
             }
 
-            for i in root.theme-names.length: Rectangle {
-                height: 56px;
-                border-radius: 10px;
-                background: root.theme-is-actives[i] ? HveColors.bg-hover : HveColors.bg-card;
-                border-width: root.theme-is-actives[i] ? 2px : 1px;
-                border-color: root.theme-is-actives[i] ? HveColors.accent-pink : HveColors.border;
-                visible: true;
-                animate background { duration: 200ms; }
-                animate border-color { duration: 200ms; }
-
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 8px;
-                    spacing: 10px;
-
-                    Rectangle {
-                        width: root.theme-is-actives[i] ? 24px : 0px;
-                        height: 24px;
-                        border-radius: 12px;
-                        background: HveColors.accent-pink;
-                        visible: root.theme-is-actives[i];
-                        opacity: root.theme-is-actives[i] ? 1 : 0;
-                        animate width { duration: 200ms; easing: ease-in-out-back; }
-                        animate opacity { duration: 200ms; }
-
-                        Text {
-                            text: "✓";
-                            color: HveColors.text;
-                            font-size: 12px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        spacing: 2px;
-                        alignment: center;
-
-                        Text {
-                            text: root.theme-names[i];
-                            color: root.theme-is-actives[i] ? HveColors.accent-pink : HveColors.text;
-                            font-size: 13px;
-                            font-weight: 600;
-                            overflow: elide;
-                        }
-
-                        Text {
-                            text: root.theme-saved-ats[i];
-                            color: HveColors.text-muted;
-                            font-size: 10px;
-                            visible: root.theme-saved-ats[i] != "";
-                            overflow: elide;
-                        }
-                    }
-
-                    Rectangle {
-                        width: 70px;
-                        height: 30px;
-                        border-radius: 6px;
-                        background: apply-ta.has-hover ? HveColors.accent-green : HveColors.accent-green.transparentize(0.8);
-                        animate background { duration: 150ms; }
-
-                        Text {
-                            text: root.apply-text;
-                            color: HveColors.accent-green;
-                            font-size: 11px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        apply-ta := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => {
-                                if (!root.is-busy) {
-                                    root.apply-theme(root.theme-names[i]);
-                                }
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: 30px;
-                        height: 30px;
-                        border-radius: 6px;
-                        background: ov-ta.has-hover ? HveColors.bg-hover : transparent;
-                        animate background { duration: 150ms; }
-
-                        Text {
-                            text: "↻";
-                            color: HveColors.text-muted;
-                            font-size: 14px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        ov-ta := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => { root.overwrite-theme(root.theme-names[i]); }
-                        }
-                    }
-
-                    Rectangle {
-                        width: 30px;
-                        height: 30px;
-                        border-radius: 6px;
-                        background: rn-ta.has-hover ? HveColors.bg-hover : transparent;
-                        animate background { duration: 150ms; }
-
-                        Text {
-                            text: "✎";
-                            color: HveColors.text-muted;
-                            font-size: 14px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        rn-ta := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => {
-                                root.rename-input = root.theme-names[i];
-                                root.dialog-target = root.theme-names[i];
-                                root.dialog-mode = "rename";
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: 30px;
-                        height: 30px;
-                        border-radius: 6px;
-                        background: del-ta.has-hover ? HveColors.accent-red.transparentize(0.8) : transparent;
-                        animate background { duration: 150ms; }
-
-                        Text {
-                            text: "✕";
-                            color: del-ta.has-hover ? HveColors.accent-red : HveColors.text-muted;
-                            font-size: 14px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        del-ta := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => {
-                                root.dialog-target = root.theme-names[i];
-                                root.dialog-mode = "delete";
-                            }
-                        }
-                    }
+            // ── Lista de temas ──
+            for i in root.theme-names.length: ThemeItem {
+                theme-name: root.theme-names[i];
+                theme-saved-at: root.theme-saved-ats[i];
+                is-active: root.theme-is-actives[i];
+                is-busy: root.is-busy;
+                keyboard-focused: root.is-active && root.focused-index == i;
+                accent: HveColors.accent-pink;
+                apply-text: root.apply-text;
+                apply-theme(v) => { root.apply-theme(v); }
+                overwrite-theme(v) => { root.overwrite-theme(v); }
+                refresh-themes => { root.refresh-themes(); }
+                open-rename(name) => {
+                    root.rename-input = name;
+                    root.dialog-target = name;
+                    root.dialog-mode = "rename";
                 }
+                open-delete(name) => {
+                    root.dialog-target = name;
+                    root.dialog-mode = "delete";
+                }
+                focus-requested(idx) => { root.focus-requested(idx); }
+                index: i;
             }
         }
     }
 
+    // ── Diálogo de Rename ──
     if root.dialog-mode == "rename": Rectangle {
         width: 100%;
         height: 100%;
@@ -961,11 +1058,10 @@ export component ThemesModule inherits Rectangle {
                     text <=> root.rename-input;
                 }
 
-                Text {
+                if (root.error-text != "") : Text {
                     text: root.error-text;
                     color: HveColors.accent-red;
                     font-size: 11px;
-                    visible: root.error-text != "";
                 }
 
                 HorizontalLayout {
@@ -1029,6 +1125,7 @@ export component ThemesModule inherits Rectangle {
         }
     }
 
+    // ── Diálogo de Delete ──
     if root.dialog-mode == "delete": Rectangle {
         width: 100%;
         height: 100%;

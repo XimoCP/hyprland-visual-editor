@@ -1276,6 +1276,30 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let tm = theme_manager.clone();
+        let weak = window.as_weak();
+        window.on_search_query_changed(move |query| {
+            if let Some(w) = weak.upgrade() {
+                let tm = tm.lock().unwrap();
+                let all = tm.list().unwrap_or_default();
+                let q = query.to_lowercase();
+                let filtered: Vec<_> = all.iter()
+                    .filter(|t| t.name.to_lowercase().contains(&q))
+                    .collect();
+
+                use slint::{ModelRc, SharedString};
+                let names: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.name)).collect();
+                let saved_ats: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.saved_at)).collect();
+                let is_actives: Vec<bool> = filtered.iter().map(|t| t.is_active).collect();
+
+                w.set_theme_names(ModelRc::from(names.as_slice()));
+                w.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
+                w.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
+            }
+        });
+    }
+
     // ── Start color watcher (bash inotify) ──
     // The bash-based watcher uses inotify for efficient file monitoring.
     let _color_watcher = watcher::spawn_color_watcher(&proj);
