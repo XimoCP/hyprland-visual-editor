@@ -534,7 +534,13 @@ export component ThemeItem inherits Rectangle {
     callback focus-requested(int);
     callback refresh-themes();
 
-    property <bool> _expanded: is-active || card-ta.has-hover || keyboard-focused;
+    property <bool> _expanded: is-active 
+    || card-ta.has-hover 
+    || apply-ta.has-hover 
+    || ref-ta.has-hover 
+    || rn-ta.has-hover 
+    || del-ta.has-hover 
+    || keyboard-focused;
 
     height: _expanded ? 100px : 56px;
     border-radius: 10px;
@@ -543,38 +549,28 @@ export component ThemeItem inherits Rectangle {
     border-color: is-active ? accent : ((card-ta.has-hover || keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
     visible: true;
 
-    // TouchArea de fondo solo para capturar foco/hover de la tarjeta
+    // 1. Capa de fondo para el TouchArea de la tarjeta (Eventos de hover/click)
     card-ta := TouchArea {
         width: 100%;
         height: 100%;
     }
 
-    // Glow sutil al estar activo
+
+    // 2. Glow y sombras (Visuales)
     drop-shadow-blur: is-active ? 12px : 0px;
     drop-shadow-color: is-active ? accent.transparentize(0.8) : transparent;
 
-    animate background {
-        duration: 200ms;
-        easing: ease-in-out;
-    }
-    animate border-color {
-        duration: 200ms;
-        easing: ease-in-out;
-    }
-    animate drop-shadow-blur {
-        duration: 300ms;
-        easing: ease-out;
-    }
-    animate height {
-        duration: 250ms;
-        easing: ease-in-out-back;
-    }
+    animate background { duration: 200ms; easing: ease-in-out; }
+    animate border-color { duration: 200ms; easing: ease-in-out; }
+    animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
+    animate height { duration: 250ms; easing: ease-in-out-back; }
 
-    // ── LAYOUT PRINCIPAL (Ocupa todo el ancho) ──
+    // 3. Contenido Visual (El layout principal)
     HorizontalLayout {
         padding-left: 14px;
         padding-right: 14px;
         spacing: 12px;
+
 
         // 1. CHECK DE ACTIVO (Pegado al principio y centrado verticalmente)
         if is-active : VerticalLayout {
@@ -627,35 +623,19 @@ export component ThemeItem inherits Rectangle {
 
                 // Apply
                 Rectangle {
-                    width: apply-ta.has-hover ? 88px : 32px;
+                    width: 32px;
                     height: 32px;
                     border-radius: 8px;
                     background: apply-ta.has-hover ? HveColors.accent-green.transparentize(0.2) : HveColors.accent-green;
-                    animate width { duration: 200ms; easing: ease-in-out-back; }
                     animate background { duration: 150ms; }
                     clip: true;
 
-                    HorizontalLayout {
-                        spacing: 6px;
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        alignment: center;
-
-                        Text {
-                            text: "▶";
-                            color: HveColors.text;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        if apply-ta.has-hover : Text {
-                            text: root.apply-text;
-                            color: HveColors.text;
-                            font-size: 11px;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                        }
+                    Text {
+                        text: "▶";
+                        color: HveColors.text;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
 
                     apply-ta := TouchArea {
