@@ -1149,6 +1149,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        let eng = engine.clone();
         let tm = theme_manager.clone();
         let cfg = cfg.clone();
         let weak = window.as_weak();
@@ -1168,6 +1169,22 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     if let Some(w) = weak.upgrade() {
                         sync_preset_indices(&w, &updated_cfg);
+                        // Re-read colors from the restored files and update the UI
+                        if let Ok(colors) = eng.get_colors() {
+                            let theme_pref = w.get_theme().to_string();
+                            let resolved = theme::resolve_scheme(&colors, &theme_pref);
+                            theme::apply_theme(&w, &resolved);
+                            let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
+                            let secondary = theme::parse_hex(&resolved.secondary);
+                            let tertiary = theme::parse_hex(&resolved.tertiary);
+                            let accent = theme::parse_hex(&resolved.accent);
+                            let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
+                            w.set_logo_image(logo);
+                            let tray_color = theme::lighten(&accent, 0.6);
+                            if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
+                                tray::update_global_icon(icon);
+                            }
+                        }
                         let tm = tm.lock().unwrap();
                         refresh_theme_list(&w, &tm);
                         w.set_home_active_theme_name(name_str.clone().into());
@@ -1265,14 +1282,47 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        let eng = engine.clone();
         let tm = theme_manager.clone();
         let weak = window.as_weak();
         window.on_refresh_themes(move || {
-                    if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap();
-                        refresh_theme_list(&w, &tm);
-                        w.set_home_active_theme_name((&tm.last_applied).clone().into());
+            if let Some(w) = weak.upgrade() {
+                // 1. Re-read colors from the current system state and update the UI
+                if let Ok(colors) = eng.get_colors() {
+                    let theme_pref = w.get_theme().to_string();
+                    let resolved = theme::resolve_scheme(&colors, &theme_pref);
+                    theme::apply_theme(&w, &resolved);
+                    let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
+                    let secondary = theme::parse_hex(&resolved.secondary);
+                    let tertiary = theme::parse_hex(&resolved.tertiary);
+                    let accent = theme::parse_hex(&resolved.accent);
+                    let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
+                    w.set_logo_image(logo);
+                    let tray_color = theme::lighten(&accent, 0.6);
+                    if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
+                        tray::update_global_icon(icon);
                     }
+                }
+
+                // 2. If there's a last applied theme, overwrite it with the current state
+                //    so the ↻ acts as "save current changes to active theme"
+                let provider_ids = {
+                    let mut ids: Vec<String> = Vec::new();
+                    if w.get_include_noctalia() { ids.push("noctalia".into()); }
+                    if w.get_include_hve_presets() { ids.push("hve-presets".into()); }
+                    ids
+                };
+
+                let last = tm.lock().unwrap().last_applied.clone();
+                if !last.is_empty() {
+                    let _ = tm.lock().unwrap().save(&last, &provider_ids);
+                }
+
+                // 3. Refresh the theme list
+                let tm = tm.lock().unwrap();
+                refresh_theme_list(&w, &tm);
+                w.set_home_active_theme_name((&tm.last_applied).clone().into());
+            }
         });
     }
 

@@ -20,6 +20,19 @@ pub trait ThemeProvider: Send + Sync {
 
     /// Restore state from `{theme_dir}/providers/{id}/`.
     fn apply(&self, theme_dir: &Path) -> Result<(), String>;
+
+    /// Optional hook called after all providers have applied successfully.
+    ///
+    /// Each provider defines post-apply actions specific to its shell:
+    /// - Noctalia v4: runs the template-processor to regenerate GTK/QT/terminal themes
+    /// - Noctalia v5: sends IPC to the daemon
+    /// - Other shells: their own refresh mechanism
+    ///
+    /// Default implementation is no-op. Errors are logged but do NOT fail the apply.
+    fn post_apply(&self, theme_name: &str) -> Result<(), String> {
+        let _ = theme_name;
+        Ok(())
+    }
 }
 
 /// Metadata persisted inside each theme directory.
@@ -218,6 +231,20 @@ impl ThemeManager {
         for p in &self.providers {
             if meta.providers.iter().any(|id| id == p.id()) {
                 p.apply(&theme_dir)?;
+            }
+        }
+
+        // Post-apply: each provider runs shell-specific refresh/notification hooks.
+        // Errors are non-fatal — the theme files are already in place.
+        for p in &self.providers {
+            if meta.providers.iter().any(|id| id == p.id()) {
+                if let Err(e) = p.post_apply(&name) {
+                    tracing::warn!(
+                        "[themes] Provider '{}' post_apply warning: {}",
+                        p.id(),
+                        e
+                    );
+                }
             }
         }
 
