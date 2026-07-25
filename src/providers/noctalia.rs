@@ -229,10 +229,23 @@ impl ThemeProvider for NoctaliaV4Provider {
         // rendered files. The IPC call tells Noctalia to set the wallpaper via
         // its internal API — no filesystem race because we're not fighting
         // Noctalia's reactive pipeline.
+        //
+        // IMPORTANT: Entries are sorted with named screens first, empty-string
+        // ("") last. The IPC handler treats screen="" as "all screens", which
+        // would OVERRIDE any named screen entries we just set. So we must:
+        //   - Set named screens individually
+        //   - Only use the empty-string entry if there are NO named screens
         let entries = self.wallpaper_pending.lock().unwrap().clone();
         if !entries.is_empty() {
             tracing::info!("[noctalia] Applying wallpapers via IPC...");
+            let has_named = entries.iter().any(|(s, _)| !s.is_empty());
             for (screen, path) in &entries {
+                // Skip the empty-string default entry when we have named screens.
+                // Setting "" hits all screens and overrides the named ones.
+                if has_named && screen.is_empty() {
+                    tracing::debug!("[noctalia] Skipping empty-screen entry (named screens present)");
+                    continue;
+                }
                 tracing::debug!("[noctalia] IPC apply: screen='{}' path='{}'", screen, path);
                 if let Err(e) = self.shell.apply_wallpaper(Path::new(path), screen) {
                     tracing::warn!("[noctalia] Wallpaper IPC for '{}': {}", screen, e);
