@@ -2,8 +2,9 @@ use crate::providers::shell::{NoctaliaV4Paths, ShellProvider};
 use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
 use serde::Deserialize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 // ── Wallpaper JSON parsing types ─────────────────────────────────────
 
@@ -90,6 +91,22 @@ fn parse_theme_entries(saved_path: &Path) -> Result<Vec<(String, String)>, Strin
     });
 
     Ok(entries)
+}
+
+// ── Color helpers ────────────────────────────────────────────────────
+
+/// Determine if a hex color represents a dark surface (dark mode).
+/// Uses perceived luminance: if the weighted brightness is < 128, it's dark.
+fn is_dark_hex(hex: &str) -> bool {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() < 6 {
+        return true; // default to dark
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32;
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32;
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32;
+    // Perceived luminance: weights reflect human eye sensitivity
+    (0.299 * r + 0.587 * g + 0.114 * b) < 128.0
 }
 
 // ── NoctaliaV4Provider ───────────────────────────────────────────────
@@ -224,11 +241,11 @@ impl ThemeProvider for NoctaliaV4Provider {
 
     fn post_apply(&self, theme_name: &str) -> Result<(), String> {
         // ── Wallpaper IPC ──
-        // We set wallpapers AFTER copying source files in apply(). Noctalia has
-        // already detected colors.json via inotify and started regenerating the
-        // rendered files. The IPC call tells Noctalia to set the wallpaper via
-        // its internal API — no filesystem race because we're not fighting
-        // Noctalia's reactive pipeline.
+        // We set wallpapers AFTER copying source files in apply(). The IPC
+        // goes through Noctalia's WallpaperService, which triggers its own
+        // reactive pipeline via AppThemeService.onWallpaperChanged().
+        // However, that pipeline regenerates templates using the LAST predefined
+        // scheme data, NOT the theme's saved colors. We correct that below.
         //
         // IMPORTANT: Entries are sorted with named screens first, empty-string
         // ("") last. The IPC handler treats screen="" as "all screens", which
@@ -240,8 +257,6 @@ impl ThemeProvider for NoctaliaV4Provider {
             tracing::info!("[noctalia] Applying wallpapers via IPC...");
             let has_named = entries.iter().any(|(s, _)| !s.is_empty());
             for (screen, path) in &entries {
-                // Skip the empty-string default entry when we have named screens.
-                // Setting "" hits all screens and overrides the named ones.
                 if has_named && screen.is_empty() {
                     tracing::debug!("[noctalia] Skipping empty-screen entry (named screens present)");
                     continue;
@@ -253,12 +268,165 @@ impl ThemeProvider for NoctaliaV4Provider {
             }
         }
 
+        // ── Wait for Noctalia's wallpaper-triggered template generation ──
+        // The wallpaper IPC triggers onWallpaperChanged → generateFromPredefinedScheme,
+        // which runs template-processor.py asynchronously via QML Process (debounced
+        // at 150ms). We wait briefly for it to finish so our run below is the last
+        // writer to all template output files.
+        tracing::info!("[noctalia] Waiting for async template generation to settle...");
+        std::thread::sleep(Duration::from_millis(500));
+
+        // ── Regenerate templates with THEME colors ──
+        // After the wallpaper-triggered pipeline finishes, we run Noctalia's
+        // template-processor.py with --scheme using the theme's saved colors.json.
+        // This regenerates GTK, Qt, terminal, and other app templates using the
+        // CORRECT theme colors, overwriting whatever was generated from
+        // lastPredefinedSchemeData by the wallpaper IPC above.
+        //
+        // The scheme JSON is built from the 14 core M3 colors in the theme's
+        // colors.json. The template processor expands them to the full 48-color
+        // palette using expand_predefined_scheme() and renders all enabled templates
+        // (from theming.predefined.toml, which excludes the noctalia colors output).
+        let config_dir = dirs::config_dir()
+            .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
+        let theme_dir = config_dir.join("hve").join("themes").join(theme_name);
+        let provider_dir = theme_dir.join("providers").join(self.id());
+        let saved_colors = provider_dir.join("colors.json");
+
+        if saved_colors.exists() {
+            let raw = match fs::read_to_string(&saved_colors) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("[noctalia] Could not read saved colors.json: {}", e);
+                    return Ok(());
+                }
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("[noctalia] Could not parse saved colors.json: {}", e);
+                    return Ok(());
+                }
+            };
+            let obj = match parsed.as_object() {
+                Some(o) => o,
+                None => {
+                    tracing::warn!("[noctalia] Saved colors.json is not an object");
+                    return Ok(());
+                }
+            };
+
+            // Extract 14 core M3 colors to build a scheme JSON for --scheme
+            let core_keys = [
+                "mPrimary", "mOnPrimary",
+                "mSecondary", "mOnSecondary",
+                "mTertiary", "mOnTertiary",
+                "mError", "mOnError",
+                "mSurface", "mOnSurface",
+                "mSurfaceVariant", "mOnSurfaceVariant",
+                "mOutline",
+            ];
+            let optional_keys = ["mShadow", "mHover"];
+
+            let mut scheme = serde_json::Map::new();
+            for key in &core_keys {
+                if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
+                    scheme.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+                }
+            }
+            for key in &optional_keys {
+                if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
+                    scheme.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+                }
+            }
+
+            let has_primary = scheme.contains_key("mPrimary");
+            let has_surface = scheme.contains_key("mSurface");
+            if !has_primary || !has_surface {
+                tracing::warn!("[noctalia] Saved colors.json missing mPrimary or mSurface");
+                return Ok(());
+            }
+
+            // Detect default mode from surface color luminance
+            let surface_val = obj.get("mSurface").and_then(|v| v.as_str()).unwrap_or("#000000");
+            let default_mode = if is_dark_hex(surface_val) { "dark" } else { "light" };
+
+            let scheme_json = serde_json::to_string_pretty(&serde_json::Value::Object(scheme))
+                .unwrap_or_default();
+
+            let safe_name = theme_name.replace('/', "_");
+            let temp_dir = std::env::temp_dir().join("hve-scheme").join(&safe_name);
+            let _ = fs::create_dir_all(&temp_dir);
+            let scheme_path = temp_dir.join("scheme.json");
+            if fs::write(&scheme_path, &scheme_json).is_err() {
+                tracing::warn!("[noctalia] Could not write temp scheme file");
+                return Ok(());
+            }
+
+            if let Some(tp) = self.shell.template_processor() {
+                // Prefer theming.predefined.toml (no noctalia colors output template).
+                // Fall back to theming.dynamic.toml if predefined doesn't exist.
+                let config_path = self.shell.theming_config().and_then(|p| {
+                    let predefined = p.with_file_name("theming.predefined.toml");
+                    if predefined.exists() {
+                        Some(predefined)
+                    } else if p.exists() {
+                        Some(p)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(tc) = config_path {
+                    tracing::info!(
+                        "[noctalia] Running template processor with theme colors (mode={})...",
+                        default_mode
+                    );
+                    let processor_dir = tp.parent().unwrap_or_else(|| std::path::Path::new("/"));
+                    let result = std::process::Command::new("python3")
+                        .arg(&tp)
+                        .arg("--scheme")
+                        .arg(&scheme_path)
+                        .arg("--config")
+                        .arg(&tc)
+                        .arg("--default-mode")
+                        .arg(default_mode)
+                        .current_dir(processor_dir)
+                        .output();
+
+                    match result {
+                        Ok(out) => {
+                            if out.status.success() {
+                                tracing::info!("[noctalia] Template processor completed successfully");
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                tracing::warn!("[noctalia] Template processor stderr: {}", stderr);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("[noctalia] Could not launch template processor: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!("[noctalia] No theming config found, skipping template processor");
+                }
+            } else {
+                tracing::warn!("[noctalia] Template processor not found, skipping");
+            }
+
+            // Clean up temp scheme file
+            let _ = fs::remove_dir_all(&temp_dir);
+        } else {
+            tracing::debug!("[noctalia] No saved colors.json in theme, skipping template processor");
+        }
+
         // ── System notification ──
         match std::process::Command::new("notify-send")
             .arg("--app-name=HVE")
             .arg(format!("🎨 Tema '{}' aplicado", theme_name))
             .arg(format!(
-                "Theme \"{}\" applied — colors synced to GTK, QT, terminal, and apps",
+                "Theme \"{}\" applied — Noctalia colors + wallpapers restored",
                 theme_name,
             ))
             .output()
@@ -283,6 +451,30 @@ mod tests {
     fn test_noctalia_v4_provider_new() {
         let provider = NoctaliaV4Provider::new();
         assert_eq!(provider.id(), "noctalia");
+    }
+
+    #[test]
+    fn test_is_dark_hex_dark() {
+        assert!(is_dark_hex("#0c1017"));  // very dark blue
+        assert!(is_dark_hex("#000000"));  // pure black
+        assert!(is_dark_hex("#1e1e2e"));  // catppuccin surface
+    }
+
+    #[test]
+    fn test_is_dark_hex_light() {
+        assert!(!is_dark_hex("#ffffff"));  // pure white
+        assert!(!is_dark_hex("#f5f5f5"));  // off-white
+        assert!(!is_dark_hex("#c0c0c0"));  // silver
+    }
+
+    #[test]
+    fn test_is_dark_hex_edge_cases() {
+        // Short hex → default dark
+        assert!(is_dark_hex("#fff"));
+        assert!(is_dark_hex(""));
+        // With and without hash
+        assert!(is_dark_hex("0c1017"));
+        assert!(!is_dark_hex("ffffff"));
     }
 
     // ── Wallpaper parsing tests (moved from wallpaper.rs) ──
