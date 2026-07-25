@@ -142,14 +142,4 @@ impl ThemeProvider for HyprlandSettingsProvider {
         Ok(())
     }
 
-    fn post_apply(&self, _theme_name: &str) -> Result<(), String> {
-        if let Err(e) = std::process::Command::new("hyprctl")
-            .arg("reload")
-            .output()
-            .map(|_| ())
-        {
-            tracing::warn!("[hyprland-settings] hyprctl reload failed: {}", e);
-        }
-        Ok(())
-    }
 }

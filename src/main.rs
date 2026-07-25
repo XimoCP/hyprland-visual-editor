@@ -701,10 +701,9 @@ fn main() -> Result<(), slint::PlatformError> {
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
     let mut theme_manager = crate::theme_manager::ThemeManager::new(&config_dir);
-    theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaProvider::new()));
+    theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
     theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new(engine.clone())));
     theme_manager.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
-    theme_manager.register_provider(Box::new(crate::providers::wallpaper::WallpaperProvider::new(Box::new(crate::providers::noctalia::NoctaliaPaths))));
     // Restore last applied theme from config
     if !cfg!(test) {
         theme_manager.last_applied = cfg.last_applied_theme.clone();
@@ -1163,7 +1162,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let name_str = name.to_string();
             let result = tm.lock().unwrap().apply(&name_str, || {
                 // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
-                // This includes wallpaper IPC which runs during WallpaperProvider::post_apply().
+                // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
                 tracing::info!("[themes] Reloading Hyprland after theme apply...");
                 std::process::Command::new("hyprctl")
                     .arg("reload")

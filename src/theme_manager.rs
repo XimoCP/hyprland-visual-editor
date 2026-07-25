@@ -207,7 +207,7 @@ impl ThemeManager {
             let has_shell = providers.iter().any(|p| p == "noctalia");
             let has_compositor = providers.iter().any(|p| p == "hyprland-settings");
             let has_presets = providers.iter().any(|p| p == "hve-presets");
-            let has_wallpaper = providers.iter().any(|p| p == "wallpaper");
+            let has_wallpaper = providers.iter().any(|p| p == "wallpaper" || p == "noctalia");
             themes.push(ThemeInfo {
                 is_active: name == self.last_applied,
                 saved_at: meta.as_ref().map(|m| m.saved_at.clone()).unwrap_or_default(),
