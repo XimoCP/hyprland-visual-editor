@@ -1114,6 +1114,8 @@ export component ThemesModule inherits Rectangle {
                                 if (root.rename-input != "" && root.rename-input != root.dialog-target) {
                                     root.rename-theme(root.dialog-target, root.rename-input);
                                 }
+                                root.dialog-mode = "";
+                                root.error-text = "";
                             }
                         }
                     }
