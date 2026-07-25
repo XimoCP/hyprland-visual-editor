@@ -123,6 +123,10 @@ export component MainWindow inherits Window {
     in-out property <[string]> theme-names;
     in-out property <[string]> theme-saved-ats;
     in-out property <[bool]> theme-is-actives;
+    in-out property <[bool]> theme-has-shell;
+    in-out property <[bool]> theme-has-compositor;
+    in-out property <[bool]> theme-has-presets;
+    in-out property <[bool]> theme-has-wallpaper;
     in-out property <int> active-theme-index: -1;
     in-out property <bool> theme-busy: false;
     in property <string> theme-header-title;
@@ -137,14 +141,11 @@ export component MainWindow inherits Window {
     in property <string> theme-cancel-text;
     in property <string> theme-confirm-delete;
     in property <string> theme-confirm-delete-msg;
+    in property <string> theme-confirm-refresh;
+    in property <string> theme-confirm-refresh-msg;
+    in property <string> theme-refresh-text;
     in property <string> theme-rename-title;
-    in property <string> theme-include-label;
-    in property <string> theme-provider-noctalia;
-    in property <string> theme-provider-hve-presets;
-    in property <string> theme-action-overwrite;
     in-out property <string> theme-error-text: "";
-    in-out property <bool> include-noctalia: true;
-    in-out property <bool> include-hve-presets: true;
     in-out property <string> home-active-theme-name: "";
 
     // Countdown (auto-minimize cuando pierde foco)
@@ -584,6 +585,10 @@ export component MainWindow inherits Window {
                         theme-names: root.theme-names;
                         theme-saved-ats: root.theme-saved-ats;
                         theme-is-actives: root.theme-is-actives;
+                        theme-has-shell: root.theme-has-shell;
+                        theme-has-compositor: root.theme-has-compositor;
+                        theme-has-presets: root.theme-has-presets;
+                        theme-has-wallpaper: root.theme-has-wallpaper;
                         is-busy: root.theme-busy;
                         focused-index: root.theme-focused-index;
                         is-active: root.active-tab == 4;
@@ -597,16 +602,13 @@ export component MainWindow inherits Window {
                         apply-text: root.theme-apply-text;
                         rename-text: root.theme-rename-text;
                         delete-text: root.theme-delete-text;
+                        refresh-text: root.theme-refresh-text;
                         cancel-text: root.theme-cancel-text;
                         confirm-delete: root.theme-confirm-delete;
                         confirm-delete-msg: root.theme-confirm-delete-msg;
+                        confirm-refresh: root.theme-confirm-refresh;
+                        confirm-refresh-msg: root.theme-confirm-refresh-msg;
                         rename-title: root.theme-rename-title;
-                        include-label: root.theme-include-label;
-                        provider-noctalia: root.theme-provider-noctalia;
-                        provider-hve-presets: root.theme-provider-hve-presets;
-                        action-overwrite: root.theme-action-overwrite;
-                        include-noctalia: root.include-noctalia;
-                        include-hve-presets: root.include-hve-presets;
                         error-text: root.theme-error-text;
                         save-theme(v) => { root.save-theme(v); }
                         apply-theme(v) => { root.apply-theme(v); }

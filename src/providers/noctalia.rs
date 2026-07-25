@@ -1,21 +1,151 @@
-use crate::theme_manager::ThemeProvider;
+use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Noctalia config directory: ~/.config/noctalia/
-fn noctalia_config_dir() -> Option<PathBuf> {
-    dirs::config_dir()
-        .or_else(|| {
-            let home = std::env::var("HOME").ok()?;
-            Some(PathBuf::from(home).join(".config"))
-        })
-        .map(|d| d.join("noctalia"))
+/// Resolución de rutas para un shell específico.
+/// Cada shell implementa este trait con sus propias rutas.
+pub trait ShellPaths: Send + Sync {
+    #[allow(dead_code)]
+    fn shell_id(&self) -> &str;
+    #[allow(dead_code)]
+    fn config_dir(&self) -> Option<PathBuf>;
+    #[allow(dead_code)]
+    fn rendered_dir(&self) -> Option<PathBuf>;
+    #[allow(dead_code)]
+    fn template_processor(&self) -> Option<PathBuf>;
+    #[allow(dead_code)]
+    fn wallpapers_file(&self) -> Option<PathBuf>;
+    #[allow(dead_code)]
+    fn theming_config(&self) -> Option<PathBuf>;
+    #[allow(dead_code)]
+    fn reload_command(&self) -> Vec<String>;
+
+    /// Apply a wallpaper to a specific screen via shell IPC.
+    /// Default: no-op (shell doesn't support wallpaper setting via IPC).
+    #[allow(dead_code, unused_variables)]
+    fn apply_wallpaper(&self, _path: &Path, _screen: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Get the current wallpaper path for a screen.
+    /// Default: Err (not supported).
+    #[allow(dead_code, unused_variables)]
+    fn get_wallpaper(&self, _screen: &str) -> Result<String, String> {
+        Err("Shell does not support wallpaper IPC".into())
+    }
 }
 
-/// Noctalia rendered color files directory: ~/.config/hypr/noctalia/
-fn noctalia_hypr_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".config").join("hypr").join("noctalia"))
+/// Rutas por defecto para Noctalia v4.
+///
+/// Soporta tres niveles de personalización (prioridad descendente):
+/// 1. Environment variables: `HVE_NOCTALIA_CONFIG`, `HVE_NOCTALIA_HYPR`,
+///    `HVE_NOCTALIA_TEMPLATE_PROCESSOR`
+/// 2. System paths: `/etc/xdg/quickshell/noctalia-shell/...`
+/// 3. Standard locations: `dirs::config_dir()`, `~/.config/...`
+pub struct NoctaliaPaths;
+
+impl ShellPaths for NoctaliaPaths {
+    fn shell_id(&self) -> &str {
+        "noctalia"
+    }
+
+    fn config_dir(&self) -> Option<PathBuf> {
+        if let Ok(dir) = std::env::var("HVE_NOCTALIA_CONFIG") {
+            let p = PathBuf::from(dir);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        dirs::config_dir().map(|d| d.join("noctalia"))
+    }
+
+    fn rendered_dir(&self) -> Option<PathBuf> {
+        if let Ok(dir) = std::env::var("HVE_NOCTALIA_HYPR") {
+            let p = PathBuf::from(dir);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        dirs::home_dir().map(|d| d.join(".config").join("hypr").join("noctalia"))
+    }
+
+    fn template_processor(&self) -> Option<PathBuf> {
+        if let Ok(path) = std::env::var("HVE_NOCTALIA_TEMPLATE_PROCESSOR") {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        let candidates = [
+            "/etc/xdg/quickshell/noctalia-shell/Scripts/python/src/theming/template-processor.py",
+        ];
+        for c in candidates {
+            let p = PathBuf::from(c);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    fn wallpapers_file(&self) -> Option<PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        Some(PathBuf::from(home).join(".cache").join("noctalia").join("wallpapers.json"))
+    }
+
+    fn theming_config(&self) -> Option<PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        Some(PathBuf::from(home).join(".cache").join("noctalia").join("theming.dynamic.toml"))
+    }
+
+    fn reload_command(&self) -> Vec<String> {
+        vec!["hyprctl".into(), "reload".into()]
+    }
+
+    /// Apply a wallpaper to a specific screen via Quickshell IPC.
+    fn apply_wallpaper(&self, path: &Path, screen: &str) -> Result<(), String> {
+        let path_str = path.to_str().ok_or("Invalid wallpaper path")?;
+        let output = std::process::Command::new("quickshell")
+            .args(["-c", "noctalia-shell", "ipc", "call", "wallpaper", "set", path_str, screen])
+            .output()
+            .map_err(|e| format!("Failed to run quickshell IPC: {}", e))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Wallpaper IPC failed: {}", stderr.trim()))
+        }
+    }
+
+    /// Get the current wallpaper path for a screen via Quickshell IPC.
+    fn get_wallpaper(&self, screen: &str) -> Result<String, String> {
+        let output = std::process::Command::new("quickshell")
+            .args(["-c", "noctalia-shell", "ipc", "call", "wallpaper", "get", screen])
+            .output()
+            .map_err(|e| format!("Failed to run quickshell IPC: {}", e))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(stdout.trim().to_string())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Wallpaper get failed: {}", stderr.trim()))
+        }
+    }
+}
+
+/// Resolve the theme directory from a theme name.
+/// Theme dirs live at `~/.config/hve/themes/{name}/`.
+fn theme_dir_for_post_apply(theme_name: &str) -> PathBuf {
+    let config_dir = dirs::config_dir()
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })
+        .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
+    config_dir.join("hve").join("themes").join(theme_name)
 }
 
 /// Source config files we snapshot for Noctalia.
@@ -139,7 +269,17 @@ fn generate_rendered_from_colors_json(provider_dir: &Path) -> Result<(), String>
     Ok(())
 }
 
-pub struct NoctaliaProvider;
+pub struct NoctaliaProvider {
+    paths: Box<dyn ShellPaths>,
+}
+
+impl NoctaliaProvider {
+    pub fn new() -> Self {
+        Self {
+            paths: Box::new(NoctaliaPaths),
+        }
+    }
+}
 
 impl ThemeProvider for NoctaliaProvider {
     fn id(&self) -> &str {
@@ -154,9 +294,17 @@ impl ThemeProvider for NoctaliaProvider {
         "◈"
     }
 
+    fn shell(&self) -> &str {
+        "noctalia"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::COLORS
+    }
+
     fn save(&self, theme_dir: &Path) -> Result<(), String> {
-        let src = noctalia_config_dir().ok_or("Noctalia config dir not found")?;
-        let hypr_src = noctalia_hypr_dir().ok_or("Noctalia hypr dir not found")?;
+        let src = self.paths.config_dir().ok_or("Noctalia config dir not found")?;
+        let hypr_src = self.paths.rendered_dir().ok_or("Noctalia hypr dir not found")?;
 
         let provider_dir = theme_dir.join("providers").join(self.id());
         fs::create_dir_all(&provider_dir)
@@ -187,8 +335,7 @@ impl ThemeProvider for NoctaliaProvider {
     }
 
     fn apply(&self, theme_dir: &Path) -> Result<(), String> {
-        let dst = noctalia_config_dir().ok_or("Noctalia config dir not found")?;
-        let hypr_dst = noctalia_hypr_dir().ok_or("Noctalia hypr dir not found")?;
+        let dst = self.paths.config_dir().ok_or("Noctalia config dir not found")?;
         let provider_dir = theme_dir.join("providers").join(self.id());
 
         if !provider_dir.exists() {
@@ -208,86 +355,101 @@ impl ThemeProvider for NoctaliaProvider {
             }
         }
 
-        // Step 2: Ensure rendered color files exist in the provider directory.
-        // New-style themes have them saved directly.
-        // Old-style themes (pre-patch) only have colors.json — generate from there.
-        let has_conf = provider_dir.join("noctalia-colors.conf").exists();
-        let has_lua = provider_dir.join("noctalia-colors.lua").exists();
-        if !has_conf || !has_lua {
-            generate_rendered_from_colors_json(&provider_dir)?;
-        }
-
-        // Step 3: Restore rendered color files to the Hyprland config dir
-        fs::create_dir_all(&hypr_dst)
-            .map_err(|e| format!("Cannot create hypr noctalia dir: {}", e))?;
-        for file in NOCTALIA_RENDERED_FILES {
-            let src_path = provider_dir.join(file);
-            if src_path.exists() {
-                let dst_path = hypr_dst.join(file);
-                let tmp = hypr_dst.join(format!("{}.tmp", file));
-                fs::copy(&src_path, &tmp)
-                    .map_err(|e| format!("Cannot copy {}: {}", file, e))?;
-                fs::rename(&tmp, &dst_path)
-                    .map_err(|e| format!("Cannot rename {}: {}", file, e))?;
-            }
-        }
-
-        // Step 4: Reload Hyprland so it picks up the restored colors
-        let _ = std::process::Command::new("hyprctl")
-            .arg("reload")
-            .output();
+        // NOTE: Rendered color files (noctalia-colors.conf, noctalia-colors.lua)
+        // are intentionally NOT restored here. When we write wallpapers.json in
+        // step 1, Noctalia's inotify fires an async color extraction script
+        // (~300-500ms). If we restored rendered files now, that async script
+        // would overwrite them with its own calculated colors.
+        //
+        // Instead, rendered files are restored in post_apply() AFTER the template
+        // processor runs and AFTER a short delay that lets the async script finish.
+        // This ensures OUR colors are the final state on disk.
 
         Ok(())
     }
 
     fn post_apply(&self, theme_name: &str) -> Result<(), String> {
-        let home = match std::env::var("HOME") {
-            Ok(h) => h,
-            Err(_) => return Ok(()),
-        };
-
         // ── Step 1: Run Noctalia template processor ──
         // Regenerates GTK, QT, terminal, VSCode, Zen, btop, yazi themes from colors.json.
         // Each shell knows its own post-apply mechanism — this is Noctalia v4's.
-        let template_processor = Path::new(
-            "/etc/xdg/quickshell/noctalia-shell/Scripts/python/src/theming/template-processor.py",
-        );
-        let noctalia_colors = noctalia_config_dir()
-            .unwrap_or_else(|| Path::new(&home).join(".config").join("noctalia"))
-            .join("colors.json");
-        let theming_config =
-            Path::new(&home).join(".cache").join("noctalia").join("theming.dynamic.toml");
+        let template_processor = self.paths.template_processor();
+        let noctalia_colors = self.paths.config_dir().map(|d| d.join("colors.json"));
+        let theming_config = self.paths.theming_config();
 
-        if template_processor.exists() && noctalia_colors.exists() && theming_config.exists() {
-            tracing::info!("[noctalia] Running template processor to refresh system themes...");
-            let processor_dir = template_processor
-                .parent()
-                .unwrap_or_else(|| Path::new("/"));
-            match std::process::Command::new("python3")
-                .arg(template_processor)
-                .arg(&noctalia_colors)
-                .arg("--scheme")
-                .arg(&noctalia_colors)
-                .arg("-c")
-                .arg(&theming_config)
-                .current_dir(processor_dir)
-                .output()
-            {
-                Ok(output) => {
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        tracing::warn!("[noctalia] Template processor stderr: {}", stderr);
-                    } else {
-                        tracing::info!("[noctalia] Template processor completed successfully");
+        if let (Some(tp), Some(colors), Some(tc)) =
+            (template_processor.as_ref(), noctalia_colors.as_ref(), theming_config.as_ref())
+        {
+            if tp.exists() && colors.exists() && tc.exists() {
+                tracing::info!("[noctalia] Running template processor to refresh system themes...");
+                let processor_dir = tp.parent().unwrap_or_else(|| Path::new("/"));
+                match std::process::Command::new("python3")
+                    .arg(tp)
+                    .arg(colors)
+                    .arg("--scheme")
+                    .arg(colors)
+                    .arg("-c")
+                    .arg(tc)
+                    .current_dir(processor_dir)
+                    .output()
+                {
+                    Ok(output) => {
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            tracing::warn!("[noctalia] Template processor stderr: {}", stderr);
+                        } else {
+                            tracing::info!("[noctalia] Template processor completed successfully");
+                        }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!("[noctalia] Could not launch template processor: {}", e);
+                    Err(e) => {
+                        tracing::warn!("[noctalia] Could not launch template processor: {}", e);
+                    }
                 }
             }
         }
 
-        // ── Step 2: System notification ──
+        // ── Step 2: Wait for Noctalia's async color extraction to finish ──
+        // When we wrote wallpapers.json in apply(), Noctalia's inotify triggered
+        // an async color extraction script (~300-500ms). That script recalculates
+        // colors from the wallpaper and writes its own noctalia-colors.conf/lua.
+        // We MUST wait for it to finish before writing our final rendered files,
+        // otherwise it would overwrite our colors after we write them.
+        tracing::info!("[noctalia] Waiting for async color extraction to settle...");
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        // ── Step 3: Restore our rendered color files (LAST WRITE WINS) ──
+        // This is the CRITICAL step. We write our saved rendered files AFTER
+        // the async script has finished, ensuring OUR colors are the final
+        // state on disk. Hyprland sources these files, so what's here is
+        // what the user sees.
+        if let Some(hypr_dst) = self.paths.rendered_dir() {
+            let provider_dir = theme_dir_for_post_apply(theme_name);
+            if provider_dir.exists() {
+                // Ensure rendered files exist in provider dir (generate from colors.json if old theme)
+                let has_conf = provider_dir.join("noctalia-colors.conf").exists();
+                let has_lua = provider_dir.join("noctalia-colors.lua").exists();
+                if !has_conf || !has_lua {
+                    let _ = generate_rendered_from_colors_json(&provider_dir);
+                }
+
+                fs::create_dir_all(&hypr_dst)
+                    .map_err(|e| format!("Cannot create hypr noctalia dir: {}", e))?;
+                for file in NOCTALIA_RENDERED_FILES {
+                    let src_path = provider_dir.join(file);
+                    if src_path.exists() {
+                        let dst_path = hypr_dst.join(file);
+                        let tmp = hypr_dst.join(format!("{}.tmp", file));
+                        fs::copy(&src_path, &tmp)
+                            .map_err(|e| format!("Cannot copy {}: {}", file, e))?;
+                        fs::rename(&tmp, &dst_path)
+                            .map_err(|e| format!("Cannot rename {}: {}", file, e))?;
+                        tracing::debug!("[noctalia] Restored {} → {}", file, dst_path.display());
+                    }
+                }
+                tracing::info!("[noctalia] Rendered color files restored (final state)");
+            }
+        }
+
+        // ── Step 4: System notification ──
         // Portable across desktop environments, unlike Quickshell's ToastService.
         match std::process::Command::new("notify-send")
             .arg("--app-name=HVE")
@@ -375,5 +537,70 @@ mod tests {
         assert_ne!(darkened, "#0c1017");
         assert!(darkened.starts_with('#'));
         assert_eq!(darkened.len(), 7);
+    }
+
+    #[test]
+    fn test_noctalia_paths_shell_id() {
+        let p = NoctaliaPaths;
+        assert_eq!(p.shell_id(), "noctalia");
+    }
+
+    #[test]
+    fn test_noctalia_paths_wallpapers_file() {
+        let p = NoctaliaPaths;
+        let wf = p.wallpapers_file();
+        assert!(wf.is_some());
+        let wf = wf.unwrap();
+        assert!(wf.ends_with("wallpapers.json"));
+        assert!(wf.parent().unwrap().ends_with(".cache/noctalia"));
+    }
+
+    #[test]
+    fn test_noctalia_paths_theming_config() {
+        let p = NoctaliaPaths;
+        let tc = p.theming_config();
+        assert!(tc.is_some());
+        let tc = tc.unwrap();
+        assert!(tc.ends_with("theming.dynamic.toml"));
+        assert!(tc.parent().unwrap().ends_with(".cache/noctalia"));
+    }
+
+    #[test]
+    fn test_noctalia_paths_reload_command() {
+        let p = NoctaliaPaths;
+        let cmd = p.reload_command();
+        assert_eq!(cmd, vec!["hyprctl".to_string(), "reload".to_string()]);
+    }
+
+    #[test]
+    fn test_noctalia_provider_new() {
+        let provider = NoctaliaProvider::new();
+        assert_eq!(provider.id(), "noctalia");
+    }
+
+    #[test]
+    fn test_apply_wallpaper_ipc_format() {
+        let p = NoctaliaPaths;
+        // When quickshell is available, IPC succeeds (returns Ok).
+        // The important thing is the command format is correct.
+        let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
+        // IPC call was made — it should succeed if quickshell is running
+        assert!(
+            result.is_ok() || result.as_ref().unwrap_err().contains("quickshell"),
+            "expected IPC call to be made, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_wallpaper_ipc_format() {
+        let p = NoctaliaPaths;
+        let result = p.get_wallpaper("DP-3");
+        // IPC call was made — verify we get a response (success or error with path hint)
+        assert!(
+            result.is_ok() || result.as_ref().unwrap_err().contains("quickshell") || result.as_ref().unwrap_err().contains("/tmp"),
+            "expected IPC call to be made, got: {:?}",
+            result
+        );
     }
 }

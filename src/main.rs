@@ -10,6 +10,7 @@ mod theme;
 mod theme_manager;
 mod tr;
 mod tray;
+mod utils;
 mod watcher;
 
 use clap::Parser;
@@ -62,7 +63,8 @@ fn project_dir() -> PathBuf {
 /// Create or update the autostart desktop entry at
 /// `~/.config/autostart/hve.desktop`.
 /// Detect whether HVE is in lua or conf mode by reading the format cache.
-fn hve_format() -> &'static str {
+#[allow(dead_code)]
+pub fn hve_format() -> &'static str {
     use std::sync::OnceLock;
     static CACHE: OnceLock<String> = OnceLock::new();
     CACHE.get_or_init(|| {
@@ -75,7 +77,8 @@ fn hve_format() -> &'static str {
 }
 
 /// HVE cache directory: ~/.cache/hve/
-fn hve_cache_dir() -> PathBuf {
+#[allow(dead_code)]
+pub fn hve_cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| {
             let home = std::env::var("HOME").unwrap_or_default();
@@ -88,7 +91,8 @@ fn hve_cache_dir() -> PathBuf {
 /// This file controls HVE's window rules and keyboard shortcuts.
 /// Replaces the old hve-windowrules.{lua,conf} naming.
 /// Migrates the old file to the new name on first call if it exists.
-fn hve_settings_path() -> PathBuf {
+#[allow(dead_code)]
+pub fn hve_settings_path() -> PathBuf {
     let ext = if hve_format() == "lua" { "lua" } else { "conf" };
     let new_path = hve_cache_dir().join(format!("hve-settings.{}", ext));
     let old_path = hve_cache_dir().join(format!("hve-windowrules.{}", ext));
@@ -112,7 +116,8 @@ fn hve_settings_path() -> PathBuf {
 
 /// Ensure the settings file exists with a default float rule and empty keybinds section.
 /// Called once at startup — does NOT overwrite an existing file.
-fn ensure_settings_file() {
+#[allow(dead_code)]
+pub fn ensure_settings_file() {
     let path = hve_settings_path();
     if path.exists() {
         return;
@@ -575,10 +580,18 @@ fn refresh_theme_list(
     let names: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.name)).collect();
     let saved_ats: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.saved_at)).collect();
     let is_actives: Vec<bool> = themes.iter().map(|t| t.is_active).collect();
+    let has_shell: Vec<bool> = themes.iter().map(|t| t.has_shell).collect();
+    let has_compositor: Vec<bool> = themes.iter().map(|t| t.has_compositor).collect();
+    let has_presets: Vec<bool> = themes.iter().map(|t| t.has_presets).collect();
+    let has_wallpaper: Vec<bool> = themes.iter().map(|t| t.has_wallpaper).collect();
 
     window.set_theme_names(ModelRc::from(names.as_slice()));
     window.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
     window.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
+    window.set_theme_has_shell(ModelRc::from(has_shell.as_slice()));
+    window.set_theme_has_compositor(ModelRc::from(has_compositor.as_slice()));
+    window.set_theme_has_presets(ModelRc::from(has_presets.as_slice()));
+    window.set_theme_has_wallpaper(ModelRc::from(has_wallpaper.as_slice()));
 
     // Update active theme index
     let active_idx = themes.iter().position(|t| t.is_active).map(|i| i as i32).unwrap_or(-1);
@@ -688,8 +701,10 @@ fn main() -> Result<(), slint::PlatformError> {
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
     let mut theme_manager = crate::theme_manager::ThemeManager::new(&config_dir);
-    theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaProvider));
+    theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaProvider::new()));
     theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new(engine.clone())));
+    theme_manager.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
+    theme_manager.register_provider(Box::new(crate::providers::wallpaper::WallpaperProvider::new(Box::new(crate::providers::noctalia::NoctaliaPaths))));
     // Restore last applied theme from config
     if !cfg!(test) {
         theme_manager.last_applied = cfg.last_applied_theme.clone();
@@ -789,11 +804,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_theme_cancel_text(tr.tr_shared("common.cancel", "Cancel"));
     window.set_theme_confirm_delete(tr.tr_shared("themes.confirm_delete", "Delete theme"));
     window.set_theme_confirm_delete_msg(tr.tr_shared("themes.confirm_delete_msg", "Are you sure you want to delete"));
+    window.set_theme_confirm_refresh(tr.tr_shared("themes.confirm_refresh", "Refresh theme"));
+    window.set_theme_confirm_refresh_msg(tr.tr_shared("themes.confirm_refresh_msg", "This will reload the theme with the current configuration. Continue?"));
+    window.set_theme_refresh_text(tr.tr_shared("themes.refresh", "Refresh"));
     window.set_theme_rename_title(tr.tr_shared("themes.rename_title", "Rename theme"));
-    window.set_theme_include_label(tr.tr_shared("themes.include", "Include:"));
-    window.set_theme_provider_noctalia(tr.tr_shared("themes.provider.noctalia", "Noctalia"));
-    window.set_theme_provider_hve_presets(tr.tr_shared("themes.provider.hve-presets", "HVE Presets"));
-    window.set_theme_action_overwrite(tr.tr_shared("themes.action_overwrite", "Overwrite"));
 
     // ── Dynamic theme + logo + tray icon ──
     let tray_handle = match engine.get_colors() {
@@ -1117,15 +1131,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_save_theme(move |name| {
             let name_str = name.to_string();
-            let provider_ids = {
-                let w = weak.upgrade();
-                w.map(|win| {
-                    let mut ids: Vec<String> = Vec::new();
-                    if win.get_include_noctalia() { ids.push("noctalia".into()); }
-                    if win.get_include_hve_presets() { ids.push("hve-presets".into()); }
-                    ids
-                }).unwrap_or_default()
-            };
+            let provider_ids = tm.lock().unwrap().provider_ids();
 
             let result = tm.lock().unwrap().save(&name_str, &provider_ids);
             match result {
@@ -1155,7 +1161,16 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_apply_theme(move |name| {
             let name_str = name.to_string();
-            let result = tm.lock().unwrap().apply(&name_str);
+            let result = tm.lock().unwrap().apply(&name_str, || {
+                // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
+                // This includes wallpaper IPC which runs during WallpaperProvider::post_apply().
+                tracing::info!("[themes] Reloading Hyprland after theme apply...");
+                std::process::Command::new("hyprctl")
+                    .arg("reload")
+                    .output()
+                    .map(|_| ())
+                    .map_err(|e| format!("hyprctl reload failed: {e}"))
+            });
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Applied theme: {}", name_str);
@@ -1250,15 +1265,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_overwrite_theme(move |name| {
             let name_str = name.to_string();
-            let provider_ids = {
-                let w = weak.upgrade();
-                w.map(|win| {
-                    let mut ids: Vec<String> = Vec::new();
-                    if win.get_include_noctalia() { ids.push("noctalia".into()); }
-                    if win.get_include_hve_presets() { ids.push("hve-presets".into()); }
-                    ids
-                }).unwrap_or_default()
-            };
+            let provider_ids = tm.lock().unwrap().provider_ids();
 
             let result = tm.lock().unwrap().save(&name_str, &provider_ids);
             match result {
@@ -1306,12 +1313,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 // 2. If there's a last applied theme, overwrite it with the current state
                 //    so the ↻ acts as "save current changes to active theme"
-                let provider_ids = {
-                    let mut ids: Vec<String> = Vec::new();
-                    if w.get_include_noctalia() { ids.push("noctalia".into()); }
-                    if w.get_include_hve_presets() { ids.push("hve-presets".into()); }
-                    ids
-                };
+                let provider_ids = tm.lock().unwrap().provider_ids();
 
                 let last = tm.lock().unwrap().last_applied.clone();
                 if !last.is_empty() {

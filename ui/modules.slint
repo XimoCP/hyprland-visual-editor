@@ -9,6 +9,7 @@ import {
     AccordionCard,
     NavCard,
     AboutItem,
+    IconButton,
 } from "./components.slint";
 
 // ─── HOME MODULE ────────────────────────────────────────────────────
@@ -523,30 +524,31 @@ export component ThemeItem inherits Rectangle {
     in property <string> theme-saved-at;
     in property <bool> is-active: false;
     in property <bool> is-busy: false;
+    in property <bool> apply-in-progress: false;
     in property <bool> keyboard-focused: false;
     in property <color> accent;
     in property <string> apply-text;
+    in property <bool> has-shell: false;
+    in property <bool> has-compositor: false;
+    in property <bool> has-presets: false;
+    in property <bool> has-wallpaper: false;
     in property <int> index: 0;
     callback apply-theme(string);
     callback overwrite-theme(string);
     callback open-rename(string);
     callback open-delete(string);
+    callback open-refresh(string);
     callback focus-requested(int);
     callback refresh-themes();
 
-    property <bool> _expanded: is-active 
-    || card-ta.has-hover 
-    || apply-ta.has-hover 
-    || ref-ta.has-hover 
-    || rn-ta.has-hover 
-    || del-ta.has-hover 
-    || keyboard-focused;
+    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover || ref-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
+    property <bool> _expanded: is-active || is-hovered || keyboard-focused;
 
     height: _expanded ? 100px : 56px;
     border-radius: 10px;
-    background: is-active ? HveColors.bg-hover : (card-ta.has-hover || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
+    background: is-active ? HveColors.bg-hover : (is-hovered || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
     border-width: is-active ? 2px : 1px;
-    border-color: is-active ? accent : ((card-ta.has-hover || keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
+    border-color: is-active ? accent : ((is-hovered || keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
     visible: true;
 
     // 1. Capa de fondo para el TouchArea de la tarjeta (Eventos de hover/click)
@@ -614,6 +616,128 @@ export component ThemeItem inherits Rectangle {
             }
         }
 
+        // 2.5 CAPABILITY BADGES
+            if root.has-shell || root.has-compositor || root.has-presets || root.has-wallpaper : HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+
+            if root.has-shell : Rectangle {
+                height: 16px;
+                border-radius: 8px;
+                background: HveColors.accent-pink.transparentize(0.8);
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: center;
+
+                    Text {
+                        text: "◈";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-pink;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "Shell";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-pink;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.has-compositor : Rectangle {
+                height: 16px;
+                border-radius: 8px;
+                background: HveColors.accent-amber.transparentize(0.8);
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: center;
+
+                    Text {
+                        text: "⚙";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-amber;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "Compositor";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-amber;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.has-presets : Rectangle {
+                height: 16px;
+                border-radius: 8px;
+                background: HveColors.accent-purple.transparentize(0.8);
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: center;
+
+                    Text {
+                        text: "◆";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-purple;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "Presets";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-purple;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.has-wallpaper : Rectangle {
+                height: 16px;
+                border-radius: 8px;
+                background: HveColors.accent-green.transparentize(0.8);
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+
+                    Text {
+                        text: "🖼";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-green;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "Wallpaper";
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: HveColors.accent-green;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
         // 3. BOTONES DE ACCIÓN (Pegados al final y centrados verticalmente)
         VerticalLayout {
             alignment: center; // Asegura centrado Y independientemente de la altura de la tarjeta
@@ -621,102 +745,42 @@ export component ThemeItem inherits Rectangle {
             HorizontalLayout {
                 spacing: 6px;
 
-                // Apply
-                Rectangle {
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 8px;
-                    background: apply-ta.has-hover ? HveColors.accent-green.transparentize(0.2) : HveColors.accent-green;
-                    animate background { duration: 150ms; }
-                    clip: true;
-
-                    Text {
-                        text: "▶";
-                        color: HveColors.text;
-                        font-size: 12px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    apply-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => {
-                            if (!root.is-busy) {
-                                root.apply-theme(root.theme-name);
-                            }
-                        }
+                // Aplicar
+                apply-btn := IconButton {
+                    icon: "▶";
+                    bg-color: HveColors.accent-green;
+                    tooltip-text: "Apply theme";
+                    disabled: root.is-busy || root.apply-in-progress;
+                    clicked => {
+                        root.apply-theme(root.theme-name);
                     }
                 }
 
-                // Refresh
-                Rectangle {
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 8px;
-                    background: ref-ta.has-hover ? HveColors.accent-purple.transparentize(0.2) : HveColors.accent-purple;
-                    animate background { duration: 150ms; }
-
-                    Text {
-                        text: "↻";
-                        color: HveColors.text;
-                        font-size: 15px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    ref-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.refresh-themes(); }
-                    }
+                // Recargar / Resetear
+                ref-btn := IconButton {
+                    icon: "↻";
+                    bg-color: HveColors.accent-purple;
+                    hover-bg-color: HveColors.accent-purple.transparentize(0.2);
+                    tooltip-text: "Refresh";
+                    clicked => { root.open-refresh(root.theme-name); }
                 }
 
-                // Rename
-                Rectangle {
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 8px;
-                    background: rn-ta.has-hover ? HveColors.accent-amber.transparentize(0.2) : HveColors.accent-amber;
-                    animate background { duration: 150ms; }
-
-                    Text {
-                        text: "✎";
-                        color: HveColors.text;
-                        font-size: 15px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    rn-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.open-rename(root.theme-name); }
-                    }
+                // Renombrar
+                rn-btn := IconButton {
+                    icon: "✎";
+                    bg-color: HveColors.accent-amber;
+                    hover-bg-color: HveColors.accent-amber.transparentize(0.2);
+                    tooltip-text: "Renombrar";
+                    clicked => { root.open-rename(root.theme-name); }
                 }
 
-                // Delete (siempre rojo, hardcodeado)
-                Rectangle {
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 8px;
-                    background: del-ta.has-hover ? #f87171.transparentize(0.2) : #f87171;
-                    animate background { duration: 150ms; }
-
-                    Text {
-                        text: "✕";
-                        color: HveColors.text;
-                        font-size: 15px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    del-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.open-delete(root.theme-name); }
-                    }
+                // Borrar
+                del-btn := IconButton {
+                    icon: "✕";
+                    bg-color: #f87171;
+                    hover-bg-color: #f87171.transparentize(0.2);
+                    tooltip-text: "Eliminar";
+                    clicked => { root.open-delete(root.theme-name); }
                 }
             }
         }
@@ -728,6 +792,10 @@ export component ThemesModule inherits Rectangle {
     in property <[string]> theme-names;
     in property <[string]> theme-saved-ats;
     in property <[bool]> theme-is-actives;
+    in property <[bool]> theme-has-shell;
+    in property <[bool]> theme-has-compositor;
+    in property <[bool]> theme-has-presets;
+    in property <[bool]> theme-has-wallpaper;
     in property <bool> is-busy: false;
     in property <string> header-title;
     in property <string> header-subtitle;
@@ -738,19 +806,16 @@ export component ThemesModule inherits Rectangle {
     in property <string> apply-text;
     in property <string> rename-text;
     in property <string> delete-text;
+    in property <string> refresh-text;
     in property <string> cancel-text;
     in property <string> confirm-delete;
     in property <string> confirm-delete-msg;
+    in property <string> confirm-refresh;
+    in property <string> confirm-refresh-msg;
     in property <string> rename-title;
-    in property <string> include-label;
-    in property <string> provider-noctalia;
-    in property <string> provider-hve-presets;
-    in property <string> action-overwrite;
     in property <int> focused-index: -1;
     in property <bool> is-active: false;
     callback focus-requested(int);
-    in-out property <bool> include-noctalia: true;
-    in-out property <bool> include-hve-presets: true;
     callback save-theme(string);
     callback apply-theme(string);
     callback delete-theme(string);
@@ -764,6 +829,7 @@ export component ThemesModule inherits Rectangle {
     in-out property <string> rename-input: "";
     in-out property <string> error-text: "";
     in-out property <string> search-query: "";
+    in-out property <bool> apply-in-progress: false;
 
     ScrollView {
         vertical-stretch: 1;
@@ -781,7 +847,14 @@ export component ThemesModule inherits Rectangle {
                 accent: HveColors.accent-pink;
             }
 
-            // ── Bloque para guardar tema ──
+            // ── Save Section ──
+            Text {
+                text: "Guardar Estado Actual";
+                color: HveColors.text-muted;
+                font-size: 12px;
+                font-weight: 600;
+            }
+
             Rectangle {
                 height: 48px;
                 border-radius: 10px;
@@ -837,94 +910,25 @@ export component ThemesModule inherits Rectangle {
                 font-size: 11px;
             }
 
-            Text {
-                text: root.include-label;
-                color: HveColors.text-muted;
-                font-size: 11px;
-                font-weight: 600;
+            // ── Divider ──
+            Rectangle {
+                height: 1px;
+                background: HveColors.border;
+                vertical-stretch: 0;
             }
 
-            // ── Chips "Incluir" con padding dinámico en lugar de width fijo ──
-            HorizontalLayout {
-                spacing: 8px;
+            Rectangle {
+                width: 100%;
+                height: 8px;
+                visible: true;
+            }
 
-                // Chip Noctalia
-                Rectangle {
-                    border-radius: 6px;
-                    background: root.include-noctalia ? HveColors.accent-pink.transparentize(0.85) : HveColors.bg-surface;
-                    border-width: 1px;
-                    border-color: root.include-noctalia ? HveColors.accent-pink.transparentize(0.5) : HveColors.border;
-                    animate background { duration: 150ms; }
-                    animate border-color { duration: 150ms; }
-
-                    HorizontalLayout {
-                        spacing: 8px;
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        padding-top: 6px;
-                        padding-bottom: 6px;
-                        alignment: center;
-
-                        Rectangle {
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
-                            background: root.include-noctalia ? HveColors.accent-pink : HveColors.text-muted;
-                        }
-
-                        Text {
-                            text: root.provider-noctalia;
-                            color: root.include-noctalia ? HveColors.text : HveColors.text-muted;
-                            font-size: 11px;
-                            font-weight: 600;
-                        }
-                    }
-
-                    TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.include-noctalia = !root.include-noctalia; }
-                    }
-                }
-
-                // Chip Presets HVE
-                Rectangle {
-                    border-radius: 6px;
-                    background: root.include-hve-presets ? HveColors.accent-pink.transparentize(0.85) : HveColors.bg-surface;
-                    border-width: 1px;
-                    border-color: root.include-hve-presets ? HveColors.accent-pink.transparentize(0.5) : HveColors.border;
-                    animate background { duration: 150ms; }
-                    animate border-color { duration: 150ms; }
-
-                    HorizontalLayout {
-                        spacing: 8px;
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        padding-top: 6px;
-                        padding-bottom: 6px;
-                        alignment: center;
-
-                        Rectangle {
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
-                            background: root.include-hve-presets ? HveColors.accent-pink : HveColors.text-muted;
-                        }
-
-                        Text {
-                            text: root.provider-hve-presets;
-                            color: root.include-hve-presets ? HveColors.text : HveColors.text-muted;
-                            font-size: 11px;
-                            font-weight: 600;
-                        }
-                    }
-
-                    TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.include-hve-presets = !root.include-hve-presets; }
-                    }
-                }
+            // ── Theme List Section ──
+            Text {
+                text: "Mis Temas";
+                color: HveColors.text-muted;
+                font-size: 12px;
+                font-weight: 600;
             }
 
             // ── Buscador con el mismo padding interno que el bloque de guardar ──
@@ -979,11 +983,20 @@ export component ThemesModule inherits Rectangle {
                 theme-name: root.theme-names[i];
                 theme-saved-at: root.theme-saved-ats[i];
                 is-active: root.theme-is-actives[i];
+                has-shell: root.theme-has-shell[i];
+                has-compositor: root.theme-has-compositor[i];
+                has-presets: root.theme-has-presets[i];
+                has-wallpaper: root.theme-has-wallpaper[i];
                 is-busy: root.is-busy;
+                apply-in-progress: root.apply-in-progress;
                 keyboard-focused: root.is-active && root.focused-index == i;
                 accent: HveColors.accent-pink;
                 apply-text: root.apply-text;
-                apply-theme(v) => { root.apply-theme(v); }
+                apply-theme(v) => {
+                    root.apply-in-progress = true;
+                    root.apply-theme(v);
+                    root.apply-in-progress = false;
+                }
                 overwrite-theme(v) => { root.overwrite-theme(v); }
                 refresh-themes => { root.refresh-themes(); }
                 open-rename(name) => {
@@ -994,6 +1007,10 @@ export component ThemesModule inherits Rectangle {
                 open-delete(name) => {
                     root.dialog-target = name;
                     root.dialog-mode = "delete";
+                }
+                open-refresh(name) => {
+                    root.dialog-target = name;
+                    root.dialog-mode = "refresh";
                 }
                 focus-requested(idx) => { root.focus-requested(idx); }
                 index: i;
@@ -1193,6 +1210,104 @@ export component ThemesModule inherits Rectangle {
                             height: 100%;
                             clicked => {
                                 root.delete-theme(root.dialog-target);
+                                root.dialog-mode = "";
+                                root.error-text = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Diálogo de Refresh ──
+    if root.dialog-mode == "refresh": Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000060;
+
+        Rectangle {
+            width: 300px;
+            height: 160px;
+            border-radius: 12px;
+            background: HveColors.bg-surface;
+            border-width: 1px;
+            border-color: HveColors.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000060;
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: root.confirm-refresh;
+                    color: HveColors.accent-purple;
+                    font-size: 15px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: root.confirm-refresh-msg;
+                    color: HveColors.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: cancel-rf.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                        border-width: 1px;
+                        border-color: HveColors.border;
+
+                        Text {
+                            text: root.cancel-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        cancel-rf := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.dialog-mode = "";
+                                root.error-text = "";
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: apply-rf.has-hover ? HveColors.accent-purple : HveColors.accent-purple.transparentize(0.2);
+
+                        Text {
+                            text: root.refresh-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        apply-rf := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                root.refresh-themes();
                                 root.dialog-mode = "";
                                 root.error-text = "";
                             }

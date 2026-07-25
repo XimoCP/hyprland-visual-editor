@@ -1369,3 +1369,92 @@ export component SettingsPanel inherits Rectangle {
         }
     }
 }
+
+// ─── Icon Button with Tooltip ─────────────────────────────────────────
+export component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <color> bg-color;
+    in property <color> hover-bg-color: bg-color;
+    in property <string> tooltip-text;
+    in property <bool> disabled: false;
+    out property <bool> has-hover: ta.has-hover;
+    callback clicked;
+
+    property <bool> show-tooltip: false;
+
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: ta.has-hover ? hover-bg-color : bg-color;
+    opacity: root.disabled ? 0.5 : 1.0;
+    animate background { duration: 150ms; }
+    animate opacity { duration: 150ms; }
+
+    Text {
+        text: root.icon;
+        color: HveColors.text;
+        font-size: 15px;
+        width: 100%;
+        height: 100%;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    ta := TouchArea {
+        width: 100%;
+        height: 100%;
+
+        clicked => {
+            if (!root.disabled) {
+                root.show-tooltip = false;
+                root.clicked();
+            }
+        }
+    }
+
+    // Timer de 300ms
+    tt-timer := Timer {
+        interval: 300ms;
+        running: ta.has-hover;
+        triggered => {
+            if (ta.has-hover && root.tooltip-text != "") {
+                root.show-tooltip = true;
+            }
+        }
+    }
+
+    // Apaga el tooltip al salir del botón
+    changed has-hover => {
+        if (!ta.has-hover) {
+            root.show-tooltip = false;
+        }
+    }
+
+    // ── Tooltip (Rectangle flotante, sin PopupWindow) ──
+    if (root.show-tooltip) : Rectangle {
+        x: (parent.width - 80px) / 2;
+        y: -36px;
+        width: 80px;
+        height: 24px;
+        z: 100;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #1e1e2e;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: HveColors.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000080;
+
+            Text {
+                text: root.tooltip-text;
+                color: HveColors.text;
+                font-size: 10px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

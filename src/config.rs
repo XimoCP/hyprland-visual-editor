@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 4;
+pub const CONFIG_VERSION: u32 = 5;
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
@@ -28,6 +28,8 @@ pub struct Config {
     pub theme: String,
     pub last_applied_theme: String,
     pub keybinds_enabled: bool,
+    #[serde(default)]
+    pub disabled_providers: Vec<String>,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             theme: "system".to_string(),
             last_applied_theme: String::new(),
             keybinds_enabled: false,
+            disabled_providers: Vec::new(),
         }
     }
 }
@@ -80,6 +83,12 @@ fn migrate(mut cfg: Config) -> Config {
     if cfg.config_version < 4 {
         cfg.last_applied_theme = String::new();
         cfg.config_version = 4;
+    }
+
+    // v4 → v5: add disabled_providers field
+    if cfg.config_version < 5 {
+        cfg.disabled_providers = Vec::new();
+        cfg.config_version = 5;
     }
 
     cfg.config_version = CONFIG_VERSION;
@@ -172,8 +181,8 @@ impl Config {
             format!("Failed to write config to '{}': {}", path.display(), e)
         })?;
         tracing::info!(
-            "[config] Saved config: version={}, theme={:?}, tiling={}, keybinds={}, active={}",
-            self.config_version, self.theme, self.tiling_mode, self.keybinds_enabled, self.is_system_active
+            "[config] Saved config: version={}, theme={:?}, tiling={}, keybinds={}, active={}, disabled_providers={:?}",
+            self.config_version, self.theme, self.tiling_mode, self.keybinds_enabled, self.is_system_active, self.disabled_providers
         );
         Ok(())
     }
@@ -280,6 +289,7 @@ mod tests {
             theme: "light".into(),
             keybinds_enabled: true,
             last_applied_theme: String::new(),
+            disabled_providers: vec!["noctalia".into()],
         };
 
         cfg.save().expect("save should succeed");
@@ -298,6 +308,7 @@ mod tests {
         assert_eq!(loaded.active_border_file, "sharp.json");
         assert_eq!(loaded.active_shader_file, "rgb.json");
         assert_eq!(loaded.config_version, CONFIG_VERSION);
+        assert_eq!(loaded.disabled_providers, vec!["noctalia"]);
     }
 
     // ── corrupt JSON → defaults (no panic) ───────────────────────────
@@ -407,5 +418,75 @@ mod tests {
         // and load() should fall back to defaults.
         assert!(!cfg.is_system_active, "unknown field should cause fallback to defaults");
         assert_eq!(cfg.border_size, 2);
+    }
+
+    // ── backward compatibility: config without disabled_providers loads ──
+
+    #[test]
+    fn test_backward_compat_no_disabled_providers() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        // A config written before v5 — no disabled_providers field
+        let v4_json = r#"{
+            "config_version": 4,
+            "is_system_active": true,
+            "border_size": 3,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "last_applied_theme": ""
+        }"#;
+        std::fs::write(&path, v4_json).expect("write v4 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v4 config should be migrated to v{CONFIG_VERSION}"
+        );
+        assert!(cfg.disabled_providers.is_empty(), "disabled_providers should default to empty");
+    }
+
+    // ── migration from v4 → v5 (disabled_providers) ───────────────────
+
+    #[test]
+    fn test_migration_from_v4_to_v5_adds_disabled_providers() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        let v4_json = r#"{
+            "config_version": 4,
+            "is_system_active": true,
+            "border_size": 3,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "last_applied_theme": "",
+            "keybinds_enabled": false
+        }"#;
+        std::fs::write(&path, v4_json).expect("write v4 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v4 config should be migrated to v{CONFIG_VERSION}"
+        );
+        assert!(cfg.disabled_providers.is_empty(), "disabled_providers should default to empty after migration");
     }
 }

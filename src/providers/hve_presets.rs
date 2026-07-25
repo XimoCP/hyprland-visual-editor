@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::engine::Engine;
-use crate::theme_manager::ThemeProvider;
+use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
 use std::fs;
 use std::path::Path;
 
@@ -25,6 +25,16 @@ impl ThemeProvider for HvePresetsProvider {
 
     fn icon(&self) -> &str {
         "◈"
+    }
+
+    fn shell(&self) -> &str {
+        "hyprland"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::ANIMATIONS
+            | ProviderCapabilities::BORDERS
+            | ProviderCapabilities::SHADERS
     }
 
     fn save(&self, theme_dir: &Path) -> Result<(), String> {
