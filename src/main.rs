@@ -1216,7 +1216,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_delete_theme(move |name| {
             let name_str = name.to_string();
-            match tm.lock().unwrap().delete(&name_str) {
+            let result = tm.lock().unwrap().delete(&name_str);
+            match result {
                 Ok(_) => {
                     tracing::info!("[themes] Deleted theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
@@ -1240,7 +1241,8 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_rename_theme(move |old, new| {
             let old_str = old.to_string();
             let new_str = new.to_string();
-            match tm.lock().unwrap().rename(&old_str, &new_str) {
+            let result = tm.lock().unwrap().rename(&old_str, &new_str);
+            match result {
                 Ok(_) => {
                     tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
                     if let Some(w) = weak.upgrade() {
