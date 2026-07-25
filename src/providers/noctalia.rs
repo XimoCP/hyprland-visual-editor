@@ -95,18 +95,142 @@ fn parse_theme_entries(saved_path: &Path) -> Result<Vec<(String, String)>, Strin
 
 // ── Color helpers ────────────────────────────────────────────────────
 
+/// Parse a hex string (#RGB or #RRGGBB) into (r, g, b) u8 components.
+/// Returns (0, 0, 0) on failure.
+fn parse_hex_rgb(hex: &str) -> (u8, u8, u8) {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() >= 6 {
+        (
+            u8::from_str_radix(&hex[0..2], 16).unwrap_or(0),
+            u8::from_str_radix(&hex[2..4], 16).unwrap_or(0),
+            u8::from_str_radix(&hex[4..6], 16).unwrap_or(0),
+        )
+    } else {
+        (0, 0, 0)
+    }
+}
+
+/// Format (r, g, b) as `"#rrggbb"`.
+fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
+    format!("#{:02x}{:02x}{:02x}", r, g, b)
+}
+
+/// Darken a hex color by `amount` (0.0 = no change, 1.0 = black).
+fn darken_hex(hex: &str, amount: f32) -> String {
+    let (r, g, b) = parse_hex_rgb(hex);
+    let clamp = |v: f32| -> u8 { (v * (1.0 - amount)).round().max(0.0).min(255.0) as u8 };
+    rgb_to_hex(clamp(r as f32), clamp(g as f32), clamp(b as f32))
+}
+
+/// Lighten a hex color by `amount` (0.0 = no change, 1.0 = white).
+fn lighten_hex(hex: &str, amount: f32) -> String {
+    let (r, g, b) = parse_hex_rgb(hex);
+    let clamp = |v: f32| -> u8 { (v as f32 + (255.0 - v as f32) * amount).round().max(0.0).min(255.0) as u8 };
+    rgb_to_hex(clamp(r as f32), clamp(g as f32), clamp(b as f32))
+}
+
+/// Blend two hex colors: `t=0.0` = all `a`, `t=1.0` = all `b`.
+fn blend_hex(a: &str, b: &str, t: f32) -> String {
+    let (r1, g1, b1) = parse_hex_rgb(a);
+    let (r2, g2, b2) = parse_hex_rgb(b);
+    let lerp = |x: f32, y: f32| -> u8 { (x + (y - x) * t).round().max(0.0).min(255.0) as u8 };
+    rgb_to_hex(
+        lerp(r1 as f32, r2 as f32),
+        lerp(g1 as f32, g2 as f32),
+        lerp(b1 as f32, b2 as f32),
+    )
+}
+
 /// Determine if a hex color represents a dark surface (dark mode).
 /// Uses perceived luminance: if the weighted brightness is < 128, it's dark.
 fn is_dark_hex(hex: &str) -> bool {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() < 6 {
-        return true; // default to dark
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32;
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32;
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32;
-    // Perceived luminance: weights reflect human eye sensitivity
-    (0.299 * r + 0.587 * g + 0.114 * b) < 128.0
+    let (r, g, b) = parse_hex_rgb(hex);
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) < 128.0
+}
+
+/// Generate a `terminal` section for a Noctalia predefined scheme from M3 core colors.
+///
+/// Returns a `serde_json::Value::Object` with keys:
+/// `foreground`, `background`, `cursor`, `cursorText`, `selectionFg`, `selectionBg`,
+/// `normal` (8 entries), `bright` (8 entries).
+fn generate_terminal_section(scheme: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let get = |key: &str, fallback: &str| -> String {
+        scheme
+            .get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or(fallback)
+            .to_string()
+    };
+
+    let surface = get("mSurface", "#000000");
+    let on_surface = get("mOnSurface", "#ffffff");
+    let primary = get("mPrimary", "#ffffff");
+    let on_primary = get("mOnPrimary", "#000000");
+    let secondary = get("mSecondary", "#ffffff");
+    let tertiary = get("mTertiary", "#ffffff");
+    let error = get("mError", "#ff0000");
+    let surface_variant = get("mSurfaceVariant", &surface);
+    let on_surface_variant = get("mOnSurfaceVariant", &on_surface);
+    let outline = get("mOutline", "#888888");
+
+    // Terminal background/foreground derived from surface
+    let bg = darken_hex(&surface, 0.08);
+    let fg = &on_surface;
+
+    // ANSI normal: map M3 roles to terminal convention
+    let black = darken_hex(&surface_variant, 0.5);
+    let red = &error;
+    let green = &primary;
+    let yellow = &secondary;
+    let blue = &tertiary;
+    // Magenta = mostly tertiary (purple) with warm secondary tint
+    let magenta = blend_hex(&secondary, &tertiary, 0.7);
+    // Cyan = blend of outline (blue) and primary (green) toward cyan
+    let cyan = blend_hex(&outline, &primary, 0.5);
+    let white = fg;
+
+    // Bright: lighter versions of normal (with 0.4 lighten factor)
+    let b_black = lighten_hex(&black, 0.35);
+    let b_red = lighten_hex(red, 0.25);
+    let b_green = lighten_hex(green, 0.25);
+    let b_yellow = lighten_hex(yellow, 0.25);
+    let b_blue = lighten_hex(blue, 0.25);
+    let b_magenta = lighten_hex(&magenta, 0.25);
+    let b_cyan = lighten_hex(&cyan, 0.25);
+    let b_white = lighten_hex(white, 0.15);
+
+    // Selection: use surface_variant (the middle tone) for bg, on_surface_variant for fg
+    let sel_bg = &on_surface_variant;
+    let sel_fg = darken_hex(&surface, 0.1);
+
+    serde_json::json!({
+        "foreground": fg,
+        "background": bg,
+        "cursor": primary,
+        "cursorText": on_primary,
+        "selectionFg": sel_fg,
+        "selectionBg": sel_bg,
+        "normal": {
+            "black": black,
+            "red": red,
+            "green": green,
+            "yellow": yellow,
+            "blue": blue,
+            "magenta": magenta,
+            "cyan": cyan,
+            "white": white,
+        },
+        "bright": {
+            "black": b_black,
+            "red": b_red,
+            "green": b_green,
+            "yellow": b_yellow,
+            "blue": b_blue,
+            "magenta": b_magenta,
+            "cyan": b_cyan,
+            "white": b_white,
+        }
+    })
 }
 
 // ── NoctaliaV4Provider ───────────────────────────────────────────────
@@ -352,6 +476,10 @@ impl ThemeProvider for NoctaliaV4Provider {
             let surface_val = obj.get("mSurface").and_then(|v| v.as_str()).unwrap_or("#000000");
             let default_mode = if is_dark_hex(surface_val) { "dark" } else { "light" };
 
+            // Generate terminal colors from the M3 palette and add to scheme
+            let terminal = generate_terminal_section(&scheme);
+            scheme.insert("terminal".to_string(), terminal);
+
             let scheme_json = serde_json::to_string_pretty(&serde_json::Value::Object(scheme))
                 .unwrap_or_default();
 
@@ -475,6 +603,73 @@ mod tests {
         // With and without hash
         assert!(is_dark_hex("0c1017"));
         assert!(!is_dark_hex("ffffff"));
+    }
+
+    #[test]
+    fn test_darken_hex() {
+        assert_eq!(darken_hex("#ffffff", 0.0), "#ffffff");
+        assert_eq!(darken_hex("#ffffff", 1.0), "#000000");
+        assert_eq!(darken_hex("#808080", 0.5), "#404040");
+        assert_eq!(darken_hex("#ff8800", 0.5), "#804400");
+    }
+
+    #[test]
+    fn test_lighten_hex() {
+        assert_eq!(lighten_hex("#000000", 0.0), "#000000");
+        assert_eq!(lighten_hex("#000000", 1.0), "#ffffff");
+        assert_eq!(lighten_hex("#404040", 0.5), "#a0a0a0");
+        assert_eq!(lighten_hex("#804400", 0.5), "#c0a280");
+    }
+
+    #[test]
+    fn test_blend_hex() {
+        assert_eq!(blend_hex("#000000", "#ffffff", 0.0), "#000000");
+        assert_eq!(blend_hex("#000000", "#ffffff", 1.0), "#ffffff");
+        assert_eq!(blend_hex("#000000", "#ffffff", 0.5), "#808080");
+        assert_eq!(blend_hex("#ff0000", "#0000ff", 0.5), "#800080");
+    }
+
+    #[test]
+    fn test_generate_terminal_section() {
+        let mut scheme = serde_json::Map::new();
+        scheme.insert("mPrimary".into(), serde_json::Value::String("#2ec436".into()));
+        scheme.insert("mOnPrimary".into(), serde_json::Value::String("#0e1015".into()));
+        scheme.insert("mSecondary".into(), serde_json::Value::String("#fb9e0f".into()));
+        scheme.insert("mOnSecondary".into(), serde_json::Value::String("#0e1015".into()));
+        scheme.insert("mTertiary".into(), serde_json::Value::String("#9d00ff".into()));
+        scheme.insert("mOnTertiary".into(), serde_json::Value::String("#0e1015".into()));
+        scheme.insert("mError".into(), serde_json::Value::String("#b32d2d".into()));
+        scheme.insert("mOnError".into(), serde_json::Value::String("#0e1015".into()));
+        scheme.insert("mSurface".into(), serde_json::Value::String("#0c1017".into()));
+        scheme.insert("mOnSurface".into(), serde_json::Value::String("#5c8ac4".into()));
+        scheme.insert("mSurfaceVariant".into(), serde_json::Value::String("#11151d".into()));
+        scheme.insert("mOnSurfaceVariant".into(), serde_json::Value::String("#9b6bc1".into()));
+        scheme.insert("mOutline".into(), serde_json::Value::String("#45a0d6".into()));
+
+        let terminal = generate_terminal_section(&scheme);
+        let obj = terminal.as_object().expect("terminal should be an object");
+
+        // Check required keys exist
+        assert!(obj.contains_key("foreground"));
+        assert!(obj.contains_key("background"));
+        assert!(obj.contains_key("cursor"));
+        assert!(obj.contains_key("normal"));
+        assert!(obj.contains_key("bright"));
+
+        // Check normal section has all 8 ANSI colors
+        let normal = obj["normal"].as_object().expect("normal should be object");
+        for color in &["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"] {
+            assert!(normal.contains_key(*color), "missing normal.{}", color);
+        }
+
+        // Bright section has all 8 ANSI colors
+        let bright = obj["bright"].as_object().expect("bright should be object");
+        for color in &["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"] {
+            assert!(bright.contains_key(*color), "missing bright.{}", color);
+        }
+
+        // Cursor should match primary
+        assert_eq!(obj["cursor"].as_str(), Some("#2ec436"));
     }
 
     // ── Wallpaper parsing tests (moved from wallpaper.rs) ──
