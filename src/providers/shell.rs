@@ -23,6 +23,7 @@ pub trait ShellProvider: Send + Sync {
     fn rendered_color_files(&self) -> Vec<&'static str>;
     #[allow(dead_code)]
     fn template_processor(&self) -> Option<PathBuf>;
+    #[allow(dead_code)]
     fn reload_command(&self) -> Vec<String>;
     #[allow(dead_code, unused_variables)]
     fn apply_wallpaper(&self, path: &Path, screen: &str) -> Result<(), String> {
