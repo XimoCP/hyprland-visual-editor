@@ -33,11 +33,12 @@ _hve_normalize_color() {
 
 # --- Extractors per format ---
 
-# Lua variable: primary = "rgb(2ec436)"
+# Lua variable: primary = "rgb(2ec436)" or local primary = "rgb(2ec436)" (v5)
 _hve_extract_lua_vars() {
     local file="$1"
-    grep -E "^[[:space:]]*(primary|secondary|tertiary|surface|surface_lowest|accent|error)\s*=" "$file" 2>/dev/null | while IFS='=' read -r var val; do
-        var=$(echo "$var" | tr -d ' ')
+    grep -E "^[[:space:]]*(local[[:space:]]+)?(primary|secondary|tertiary|surface|surface_lowest|accent|error)\s*=" "$file" 2>/dev/null | while IFS='=' read -r var val; do
+        # Strip 'local' prefix and whitespace from variable name
+        var=$(echo "$var" | sed 's/^[[:space:]]*local[[:space:]]*//' | tr -d ' ')
         val=$(echo "$val" | tr -d ' "')
         local hex
         hex=$(_hve_normalize_color "$val")
@@ -72,19 +73,116 @@ _hve_extract_border_gradient() {
 
 # --- Detection & extraction per tool ---
 
-# Noctalia: ~/.config/hypr/noctalia/noctalia-colors.{lua,conf}
-_hve_try_noctalia() {
-    local noctalia_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
-    local noctalia_conf="$HVE_HYPR_DIR/noctalia/noctalia-colors.conf"
+# Try to read the full M3 palette directly from the Noctalia scheme/palette file.
+# This gives us ALL colors (tertiary, surface_variant, etc.) regardless of what
+# the hyprland template happens to render. For wallpaper schemes (no palette
+# file), falls back to template output via _hve_try_noctalia().
+_hve_try_noctalia_palette() {
+    command -v noctalia &>/dev/null || return 1
+    command -v python3 &>/dev/null || return 1
 
-    # .conf updates live, .lua only on reboot — prefer .conf
-    if [ -f "$noctalia_conf" ]; then
-        echo "[HVE] Colors from: Noctalia (conf)" >&2
-        eval "$(_hve_extract_conf_vars "$noctalia_conf")"
+    local scheme_raw
+    scheme_raw=$(noctalia msg color-scheme-get 2>/dev/null) || return 1
+    scheme_raw="${scheme_raw%[$'\r\n']}"  # strip trailing newline
+
+    local source="${scheme_raw%% *}"
+    local name="${scheme_raw#* }"
+    [ -z "$source" ] || [ -z "$name" ] && return 1
+
+    local palette_file=""
+    case "$source" in
+        custom)
+            [ -f "$HOME/.config/noctalia/palettes/${name}.json" ] && palette_file="$HOME/.config/noctalia/palettes/${name}.json"
+            ;;
+        builtin)
+            if [ -f "$HOME/.config/noctalia/colorschemes/${name}/${name}.json" ]; then
+                palette_file="$HOME/.config/noctalia/colorschemes/${name}/${name}.json"
+            elif [ -f "/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json" ]; then
+                palette_file="/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json"
+            fi
+            ;;
+        community)
+            [ -f "$HOME/.local/state/noctalia/community-palettes/${name}.json" ] && palette_file="$HOME/.local/state/noctalia/community-palettes/${name}.json"
+            ;;
+        wallpaper)
+            return 1  # no palette file, fall through to template output
+            ;;
+    esac
+
+    [ -n "$palette_file" ] && [ -f "$palette_file" ] || return 1
+
+    echo "[HVE] Colors from: Noctalia palette (${source})" >&2
+
+    eval "$(python3 -c "
+import json, sys
+
+with open('${palette_file}') as f:
+    data = json.load(f)
+
+# Handle both {dark: {...}, light: {...}} (full scheme)
+# and {mPrimary: ..., ...} (direct palette)
+if 'dark' in data:
+    palette = data['dark']
+else:
+    palette = data
+
+mapping = {
+    'mPrimary': 'HVE_PRIMARY',
+    'mSecondary': 'HVE_SECONDARY',
+    'mTertiary': 'HVE_TERTIARY',
+    'mSurface': 'HVE_SURFACE',
+    'mSurfaceVariant': 'HVE_SURFACE_LOWEST',
+    'mError': 'HVE_ERROR',
+    'mOutline': 'HVE_OUTLINE',
+    'mShadow': 'HVE_SHADOW',
+}
+
+# HVE uses 'accent' which maps to primary (the main brand color)
+if 'mPrimary' in palette:
+    val = palette['mPrimary']
+    print(f'HVE_ACCENT={\"#\" + val if not val.startswith(\"#\") else val}')
+
+for m3_key, hve_key in mapping.items():
+    if m3_key in palette:
+        val = palette[m3_key]
+        if val.startswith('#'):
+            print(f'{hve_key}={val}')
+        else:
+            print(f'{hve_key}=#{val}')
+")" 2>/dev/null || return 1
+
+    return 0
+}
+
+# Noctalia template output fallback:
+#   v5: ~/.config/hypr/noctalia.{lua,conf}
+#   v4: ~/.config/hypr/noctalia/noctalia-colors.{lua,conf}
+_hve_try_noctalia() {
+    local noctalia_v5_lua="$HVE_HYPR_DIR/noctalia.lua"
+    local noctalia_v5_conf="$HVE_HYPR_DIR/noctalia.conf"
+    local noctalia_v4_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
+    local noctalia_v4_conf="$HVE_HYPR_DIR/noctalia/noctalia-colors.conf"
+
+    # Prefer v5 output (templates-apply writes here). Lua mode first (detected by
+    # templates-apply if Hyprland is in Lua mode), then conf mode.
+    if [ -f "$noctalia_v5_lua" ]; then
+        echo "[HVE] Colors from: Noctalia v5 (lua)" >&2
+        eval "$(_hve_extract_lua_vars "$noctalia_v5_lua")"
         return 0
-    elif [ -f "$noctalia_lua" ]; then
-        echo "[HVE] Colors from: Noctalia (lua)" >&2
-        eval "$(_hve_extract_lua_vars "$noctalia_lua")"
+    elif [ -f "$noctalia_v5_conf" ]; then
+        echo "[HVE] Colors from: Noctalia v5 (conf)" >&2
+        eval "$(_hve_extract_conf_vars "$noctalia_v5_conf")"
+        return 0
+    fi
+
+    # Fallback to v4 paths
+    if [ -f "$noctalia_v4_conf" ]; then
+        echo "[HVE] Colors from: Noctalia v4 (conf)" >&2
+        eval "$(_hve_extract_conf_vars "$noctalia_v4_conf")"
+        return 0
+    elif [ -f "$noctalia_v4_lua" ]; then
+        echo "[HVE] Colors from: Noctalia v4 (lua)" >&2
+        eval "$(_hve_extract_lua_vars "$noctalia_v4_lua")"
         return 0
     fi
     return 1
@@ -193,7 +291,11 @@ hve_load_colors() {
     HVE_SURFACE_LOWEST=""
     HVE_ACCENT=""
 
-    # Detection priority: Noctalia → pywal → matugen → manual
+    # Detection priority:
+    #   1. Noctalia full palette (direct from scheme file — has ALL M3 colors)
+    #   2. Noctalia template output (fallback for wallpaper schemes, or v4)
+    #   3. Pywal / Matugen / Manual
+    _hve_try_noctalia_palette ||
     _hve_try_noctalia ||
     _hve_try_pywal ||
     _hve_try_matugen ||

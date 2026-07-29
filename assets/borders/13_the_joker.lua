@@ -35,7 +35,8 @@ hl.config({
         }
     },
     windowrulev2 = {
-        "noshadow, focus:0"
+        "noshadow, focus:0",
+        "dim_around, floating:1"       -- NUEVO: dim around floating windows
     }
 })
 
@@ -45,4 +46,6 @@ hl.curve("joker_bounce", { type = "bezier", points = { { 0.175, 0.885 }, { 0.32,
 hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "nv_joker_flow", style = "loop" })
 -- Esta animación "border" es la que controla lo rápido que se apaga la sombra (speed = 10)
 hl.animation({ leaf = "border", enabled = true, speed = 10, bezier = "default" })
+-- NUEVO: Fade de la sombra al cambiar de ventana
+hl.animation({ leaf = "fadeShadow", enabled = true, speed = 5, bezier = "default" })
 hl.animation({ leaf = "windows", enabled = true, speed = 5, bezier = "joker_bounce", style = "popin 80%" })

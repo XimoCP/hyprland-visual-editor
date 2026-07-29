@@ -528,10 +528,6 @@ export component ThemeItem inherits Rectangle {
     in property <bool> keyboard-focused: false;
     in property <color> accent;
     in property <string> apply-text;
-    in property <bool> has-shell: false;
-    in property <bool> has-compositor: false;
-    in property <bool> has-presets: false;
-    in property <bool> has-wallpaper: false;
     in property <int> index: 0;
     callback apply-theme(string);
     callback overwrite-theme(string);
@@ -616,128 +612,6 @@ export component ThemeItem inherits Rectangle {
             }
         }
 
-        // 2.5 CAPABILITY BADGES
-            if root.has-shell || root.has-compositor || root.has-presets || root.has-wallpaper : HorizontalLayout {
-            spacing: 4px;
-            alignment: start;
-
-            if root.has-shell : Rectangle {
-                height: 16px;
-                border-radius: 8px;
-                background: HveColors.accent-pink.transparentize(0.8);
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: center;
-
-                    Text {
-                        text: "◈";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-pink;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        text: "Shell";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-pink;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
-            if root.has-compositor : Rectangle {
-                height: 16px;
-                border-radius: 8px;
-                background: HveColors.accent-amber.transparentize(0.8);
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: center;
-
-                    Text {
-                        text: "⚙";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-amber;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        text: "Compositor";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-amber;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
-            if root.has-presets : Rectangle {
-                height: 16px;
-                border-radius: 8px;
-                background: HveColors.accent-purple.transparentize(0.8);
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: center;
-
-                    Text {
-                        text: "◆";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-purple;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        text: "Presets";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-purple;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
-            if root.has-wallpaper : Rectangle {
-                height: 16px;
-                border-radius: 8px;
-                background: HveColors.accent-green.transparentize(0.8);
-
-                HorizontalLayout {
-                    spacing: 4px;
-                    alignment: center;
-
-                    Text {
-                        text: "🖼";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-green;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        text: "Wallpaper";
-                        font-size: 9px;
-                        font-weight: 600;
-                        color: HveColors.accent-green;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-
         // 3. BOTONES DE ACCIÓN (Pegados al final y centrados verticalmente)
         VerticalLayout {
             alignment: center; // Asegura centrado Y independientemente de la altura de la tarjeta
@@ -792,10 +666,7 @@ export component ThemesModule inherits Rectangle {
     in property <[string]> theme-names;
     in property <[string]> theme-saved-ats;
     in property <[bool]> theme-is-actives;
-    in property <[bool]> theme-has-shell;
-    in property <[bool]> theme-has-compositor;
-    in property <[bool]> theme-has-presets;
-    in property <[bool]> theme-has-wallpaper;
+
     in property <bool> is-busy: false;
     in property <string> header-title;
     in property <string> header-subtitle;
@@ -983,10 +854,6 @@ export component ThemesModule inherits Rectangle {
                 theme-name: root.theme-names[i];
                 theme-saved-at: root.theme-saved-ats[i];
                 is-active: root.theme-is-actives[i];
-                has-shell: root.theme-has-shell[i];
-                has-compositor: root.theme-has-compositor[i];
-                has-presets: root.theme-has-presets[i];
-                has-wallpaper: root.theme-has-wallpaper[i];
                 is-busy: root.is-busy;
                 apply-in-progress: root.apply-in-progress;
                 keyboard-focused: root.is-active && root.focused-index == i;

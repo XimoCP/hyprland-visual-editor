@@ -123,10 +123,6 @@ export component MainWindow inherits Window {
     in-out property <[string]> theme-names;
     in-out property <[string]> theme-saved-ats;
     in-out property <[bool]> theme-is-actives;
-    in-out property <[bool]> theme-has-shell;
-    in-out property <[bool]> theme-has-compositor;
-    in-out property <[bool]> theme-has-presets;
-    in-out property <[bool]> theme-has-wallpaper;
     in-out property <int> active-theme-index: -1;
     in-out property <bool> theme-busy: false;
     in property <string> theme-header-title;
@@ -585,10 +581,6 @@ export component MainWindow inherits Window {
                         theme-names: root.theme-names;
                         theme-saved-ats: root.theme-saved-ats;
                         theme-is-actives: root.theme-is-actives;
-                        theme-has-shell: root.theme-has-shell;
-                        theme-has-compositor: root.theme-has-compositor;
-                        theme-has-presets: root.theme-has-presets;
-                        theme-has-wallpaper: root.theme-has-wallpaper;
                         is-busy: root.theme-busy;
                         focused-index: root.theme-focused-index;
                         is-active: root.active-tab == 4;

@@ -17,6 +17,7 @@ ASSEMBLE_SCRIPT="$HVE_SCRIPTS_DIR/assemble.sh"
 LOG_FILE="$HOME/.cache/hve/color_watcher.log"
 COLOR_SIGNAL="$HOME/.cache/hve/colors.json"
 GET_COLORS_SCRIPT="$HVE_SCRIPTS_DIR/get_colors.sh"
+NOCTALIA_V5_SETTINGS="$HOME/.local/state/noctalia/settings.toml"
 
 _log() {
     echo "[HVE Watcher] $(date '+%H:%M:%S') $*" >> "$LOG_FILE"
@@ -26,7 +27,7 @@ _log() {
 find_watch_files() {
     local files=()
 
-    # Noctalia: .conf updates live, .lua only on reboot
+    # Noctalia v4: rendered output in noctalia/ subdirectory
     local noctalia_conf="$HVE_HYPR_DIR/noctalia/noctalia-colors.conf"
     local noctalia_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
     if [ -f "$noctalia_conf" ]; then
@@ -34,6 +35,38 @@ find_watch_files() {
     fi
     if [ -f "$noctalia_lua" ]; then
         files+=("$noctalia_lua")
+    fi
+
+    # Noctalia v5: rendered output directly in hypr dir (noctalia.lua or noctalia.conf)
+    local noctalia_v5_lua="$HVE_HYPR_DIR/noctalia.lua"
+    local noctalia_v5_conf="$HVE_HYPR_DIR/noctalia.conf"
+    if [ -f "$noctalia_v5_lua" ]; then
+        files+=("$noctalia_v5_lua")
+    fi
+    if [ -f "$noctalia_v5_conf" ]; then
+        files+=("$noctalia_v5_conf")
+    fi
+
+    # Noctalia v5: settings.toml changes when user modifies colors in Noctalia's own UI.
+    # We watch it so HVE can detect external color changes and refresh.
+    local noctalia_v5_settings="$HOME/.local/state/noctalia/settings.toml"
+    if [ -f "$noctalia_v5_settings" ] && command -v noctalia &>/dev/null; then
+        files+=("$noctalia_v5_settings")
+    fi
+
+    # Noctalia palette files: watch custom palettes and community palettes so HVE
+    # picks up direct palette edits (individual color changes within a scheme).
+    local noctalia_palettes_dir="$HOME/.config/noctalia/palettes"
+    if [ -d "$noctalia_palettes_dir" ]; then
+        while IFS= read -r pf; do
+            files+=("$pf")
+        done < <(find "$noctalia_palettes_dir" -name "*.json" -type f 2>/dev/null)
+    fi
+    local noctalia_community_palettes_dir="$HOME/.local/state/noctalia/community-palettes"
+    if [ -d "$noctalia_community_palettes_dir" ]; then
+        while IFS= read -r pf; do
+            files+=("$pf")
+        done < <(find "$noctalia_community_palettes_dir" -name "*.json" -type f 2>/dev/null)
     fi
 
     # Pywal
@@ -127,6 +160,7 @@ while true; do
     while true; do
         # Check if any file's content actually changed (hash-based detection)
         changed=false
+        noctalia_settings_changed=false
         while IFS= read -r file; do
             if [ -f "$file" ]; then
                 current_hash=$(md5sum "$file" 2>/dev/null | cut -d' ' -f1)
@@ -134,6 +168,8 @@ while true; do
                     LAST_HASHES["$file"]="$current_hash"
                     changed=true
                     _log "Change detected: $file"
+                    # Track if this was Noctalia v5 settings
+                    [ "$file" = "$NOCTALIA_V5_SETTINGS" ] && noctalia_settings_changed=true
                 fi
             else
                 _log "WARN: watched file no longer exists: $file"
@@ -142,6 +178,29 @@ while true; do
 
         if [ "$changed" = false ]; then
             break
+        fi
+
+        # Noctalia v5: if settings.toml changed, run templates-apply FIRST so the
+        # rendered files (noctalia-colors.conf) reflect the new palette before
+        # assemble.sh reads them. This bridges the gap where v5's color-scheme-set
+        # only persists the setting but does NOT auto-run templates-apply.
+        if [ "$noctalia_settings_changed" = true ] && [ -f "$NOCTALIA_V5_SETTINGS" ] && command -v noctalia &>/dev/null; then
+            _log "Noctalia v5 settings changed — applying templates..."
+            if noctalia msg templates-apply >> "$LOG_FILE" 2>&1; then
+                _log "Templates applied"
+                # Update hashes of rendered files so they don't trigger a second pass
+                # v4 paths: noctalia/noctalia-colors.{conf,lua}
+                # v5 paths: noctalia.{lua,conf}
+                for f in \
+                    "$HVE_HYPR_DIR/noctalia/noctalia-colors.conf" \
+                    "$HVE_HYPR_DIR/noctalia/noctalia-colors.lua" \
+                    "$HVE_HYPR_DIR/noctalia.lua" \
+                    "$HVE_HYPR_DIR/noctalia.conf"; do
+                    [ -f "$f" ] && LAST_HASHES["$f"]=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
+                done
+            else
+                _log "templates-apply failed (noctalia may not be available)"
+            fi
         fi
 
         _log "Regenerating overlay..."

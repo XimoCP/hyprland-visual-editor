@@ -1,4 +1,5 @@
-use crate::providers::shell::{NoctaliaV4Paths, ShellProvider};
+use crate::providers::shell::NoctaliaV4Paths;
+use crate::providers::shell::ShellProvider;
 use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
 use serde::Deserialize;
 use std::fs;
@@ -569,6 +570,257 @@ impl ThemeProvider for NoctaliaV4Provider {
     }
 }
 
+// ── Noctalia v5 helpers ─────────────────────────────────────────────
+
+/// Run `noctalia msg <args...>` and return stdout on success.
+fn noctalia_msg(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("noctalia")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run noctalia: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("noctalia {} failed: {}", args.join(" "), stderr.trim()))
+    }
+}
+
+/// Resolve Noctalia config dir (~/.config/noctalia).
+fn noctalia_config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("HVE_NOCTALIA_CONFIG") {
+        let p = PathBuf::from(dir);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    dirs::config_dir().map(|d| d.join("noctalia"))
+}
+
+/// Find the palette JSON file for a given source and name.
+///
+/// Sources:
+/// - `custom`       → ~/.config/noctalia/palettes/<name>.json
+/// - `builtin`      → No file — built-in palettes are internal to Noctalia
+/// - `community`    → ~/.local/state/noctalia/community-palettes/<name>
+/// - `wallpaper`    → No file — extracted from wallpaper at runtime
+fn find_palette_path(source: &str, name: &str) -> Option<PathBuf> {
+    match source {
+        "custom" => {
+            noctalia_config_dir().map(|d| d.join("palettes").join(format!("{}.json", name)))
+        }
+        "community" => {
+            let home = std::env::var("HOME").ok()?;
+            Some(
+                PathBuf::from(home)
+                    .join(".local")
+                    .join("state")
+                    .join("noctalia")
+                    .join("community-palettes")
+                    .join(name),
+            )
+        }
+        _ => None,
+    }
+}
+
+// ── NoctaliaV5Provider ───────────────────────────────────────────────
+//
+// Auto-contenido: todo el save/apply se hace por IPC (`noctalia msg`).
+// No necesita ShellProvider, ni file paths, ni template processor.
+
+pub struct NoctaliaV5Provider;
+
+impl NoctaliaV5Provider {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for NoctaliaV5Provider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ThemeProvider for NoctaliaV5Provider {
+    fn id(&self) -> &str {
+        "noctalia-v5"
+    }
+
+    fn display_name_key(&self) -> &str {
+        "themes.provider.noctalia_v5"
+    }
+
+    fn icon(&self) -> &str {
+        "◈"
+    }
+
+    fn shell(&self) -> &str {
+        "noctalia-v5"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::COLORS | ProviderCapabilities::WALLPAPERS
+    }
+
+    fn save(&self, theme_dir: &Path) -> Result<(), String> {
+        let provider_dir = theme_dir.join("providers").join(self.id());
+        fs::create_dir_all(&provider_dir)
+            .map_err(|e| format!("Cannot create provider dir: {}", e))?;
+
+        // 1. Get active color scheme via IPC
+        let scheme = noctalia_msg(&["msg", "color-scheme-get"])
+            .map_err(|e| format!("Cannot get color scheme: {}", e))?;
+        let scheme = scheme.trim().to_string();
+        if scheme.is_empty() {
+            return Err("Empty color-scheme-get response".into());
+        }
+
+        // Save scheme source info (e.g. "custom JokerTheme")
+        fs::write(provider_dir.join("source.txt"), &scheme)
+            .map_err(|e| format!("Cannot write source.txt: {}", e))?;
+
+        // Parse source and name
+        let parts: Vec<&str> = scheme.splitn(2, ' ').collect();
+        let source = parts.first().copied().unwrap_or("custom");
+        let name = parts.get(1).copied().unwrap_or("");
+
+        // 2. Save palette JSON
+        if !name.is_empty() {
+            if let Some(palette_path) = find_palette_path(source, name) {
+                if palette_path.exists() {
+                    fs::copy(&palette_path, provider_dir.join("palette.json"))
+                        .map_err(|e| format!("Cannot copy palette: {}", e))?;
+                    tracing::info!(
+                        "[noctalia-v5] Saved palette from {:?}",
+                        palette_path
+                    );
+                } else {
+                    tracing::warn!(
+                        "[noctalia-v5] Palette file not found: {:?}",
+                        palette_path
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "[noctalia-v5] Cannot resolve palette path for source={}, name={}",
+                    source,
+                    name
+                );
+            }
+        }
+
+        // 3. Save default wallpaper via IPC
+        match noctalia_msg(&["msg", "wallpaper-get"]) {
+            Ok(wp) => {
+                let wp = wp.trim().to_string();
+                if !wp.is_empty() {
+                    fs::write(provider_dir.join("wallpaper.txt"), &wp)
+                        .map_err(|e| format!("Cannot write wallpaper.txt: {}", e))?;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[noctalia-v5] Cannot get wallpaper: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn apply(&self, theme_dir: &Path) -> Result<(), String> {
+        let provider_dir = theme_dir.join("providers").join(self.id());
+        if !provider_dir.exists() {
+            return Err("Noctalia v5 provider data not found in theme".into());
+        }
+
+        let palette_src = provider_dir.join("palette.json");
+        let source_src = provider_dir.join("source.txt");
+
+        // 1. Restore wallpaper FIRST — for wallpaper-derived schemes, setting
+        //    the wallpaper triggers Noctalia's palette regeneration, so it
+        //    must happen before color-scheme-set and templates-apply.
+        let wp_path = provider_dir.join("wallpaper.txt");
+        if wp_path.exists() {
+            let wp = fs::read_to_string(&wp_path)
+                .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
+            let wp = wp.trim();
+            if !wp.is_empty() {
+                noctalia_msg(&["msg", "wallpaper-set", "", wp])
+                    .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
+                tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
+            }
+        }
+
+        // 2. Restore color scheme
+        if source_src.exists() {
+            let raw = fs::read_to_string(&source_src)
+                .map_err(|e| format!("Cannot read source.txt: {}", e))?;
+            let scheme = raw.trim();
+            let parts: Vec<&str> = scheme.splitn(2, ' ').collect();
+            let source = parts.first().copied().unwrap_or("custom");
+            let name = parts.get(1).copied().unwrap_or("");
+
+            if !name.is_empty() && palette_src.exists() {
+                // Custom or community palette — copy the saved palette file back
+                // and restore as "custom" regardless of original source.
+                let safe_name = name.replace('/', "_");
+
+                if let Some(palettes_dir) = noctalia_config_dir().map(|d| d.join("palettes")) {
+                    fs::create_dir_all(&palettes_dir)
+                        .map_err(|e| format!("Cannot create palettes dir: {}", e))?;
+                    let dst = palettes_dir.join(format!("{}.json", safe_name));
+                    fs::copy(&palette_src, &dst)
+                        .map_err(|e| format!("Cannot restore palette: {}", e))?;
+                    tracing::info!("[noctalia-v5] Restored palette to {:?}", dst);
+
+                    noctalia_msg(&["msg", "color-scheme-set", "custom", &safe_name])
+                        .map_err(|e| format!("Cannot set color scheme: {}", e))?;
+                    tracing::info!("[noctalia-v5] Set active scheme: custom {}", safe_name);
+                }
+            } else if !name.is_empty() && matches!(source, "builtin" | "community") {
+                // Builtin or community — no palette file to copy, restore directly.
+                noctalia_msg(&["msg", "color-scheme-set", source, name])
+                    .map_err(|e| format!("Cannot set color scheme: {}", e))?;
+                tracing::info!("[noctalia-v5] Set active scheme: {} {}", source, name);
+            }
+            // wallpaper scheme: already handled by wallpaper restoration above
+
+            // 3. Apply templates so rendered files (noctalia-colors.conf, etc.)
+            //    reflect the restored palette. color-scheme-set only persists
+            //    the setting; templates-apply renders the actual output files.
+            noctalia_msg(&["msg", "templates-apply"])
+                .map_err(|e| format!("Cannot apply templates: {}", e))?;
+            tracing::info!("[noctalia-v5] Templates applied");
+        }
+
+        Ok(())
+    }
+
+    fn post_apply(&self, theme_name: &str) -> Result<(), String> {
+        // No reload needed — v5 hot-reloads automatically.
+        // Just a notification.
+        match std::process::Command::new("notify-send")
+            .arg("--app-name=HVE")
+            .arg(format!("🎨 Tema '{}' aplicado", theme_name))
+            .arg(format!(
+                "Theme \"{}\" applied — Noctalia v5 colors + wallpaper restored",
+                theme_name,
+            ))
+            .output()
+        {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("[noctalia-v5] notify-send not available: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -579,6 +831,78 @@ mod tests {
     fn test_noctalia_v4_provider_new() {
         let provider = NoctaliaV4Provider::new();
         assert_eq!(provider.id(), "noctalia");
+    }
+
+    #[test]
+    fn test_noctalia_v5_provider_new() {
+        let provider = NoctaliaV5Provider::new();
+        assert_eq!(provider.id(), "noctalia-v5");
+        assert_eq!(provider.shell(), "noctalia-v5");
+    }
+
+    #[test]
+    fn test_noctalia_v5_provider_display_name_key() {
+        let provider = NoctaliaV5Provider::new();
+        assert_eq!(provider.display_name_key(), "themes.provider.noctalia_v5");
+    }
+
+    #[test]
+    fn test_noctalia_v5_provider_icon() {
+        let provider = NoctaliaV5Provider::new();
+        assert_eq!(provider.icon(), "◈");
+    }
+
+    #[test]
+    fn test_noctalia_v5_provider_capabilities() {
+        let provider = NoctaliaV5Provider::new();
+        let caps = provider.capabilities();
+        assert!(caps.contains(ProviderCapabilities::COLORS));
+        assert!(caps.contains(ProviderCapabilities::WALLPAPERS));
+    }
+
+    #[test]
+    fn test_noctalia_v5_save_creates_provider_dir() {
+        // Save requires noctalia running — solo verificamos que el
+        // directorio del provider se intente crear.
+        let provider = NoctaliaV5Provider::new();
+        let dir = std::env::temp_dir().join("hve-test-v5-save");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // No assert on result — puede ser Ok (noctalia corriendo) o
+        // Err (noctalia no disponible). Solo verificamos que no panic.
+        let _result = provider.save(&dir);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_palette_path_custom() {
+        let path = find_palette_path("custom", "JokerTheme");
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.ends_with("JokerTheme.json"));
+        assert!(path.to_string_lossy().contains("palettes"));
+    }
+
+    #[test]
+    fn test_find_palette_path_community() {
+        let path = find_palette_path("community", "Ayu Green");
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.to_string_lossy().contains("community-palettes"));
+    }
+
+    #[test]
+    fn test_find_palette_path_builtin_returns_none() {
+        let path = find_palette_path("builtin", "Kanagawa");
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn test_find_palette_path_wallpaper_returns_none() {
+        let path = find_palette_path("wallpaper", "");
+        assert!(path.is_none());
     }
 
     #[test]

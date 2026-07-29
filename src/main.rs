@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use tr::Tr;
+use crate::providers::shell::ShellDetector;
 
 slint::include_modules!();
 
@@ -580,18 +581,10 @@ fn refresh_theme_list(
     let names: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.name)).collect();
     let saved_ats: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.saved_at)).collect();
     let is_actives: Vec<bool> = themes.iter().map(|t| t.is_active).collect();
-    let has_shell: Vec<bool> = themes.iter().map(|t| t.has_shell).collect();
-    let has_compositor: Vec<bool> = themes.iter().map(|t| t.has_compositor).collect();
-    let has_presets: Vec<bool> = themes.iter().map(|t| t.has_presets).collect();
-    let has_wallpaper: Vec<bool> = themes.iter().map(|t| t.has_wallpaper).collect();
 
     window.set_theme_names(ModelRc::from(names.as_slice()));
     window.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
     window.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
-    window.set_theme_has_shell(ModelRc::from(has_shell.as_slice()));
-    window.set_theme_has_compositor(ModelRc::from(has_compositor.as_slice()));
-    window.set_theme_has_presets(ModelRc::from(has_presets.as_slice()));
-    window.set_theme_has_wallpaper(ModelRc::from(has_wallpaper.as_slice()));
 
     // Update active theme index
     let active_idx = themes.iter().position(|t| t.is_active).map(|i| i as i32).unwrap_or(-1);
@@ -701,7 +694,21 @@ fn main() -> Result<(), slint::PlatformError> {
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
     let mut theme_manager = crate::theme_manager::ThemeManager::new(&config_dir);
-    theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
+    // Detectar qué versión de Noctalia está activa y registrar el provider correspondiente
+    let noctalia_v4 = crate::providers::shell::NoctaliaV4Paths;
+    let noctalia_v5 = crate::providers::shell::NoctaliaV5Paths;
+
+    if noctalia_v5.is_active() {
+        theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV5Provider::new()));
+        tracing::info!("[shell] Noctalia v5 detectado — registrando provider v5");
+    } else if noctalia_v4.is_active() {
+        theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
+        tracing::info!("[shell] Noctalia v4 detectado — registrando provider v4");
+    } else {
+        // Fallback: registrar v4 por defecto
+        theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
+        tracing::warn!("[shell] Noctalia no detectado — registrando provider v4 por defecto");
+    }
     theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new(engine.clone())));
     theme_manager.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
     // Restore last applied theme from config

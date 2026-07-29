@@ -78,10 +78,6 @@ pub struct ThemeInfo {
     pub is_active: bool,
     #[allow(dead_code)]
     pub providers: Vec<String>,
-    pub has_shell: bool,
-    pub has_compositor: bool,
-    pub has_presets: bool,
-    pub has_wallpaper: bool,
 }
 
 /// Manages themes: list, save, apply, delete, rename.
@@ -204,23 +200,29 @@ impl ThemeManager {
                 .ok()
                 .and_then(|s| serde_json::from_str::<ThemeMeta>(&s).ok());
             let providers = meta.as_ref().map(|m| m.providers.clone()).unwrap_or_default();
-            let has_shell = providers.iter().any(|p| p == "noctalia");
-            let has_compositor = providers.iter().any(|p| p == "hyprland-settings");
-            let has_presets = providers.iter().any(|p| p == "hve-presets");
-            let has_wallpaper = providers.iter().any(|p| p == "wallpaper" || p == "noctalia");
             themes.push(ThemeInfo {
                 is_active: name == self.last_applied,
                 saved_at: meta.as_ref().map(|m| m.saved_at.clone()).unwrap_or_default(),
                 name,
                 providers,
-                has_shell,
-                has_compositor,
-                has_presets,
-                has_wallpaper,
             });
         }
 
+        // Filter: only show themes whose providers are all currently registered.
+        // This ensures shell-specific themes (e.g. noctalia v4, v5, or future shells)
+        // are hidden when their shell is not active. Shell-agnostic themes
+        // (e.g. presets-only) always show because their providers are always registered.
+        let registered = self.registered_ids();
+        themes.retain(|t| {
+            t.providers.iter().all(|pid| registered.contains(pid))
+        });
+
         Ok(themes)
+    }
+
+    /// IDs of currently registered providers.
+    fn registered_ids(&self) -> Vec<String> {
+        self.providers.iter().map(|p| p.id().to_string()).collect()
     }
 
     pub fn save(&mut self, name: &str, provider_ids: &[String]) -> Result<(), String> {

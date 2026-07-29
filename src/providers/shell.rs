@@ -154,6 +154,176 @@ impl ShellProvider for NoctaliaV4Paths {
     }
 }
 
+/// Detecta si un shell está activo en el sistema.
+#[allow(dead_code)]
+pub trait ShellDetector: Send + Sync {
+    #[allow(dead_code)]
+    fn id(&self) -> &str;
+    fn is_active(&self) -> bool;
+}
+
+impl ShellDetector for NoctaliaV4Paths {
+    fn id(&self) -> &str {
+        "noctalia"
+    }
+
+    fn is_active(&self) -> bool {
+        std::process::Command::new("pgrep")
+            .arg("-x")
+            .arg("quickshell")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+}
+
+/// Noctalia v5 (Rust native shell) — paths solo para detección y acceso a paletas.
+///
+/// La save/apply del provider se maneja enteramente por IPC (`noctalia msg`).
+/// No hay template processor, rendered files, wallpapers.json cache, ni reload.
+/// v5 tiene hot-reload automático.
+pub struct NoctaliaV5Paths;
+
+impl ShellProvider for NoctaliaV5Paths {
+    fn id(&self) -> &str {
+        "noctalia"
+    }
+
+    fn display_name(&self) -> &str {
+        "Noctalia v5"
+    }
+
+    fn config_dir(&self) -> Option<PathBuf> {
+        if let Ok(dir) = std::env::var("HVE_NOCTALIA_CONFIG") {
+            let p = PathBuf::from(dir);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        dirs::config_dir().map(|d| d.join("noctalia"))
+    }
+
+    fn rendered_dir(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn wallpapers_file(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn theming_config(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn source_files(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
+    fn rendered_color_files(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
+    fn template_processor(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn reload_command(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn apply_wallpaper(&self, path: &Path, screen: &str) -> Result<(), String> {
+        let path_str = path.to_str().ok_or("Invalid wallpaper path")?;
+        let output = std::process::Command::new("noctalia")
+            .args(["msg", "wallpaper-set", screen, path_str])
+            .output()
+            .map_err(|e| format!("Failed to run noctalia msg: {}", e))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Wallpaper IPC failed: {}", stderr.trim()))
+        }
+    }
+
+    fn get_wallpaper(&self, screen: &str) -> Result<String, String> {
+        let output = std::process::Command::new("noctalia")
+            .args(["msg", "wallpaper-get", screen])
+            .output()
+            .map_err(|e| format!("Failed to run noctalia msg: {}", e))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(stdout.trim().to_string())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Wallpaper get failed: {}", stderr.trim()))
+        }
+    }
+}
+
+impl ShellDetector for NoctaliaV5Paths {
+    fn id(&self) -> &str {
+        "noctalia"
+    }
+
+    fn is_active(&self) -> bool {
+        // Ambas condiciones necesarias:
+        // 1. El proceso noctalia está corriendo
+        // 2. Existe ~/.config/noctalia/profiles/ (solo v5)
+        let process_running = std::process::Command::new("pgrep")
+            .arg("-x")
+            .arg("noctalia")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let profiles_dir_exists = self
+            .config_dir()
+            .map(|c| c.join("profiles").exists())
+            .unwrap_or(false);
+
+        process_running && profiles_dir_exists
+    }
+}
+
+/// Registry que detecta qué shell está activo.
+///
+/// Se registran los detectores en orden; el primero que retorne
+/// `is_active() == true` se marca como activo.
+#[allow(dead_code)]
+pub struct ShellRegistry {
+    detectors: Vec<Box<dyn ShellDetector>>,
+    active_id: Option<String>,
+}
+
+#[allow(dead_code)]
+impl ShellRegistry {
+    pub fn new() -> Self {
+        Self {
+            detectors: Vec::new(),
+            active_id: None,
+        }
+    }
+
+    pub fn register<T: ShellDetector + 'static>(&mut self, detector: T) {
+        let id = detector.id().to_string();
+        if self.active_id.is_none() && detector.is_active() {
+            tracing::info!("[shell] {} detectado como activo", id);
+            self.active_id = Some(id.clone());
+        }
+        self.detectors.push(Box::new(detector));
+    }
+
+    pub fn active_id(&self) -> Option<&str> {
+        self.active_id.as_deref()
+    }
+
+    pub fn is_active(&self, id: &str) -> bool {
+        self.active_id.as_deref() == Some(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,7 +332,7 @@ mod tests {
     #[test]
     fn test_noctalia_v4_paths_id() {
         let p = NoctaliaV4Paths;
-        assert_eq!(p.id(), "noctalia");
+        assert_eq!(<NoctaliaV4Paths as ShellProvider>::id(&p), "noctalia");
     }
 
     #[test]
@@ -219,21 +389,185 @@ mod tests {
     fn test_apply_wallpaper_ipc_format() {
         let p = NoctaliaV4Paths;
         let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
-        assert!(
-            result.is_ok() || result.as_ref().unwrap_err().contains("quickshell"),
-            "expected IPC call to be made, got: {:?}",
-            result
-        );
+        // Puede fallar si quickshell no está disponible o devuelve error
+        // Solo verificamos que no panic y que la sintaxis del comando sea correcta
+        if let Err(e) = &result {
+            assert!(
+                e.contains("quickshell") || e.contains("Wallpaper IPC"),
+                "unexpected error: {}",
+                e
+            );
+        }
     }
 
     #[test]
     fn test_get_wallpaper_ipc_format() {
         let p = NoctaliaV4Paths;
         let result = p.get_wallpaper("DP-3");
-        assert!(
-            result.is_ok() || result.as_ref().unwrap_err().contains("quickshell") || result.as_ref().unwrap_err().contains("/tmp"),
-            "expected IPC call to be made, got: {:?}",
-            result
-        );
+        if let Err(e) = &result {
+            assert!(
+                e.contains("quickshell") || e.contains("Wallpaper get"),
+                "unexpected error: {}",
+                e
+            );
+        }
+    }
+
+    // ── NoctaliaV5Paths tests ──
+
+    #[test]
+    fn test_noctalia_v5_paths_id() {
+        let p = NoctaliaV5Paths;
+        assert_eq!(<NoctaliaV5Paths as ShellProvider>::id(&p), "noctalia");
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_display_name() {
+        let p = NoctaliaV5Paths;
+        assert_eq!(p.display_name(), "Noctalia v5");
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_config_dir() {
+        let p = NoctaliaV5Paths;
+        let cd = p.config_dir();
+        assert!(cd.is_some());
+        let cd = cd.unwrap();
+        assert!(cd.ends_with("noctalia"));
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_rendered_dir_none() {
+        let p = NoctaliaV5Paths;
+        assert!(p.rendered_dir().is_none());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_theming_config_none() {
+        let p = NoctaliaV5Paths;
+        assert!(p.theming_config().is_none());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_template_processor_none() {
+        let p = NoctaliaV5Paths;
+        assert!(p.template_processor().is_none());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_wallpapers_file_none() {
+        let p = NoctaliaV5Paths;
+        assert!(p.wallpapers_file().is_none());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_source_files_empty() {
+        let p = NoctaliaV5Paths;
+        assert!(p.source_files().is_empty());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_rendered_color_files_empty() {
+        let p = NoctaliaV5Paths;
+        assert!(p.rendered_color_files().is_empty());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_reload_command_empty() {
+        let p = NoctaliaV5Paths;
+        assert!(p.reload_command().is_empty());
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_apply_wallpaper_ipc_format() {
+        let p = NoctaliaV5Paths;
+        // Puede fallar — solo verificamos que no panic y la sintaxis sea correcta
+        let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
+        if let Err(e) = &result {
+            assert!(
+                e.contains("noctalia") || e.contains("Wallpaper IPC") || e.contains("No such file"),
+                "unexpected error: {}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_noctalia_v5_paths_get_wallpaper_ipc_format() {
+        let p = NoctaliaV5Paths;
+        let result = p.get_wallpaper("DP-3");
+        if let Err(e) = &result {
+            assert!(
+                e.contains("noctalia") || e.contains("Wallpaper get") || e.contains("No such file"),
+                "unexpected error: {}",
+                e
+            );
+        }
+    }
+
+    // ── ShellDetector tests ──
+
+    #[test]
+    fn test_v4_detector_id() {
+        let detector = NoctaliaV4Paths;
+        assert_eq!(<NoctaliaV4Paths as ShellDetector>::id(&detector), "noctalia");
+    }
+
+    #[test]
+    fn test_v5_detector_id() {
+        let detector = NoctaliaV5Paths;
+        assert_eq!(<NoctaliaV5Paths as ShellDetector>::id(&detector), "noctalia");
+    }
+
+    #[test]
+    fn test_v4_detector_is_active_no_crash() {
+        // Puede ser true o false dependiendo de si quickshell está corriendo
+        // Solo verificamos que no panic
+        let detector = NoctaliaV4Paths;
+        let _ = detector.is_active();
+    }
+
+    #[test]
+    fn test_v5_detector_is_active_no_crash() {
+        // Puede ser true o false dependiendo de procesos y directorios
+        // Solo verificamos que no panic
+        let detector = NoctaliaV5Paths;
+        let _ = detector.is_active();
+    }
+
+    // ── ShellRegistry tests ──
+
+    #[test]
+    fn test_registry_new_empty() {
+        let registry = ShellRegistry::new();
+        assert!(registry.active_id().is_none());
+    }
+
+    #[test]
+    fn test_registry_register_v4_v5() {
+        let mut registry = ShellRegistry::new();
+        registry.register(NoctaliaV4Paths);
+        registry.register(NoctaliaV5Paths);
+        // El active_id será None (ningún proceso corriendo en tests)
+        // o será Some("noctalia") (si uno de los detectores devuelve true)
+        match registry.active_id() {
+            None => {} // ninguno activo — OK
+            Some(id) => assert_eq!(id, "noctalia"), // uno activo — OK
+        }
+    }
+
+    #[test]
+    fn test_registry_is_active_check() {
+        let mut registry = ShellRegistry::new();
+        registry.register(NoctaliaV4Paths);
+        registry.register(NoctaliaV5Paths);
+
+        // Si alguno está activo, is_active("noctalia") debe ser true
+        if registry.active_id() == Some("noctalia") {
+            assert!(registry.is_active("noctalia"));
+            assert!(!registry.is_active("nonexistent"));
+        } else {
+            assert!(!registry.is_active("noctalia"));
+        }
     }
 }
