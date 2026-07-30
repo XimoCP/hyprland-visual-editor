@@ -94,6 +94,7 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
             .args(["dispatch", "movetoworkspacesilent", "special:minimized"])
             .output();
         crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+        crate::tray::refresh_global_menu();
     }
 }
 
@@ -169,6 +170,7 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
         window.set_countdown_seconds(total_seconds);
         window.set_countdown_progress(1.0);
         crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+        crate::tray::refresh_global_menu();
     }
 }
 

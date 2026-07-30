@@ -245,6 +245,7 @@ fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
             let _ = win.window().hide();
             WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         }
+        crate::tray::refresh_global_menu();
         "ok".to_string()
     }))
 }

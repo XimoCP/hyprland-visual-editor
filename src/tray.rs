@@ -15,6 +15,11 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
+    /// Force a tray menu refresh so the UI picks up the latest WINDOW_HIDDEN state.
+    pub fn refresh_menu(&self) {
+        self.handle.update(|_| {});
+    }
+
     /// Update the tray icon with new RGBA pixel data (will be converted to BGRA internally).
     pub fn update_icon(&self, rgba: Vec<u8>) {
         let bgra: Vec<u8> = rgba
@@ -39,6 +44,16 @@ pub fn update_global_icon(rgba: Vec<u8>) {
     if let Some(tray) = GLOBAL_TRAY.get() {
         if let Ok(tray) = tray.lock() {
             tray.update_icon(rgba);
+        }
+    }
+}
+
+/// Force the tray menu to refresh so the next open reads fresh WINDOW_HIDDEN state.
+/// Safe to call from any thread (just sends via mpsc channel).
+pub fn refresh_global_menu() {
+    if let Some(tray) = GLOBAL_TRAY.get() {
+        if let Ok(tray) = tray.lock() {
+            tray.refresh_menu();
         }
     }
 }
@@ -231,6 +246,8 @@ impl ksni::Tray for HveTray {
                                 crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
                             }
                         }
+                        // Force tray menu refresh so label reflects new visibility
+                        crate::tray::refresh_global_menu();
                     });
                 }),
                 ..Default::default()

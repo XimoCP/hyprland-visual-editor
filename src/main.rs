@@ -1372,6 +1372,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.window().on_close_requested(|| {
         // Keep the tray menu in sync: the window is now hidden
         ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+        crate::tray::refresh_global_menu();
         slint::CloseRequestResponse::HideWindow
     });
 

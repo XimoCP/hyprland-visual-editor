@@ -599,6 +599,15 @@ fn noctalia_config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("noctalia"))
 }
 
+/// Resolve Noctalia state dir (~/.local/state/noctalia).
+///
+/// v5 stores its runtime settings in `settings.toml` inside this directory,
+/// NOT in `~/.config/noctalia/settings.json` (which is a v4 artifact).
+fn noctalia_state_dir() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".local").join("state").join("noctalia"))
+}
+
 /// Find the palette JSON file for a given source and name.
 ///
 /// Sources:
@@ -727,6 +736,18 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
+        // 4. Save full Noctalia v5 settings (bar, OSD, widgets, layout, everything)
+        //    v5 stores its settings in ~/.local/state/noctalia/settings.toml, NOT
+        //    in ~/.config/noctalia/settings.json (which is a v4 artifact).
+        let v5_settings = noctalia_state_dir().map(|d| d.join("settings.toml"));
+        if let Some(settings_path) = v5_settings {
+            if settings_path.exists() {
+                fs::copy(&settings_path, provider_dir.join("settings.toml"))
+                    .map_err(|e| format!("Cannot copy settings.toml: {}", e))?;
+                tracing::info!("[noctalia-v5] Saved settings.toml");
+            }
+        }
+
         Ok(())
     }
 
@@ -738,6 +759,24 @@ impl ThemeProvider for NoctaliaV5Provider {
 
         let palette_src = provider_dir.join("palette.json");
         let source_src = provider_dir.join("source.txt");
+
+        // 0. Restore full Noctalia v5 settings FIRST (bar, OSD, widgets, layout, etc.)
+        //    v5 stores settings in ~/.local/state/noctalia/settings.toml, NOT
+        //    in settings.json (v4 artifact). This must happen before wallpaper/scheme
+        //    so config-reload loads the complete ecosystem state first.
+        let saved_settings = provider_dir.join("settings.toml");
+        if saved_settings.exists() {
+            if let Some(state_dir) = noctalia_state_dir() {
+                let dst = state_dir.join("settings.toml");
+                fs::copy(&saved_settings, &dst)
+                    .map_err(|e| format!("Cannot restore settings.toml: {}", e))?;
+                tracing::info!("[noctalia-v5] Restored settings.toml");
+
+                noctalia_msg(&["msg", "config-reload"])
+                    .map_err(|e| format!("Cannot reload config: {}", e))?;
+                tracing::info!("[noctalia-v5] Config reloaded — bar, OSD, widgets restored");
+            }
+        }
 
         // 1. Restore wallpaper FIRST — for wallpaper-derived schemes, setting
         //    the wallpaper triggers Noctalia's palette regeneration, so it
@@ -806,7 +845,7 @@ impl ThemeProvider for NoctaliaV5Provider {
             .arg("--app-name=HVE")
             .arg(format!("🎨 Tema '{}' aplicado", theme_name))
             .arg(format!(
-                "Theme \"{}\" applied — Noctalia v5 colors + wallpaper restored",
+                "Theme \"{}\" applied — Noctalia v5 colors, settings, wallpaper restored",
                 theme_name,
             ))
             .output()
@@ -874,6 +913,23 @@ mod tests {
         let _result = provider.save(&dir);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_noctalia_state_dir() {
+        let path = noctalia_state_dir();
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.ends_with(".local/state/noctalia"));
+        assert!(path.is_absolute());
+    }
+
+    #[test]
+    fn test_noctalia_state_dir_exists() {
+        let path = noctalia_state_dir().unwrap();
+        // This should exist on a real system when noctalia v5 is installed
+        // We just verify it doesn't crash — existence depends on the system
+        let _ = path.exists();
     }
 
     #[test]
