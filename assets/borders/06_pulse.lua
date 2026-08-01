@@ -20,6 +20,14 @@ hl.config({
     }
 })
 
+hl.config({
+    windowrulev2 = {
+        "noshadow, focus:0",
+        "dim_around, floating:1"
+    }
+})
+
 hl.curve("heartbeat", { type = "bezier", points = { { 0.05, 0.9 }, { 0.1, 1.0 } } })
-hl.animation({ leaf = "borderangle", enabled = true, speed = 40, bezier = "heartbeat", style = "loop" })
-hl.animation({ leaf = "border", enabled = true, speed = 1.0, bezier = "default" })
+hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "heartbeat", style = "loop" })
+hl.animation({ leaf = "border", enabled = true, speed = 2, bezier = "default" })
+hl.animation({ leaf = "fadeShadow", enabled = true, speed = 2, bezier = "default" })

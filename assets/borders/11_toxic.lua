@@ -20,5 +20,14 @@ hl.config({
     }
 })
 
+hl.config({
+    windowrulev2 = {
+        "noshadow, focus:0",
+        "dim_around, floating:1"
+    }
+})
+
 hl.curve("nv_toxic", { type = "bezier", points = { { 0.4, 0 }, { 0.2, 1 } } })
-hl.animation({ leaf = "borderangle", enabled = true, speed = 40, bezier = "nv_toxic", style = "loop" })
+hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "nv_toxic", style = "loop" })
+hl.animation({ leaf = "border", enabled = true, speed = 2, bezier = "default" })
+hl.animation({ leaf = "fadeShadow", enabled = true, speed = 2, bezier = "default" })

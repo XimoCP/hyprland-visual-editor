@@ -27,8 +27,8 @@ hl.config({
     decoration = {
         shadow = {
             enabled = true,
-            range = 15,                  -- Tu rango original
-            render_power = 3,            -- Tu potencia original
+            range = 20,                  -- Tu rango original
+            render_power = 4,            -- Tu potencia original
             color = shadow_glow,
             color_inactive = shadow_off, -- Hyprland hará un fundido hasta volverla invisible
             offset = { 0, 0 }
@@ -36,7 +36,7 @@ hl.config({
     },
     windowrulev2 = {
         "noshadow, focus:0",
-        "dim_around, floating:1"       -- NUEVO: dim around floating windows
+        "dim_around, floating:1" -- NUEVO: dim around floating windows
     }
 })
 
@@ -44,8 +44,7 @@ hl.curve("nv_joker_flow", { type = "bezier", points = { { 0.4, 0 }, { 0.2, 1 } }
 hl.curve("joker_bounce", { type = "bezier", points = { { 0.175, 0.885 }, { 0.32, 1.275 } } })
 
 hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "nv_joker_flow", style = "loop" })
--- Esta animación "border" es la que controla lo rápido que se apaga la sombra (speed = 10)
-hl.animation({ leaf = "border", enabled = true, speed = 10, bezier = "default" })
+-- Esta animación "border" es la que controla lo rápido que se apaga la sombra
+hl.animation({ leaf = "border", enabled = true, speed = 30, bezier = "default" })
 -- NUEVO: Fade de la sombra al cambiar de ventana
-hl.animation({ leaf = "fadeShadow", enabled = true, speed = 5, bezier = "default" })
-hl.animation({ leaf = "windows", enabled = true, speed = 5, bezier = "joker_bounce", style = "popin 80%" })
+hl.animation({ leaf = "fadeShadow", enabled = true, speed = 10, bezier = "default" })

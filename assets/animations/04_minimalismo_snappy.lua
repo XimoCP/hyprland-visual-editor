@@ -3,7 +3,7 @@
 -- @Color: #94a3b8
 -- @Tag: SNAPPY
 -- @Desc: Optimized for maximum speed. Only window and workspace management.
--- =====================================
+
 hl.animation({ leaf = "global", enabled = true, speed = 1, bezier = "default" })
 
 hl.curve("winIn", { type = "bezier", points = { { 0.07, 0.88 }, { 0.04, 0.99 } } })

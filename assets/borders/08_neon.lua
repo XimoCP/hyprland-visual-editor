@@ -20,5 +20,14 @@ hl.config({
     }
 })
 
+hl.config({
+    windowrulev2 = {
+        "noshadow, focus:0",
+        "dim_around, floating:1"
+    }
+})
+
 hl.curve("glitch", { type = "bezier", points = { { 0.1, 1.5 }, { 0.9, -0.5 } } })
-hl.animation({ leaf = "borderangle", enabled = true, speed = 40, bezier = "glitch", style = "loop" })
+hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "glitch", style = "loop" })
+hl.animation({ leaf = "border", enabled = true, speed = 2, bezier = "default" })
+hl.animation({ leaf = "fadeShadow", enabled = true, speed = 2, bezier = "default" })
