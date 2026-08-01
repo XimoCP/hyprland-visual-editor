@@ -41,6 +41,13 @@ export component MainWindow inherits Window {
     in-out property <int> shader-focused-index: -1;
     in-out property <int> theme-focused-index: -1;
     property <bool> sidebar-mode: anim-focused-index == -1 && border-focused-index == -1 && shader-focused-index == -1 && theme-focused-index == -1;
+
+    // ── Held-key navigation state (throttle auto-repeat) ──
+    property <bool> _nav-down-held: false;
+    property <bool> _nav-up-held: false;
+    property <int> _nav-repeat-interval: 400;  // ms, starts at OS-style initial delay
+    property <bool> _nav-rapid: false;  // true while a key is HELD (repeat mode); false for discrete presses
+
     in property <[NavModule]> nav-modules;
     in-out property <bool> system-active: false;
     in property <image> logo-image;
@@ -185,99 +192,144 @@ export component MainWindow inherits Window {
     callback refresh-themes();
     callback search-query-changed(string);
 
+    // ── Keyboard step helpers (called once per press, then on 120ms timer while held) ──
+    function step-down() {
+        if (root.active-tab == 1 && root.anim-focused-index >= 0) {
+            if (root.anim-focused-index >= root.anim-titles.length - 1) {
+                root.anim-focused-index = 0;
+            } else {
+                root.anim-focused-index += 1;
+            }
+        } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
+            if (root.border-focused-index >= root.border-titles.length - 1) {
+                root.border-focused-index = 0;
+            } else {
+                root.border-focused-index += 1;
+            }
+        } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
+            if (root.shader-focused-index >= root.shader-titles.length - 1) {
+                root.shader-focused-index = 0;
+            } else {
+                root.shader-focused-index += 1;
+            }
+        } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
+            if (root.theme-focused-index >= root.theme-names.length - 1) {
+                root.theme-focused-index = 0;
+            } else {
+                root.theme-focused-index += 1;
+            }
+        } else {
+            if (root.active-tab >= 4) {
+                root.active-tab = 0;
+            } else {
+                root.active-tab += 1;
+            }
+        }
+    }
+    function step-up() {
+        if (root.active-tab == 1 && root.anim-focused-index >= 0) {
+            if (root.anim-focused-index <= 0) {
+                root.anim-focused-index = root.anim-titles.length - 1;
+            } else {
+                root.anim-focused-index -= 1;
+            }
+        } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
+            if (root.border-focused-index <= 0) {
+                root.border-focused-index = root.border-titles.length - 1;
+            } else {
+                root.border-focused-index -= 1;
+            }
+        } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
+            if (root.shader-focused-index <= 0) {
+                root.shader-focused-index = root.shader-titles.length - 1;
+            } else {
+                root.shader-focused-index -= 1;
+            }
+        } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
+            if (root.theme-focused-index <= 0) {
+                root.theme-focused-index = root.theme-names.length - 1;
+            } else {
+                root.theme-focused-index -= 1;
+            }
+        } else {
+            if (root.active-tab <= 0) {
+                root.active-tab = 4;
+            } else {
+                root.active-tab -= 1;
+            }
+        }
+    }
+
     // ── Root FocusScope — centralized keyboard handler ──
     forward-focus: root-kbd;
 
     root-kbd := FocusScope {
-        // Down: navigate presets if inside module, else cycle tabs
-        KeyBinding {
-            keys: @keys(DownArrow);
-            activated => {
-                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
-                    if (root.anim-focused-index >= root.anim-titles.length - 1) {
-                        root.anim-focused-index = 0;
-                    } else {
-                        root.anim-focused-index += 1;
-                    }
-                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
-                    if (root.border-focused-index >= root.border-titles.length - 1) {
-                        root.border-focused-index = 0;
-                    } else {
-                        root.border-focused-index += 1;
-                    }
-                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
-                    if (root.shader-focused-index >= root.shader-titles.length - 1) {
-                        root.shader-focused-index = 0;
-                    } else {
-                        root.shader-focused-index += 1;
-                    }
-                } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
-                    if (root.theme-focused-index >= root.theme-names.length - 1) {
-                        root.theme-focused-index = 0;
-                    } else {
-                        root.theme-focused-index += 1;
-                    }
-                } else {
-                    if (root.active-tab >= 4) {
-                        root.active-tab = 0;
-                    } else {
-                        root.active-tab += 1;
-                    }
+        // ── Down/Up: navigate presets (or cycle tabs in sidebar mode).
+        // First press steps immediately; while the key stays held, a 120ms Timer
+        // keeps stepping so auto-repeat behaves like repeated presses. ──
+        Timer {
+            interval: root._nav-repeat-interval * 1ms;
+            running: root._nav-down-held || root._nav-up-held;
+            triggered => {
+                // after the initial delay, repeat: 150ms inside a module, 300ms between tabs
+                root._nav-rapid = true;
+                root._nav-repeat-interval = root.sidebar-mode ? 300 : 150;
+                if (root._nav-down-held) {
+                    root.step-down();
+                }
+                if (root._nav-up-held) {
+                    root.step-up();
                 }
             }
         }
 
-        // Up: navigate presets if inside module, else cycle tabs
-        KeyBinding {
-            keys: @keys(UpArrow);
-            activated => {
-                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
-                    if (root.anim-focused-index <= 0) {
-                        root.anim-focused-index = root.anim-titles.length - 1;
-                    } else {
-                        root.anim-focused-index -= 1;
-                    }
-                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
-                    if (root.border-focused-index <= 0) {
-                        root.border-focused-index = root.border-titles.length - 1;
-                    } else {
-                        root.border-focused-index -= 1;
-                    }
-                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
-                    if (root.shader-focused-index <= 0) {
-                        root.shader-focused-index = root.shader-titles.length - 1;
-                    } else {
-                        root.shader-focused-index -= 1;
-                    }
-                } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
-                    if (root.theme-focused-index <= 0) {
-                        root.theme-focused-index = root.theme-names.length - 1;
-                    } else {
-                        root.theme-focused-index -= 1;
-                    }
-                } else {
-                    if (root.active-tab <= 0) {
-                        root.active-tab = 4;
-                    } else {
-                        root.active-tab -= 1;
-                    }
+        key-pressed(event) => {
+            if (event.text == Key.DownArrow) {
+                if (!root._nav-down-held) {
+                    root._nav-down-held = true;
+                    root.step-down();
                 }
+                accept
+            } else if (event.text == Key.UpArrow) {
+                if (!root._nav-up-held) {
+                    root._nav-up-held = true;
+                    root.step-up();
+                }
+                accept
+            } else {
+                reject
             }
         }
 
-        // Right: enter module (select first preset)
+        key-released(event) => {
+            if (event.text == Key.DownArrow) {
+                root._nav-down-held = false;
+                root._nav-repeat-interval = 400;
+                root._nav-rapid = false;
+                accept
+            } else if (event.text == Key.UpArrow) {
+                root._nav-up-held = false;
+                root._nav-repeat-interval = 400;
+                root._nav-rapid = false;
+                accept
+            } else {
+                reject
+            }
+        }
+
+        // Right: enter module (select active preset, fallback first)
         KeyBinding {
             keys: @keys(RightArrow);
             enabled: root.active-tab != 0 && root.active-tab <= 4;
             activated => {
                 if (root.active-tab == 1) {
-                    root.anim-focused-index = 0;
+                    root.anim-focused-index = root.active-anim-index >= 0 ? root.active-anim-index : 0;
                 } else if (root.active-tab == 2) {
-                    root.border-focused-index = 0;
+                    root.border-focused-index = root.active-border-index >= 0 ? root.active-border-index : 0;
                 } else if (root.active-tab == 3) {
-                    root.shader-focused-index = 0;
+                    root.shader-focused-index = root.active-shader-index >= 0 ? root.active-shader-index : 0;
                 } else if (root.active-tab == 4) {
-                    root.theme-focused-index = 0;
+                    root.theme-focused-index = root.active-theme-index >= 0 ? root.active-theme-index : 0;
                 }
             }
         }
@@ -515,6 +567,7 @@ export component MainWindow inherits Window {
                         active-index: root.active-anim-index;
                         focused-index: root.anim-focused-index;
                         is-active: root.active-tab == 1;
+                        fast-expand: root._nav-rapid;
                         focus-requested(idx) => { root.anim-focused-index = idx; }
                         anim-toggled(idx, file) => { root.apply-animation(idx, file); }
                     }
@@ -540,6 +593,7 @@ export component MainWindow inherits Window {
                         border-size: root.border-size;
                         focused-index: root.border-focused-index;
                         is-active: root.active-tab == 2;
+                        fast-expand: root._nav-rapid;
                         focus-requested(idx) => { root.border-focused-index = idx; }
                         border-toggled(idx, file) => { root.apply-border(idx, file); }
                         geometry-changed(v) => { root.apply-geometry(v); }
@@ -564,6 +618,7 @@ export component MainWindow inherits Window {
                         active-index: root.active-shader-index;
                         focused-index: root.shader-focused-index;
                         is-active: root.active-tab == 3;
+                        fast-expand: root._nav-rapid;
                         focus-requested(idx) => { root.shader-focused-index = idx; }
                         shader-toggled(idx, file) => { root.apply-shader(idx, file); }
                     }
@@ -584,6 +639,8 @@ export component MainWindow inherits Window {
                         is-busy: root.theme-busy;
                         focused-index: root.theme-focused-index;
                         is-active: root.active-tab == 4;
+                        fast-expand: root._nav-rapid;
+                        active-index: root.active-theme-index;
                         focus-requested(idx) => { root.theme-focused-index = idx; }
                         header-title: root.theme-header-title;
                         header-subtitle: root.theme-header-subtitle;

@@ -373,13 +373,14 @@ export component AnimationsModule inherits Rectangle {
     in property <string> header-subtitle;
     in property <int> focused-index: -1;
     in property <bool> is-active: false;
+    in property <bool> fast-expand: false;
     callback focus-requested(int);
     callback anim-toggled(int, string);
 
     ScrollView {
         vertical-stretch: 1;
-        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 400ms; easing: ease-out; }
+        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px + 152px - self.height / 2 + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px) + ((root.active-index == root.focused-index || root.is-active) ? 21px : 0px))) : 0px;
+        animate viewport-y { duration: root.fast-expand ? 140ms : 250ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
@@ -400,6 +401,7 @@ export component AnimationsModule inherits Rectangle {
                 active: root.active-index == i;
                 index: i;
                 keyboard-focused: root.is-active && root.focused-index == i;
+                fast-expand: root.fast-expand;
                 toggled => { root.anim-toggled(i, root.anim-files[i]); }
                 focus-requested(idx) => {
                     if (root.is-active) {
@@ -424,14 +426,15 @@ export component BordersModule inherits Rectangle {
     in property <string> geometry-label;
     in property <int> focused-index: -1;
     in property <bool> is-active: false;
+    in property <bool> fast-expand: false;
     callback focus-requested(int);
     callback border-toggled(int, string);
     callback geometry-changed(int);
 
     ScrollView {
         vertical-stretch: 1;
-        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 400ms; easing: ease-out; }
+        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px + 244px - self.height / 2 + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px) + ((root.active-index == root.focused-index || root.is-active) ? 21px : 0px))) : 0px;
+        animate viewport-y { duration: root.fast-expand ? 140ms : 250ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
@@ -458,6 +461,7 @@ export component BordersModule inherits Rectangle {
                 active: root.active-index == i;
                 index: i;
                 keyboard-focused: root.is-active && root.focused-index == i;
+                fast-expand: root.fast-expand;
                 toggled => { root.border-toggled(i, root.border-files[i]); }
                 focus-requested(idx) => {
                     if (root.is-active) {
@@ -480,13 +484,14 @@ export component ShadersModule inherits Rectangle {
     in property <string> header-subtitle;
     in property <int> focused-index: -1;
     in property <bool> is-active: false;
+    in property <bool> fast-expand: false;
     callback focus-requested(int);
     callback shader-toggled(int, string);
 
     ScrollView {
         vertical-stretch: 1;
-        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 400ms; easing: ease-out; }
+        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px + 152px - self.height / 2 + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px) + ((root.active-index == root.focused-index || root.is-active) ? 21px : 0px))) : 0px;
+        animate viewport-y { duration: root.fast-expand ? 140ms : 250ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
@@ -507,6 +512,7 @@ export component ShadersModule inherits Rectangle {
                 active: root.active-index == i;
                 index: i;
                 keyboard-focused: root.is-active && root.focused-index == i;
+                fast-expand: root.fast-expand;
                 toggled => { root.shader-toggled(i, root.shader-files[i]); }
                 focus-requested(idx) => {
                     if (root.is-active) {
@@ -526,6 +532,7 @@ export component ThemeItem inherits Rectangle {
     in property <bool> is-busy: false;
     in property <bool> apply-in-progress: false;
     in property <bool> keyboard-focused: false;
+    in property <bool> fast-expand: false;
     in property <color> accent;
     in property <string> apply-text;
     in property <int> index: 0;
@@ -543,8 +550,8 @@ export component ThemeItem inherits Rectangle {
     height: _expanded ? 100px : 56px;
     border-radius: 10px;
     background: is-active ? HveColors.bg-hover : (is-hovered || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
-    border-width: is-active ? 2px : 1px;
-    border-color: is-active ? accent : ((is-hovered || keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
+    border-width: (is-active || keyboard-focused) ? 2px : 1px;
+    border-color: is-active ? accent : ((is-hovered || keyboard-focused) ? (keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border);
     visible: true;
 
     // 1. Capa de fondo para el TouchArea de la tarjeta (Eventos de hover/click)
@@ -561,7 +568,7 @@ export component ThemeItem inherits Rectangle {
     animate background { duration: 200ms; easing: ease-in-out; }
     animate border-color { duration: 200ms; easing: ease-in-out; }
     animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
-    animate height { duration: 250ms; easing: ease-in-out-back; }
+    animate height { duration: fast-expand ? 120ms : 250ms; easing: ease-in-out-back; }
 
     // 3. Contenido Visual (El layout principal)
     HorizontalLayout {
@@ -685,7 +692,9 @@ export component ThemesModule inherits Rectangle {
     in property <string> confirm-refresh-msg;
     in property <string> rename-title;
     in property <int> focused-index: -1;
+    in property <int> active-index: -1;
     in property <bool> is-active: false;
+    in property <bool> fast-expand: false;
     callback focus-requested(int);
     callback save-theme(string);
     callback apply-theme(string);
@@ -704,8 +713,8 @@ export component ThemesModule inherits Rectangle {
 
     ScrollView {
         vertical-stretch: 1;
-        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px - 123px)) : 0px;
-        animate viewport-y { duration: 400ms; easing: ease-out; }
+        viewport-y: root.focused-index >= 0 ? (0px - max(0px, root.focused-index * 70px + 371px - self.height / 2 + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px) + ((root.active-index == root.focused-index || root.is-active) ? 21px : 0px))) : 0px;
+        animate viewport-y { duration: root.fast-expand ? 140ms : 250ms; easing: ease-out; }
 
         VerticalLayout {
             padding: 24px;
@@ -857,6 +866,7 @@ export component ThemesModule inherits Rectangle {
                 is-busy: root.is-busy;
                 apply-in-progress: root.apply-in-progress;
                 keyboard-focused: root.is-active && root.focused-index == i;
+                fast-expand: root.fast-expand;
                 accent: HveColors.accent-pink;
                 apply-text: root.apply-text;
                 apply-theme(v) => {

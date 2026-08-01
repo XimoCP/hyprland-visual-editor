@@ -15,15 +15,16 @@ export component PresetCard inherits Rectangle {
     in property <bool> active: false;
     in property <int> index: 0;
     in-out property <bool> keyboard-focused: false;
+    in property <bool> fast-expand: false;
     callback toggled();
     callback focus-requested(int);
 
-    height: (active || ta.has-hover || root.keyboard-focused) ? 100px : 58px;
-    border-radius: 10px;
-    clip: true;
-    background: active ? HveColors.bg-hover : ((ta.has-hover || root.keyboard-focused) ? HveColors.bg-hover : HveColors.bg-card);
-    border-width: active ? 2px : 1px;
-    border-color: active ? accent : ((ta.has-hover || root.keyboard-focused) ? accent.transparentize(0.6) : HveColors.border);
+     height: (active || ta.has-hover || root.keyboard-focused) ? 100px : 58px;
+     border-radius: 10px;
+     clip: true;
+     background: active ? HveColors.bg-hover : ((ta.has-hover || root.keyboard-focused) ? HveColors.bg-hover : HveColors.bg-card);
+     border-width: (active || root.keyboard-focused) ? 2px : 1px;
+     border-color: active ? accent : ((ta.has-hover || root.keyboard-focused) ? (root.keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border);
 
     // Glow sutil al estar activo
     drop-shadow-blur: active ? 12px : 0px;
@@ -42,7 +43,7 @@ export component PresetCard inherits Rectangle {
         easing: ease-out;
     }
     animate height {
-        duration: 250ms;
+        duration: root.fast-expand ? 120ms : 250ms;
         easing: ease-in-out-back;
     }
 
