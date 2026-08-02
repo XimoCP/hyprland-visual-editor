@@ -317,6 +317,23 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Reset nav state when focus leaves or returns (e.g. tray menu steals
+        // keyboard focus on Wayland — a held arrow key's release never reaches
+        // us and would wedge the repeat timer otherwise).
+        focus-lost => {
+            root._nav-down-held = false;
+            root._nav-up-held = false;
+            root._nav-repeat-interval = 400;
+            root._nav-rapid = false;
+        }
+
+        focus-gained => {
+            root._nav-down-held = false;
+            root._nav-up-held = false;
+            root._nav-repeat-interval = 400;
+            root._nav-rapid = false;
+        }
+
         // Right: enter module (select active preset, fallback first)
         KeyBinding {
             keys: @keys(RightArrow);

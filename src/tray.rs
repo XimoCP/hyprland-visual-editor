@@ -241,6 +241,11 @@ impl ksni::Tray for HveTray {
                                 let _ = win.window().show();
                                 win.window().request_redraw();
                                 crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+                                // On Wayland/Hyprland, show() doesn't guarantee keyboard
+                                // focus — force it back to the HVE window.
+                                let _ = std::process::Command::new("hyprctl")
+                                    .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
+                                    .output();
                             } else {
                                 let _ = win.window().hide();
                                 crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
