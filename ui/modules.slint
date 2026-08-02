@@ -550,8 +550,8 @@ export component ThemeItem inherits Rectangle {
     height: _expanded ? 100px : 56px;
     border-radius: 10px;
     background: is-active ? HveColors.bg-hover : (is-hovered || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
-    border-width: (is-active || keyboard-focused) ? 2px : 1px;
-    border-color: is-active ? accent : ((is-hovered || keyboard-focused) ? (keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border);
+    border-width: is-active ? 3px : (keyboard-focused ? 1.5px : 1px);
+    border-color: (is-active && keyboard-focused) ? HveColors.text : (is-active ? accent : ((is-hovered || keyboard-focused) ? (keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border));
     visible: true;
 
     // 1. Capa de fondo para el TouchArea de la tarjeta (Eventos de hover/click)

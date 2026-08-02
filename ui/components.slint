@@ -23,8 +23,8 @@ export component PresetCard inherits Rectangle {
      border-radius: 10px;
      clip: true;
      background: active ? HveColors.bg-hover : ((ta.has-hover || root.keyboard-focused) ? HveColors.bg-hover : HveColors.bg-card);
-     border-width: (active || root.keyboard-focused) ? 2px : 1px;
-     border-color: active ? accent : ((ta.has-hover || root.keyboard-focused) ? (root.keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border);
+     border-width: active ? 3px : (root.keyboard-focused ? 1.5px : 1px);
+     border-color: (active && root.keyboard-focused) ? HveColors.text : (active ? accent : ((ta.has-hover || root.keyboard-focused) ? (root.keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border));
 
     // Glow sutil al estar activo
     drop-shadow-blur: active ? 12px : 0px;
