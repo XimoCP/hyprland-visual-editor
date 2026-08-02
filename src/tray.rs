@@ -224,7 +224,7 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Separator ──
             ksni::MenuItem::Separator,
-            // ── Toggle Window (hide/show) — seguro con run_event_loop_until_quit ──
+            // ── Toggle Window (hide/show) — mantiene ventana mapeada en special workspace ──
             StandardItem {
                 label: if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
                     self.tr.tr_or("tray.show_window", "Show Window").to_string()
@@ -238,16 +238,16 @@ impl ksni::Tray for HveTray {
                             // WINDOW_HIDDEN única fuente de verdad.
                             // is_visible() no es fiable en Wayland.
                             if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
-                                let _ = win.window().show();
-                                win.window().request_redraw();
+                                let fast = crate::ipc::show_window(&win);
+                                if !fast {
+                                    // Desmapeada (tray lazy-load / cierre por WM):
+                                    // re-mapeo + warmup.
+                                    crate::prewarm_tabs(win.as_weak(), 1);
+                                    crate::warmup_navigation(&win);
+                                }
                                 crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
-                                // On Wayland/Hyprland, show() doesn't guarantee keyboard
-                                // focus — force it back to the HVE window.
-                                let _ = std::process::Command::new("hyprctl")
-                                    .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
-                                    .output();
                             } else {
-                                let _ = win.window().hide();
+                                crate::ipc::hide_window(&win);
                                 crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
                             }
                         }

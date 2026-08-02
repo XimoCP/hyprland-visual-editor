@@ -36,17 +36,19 @@ export component MainWindow inherits Window {
 
     // ── State ──
     in-out property <int> active-tab: 0;
+    in-out property <bool> nav-ready: true;
     in-out property <int> anim-focused-index: -1;
     in-out property <int> border-focused-index: -1;
     in-out property <int> shader-focused-index: -1;
     in-out property <int> theme-focused-index: -1;
     property <bool> sidebar-mode: anim-focused-index == -1 && border-focused-index == -1 && shader-focused-index == -1 && theme-focused-index == -1;
 
-    // ── Held-key navigation state (throttle auto-repeat) ──
+    // ── Held-key navigation state ──
     property <bool> _nav-down-held: false;
     property <bool> _nav-up-held: false;
-    property <int> _nav-repeat-interval: 400;  // ms, starts at OS-style initial delay
-    property <bool> _nav-rapid: false;  // true while a key is HELD (repeat mode); false for discrete presses
+    property <int> _nav-repeat-interval: 150;  // ms between repeats once the OS confirms the hold
+    property <bool> _nav-repeat-active: false; // true once OS auto-repeat confirms the hold
+    property <bool> _nav-rapid: false;         // true during OS-confirmed repeat (fast expand)
 
     in property <[NavModule]> nav-modules;
     in-out property <bool> system-active: false;
@@ -265,15 +267,15 @@ export component MainWindow inherits Window {
 
     root-kbd := FocusScope {
         // ── Down/Up: navigate presets (or cycle tabs in sidebar mode).
-        // First press steps immediately; while the key stays held, a 120ms Timer
-        // keeps stepping so auto-repeat behaves like repeated presses. ──
+        // A first press steps immediately. The OS auto-repeat (event.repeat)
+        // confirms a hold; only then does this Timer take over the repeat
+        // cadence (150ms inside a module, 300ms between tabs). Starting the
+        // Timer on the first press caused a premature second step at 400ms —
+        // the "jumps two tabs" bug. ──
         Timer {
             interval: root._nav-repeat-interval * 1ms;
-            running: root._nav-down-held || root._nav-up-held;
+            running: root._nav-repeat-active;
             triggered => {
-                // after the initial delay, repeat: 150ms inside a module, 300ms between tabs
-                root._nav-rapid = true;
-                root._nav-repeat-interval = root.sidebar-mode ? 300 : 150;
                 if (root._nav-down-held) {
                     root.step-down();
                 }
@@ -285,15 +287,24 @@ export component MainWindow inherits Window {
 
         key-pressed(event) => {
             if (event.text == Key.DownArrow) {
-                if (!root._nav-down-held) {
+                if (root.nav-ready && !root._nav-down-held) {
                     root._nav-down-held = true;
                     root.step-down();
+                } else if (root.nav-ready && event.repeat && root._nav-down-held && !root._nav-repeat-active) {
+                    // OS confirmed the hold → take over repeat cadence
+                    root._nav-repeat-active = true;
+                    root._nav-rapid = true;
+                    root._nav-repeat-interval = root.sidebar-mode ? 300 : 150;
                 }
                 accept
             } else if (event.text == Key.UpArrow) {
-                if (!root._nav-up-held) {
+                if (root.nav-ready && !root._nav-up-held) {
                     root._nav-up-held = true;
                     root.step-up();
+                } else if (root.nav-ready && event.repeat && root._nav-up-held && !root._nav-repeat-active) {
+                    root._nav-repeat-active = true;
+                    root._nav-rapid = true;
+                    root._nav-repeat-interval = root.sidebar-mode ? 300 : 150;
                 }
                 accept
             } else {
@@ -304,12 +315,12 @@ export component MainWindow inherits Window {
         key-released(event) => {
             if (event.text == Key.DownArrow) {
                 root._nav-down-held = false;
-                root._nav-repeat-interval = 400;
+                root._nav-repeat-active = false;
                 root._nav-rapid = false;
                 accept
             } else if (event.text == Key.UpArrow) {
                 root._nav-up-held = false;
-                root._nav-repeat-interval = 400;
+                root._nav-repeat-active = false;
                 root._nav-rapid = false;
                 accept
             } else {
@@ -323,21 +334,21 @@ export component MainWindow inherits Window {
         focus-lost => {
             root._nav-down-held = false;
             root._nav-up-held = false;
-            root._nav-repeat-interval = 400;
+            root._nav-repeat-active = false;
             root._nav-rapid = false;
         }
 
         focus-gained => {
             root._nav-down-held = false;
             root._nav-up-held = false;
-            root._nav-repeat-interval = 400;
+            root._nav-repeat-active = false;
             root._nav-rapid = false;
         }
 
         // Right: enter module (select active preset, fallback first)
         KeyBinding {
             keys: @keys(RightArrow);
-            enabled: root.active-tab != 0 && root.active-tab <= 4;
+            enabled: root.nav-ready && root.active-tab != 0 && root.active-tab <= 4;
             activated => {
                 if (root.active-tab == 1) {
                     root.anim-focused-index = root.active-anim-index >= 0 ? root.active-anim-index : 0;
@@ -353,6 +364,7 @@ export component MainWindow inherits Window {
 
         // Left: exit module (back to tab nav)
         KeyBinding {
+            enabled: root.nav-ready;
             keys: @keys(LeftArrow);
             activated => {
                 root.anim-focused-index = -1;
@@ -364,6 +376,7 @@ export component MainWindow inherits Window {
 
         // Enter: toggle preset if inside module
         KeyBinding {
+            enabled: root.nav-ready;
             keys: @keys(Return);
             activated => {
                 if (root.active-tab == 1 && root.anim-focused-index >= 0) {

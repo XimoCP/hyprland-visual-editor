@@ -617,6 +617,44 @@ fn sync_preset_indices(
     window.set_border_size(cfg.border_size);
 }
 
+/// Pre-warm tab layouts so the first user interaction after a show()
+/// does not hit cold (unmeasured) layouts.
+///
+/// Slint does not compute the layout of inactive tabs (width: 0%) until
+/// they are rendered. This briefly cycles through tabs during startup /
+/// after each show() so Slint caches the layouts, avoiding first-keypress
+/// lag and skipped animations. In tray mode this must be called again
+/// after every show() because hide() discards the rendered state.
+pub(crate) fn prewarm_tabs(weak: slint::Weak<crate::MainWindow>, step: u8) {
+    if step > 3 {
+        if let Some(win) = weak.upgrade() {
+            win.set_active_tab(0);
+        }
+        return;
+    }
+    if let Some(win) = weak.upgrade() {
+        win.set_active_tab(step as i32);
+    }
+    slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
+        prewarm_tabs(weak, step + 1);
+    });
+}
+
+/// Block keyboard navigation for a short warmup window after the window is
+/// shown, so Slint's animation clock starts ticking before the first key
+/// press. Without this, the very first navigation step after show() skips
+/// its animation (Slint issue #1255) and the auto-repeat timer makes it
+/// look like a double tab-skip.
+pub(crate) fn warmup_navigation(win: &crate::MainWindow) {
+    win.set_nav_ready(false);
+    let weak = win.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(250), move || {
+        if let Some(w) = weak.upgrade() {
+            w.set_nav_ready(true);
+        }
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
@@ -971,9 +1009,7 @@ fn main() -> Result<(), slint::PlatformError> {
             set_tiling_window_rules(enabled);
 
             // Try to toggle the CURRENT window immediately
-            let _ = std::process::Command::new("hyprctl")
-                .args(["dispatch", "togglefloating", "title:Hyprland Visual Editor"])
-                .output();
+            crate::ipc::toggle_float_hve();
 
             // Show restart banner explaining that full effect requires restart
             if let Some(w) = weak.upgrade() {
@@ -1407,31 +1443,19 @@ fn main() -> Result<(), slint::PlatformError> {
         // hasta que se renderizan por primera vez. Esto causa un delay
         // en el primer click. Solución: mostrar cada tab brevemente
         // durante el startup para que Slint cachem los layouts.
-        fn prewarm_tabs(weak: slint::Weak<crate::MainWindow>, step: u8) {
-            if step > 3 {
-                if let Some(win) = weak.upgrade() {
-                    win.set_active_tab(0);
-                }
-                return;
-            }
-            if let Some(win) = weak.upgrade() {
-                win.set_active_tab(step as i32);
-            }
-            slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-                prewarm_tabs(weak, step + 1);
-            });
-        }
         prewarm_tabs(window.as_weak(), 1);
+
+        // ── Warm up keyboard navigation ──
+        // Block nav for 250ms after show so the animation clock ticks
+        // before the first key press.
+        warmup_navigation(&window);
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via hyprctl para evitar el doble-click inicial.
         let startup_tiling = cfg.lock().unwrap().tiling_mode;
-        let startup_weak = window.as_weak();
         // First timer: focus window + sync config rules
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
-            let _ = std::process::Command::new("hyprctl")
-                .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
-                .output();
+            crate::ipc::focus_hve_window();
 
             // ── Ensure hyprland.conf rules match saved config ──
             set_tiling_window_rules(startup_tiling);
@@ -1441,12 +1465,8 @@ fn main() -> Result<(), slint::PlatformError> {
             // window, we dispatch togglefloating after a short delay to let the
             // config reload complete.
             if startup_tiling {
-                let weak2 = startup_weak.clone();
                 slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
-                    let _w = weak2.upgrade();
-                    let _ = std::process::Command::new("hyprctl")
-                        .args(["dispatch", "togglefloating", "title:Hyprland Visual Editor"])
-                        .output();
+                    crate::ipc::toggle_float_hve();
                     tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
                 });
             }
@@ -1588,6 +1608,68 @@ mod tests {
         set_keybinds(false);
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(before, after, "disabling when markers absent should be no-op");
+    }
+
+    // ── Keyboard navigation logic (backend-testing) ──────────────────
+    // Ignored by default: initializes the Slint testing backend which can
+    // only run once per process. Run with:
+    //   cargo test -- --ignored nav_logic --test-threads=1
+    //
+    // Regression test: a plain hold of the arrow key (<600ms, no OS
+    // auto-repeat yet) must NOT jump two tabs. The repeat Timer only starts
+    // after the OS confirms the hold with its first repeat (event.repeat).
+    #[test]
+    #[ignore]
+    fn nav_logic_single_keypress_single_step() {
+        i_slint_backend_testing::init_integration_test_with_mock_time();
+        let win = MainWindow::new().unwrap();
+        win.show().unwrap();
+        let w = win.window();
+
+        // 1. Tap: un KeyPressed Down desde Inicio (tab 0) → exactamente UNA tab
+        w.dispatch_event(slint::platform::WindowEvent::KeyPressed {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+        assert_eq!(win.get_active_tab(), 1, "un key-pressed (tap) debe mover exactamente una tab");
+
+        // 2. Hold de 500ms SIN repeat del OS: el Timer NO está activo
+        //    (arranca solo tras event.repeat) → NO debe saltar otra tab.
+        //    ESTO era el bug: el Timer viejo disparaba a los 400ms.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(500));
+        assert_eq!(win.get_active_tab(), 1, "hold de 500ms sin repeat del OS no debe saltar dos tabs");
+
+        // 3. El OS confirma el hold con su primer repeat → activa el Timer, sin step
+        w.dispatch_event(slint::platform::WindowEvent::KeyPressRepeated {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+        assert_eq!(win.get_active_tab(), 1, "el repeat del OS activa el Timer pero no hace step");
+
+        // 4. El Timer toma el relevo del repeat. Nota: en el backend de
+        //    testing, el Timer se registra recién en el siguiente tick (el
+        //    dispatch del evento no avanza el reloj). En la app real el event
+        //    loop de winit actualiza los timers continuamente.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
+
+        // 5. Primer step del Timer (intervalo 150ms dentro de un módulo)
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
+        assert_eq!(win.get_active_tab(), 2, "Timer activo tras repeat del OS: step cada 150ms");
+
+        // 6. El Timer se re-registra en el tick siguiente y luego dispara el
+        //    2º step (mismo patrón de registro diferido del backend testing)
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
+        assert_eq!(win.get_active_tab(), 3, "segundo intervalo del Timer: otro step");
+
+        // 7. Release → todo se resetea
+        w.dispatch_event(slint::platform::WindowEvent::KeyReleased {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+
+        // 8. Nuevo tap tras release → exactamente una tab más
+        w.dispatch_event(slint::platform::WindowEvent::KeyPressed {
+            text: slint::platform::Key::DownArrow.into(),
+        });
+        assert_eq!(win.get_active_tab(), 4, "nuevo press tras release mueve una tab");
     }
 
 }

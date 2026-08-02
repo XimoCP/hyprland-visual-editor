@@ -2040,6 +2040,7 @@ dependencies = [
  "clap 4.6.1",
  "dirs",
  "fs2",
+ "i-slint-backend-testing",
  "ksni 0.2.2",
  "resvg 0.45.1",
  "serde",

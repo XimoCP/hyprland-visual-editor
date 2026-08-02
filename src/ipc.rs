@@ -7,6 +7,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 /// Tracks whether the main window has been hidden via toggle-tray (tray mode).
@@ -238,12 +239,16 @@ fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
         // sobre una ventana que nunca terminó de aparecer —→ 3 pulsaciones.
         let hidden = WINDOW_HIDDEN.load(Ordering::Relaxed);
         if hidden {
-            let _ = win.window().show();
-            win.window().request_redraw();
-            WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+            let fast = crate::ipc::show_window(&win);
+            if !fast {
+                // Desmapeada (tray lazy-load / cierre por WM): re-mapeo + warmup.
+                crate::prewarm_tabs(win.as_weak(), 1);
+                crate::warmup_navigation(&win);
+            }
+            crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
         } else {
-            let _ = win.window().hide();
-            WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+            crate::ipc::hide_window(&win);
+            crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         }
         crate::tray::refresh_global_menu();
         "ok".to_string()
@@ -300,6 +305,178 @@ fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {
         let _ = slint::quit_event_loop();
     });
     "ok\n".to_string()
+}
+
+// ─── Hyprland show/hide via named special workspace ──────────────────
+// Ventana NUNCA se desmapea: ocultar la mueve a special:minimized y
+// mostrar la devuelve. Evita el re-mapeo lento (~1.2s) de hide()/show()
+// de Slint que hacía que las teclas se perdieran tras reabrir.
+// V5 = Hyprland v5/Noctalia (lua hl.dsp.*). V4 = clásico (dispatch ...).
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum HyprMode {
+    V5,
+    V4,
+    None,
+}
+
+static HYPR_MODE: OnceLock<HyprMode> = OnceLock::new();
+const HVE_TITLE: &str = "Hyprland Visual Editor";
+const SPECIAL: &str = "minimized";
+
+pub(crate) fn hypr_mode() -> HyprMode {
+    *HYPR_MODE.get_or_init(|| {
+        // V5: `dispatch 'hl.dsp.no_op()'` → contiene "ok"
+        if let Ok(out) = std::process::Command::new("hyprctl")
+            .args(["dispatch", "hl.dsp.no_op()"])
+            .output()
+        {
+            if String::from_utf8_lossy(&out.stdout).contains("ok") {
+                return HyprMode::V5;
+            }
+        }
+        // V4: si cualquier cosa, verificar versión
+        if let Ok(out) = std::process::Command::new("hyprctl").arg("version").output() {
+            if String::from_utf8_lossy(&out.stdout).contains("Hyprland") {
+                return HyprMode::V4;
+            }
+        }
+        HyprMode::None
+    })
+}
+
+fn hypr_dispatch_v5(script: &str) -> bool {
+    std::process::Command::new("hyprctl")
+        .args(["dispatch", script])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+        .unwrap_or(false)
+}
+
+fn hypr_dispatch_v4(args: &[&str]) -> bool {
+    std::process::Command::new("hyprctl")
+        .arg("dispatch")
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+        .unwrap_or(false)
+}
+
+/// True si la ventana de HVE está mapeada en el special workspace.
+fn hve_in_special() -> bool {
+    let Ok(out) = std::process::Command::new("hyprctl").args(["clients", "-j"]).output() else {
+        return false;
+    };
+    let Ok(text) = String::from_utf8(out.stdout) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    v.as_array().into_iter().flatten().any(|w| {
+        w.get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .contains(HVE_TITLE)
+            && w.get("workspace")
+                .and_then(|ws| ws.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .contains("special")
+    })
+}
+
+/// Forzar foco de teclado a HVE (sintaxis correcta según versión).
+pub(crate) fn focus_hve_window() {
+    match hypr_mode() {
+        HyprMode::V5 => {
+            let s = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+            let _ = hypr_dispatch_v5(&s);
+        }
+        HyprMode::V4 => {
+            let _ = hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
+        }
+        HyprMode::None => {}
+    }
+}
+
+/// Toggle floating de HVE (sintaxis correcta según versión).
+pub(crate) fn toggle_float_hve() {
+    match hypr_mode() {
+        HyprMode::V5 => {
+            let s = format!(
+                "hl.dsp.window.float({{ action = \"toggle\", window = \"title:{HVE_TITLE}\" }})"
+            );
+            let _ = hypr_dispatch_v5(&s);
+        }
+        HyprMode::V4 => {
+            let _ = hypr_dispatch_v4(&["togglefloating", HVE_TITLE]);
+        }
+        HyprMode::None => {}
+    }
+}
+
+/// Ocultar manteniendo la ventana mapeada (special workspace).
+/// Fallback a hide() de Slint si no está disponible.
+pub(crate) fn hide_window(win: &crate::MainWindow) {
+    match hypr_mode() {
+        HyprMode::V5 => {
+            let s1 = format!("hl.dsp.window.move({{ workspace = \"special:{SPECIAL}\" }})");
+            let s2 = format!("hl.dsp.workspace.toggle_special(\"{SPECIAL}\")");
+            let did_move = hypr_dispatch_v5(&s1);
+            let did_close = hypr_dispatch_v5(&s2);
+            if !(did_move && did_close) {
+                let _ = win.window().hide();
+            }
+        }
+        HyprMode::V4 => {
+            let did_move =
+                hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
+            let did_close = hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
+            if !(did_move && did_close) {
+                let _ = win.window().hide();
+            }
+        }
+        HyprMode::None => {
+            let _ = win.window().hide();
+        }
+    }
+}
+
+/// Mostrar la ventana. Retorna true si fue rápido (special workspace, ventana
+/// seguía mapeada) o false si hubo que re-mapear con show() de Slint (lento).
+pub(crate) fn show_window(win: &crate::MainWindow) -> bool {
+    let fast = match hypr_mode() {
+        HyprMode::V5 => {
+            if hve_in_special() {
+                let s1 = format!("hl.dsp.workspace.toggle_special(\"{SPECIAL}\")");
+                let s2 = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                let did_open = hypr_dispatch_v5(&s1);
+                let did_focus = hypr_dispatch_v5(&s2);
+                did_open && did_focus
+            } else {
+                let _ = win.window().show();
+                false
+            }
+        }
+        HyprMode::V4 => {
+            if hve_in_special() {
+                let did_open = hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
+                let did_focus =
+                    hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
+                did_open && did_focus
+            } else {
+                let _ = win.window().show();
+                false
+            }
+        }
+        HyprMode::None => {
+            let _ = win.window().show();
+            false
+        }
+    };
+    win.window().request_redraw();
+    fast
 }
 
 #[cfg(test)]

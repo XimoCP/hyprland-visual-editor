@@ -27,6 +27,7 @@ slint-build = "1.17"
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+i-slint-backend-testing = "1.17"
 
 [profile.dev]
 codegen-units = 256

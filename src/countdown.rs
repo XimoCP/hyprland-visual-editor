@@ -84,15 +84,7 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     cancel_countdown(window_weak.clone());
 
     if let Some(window) = window_weak.upgrade() {
-        // hide() en Wayland con run_event_loop_until_quit funciona
-        match window.window().hide() {
-            Ok(_) => tracing::info!("[countdown] Window hidden OK"),
-            Err(e) => tracing::error!("[countdown] hide() falló: {:?}", e),
-        }
-        // Best-effort: también pedir a Hyprland que minimice
-        let _ = std::process::Command::new("hyprctl")
-            .args(["dispatch", "movetoworkspacesilent", "special:minimized"])
-            .output();
+        crate::ipc::hide_window(&window);
         crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         crate::tray::refresh_global_menu();
     }
@@ -159,13 +151,7 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
             *t.borrow_mut() = None;
         });
         tracing::info!("[countdown] Cuenta regresiva terminada, ocultando ventana");
-        match window.window().hide() {
-            Ok(_) => tracing::info!("[countdown] Window hidden OK"),
-            Err(e) => tracing::error!("[countdown] hide() falló: {:?}", e),
-        }
-        let _ = std::process::Command::new("hyprctl")
-            .args(["dispatch", "movetoworkspacesilent", "special:minimized"])
-            .output();
+        crate::ipc::hide_window(&window);
         window.set_countdown_active(false);
         window.set_countdown_seconds(total_seconds);
         window.set_countdown_progress(1.0);
