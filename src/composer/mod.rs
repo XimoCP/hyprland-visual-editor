@@ -355,6 +355,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_composer_show_contract_slow_path() {
+        // Show contract (slow path): when the window is NOT in the special
+        // workspace, show() reports slow (show_fast=false). The controller
+        // triggers prewarm/warmup (not asserted here — they operate on the
+        // window) and flips the window back to visible.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::with_show_fast(false);
+        let mut controller = Controller::new(Box::new(fake));
+
+        // Hide first (visible → hide path), then clear the recorded calls.
+        controller.toggle_tray(&win);
+        assert!(controller.window_hidden());
+        calls.lock().unwrap().clear();
+
+        // Toggle again from hidden → show path (slow, show_fast=false).
+        let fast = controller.toggle_tray(&win);
+        assert!(!fast, "slow path taken because the window is not in the special workspace");
+        assert!(!controller.window_hidden(), "show marks the window visible");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["focus", "move_to_workspace", "focus", "WindowActiveChanged"],
+            "show slow path must emit the same focus → move → deferred focus sequence"
+        );
+    }
+
+    #[test]
     fn test_fake_composer_hide_sequence() {
         // Verify Controller is built correctly and FakeComposer is accessible
         let (fake, calls) = FakeComposer::new();
