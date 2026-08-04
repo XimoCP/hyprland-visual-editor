@@ -151,7 +151,13 @@ impl Composer for HyprlandComposer {
     fn hide(&self, win: &crate::MainWindow) -> bool {
         match self.hypr_mode() {
             HyprMode::V5 => {
-                let s1 = format!("hl.dsp.window.move({{ workspace = \"special:{SPECIAL}\" }})");
+                // Apuntar el move EXPLÍCITAMENTE a HVE por título. Sin `window=`,
+                // `hl.dsp.window.move` actúa sobre la ventana con foco: si el
+                // usuario está clickeando otra ventana en el mismo instante del
+                // SUPER+H, el move secuestra ESA ventana y la manda al special.
+                let s1 = format!(
+                    "hl.dsp.window.move({{ window = \"title:{HVE_TITLE}\", workspace = \"special:{SPECIAL}\" }})"
+                );
                 let did_move = self.hypr_dispatch_v5(&s1);
                 if did_move {
                     // Mover al special lo "abre" como overlay visible. Hay que cerrar
@@ -164,9 +170,12 @@ impl Composer for HyprlandComposer {
                 } else {
                     // Si el move por lua falló, intentamos mover con la sintaxis
                     // clásica (comunmente "special:minimized" acepta move).
+                    // Enfocar HVE primero como en show(): `movetoworkspacesilent`
+                    // actúa sobre la ventana con foco y no debe atrapar otra.
+                    let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                     let did_move4 =
                         self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
-                    if did_move4 {
+                    if did_focus && did_move4 {
                         let _ = self.hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
                         true
                     } else {
@@ -176,9 +185,13 @@ impl Composer for HyprlandComposer {
                 }
             }
             HyprMode::V4 => {
+                // Enfocar HVE primero: `movetoworkspacesilent` actúa sobre la
+                // ventana con foco. Sin esto, un click simultáneo del ratón en
+                // otra ventana la atraparía al moverla al special.
+                let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                 let did_move =
                     self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
-                if did_move {
+                if did_focus && did_move {
                     let _ = self.hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
                     true
                 } else {
