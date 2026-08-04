@@ -15,7 +15,7 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    /// Force a tray menu refresh so the UI picks up the latest WINDOW_HIDDEN state.
+    /// Force a tray menu refresh so the UI picks up the latest visibility state.
     pub fn refresh_menu(&self) {
         self.handle.update(|_| {});
     }
@@ -48,7 +48,7 @@ pub fn update_global_icon(rgba: Vec<u8>) {
     }
 }
 
-/// Force the tray menu to refresh so the next open reads fresh WINDOW_HIDDEN state.
+/// Force the tray menu to refresh so the next open reads fresh controller state.
 /// Safe to call from any thread (just sends via mpsc channel).
 pub fn refresh_global_menu() {
     if let Some(tray) = GLOBAL_TRAY.get() {
@@ -126,10 +126,9 @@ impl ksni::Tray for HveTray {
         use ksni::menu::StandardItem;
 
         // Read hidden state from Controller (the single source of truth).
-        // Falls back to the static for backward compat if Controller not yet initialized.
         let is_hidden = crate::composer::global_controller()
             .map(|c| c.window_hidden())
-            .unwrap_or_else(|| crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed));
+            .unwrap_or(false);
 
         vec![
             // ── App title (read-only) ──
@@ -243,25 +242,10 @@ impl ksni::Tray for HveTray {
                         if let Some(win) = w.upgrade() {
                             // Delegate the whole toggle (show/hide + state +
                             // prev_workspace + warmup) through the Controller —
-                            // single source of truth. The WINDOW_HIDDEN static
-                            // stays in sync as a backward-compat fallback.
+                            // single source of truth. The controller is always
+                            // initialized before the tray starts.
                             if let Some(mut ctrl) = crate::composer::global_controller() {
                                 ctrl.toggle_tray(&win);
-                                crate::ipc::WINDOW_HIDDEN
-                                    .store(ctrl.window_hidden(), Ordering::Relaxed);
-                            } else {
-                                // Fallback: no Controller available, use legacy path.
-                                if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
-                                    let fast = crate::ipc::show_window(&win);
-                                    if !fast {
-                                        crate::prewarm_tabs(win.as_weak(), 1);
-                                        crate::warmup_navigation(&win);
-                                    }
-                                    crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
-                                } else {
-                                    crate::ipc::hide_window(&win);
-                                    crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
-                                }
                             }
                         }
                         // Force tray menu refresh so label reflects new visibility

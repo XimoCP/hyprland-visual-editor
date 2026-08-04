@@ -23,12 +23,11 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
         return;
     }
 
-    // Read hidden state from Controller; fall back to false if Controller
-    // isn't initialized yet (startup race). The WINDOW_HIDDEN static is
-    // kept as a secondary fallback for backward compat.
+    // Read hidden state from Controller. The controller is initialized in
+    // main() before the countdown listener starts, so it is always available.
     let hidden = crate::composer::global_controller()
         .map(|c| c.window_hidden())
-        .unwrap_or_else(|| crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed));
+        .unwrap_or(false);
     if hidden {
         COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
         tracing::debug!("[countdown] Ventana oculta, ignorando start");
@@ -91,13 +90,10 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
 
     if let Some(window) = window_weak.upgrade() {
         if let Some(mut ctrl) = crate::composer::global_controller() {
-            ctrl.composer().hide(&window);
-            ctrl.set_window_hidden(true);
-        } else {
-            crate::ipc::hide_window(&window);
+            // toggle_tray from visible → hide path, which also records
+            // prev_workspace so re-showing returns to the original workspace.
+            ctrl.toggle_tray(&window);
         }
-        // Keep the static in sync for backward compat
-        crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         crate::tray::refresh_global_menu();
     }
 }
@@ -164,13 +160,10 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
         });
         tracing::info!("[countdown] Cuenta regresiva terminada, ocultando ventana");
         if let Some(mut ctrl) = crate::composer::global_controller() {
-            ctrl.composer().hide(&window);
-            ctrl.set_window_hidden(true);
-        } else {
-            crate::ipc::hide_window(&window);
+            // toggle_tray from visible → hide path, which also records
+            // prev_workspace so re-showing returns to the original workspace.
+            ctrl.toggle_tray(&window);
         }
-        // Keep the static in sync for backward compat
-        crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         window.set_countdown_active(false);
         window.set_countdown_seconds(total_seconds);
         window.set_countdown_progress(1.0);
@@ -276,10 +269,11 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
 
     crate::hypr_ipc::spawn_focus_listener(
         move || {
-            // Check hidden state via Controller (with static fallback)
+            // Check hidden state via Controller (initialized in main()
+            // before this listener starts).
             let hidden = crate::composer::global_controller()
                 .map(|c| c.window_hidden())
-                .unwrap_or_else(|| crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed));
+                .unwrap_or(false);
             if hidden {
                 return;
             }

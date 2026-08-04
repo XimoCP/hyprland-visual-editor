@@ -1,20 +1,12 @@
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme;
-use crate::composer::HyprMode;
 use slint::ComponentHandle;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::time::Instant;
-
-/// Tracks whether the main window has been hidden via toggle-tray (tray mode).
-pub(crate) static WINDOW_HIDDEN: AtomicBool = AtomicBool::new(false);
-/// Whether HVE was started with --tray (window starts hidden before run()).
-pub(crate) static TRAY_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Debounce: evita que pulsaciones rápidas de SUPER+H saboteen el
 /// roundtrip de Wayland al crear el xdg_toplevel por primera vez.
@@ -235,26 +227,10 @@ fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     format_response(invoke_on_main(window, |win| {
         // Delegate the whole toggle (show/hide + state + prev_workspace +
         // warmup) through the Controller — single source of truth. The
-        // WINDOW_HIDDEN static stays in sync as a backward-compat fallback.
+        // controller is initialized in main() before the IPC server starts,
+        // so it is always available here.
         if let Some(mut ctrl) = crate::composer::global_controller() {
             ctrl.toggle_tray(&win);
-            let current_hidden = ctrl.window_hidden();
-            WINDOW_HIDDEN.store(current_hidden, Ordering::Relaxed);
-        } else {
-            // Fallback: no Controller available, use legacy path.
-            // This can happen during startup before init_global() is called.
-            let hidden = WINDOW_HIDDEN.load(Ordering::Relaxed);
-            if hidden {
-                let fast = crate::ipc::show_window(&win);
-                if !fast {
-                    crate::prewarm_tabs(win.as_weak(), 1);
-                    crate::warmup_navigation(&win);
-                }
-                WINDOW_HIDDEN.store(false, Ordering::Relaxed);
-            } else {
-                crate::ipc::hide_window(&win);
-                WINDOW_HIDDEN.store(true, Ordering::Relaxed);
-            }
         }
         crate::tray::refresh_global_menu();
         "ok".to_string()
@@ -318,251 +294,6 @@ fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {
         let _ = slint::quit_event_loop();
     });
     "ok\n".to_string()
-}
-
-// ─── Hyprland show/hide via named special workspace ──────────────────
-// Ventana NUNCA se desmapea: ocultar la mueve a special:minimized y
-// mostrar la devuelve. Evita el re-mapeo lento (~1.2s) de hide()/show()
-// de Slint que hacía que las teclas se perdieran tras reabrir.
-// V5 = Hyprland v5/Noctalia (lua hl.dsp.*). V4 = clásico (dispatch ...).
-
-static HYPR_MODE: OnceLock<HyprMode> = OnceLock::new();
-const HVE_TITLE: &str = "Hyprland Visual Editor";
-const SPECIAL: &str = "minimized";
-
-/// Workspace real donde HVE vivía antes de ocultarla. Lo recordamos para
-/// devolver la ventana a un workspace normal al re-mostrar, en lugar de
-/// dejarla retenida como overlay del special scratchpad (que agarraba el
-/// foco de teclado y bloqueaba el switch de ventanas).
-static PREV_WORKSPACE: Mutex<Option<String>> = Mutex::new(None);
-
-pub(crate) fn hypr_mode() -> HyprMode {
-    *HYPR_MODE.get_or_init(|| {
-        // V5: `dispatch 'hl.dsp.no_op()'` → contiene "ok"
-        if let Ok(out) = std::process::Command::new("hyprctl")
-            .args(["dispatch", "hl.dsp.no_op()"])
-            .output()
-        {
-            if String::from_utf8_lossy(&out.stdout).contains("ok") {
-                return HyprMode::V5;
-            }
-        }
-        // V4: si cualquier cosa, verificar versión
-        if let Ok(out) = std::process::Command::new("hyprctl").arg("version").output() {
-            if String::from_utf8_lossy(&out.stdout).contains("Hyprland") {
-                return HyprMode::V4;
-            }
-        }
-        HyprMode::None
-    })
-}
-
-fn hypr_dispatch_v5(script: &str) -> bool {
-    std::process::Command::new("hyprctl")
-        .args(["dispatch", script])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
-}
-
-fn hypr_dispatch_v4(args: &[&str]) -> bool {
-    std::process::Command::new("hyprctl")
-        .arg("dispatch")
-        .args(args)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
-}
-
-/// True si la ventana de HVE está mapeada en el special workspace.
-fn hve_in_special() -> bool {
-    let Ok(out) = std::process::Command::new("hyprctl").args(["clients", "-j"]).output() else {
-        return false;
-    };
-    let Ok(text) = String::from_utf8(out.stdout) else {
-        return false;
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return false;
-    };
-    v.as_array().into_iter().flatten().any(|w| {
-        w.get("title")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .contains(HVE_TITLE)
-            && w.get("workspace")
-                .and_then(|ws| ws.get("name"))
-                .and_then(|n| n.as_str())
-                .unwrap_or("")
-                .contains("special")
-    })
-}
-
-/// Workspace real (el que está activo ahora). Lo usamos tanto para recordar
-/// dónde devolver la ventana como para reenfocarla tras re-mostrar.
-fn active_workspace() -> Option<String> {
-    let Ok(out) = std::process::Command::new("hyprctl").args(["activeworkspace", "-j"]).output() else {
-        return None;
-    };
-    let Ok(text) = String::from_utf8(out.stdout) else {
-        return None;
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return None;
-    };
-    v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
-}
-
-/// Ocultar manteniendo la ventana mapeada (special workspace).
-/// Seconde a hide() de Slint si no está disponible.
-pub(crate) fn hide_window(win: &crate::MainWindow) {
-    // Recordamos dónde vivía la ventana para re-mostrarla en un workspace real.
-    if let Some(ws) = active_workspace() {
-        *PREV_WORKSPACE.lock().unwrap() = Some(ws);
-    }
-    match hypr_mode() {
-        HyprMode::V5 => {
-            let s1 = format!("hl.dsp.window.move({{ workspace = \"special:{SPECIAL}\" }})");
-            let did_move = hypr_dispatch_v5(&s1);
-            if did_move {
-                // Mover al special lo "abre" como overlay visible. Hay que cerrar
-                // el scratchpad tras mover para que la ventana quede oculta, no
-                // flotando encima del workspace activo (era la regresión de "no
-                // minimiza").
-                let s2 = format!("hl.dsp.workspace.toggle_special(\"{SPECIAL}\")");
-                let _ = hypr_dispatch_v5(&s2);
-            } else {
-                // Si el move por lua falló, intentamos mover con la sintaxis
-                // clásica (comunmente "special:minimized" acepta move).
-                let did_move4 =
-                    hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
-                if did_move4 {
-                    let _ = hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
-                } else {
-                    let _ = win.window().hide();
-                }
-            }
-        }
-        HyprMode::V4 => {
-            let did_move =
-                hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
-            if did_move {
-                let _ = hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
-            } else {
-                let _ = win.window().hide();
-            }
-        }
-        HyprMode::None => {
-            let _ = win.window().hide();
-        }
-    }
-}
-
-/// Mostrar la ventana. Retorna true si fue rápido (special workspace, ventana
-/// seguía mapeada) o false si hubo que re-mapear con show() de Slint (lento).
-///
-/// En el path rápido NO usamos toggle_special para "mostrar": abrir el special
-/// como overlay dejaba la ventana retenida en el scratchpad, agarrando el foco
-/// de teclado y bloqueando el switch a otras ventanas. En su lugar devolvemos
-/// la ventana a un workspace REAL (el activo, o el previo si lo recordamos).
-///
-/// CRÍTICO (el bug del "mouse lo arregla"): tras re-mostrar, Hyprland no
-/// siempre le devuelve a Slint el foco de teclado de forma inmediata — en
-/// concretol cuando el usuario presionó SUPER+H estando en OTRA ventana. Slint
-/// solo entrega `key-pressed` al FocusScope raíz si la ventana está activa y
-/// tené el `focus_item`. Si el compositor no re-envía el evento de activación
-/// (Wayland "keyboard enter"), la navegación queda muda hasta que un click /
-/// hover del ratón (o un atajo que re-foca) forz el FocusIn. Por eso se
-/// re-afirma el foco con un Timer diferido, igual que hace el startup (main.rs).
-pub(crate) fn show_window(win: &crate::MainWindow) -> bool {
-    let fast = match hypr_mode() {
-        HyprMode::V5 => {
-            if hve_in_special() {
-                // Workplace donde devolver HVE: el activo o el previo.
-                let target = active_workspace()
-                    .or_else(|| PREV_WORKSPACE.lock().unwrap().clone())
-                    .unwrap_or_else(|| "1".to_string());
-                // 1) Enfocar HVE PRIMERO. Imprescindible: `movetoworkspacesilent`
-                //    y `hl.dsp.window.move` sin `window=` actúan sobre la ventana
-                //    con foco. Como HVE estaba en el special scratchpad sin foco,
-                //    el move movía OTRA ventana e HVE quedaba atrapada. Al enfocar
-                //    primero, el move posterior la saca del special al workspace.
-                let s_focus = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
-                let did_focus = hypr_dispatch_v5(&s_focus);
-                // 2) Devolverla al workspace real (el move actúa sobre la focada).
-                let s_move = format!("hl.dsp.window.move({{ workspace = \"{target}\" }})");
-                let did_move = hypr_dispatch_v5(&s_move);
-                if !(did_focus && did_move) {
-                    let _ = win.window().show();
-                    return false;
-                }
-                // 3) Re-afirmar foco tras el roundtrip de Wayland. Hacemos DOS
-                //    cosas: (a) re-dispatch de foco a Hyprland, y (b) re-emitir
-                //    `WindowActiveChanged(true)` a Slint. Esta segunda parte es
-                //    la decisiva: cuando el usuario presionó SUPER+H estando en
-                //    OTRA ventana, Slint nunca recibe el evento de "ventana
-                //    activa" porque la superficie nunca se despublicó (no hay
-                //    hide/show). Sin él, la FocusScope raíz no re-gana el
-                //    `focus_item` y `key-pressed` queda sordo — exactamente lo
-                //    que el usuario arreglaba con un click/hover del ratón
-                //    (que sí re-envía la activación a Slint). Al forzar este
-                //    evento, Slint re-dispara FocusIn(WaylandActivation) y la
-                //    navegación por teclado vuelve a funcionar sin tocar nada.
-                let win_weak = win.as_weak();
-                slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
-                    let s_focus = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
-                    let _ = hypr_dispatch_v5(&s_focus);
-                    if let Some(win) = win_weak.upgrade() {
-                        use slint::platform::WindowEvent;
-                        win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
-                        win.window().request_redraw();
-                    }
-                });
-                true
-            } else {
-                let _ = win.window().show();
-                false
-            }
-        }
-        HyprMode::V4 => {
-            if hve_in_special() {
-                let target = active_workspace()
-                    .or_else(|| PREV_WORKSPACE.lock().unwrap().clone())
-                    .unwrap_or_else(|| "1".to_string());
-                // 1) Enfocar HVE primero (movetoworkspacesilent actúa sobre la focada).
-                let did_focus = hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-                // 2) Devolverla al workspace real.
-                let did_move =
-                    hypr_dispatch_v4(&["movetoworkspacesilent", &target]);
-                if !(did_focus && did_move) {
-                    let _ = win.window().show();
-                    return false;
-                }
-                // 3) Re-afirmar foco de teclado tras el roundtrip (mismo
-                //    motivo que en V5: re-activar Slint para que la FocusScope
-                //    raíz re-gane su focus_item y la navegación no quede sorda).
-                let win_weak = win.as_weak();
-                slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
-                    let _ = hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-                    if let Some(win) = win_weak.upgrade() {
-                        use slint::platform::WindowEvent;
-                        win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
-                        win.window().request_redraw();
-                    }
-                });
-                true
-            } else {
-                let _ = win.window().show();
-                false
-            }
-        }
-        HyprMode::None => {
-            let _ = win.window().show();
-            false
-        }
-    };
-    win.window().request_redraw();
-    fast
 }
 
 #[cfg(test)]

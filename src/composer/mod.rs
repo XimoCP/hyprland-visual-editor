@@ -168,6 +168,16 @@ pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
+    /// Initialize the headless Slint test backend on the current thread.
+    ///
+    /// Tests run in parallel threads. `init_no_event_loop` configures the
+    /// backend with `threading: false`, so each test thread gets its own
+    /// independent backend — the integration backend (`threading: true`) only
+    /// supports a single process-wide init and would panic on parallel use.
+    fn init_test_platform() {
+        i_slint_backend_testing::init_no_event_loop();
+    }
+
     /// Records calls for deterministic testing.
     pub struct FakeComposer {
         calls: Arc<Mutex<Vec<String>>>,
@@ -277,7 +287,7 @@ pub(crate) mod tests {
     fn test_controller_prev_workspace() {
         // prev_workspace is written by toggle_tray's hide path, not by a
         // public setter. FakeComposer.active_workspace() reports "2".
-        i_slint_backend_testing::init_integration_test_with_mock_time();
+        init_test_platform();
         let win = crate::MainWindow::new().unwrap();
         let (fake, _calls) = FakeComposer::new();
         let mut controller = Controller::new(Box::new(fake));
@@ -292,39 +302,55 @@ pub(crate) mod tests {
 
     #[test]
     fn test_composer_hide_contract() {
-        // The FakeComposer hide() records: record_workspace → move_to_special → close_special.
-        // We can't call hide() without a &MainWindow, but we CAN verify the
-        // FakeComposer's implementation is correct by checking its record method.
+        // Real hide contract: a visible window (window_hidden=false) toggled
+        // via toggle_tray() goes through the hide path, which records the
+        // active workspace first, then dispatches the special-workspace hide
+        // sequence on the composer. The controller flips to hidden.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
         let (fake, calls) = FakeComposer::new();
-        let _controller = Controller::new(Box::new(fake));
+        let mut controller = Controller::new(Box::new(fake));
 
-        // Verify the FakeComposer starts with empty calls
-        assert!(calls.lock().unwrap().is_empty(), "no calls before any interaction");
-
-        // The hide contract is verified by code inspection: FakeComposer::hide()
-        // calls record("record_workspace"), record("move_to_special"), record("close_special")
-        // in that exact order. This matches the spec's Requirement: Window State Management.
-        // Full integration tests require a mock MainWindow (tracked as future work).
+        let fast = controller.toggle_tray(&win);
+        assert!(fast, "hide path returns fast (special workspace transition)");
+        assert!(controller.window_hidden(), "hide marks the window hidden");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                "active_workspace",
+                "record_workspace",
+                "move_to_special",
+                "close_special",
+            ],
+            "hide must record the active workspace, then dispatch move → close on the special workspace"
+        );
     }
 
     #[test]
     fn test_composer_show_contract_fast_path() {
-        // Show contract (from spec): focus → move_to_workspace → emit WindowActiveChanged
-        // The FakeComposer::show() records exactly this sequence.
-        // Full integration test requires &MainWindow; here we verify the FakeComposer
-        // records the expected sequence when show() is called (code inspection).
-        let expected = vec![
-            "focus",
-            "move_to_workspace",
-            "focus",
-            "WindowActiveChanged",
-        ];
-        // This matches the FakeComposer::show() implementation — contract verified
-        // by code inspection. Real integration tests need a mock MainWindow.
+        // Real show contract (fast path): a window that is already hidden
+        // toggled via toggle_tray() goes through the show path. The
+        // FakeComposer emits focus → move_to_workspace → deferred focus →
+        // WindowActiveChanged, and returns show_fast=true because the window
+        // is in the special workspace. The controller flips back to visible.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::with_show_fast(true);
+        let mut controller = Controller::new(Box::new(fake));
+
+        // Hide first (visible → hide path), then clear the recorded calls.
+        controller.toggle_tray(&win);
+        assert!(controller.window_hidden());
+        calls.lock().unwrap().clear();
+
+        // Toggle again from hidden → show path (fast, show_fast=true).
+        let fast = controller.toggle_tray(&win);
+        assert!(fast, "fast path taken because the window is in the special workspace");
+        assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
-            expected,
+            *calls.lock().unwrap(),
             vec!["focus", "move_to_workspace", "focus", "WindowActiveChanged"],
-            "show fast path should emit focus → move → focus → WindowActiveChanged"
+            "show fast path must emit focus → move → deferred focus → WindowActiveChanged"
         );
     }
 
@@ -373,16 +399,6 @@ pub(crate) mod tests {
     }
 
     // ── Global controller integration tests ────────────────────────────
-
-    /// Helper to reset the global controller for test isolation.
-    /// The OnceLock can only be set once, so we need to reconstruct it.
-    fn reset_global_for_test() {
-        // We can't clear a OnceLock, but we can check that global_controller()
-        // returns None for tests that don't call init_global, or that the
-        // existing set Controller is accessible.
-        // For tests that need a fresh global, they should be the first to call
-        // init_global in the test process.
-    }
 
     #[test]
     fn test_global_controller_round_trip() {

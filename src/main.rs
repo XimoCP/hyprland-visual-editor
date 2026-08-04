@@ -1425,16 +1425,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(mut ctrl) = composer::global_controller() {
                     // La ventana está visible al cerrar → hide path (al escondite).
                     ctrl.toggle_tray(&win);
-                    // Keep the static in sync for backward compat (countdown, etc.)
-                    ipc::WINDOW_HIDDEN.store(ctrl.window_hidden(), std::sync::atomic::Ordering::Relaxed);
                     // Si el compositor no pudo mover al escondite (hide() cayó al
                     // fallback Slint), la ventana no quedó oculta por hyprctl →
                     // hay que ocultarla por Slint.
                     !ctrl.window_hidden()
                 } else {
-                    // Fallback legacy: no Controller
-                    ipc::hide_window(&win);
-                    ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+                    // Inalcanzable en producción: el controller se inicializa en
+                    // main() antes de cablear este callback. Mantener la ventana.
                     false
                 }
             } else {
@@ -1474,9 +1471,6 @@ fn main() -> Result<(), slint::PlatformError> {
             ctrl.set_window_hidden(true);
             ctrl.set_tray_mode(true);
         }
-        // Propagate to statics for backward compat
-        ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
-        ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("Starting in tray mode (lazy load — first toggle shows window)");
     } else {
         window.show()?;
@@ -1484,9 +1478,6 @@ fn main() -> Result<(), slint::PlatformError> {
             ctrl.set_window_hidden(false);
             ctrl.set_tray_mode(false);
         }
-        // Propagate to statics for backward compat
-        ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
-        ipc::TRAY_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // ── Pre-warm tab layouts ──
         // Slint no calcula el layout de tabs inactivos (width: 0%)
