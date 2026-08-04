@@ -1,4 +1,5 @@
 mod callbacks;
+mod composer;
 mod config;
 mod countdown;
 mod engine;
@@ -1008,8 +1009,10 @@ fn main() -> Result<(), slint::PlatformError> {
             // Toggle window rules in hyprland.conf — this persists across restarts
             set_tiling_window_rules(enabled);
 
-            // Try to toggle the CURRENT window immediately
-            crate::ipc::toggle_float_hve();
+            // Try to toggle the CURRENT window immediately via Composer
+            if let Some(ctrl) = composer::global_controller() {
+                ctrl.composer().toggle_float();
+            }
 
             // Show restart banner explaining that full effect requires restart
             if let Some(w) = weak.upgrade() {
@@ -1400,16 +1403,53 @@ fn main() -> Result<(), slint::PlatformError> {
     // The bash-based watcher uses inotify for efficient file monitoring.
     let _color_watcher = watcher::spawn_color_watcher(&proj);
 
+    // ── Composer controller (composition root) ──
+    let composer_driver = Box::new(composer::HyprlandComposer::new());
+    let controller = composer::Controller::new(composer_driver);
+    composer::init_global(controller);
+
     // ── IPC server (Unix socket) ──
     ipc::start_ipc_server(window.as_weak(), proj.clone());
 
     // ── Intercept close events — always hide instead of destroying
     //     the window so the global event loop keeps running. ──
-    window.window().on_close_requested(|| {
-        // Keep the tray menu in sync: the window is now hidden
-        ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    let win_weak_for_close = window.as_weak();
+    window.window().on_close_requested(move || {
+        // "Secuestramos" el cierre (SUPER+C) para que haga lo MISMO que el
+        // toggle de SUPER+H: esconder la ventana en el escritorio oculto
+        // (special workspace) en lugar de destruir la superficie. Así nunca se
+        // recrea y el foco de teclado se conserva. KeepWindowShown rechaza la
+        // destrucción y el hide() del compositor la retira a pantalla aparte.
+        let needs_slint_hide = {
+            if let Some(win) = win_weak_for_close.upgrade() {
+                if let Some(mut ctrl) = composer::global_controller() {
+                    // La ventana está visible al cerrar → hide path (al escondite).
+                    ctrl.toggle_tray(&win);
+                    // Keep the static in sync for backward compat (countdown, etc.)
+                    ipc::WINDOW_HIDDEN.store(ctrl.window_hidden(), std::sync::atomic::Ordering::Relaxed);
+                    // Si el compositor no pudo mover al escondite (hide() cayó al
+                    // fallback Slint), la ventana no quedó oculta por hyprctl →
+                    // hay que ocultarla por Slint.
+                    !ctrl.window_hidden()
+                } else {
+                    // Fallback legacy: no Controller
+                    ipc::hide_window(&win);
+                    ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+                    false
+                }
+            } else {
+                // Ventana ya muerta: nada que ocultar, que respete el codigo default.
+                true
+            }
+        };
         crate::tray::refresh_global_menu();
-        slint::CloseRequestResponse::HideWindow
+        if needs_slint_hide {
+            slint::CloseRequestResponse::HideWindow
+        } else {
+            // El compositor ya la movió al escondite: rechazamos la destrucción
+            // y dejamos que la superficie siga viva.
+            slint::CloseRequestResponse::KeepWindowShown
+        }
     });
 
     // ── Startup: sync keybinds + autostart from saved config ──
@@ -1430,11 +1470,21 @@ fn main() -> Result<(), slint::PlatformError> {
         //
         // Esto evita por completo el problema de set_minimized() en Wayland
         // (no existe un-minimize programático) y es 100% agnóstico al WM.
+        if let Some(mut ctrl) = composer::global_controller() {
+            ctrl.set_window_hidden(true);
+            ctrl.set_tray_mode(true);
+        }
+        // Propagate to statics for backward compat
         ipc::WINDOW_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
         ipc::TRAY_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("Starting in tray mode (lazy load — first toggle shows window)");
     } else {
         window.show()?;
+        if let Some(mut ctrl) = composer::global_controller() {
+            ctrl.set_window_hidden(false);
+            ctrl.set_tray_mode(false);
+        }
+        // Propagate to statics for backward compat
         ipc::WINDOW_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
         ipc::TRAY_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
 
@@ -1451,11 +1501,13 @@ fn main() -> Result<(), slint::PlatformError> {
         warmup_navigation(&window);
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
-        // Forzamos foco via hyprctl para evitar el doble-click inicial.
+        // Forzamos foco via Composer para evitar el doble-click inicial.
         let startup_tiling = cfg.lock().unwrap().tiling_mode;
         // First timer: focus window + sync config rules
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
-            crate::ipc::focus_hve_window();
+            if let Some(ctrl) = composer::global_controller() {
+                ctrl.composer().focus();
+            }
 
             // ── Ensure hyprland.conf rules match saved config ──
             set_tiling_window_rules(startup_tiling);
@@ -1466,7 +1518,9 @@ fn main() -> Result<(), slint::PlatformError> {
             // config reload complete.
             if startup_tiling {
                 slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
-                    crate::ipc::toggle_float_hve();
+                    if let Some(ctrl) = composer::global_controller() {
+                        ctrl.composer().toggle_float();
+                    }
                     tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
                 });
             }
@@ -1670,6 +1724,27 @@ mod tests {
             text: slint::platform::Key::DownArrow.into(),
         });
         assert_eq!(win.get_active_tab(), 4, "nuevo press tras release mueve una tab");
+    }
+
+    // ── Composer wiring verification ─────────────────────────────────
+
+    /// Verify that the Controller is constructed with correct defaults
+    /// and that the Composer trait is properly implemented.
+    /// This test does NOT call init_global() (OnceLock can only be set once
+    /// per process), but it verifies the Controller + Composer integration
+    /// that main.rs uses at the composition root.
+    #[test]
+    fn test_controller_wiring_defaults() {
+        let (fake, _calls) = composer::tests::FakeComposer::new();
+        let controller = composer::Controller::new(Box::new(fake));
+
+        // Verify the Controller's initial state matches what main.rs expects
+        assert!(!controller.window_hidden(), "window should not be hidden at startup");
+        assert!(!controller.tray_mode(), "tray_mode should be false at startup");
+        assert!(controller.prev_workspace().is_none(), "no prev workspace at startup");
+
+        // Verify the composer reference works
+        let _composer = controller.composer();
     }
 
 }

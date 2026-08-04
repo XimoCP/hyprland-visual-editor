@@ -1,0 +1,40 @@
+project: hve
+description: Hyprland Visual Editor - standalone visual composer for Hyprland
+stack:
+  language: rust
+  edition: "2021"
+  gui: slint 1.17.1 (latest stable confirmed, crates.io 2026-08-03)
+  modules: src/ (main, ipc, config, engine, presets, providers, tray, watcher, theme, hypr_ipc, callbacks, countdown, tr, utils)
+  ui: ui/{main,components,modules,theme}.slint
+  binary: hve
+
+context: |-
+  HVE is a visual editor for Hyprland. This is a rewrite focused on modularity
+  and reliable keyboard navigation. The previous implementation accumulated
+  fragile patches around show/hide (special workspace + Slint WindowActiveChanged),
+  leaving keyboard nav unreliable after SUPER+H re-show. The rewrite must decouple
+  the UI (Slint) from the Hyprland driver behind a trait, so navigation logic and
+  composer quirks live in one testable layer instead of leaking into the UI.
+
+strict_tdd: true
+
+testing:
+  runner: cargo test
+  framework: cargo test (built-in) + i-slint-backend-testing for headless UI
+  layers:
+    unit: cargo test
+    integration: tempfile + serial_test
+    e2e: none (no compositor harness in CI)
+  coverage: none (no tarpaulin/llvm-cov installed)
+  lint: none installed (cargo clippy missing)
+  type_check: cargo check (built-in)
+  formatter: none installed (cargo fmt missing)
+
+phases:
+  propose: write proposal with intent, scope, approach
+  spec: write delta specs with requirements and scenarios
+  design: write technical design with modules and decisions
+  tasks: break down into ordered implementation tasks
+  apply: implement tasks with strict TDD (test-first)
+  verify: run tests and prove implementation matches specs
+  archive: sync delta specs back to archived changes

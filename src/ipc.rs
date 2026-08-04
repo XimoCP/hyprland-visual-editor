@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme;
+use crate::composer::HyprMode;
 use slint::ComponentHandle;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -232,23 +233,28 @@ fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     }
 
     format_response(invoke_on_main(window, |win| {
-        // Usamos WINDOW_HIDDEN como única fuente de verdad.
-        // is_visible() no es fiable: Slint lo pone a true inmediatamente
-        // después de show(), antes de que el compositor Wayland mapee
-        // realmente la ventana. Eso hacía que el toggle llamara hide()
-        // sobre una ventana que nunca terminó de aparecer —→ 3 pulsaciones.
-        let hidden = WINDOW_HIDDEN.load(Ordering::Relaxed);
-        if hidden {
-            let fast = crate::ipc::show_window(&win);
-            if !fast {
-                // Desmapeada (tray lazy-load / cierre por WM): re-mapeo + warmup.
-                crate::prewarm_tabs(win.as_weak(), 1);
-                crate::warmup_navigation(&win);
-            }
-            crate::ipc::WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+        // Delegate the whole toggle (show/hide + state + prev_workspace +
+        // warmup) through the Controller — single source of truth. The
+        // WINDOW_HIDDEN static stays in sync as a backward-compat fallback.
+        if let Some(mut ctrl) = crate::composer::global_controller() {
+            ctrl.toggle_tray(&win);
+            let current_hidden = ctrl.window_hidden();
+            WINDOW_HIDDEN.store(current_hidden, Ordering::Relaxed);
         } else {
-            crate::ipc::hide_window(&win);
-            crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+            // Fallback: no Controller available, use legacy path.
+            // This can happen during startup before init_global() is called.
+            let hidden = WINDOW_HIDDEN.load(Ordering::Relaxed);
+            if hidden {
+                let fast = crate::ipc::show_window(&win);
+                if !fast {
+                    crate::prewarm_tabs(win.as_weak(), 1);
+                    crate::warmup_navigation(&win);
+                }
+                WINDOW_HIDDEN.store(false, Ordering::Relaxed);
+            } else {
+                crate::ipc::hide_window(&win);
+                WINDOW_HIDDEN.store(true, Ordering::Relaxed);
+            }
         }
         crate::tray::refresh_global_menu();
         "ok".to_string()
@@ -320,13 +326,6 @@ fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {
 // de Slint que hacía que las teclas se perdieran tras reabrir.
 // V5 = Hyprland v5/Noctalia (lua hl.dsp.*). V4 = clásico (dispatch ...).
 
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum HyprMode {
-    V5,
-    V4,
-    None,
-}
-
 static HYPR_MODE: OnceLock<HyprMode> = OnceLock::new();
 const HVE_TITLE: &str = "Hyprland Visual Editor";
 const SPECIAL: &str = "minimized";
@@ -397,36 +396,6 @@ fn hve_in_special() -> bool {
                 .unwrap_or("")
                 .contains("special")
     })
-}
-
-/// Forzar foco de teclado a HVE (sintaxis correcta según versión).
-pub(crate) fn focus_hve_window() {
-    match hypr_mode() {
-        HyprMode::V5 => {
-            let s = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
-            let _ = hypr_dispatch_v5(&s);
-        }
-        HyprMode::V4 => {
-            let _ = hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-        }
-        HyprMode::None => {}
-    }
-}
-
-/// Toggle floating de HVE (sintaxis correcta según versión).
-pub(crate) fn toggle_float_hve() {
-    match hypr_mode() {
-        HyprMode::V5 => {
-            let s = format!(
-                "hl.dsp.window.float({{ action = \"toggle\", window = \"title:{HVE_TITLE}\" }})"
-            );
-            let _ = hypr_dispatch_v5(&s);
-        }
-        HyprMode::V4 => {
-            let _ = hypr_dispatch_v4(&["togglefloating", HVE_TITLE]);
-        }
-        HyprMode::None => {}
-    }
 }
 
 /// Workspace real (el que está activo ahora). Lo usamos tanto para recordar

@@ -23,7 +23,13 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
         return;
     }
 
-    if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
+    // Read hidden state from Controller; fall back to false if Controller
+    // isn't initialized yet (startup race). The WINDOW_HIDDEN static is
+    // kept as a secondary fallback for backward compat.
+    let hidden = crate::composer::global_controller()
+        .map(|c| c.window_hidden())
+        .unwrap_or_else(|| crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed));
+    if hidden {
         COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
         tracing::debug!("[countdown] Ventana oculta, ignorando start");
         return;
@@ -84,7 +90,13 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     cancel_countdown(window_weak.clone());
 
     if let Some(window) = window_weak.upgrade() {
-        crate::ipc::hide_window(&window);
+        if let Some(mut ctrl) = crate::composer::global_controller() {
+            ctrl.composer().hide(&window);
+            ctrl.set_window_hidden(true);
+        } else {
+            crate::ipc::hide_window(&window);
+        }
+        // Keep the static in sync for backward compat
         crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         crate::tray::refresh_global_menu();
     }
@@ -151,11 +163,17 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
             *t.borrow_mut() = None;
         });
         tracing::info!("[countdown] Cuenta regresiva terminada, ocultando ventana");
-        crate::ipc::hide_window(&window);
+        if let Some(mut ctrl) = crate::composer::global_controller() {
+            ctrl.composer().hide(&window);
+            ctrl.set_window_hidden(true);
+        } else {
+            crate::ipc::hide_window(&window);
+        }
+        // Keep the static in sync for backward compat
+        crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         window.set_countdown_active(false);
         window.set_countdown_seconds(total_seconds);
         window.set_countdown_progress(1.0);
-        crate::ipc::WINDOW_HIDDEN.store(true, Ordering::Relaxed);
         crate::tray::refresh_global_menu();
     }
 }
@@ -258,7 +276,11 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
 
     crate::hypr_ipc::spawn_focus_listener(
         move || {
-            if crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed) {
+            // Check hidden state via Controller (with static fallback)
+            let hidden = crate::composer::global_controller()
+                .map(|c| c.window_hidden())
+                .unwrap_or_else(|| crate::ipc::WINDOW_HIDDEN.load(Ordering::Relaxed));
+            if hidden {
                 return;
             }
             tracing::info!("[countdown] Foco perdido, iniciando countdown");
