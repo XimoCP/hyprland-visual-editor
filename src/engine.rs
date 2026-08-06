@@ -98,7 +98,7 @@ impl Error for EngineError {
 }
 
 impl Engine {
-    pub fn new(project_dir: &PathBuf) -> Self {
+    pub fn new(project_dir: &std::path::Path) -> Self {
         let scripts_dir = project_dir.join("assets").join("scripts");
         Self { scripts_dir }
     }

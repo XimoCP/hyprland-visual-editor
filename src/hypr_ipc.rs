@@ -111,7 +111,7 @@ impl HyprIpc {
                     if line.starts_with("configreloaded") {
                         let mut last = last_reload.lock().unwrap();
                         let now = Instant::now();
-                        if last.map_or(true, |t| now.duration_since(t) > Duration::from_secs(3)) {
+                        if last.is_none_or(|t| now.duration_since(t) > Duration::from_secs(3)) {
                             *last = Some(now);
                             println!("[HVE] Config reloaded, regenerating overlay...");
                             on_config_reload();

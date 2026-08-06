@@ -119,14 +119,14 @@ fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
 /// Darken a hex color by `amount` (0.0 = no change, 1.0 = black).
 fn darken_hex(hex: &str, amount: f32) -> String {
     let (r, g, b) = parse_hex_rgb(hex);
-    let clamp = |v: f32| -> u8 { (v * (1.0 - amount)).round().max(0.0).min(255.0) as u8 };
+    let clamp = |v: f32| -> u8 { (v * (1.0 - amount)).round().clamp(0.0, 255.0) as u8 };
     rgb_to_hex(clamp(r as f32), clamp(g as f32), clamp(b as f32))
 }
 
 /// Lighten a hex color by `amount` (0.0 = no change, 1.0 = white).
 fn lighten_hex(hex: &str, amount: f32) -> String {
     let (r, g, b) = parse_hex_rgb(hex);
-    let clamp = |v: f32| -> u8 { (v as f32 + (255.0 - v as f32) * amount).round().max(0.0).min(255.0) as u8 };
+    let clamp = |v: f32| -> u8 { (v + (255.0 - v) * amount).round().clamp(0.0, 255.0) as u8 };
     rgb_to_hex(clamp(r as f32), clamp(g as f32), clamp(b as f32))
 }
 
@@ -134,7 +134,7 @@ fn lighten_hex(hex: &str, amount: f32) -> String {
 fn blend_hex(a: &str, b: &str, t: f32) -> String {
     let (r1, g1, b1) = parse_hex_rgb(a);
     let (r2, g2, b2) = parse_hex_rgb(b);
-    let lerp = |x: f32, y: f32| -> u8 { (x + (y - x) * t).round().max(0.0).min(255.0) as u8 };
+    let lerp = |x: f32, y: f32| -> u8 { (x + (y - x) * t).round().clamp(0.0, 255.0) as u8 };
     rgb_to_hex(
         lerp(r1 as f32, r2 as f32),
         lerp(g1 as f32, g2 as f32),

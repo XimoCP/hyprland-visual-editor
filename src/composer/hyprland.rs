@@ -72,11 +72,11 @@ impl HyprlandComposer {
         v.as_array().into_iter().flatten().any(|w| {
             w.get("title")
                 .and_then(|t| t.as_str())
-                .map_or(false, |t| t.contains("Hyprland Visual Editor"))
+                .is_some_and(|t| t.contains("Hyprland Visual Editor"))
                 && w.get("workspace")
                     .and_then(|ws| ws.get("name"))
                     .and_then(|n| n.as_str())
-                    .map_or(false, |n| n.contains("special"))
+                    .is_some_and(|n| n.contains("special"))
         })
     }
 

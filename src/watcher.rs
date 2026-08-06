@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// Spawn the color_watcher.sh bash script and return the child process handle.
-pub fn spawn_color_watcher(proj: &PathBuf) -> Option<std::process::Child> {
+pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<std::process::Child> {
     let watcher_script = proj.join("assets").join("scripts").join("color_watcher.sh");
     let watcher_log = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))

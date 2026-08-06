@@ -45,7 +45,7 @@ fn project_dir() -> PathBuf {
     let candidates = [
         std::env::current_dir().ok(),
         std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())),
-        std::env::current_exe().ok().and_then(|_| {
+        std::env::current_exe().ok().and({
             // For NixOS/macOS where the binary is in a store path,
             // try the original source tree
             None
@@ -804,19 +804,19 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_about_full(tr.tr_shared("home.about_full", "HVE customizes Hyprland animations, borders, and shaders from a visual interface, in real time.\n\nTo apply changes, HVE adds a block at the end of your hyprland.lua (or hyprland.conf), delimited by markers. That block only includes (dofile / source) our overlay files in ~/.cache/hve/ — it never rewrites your personal config.\n\nWhen you disable the system, the markers are removed. If you uninstall, a watchdog cleans them on the next Hyprland start. Your original config always stays intact."));
     let about_items: Vec<AboutItem> = vec![
         AboutItem {
-            text: tr.tr_shared("home.about_line_1", "Live preview — tweak and see it instantly").into(),
+            text: tr.tr_shared("home.about_line_1", "Live preview — tweak and see it instantly"),
             color: Color::from_rgb_u8(251, 191, 36),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_2", "Safe assembly — zero risk to your configs").into(),
+            text: tr.tr_shared("home.about_line_2", "Safe assembly — zero risk to your configs"),
             color: Color::from_rgb_u8(16, 185, 129),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_3", "Hot reload — apply without restarting Hyprland").into(),
+            text: tr.tr_shared("home.about_line_3", "Hot reload — apply without restarting Hyprland"),
             color: Color::from_rgb_u8(56, 189, 248),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_4", "Fragments — composable pieces, not one huge file").into(),
+            text: tr.tr_shared("home.about_line_4", "Fragments — composable pieces, not one huge file"),
             color: Color::from_rgb_u8(192, 132, 252),
         },
     ];
@@ -1294,7 +1294,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Some(w) = weak.upgrade() {
                         let tm = tm.lock().unwrap();
                         refresh_theme_list(&w, &tm);
-                        w.set_home_active_theme_name((&tm.last_applied).clone().into());
+                        w.set_home_active_theme_name(tm.last_applied.clone().into());
                     }
                 }
                 Err(e) => {
@@ -1370,7 +1370,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // 3. Refresh the theme list
                 let tm = tm.lock().unwrap();
                 refresh_theme_list(&w, &tm);
-                w.set_home_active_theme_name((&tm.last_applied).clone().into());
+                w.set_home_active_theme_name(tm.last_applied.clone().into());
             }
         });
     }

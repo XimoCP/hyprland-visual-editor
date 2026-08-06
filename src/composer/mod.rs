@@ -32,12 +32,12 @@ pub struct MutexGuard(std::sync::MutexGuard<'static, Controller>);
 impl std::ops::Deref for MutexGuard {
     type Target = Controller;
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 impl std::ops::DerefMut for MutexGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.0
+        &mut self.0
     }
 }
 

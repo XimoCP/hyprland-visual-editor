@@ -4,7 +4,7 @@ use crate::theme;
 use slint::ComponentHandle;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -64,7 +64,7 @@ fn get_socket_path() -> PathBuf {
 fn handle_connection(
     mut stream: UnixStream,
     window: &slint::Weak<crate::MainWindow>,
-    proj: &PathBuf,
+    proj: &Path,
 ) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
@@ -86,7 +86,7 @@ fn handle_connection(
 fn dispatch_command(
     cmd: &str,
     window: &slint::Weak<crate::MainWindow>,
-    proj: &PathBuf,
+    proj: &Path,
 ) -> String {
     match cmd {
         "pause-restart" => cmd_pause_restart(window),
@@ -257,7 +257,7 @@ fn cmd_status(window: &slint::Weak<crate::MainWindow>) -> String {
     }))
 }
 
-fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &PathBuf) -> String {
+fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &Path) -> String {
     let eng = Engine::new(proj);
     match eng.get_colors() {
         Ok(colors) => {
