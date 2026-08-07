@@ -129,24 +129,110 @@ pub fn setup_callbacks(
                 geo_init = false;
                 return;
             }
-            {
+            let (radius, gaps_in, gaps_out, current) = {
                 let cfg = cfg.lock().unwrap();
-                if size == cfg.border_size {
-                    return;
-                }
+                (
+                    cfg.border_radius,
+                    cfg.gaps_in,
+                    cfg.gaps_out,
+                    cfg.border_size,
+                )
+            };
+            if size == current {
+                return;
             }
             {
                 let mut cfg = cfg.lock().unwrap();
                 cfg.border_size = size;
                 let _ = cfg.save();
             }
-            let result = eng.apply_geometry(size);
+            let result = eng.apply_geometry(size, radius, gaps_in, gaps_out);
             if let Err(e) = result {
                 eprintln!("[HVE] Geometry error: {}", e);
             }
             // Update UI slider value
             if let Some(w) = weak.upgrade() {
                 w.set_border_size(size);
+            }
+        });
+    }
+
+    // Corner radius change — skip first call (Slider fires on init)
+    {
+        let eng = eng.clone();
+        let cfg = cfg.clone();
+        let weak = window.as_weak();
+        let mut radius_init = true;
+        window.on_apply_geometry_radius(move |radius| {
+            if radius_init {
+                radius_init = false;
+                return;
+            }
+            let (size, gaps_in, gaps_out, current) = {
+                let cfg = cfg.lock().unwrap();
+                (
+                    cfg.border_size,
+                    cfg.gaps_in,
+                    cfg.gaps_out,
+                    cfg.border_radius,
+                )
+            };
+            if radius == current {
+                return;
+            }
+            {
+                let mut cfg = cfg.lock().unwrap();
+                cfg.border_radius = radius;
+                let _ = cfg.save();
+            }
+            let result = eng.apply_geometry(size, radius, gaps_in, gaps_out);
+            if let Err(e) = result {
+                eprintln!("[HVE] Radius error: {}", e);
+            }
+            // Update UI slider value
+            if let Some(w) = weak.upgrade() {
+                w.set_corner_radius(radius);
+            }
+        });
+    }
+
+    // Gaps change — skip first call (Slider fires on init)
+    {
+        let eng = eng.clone();
+        let cfg = cfg.clone();
+        let weak = window.as_weak();
+        let mut gaps_init = true;
+        window.on_apply_geometry_gaps(move |gap| {
+            if gaps_init {
+                gaps_init = false;
+                return;
+            }
+            let (size, radius, current_in, current_out) = {
+                let cfg = cfg.lock().unwrap();
+                (
+                    cfg.border_size,
+                    cfg.border_radius,
+                    cfg.gaps_in,
+                    cfg.gaps_out,
+                )
+            };
+            let is_same = gap == current_in && gap == current_out;
+            if is_same {
+                return;
+            }
+            {
+                let mut cfg = cfg.lock().unwrap();
+                cfg.gaps_in = gap;
+                cfg.gaps_out = gap;
+                let _ = cfg.save();
+            }
+            let result = eng.apply_geometry(size, radius, gap, gap);
+            if let Err(e) = result {
+                eprintln!("[HVE] Gaps error: {}", e);
+            }
+            // Update UI slider value
+            if let Some(w) = weak.upgrade() {
+                w.set_gap(gap);
             }
         });
     }

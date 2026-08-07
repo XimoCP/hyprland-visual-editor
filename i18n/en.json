@@ -140,6 +140,14 @@
       "title": "Border Thickness",
       "desc": "Define line thickness (0-5px)"
     },
+    "radius": {
+      "title": "Corner Radius",
+      "desc": "Define window corner rounding (0-100px)"
+    },
+    "gaps": {
+      "title": "Gaps",
+      "desc": "Define spacing between windows (0-30px)"
+    },
     "header_title": "Visual Styles",
     "header_subtitle": "Define your windows' personality",
     "presets": {

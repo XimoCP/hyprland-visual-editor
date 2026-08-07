@@ -120,6 +120,10 @@ export component MainWindow inherits Window {
     in property <[string]> border-files;
     in-out property <int> active-border-index: -1;
     in-out property <int> border-size: 2;
+    in-out property <int> corner-radius: 32;
+    in property <string> border-radius-label;
+    in-out property <int> gap: 5;
+    in property <string> gap-label;
 
     // Shader data
     in property <[string]> shader-titles;
@@ -175,6 +179,8 @@ export component MainWindow inherits Window {
     callback apply-border(int, string);
     callback apply-shader(int, string);
     callback apply-geometry(int);
+    callback apply-geometry-radius(int);
+    callback apply-geometry-gaps(int);
     callback close-button-clicked();
     callback toggle-settings();
     callback toggle-auto-minimize(bool);
@@ -621,12 +627,18 @@ export component MainWindow inherits Window {
                         border-files: root.border-files;
                         active-index: root.active-border-index;
                         border-size: root.border-size;
+                        corner-radius: root.corner-radius;
+                        border-radius-label: root.border-radius-label;
+                        gap: root.gap;
+                        gap-label: root.gap-label;
                         focused-index: root.border-focused-index;
                         is-active: root.active-tab == 2;
                         fast-expand: root._nav-rapid;
                         focus-requested(idx) => { root.border-focused-index = idx; }
                         border-toggled(idx, file) => { root.apply-border(idx, file); }
                         geometry-changed(v) => { root.apply-geometry(v); }
+                        geometry-radius-changed(v) => { root.apply-geometry-radius(v); }
+                        geometry-gaps-changed(v) => { root.apply-geometry-gaps(v); }
                     }
                 }
 

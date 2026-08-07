@@ -44,6 +44,9 @@ impl ThemeProvider for HvePresetsProvider {
             "active_border_file": cfg.active_border_file,
             "active_shader_file": cfg.active_shader_file,
             "border_size": cfg.border_size,
+            "border_radius": cfg.border_radius,
+            "gaps_in": cfg.gaps_in,
+            "gaps_out": cfg.gaps_out,
         });
 
         let provider_dir = theme_dir.join("providers").join(self.id());
@@ -104,13 +107,40 @@ impl ThemeProvider for HvePresetsProvider {
         if let Some(v) = state.get("border_size").and_then(|v| v.as_i64()) {
             let size = v as i32;
             if size != cfg.border_size {
-                let _ = self.engine.apply_geometry(size);
                 cfg.border_size = size;
+                changed = true;
+            }
+        }
+        // Corner radius (decoration.rounding). Applied together with geometry
+        // so the fragment always carries both values.
+        if let Some(v) = state.get("border_radius").and_then(|v| v.as_i64()) {
+            let radius = v as i32;
+            if radius != cfg.border_radius {
+                cfg.border_radius = radius;
+                changed = true;
+            }
+        }
+        // Gaps. Read both independently (they are saved separately) but the
+        // geometry fragment carries all four values together.
+        if let Some(v) = state.get("gaps_in").and_then(|v| v.as_i64()) {
+            let gap = v as i32;
+            if gap != cfg.gaps_in {
+                cfg.gaps_in = gap;
+                changed = true;
+            }
+        }
+        if let Some(v) = state.get("gaps_out").and_then(|v| v.as_i64()) {
+            let gap = v as i32;
+            if gap != cfg.gaps_out {
+                cfg.gaps_out = gap;
                 changed = true;
             }
         }
 
         if changed {
+            let _ = self
+                .engine
+                .apply_geometry(cfg.border_size, cfg.border_radius, cfg.gaps_in, cfg.gaps_out);
             let _ = cfg.save();
         }
 

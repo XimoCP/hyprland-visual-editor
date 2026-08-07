@@ -153,8 +153,26 @@ impl Engine {
         self.run_script("shader.sh", &[file])
     }
 
-    pub fn apply_geometry(&self, size: i32) -> Result<String, EngineError> {
-        self.run_script("geometry.sh", &[&size.to_string()])
+    /// Apply window geometry: border thickness (`size`), corner radius
+    /// (`radius`, in px), and inner/outer gaps. All four go to `geometry.sh`,
+    /// which writes `general.border_size`, `general.gaps_in`, `general.gaps_out`
+    /// and `decoration.rounding`.
+    pub fn apply_geometry(
+        &self,
+        size: i32,
+        radius: i32,
+        gaps_in: i32,
+        gaps_out: i32,
+    ) -> Result<String, EngineError> {
+        self.run_script(
+            "geometry.sh",
+            &[
+                &size.to_string(),
+                &radius.to_string(),
+                &gaps_in.to_string(),
+                &gaps_out.to_string(),
+            ],
+        )
     }
 
     /// Read current colors from the active color source (Noctalia/pywal/matugen/manual).

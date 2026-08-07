@@ -4,10 +4,18 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 5;
+pub const CONFIG_VERSION: u32 = 7;
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
+}
+
+fn default_border_radius() -> i32 {
+    32
+}
+
+fn default_gaps() -> i32 {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +25,12 @@ pub struct Config {
     pub config_version: u32,
     pub is_system_active: bool,
     pub border_size: i32,
+    #[serde(default = "default_border_radius")]
+    pub border_radius: i32,
+    #[serde(default = "default_gaps")]
+    pub gaps_in: i32,
+    #[serde(default = "default_gaps")]
+    pub gaps_out: i32,
     pub active_anim_file: String,
     pub active_border_file: String,
     pub active_shader_file: String,
@@ -38,6 +52,9 @@ impl Default for Config {
             config_version: CONFIG_VERSION,
             is_system_active: false,
             border_size: 2,
+            border_radius: 32,
+            gaps_in: 5,
+            gaps_out: 5,
             active_anim_file: String::new(),
             active_border_file: String::new(),
             active_shader_file: String::new(),
@@ -89,6 +106,19 @@ fn migrate(mut cfg: Config) -> Config {
     if cfg.config_version < 5 {
         cfg.disabled_providers = Vec::new();
         cfg.config_version = 5;
+    }
+
+    // v5 → v6: add border_radius field
+    if cfg.config_version < 6 {
+        cfg.border_radius = 32;
+        cfg.config_version = 6;
+    }
+
+    // v6 → v7: add gaps_in/gaps_out fields
+    if cfg.config_version < 7 {
+        cfg.gaps_in = 5;
+        cfg.gaps_out = 5;
+        cfg.config_version = 7;
     }
 
     cfg.config_version = CONFIG_VERSION;
@@ -238,6 +268,9 @@ mod tests {
         let cfg = Config::default();
         assert!(!cfg.is_system_active, "system_active should default to false");
         assert_eq!(cfg.border_size, 2, "border_size should default to 2");
+        assert_eq!(cfg.border_radius, 32, "border_radius should default to 32");
+        assert_eq!(cfg.gaps_in, 5, "gaps_in should default to 5");
+        assert_eq!(cfg.gaps_out, 5, "gaps_out should default to 5");
         assert!(!cfg.auto_start, "auto_start should default to false");
         assert!(cfg.auto_minimize_enabled, "auto_minimize_enabled should default to true");
         assert_eq!(cfg.minimize_seconds, 5, "minimize_seconds should default to 5");
@@ -277,6 +310,9 @@ mod tests {
         let cfg = Config {
             is_system_active: true,
             border_size: 6,
+            border_radius: 48,
+            gaps_in: 7,
+            gaps_out: 9,
             auto_start: true,
             active_anim_file: "glow.json".into(),
             active_border_file: "sharp.json".into(),
@@ -297,6 +333,9 @@ mod tests {
         let loaded = Config::load();
         assert!(loaded.is_system_active);
         assert_eq!(loaded.border_size, 6);
+        assert_eq!(loaded.border_radius, 48);
+        assert_eq!(loaded.gaps_in, 7);
+        assert_eq!(loaded.gaps_out, 9);
         assert!(loaded.auto_start);
         assert!(!loaded.auto_minimize_enabled);
         assert_eq!(loaded.minimize_seconds, 10);
@@ -488,5 +527,123 @@ mod tests {
             "v4 config should be migrated to v{CONFIG_VERSION}"
         );
         assert!(cfg.disabled_providers.is_empty(), "disabled_providers should default to empty after migration");
+    }
+
+    // ── migration from v5 → v6 (border_radius) ───────────────────────
+
+    #[test]
+    fn test_migration_from_v5_to_v6_adds_border_radius() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        let v5_json = r#"{
+            "config_version": 5,
+            "is_system_active": true,
+            "border_size": 3,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "last_applied_theme": "",
+            "keybinds_enabled": false,
+            "disabled_providers": []
+        }"#;
+        std::fs::write(&path, v5_json).expect("write v5 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v5 config should be migrated to v{CONFIG_VERSION}"
+        );
+        assert_eq!(
+            cfg.border_radius, 32,
+            "border_radius should default to 32 after migration"
+        );
+    }
+
+    // ── migration from v6 → v7 (gaps_in / gaps_out) ──────────────────
+
+    #[test]
+    fn test_migration_from_v6_to_v7_adds_gaps() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        let v6_json = r#"{
+            "config_version": 6,
+            "is_system_active": true,
+            "border_size": 3,
+            "border_radius": 20,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "last_applied_theme": "",
+            "keybinds_enabled": false,
+            "disabled_providers": []
+        }"#;
+        std::fs::write(&path, v6_json).expect("write v6 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v6 config should be migrated to v{CONFIG_VERSION}"
+        );
+        assert_eq!(
+            cfg.border_radius, 20,
+            "border_radius should be preserved after migration"
+        );
+        assert_eq!(cfg.gaps_in, 5, "gaps_in should default to 5 after migration");
+        assert_eq!(cfg.gaps_out, 5, "gaps_out should default to 5 after migration");
+    }
+
+    // ── old config (pre-v6) loads with border_radius default ─────────
+
+    #[test]
+    fn test_old_config_without_border_radius_and_gaps_loads() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        // A v5 config serialized WITHOUT border_radius/gaps (they have serde defaults)
+        let v5_json = r#"{
+            "config_version": 5,
+            "is_system_active": true,
+            "border_size": 3,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "last_applied_theme": "",
+            "keybinds_enabled": false,
+            "disabled_providers": []
+        }"#;
+        std::fs::write(&path, v5_json).expect("write v5 config");
+
+        let cfg = Config::load();
+        // serde defaults fill the missing fields without failing the parse
+        assert_eq!(cfg.border_radius, 32, "border_radius serde default");
+        assert_eq!(cfg.gaps_in, 5, "gaps_in serde default");
+        assert_eq!(cfg.gaps_out, 5, "gaps_out serde default");
+        assert_eq!(cfg.border_size, 3, "existing field preserved");
     }
 }

@@ -140,6 +140,14 @@
       "title": "Grosor del Borde",
       "desc": "Define el grosor de la línea (0-5px)"
     },
+    "radius": {
+      "title": "Radio de Borde",
+      "desc": "Define el redondeo de esquinas de la ventana (0-100px)"
+    },
+    "gaps": {
+      "title": "Gaps",
+      "desc": "Define el espacio entre ventanas (0-30px)"
+    },
     "header_title": "Estilos Visuales",
     "header_subtitle": "Define la personalidad de tus ventanas",
     "presets": {
