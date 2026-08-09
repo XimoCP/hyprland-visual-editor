@@ -1,27 +1,18 @@
--- @Title: Stylized 2.5D
--- @Icon: palette
--- @Color: #fde047
--- @Tag: ARTISTIC
--- @Desc: Animación tradicional 2.5D. Efecto "Squash & Stretch" con anticipación al entrar y cortes rápidos al salir.
+-- @Title: Classic Impact
+-- @Icon: flame
+-- @Color: #fb7185
+-- @Tag: FX
+-- @Desc: Jelly effect. Elastic bounce on entry and anticipation on exit.
 
 hl.animation({ leaf = "global", enabled = true, speed = 1, bezier = "default" })
 
--- 1. Curvas de físicas tradicionales
-hl.curve("anticipation", { type = "bezier", points = { { 0.4, -0.3 }, { 0.2, 1.15 } } })
-hl.curve("keyframe_out", { type = "bezier", points = { { 1.0, 0.0 }, { 1.0, 1.0 } } })
-hl.curve("squash", { type = "bezier", points = { { 0.2, 1.2 }, { 0.3, 1.0 } } })
+hl.curve("elastic", { type = "bezier", points = { { 0.05, 0.9 }, { 0.1, 1.05 } } })
+hl.curve("retro", { type = "bezier", points = { { 0.6, -0.28 }, { 0.735, 0.045 } } })
+hl.curve("smooth", { type = "bezier", points = { { 0.1, 1 }, { 0.1, 1 } } })
 
--- 2. Gestión de Ventanas
-hl.animation({ leaf = "windowsIn", enabled = true, speed = 4.5, bezier = "anticipation", style = "popin 70%" })
-hl.animation({ leaf = "windowsOut", enabled = true, speed = 1.5, bezier = "keyframe_out", style = "popin 95%" })
-hl.animation({ leaf = "windowsMove", enabled = true, speed = 4.0, bezier = "squash", style = "slide" })
-
--- 3. Transiciones de Entorno y Capas (Layers)
-hl.animation({ leaf = "fade", enabled = true, speed = 3, bezier = "squash" })
-hl.animation({ leaf = "fadeDim", enabled = true, speed = 3, bezier = "squash" })
-hl.animation({ leaf = "layersIn", enabled = true, speed = 4, bezier = "anticipation", style = "slide right" })
-hl.animation({ leaf = "layersOut", enabled = true, speed = 2, bezier = "keyframe_out", style = "slide right" })
-
--- 4. Espacios de trabajo y Scratchpads
-hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "anticipation", style = "slidefade 15%" })
-hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4.5, bezier = "anticipation", style = "slidefadevert 20%" })
+hl.animation({ leaf = "windowsIn", enabled = true, speed = 3, bezier = "elastic", style = "popin 80%" })
+hl.animation({ leaf = "windowsOut", enabled = true, speed = 3, bezier = "retro", style = "popin 80%" })
+hl.animation({ leaf = "windowsMove", enabled = true, speed = 3, bezier = "smooth", style = "slide" })
+hl.animation({ leaf = "fade", enabled = true, speed = 2, bezier = "smooth" })
+hl.animation({ leaf = "workspaces", enabled = true, speed = 4, bezier = "elastic", style = "slide" })
+hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, bezier = "elastic", style = "slidevert" })
