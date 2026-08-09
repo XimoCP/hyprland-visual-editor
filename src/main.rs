@@ -617,7 +617,8 @@ fn sync_preset_indices(
     window.set_active_shader_index(find(&window.get_shader_files(), &cfg.active_shader_file));
     window.set_border_size(cfg.border_size);
     window.set_corner_radius(cfg.border_radius);
-    window.set_gap(cfg.gaps_in);
+    window.set_gap_in(cfg.gaps_in);
+    window.set_gap_out(cfg.gaps_out);
 }
 
 /// Pre-warm tab layouts so the first user interaction after a show()
@@ -720,7 +721,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_system_active(cfg.is_system_active);
     window.set_border_size(cfg.border_size);
     window.set_corner_radius(cfg.border_radius);
-    window.set_gap(cfg.gaps_in);
+    window.set_gap_in(cfg.gaps_in);
+    window.set_gap_out(cfg.gaps_out);
     window.set_auto_minimize(cfg.auto_minimize_enabled);
     window.set_minimize_seconds(cfg.minimize_seconds);
     window.set_language(tr_lang.clone().into());
@@ -783,7 +785,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_border_header_subtitle(tr.tr_shared("borders.header_subtitle", "Define your windows' personality"));
     window.set_border_geometry_label(tr.tr_shared("borders.geometry.title", "Border Thickness"));
     window.set_border_radius_label(tr.tr_shared("borders.radius.title", "Corner Radius"));
-    window.set_gap_label(tr.tr_shared("borders.gaps.title", "Gaps"));
+    window.set_gap_in_label(tr.tr_shared("borders.gaps.in.title", "Inner Gap"));
+    window.set_gap_out_label(tr.tr_shared("borders.gaps.out.title", "Outer Gap"));
     window.set_shader_header_title(tr.tr_shared("shaders.header_title", "Screen Filters"));
     window.set_shader_header_subtitle(tr.tr_shared("shaders.header_subtitle", "Real-time image post-processing"));
 

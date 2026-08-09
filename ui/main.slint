@@ -122,8 +122,10 @@ export component MainWindow inherits Window {
     in-out property <int> border-size: 2;
     in-out property <int> corner-radius: 32;
     in property <string> border-radius-label;
-    in-out property <int> gap: 5;
-    in property <string> gap-label;
+    in-out property <int> gap-in: 5;
+    in-out property <int> gap-out: 5;
+    in property <string> gap-in-label;
+    in property <string> gap-out-label;
 
     // Shader data
     in property <[string]> shader-titles;
@@ -180,7 +182,8 @@ export component MainWindow inherits Window {
     callback apply-shader(int, string);
     callback apply-geometry(int);
     callback apply-geometry-radius(int);
-    callback apply-geometry-gaps(int);
+    callback apply-geometry-gaps-in(int);
+    callback apply-geometry-gaps-out(int);
     callback close-button-clicked();
     callback toggle-settings();
     callback toggle-auto-minimize(bool);
@@ -629,8 +632,10 @@ export component MainWindow inherits Window {
                         border-size: root.border-size;
                         corner-radius: root.corner-radius;
                         border-radius-label: root.border-radius-label;
-                        gap: root.gap;
-                        gap-label: root.gap-label;
+                        gap-in: root.gap-in;
+                        gap-out: root.gap-out;
+                        gap-in-label: root.gap-in-label;
+                        gap-out-label: root.gap-out-label;
                         focused-index: root.border-focused-index;
                         is-active: root.active-tab == 2;
                         fast-expand: root._nav-rapid;
@@ -638,7 +643,8 @@ export component MainWindow inherits Window {
                         border-toggled(idx, file) => { root.apply-border(idx, file); }
                         geometry-changed(v) => { root.apply-geometry(v); }
                         geometry-radius-changed(v) => { root.apply-geometry-radius(v); }
-                        geometry-gaps-changed(v) => { root.apply-geometry-gaps(v); }
+                        geometry-gaps-in-changed(v) => { root.apply-geometry-gaps-in(v); }
+                        geometry-gaps-out-changed(v) => { root.apply-geometry-gaps-out(v); }
                     }
                 }
 

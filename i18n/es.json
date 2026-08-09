@@ -146,7 +146,15 @@
     },
     "gaps": {
       "title": "Gaps",
-      "desc": "Define el espacio entre ventanas (0-30px)"
+      "desc": "Define el espacio entre ventanas (0-30px)",
+      "in": {
+        "title": "Gap Interno",
+        "desc": "Espacio entre ventanas (0-30px)"
+      },
+      "out": {
+        "title": "Gap Externo",
+        "desc": "Espacio con los bordes de la pantalla (0-30px)"
+      }
     },
     "header_title": "Estilos Visuales",
     "header_subtitle": "Define la personalidad de tus ventanas",

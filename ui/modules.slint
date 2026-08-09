@@ -422,8 +422,10 @@ export component BordersModule inherits Rectangle {
     in property <int> active-index: -1;
     in property <int> border-size: 2;
     in property <int> corner-radius: 32;
-    in property <int> gap: 5;
-    in property <string> gap-label;
+    in property <int> gap-in: 5;
+    in property <int> gap-out: 5;
+    in property <string> gap-in-label;
+    in property <string> gap-out-label;
     in property <string> border-radius-label;
     in property <string> header-title;
     in property <string> header-subtitle;
@@ -435,7 +437,8 @@ export component BordersModule inherits Rectangle {
     callback border-toggled(int, string);
     callback geometry-changed(int);
     callback geometry-radius-changed(int);
-    callback geometry-gaps-changed(int);
+    callback geometry-gaps-in-changed(int);
+    callback geometry-gaps-out-changed(int);
 
     ScrollView {
         vertical-stretch: 1;
@@ -468,11 +471,19 @@ export component BordersModule inherits Rectangle {
             }
 
             GeometrySlider {
-                label: root.gap-label;
-                value: root.gap;
+                label: root.gap-in-label;
+                value: root.gap-in;
                 min: 0;
                 max: 30;
-                changed(v) => { root.geometry-gaps-changed(v); }
+                changed(v) => { root.geometry-gaps-in-changed(v); }
+            }
+
+            GeometrySlider {
+                label: root.gap-out-label;
+                value: root.gap-out;
+                min: 0;
+                max: 30;
+                changed(v) => { root.geometry-gaps-out-changed(v); }
             }
 
             for i in root.border-titles.length: PresetCard {

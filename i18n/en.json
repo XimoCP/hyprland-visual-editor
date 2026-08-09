@@ -146,7 +146,15 @@
     },
     "gaps": {
       "title": "Gaps",
-      "desc": "Define spacing between windows (0-30px)"
+      "desc": "Define spacing between windows (0-30px)",
+      "in": {
+        "title": "Inner Gap",
+        "desc": "Spacing between windows (0-30px)"
+      },
+      "out": {
+        "title": "Outer Gap",
+        "desc": "Spacing from screen edges (0-30px)"
+      }
     },
     "header_title": "Visual Styles",
     "header_subtitle": "Define your windows' personality",

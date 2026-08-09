@@ -196,13 +196,13 @@ pub fn setup_callbacks(
         });
     }
 
-    // Gaps change — skip first call (Slider fires on init)
+    // Gaps-in change (between windows) — skip first call (Slider fires on init)
     {
         let eng = eng.clone();
         let cfg = cfg.clone();
         let weak = window.as_weak();
         let mut gaps_init = true;
-        window.on_apply_geometry_gaps(move |gap| {
+        window.on_apply_geometry_gaps_in(move |gap| {
             if gaps_init {
                 gaps_init = false;
                 return;
@@ -216,23 +216,60 @@ pub fn setup_callbacks(
                     cfg.gaps_out,
                 )
             };
-            let is_same = gap == current_in && gap == current_out;
-            if is_same {
+            if gap == current_in {
                 return;
             }
             {
                 let mut cfg = cfg.lock().unwrap();
                 cfg.gaps_in = gap;
-                cfg.gaps_out = gap;
                 let _ = cfg.save();
             }
-            let result = eng.apply_geometry(size, radius, gap, gap);
+            let result = eng.apply_geometry(size, radius, gap, current_out);
             if let Err(e) = result {
-                eprintln!("[HVE] Gaps error: {}", e);
+                eprintln!("[HVE] Gaps-in error: {}", e);
             }
             // Update UI slider value
             if let Some(w) = weak.upgrade() {
-                w.set_gap(gap);
+                w.set_gap_in(gap);
+            }
+        });
+    }
+
+    // Gaps-out change (windows ↔ monitor edges) — skip first call
+    {
+        let eng = eng.clone();
+        let cfg = cfg.clone();
+        let weak = window.as_weak();
+        let mut gaps_init = true;
+        window.on_apply_geometry_gaps_out(move |gap| {
+            if gaps_init {
+                gaps_init = false;
+                return;
+            }
+            let (size, radius, current_in, current_out) = {
+                let cfg = cfg.lock().unwrap();
+                (
+                    cfg.border_size,
+                    cfg.border_radius,
+                    cfg.gaps_in,
+                    cfg.gaps_out,
+                )
+            };
+            if gap == current_out {
+                return;
+            }
+            {
+                let mut cfg = cfg.lock().unwrap();
+                cfg.gaps_out = gap;
+                let _ = cfg.save();
+            }
+            let result = eng.apply_geometry(size, radius, current_in, gap);
+            if let Err(e) = result {
+                eprintln!("[HVE] Gaps-out error: {}", e);
+            }
+            // Update UI slider value
+            if let Some(w) = weak.upgrade() {
+                w.set_gap_out(gap);
             }
         });
     }
