@@ -1215,6 +1215,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_apply_theme(move |name| {
             let name_str = name.to_string();
+            // Suprime el auto-minimize mientras se aplica: hyprctl reload y la
+            // regeneración de window rules hacen que la ventana pierda foco
+            // varias veces, y eso no debe disparar un countdown espurio.
+            countdown::suppress_auto_minimize(std::time::Duration::from_secs(4));
             let result = tm.lock().unwrap().apply(&name_str, || {
                 // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
                 // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().

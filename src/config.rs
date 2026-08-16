@@ -158,7 +158,7 @@ impl Config {
 
         match serde_json::from_str::<Config>(&data) {
             Ok(cfg) => {
-                tracing::info!("[config] Loaded config: version={}, theme={:?}, tiling={}, keybinds={}, active={}",
+                tracing::debug!("[config] Loaded config: version={}, theme={:?}, tiling={}, keybinds={}, active={}",
                     cfg.config_version, cfg.theme, cfg.tiling_mode, cfg.keybinds_enabled, cfg.is_system_active);
                 if cfg.config_version < CONFIG_VERSION {
                     eprintln!(

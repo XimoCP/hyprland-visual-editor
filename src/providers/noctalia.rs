@@ -573,7 +573,7 @@ impl ThemeProvider for NoctaliaV4Provider {
 // ── Noctalia v5 helpers ─────────────────────────────────────────────
 
 /// Run `noctalia msg <args...>` and return stdout on success.
-fn noctalia_msg(args: &[&str]) -> Result<String, String> {
+pub(crate) fn noctalia_msg(args: &[&str]) -> Result<String, String> {
     let output = std::process::Command::new("noctalia")
         .args(args)
         .output()
@@ -603,7 +603,7 @@ fn noctalia_config_dir() -> Option<PathBuf> {
 ///
 /// v5 stores its runtime settings in `settings.toml` inside this directory,
 /// NOT in `~/.config/noctalia/settings.json` (which is a v4 artifact).
-fn noctalia_state_dir() -> Option<PathBuf> {
+pub(crate) fn noctalia_state_dir() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(".local").join("state").join("noctalia"))
 }
@@ -748,6 +748,13 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
+        // 5. Save animated wallpaper manifest (mpvpaper plugin), reference only.
+        //    It is safe to keep going if the plugin has no live assignments.
+        match crate::providers::mpvpaper::save_manifest(&provider_dir) {
+            Ok(()) => {}
+            Err(e) => tracing::warn!("[noctalia-v5] Could not save mpvpaper manifest: {}", e),
+        }
+
         Ok(())
     }
 
@@ -778,11 +785,47 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        // 1. Restore wallpaper FIRST — for wallpaper-derived schemes, setting
+        // 1. Animated wallpaper (mpvpaper plugin).
+        //    If the theme saved animated wallpapers, resolve/download the videos
+        //    and bounce the plugin so it launches them. If the theme has NO
+        //    manifest, send clear-all FIRST: a running video would otherwise
+        //    keep hijacking the screen and the static wallpaper below could
+        //    never show. These operations are best-effort: a plugin problem
+        //    must never fail the whole theme apply.
+        let manifest_exists = provider_dir
+            .join(crate::providers::mpvpaper::MANIFEST_FILE)
+            .exists();
+        let mut animated_applied = false;
+        if manifest_exists {
+            // Warn the user up-front when the theme has animated wallpapers
+            // but the plugin is not available — otherwise they would apply the
+            // theme and silently lose the videos.
+            if !crate::providers::mpvpaper::mpvpaper_enabled() {
+                crate::providers::mpvpaper::notify_plugin_required();
+            }
+            match crate::providers::mpvpaper::apply_manifest(theme_dir) {
+                Ok(()) => {
+                    animated_applied = true;
+                    tracing::info!("[noctalia-v5] Animated wallpapers applied");
+                }
+                Err(e) => tracing::warn!("[noctalia-v5] Animated wallpapers skipped: {}", e),
+            }
+        } else {
+            match crate::providers::mpvpaper::clear_all() {
+                Ok(()) => tracing::info!("[noctalia-v5] Stopped running video wallpapers"),
+                Err(e) => tracing::warn!("[noctalia-v5] clear-all warning: {}", e),
+            }
+        }
+
+        // 2. Restore wallpaper FIRST — for wallpaper-derived schemes, setting
         //    the wallpaper triggers Noctalia's palette regeneration, so it
         //    must happen before color-scheme-set and templates-apply.
+        //    SKIP when a video wallpaper was successfully applied: the mpvpaper
+        //    plugin disables the static wallpaper while a video plays, so
+        //    re-setting the static image here would cover the running video.
+        //    If the animated apply failed, fall back to the static wallpaper.
         let wp_path = provider_dir.join("wallpaper.txt");
-        if wp_path.exists() {
+        if !animated_applied && wp_path.exists() {
             let wp = fs::read_to_string(&wp_path)
                 .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
             let wp = wp.trim();

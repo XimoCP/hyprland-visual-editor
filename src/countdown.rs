@@ -6,10 +6,36 @@
 use slint::{ComponentHandle, Timer, TimerMode, Weak};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Bandera compartida para indicar si el countdown está activo.
 static COUNTDOWN_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Hasta cuándo se suprime el auto-minimize. Se setea durante un apply de
+/// tema: el hyprctl reload y la regeneración de window rules hacen que la
+/// ventana pierda y recupere foco varias veces, y esos eventos (encolados en
+/// el event loop) no deben disparar un countdown espurio.
+static SUPPRESS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Suprime el auto-minimize durante `duration` (p. ej. mientras se aplica un
+/// tema). Safe to call desde cualquier thread.
+pub fn suppress_auto_minimize(duration: Duration) {
+    let until = Instant::now() + duration;
+    *SUPPRESS_UNTIL.lock().unwrap() = Some(until);
+    tracing::debug!("[countdown] Auto-minimize suprimido por {:?}", duration);
+}
+
+fn is_suppressed() -> bool {
+    let mut guard = SUPPRESS_UNTIL.lock().unwrap();
+    match *guard {
+        Some(until) if Instant::now() < until => true,
+        _ => {
+            *guard = None;
+            false
+        }
+    }
+}
 
 thread_local! {
     /// Timer del countdown (solo accesible desde el thread principal).
@@ -20,6 +46,12 @@ thread_local! {
 pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
     if COUNTDOWN_ACTIVE.swap(true, Ordering::Relaxed) {
         tracing::debug!("[countdown] Ya activo, ignorando start");
+        return;
+    }
+
+    if is_suppressed() {
+        COUNTDOWN_ACTIVE.store(false, Ordering::Relaxed);
+        tracing::debug!("[countdown] Suprimido (apply en curso), ignorando start");
         return;
     }
 
@@ -277,7 +309,7 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
             if hidden {
                 return;
             }
-            tracing::info!("[countdown] Foco perdido, iniciando countdown");
+            tracing::debug!("[countdown] Foco perdido, posible countdown");
             let w = weak_for_lost.clone();
             match slint::invoke_from_event_loop(move || start_countdown(w)) {
                 Ok(_) => {}
@@ -285,7 +317,7 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
             }
         },
         move || {
-            tracing::info!("[countdown] Foco recuperado, cancelando countdown");
+            tracing::debug!("[countdown] Foco recuperado, cancelando countdown");
             let w = weak_for_gained.clone();
             match slint::invoke_from_event_loop(move || cancel_countdown(w)) {
                 Ok(_) => {}
