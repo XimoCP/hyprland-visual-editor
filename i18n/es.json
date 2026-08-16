@@ -21,8 +21,8 @@
   },
   "welcome": {
     "toast": {
-    "enabled": "Editor Visual Habilitado",
-    "disabled": "Editor Visual Deshabilitado"
+      "enabled": "Editor Visual Habilitado",
+      "disabled": "Editor Visual Deshabilitado"
     },
     "activation_title": "Activación del Sistema",
     "system_active": "El sistema está operativo. Los efectos visuales están gestionados por HVE de forma segura.",
@@ -310,11 +310,15 @@
     "none_theme": "Ninguno",
     "about_title": "Acerca de HVE",
     "about_short": "Hyprland Visual Editor es la evolución estética de tu escritorio.",
-    "about_full": "HVE modifica animaciones, bordes y shaders de Hyprland desde una interfaz visual, en tiempo real.\n\nPara aplicar los cambios, HVE añade un bloque al final de tu hyprland.lua (o hyprland.conf), delimitado por marcadores. Ese bloque solo incluye (dofile / source) nuestros archivos de overlay en ~/.cache/hve/ — nunca reescribe tu configuración personal.\n\nAl desactivar el sistema, los marcadores se eliminan. Si desinstalás, un watchdog los limpia en el próximo inicio de Hyprland. Tu configuración original siempre queda intacta.",
+    "about_full": "HVE es una aplicación gráfica para gestionar visualmente la estética de tu escritorio Hyprland: animaciones, bordes, esquinas redondeadas, espacios entre ventanas y efectos visuales, todo con vista previa en vivo.\n\nLa pestaña Temas te deja guardar, aplicar, renombrar y eliminar configuraciones completas, incluyendo fondos estáticos y animados (mpvpaper) según el proveedor activo (Noctalia v5, presets HVE y wallpapers).\n\nAdemás incluye tiling mode, auto-minimización al perder el foco, autostart con tu sesión, navegación completa por teclado, idiomas español/inglés y control desde la bandeja del sistema.\n\nTodo se aplica de forma segura: HVE ensambla fragmentos y nunca reescribe tu configuración personal. Al desactivar el sistema o desinstalar, un watchdog limpia los cambios y tu configuración original siempre queda intacta.",
     "about_line_1": "Vista previa en vivo — ajustá y mirá al instante",
     "about_line_2": "Ensamblado seguro — cero riesgo para tus configs",
     "about_line_3": "Recarga en caliente — aplicá sin reiniciar Hyprland",
-    "about_line_4": "Fragmentos — piezas reutilizables, no un archivo enorme"
+    "about_line_4": "Fragmentos — piezas reutilizables, no un archivo enorme",
+    "about_tree_label": "Estructura del proyecto",
+    "about_tree": "hve/\n├── src/                        Lógica de la aplicación (Rust)\n│   ├── main.rs                 Punto de entrada e integración de la UI\n│   ├── callbacks.rs            Conexión UI ↔ lógica (Slint → Rust)\n│   ├── config.rs               Configuración del usuario\n│   ├── engine.rs               Motor de ensamblado (fragmentos)\n│   ├── theme.rs                Sistema de colores y temas\n│   ├── theme_manager.rs        Gestor de temas (guardar/aplicar)\n│   ├── presets.rs              Presets de animación y bordes\n│   ├── tr.rs                   Traducciones (es/en)\n│   ├── composer/               Capa de abstracción de Hyprland\n│   ├── providers/              Integraciones y proveedores\n│   │   ├── hve_presets.rs      Presets propios de HVE\n│   │   ├── wallpaper.rs        Fondos de pantalla estáticos\n│   │   ├── mpvpaper.rs         Fondos animados (video)\n│   │   ├── noctalia.rs         Integración Noctalia v5\n│   │   ├── shell.rs            Detección del shell\n│   │   └── hyprland_settings.rs  Ajustes de Hyprland\n│   ├── ipc.rs                  Comunicación entre procesos\n│   ├── hypr_ipc.rs             Listener de eventos de Hyprland\n│   ├── tray.rs                 Bandeja del sistema\n│   ├── countdown.rs            Auto-minimización al perder foco\n│   ├── watcher.rs              Vigilante de archivos\n│   └── utils.rs                Utilidades compartidas\n├── ui/                         Interfaz gráfica (Slint)\n│   ├── main.slint              Ventana principal\n│   ├── modules.slint           Módulos (Inicio, Animaciones, Temas...)\n│   ├── components.slint        Componentes reutilizables\n│   └── theme.slint             Paleta de colores\n├── i18n/                       Traducciones\n│   ├── es.json                 Español\n│   └── en.json                 Inglés\n├── assets/                     Scripts y recursos\n├── install.sh                  Instalador\n├── uninstall.sh                Desinstalador\n├── README.md                   Documentación de inicio\n└── WIKI.md                     Wiki técnica",
+    "about_docs": "Ver documentación",
+    "about_line_5": "Temas — guardá y aplicá configuraciones completas"
   },
   "themes": {
     "header_title": "Gestor de Temas",

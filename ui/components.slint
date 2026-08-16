@@ -589,9 +589,13 @@ export component AccordionCard inherits Rectangle {
     in property <color> border;
     in property <string> short-desc;
     in property <string> full-desc;
-    in property <bool> expanded: false;
     in property <[AboutItem]> about-items: [];
+    in property <bool> expanded: false;
+    in property <string> tree-label;
+    in property <string> tree-text;
+    in property <string> docs-label;
     callback toggled();
+    callback open-docs();
 
     height: lv.preferred-height;
     border-radius: 12px;
@@ -672,8 +676,8 @@ export component AccordionCard inherits Rectangle {
         }
 
         // ── Cuerpo expandido ──
-        if expanded && root.about-items.length > 0 : VerticalLayout {
-            spacing: 8px;
+        if expanded : VerticalLayout {
+            spacing: 10px;
             padding-top: 8px;
 
             Rectangle {
@@ -681,6 +685,15 @@ export component AccordionCard inherits Rectangle {
                 background: accent.transparentize(0.3);
             }
 
+            // Descripción completa del proyecto
+            Text {
+                text: root.full-desc;
+                color: HveColors.text;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            // Feature points
             for item in root.about-items: Rectangle {
                 height: 32px;
                 border-radius: 6px;
@@ -711,22 +724,89 @@ export component AccordionCard inherits Rectangle {
                     }
                 }
             }
-        }
 
-        if expanded && root.about-items.length == 0 : VerticalLayout {
-            spacing: 10px;
-            padding-top: 8px;
+            // ── Árbol del proyecto ──
+            if root.tree-label != "" : VerticalLayout {
+                spacing: 8px;
+                padding-top: 4px;
 
-            Rectangle {
-                height: 1px;
-                background: accent.transparentize(0.3);
+                Rectangle {
+                    height: 1px;
+                    background: accent.transparentize(0.3);
+                }
+
+                Text {
+                    text: root.tree-label;
+                    color: root.accent;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 1px;
+                }
+
+                Rectangle {
+                    border-radius: 8px;
+                    background: HveColors.bg-surface;
+                    border-width: 1px;
+                    border-color: HveColors.border;
+
+                    HorizontalLayout {
+                        padding: 12px;
+
+                        Text {
+                            text: root.tree-text;
+                            color: HveColors.text;
+                            font-size: 12px;
+                            font-family: "monospace";
+                            wrap: word-wrap;
+                            horizontal-alignment: left;
+                            vertical-alignment: top;
+                        }
+                    }
+                }
             }
 
-            Text {
-                text: root.full-desc;
-                color: HveColors.text;
-                font-size: 13px;
-                wrap: word-wrap;
+            // ── Botón Documentación ──
+            if root.docs-label != "" : Rectangle {
+                height: 38px;
+                border-radius: 8px;
+                background: accent.transparentize(0.85);
+                border-width: 1px;
+                border-color: accent.transparentize(0.45);
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: center;
+
+                    Text {
+                        text: "📖";
+                        font-size: 14px;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.docs-label;
+                        color: root.accent;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: "↗";
+                        color: root.accent;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                doc-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.open-docs(); }
+                }
             }
         }
     }

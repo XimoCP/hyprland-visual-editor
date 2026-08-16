@@ -273,4 +273,18 @@ pub fn setup_callbacks(
             }
         });
     }
+
+    // Open project documentation (WIKI.md / README.md) in the default viewer
+    {
+        let wiki_path = proj.join("WIKI.md");
+        window.on_open_docs(move || {
+            let target = if wiki_path.exists() {
+                wiki_path.clone()
+            } else {
+                proj.join("README.md")
+            };
+            tracing::info!("[about] Opening documentation: {}", target.display());
+            let _ = std::process::Command::new("xdg-open").arg(&target).spawn();
+        });
+    }
 }

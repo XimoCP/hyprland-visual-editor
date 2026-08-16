@@ -46,14 +46,30 @@ export component HomeModule inherits ScrollView {
     in property <string> about-short;
     in property <string> about-full;
     in property <[AboutItem]> about-items: [];
+    in property <string> about-tree-label;
+    in property <string> about-tree-text;
+    in property <string> about-docs-label;
+    in-out property <bool> about-scroll-pending: false;
     callback toggle-system(bool);
     callback navigate-to(int);
+    callback open-docs();
 
     // Scroll suave al expandir el acordeón: viewport-y animado
     // + desplazamiento relativo para evitar el clamping pre-layout
     animate viewport-y {
         duration: 250ms;
         easing: ease-in-out;
+    }
+
+    // Al expandir, esperamos un tick (layout ya recalculado) y scrolleamos
+    // hasta que el acordeón quede en la parte superior del área visible.
+    ab-timer := Timer {
+        interval: 20ms;
+        running: root.about-scroll-pending;
+        triggered => {
+            root.about-scroll-pending = false;
+            root.viewport-y = -acerca.y + 24px;
+        }
     }
 
     VerticalLayout {
@@ -350,13 +366,20 @@ export component HomeModule inherits ScrollView {
             short-desc: root.about-short;
             full-desc: root.about-full;
             about-items: root.about-items;
+            tree-label: root.about-tree-label;
+            tree-text: root.about-tree-text;
+            docs-label: root.about-docs-label;
             toggled => {
                 acerca.expanded = !acerca.expanded;
                 if acerca.expanded {
-                    root.viewport-y = root.viewport-y - 140px;
+                    root.about-scroll-pending = true;
                 } else {
+                    root.about-scroll-pending = false;
                     root.viewport-y = 0px;
                 }
+            }
+            open-docs => {
+                root.open-docs();
             }
         }
     }

@@ -93,6 +93,9 @@ export component MainWindow inherits Window {
     in property <string> home-about-short;
     in property <string> home-about-full;
     in property <[AboutItem]> home-about-items;
+    in property <string> home-about-tree-label;
+    in property <string> home-about-tree-text;
+    in property <string> home-about-docs-label;
     // ── i18n: Settings strings ──
     in property <string> settings-restart-banner;
     in property <string> settings-restart-button;
@@ -202,6 +205,7 @@ export component MainWindow inherits Window {
     callback overwrite-theme(string);
     callback refresh-themes();
     callback search-query-changed(string);
+    callback open-docs();
 
     // ── Keyboard step helpers (called once per press, then on 120ms timer while held) ──
     function step-down() {
@@ -577,6 +581,9 @@ export component MainWindow inherits Window {
                         about-short: root.home-about-short;
                         about-full: root.home-about-full;
                         about-items: root.home-about-items;
+                        about-tree-label: root.home-about-tree-label;
+                        about-tree-text: root.home-about-tree-text;
+                        about-docs-label: root.home-about-docs-label;
                         toggle-system(v) => { root.toggle-system(v); }
                         navigate-to(tab) => {
                             root.anim-focused-index = -1;
@@ -585,6 +592,7 @@ export component MainWindow inherits Window {
                             root.theme-focused-index = -1;
                             root.active-tab = tab;
                         }
+                        open-docs => { root.open-docs(); }
                     }
                 }
 

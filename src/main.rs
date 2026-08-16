@@ -810,7 +810,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_active_theme_name(cfg.last_applied_theme.clone().into());
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
-    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE customizes Hyprland animations, borders, and shaders from a visual interface, in real time.\n\nTo apply changes, HVE adds a block at the end of your hyprland.lua (or hyprland.conf), delimited by markers. That block only includes (dofile / source) our overlay files in ~/.cache/hve/ — it never rewrites your personal config.\n\nWhen you disable the system, the markers are removed. If you uninstall, a watchdog cleans them on the next Hyprland start. Your original config always stays intact."));
+    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE is a graphical app to visually manage your Hyprland desktop aesthetics: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete full configurations, including static and animated (mpvpaper) wallpapers depending on the active provider (Noctalia v5, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact."));
+    window.set_home_about_tree_label(tr.tr_shared("home.about_tree_label", "Project structure"));
+    window.set_home_about_tree_text(tr.tr_shared("home.about_tree", ""));
+    window.set_home_about_docs_label(tr.tr_shared("home.about_docs", "View documentation"));
     let about_items: Vec<AboutItem> = vec![
         AboutItem {
             text: tr.tr_shared("home.about_line_1", "Live preview — tweak and see it instantly"),
@@ -827,6 +830,10 @@ fn main() -> Result<(), slint::PlatformError> {
         AboutItem {
             text: tr.tr_shared("home.about_line_4", "Fragments — composable pieces, not one huge file"),
             color: Color::from_rgb_u8(192, 132, 252),
+        },
+        AboutItem {
+            text: tr.tr_shared("home.about_line_5", "Themes — save and apply complete configurations"),
+            color: Color::from_rgb_u8(56, 189, 248),
         },
     ];
     window.set_home_about_items(ModelRc::new(VecModel::from(about_items)));
