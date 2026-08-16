@@ -94,7 +94,9 @@ export component MainWindow inherits Window {
     in property <string> home-about-full;
     in property <[AboutItem]> home-about-items;
     in property <string> home-about-tree-label;
-    in property <string> home-about-tree-text;
+    in property <[string]> home-about-tree-paths;
+    in property <[string]> home-about-tree-descs;
+    in property <string> home-about-tree-path-max;
     in property <string> home-about-docs-label;
     // ── i18n: Settings strings ──
     in property <string> settings-restart-banner;
@@ -582,7 +584,9 @@ export component MainWindow inherits Window {
                         about-full: root.home-about-full;
                         about-items: root.home-about-items;
                         about-tree-label: root.home-about-tree-label;
-                        about-tree-text: root.home-about-tree-text;
+                        about-tree-paths: root.home-about-tree-paths;
+                        about-tree-descs: root.home-about-tree-descs;
+                        about-tree-path-max: root.home-about-tree-path-max;
                         about-docs-label: root.home-about-docs-label;
                         toggle-system(v) => { root.toggle-system(v); }
                         navigate-to(tab) => {

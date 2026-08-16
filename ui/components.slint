@@ -592,10 +592,25 @@ export component AccordionCard inherits Rectangle {
     in property <[AboutItem]> about-items: [];
     in property <bool> expanded: false;
     in property <string> tree-label;
-    in property <string> tree-text;
+    in property <[string]> tree-paths;
+    in property <[string]> tree-descs;
+    in property <string> tree-path-max;
     in property <string> docs-label;
     callback toggled();
     callback open-docs();
+
+    // Ancho de la columna del árbol: el path más largo medido con la fuente real (monospace),
+    // más un pequeño margen. Así todas las definiciones arrancan en el mismo x.
+    private property <length> tree-path-col-width: tree-path-measure.preferred-width + 14px;
+
+    tree-path-measure := Text {
+        text: root.tree-path-max;
+        font-family: "monospace";
+        font-size: 12px;
+        opacity: 0;
+        x: -10000px;
+        y: -10000px;
+    }
 
     height: lv.preferred-height;
     border-radius: 12px;
@@ -749,17 +764,47 @@ export component AccordionCard inherits Rectangle {
                     border-width: 1px;
                     border-color: HveColors.border;
 
-                    HorizontalLayout {
+                    VerticalLayout {
                         padding: 12px;
+                        spacing: 3px;
 
-                        Text {
-                            text: root.tree-text;
-                            color: HveColors.text;
-                            font-size: 12px;
-                            font-family: "monospace";
-                            wrap: word-wrap;
-                            horizontal-alignment: left;
-                            vertical-alignment: top;
+                        for i in root.tree-paths.length: HorizontalLayout {
+                            spacing: 4px;
+
+                            // Columna 1 (ancho fijo = path más largo): ramas del árbol + puntos
+                            // que rellenan hasta el borde derecho de la columna.
+                            HorizontalLayout {
+                                width: root.tree-path-col-width;
+                                spacing: 0px;
+
+                                Text {
+                                    text: root.tree-paths[i];
+                                    color: HveColors.text;
+                                    font-size: 12px;
+                                    font-family: "monospace";
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.tree-descs[i] != "" ? "...................................................................................................." : "";
+                                    color: HveColors.text-muted;
+                                    font-size: 12px;
+                                    font-family: "monospace";
+                                    horizontal-stretch: 1;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                    min-width: 0px;
+                                    overflow: clip;
+                                }
+                            }
+
+                            // Columna 2: definición, siempre arranca en el mismo x.
+                            Text {
+                                text: root.tree-descs[i];
+                                color: HveColors.text-muted;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
                         }
                     }
                 }

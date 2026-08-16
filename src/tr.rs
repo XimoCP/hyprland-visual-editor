@@ -59,6 +59,28 @@ impl Tr {
     pub fn tr_shared(&self, key: &str, fallback: &str) -> slint::SharedString {
         slint::SharedString::from(self.tr_or(key, fallback))
     }
+
+    /// Resolve a key that holds a JSON array of strings and return it as `Vec<SharedString>`.
+    /// Returns an empty vector when the key is missing or is not an array of strings.
+    pub fn tr_array(&self, key: &str) -> Vec<slint::SharedString> {
+        let parts: Vec<&str> = key.split('.').collect();
+        let mut current = &self.data;
+        for part in &parts {
+            match current.get(*part) {
+                Some(v) => current = v,
+                None => return Vec::new(),
+            }
+        }
+        current
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(slint::SharedString::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Detect the user's language from the `LANG` environment variable.

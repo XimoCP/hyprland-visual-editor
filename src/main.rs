@@ -812,7 +812,17 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
     window.set_home_about_full(tr.tr_shared("home.about_full", "HVE is a graphical app to visually manage your Hyprland desktop aesthetics: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete full configurations, including static and animated (mpvpaper) wallpapers depending on the active provider (Noctalia v5, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact."));
     window.set_home_about_tree_label(tr.tr_shared("home.about_tree_label", "Project structure"));
-    window.set_home_about_tree_text(tr.tr_shared("home.about_tree", ""));
+    let tree_paths: Vec<SharedString> = tr.tr_array("home.about_tree_paths");
+    let tree_descs: Vec<SharedString> = tr.tr_array("home.about_tree_descs");
+    window.set_home_about_tree_paths(ModelRc::from(tree_paths.as_slice()));
+    window.set_home_about_tree_descs(ModelRc::from(tree_descs.as_slice()));
+    window.set_home_about_tree_path_max(
+        tree_paths
+            .iter()
+            .max_by_key(|p| p.len())
+            .cloned()
+            .unwrap_or_default(),
+    );
     window.set_home_about_docs_label(tr.tr_shared("home.about_docs", "View documentation"));
     let about_items: Vec<AboutItem> = vec![
         AboutItem {

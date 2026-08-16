@@ -47,7 +47,9 @@ export component HomeModule inherits ScrollView {
     in property <string> about-full;
     in property <[AboutItem]> about-items: [];
     in property <string> about-tree-label;
-    in property <string> about-tree-text;
+    in property <[string]> about-tree-paths;
+    in property <[string]> about-tree-descs;
+    in property <string> about-tree-path-max;
     in property <string> about-docs-label;
     in-out property <bool> about-scroll-pending: false;
     callback toggle-system(bool);
@@ -367,7 +369,9 @@ export component HomeModule inherits ScrollView {
             full-desc: root.about-full;
             about-items: root.about-items;
             tree-label: root.about-tree-label;
-            tree-text: root.about-tree-text;
+            tree-paths: root.about-tree-paths;
+            tree-descs: root.about-tree-descs;
+            tree-path-max: root.about-tree-path-max;
             docs-label: root.about-docs-label;
             toggled => {
                 acerca.expanded = !acerca.expanded;
