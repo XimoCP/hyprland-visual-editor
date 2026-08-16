@@ -102,9 +102,8 @@ fn live_assignments_path() -> Option<PathBuf> {
 /// mirroring the plugin default. No `toml` crate: settings.toml is
 /// machine-written, line `video_directory = "..."` inside the section.
 fn video_directory_from_settings() -> PathBuf {
-    let default = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join("Videos"))
-        .unwrap_or_else(|_| PathBuf::from("/tmp"));
+    let home = std::env::var("HOME").unwrap_or_default();
+    let default = PathBuf::from(&home).join("Videos");
 
     let Some(state_dir) = noctalia_state_dir() else {
         return default;
@@ -114,12 +113,12 @@ fn video_directory_from_settings() -> PathBuf {
         return default;
     };
 
-    parse_video_directory(&raw, default)
+    parse_video_directory(&raw, default, &home)
 }
 
 /// Pure parser: extract `video_directory` from the mpvpaper plugin section of
 /// a settings.toml string. Returns `default` when absent or unparseable.
-fn parse_video_directory(raw: &str, default: PathBuf) -> PathBuf {
+fn parse_video_directory(raw: &str, default: PathBuf, home: &str) -> PathBuf {
     let mut in_mpvpaper_section = false;
     for line in raw.lines() {
         let line = line.trim();
@@ -133,7 +132,7 @@ fn parse_video_directory(raw: &str, default: PathBuf) -> PathBuf {
                 if let Some(value) = rest.strip_prefix('=') {
                     let value = value.trim().trim_matches('"');
                     if !value.is_empty() {
-                        if let Some(expanded) = expand_home(value) {
+                        if let Some(expanded) = expand_home(value, home) {
                             return expanded;
                         }
                     }
@@ -146,10 +145,9 @@ fn parse_video_directory(raw: &str, default: PathBuf) -> PathBuf {
 }
 
 /// Expand a leading `~` in a configured path.
-fn expand_home(path: &str) -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
+fn expand_home(path: &str, home: &str) -> Option<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
-        Some(PathBuf::from(&home).join(rest))
+        Some(PathBuf::from(home).join(rest))
     } else if path == "~" {
         Some(PathBuf::from(home))
     } else {
@@ -449,7 +447,7 @@ auto_check_hours = 60
     #[test]
     fn test_parse_video_directory_found() {
         let default = PathBuf::from("/fallback");
-        let dir = parse_video_directory(&sample_settings(), default.clone());
+        let dir = parse_video_directory(&sample_settings(), default.clone(), "/home/ximo");
         assert_eq!(dir, PathBuf::from("/home/ximo/Pictures/LiveWallpapers"));
     }
 
@@ -457,7 +455,7 @@ auto_check_hours = 60
     fn test_parse_video_directory_missing_section() {
         let raw = "[wallpaper]\ndirectory = \"/x\"\n";
         let default = PathBuf::from("/fallback");
-        let dir = parse_video_directory(raw, default.clone());
+        let dir = parse_video_directory(raw, default.clone(), "/home/ximo");
         assert_eq!(dir, default);
     }
 
@@ -470,7 +468,7 @@ video_directory = "/wrong"
 [plugin_settings."noctalia/mpvpaper"]
 video_directory = "/right"
 "#;
-        let dir = parse_video_directory(raw, PathBuf::from("/fallback"));
+        let dir = parse_video_directory(raw, PathBuf::from("/fallback"), "/home/ximo");
         assert_eq!(dir, PathBuf::from("/right"));
     }
 
@@ -479,20 +477,18 @@ video_directory = "/right"
         let raw = r#"[plugin_settings."noctalia/mpvpaper"]
 video_directory = "~/Videos"
 "#;
-        let home = std::env::var("HOME").unwrap_or_default();
-        let dir = parse_video_directory(raw, PathBuf::from("/fallback"));
-        assert_eq!(dir, PathBuf::from(&home).join("Videos"));
+        let dir = parse_video_directory(raw, PathBuf::from("/fallback"), "/home/ximo");
+        assert_eq!(dir, PathBuf::from("/home/ximo/Videos"));
     }
 
     #[test]
     fn test_expand_home() {
-        let home = std::env::var("HOME").unwrap_or_default();
         assert_eq!(
-            expand_home("~/x/y.mp4"),
-            Some(PathBuf::from(&home).join("x/y.mp4"))
+            expand_home("~/x/y.mp4", "/home/ximo"),
+            Some(PathBuf::from("/home/ximo/x/y.mp4"))
         );
-        assert_eq!(expand_home("~"), Some(PathBuf::from(&home)));
-        assert_eq!(expand_home("/abs/path.mp4"), Some(PathBuf::from("/abs/path.mp4")));
+        assert_eq!(expand_home("~", "/home/ximo"), Some(PathBuf::from("/home/ximo")));
+        assert_eq!(expand_home("/abs/path.mp4", "/home/ximo"), Some(PathBuf::from("/abs/path.mp4")));
     }
 
     #[test]
