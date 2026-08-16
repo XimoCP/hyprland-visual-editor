@@ -21,8 +21,8 @@
   },
   "welcome": {
     "toast": {
-    "enabled": "Visual Editor Enabled",
-    "disabled": "Visual Editor Disabled"
+      "enabled": "Visual Editor Enabled",
+      "disabled": "Visual Editor Disabled"
     },
     "activation_title": "System Activation",
     "system_active": "The system is operational. Visual effects are safely managed by HVE.",
@@ -309,12 +309,16 @@
     "none_shader": "None",
     "none_theme": "None",
     "about_title": "About HVE",
-    "about_short": "Hyprland Visual Editor makes your desktop truly yours.",
-    "about_full": "HVE customizes Hyprland animations, borders, and shaders from a visual interface, in real time.\n\nTo apply changes, HVE adds a block at the end of your hyprland.lua (or hyprland.conf), delimited by markers. That block only includes (dofile / source) our overlay files in ~/.cache/hve/ — it never rewrites your personal config.\n\nWhen you disable the system, the markers are removed. If you uninstall, a watchdog cleans them on the next Hyprland start. Your original config always stays intact.",
+    "about_short": "Hyprland Visual Editor is the aesthetic evolution of your desktop.",
+    "about_full": "HVE is a graphical app to visually manage the aesthetics of your Hyprland desktop: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete complete configurations, including static and animated wallpapers (mpvpaper) depending on the active provider (Noctalia v5, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact.",
     "about_line_1": "Live preview — tweak and see it instantly",
     "about_line_2": "Safe assembly — zero risk to your configs",
     "about_line_3": "Hot reload — apply without restarting Hyprland",
-    "about_line_4": "Fragments — composable pieces, not one huge file"
+    "about_line_4": "Fragments — composable pieces, not one huge file",
+    "about_docs": "View documentation",
+    "about_line_5": "Themes — save and apply complete configurations",
+    "about_tree_label": "Project structure",
+    "about_tree": "hve/\n├── src/                        Application logic (Rust)\n│   ├── main.rs                 Entry point and UI integration\n│   ├── callbacks.rs            UI ↔ logic wiring (Slint → Rust)\n│   ├── config.rs               User configuration\n│   ├── engine.rs               Assembly engine (fragments)\n│   ├── theme.rs                Color and theme system\n│   ├── theme_manager.rs        Theme manager (save/apply)\n│   ├── presets.rs              Animation and border presets\n│   ├── tr.rs                   Translations (es/en)\n│   ├── composer/               Hyprland abstraction layer\n│   ├── providers/              Integrations and providers\n│   │   ├── hve_presets.rs      HVE's own presets\n│   │   ├── wallpaper.rs        Static wallpapers\n│   │   ├── mpvpaper.rs         Animated wallpapers (video)\n│   │   ├── noctalia.rs         Noctalia v5 integration\n│   │   ├── shell.rs            Shell detection\n│   │   └── hyprland_settings.rs  Hyprland settings\n│   ├── ipc.rs                  Inter-process communication\n│   ├── hypr_ipc.rs             Hyprland event listener\n│   ├── tray.rs                 System tray\n│   ├── countdown.rs            Auto-minimize on focus loss\n│   ├── watcher.rs              File watcher\n│   └── utils.rs                Shared utilities\n├── ui/                         Graphical interface (Slint)\n│   ├── main.slint              Main window\n│   ├── modules.slint           Modules (Home, Animations, Themes...)\n│   ├── components.slint        Reusable components\n│   └── theme.slint             Color palette\n├── i18n/                       Translations\n│   ├── es.json                 Spanish\n│   └── en.json                 English\n├── assets/                     Scripts and resources\n├── install.sh                  Installer\n├── uninstall.sh                Uninstaller\n├── README.md                   Getting started docs\n└── WIKI.md                     Technical wiki"
   },
   "themes": {
     "header_title": "Theme Manager",
