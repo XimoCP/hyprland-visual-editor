@@ -221,45 +221,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Serializes tests that manipulate the global `HOME` env var so they
-    /// do not race with each other when running in parallel.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// RAII guard: sets `HOME` to a temporary directory for the duration of
-    /// the test, then restores the original value and cleans up the temp dir.
-    struct TempEnv {
-        old_home: Option<String>,
-        tmp: std::path::PathBuf,
-        _guard: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl TempEnv {
-        fn new() -> Self {
-            let guard = ENV_LOCK.lock().unwrap();
-            let tmp = std::env::temp_dir().join(format!("hve_cfg_{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&tmp);
-            std::fs::create_dir_all(&tmp).unwrap();
-            let old_home = std::env::var("HOME").ok();
-            std::env::set_var("HOME", &tmp);
-            Self {
-                old_home,
-                tmp,
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for TempEnv {
-        fn drop(&mut self) {
-            match &self.old_home {
-                Some(h) => std::env::set_var("HOME", h),
-                None => std::env::remove_var("HOME"),
-            }
-            let _ = std::fs::remove_dir_all(&self.tmp);
-        }
-    }
+    use crate::test_utils::TempEnv;
 
     // ── Config::default() ────────────────────────────────────────────
 

@@ -908,6 +908,7 @@ impl ThemeProvider for NoctaliaV5Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_noctalia_v4_provider_new() {
@@ -945,17 +946,14 @@ mod tests {
     #[test]
     fn test_noctalia_v5_save_creates_provider_dir() {
         // Save requires noctalia running — solo verificamos que el
-        // directorio del provider se intente crear.
+        // directorio del provider se intente crear. TempDir cleans up
+        // automatically on drop (no leftover state between runs).
         let provider = NoctaliaV5Provider::new();
-        let dir = std::env::temp_dir().join("hve-test-v5-save");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new().unwrap();
 
         // No assert on result — puede ser Ok (noctalia corriendo) o
         // Err (noctalia no disponible). Solo verificamos que no panic.
-        let _result = provider.save(&dir);
-
-        let _ = fs::remove_dir_all(&dir);
+        let _result = provider.save(dir.path());
     }
 
     #[test]
@@ -1106,12 +1104,10 @@ mod tests {
             }
         }"#;
 
-        let dir = std::env::temp_dir().join("noctalia-wp-test-nested");
-        let _ = fs::create_dir_all(&dir);
-        let fpath = dir.join("wp.json");
+        let dir = TempDir::new().unwrap();
+        let fpath = dir.path().join("wp.json");
         fs::write(&fpath, json).unwrap();
         let entries = parse_theme_entries(&fpath).unwrap();
-        let _ = fs::remove_dir_all(&dir);
 
         assert_eq!(entries.len(), 2);
         // DP-3 should be first (non-empty name)
@@ -1133,12 +1129,10 @@ mod tests {
             }
         }"#;
 
-        let dir = std::env::temp_dir().join("noctalia-wp-test-fallback");
-        let _ = fs::create_dir_all(&dir);
-        let fpath = dir.join("wp.json");
+        let dir = TempDir::new().unwrap();
+        let fpath = dir.path().join("wp.json");
         fs::write(&fpath, json).unwrap();
         let entries = parse_theme_entries(&fpath).unwrap();
-        let _ = fs::remove_dir_all(&dir);
 
         // Should have 2 entries: DP-3 and "", NOT FALLBACK
         assert_eq!(entries.len(), 2);
@@ -1155,12 +1149,10 @@ mod tests {
             ]
         }"#;
 
-        let dir = std::env::temp_dir().join("noctalia-wp-test-screens");
-        let _ = fs::create_dir_all(&dir);
-        let fpath = dir.join("wp.json");
+        let dir = TempDir::new().unwrap();
+        let fpath = dir.path().join("wp.json");
         fs::write(&fpath, json).unwrap();
         let entries = parse_theme_entries(&fpath).unwrap();
-        let _ = fs::remove_dir_all(&dir);
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, "DP-3");
@@ -1177,12 +1169,10 @@ mod tests {
             ]
         }"#;
 
-        let dir = std::env::temp_dir().join("noctalia-wp-test-single");
-        let _ = fs::create_dir_all(&dir);
-        let fpath = dir.join("wp.json");
+        let dir = TempDir::new().unwrap();
+        let fpath = dir.path().join("wp.json");
         fs::write(&fpath, json).unwrap();
         let entries = parse_theme_entries(&fpath).unwrap();
-        let _ = fs::remove_dir_all(&dir);
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "HDMI-A-1");
@@ -1192,10 +1182,8 @@ mod tests {
     #[test]
     fn test_pending_cleared_on_empty_theme() {
         // No wallpapers.json in dir → parse_theme_entries should return error
-        let dir = std::env::temp_dir().join("noctalia-wp-test-empty");
-        let _ = fs::create_dir_all(&dir);
-        let result = parse_theme_entries(&dir.join("wallpapers.json"));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = TempDir::new().unwrap();
+        let result = parse_theme_entries(&dir.path().join("wallpapers.json"));
         assert!(result.is_err());
     }
 }

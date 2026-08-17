@@ -22,12 +22,12 @@ static SUPPRESS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 /// tema). Safe to call desde cualquier thread.
 pub fn suppress_auto_minimize(duration: Duration) {
     let until = Instant::now() + duration;
-    *SUPPRESS_UNTIL.lock().unwrap() = Some(until);
+    *SUPPRESS_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) = Some(until);
     tracing::debug!("[countdown] Auto-minimize suprimido por {:?}", duration);
 }
 
 fn is_suppressed() -> bool {
-    let mut guard = SUPPRESS_UNTIL.lock().unwrap();
+    let mut guard = SUPPRESS_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
     match *guard {
         Some(until) if Instant::now() < until => true,
         _ => {

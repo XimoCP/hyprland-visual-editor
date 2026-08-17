@@ -1,5 +1,7 @@
 # HVE — Hyprland Visual Editor
 
+<!-- NOTA DE MANTENIMIENTO: README.md y WIKI.md se mantienen en sincronía (mismo contenido). Si editas uno, aplica los mismos cambios al otro. -->
+
 **HVE** es una aplicación gráfica para gestionar visualmente la estética de Hyprland: animaciones, bordes, shaders, geometría de ventanas y colores, todo desde una interfaz unificada.
 
 Funciona con **cualquier desktop basado en Hyprland** (Noctalia Shell, Hyprland puro, etc.) y es **agnóstico al escritorio** — no depende de ningún shell en particular.
@@ -22,6 +24,7 @@ Funciona con **cualquier desktop basado en Hyprland** (Noctalia Shell, Hyprland 
   - [Sistema de configuración](#sistema-de-configuración)
   - [Sistema de colores y temas](#sistema-de-colores-y-temas)
   - [Sistema de presets](#sistema-de-presets)
+  - [Fondos animados (mpvpaper)](#fondos-animados-mpvpaper)
   - [IPC (Comunicación entre procesos)](#ipc-comunicación-entre-procesos)
   - [Bandeja del sistema (System Tray)](#bandeja-del-sistema-system-tray)
   - [Vigilante de colores (Color Watcher)](#vigilante-de-colores-color-watcher)
@@ -210,13 +213,16 @@ Cada preset de animación y borde existe en **ambos formatos** (`.conf` + `.lua`
 
 ### Sistema de configuración
 
-`~/.config/hve/config.json` — versión actual: **3**
+`~/.config/hve/config.json` — versión actual: **7**
 
 ```json
 {
-  "config_version": 3,
+  "config_version": 7,
   "is_system_active": true,
   "border_size": 2,
+  "border_radius": 32,
+  "gaps_in": 5,
+  "gaps_out": 5,
   "active_anim_file": "01_relampago",
   "active_border_file": "01_cascade",
   "active_shader_file": "",
@@ -226,11 +232,25 @@ Cada preset de animación y borde existe en **ambos formatos** (`.conf` + `.lua`
   "language": "es",
   "tiling_mode": false,
   "theme": "dark",
-  "keybinds_enabled": true
+  "last_applied_theme": "",
+  "keybinds_enabled": true,
+  "disabled_providers": []
 }
 ```
 
-El sistema tiene **migraciones hacia adelante**: si una versión futura añade campos, HVE migra automáticamente desde cualquier versión anterior (v0 → v1 → v2 → v3). Usa `deny_unknown_fields` para detectar configs corruptas y caer a valores por defecto.
+El sistema tiene **migraciones hacia adelante**: si una versión futura añade campos, HVE migra automáticamente desde cualquier versión anterior. Cadena de migración real:
+
+| Paso | Campo(s) añadidos |
+|------|-------------------|
+| v0 → v1 | Marcado de versión (configs pre-versionado) |
+| v1 → v2 | Panel de ajustes: `auto_minimize_enabled`, `minimize_seconds`, `language`, `tiling_mode`, `theme` |
+| v2 → v3 | `keybinds_enabled` |
+| v3 → v4 | `last_applied_theme` |
+| v4 → v5 | `disabled_providers` |
+| v5 → v6 | `border_radius` |
+| v6 → v7 | `gaps_in`, `gaps_out` |
+
+Usa `deny_unknown_fields` para detectar configs corruptas y caer a valores por defecto.
 
 ### Sistema de colores y temas
 
@@ -268,6 +288,15 @@ Cada preset (animación, borde, shader) es un archivo individual con metadatos e
 `scan.sh` lee estos metadatos y genera JSON que la interfaz consume para mostrar tarjetas con icono, color y descripción. Los presets incluyen traducciones i18n por clave (ej. `animations.presets.01_relampago.title`) que tienen prioridad sobre los metadatos raw.
 
 **Comportamiento toggle**: si haces clic en el preset ya activo, se **desactiva** (vuelve a "ninguno").
+
+### Fondos animados (mpvpaper)
+
+HVE integra fondos de pantalla animados (video) para temas de **Noctalia v5** a través del plugin oficial `noctalia/mpvpaper` (que supervisa una instancia de `mpvpaper` por salida y persiste las asignaciones en `~/.local/state/noctalia/mpvpaper/assignments.json`).
+
+- **Manifiesto ligero por tema**: los temas guardan solo referencias, no bytes de video, en `{theme_dir}/providers/noctalia-v5/mpvpaper-assignments.json` — asignaciones por salida (`*` = todas, o un conector como `DP-3`) con `filename`, `local_path`, `url` y `sha256` opcional.
+- **Cascada de resolución al aplicar**: (1) `local_path` existe en disco → se usa sin descarga; (2) `filename` ya está en `video_directory` → se usa; (3) hay `url` → se descarga con `curl` y se verifica el `sha256` si está presente; (4) si no → se advierte y se omite (nunca falla la aplicación del tema).
+- **Aplicar/limpiar**: como el plugin solo lee `assignments.json` al arrancar, HVE escribe el archivo y "rebota" el plugin (`noctalia msg plugins disable/enable noctalia/mpvpaper`). Los temas **sin** manifiesto envían `clear-all` primero, de modo que un video previo no pueda secuestrar la pantalla.
+- **Disponibilidad**: depende del provider activo (Noctalia v5). Noctalia v4 y los presets de HVE no usan video.
 
 ### IPC (Comunicación entre procesos)
 
@@ -373,17 +402,20 @@ El idioma se detecta de la variable `$LANG` y se puede cambiar desde la configur
 hve/
 ├── Cargo.toml              ← Dependencias Rust
 ├── build.rs                ← Compilación Slint UI
-├── install.sh              ← Instalador (448 líneas, bilingüe)
-├── uninstall.sh            ← Desinstalador (bilingüe)
+├── install.sh              ← Instalador (458 líneas, bilingüe)
+├── uninstall.sh            ← Desinstalador (207 líneas, bilingüe)
 ├── hve.desktop             ← Acceso directo (base)
 ├── i18n/
 │   ├── en.json             ← Traducciones inglés
 │   └── es.json             ← Traducciones español
 ├── ui/
-│   └── main.slint          ← Interfaz de usuario (Slint)
+│   ├── main.slint          ← Ventana principal (Slint)
+│   ├── components.slint    ← Componentes reutilizables (botones, paneles)
+│   ├── modules.slint       ← Módulos de pestañas (Home, Animaciones, Bordes, Efectos, Temas)
+│   └── theme.slint         ← Tokens de color globales (HveColors), definición NavModule
 ├── src/
 │   ├── main.rs             ← Punto de entrada, CLI, inicialización
-│   ├── config.rs           ← Config persistente (JSON, migraciones)
+│   ├── config.rs           ← Config persistente (JSON, migraciones v0→v7)
 │   ├── engine.rs           ← Ejecución de scripts bash
 │   ├── callbacks.rs        ← Eventos de la UI Slint
 │   ├── tray.rs             ← Icono de bandeja (ksni)
@@ -391,11 +423,22 @@ hve/
 │   ├── hypr_ipc.rs         ← Listener de eventos de Hyprland
 │   ├── watcher.rs          ← Gestor del proceso color_watcher
 │   ├── theme.rs            ← Sistema de colores y temas
+│   ├── theme_manager.rs    ← Guardado/aplicación de temas completos
 │   ├── tr.rs               ← Traducciones (i18n)
 │   ├── presets.rs          ← Población de presets en la UI
-│   └── countdown.rs        ← Auto-minimizado con cuenta regresiva
+│   ├── countdown.rs        ← Auto-minimizado con cuenta regresiva
+│   ├── utils.rs            ← Utilidades varias
+│   ├── composer/           ← Ensamblado de overlays y fragmentos
+│   │   ├── mod.rs          ← Orquestación del compositor
+│   │   └── hyprland.rs     ← Compose del overlay para Hyprland
+│   └── providers/          ← Providers de temas (captura/restauración por shell)
+│       ├── noctalia.rs     ← Provider Noctalia v4/v5 (colores, wallpapers, plantillas)
+│       ├── shell.rs        ← Detección de shell activo + rutas por versión
+│       ├── mpvpaper.rs     ← Fondos animados (video) para temas Noctalia v5
+│       ├── hve_presets.rs  ← Provider de presets HVE (anim/border/shader/geometría)
+│       └── hyprland_settings.rs ← Provider de reglas de ventana (hve-settings)
 ├── assets/
-│   ├── hve-icon.svg        ← Icono vectorial
+│   ├── hve_logo.svg        ← Icono vectorial
 │   ├── scripts/            ← 15 scripts bash (ver abajo)
 │   ├── animations/         ← 18 presets × 2 formatos = 36 archivos
 │   ├── borders/            ← 14 presets × 2 formatos = 28 archivos
@@ -424,18 +467,27 @@ hve/
 
 | Archivo | Líneas | Responsabilidad |
 |---------|--------|-----------------|
-| `main.rs` | 1137 | Punto de entrada, CLI (`--tray`, `-v`), inicialización de todos los sistemas, protección multinstancia (lock exclusivo), listeners, navegación |
-| `config.rs` | 401 | Config JSON, migraciones v0→v1→v2→v3, `deny_unknown_fields`, rutas XDG |
-| `engine.rs` | 385 | Interface tipada sobre los scripts bash, `EngineError`, `ColorScheme`, `PresetInfo`, `ScanEntry` |
-| `tray.rs` | 319 | Icono programático ksni (SDF + letras HVE), menú contextual, colores activo/inactivo |
-| `theme.rs` | 326 | Resolución de tema (oscuro/claro/sistema), paletas Tailwind, 12 colores Slint derivados |
-| `ipc.rs` | 361 | Servidor Unix socket, 8 comandos + `status` JSON, cleanup al salir |
-| `hypr_ipc.rs` | 226 | Listener `socket2.sock`, evento `configreloaded`, refresco UI con throttle 3s |
+| `main.rs` | 1729 | Punto de entrada, CLI (`--tray`, `-v`), inicialización de todos los sistemas, protección multinstancia (lock exclusivo), listeners, navegación |
+| `config.rs` | 611 | Config JSON, migraciones v0→v7, `deny_unknown_fields`, rutas XDG |
+| `engine.rs` | 699 | Interface tipada sobre los scripts bash, `EngineError`, `ColorScheme`, `PresetInfo`, `ScanEntry` |
+| `tray.rs` | 277 | Icono programático ksni (SDF + letras HVE), menú contextual, colores activo/inactivo |
+| `theme.rs` | 451 | Resolución de tema (oscuro/claro/sistema), paletas Tailwind, colores Slint derivados, render de logo |
+| `theme_manager.rs` | 329 | Gestión de temas completos: listar, guardar, aplicar, renombrar, eliminar (con providers) |
+| `ipc.rs` | 391 | Servidor Unix socket, comandos + `status` JSON, cleanup al salir |
+| `hypr_ipc.rs` | 297 | Listener `socket2.sock`, evento `configreloaded`, refresco UI con throttle 3s |
 | `presets.rs` | 221 | Escaneo y población de presets, traducción de metadatos, selección activa |
-| `callbacks.rs` | 160 | Conexión UI ↔ lógica, toggle de presets, toggle de sistema, geometría |
-| `tr.rs` | 170 | Carga de JSON embebido, resolución por clave con dot-notation, detección de idioma |
-| `countdown.rs` | 163 | Timer thread-local, countdown UI, minimizado al perder foco |
+| `callbacks.rs` | 290 | Conexión UI ↔ lógica, toggle de presets, toggle de sistema, geometría |
+| `tr.rs` | 223 | Carga de JSON embebido, resolución por clave con dot-notation, detección de idioma |
+| `countdown.rs` | 328 | Timer thread-local, countdown UI, minimizado al perder foco |
 | `watcher.rs` | 83 | Spawn de `color_watcher.sh`, logging |
+| `utils.rs` | 101 | Utilidades varias |
+| `composer/mod.rs` | 488 | Orquestación del ensamblado de overlays |
+| `composer/hyprland.rs` | 367 | Compose del overlay para Hyprland |
+| `providers/noctalia.rs` | 1189 | Provider Noctalia v4/v5: colores, wallpapers, template processor, manifest mpvpaper |
+| `providers/shell.rs` | 574 | Detección de shell activo y rutas por versión (`ShellProvider`, `ShellDetector`) |
+| `providers/mpvpaper.rs` | 758 | Fondos animados (video) para temas Noctalia v5 |
+| `providers/hve_presets.rs` | 149 | Provider de presets HVE (animación, borde, shader, geometría) |
+| `providers/hyprland_settings.rs` | 344 | Provider de reglas de ventana (`hve-settings`) |
 
 ### Scripts (assets/scripts/)
 
@@ -443,14 +495,14 @@ hve/
 |--------|--------|---------|
 | `utils.sh` | 96 | Rutas compartidas: `HVE_ASSETS_DIR`, `HVE_SCRIPTS_DIR`, `HVE_FRAGMENTS_DIR`, `HVE_SAFE_DIR`, `HVE_HYPR_DIR`; funciones `hve_resolve_preset()`, `hve_trim()`, `hve_unquote()` |
 | `assemble.sh` | 152 | **Corazón del sistema**: ensambla colores + fragmentos → overlay atómico, valida sintaxis, recarga Hyprland |
-| `init.sh` | 196 | Activar/desactivar HVE: inyecta o remueve marcadores en `hyprland.conf`/`hyprland.lua`, crea `hve-settings` con defaults |
-| `colors.sh` | 214 | Detector inteligente de colores: Noctalia → pywal → matugen → manual, exporta 6 variables de color |
-| `color_watcher.sh` | 158 | Vigilante `inotifywait` con hash-based detection, timeout 30s, refresh automático |
-| `scan.sh` | 110 | Escáner de presets con parseo de metadatos (@Title, @Desc, @Tag, @Icon, @Color), output JSON |
-| `shader.sh` | 86 | Aplica shader `.frag`, genera wrapper con `decoration.screen_shader`, "none" limpia via hyprctl |
-| `geometry.sh` | 67 | Escribe fragmento de `general.border_size` |
+| `init.sh` | 195 | Activar/desactivar HVE: inyecta o remueve marcadores en `hyprland.conf`/`hyprland.lua`, crea `hve-settings` con defaults |
+| `colors.sh` | 407 | Detector inteligente de colores: Noctalia → pywal → matugen → manual, exporta 6 variables de color |
+| `color_watcher.sh` | 217 | Vigilante `inotifywait` con hash-based detection, timeout 30s, refresh automático |
+| `scan.sh` | 122 | Escáner de presets con parseo de metadatos (@Title, @Desc, @Tag, @Icon, @Color), output JSON |
+| `shader.sh` | 99 | Aplica shader `.frag`, genera wrapper con `decoration.screen_shader`, "none" limpia via hyprctl |
+| `geometry.sh` | 126 | Escribe fragmento de `general.border_size` |
 | `apply_animation.sh` | 61 | Aplica preset de animación, copia a `fragments/animation.{ext}` |
-| `border.sh` | 59 | Aplica preset de borde, copia a `fragments/border.{ext}` |
+| `border.sh` | 58 | Aplica preset de borde, copia a `fragments/border.{ext}` |
 | `detect_format.sh` | 62 | Detecta Lua vs Conf, cachea resultado |
 | `get_colors.sh` | 11 | Envuelve `colors.sh`, output JSON |
 | `hve_watchdog.sh` | 28 | Seguridad: si HVE no existe, limpia marcadores y cache |
@@ -513,14 +565,19 @@ Son **sobrescritos** cada vez que cambias un preset.
 hve
 ```
 
-Abre la ventana principal con 4 pestañas de navegación:
+Abre la ventana principal con 5 pestañas de navegación:
 
 | Pestaña | Módulo |
 |---------|--------|
-| ⌂ **Inicio** | Estado del sistema, información general |
+| ⌂ **Inicio** | Estado del sistema, información general, sección About |
 | ▶ **Animaciones** | Explora y aplica presets de animación |
 | ◻ **Bordes** | Explora y aplica presets de bordes |
 | ♦ **Efectos** | Shaders, geometría, ajustes |
+| ✦ **Temas** | Guardar, aplicar, renombrar y eliminar temas completos |
+
+La pestaña **Inicio** incluye una sección **About HVE** con la descripción del proyecto, características clave, árbol del proyecto y un enlace a la documentación.
+
+La pestaña **Temas** gestiona configuraciones completas del escritorio: escribe un nombre, pulsa *Guardar* y el estado actual (animación, borde, shader, geometría y —según el provider activo— colores, wallpapers estáticos o animados de mpvpaper y reglas de ventana) se captura como un tema. Los temas se pueden **aplicar**, **renombrar**, **eliminar** (con confirmación) y **recargar** con la configuración actual. Solo se muestran los temas cuyos providers están activos en el sistema.
 
 La ventana incluye un panel de **Ajustes** donde puedes configurar:
 - Tema (oscuro/claro/sistema)

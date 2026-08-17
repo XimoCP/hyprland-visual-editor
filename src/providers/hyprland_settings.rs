@@ -35,6 +35,31 @@ impl HyprlandSettingsProvider {
         (wr_start, wr_end, kb_start, kb_end, as_start, as_end)
     }
 
+    /// Remove a marker block (markers AND content) from `path` when present.
+    /// Returns `Ok(true)` if a block was removed, `Ok(false)` if the markers
+    /// were absent. Used to restore the "disabled" state: a block saved as
+    /// `None` (markers absent at save time) must delete the currently active
+    /// block on apply, otherwise the disabled state is silently lost.
+    fn remove_between_markers(&self, path: &Path, start_marker: &str, end_marker: &str) -> Result<bool, String> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
+
+        let (Some(start_idx), Some(end_idx)) =
+            (content.find(start_marker), content.find(end_marker))
+        else {
+            return Ok(false);
+        };
+        if end_idx < start_idx {
+            return Ok(false);
+        }
+
+        let before = &content[..start_idx];
+        let after = &content[end_idx + end_marker.len()..];
+        fs::write(path, format!("{}{}", before, after))
+            .map_err(|e| format!("Cannot write {}: {}", path.display(), e))?;
+        Ok(true)
+    }
+
     fn settings_path(&self) -> std::path::PathBuf {
         crate::hve_settings_path()
     }
@@ -118,28 +143,202 @@ impl ThemeProvider for HyprlandSettingsProvider {
 
         let (wr_start, wr_end, kb_start, kb_end, as_start, as_end) = self.markers();
 
-        // Apply window rules
-        if let Some(content) = &state.window_rules {
-            edit_between_markers(&path, wr_start, wr_end, content)
-                .map_err(|e| format!("Cannot apply window rules: {}", e))?;
-            tracing::debug!("[hyprland-settings] Applied window rules");
+        // Apply window rules — `None` means the block was disabled when the
+        // theme was saved, so the currently active block must be REMOVED.
+        match &state.window_rules {
+            Some(content) => {
+                edit_between_markers(&path, wr_start, wr_end, content)
+                    .map_err(|e| format!("Cannot apply window rules: {}", e))?;
+                tracing::debug!("[hyprland-settings] Applied window rules");
+            }
+            None => {
+                if self.remove_between_markers(&path, wr_start, wr_end)
+                    .map_err(|e| format!("Cannot remove window rules: {}", e))?
+                {
+                    tracing::debug!("[hyprland-settings] Removed window rules block");
+                }
+            }
         }
 
         // Apply keybinds
-        if let Some(content) = &state.keybinds {
-            edit_between_markers(&path, kb_start, kb_end, content)
-                .map_err(|e| format!("Cannot apply keybinds: {}", e))?;
-            tracing::debug!("[hyprland-settings] Applied keybinds");
+        match &state.keybinds {
+            Some(content) => {
+                edit_between_markers(&path, kb_start, kb_end, content)
+                    .map_err(|e| format!("Cannot apply keybinds: {}", e))?;
+                tracing::debug!("[hyprland-settings] Applied keybinds");
+            }
+            None => {
+                if self.remove_between_markers(&path, kb_start, kb_end)
+                    .map_err(|e| format!("Cannot remove keybinds: {}", e))?
+                {
+                    tracing::debug!("[hyprland-settings] Removed keybinds block");
+                }
+            }
         }
 
         // Apply autostart
-        if let Some(content) = &state.autostart {
-            edit_between_markers(&path, as_start, as_end, content)
-                .map_err(|e| format!("Cannot apply autostart: {}", e))?;
-            tracing::debug!("[hyprland-settings] Applied autostart");
+        match &state.autostart {
+            Some(content) => {
+                edit_between_markers(&path, as_start, as_end, content)
+                    .map_err(|e| format!("Cannot apply autostart: {}", e))?;
+                tracing::debug!("[hyprland-settings] Applied autostart");
+            }
+            None => {
+                if self.remove_between_markers(&path, as_start, as_end)
+                    .map_err(|e| format!("Cannot remove autostart: {}", e))?
+                {
+                    tracing::debug!("[hyprland-settings] Removed autostart block");
+                }
+            }
         }
 
         Ok(())
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TempEnv;
+    use tempfile::TempDir;
+
+    fn write_settings(content: &str) {
+        let path = crate::hve_settings_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+    }
+
+    fn read_settings() -> String {
+        std::fs::read_to_string(crate::hve_settings_path()).unwrap()
+    }
+
+    fn provider_dir(theme: &std::path::Path) -> std::path::PathBuf {
+        theme.join("providers").join("hyprland-settings")
+    }
+
+    fn write_state(theme: &std::path::Path, json: &str) {
+        let pdir = provider_dir(theme);
+        std::fs::create_dir_all(&pdir).unwrap();
+        std::fs::write(pdir.join("state.json"), json).unwrap();
+    }
+
+    /// Apply with `keybinds: null` (saved while disabled) must REMOVE the
+    /// currently active keybinds block instead of leaving it behind.
+    #[test]
+    fn test_apply_removes_block_when_state_none() {
+        let _env = TempEnv::new();
+        write_settings(
+            "# >>> HVE WINDOW RULES <<<\n\
+             windowrulev2 = float, title:^(Hyprland Visual Editor)$\n\
+             # >>> HVE WINDOW RULES END <<<\n\
+             # >>> HVE KEYBINDS <<<\n\
+             bind = SUPER, H, exec, hve-ipc toggle-tray\n\
+             # >>> HVE KEYBINDS END <<<\n",
+        );
+
+        let theme = TempDir::new().unwrap();
+        write_state(
+            theme.path(),
+            r#"{
+                "keybinds": null,
+                "autostart": null,
+                "window_rules": "windowrulev2 = float, title:^(Hyprland Visual Editor)$"
+            }"#,
+        );
+
+        let provider = HyprlandSettingsProvider::new();
+        provider.apply(theme.path()).expect("apply should succeed");
+
+        let after = read_settings();
+        assert!(
+            !after.contains("HVE KEYBINDS"),
+            "disabled keybinds block should be removed: {after}"
+        );
+        assert!(
+            after.contains("HVE WINDOW RULES"),
+            "enabled window rules should still be present: {after}"
+        );
+    }
+
+    /// Full loop: save() while markers are absent records `None`; a later
+    /// apply() on a file with active blocks removes them (keybinds + autostart)
+    /// while re-writing the captured window rules.
+    #[test]
+    fn test_save_with_absent_markers_then_apply_removes_active_block() {
+        let _env = TempEnv::new();
+        // Settings file WITHOUT keybinds/autostart markers at save time.
+        write_settings(
+            "# >>> HVE WINDOW RULES <<<\n\
+             windowrulev2 = float, title:^(Hyprland Visual Editor)$\n\
+             # >>> HVE WINDOW RULES END <<<\n",
+        );
+
+        let theme = TempDir::new().unwrap();
+        let provider = HyprlandSettingsProvider::new();
+        provider.save(theme.path()).expect("save should succeed");
+
+        let state_raw =
+            std::fs::read_to_string(provider_dir(theme.path()).join("state.json")).unwrap();
+        let state: HyprlandSettingsState = serde_json::from_str(&state_raw).unwrap();
+        assert!(state.keybinds.is_none(), "keybinds should be None when markers absent at save");
+        assert!(state.autostart.is_none(), "autostart should be None when markers absent at save");
+        assert!(state.window_rules.is_some(), "window rules block should be captured");
+
+        // Later the settings file gains active keybinds/autostart blocks
+        // (e.g. enabled manually after the theme was saved).
+        write_settings(
+            "# >>> HVE WINDOW RULES <<<\n\
+             windowrulev2 = float, title:^(Hyprland Visual Editor)$\n\
+             # >>> HVE WINDOW RULES END <<<\n\
+             # >>> HVE KEYBINDS <<<\n\
+             bind = SUPER, H, exec, hve-ipc toggle-tray\n\
+             # >>> HVE KEYBINDS END <<<\n\
+             # >>> HVE AUTOSTART <<<\n\
+             exec-once = hve --tray\n\
+             # >>> HVE AUTOSTART END <<<\n",
+        );
+
+        provider.apply(theme.path()).expect("apply should succeed");
+
+        let after = read_settings();
+        assert!(
+            !after.contains("HVE KEYBINDS"),
+            "keybinds block should be removed on apply: {after}"
+        );
+        assert!(
+            !after.contains("HVE AUTOSTART"),
+            "autostart block should be removed on apply: {after}"
+        );
+        assert!(
+            after.contains("HVE WINDOW RULES"),
+            "captured window rules should still be present: {after}"
+        );
+    }
+
+    /// `None` state against a file with no markers is a no-op (nothing to remove).
+    #[test]
+    fn test_apply_none_when_no_markers_is_noop() {
+        let _env = TempEnv::new();
+        write_settings(
+            "some = user config\n\
+             another = line\n",
+        );
+
+        let theme = TempDir::new().unwrap();
+        write_state(
+            theme.path(),
+            r#"{
+                "keybinds": null,
+                "autostart": null,
+                "window_rules": null
+            }"#,
+        );
+
+        let provider = HyprlandSettingsProvider::new();
+        provider.apply(theme.path()).expect("apply should succeed");
+
+        let after = read_settings();
+        assert_eq!(after, "some = user config\nanother = line\n", "file should be untouched");
+    }
 }

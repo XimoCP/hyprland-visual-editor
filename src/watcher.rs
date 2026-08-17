@@ -27,17 +27,17 @@ pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<std::process::Child
             .spawn()
         {
             Ok(child) => {
-                println!("[HVE] Color watcher started (pid: {})", child.id());
-                println!("[HVE] Watcher log: {}", watcher_log.display());
+                tracing::info!("[HVE] Color watcher started (pid: {})", child.id());
+                tracing::info!("[HVE] Watcher log: {}", watcher_log.display());
                 Some(child)
             }
             Err(e) => {
-                eprintln!("[HVE] Could not start color watcher: {}", e);
+                tracing::error!("[HVE] Could not start color watcher: {}", e);
                 None
             }
         }
     } else {
-        eprintln!(
+        tracing::warn!(
             "[HVE] Color watcher script not found: {}",
             watcher_script.display()
         );

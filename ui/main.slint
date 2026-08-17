@@ -161,6 +161,9 @@ export component MainWindow inherits Window {
     in property <string> theme-confirm-refresh-msg;
     in property <string> theme-refresh-text;
     in property <string> theme-rename-title;
+    in property <string> theme-save-section-text;
+    in property <string> theme-list-section-text;
+    in property <string> app-version-label;
     in-out property <string> theme-error-text: "";
     in-out property <string> home-active-theme-name: "";
 
@@ -521,7 +524,7 @@ export component MainWindow inherits Window {
                         }
 
                         Text {
-                            text: "v1.0.0 — Standalone";
+                            text: root.app-version-label;
                             color: HveColors.text-muted;
                             font-size: 9px;
                             vertical-alignment: center;
@@ -718,6 +721,8 @@ export component MainWindow inherits Window {
                         confirm-refresh: root.theme-confirm-refresh;
                         confirm-refresh-msg: root.theme-confirm-refresh-msg;
                         rename-title: root.theme-rename-title;
+                        save-section-text: root.theme-save-section-text;
+                        list-section-text: root.theme-list-section-text;
                         error-text: root.theme-error-text;
                         save-theme(v) => { root.save-theme(v); }
                         apply-theme(v) => { root.apply-theme(v); }

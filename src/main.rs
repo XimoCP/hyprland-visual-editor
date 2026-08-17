@@ -13,11 +13,12 @@ mod tr;
 mod tray;
 mod utils;
 mod watcher;
+#[cfg(test)]
+mod test_utils;
 
 use clap::Parser;
 use config::Config;
 use engine::Engine;
-use fs2::FileExt;
 use slint::{Color, ComponentHandle, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -687,7 +688,7 @@ fn main() -> Result<(), slint::PlatformError> {
             tracing::error!("Failed to create lock file: {}", e);
             std::process::exit(1);
         });
-    if let Err(e) = lock_file.try_lock_exclusive() {
+    if let Err(e) = rustix::fs::flock(&lock_file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
         if e.kind() == std::io::ErrorKind::WouldBlock {
             tracing::error!("Another instance of HVE is already running.");
         } else {
@@ -764,7 +765,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Refresh UI theme list
     {
-        let tm = theme_manager.lock().unwrap();
+        let tm = theme_manager.lock().unwrap_or_else(|e| e.into_inner());
         refresh_theme_list(&window, &tm);
     }
 
@@ -879,6 +880,12 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_theme_confirm_refresh_msg(tr.tr_shared("themes.confirm_refresh_msg", "This will reload the theme with the current configuration. Continue?"));
     window.set_theme_refresh_text(tr.tr_shared("themes.refresh", "Refresh"));
     window.set_theme_rename_title(tr.tr_shared("themes.rename_title", "Rename theme"));
+    window.set_theme_save_section_text(tr.tr_shared("themes.save_section", "Save Current State"));
+    window.set_theme_list_section_text(tr.tr_shared("themes.list_section", "My Themes"));
+    window.set_app_version_label(slint::SharedString::from(format!(
+        "v{} — Standalone",
+        env!("CARGO_PKG_VERSION")
+    )));
 
     // ── Dynamic theme + logo + tray icon ──
     let tray_handle = match engine.get_colors() {
@@ -975,7 +982,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_toggle_auto_minimize(move |enabled| {
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.auto_minimize_enabled = enabled;
                 let _ = c.save();
             }
@@ -990,7 +997,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_change_minimize_seconds(move |secs| {
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.minimize_seconds = secs;
                 let _ = c.save();
             }
@@ -1006,7 +1013,7 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_change_language(move |lang| {
             let lang_str = lang.to_string();
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.language = lang_str.clone();
                 let _ = c.save();
             }
@@ -1023,7 +1030,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_toggle_tiling_mode(move |enabled| {
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.tiling_mode = enabled;
                 let _ = c.save();
             }
@@ -1056,7 +1063,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_toggle_keybinds(move |enabled| {
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.keybinds_enabled = enabled;
                 let _ = c.save();
             }
@@ -1073,7 +1080,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_toggle_autostart(move |enabled| {
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.auto_start = enabled;
                 let _ = c.save();
             }
@@ -1091,7 +1098,7 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_change_theme(move |theme| {
             let theme_str = theme.to_string();
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.theme = theme_str.clone();
                 let _ = c.save();
             }
@@ -1186,7 +1193,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_active_shader_index(-1);
             }
             {
-                let mut c = settings_cfg.lock().unwrap();
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.active_anim_file = String::new();
                 c.active_border_file = String::new();
                 c.active_shader_file = String::new();
@@ -1202,15 +1209,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_save_theme(move |name| {
             let name_str = name.to_string();
-            let provider_ids = tm.lock().unwrap().provider_ids();
+            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
 
-            let result = tm.lock().unwrap().save(&name_str, &provider_ids);
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Saved theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
                         w.set_theme_busy(true);
-                        let tm = tm.lock().unwrap();
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                         refresh_theme_list(&w, &tm);
                         w.set_theme_busy(false);
                     }
@@ -1236,7 +1243,7 @@ fn main() -> Result<(), slint::PlatformError> {
             // regeneración de window rules hacen que la ventana pierda foco
             // varias veces, y eso no debe disparar un countdown espurio.
             countdown::suppress_auto_minimize(std::time::Duration::from_secs(4));
-            let result = tm.lock().unwrap().apply(&name_str, || {
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).apply(&name_str, || {
                 // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
                 // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
                 tracing::info!("[themes] Reloading Hyprland after theme apply...");
@@ -1275,7 +1282,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 tray::update_global_icon(icon);
                             }
                         }
-                        let tm = tm.lock().unwrap();
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                         refresh_theme_list(&w, &tm);
                         w.set_home_active_theme_name(name_str.clone().into());
                     }
@@ -1292,12 +1299,12 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_delete_theme(move |name| {
             let name_str = name.to_string();
-            let result = tm.lock().unwrap().delete(&name_str);
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).delete(&name_str);
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Deleted theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap();
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                         refresh_theme_list(&w, &tm);
                     }
                 }
@@ -1317,12 +1324,12 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_rename_theme(move |old, new| {
             let old_str = old.to_string();
             let new_str = new.to_string();
-            let result = tm.lock().unwrap().rename(&old_str, &new_str);
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).rename(&old_str, &new_str);
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
                     if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap();
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                         refresh_theme_list(&w, &tm);
                         w.set_home_active_theme_name(tm.last_applied.clone().into());
                     }
@@ -1342,15 +1349,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_overwrite_theme(move |name| {
             let name_str = name.to_string();
-            let provider_ids = tm.lock().unwrap().provider_ids();
+            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
 
-            let result = tm.lock().unwrap().save(&name_str, &provider_ids);
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Overwritten theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
                         w.set_theme_busy(true);
-                        let tm = tm.lock().unwrap();
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                         refresh_theme_list(&w, &tm);
                         w.set_theme_busy(false);
                     }
@@ -1390,15 +1397,15 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 // 2. If there's a last applied theme, overwrite it with the current state
                 //    so the ↻ acts as "save current changes to active theme"
-                let provider_ids = tm.lock().unwrap().provider_ids();
+                let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
 
-                let last = tm.lock().unwrap().last_applied.clone();
+                let last = tm.lock().unwrap_or_else(|e| e.into_inner()).last_applied.clone();
                 if !last.is_empty() {
-                    let _ = tm.lock().unwrap().save(&last, &provider_ids);
+                    let _ = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&last, &provider_ids);
                 }
 
                 // 3. Refresh the theme list
-                let tm = tm.lock().unwrap();
+                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                 refresh_theme_list(&w, &tm);
                 w.set_home_active_theme_name(tm.last_applied.clone().into());
             }
@@ -1410,7 +1417,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_search_query_changed(move |query| {
             if let Some(w) = weak.upgrade() {
-                let tm = tm.lock().unwrap();
+                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
                 let all = tm.list().unwrap_or_default();
                 let q = query.to_lowercase();
                 let filtered: Vec<_> = all.iter()
@@ -1480,7 +1487,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     // ── Startup: sync keybinds + autostart from saved config ──
-    let cfg_guard = cfg.lock().unwrap();
+    let cfg_guard = cfg.lock().unwrap_or_else(|e| e.into_inner());
     if cfg_guard.keybinds_enabled {
         set_keybinds(true);
     }
@@ -1523,7 +1530,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via Composer para evitar el doble-click inicial.
-        let startup_tiling = cfg.lock().unwrap().tiling_mode;
+        let startup_tiling = cfg.lock().unwrap_or_else(|e| e.into_inner()).tiling_mode;
         // First timer: focus window + sync config rules
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
             if let Some(ctrl) = composer::global_controller() {
@@ -1561,50 +1568,7 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct TempEnv {
-        old_home: Option<String>,
-        old_cache_home: Option<String>,
-        tmp: std::path::PathBuf,
-        _guard: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl TempEnv {
-        fn new() -> Self {
-            let guard = ENV_LOCK.lock().unwrap();
-            let tmp = std::env::temp_dir().join(format!("hve_test_{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&tmp);
-            std::fs::create_dir_all(&tmp).unwrap();
-            let old_home = std::env::var("HOME").ok();
-            let old_cache_home = std::env::var("XDG_CACHE_HOME").ok();
-            std::env::set_var("HOME", &tmp);
-            // Unset XDG_CACHE_HOME so dirs::cache_dir falls through to HOME/.cache
-            std::env::remove_var("XDG_CACHE_HOME");
-            Self {
-                old_home,
-                old_cache_home,
-                tmp,
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for TempEnv {
-        fn drop(&mut self) {
-            match &self.old_home {
-                Some(h) => std::env::set_var("HOME", h),
-                None => std::env::remove_var("HOME"),
-            }
-            match &self.old_cache_home {
-                Some(c) => std::env::set_var("XDG_CACHE_HOME", c),
-                None => std::env::remove_var("XDG_CACHE_HOME"),
-            }
-            let _ = std::fs::remove_dir_all(&self.tmp);
-        }
-    }
+    use crate::test_utils::TempEnv;
 
     // ── set_keybinds ─────────────────────────────────────────────────
 

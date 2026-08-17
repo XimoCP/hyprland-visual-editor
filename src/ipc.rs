@@ -27,7 +27,7 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
         let listener = match UnixListener::bind(&socket_path) {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("[HVE IPC] Cannot bind socket: {}", e);
+                tracing::error!("[HVE IPC] Cannot bind socket: {}", e);
                 return;
             }
         };
@@ -36,12 +36,12 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
             &socket_path,
             std::os::unix::fs::PermissionsExt::from_mode(0o700),
         );
-        println!("[HVE IPC] Listening on {}", socket_path.display());
+        tracing::info!("[HVE IPC] Listening on {}", socket_path.display());
 
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => handle_connection(stream, &window, &proj),
-                Err(e) => eprintln!("[HVE IPC] Connection error: {}", e),
+                Err(e) => tracing::error!("[HVE IPC] Connection error: {}", e),
             }
         }
     });
@@ -51,7 +51,7 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
 pub fn cleanup() {
     let path = get_socket_path();
     let _ = std::fs::remove_file(&path);
-    println!("[HVE IPC] Socket cleaned up: {}", path.display());
+    tracing::debug!("[HVE IPC] Socket cleaned up: {}", path.display());
 }
 
 fn get_socket_path() -> PathBuf {
@@ -214,7 +214,7 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
     // Debounce: solo para dedup keybind spam (~80ms entre pulsaciones humanas).
     {
-        let mut last = LAST_TOGGLE.lock().unwrap();
+        let mut last = LAST_TOGGLE.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         if let Some(prev) = *last {
             if now.duration_since(prev).as_millis() < DEBOUNCE_MS as u128 {

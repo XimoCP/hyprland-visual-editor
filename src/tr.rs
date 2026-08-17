@@ -118,6 +118,32 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    /// RAII guard: sets `LANG` for the duration of the test and restores the
+    /// previous value on drop so no mutation leaks into the process.
+    struct LangGuard {
+        old: Option<String>,
+    }
+
+    impl LangGuard {
+        fn set(lang: Option<&str>) -> Self {
+            let old = std::env::var("LANG").ok();
+            match lang {
+                Some(l) => std::env::set_var("LANG", l),
+                None => std::env::remove_var("LANG"),
+            }
+            Self { old }
+        }
+    }
+
+    impl Drop for LangGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(l) => std::env::set_var("LANG", l),
+                None => std::env::remove_var("LANG"),
+            }
+        }
+    }
+
     #[test]
     fn test_tr_resolves_top_level() {
         let t = Tr::with_lang("en");
@@ -154,21 +180,21 @@ mod tests {
     #[test]
     #[serial]
     fn test_detect_language_parses_full_locale() {
-        std::env::set_var("LANG", "es_AR.UTF-8");
+        let _guard = LangGuard::set(Some("es_AR.UTF-8"));
         assert_eq!(detect_language(), "es");
     }
 
     #[test]
     #[serial]
     fn test_detect_language_parses_short() {
-        std::env::set_var("LANG", "en_US");
+        let _guard = LangGuard::set(Some("en_US"));
         assert_eq!(detect_language(), "en");
     }
 
     #[test]
     #[serial]
     fn test_detect_language_defaults_to_en() {
-        std::env::remove_var("LANG");
+        let _guard = LangGuard::set(None);
         assert_eq!(detect_language(), "en");
     }
 
@@ -187,8 +213,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_tr_es_loads_spanish() {
-        std::env::set_var("LANG", "es_ES.UTF-8");
+        let _guard = LangGuard::set(Some("es_ES.UTF-8"));
         let t = Tr::new();
         assert_eq!(t.lang, "es");
         assert_eq!(t.tr("panel.tabs.home"), Some("Inicio"));

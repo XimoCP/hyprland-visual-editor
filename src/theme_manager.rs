@@ -25,6 +25,10 @@ bitflags! {
 /// `{theme_dir}/providers/{id}/`.
 pub trait ThemeProvider: Send + Sync {
     fn id(&self) -> &str;
+    // The four methods below are exercised only by the test suite (noctalia.rs
+    // tests); production code uses `id`, `save`, `apply` and `post_apply`.
+    // The allows are required: rustc's dead_code lint does not count
+    // `#[cfg(test)]` usage during a plain `cargo check`.
     #[allow(dead_code)]
     fn display_name_key(&self) -> &str;
     #[allow(dead_code)]
@@ -76,7 +80,6 @@ pub struct ThemeInfo {
     pub name: String,
     pub saved_at: String,
     pub is_active: bool,
-    #[allow(dead_code)]
     pub providers: Vec<String>,
 }
 
@@ -105,21 +108,6 @@ impl ThemeManager {
     /// Returns the IDs of all registered providers.
     pub fn provider_ids(&self) -> Vec<String> {
         self.providers.iter().map(|p| p.id().to_string()).collect()
-    }
-
-    #[allow(dead_code)]
-    pub fn providers(&self) -> &[Box<dyn ThemeProvider>] {
-        &self.providers
-    }
-
-    #[allow(dead_code)]
-    pub fn themes_dir(&self) -> &Path {
-        &self.themes_dir
-    }
-
-    #[allow(dead_code)]
-    fn provider_dir(theme_dir: &Path, provider_id: &str) -> PathBuf {
-        theme_dir.join("providers").join(provider_id)
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
@@ -212,17 +200,12 @@ impl ThemeManager {
         // This ensures shell-specific themes (e.g. noctalia v4, v5, or future shells)
         // are hidden when their shell is not active. Shell-agnostic themes
         // (e.g. presets-only) always show because their providers are always registered.
-        let registered = self.registered_ids();
+        let registered = self.provider_ids();
         themes.retain(|t| {
             t.providers.iter().all(|pid| registered.contains(pid))
         });
 
         Ok(themes)
-    }
-
-    /// IDs of currently registered providers.
-    fn registered_ids(&self) -> Vec<String> {
-        self.providers.iter().map(|p| p.id().to_string()).collect()
     }
 
     pub fn save(&mut self, name: &str, provider_ids: &[String]) -> Result<(), String> {
@@ -342,11 +325,5 @@ impl ThemeManager {
             self.last_applied = new_name;
         }
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn name_for_index(&self, index: i32) -> Option<String> {
-        let themes = self.list().ok()?;
-        themes.into_iter().nth(index as usize).map(|t| t.name)
     }
 }

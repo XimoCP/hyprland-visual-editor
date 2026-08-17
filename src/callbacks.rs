@@ -13,7 +13,7 @@ macro_rules! make_toggle_callback {
         move |idx, file| {
             let file_str = file.to_string();
             let (is_deactivate, new_file) = {
-                let mut cfg = $cfg.lock().unwrap();
+                let mut cfg = $cfg.lock().unwrap_or_else(|e| e.into_inner());
                 let is_deact = cfg.$active_field == file_str;
                 let new = if is_deact { String::new() } else { file_str.clone() };
                 cfg.$active_field = new.clone();
@@ -24,7 +24,7 @@ macro_rules! make_toggle_callback {
             let arg = if is_deactivate { "none" } else { &new_file };
             let result = $eng.$apply_method(arg);
             if let Err(e) = result {
-                eprintln!("[HVE] {} error: {}", $err_label, e);
+                tracing::error!("[HVE] {} error: {}", $err_label, e);
             }
 
             if let Some(w) = $weak.upgrade() {
@@ -52,7 +52,7 @@ pub fn setup_callbacks(
         window.on_toggle_system(move |active| {
             tray_active.store(active, Ordering::Relaxed);
             {
-                let mut cfg = cfg.lock().unwrap();
+                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 cfg.is_system_active = active;
                 let _ = cfg.save();
             }
@@ -62,7 +62,7 @@ pub fn setup_callbacks(
                 eng.init_disable()
             };
             if let Err(e) = result {
-                eprintln!("[HVE] Init error: {}", e);
+                tracing::error!("[HVE] Init error: {}", e);
             }
             if let Some(w) = weak.upgrade() {
                 w.set_system_active(active);
@@ -130,7 +130,7 @@ pub fn setup_callbacks(
                 return;
             }
             let (radius, gaps_in, gaps_out, current) = {
-                let cfg = cfg.lock().unwrap();
+                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 (
                     cfg.border_radius,
                     cfg.gaps_in,
@@ -142,13 +142,13 @@ pub fn setup_callbacks(
                 return;
             }
             {
-                let mut cfg = cfg.lock().unwrap();
+                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 cfg.border_size = size;
                 let _ = cfg.save();
             }
             let result = eng.apply_geometry(size, radius, gaps_in, gaps_out);
             if let Err(e) = result {
-                eprintln!("[HVE] Geometry error: {}", e);
+                tracing::error!("[HVE] Geometry error: {}", e);
             }
             // Update UI slider value
             if let Some(w) = weak.upgrade() {
@@ -169,7 +169,7 @@ pub fn setup_callbacks(
                 return;
             }
             let (size, gaps_in, gaps_out, current) = {
-                let cfg = cfg.lock().unwrap();
+                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 (
                     cfg.border_size,
                     cfg.gaps_in,
@@ -181,13 +181,13 @@ pub fn setup_callbacks(
                 return;
             }
             {
-                let mut cfg = cfg.lock().unwrap();
+                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 cfg.border_radius = radius;
                 let _ = cfg.save();
             }
             let result = eng.apply_geometry(size, radius, gaps_in, gaps_out);
             if let Err(e) = result {
-                eprintln!("[HVE] Radius error: {}", e);
+                tracing::error!("[HVE] Radius error: {}", e);
             }
             // Update UI slider value
             if let Some(w) = weak.upgrade() {
@@ -208,7 +208,7 @@ pub fn setup_callbacks(
                 return;
             }
             let (size, radius, current_in, current_out) = {
-                let cfg = cfg.lock().unwrap();
+                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 (
                     cfg.border_size,
                     cfg.border_radius,
@@ -220,13 +220,13 @@ pub fn setup_callbacks(
                 return;
             }
             {
-                let mut cfg = cfg.lock().unwrap();
+                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 cfg.gaps_in = gap;
                 let _ = cfg.save();
             }
             let result = eng.apply_geometry(size, radius, gap, current_out);
             if let Err(e) = result {
-                eprintln!("[HVE] Gaps-in error: {}", e);
+                tracing::error!("[HVE] Gaps-in error: {}", e);
             }
             // Update UI slider value
             if let Some(w) = weak.upgrade() {
@@ -247,7 +247,7 @@ pub fn setup_callbacks(
                 return;
             }
             let (size, radius, current_in, current_out) = {
-                let cfg = cfg.lock().unwrap();
+                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 (
                     cfg.border_size,
                     cfg.border_radius,
@@ -259,13 +259,13 @@ pub fn setup_callbacks(
                 return;
             }
             {
-                let mut cfg = cfg.lock().unwrap();
+                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
                 cfg.gaps_out = gap;
                 let _ = cfg.save();
             }
             let result = eng.apply_geometry(size, radius, current_in, gap);
             if let Err(e) = result {
-                eprintln!("[HVE] Gaps-out error: {}", e);
+                tracing::error!("[HVE] Gaps-out error: {}", e);
             }
             // Update UI slider value
             if let Some(w) = weak.upgrade() {

@@ -1638,16 +1638,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs2"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "futures"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2039,10 +2029,10 @@ dependencies = [
  "bitflags 2.13.0",
  "clap 4.6.1",
  "dirs",
- "fs2",
  "i-slint-backend-testing",
  "ksni 0.2.2",
  "resvg 0.45.1",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "serial_test",

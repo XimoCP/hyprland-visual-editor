@@ -32,12 +32,13 @@ impl Drop for ListenerHandle {
 impl HyprIpc {
     pub fn new() -> Option<Self> {
         let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| "/run/user/1000".to_string());
-        let socket = PathBuf::from(format!(
-            "{}/hypr/{}/.socket2.sock",
-            runtime_dir, instance
-        ));
+        // Prefer the real XDG runtime dir (honors XDG_RUNTIME_DIR and the
+        // per-UID /run/user/<uid> fallback) instead of a hardcoded /run/user/1000.
+        let runtime_dir = dirs::runtime_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        let socket = runtime_dir
+            .join("hypr")
+            .join(&instance)
+            .join(".socket2.sock");
         if socket.exists() {
             Some(Self { socket_path: socket })
         } else {
@@ -67,7 +68,7 @@ impl HyprIpc {
                 match self.connect_and_listen(&callback) {
                     Ok(_) => break, // Clean exit from Hyprland
                     Err(e) => {
-                        eprintln!("[HVE] IPC listener error: {}, reconnecting in 2s...", e);
+                        tracing::warn!("[HVE] IPC listener error: {}, reconnecting in 2s...", e);
                         // Respect shutdown during the sleep too
                         for _ in 0..20 {
                             if shutdown_clone.load(Ordering::Relaxed) {
@@ -109,11 +110,11 @@ impl HyprIpc {
                 Ok(line) => {
                     // Events come as: "eventname>>data"
                     if line.starts_with("configreloaded") {
-                        let mut last = last_reload.lock().unwrap();
+                        let mut last = last_reload.lock().unwrap_or_else(|e| e.into_inner());
                         let now = Instant::now();
                         if last.is_none_or(|t| now.duration_since(t) > Duration::from_secs(3)) {
                             *last = Some(now);
-                            println!("[HVE] Config reloaded, regenerating overlay...");
+                            tracing::info!("[HVE] Config reloaded, regenerating overlay...");
                             on_config_reload();
                         }
                     }
@@ -167,10 +168,10 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
                 });
             }
         });
-        println!("[HVE] Hyprland IPC listener started");
+        tracing::info!("[HVE] Hyprland IPC listener started");
         handle
     } else {
-        eprintln!("[HVE] Could not find Hyprland IPC socket");
+        tracing::warn!("[HVE] Could not find Hyprland IPC socket");
         // Return a dummy handle that does nothing on drop (no listener to stop)
         let shutdown = std::sync::Arc::new(AtomicBool::new(true));
         ListenerHandle {
@@ -199,7 +200,7 @@ where
     let ipc = match HyprIpc::new() {
         Some(i) => i,
         None => {
-            eprintln!("[HVE] Could not find Hyprland IPC socket (focus listener skipped)");
+            tracing::warn!("[HVE] Could not find Hyprland IPC socket (focus listener skipped)");
             // Return a dummy handle
             let shutdown = std::sync::Arc::new(AtomicBool::new(true));
             return ListenerHandle {
@@ -225,7 +226,7 @@ where
             match connect_and_listen_focus(&ipc, &lost, &gained) {
                 Ok(_) => break,
                 Err(e) => {
-                    eprintln!("[HVE] Focus listener error: {}, reconnecting in 2s...", e);
+                    tracing::warn!("[HVE] Focus listener error: {}, reconnecting in 2s...", e);
                     // Respect shutdown during the sleep too
                     for _ in 0..20 {
                         if shutdown_clone.load(Ordering::Relaxed) {
@@ -238,7 +239,7 @@ where
         }
     });
 
-    println!("[HVE] Hyprland focus listener started");
+    tracing::info!("[HVE] Hyprland focus listener started");
     ListenerHandle {
         shutdown,
         _thread: handle,

@@ -26,6 +26,12 @@ pub enum EngineError {
         path: PathBuf,
         script_name: String,
     },
+    /// The script path is not valid UTF-8 (e.g. from a non-UTF-8 project dir)
+    /// and cannot be passed to `bash`.
+    InvalidScriptPath {
+        path: PathBuf,
+        script_name: String,
+    },
     /// The script process could not be spawned (I/O error).
     ProcessSpawnFailed {
         script_name: String,
@@ -51,6 +57,14 @@ impl fmt::Display for EngineError {
                 write!(
                     f,
                     "Script '{}' not found at {}",
+                    script_name,
+                    path.display()
+                )
+            }
+            EngineError::InvalidScriptPath { path, script_name } => {
+                write!(
+                    f,
+                    "Script '{}' has a non-UTF-8 path: {}",
                     script_name,
                     path.display()
                 )
@@ -112,8 +126,13 @@ impl Engine {
             });
         }
 
+        let script_str = script_path.to_str().ok_or_else(|| EngineError::InvalidScriptPath {
+            path: script_path.clone(),
+            script_name: script_name.to_string(),
+        })?;
+
         let output = Command::new("bash")
-            .arg(script_path.to_str().unwrap())
+            .arg(script_str)
             .args(args)
             .output()
             .map_err(|e| EngineError::ProcessSpawnFailed {
@@ -264,6 +283,26 @@ mod tests {
     }
 
     #[test]
+    fn test_engine_error_display_invalid_script_path() {
+        let err = EngineError::InvalidScriptPath {
+            path: PathBuf::from("/tmp/foo.sh"),
+            script_name: "foo.sh".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("foo.sh"), "msg should name the script: {msg}");
+        assert!(msg.contains("non-UTF-8"), "msg should explain the problem: {msg}");
+    }
+
+    #[test]
+    fn test_engine_error_source_invalid_script_path_is_none() {
+        let err = EngineError::InvalidScriptPath {
+            path: PathBuf::from("x"),
+            script_name: "x".into(),
+        };
+        assert!(err.source().is_none());
+    }
+
+    #[test]
     fn test_engine_error_display_process_spawn_failed() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
         let err = EngineError::ProcessSpawnFailed {
@@ -408,6 +447,53 @@ mod tests {
         let engine = Engine::new(&proj);
         let expected = PathBuf::from("/some/project/assets/scripts");
         assert_eq!(engine.scripts_dir, expected);
+    }
+
+    // ── run_script: non-UTF-8 path handling ─────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn test_run_script_non_utf8_project_dir_returns_error() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let base = tempfile::tempdir().unwrap();
+        // A project directory whose name contains a non-UTF-8 byte. The script
+        // file exists on disk, but its path cannot be converted to a UTF-8 str
+        // to pass to `bash` — run_script must return an error, not panic.
+        let weird = std::ffi::OsStr::from_bytes(b"non-\xff-utf8");
+        let proj = base.path().join(weird);
+        let scripts_dir = proj.join("assets").join("scripts");
+        std::fs::create_dir_all(&scripts_dir).unwrap();
+        std::fs::write(scripts_dir.join("scan.sh"), "#!/bin/bash\necho hi\n").unwrap();
+
+        let engine = Engine::new(&proj);
+        let result = engine.run_script("scan.sh", &[]);
+        assert!(
+            matches!(result, Err(EngineError::InvalidScriptPath { .. })),
+            "non-UTF-8 script path should yield InvalidScriptPath, got {:?}",
+            result.map(|_| ())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_run_script_non_utf8_missing_script_reports_not_found() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let base = tempfile::tempdir().unwrap();
+        let weird = std::ffi::OsStr::from_bytes(b"non-\xff-utf8");
+        let proj = base.path().join(weird);
+        std::fs::create_dir_all(proj.join("assets").join("scripts")).unwrap();
+
+        // Missing script inside a non-UTF-8 dir: the existence check fires
+        // first and must report ScriptNotFound, not panic on to_str().
+        let engine = Engine::new(&proj);
+        let result = engine.run_script("missing.sh", &[]);
+        assert!(
+            matches!(result, Err(EngineError::ScriptNotFound { .. })),
+            "missing script should yield ScriptNotFound, got {:?}",
+            result.map(|_| ())
+        );
     }
 
     // ── ScanEntry deserialisation ─────────────────────────────────────

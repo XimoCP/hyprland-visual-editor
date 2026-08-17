@@ -24,7 +24,9 @@ pub fn init_global(ctrl: Controller) {
 
 /// Get a lock on the global controller.
 pub fn global_controller() -> Option<MutexGuard> {
-    GLOBAL_CONTROLLER.get().map(|m| MutexGuard(m.lock().unwrap()))
+    GLOBAL_CONTROLLER
+        .get()
+        .map(|m| MutexGuard(m.lock().unwrap_or_else(|e| e.into_inner())))
 }
 
 /// Convenience wrapper for MutexGuard.

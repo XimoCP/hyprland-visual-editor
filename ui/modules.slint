@@ -595,6 +595,9 @@ export component ThemeItem inherits Rectangle {
     in property <bool> fast-expand: false;
     in property <color> accent;
     in property <string> apply-text;
+    in property <string> refresh-text;
+    in property <string> rename-text;
+    in property <string> delete-text;
     in property <int> index: 0;
     callback apply-theme(string);
     callback overwrite-theme(string);
@@ -690,7 +693,7 @@ export component ThemeItem inherits Rectangle {
                 apply-btn := IconButton {
                     icon: "▶";
                     bg-color: HveColors.accent-green;
-                    tooltip-text: "Apply theme";
+                    tooltip-text: root.apply-text;
                     disabled: root.is-busy || root.apply-in-progress;
                     clicked => {
                         root.apply-theme(root.theme-name);
@@ -702,7 +705,7 @@ export component ThemeItem inherits Rectangle {
                     icon: "↻";
                     bg-color: HveColors.accent-purple;
                     hover-bg-color: HveColors.accent-purple.transparentize(0.2);
-                    tooltip-text: "Refresh";
+                    tooltip-text: root.refresh-text;
                     clicked => { root.open-refresh(root.theme-name); }
                 }
 
@@ -711,7 +714,7 @@ export component ThemeItem inherits Rectangle {
                     icon: "✎";
                     bg-color: HveColors.accent-amber;
                     hover-bg-color: HveColors.accent-amber.transparentize(0.2);
-                    tooltip-text: "Renombrar";
+                    tooltip-text: root.rename-text;
                     clicked => { root.open-rename(root.theme-name); }
                 }
 
@@ -720,7 +723,7 @@ export component ThemeItem inherits Rectangle {
                     icon: "✕";
                     bg-color: #f87171;
                     hover-bg-color: #f87171.transparentize(0.2);
-                    tooltip-text: "Eliminar";
+                    tooltip-text: root.delete-text;
                     clicked => { root.open-delete(root.theme-name); }
                 }
             }
@@ -751,6 +754,8 @@ export component ThemesModule inherits Rectangle {
     in property <string> confirm-refresh;
     in property <string> confirm-refresh-msg;
     in property <string> rename-title;
+    in property <string> save-section-text;
+    in property <string> list-section-text;
     in property <int> focused-index: -1;
     in property <int> active-index: -1;
     in property <bool> is-active: false;
@@ -789,7 +794,7 @@ export component ThemesModule inherits Rectangle {
 
             // ── Save Section ──
             Text {
-                text: "Guardar Estado Actual";
+                text: root.save-section-text;
                 color: HveColors.text-muted;
                 font-size: 12px;
                 font-weight: 600;
@@ -865,7 +870,7 @@ export component ThemesModule inherits Rectangle {
 
             // ── Theme List Section ──
             Text {
-                text: "Mis Temas";
+                text: root.list-section-text;
                 color: HveColors.text-muted;
                 font-size: 12px;
                 font-weight: 600;
@@ -929,6 +934,9 @@ export component ThemesModule inherits Rectangle {
                 fast-expand: root.fast-expand;
                 accent: HveColors.accent-pink;
                 apply-text: root.apply-text;
+                refresh-text: root.refresh-text;
+                rename-text: root.rename-text;
+                delete-text: root.delete-text;
                 apply-theme(v) => {
                     root.apply-in-progress = true;
                     root.apply-theme(v);

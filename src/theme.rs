@@ -265,14 +265,13 @@ fn parse_logo_svg(h: &str, hv: &str, v: &str, e: &str) -> Option<usvg::Tree> {
 /// Render the HVE logo SVG to raw RGBA bytes at the given width, maintaining aspect ratio.
 ///
 /// Each letter gets a different palette color:
-/// - `secondary` → H (amber/orange)
-/// - `primary`   → HV (cyan, interlaced)
-/// - `tertiary`  → V (purple)
-/// - `accent`    → E (green)
+/// - `secondary`        → H (amber/orange)
+/// - `tertiary` darkened → HV (darker purple, interlaced part)
+/// - `tertiary`         → V (purple)
+/// - `accent`           → E (green)
 ///
 /// Returns `None` if parsing or rendering fails.
 pub fn render_logo_rgba(
-    _surface_lowest: &Color,
     secondary: &Color,
     tertiary: &Color,
     accent: &Color,
@@ -329,16 +328,16 @@ pub fn render_logo_square_mono(accent: &Color, size: u32) -> Option<Vec<u8>> {
 /// Render the HVE logo with 4 palette colors and return a Slint Image.
 ///
 /// - H  → `secondary` (amber/orange)
-/// - HV → `surface_lowest` (lightest palette color)
+/// - HV → `tertiary` darkened (darker purple)
 /// - V  → `tertiary` (purple)
 /// - E  → `accent` (green)
 pub fn render_logo_image(
-    surface_lowest: &Color,
+    _surface_lowest: &Color, // kept for API compatibility: callers (main.rs, ipc.rs) still pass it
     secondary: &Color,
     tertiary: &Color,
     accent: &Color,
 ) -> slint::Image {
-    let (data, w, h) = match render_logo_rgba(surface_lowest, secondary, tertiary, accent, LOGO_WIDTH) {
+    let (data, w, h) = match render_logo_rgba(secondary, tertiary, accent, LOGO_WIDTH) {
         Some(r) => r,
         None => return slint::Image::default(),
     };

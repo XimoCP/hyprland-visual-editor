@@ -1,38 +1,4 @@
 // Theme — Design tokens for HVE Standalone
-export struct Theme {
-    bg-dark: color,
-    bg-surface: color,
-    bg-card: color,
-    bg-hover: color,
-    text: color,
-    text-muted: color,
-    accent-cyan: color,
-    accent-amber: color,
-    accent-green: color,
-    accent-purple: color,
-    accent-pink: color,
-    accent-red: color,
-    border: color,
-}
-
-export global HveTheme {
-    in property <Theme> dark: {
-        bg-dark: #0d1117,
-        bg-surface: #161b22,
-        bg-card: #1c2128,
-        bg-hover: #252d38,
-        text: #e6edf3,
-        text-muted: #7d8590,
-        accent-cyan: #38bdf8,
-        accent-amber: #fbbf24,
-        accent-green: #10b981,
-        accent-purple: #c084fc,
-        accent-pink: #f472b6,
-        accent-red: #f87171,
-        border: #30363d,
-    };
-}
-
 // ─── Nav module definition ──────────────────────────────────────────
 export struct NavModule {
     label: string,

@@ -3,34 +3,31 @@ use std::path::{Path, PathBuf};
 /// A shell knows how to resolve its configuration paths and perform shell-specific
 /// operations like wallpaper IPC.
 ///
-/// This replaces the old `ShellPaths` trait with a richer interface that
-/// includes source/rendered file lists, template processor paths, and
+/// Includes source/rendered file lists, template processor paths, and
 /// wallpaper IPC operations.
 pub trait ShellProvider: Send + Sync {
+    // The four methods below are exercised only by the test suite (and by
+    // `ShellRegistry`, itself tests-only); production code (noctalia.rs) uses
+    // the remaining methods. The allows are required: rustc's dead_code lint
+    // does not count `#[cfg(test)]` usage during a plain `cargo check`.
     #[allow(dead_code)]
     fn id(&self) -> &str;
     #[allow(dead_code)]
     fn display_name(&self) -> &str;
-    #[allow(dead_code)]
     fn config_dir(&self) -> Option<PathBuf>;
-    #[allow(dead_code)]
     fn rendered_dir(&self) -> Option<PathBuf>;
-    #[allow(dead_code)]
     fn wallpapers_file(&self) -> Option<PathBuf>;
-    #[allow(dead_code)]
     fn theming_config(&self) -> Option<PathBuf>;
     fn source_files(&self) -> Vec<&'static str>;
     fn rendered_color_files(&self) -> Vec<&'static str>;
-    #[allow(dead_code)]
     fn template_processor(&self) -> Option<PathBuf>;
     #[allow(dead_code)]
     fn reload_command(&self) -> Vec<String>;
-    #[allow(dead_code, unused_variables)]
-    fn apply_wallpaper(&self, path: &Path, screen: &str) -> Result<(), String> {
+    fn apply_wallpaper(&self, _path: &Path, _screen: &str) -> Result<(), String> {
         Ok(())
     }
-    #[allow(dead_code, unused_variables)]
-    fn get_wallpaper(&self, screen: &str) -> Result<String, String> {
+    #[allow(dead_code)]
+    fn get_wallpaper(&self, _screen: &str) -> Result<String, String> {
         Err("not supported".into())
     }
 }
@@ -155,8 +152,9 @@ impl ShellProvider for NoctaliaV4Paths {
 }
 
 /// Detecta si un shell está activo en el sistema.
-#[allow(dead_code)]
 pub trait ShellDetector: Send + Sync {
+    // `id` is used by tests and by `ShellRegistry` (tests-only); the lint does
+    // not count `#[cfg(test)]` usage during a plain `cargo check`.
     #[allow(dead_code)]
     fn id(&self) -> &str;
     fn is_active(&self) -> bool;
@@ -291,6 +289,9 @@ impl ShellDetector for NoctaliaV5Paths {
 ///
 /// Se registran los detectores en orden; el primero que retorne
 /// `is_active() == true` se marca como activo.
+///
+/// NOTE: only instantiated by tests. Production (main.rs) bypasses the
+/// registry and calls `is_active()` on the detectors directly.
 #[allow(dead_code)]
 pub struct ShellRegistry {
     detectors: Vec<Box<dyn ShellDetector>>,
