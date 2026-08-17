@@ -52,6 +52,20 @@ if [ "$PRESET" == "none" ] || [ -z "$PRESET" ] || [ "$PRESET" == "00_limpio.frag
 
 # Case 2: Enable a specific filter
 else
+    # SECURITY: the preset name comes from theme state / the scan UI and is
+    # embedded into Hyprland config and Lua. Reject anything outside
+    # [A-Za-z0-9._-] plus spaces so quotes, backslashes, newlines and
+    # shell/script metacharacters can never leak into the generated config.
+    # (Spaces are mapped to '_' before matching: a literal space inside a
+    # case bracket class is a bash parse error.)
+    testpreset=$(printf '%s' "$PRESET" | tr ' ' '_')
+    case "$testpreset" in
+        ''|*[!A-Za-z0-9._-]*)
+            notify-send "HVE Error" "Invalid shader preset name" -i dialog-error
+            exit 1
+            ;;
+    esac
+
     # Limpieza preventiva del formato opuesto
     rm -f "$OLD_FRAGMENT"
 

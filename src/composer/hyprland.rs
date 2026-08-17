@@ -215,6 +215,12 @@ impl Composer for HyprlandComposer {
                         .active_workspace()
                         .or_else(|| prev_workspace.map(|s| s.to_string()))
                         .unwrap_or_else(|| "1".to_string());
+                    // SECURITY: reject workspace names that could break out of
+                    // the Lua string below (see safe_workspace_target).
+                    if !safe_workspace_target(&target) {
+                        let _ = win.window().show();
+                        return false;
+                    }
                     // 1) Enfocar HVE PRIMERO. Imprescindible: `movetoworkspacesilent`
                     //    y `hl.dsp.window.move` sin `window=` actúan sobre la ventana
                     //    con foco. Como HVE estaba en el special scratchpad sin foco,
@@ -254,6 +260,11 @@ impl Composer for HyprlandComposer {
                         .active_workspace()
                         .or_else(|| prev_workspace.map(|s| s.to_string()))
                         .unwrap_or_else(|| "1".to_string());
+                    // SECURITY: same allowlist as the v5 path.
+                    if !safe_workspace_target(&target) {
+                        let _ = win.window().show();
+                        return false;
+                    }
                     // 1) Enfocar HVE primero (movetoworkspacesilent actúa sobre la focada).
                     let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                     // 2) Devolverla al workspace real.
@@ -323,6 +334,19 @@ impl Composer for HyprlandComposer {
 
 const HVE_TITLE: &str = "Hyprland Visual Editor";
 const SPECIAL: &str = "minimized";
+
+/// SECURITY: workspace names are interpolated into a Lua string sent to
+/// hyprctl dispatch (`hl.dsp.window.move({ workspace = "..." })`). Validate
+/// against a strict allowlist so a crafted name (quotes, backslashes, `;`,
+/// control chars) cannot break out of the Lua string and inject arbitrary
+/// Lua (which `hl.exec_cmd` would run). Applied to both v5 and v4 paths.
+fn safe_workspace_target(target: &str) -> bool {
+    !target.is_empty()
+        && target.len() <= 128
+        && target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' '))
+}
 
 /// Standalone dispatch — used by Timer closures that can't capture &self.
 fn hypr_dispatch_v5_standalone(script: &str) -> bool {

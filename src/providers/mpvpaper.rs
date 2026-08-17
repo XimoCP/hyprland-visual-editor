@@ -248,8 +248,55 @@ pub fn save_manifest(provider_dir: &Path) -> Result<(), String> {
 
 // ── Apply ───────────────────────────────────────────────────────────────
 
+/// SECURITY: strict allowlist for manifest `filename` values. Only letters,
+/// digits, `-`, `_`, `.` and spaces are accepted. Anything that could escape
+/// `video_dir` (slashes, `..`, leading dots, NUL) or otherwise break the
+/// download path is rejected before any path/command use.
+fn validate_filename(filename: &str) -> Result<(), String> {
+    if filename.is_empty() {
+        return Err("manifest filename is empty".into());
+    }
+    if filename.contains('/') || filename.contains('\\') || filename.contains('\0') {
+        return Err(format!(
+            "manifest filename '{filename}' contains path separators or NUL"
+        ));
+    }
+    if filename.starts_with('.') {
+        return Err(format!("manifest filename '{filename}' starts with a dot"));
+    }
+    if filename.contains("..") {
+        return Err(format!("manifest filename '{filename}' contains '..'"));
+    }
+    if !filename
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+    {
+        return Err(format!(
+            "manifest filename '{filename}' contains disallowed characters"
+        ));
+    }
+    Ok(())
+}
+
+/// SECURITY: unpredictable temp path next to `dest` (filename + pid + ns) so
+/// a pre-existing symlink at a predictable location cannot be followed.
+fn unique_tmp_path(dest: &Path) -> Result<PathBuf, String> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let base = dest
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| "video".to_string());
+    Ok(dest.with_file_name(format!("{base}.tmp.{}.{}", std::process::id(), nanos)))
+}
+
 /// Resolve one video reference to an absolute path that exists on disk.
 fn resolve_video(video: &MpvpaperVideo, video_dir: &Path) -> Result<PathBuf, String> {
+    // SECURITY: reject unsafe filenames before they touch any path.
+    validate_filename(&video.filename)?;
+
     // 1. Local save still present.
     if let Some(lp) = &video.local_path {
         let p = PathBuf::from(lp);
@@ -264,10 +311,18 @@ fn resolve_video(video: &MpvpaperVideo, video_dir: &Path) -> Result<PathBuf, Str
         return Ok(local);
     }
 
-    // 3. Remote source: download into video_directory.
+    // 3. Remote source: download into video_directory. sha256 is REQUIRED —
+    //    an unverified remote download is never accepted.
     if let Some(url) = &video.url {
         if !url.is_empty() {
-            let downloaded = download_video(url, &local, video.sha256.as_deref())?;
+            let sha = video.sha256.as_deref().filter(|s| !s.is_empty());
+            let Some(sha) = sha else {
+                return Err(format!(
+                    "video '{}': url present but manifest omits sha256; refusing to download",
+                    video.filename
+                ));
+            };
+            let downloaded = download_video(url, &local, sha)?;
             return Ok(downloaded);
         }
     }
@@ -275,14 +330,38 @@ fn resolve_video(video: &MpvpaperVideo, video_dir: &Path) -> Result<PathBuf, Str
     Err(format!("video '{}' not found locally and has no usable url", video.filename))
 }
 
-/// Download `url` to `dest` using `curl`, optionally verifying sha256.
-fn download_video(url: &str, dest: &Path, expected_sha: Option<&str>) -> Result<PathBuf, String> {
+/// Download `url` to `dest` using `curl`, verifying sha256.
+///
+/// SECURITY: only `https://` URLs are accepted and curl is restricted to the
+/// https protocol (defense in depth against redirect downgrades); the sha256
+/// hash is mandatory, so an unverified file is never placed on disk.
+fn download_video(url: &str, dest: &Path, expected_sha: &str) -> Result<PathBuf, String> {
+    if !url.starts_with("https://") {
+        return Err(format!("refusing to download non-https url: {}", url));
+    }
+
     let parent = dest.parent().ok_or("Invalid destination path")?;
     fs::create_dir_all(parent).map_err(|e| format!("Cannot create video dir: {}", e))?;
 
-    let tmp = dest.with_extension("mp4.tmp");
+    // SECURITY: claim a unique temp path with O_EXCL so a pre-existing
+    // symlink at a predictable temp name cannot be followed.
+    let tmp = unique_tmp_path(dest)?;
+    let created = fs::File::create_new(&tmp)
+        .map_err(|e| format!("Cannot create unique temp file: {}", e))?;
+    drop(created);
+
     let status = std::process::Command::new("curl")
-        .args(["-L", "--fail", "--silent", "--show-error", "--max-time", "300", "-o"])
+        .args([
+            "-L",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "300",
+            "--proto",
+            "=https",
+            "-o",
+        ])
         .arg(&tmp)
         .arg(url)
         .status()
@@ -293,14 +372,13 @@ fn download_video(url: &str, dest: &Path, expected_sha: Option<&str>) -> Result<
         return Err(format!("Download failed for {}", url));
     }
 
-    if let Some(expected) = expected_sha {
-        if !expected.is_empty() {
-            let actual = sha256_of(&tmp)?;
-            if actual != expected {
-                let _ = fs::remove_file(&tmp);
-                return Err(format!("sha256 mismatch for {}: expected {}, got {}", url, expected, actual));
-            }
-        }
+    let actual = sha256_of(&tmp)?;
+    if actual != expected_sha {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "sha256 mismatch for {}: expected {}, got {}",
+            url, expected_sha, actual
+        ));
     }
 
     fs::rename(&tmp, dest).map_err(|e| format!("Cannot move downloaded video: {}", e))?;
@@ -541,6 +619,120 @@ video_directory = "~/Videos"
             sha256: None,
         };
         assert!(resolve_video(&video, &dir).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_video_rejects_traversal_filename() {
+        let dir = std::env::temp_dir().join("mpvpaper-test-traversal");
+        let _ = fs::create_dir_all(&dir);
+
+        // A traversal filename must never reach the filesystem (would let a
+        // crafted manifest overwrite arbitrary user-writable files).
+        for bad in [
+            "../../.config/hypr/hyprland.conf",
+            "..",
+            ".hidden.mp4",
+            "a/b.mp4",
+            "a\\b.mp4",
+            "",
+            "a;rm -rf ~",
+        ] {
+            let video = MpvpaperVideo {
+                filename: bad.to_string(),
+                local_path: None,
+                url: Some("https://example.com/movie.mp4".into()),
+                sha256: Some("a".repeat(64)),
+            };
+            let err = resolve_video(&video, &dir).unwrap_err();
+            assert!(err.contains("filename"), "unexpected error for {bad:?}: {err}");
+        }
+
+        // A safe filename with spaces is accepted by the validator, and a
+        // local path resolves without any network access.
+        assert!(validate_filename("my movie.mp4").is_ok());
+        let local = dir.join("my movie.mp4");
+        fs::write(&local, b"x").expect("write local fixture");
+        let video = MpvpaperVideo {
+            filename: "my movie.mp4".into(),
+            local_path: Some(local.to_string_lossy().to_string()),
+            url: None,
+            sha256: None,
+        };
+        let resolved = resolve_video(&video, &dir).unwrap();
+        assert_eq!(resolved, local);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_video_rejects_non_https_url() {
+        let dir = std::env::temp_dir().join("mpvpaper-test-http");
+        let _ = fs::create_dir_all(&dir);
+
+        let video = MpvpaperVideo {
+            filename: "movie.mp4".into(),
+            local_path: None,
+            url: Some("http://example.com/movie.mp4".into()),
+            sha256: Some("a".repeat(64)),
+        };
+        let err = resolve_video(&video, &dir).unwrap_err();
+        assert!(err.contains("https"), "unexpected error: {err}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_download_video_rejects_file_scheme() {
+        // Defense in depth: even if a caller bypassed resolve_video, the
+        // download layer itself refuses non-https URLs.
+        let dir = std::env::temp_dir().join("mpvpaper-test-filescheme");
+        let _ = fs::create_dir_all(&dir);
+
+        let dest = dir.join("movie.mp4");
+        let err = download_video("file:///etc/passwd", &dest, "abc").unwrap_err();
+        assert!(err.contains("https"), "unexpected error: {err}");
+        assert!(!dest.exists(), "file scheme must not write anything");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_video_requires_sha256_with_url() {
+        let dir = std::env::temp_dir().join("mpvpaper-test-nosha");
+        let _ = fs::create_dir_all(&dir);
+
+        // Missing sha256 -> fail BEFORE any download attempt.
+        let video = MpvpaperVideo {
+            filename: "movie.mp4".into(),
+            local_path: None,
+            url: Some("https://example.com/movie.mp4".into()),
+            sha256: None,
+        };
+        let err = resolve_video(&video, &dir).unwrap_err();
+        assert!(err.contains("sha256"), "unexpected error: {err}");
+
+        // Empty sha256 is treated the same as missing.
+        let video2 = MpvpaperVideo {
+            filename: "movie.mp4".into(),
+            local_path: None,
+            url: Some("https://example.com/movie.mp4".into()),
+            sha256: Some(String::new()),
+        };
+        let err2 = resolve_video(&video2, &dir).unwrap_err();
+        assert!(err2.contains("sha256"), "unexpected error: {err2}");
+
+        // With a hash present the error moves past the sha gate (curl not run
+        // here — this merely proves the hash requirement is what fires).
+        let video3 = MpvpaperVideo {
+            filename: "movie.mp4".into(),
+            local_path: None,
+            url: Some("https://example.com/movie.mp4".into()),
+            sha256: Some("a".repeat(64)),
+        };
+        let err3 = resolve_video(&video3, &dir).unwrap_err();
+        assert!(!err3.contains("sha256"), "unexpected error: {err3}");
 
         let _ = fs::remove_dir_all(&dir);
     }

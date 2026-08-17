@@ -7,6 +7,13 @@ source "$SCRIPT_DIR/utils.sh"
 TARGET_FOLDER="$1"
 SEARCH_DIR="$HVE_ASSETS_DIR/$TARGET_FOLDER"
 
+# Escape a value for safe inclusion in a JSON string literal: backslashes
+# first (so they are not interpreted as JSON escapes), then quotes, then the
+# control characters that would otherwise produce invalid JSON.
+escape_json() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r/\\r/g'
+}
+
 # --- FORMAT DETECTION ---
 HVE_FORMAT_CACHE="$HVE_SAFE_DIR/hve_format"
 FORMAT_DETECTION_SCRIPT="$HVE_SCRIPTS_DIR/detect_format.sh"
@@ -69,12 +76,18 @@ for filepath in "${SELECTED_FILES[@]}"; do
     ID_NAME="${filename%.*}"
 
     # 1. Translation keys
-    KEY_T="${TARGET_FOLDER}.presets.${ID_NAME}.title"
-    KEY_D="${TARGET_FOLDER}.presets.${ID_NAME}.desc"
+    # Sanitize the id for the i18n key path: dots inside a file name would
+    # break the dot-notation lookup (tr.rs splits keys on '.'), so any '.'
+    # becomes '_'. The file itself keeps its original name.
+    KEY_ID="${ID_NAME//./_}"
+    KEY_T="${TARGET_FOLDER}.presets.${KEY_ID}.title"
+    KEY_D="${TARGET_FOLDER}.presets.${KEY_ID}.desc"
 
     # 2. Metadata extraction (both # @Title and -- @Title styles)
+    # Note: values are NOT escaped here — escaping happens at JSON output
+    # time via escape_json so every field gets identical treatment.
     function get_meta() {
-        grep -m1 -E "^[ \t]*(#|--)[ \t]*@$1:" "$filepath" 2>/dev/null | sed 's/^[ \t]*\(#\|--\)[ \t]*@[^:]*:[ \t]*//' | sed 's/^[ \t]*//;s/[ \t]*$//;s/"/\\"/g' | tr -d '\r'
+        grep -m1 -E "^[ \t]*(#|--)[ \t]*@$1:" "$filepath" 2>/dev/null | sed 's/^[ \t]*\(#\|--\)[ \t]*@[^:]*:[ \t]*//' | sed 's/^[ \t]*//;s/[ \t]*$//' | tr -d '\r'
     }
 
     RAW_T=$(get_meta "Title")
@@ -91,17 +104,20 @@ for filepath in "${SELECTED_FILES[@]}"; do
 
     if [ "$FIRST" = true ]; then FIRST=false; else echo ","; fi
 
-    # 3. JSON Output
+    # 3. JSON Output — every interpolated value is escaped (backslashes,
+    #    quotes, tabs, CR) so filenames/metadata cannot break the JSON or
+    #    inject fields. Filenames come from the filesystem scan; metadata
+    #    comes from file contents.
     cat <<EOF
     {
-        "file": "$filename",
-        "title": "$KEY_T",
-        "desc": "$KEY_D",
-        "rawTitle": "$RAW_T",
-        "rawDesc": "$RAW_D",
-        "icon": "$ICON",
-        "color": "$COLOR",
-        "tag": "$TAG"
+        "file": "$(escape_json "$filename")",
+        "title": "$(escape_json "$KEY_T")",
+        "desc": "$(escape_json "$KEY_D")",
+        "rawTitle": "$(escape_json "$RAW_T")",
+        "rawDesc": "$(escape_json "$RAW_D")",
+        "icon": "$(escape_json "$ICON")",
+        "color": "$(escape_json "$COLOR")",
+        "tag": "$(escape_json "$TAG")"
     }
 EOF
 

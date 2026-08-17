@@ -87,7 +87,27 @@ _hve_try_noctalia_palette() {
 
     local source="${scheme_raw%% *}"
     local name="${scheme_raw#* }"
-    [ -z "$source" ] || [ -z "$name" ] && return 1
+
+    # SECURITY: reject anything outside the exact supported source set.
+    case "$source" in
+        custom|builtin|community|wallpaper) ;;
+        *) return 1 ;;
+    esac
+
+    # SECURITY: the scheme name is theme-controlled and would be interpolated
+    # into file paths. Only [A-Za-z0-9_-] plus spaces are allowed; quotes,
+    # slashes, $, backticks, ;, (), control chars etc. make the whole palette
+    # attempt fall through safely to the template output. (Spaces are mapped
+    # to '_' before matching: a literal space inside a case bracket class is
+    # a bash parse error, while a space in the VALUE is harmless.)
+    local testname
+    testname=$(printf '%s' "$name" | tr ' ' '_')
+    case "$testname" in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "[HVE] Invalid Noctalia scheme name, skipping palette" >&2
+            return 1
+            ;;
+    esac
 
     local palette_file=""
     case "$source" in
@@ -113,10 +133,17 @@ _hve_try_noctalia_palette() {
 
     echo "[HVE] Colors from: Noctalia palette (${source})" >&2
 
-    eval "$(python3 -c "
+    # SECURITY: the palette path is passed to python as argv, never embedded
+    # in the python source, so no injection is possible via the file path.
+    # Python prints sanitized HVE_* assignments to a private temp file (0600).
+    local tmp_palette
+    tmp_palette=$(mktemp) || return 1
+    chmod 600 "$tmp_palette"
+
+    if ! python3 - "$palette_file" >"$tmp_palette" 2>/dev/null <<'PY'
 import json, sys
 
-with open('${palette_file}') as f:
+with open(sys.argv[1]) as f:
     data = json.load(f)
 
 # Handle both {dark: {...}, light: {...}} (full scheme)
@@ -140,18 +167,71 @@ mapping = {
 # HVE uses 'accent' which maps to primary (the main brand color)
 if 'mPrimary' in palette:
     val = palette['mPrimary']
-    print(f'HVE_ACCENT={\"#\" + val if not val.startswith(\"#\") else val}')
+    print('HVE_ACCENT=' + ('#' + val if not val.startswith('#') else val))
 
 for m3_key, hve_key in mapping.items():
     if m3_key in palette:
         val = palette[m3_key]
-        if val.startswith('#'):
-            print(f'{hve_key}={val}')
-        else:
-            print(f'{hve_key}=#{val}')
-")" 2>/dev/null || return 1
+        print(hve_key + '=' + ('#' + val if not val.startswith('#') else val))
+PY
+    then
+        rm -f "$tmp_palette"
+        return 1
+    fi
 
-    return 0
+    # SECURITY: validate every emitted assignment BEFORE it can run. Variable
+    # names must match ^HVE_[A-Z_]+$ and values must be exactly
+    # ^#?[0-9a-fA-F]{6}$. Lines that fail are skipped — raw palette content
+    # is never eval'd. Only validated lines are sourced (from a 0600 file).
+    local safe_palette
+    safe_palette=$(mktemp) || { rm -f "$tmp_palette"; return 1; }
+    chmod 600 "$safe_palette"
+
+    local line var val
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in
+            *=*) ;;
+            *) continue ;;  # not an assignment
+        esac
+        var="${line%%=*}"
+        val="${line#*=}"
+
+        case "$var" in
+            HVE_[A-Z_]*) ;;
+            *) continue ;;
+        esac
+        # Strict: var must be exactly HVE_ + one-or-more [A-Z_]. The prefix
+        # pattern above alone is insufficient: HVE_X;payload passes it, and a
+        # palette value containing a newline lets that whole line be sourced.
+        case "$var" in
+            *[!A-Z_]*) continue ;;
+        esac
+
+        # Value must be exactly [#]rrggbb (strip optional leading '#').
+        case "$val" in
+            '#'*) val="${val#\#}" ;;
+        esac
+        case "$val" in
+            ??????) ;;
+            *) continue ;;
+        esac
+        case "$val" in
+            *[!0-9a-fA-F]*) continue ;;
+        esac
+
+        printf '%s\n' "$line" >>"$safe_palette"
+    done <"$tmp_palette"
+    rm -f "$tmp_palette"
+
+    if [ -s "$safe_palette" ]; then
+        # shellcheck disable=SC1090
+        . "$safe_palette"
+        rm -f "$safe_palette"
+        return 0
+    fi
+    rm -f "$safe_palette"
+    return 1
 }
 
 # Noctalia template output fallback:
