@@ -1,6 +1,5 @@
 use crate::config::Config;
 use crate::engine::Engine;
-use crate::theme;
 use slint::ComponentHandle;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -259,29 +258,34 @@ fn cmd_status(window: &slint::Weak<crate::MainWindow>) -> String {
 
 fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &Path) -> String {
     let eng = Engine::new(proj);
-    match eng.get_colors() {
-        Ok(colors) => {
-            let cfg = Config::load();
-            let resolved = theme::resolve_scheme(&colors, &cfg.theme);
-            format_response(invoke_on_main(window, move |win| {
-                theme::apply_theme(&win, &resolved);
-                // Regenerate logo with new theme colors
-                let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
-                let secondary = theme::parse_hex(&resolved.secondary);
-                let tertiary = theme::parse_hex(&resolved.tertiary);
-                let accent = theme::parse_hex(&resolved.accent);
-                let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
-                win.set_logo_image(logo);
-                // Update tray icon
-                let tray_color = theme::lighten(&accent, 0.6);
-                if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
-                    crate::tray::update_global_icon(icon);
-                }
-                "ok".to_string()
-            }))
+    let cfg = Config::load();
+    let theme_pref = cfg.theme;
+    // Delegate the visual refresh to the shared helpers from main.rs.
+    //
+    // get_colors() spawns the get_colors.sh subprocess, so it must NOT run
+    // on the event-loop thread. It is called here on the IPC thread first;
+    // only the UI mutations (apply_visual_state: resolve scheme, apply
+    // theme, logo, tray icon) run inside invoke_from_event_loop.
+    //
+    // Behavior notes vs. the previous inline sequence:
+    // - The helpers swallow the get_colors error detail into an Option, so
+    //   the response uses a generic error message instead of the EngineError
+    //   text. A get_colors failure now also replies immediately without
+    //   waiting on the event loop.
+    // - If the tray icon render fails, the helper returns None while the old
+    //   code still replied "ok". That render only fails on an invalid SVG or
+    //   an allocation failure — unreachable in practice for the static logo
+    //   at 48px, so the response change is theoretical.
+    let colors = match crate::fetch_visual_colors(&eng) {
+        Some(colors) => colors,
+        None => return "error: could not refresh visual state\n".to_string(),
+    };
+    format_response(invoke_on_main(window, move |win| {
+        match crate::apply_visual_state(&win, &colors, &theme_pref) {
+            Some(_) => "ok".to_string(),
+            None => "error: could not refresh visual state".to_string(),
         }
-        Err(e) => format!("error: {}\n", e),
-    }
+    }))
 }
 
 fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {

@@ -325,14 +325,13 @@ pub fn render_logo_square_mono(accent: &Color, size: u32) -> Option<Vec<u8>> {
     Some(pad_rgba_to_square(&pixmap.take(), size, height, size))
 }
 
-/// Render the HVE logo with 4 palette colors and return a Slint Image.
+/// Render the HVE logo with 3 palette colors and return a Slint Image.
 ///
 /// - H  → `secondary` (amber/orange)
 /// - HV → `tertiary` darkened (darker purple)
 /// - V  → `tertiary` (purple)
 /// - E  → `accent` (green)
 pub fn render_logo_image(
-    _surface_lowest: &Color, // kept for API compatibility: callers (main.rs, ipc.rs) still pass it
     secondary: &Color,
     tertiary: &Color,
     accent: &Color,

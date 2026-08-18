@@ -1,4 +1,7 @@
+use crate::config::Config;
 use crate::engine::Engine;
+use crate::settings::{set_autostart, set_keybinds, set_tiling_window_rules};
+use crate::theme_manager::ThemeManager;
 use slint::ComponentHandle;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,15 +37,25 @@ macro_rules! make_toggle_callback {
     };
 }
 
+/// Registers every Slint UI callback. Call once from `main()` after the
+/// window, config, engine, theme manager and tray are initialized.
+///
+/// Dependencies are passed by reference; each callback clones what it
+/// captures. All Slint callbacks run on the same thread, so
+/// clone-then-save is safe.
 pub fn setup_callbacks(
     window: &crate::MainWindow,
-    cfg: &Arc<Mutex<crate::config::Config>>,
+    engine: &Arc<Engine>,
+    cfg: &Arc<Mutex<Config>>,
+    theme_manager: &Arc<Mutex<ThemeManager>>,
     proj: PathBuf,
     tray_active: Arc<AtomicBool>,
+    restart_lock: &Arc<Mutex<Option<std::fs::File>>>,
 ) {
-    // Single Engine + Config instances shared across all callbacks
-    let eng = Arc::new(Engine::new(&proj));
+    // Single Engine + Config + ThemeManager instances shared across all callbacks
+    let eng = engine.clone();
     let cfg = cfg.clone();
+    let tm = theme_manager.clone();
 
     // System toggle — skip first call (UI fires on init)
     {
@@ -287,4 +300,510 @@ pub fn setup_callbacks(
             let _ = std::process::Command::new("xdg-open").arg(&target).spawn();
         });
     }
+
+    // ── Close button callback ──
+    {
+        let weak = window.as_weak();
+        window.on_close_button_clicked(move || {
+            crate::countdown::minimize_now(weak.clone());
+        });
+    }
+
+    // ── Settings callbacks ──
+    // We use clone-then-save since all Slint callbacks run on the same thread
+    {
+        let window_weak = window.as_weak();
+        window.on_toggle_settings(move || {
+            let w = window_weak.upgrade().unwrap();
+            w.set_settings_open(!w.get_settings_open());
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_auto_minimize(move |enabled| {
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.auto_minimize_enabled = enabled;
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_auto_minimize(enabled);
+            }
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_change_minimize_seconds(move |secs| {
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.minimize_seconds = secs;
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_minimize_seconds(secs);
+            }
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_change_language(move |lang| {
+            let lang_str = lang.to_string();
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.language = lang_str.clone();
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_language(lang);
+                w.set_restart_required(true);
+            }
+            tracing::info!("Language changed to {}. Restart to apply fully.", lang_str);
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_tiling_mode(move |enabled| {
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.tiling_mode = enabled;
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_tiling_mode(enabled);
+                w.set_restart_required(false);
+            }
+
+            // Toggle window rules in hyprland.conf — this persists across restarts
+            set_tiling_window_rules(enabled);
+
+            // Try to toggle the CURRENT window immediately via Composer
+            if let Some(ctrl) = crate::composer::global_controller() {
+                ctrl.composer().toggle_float();
+            }
+
+            // Show restart banner explaining that full effect requires restart
+            if let Some(w) = weak.upgrade() {
+                w.set_restart_required(true);
+            }
+            tracing::info!(
+                "[settings] Tiling mode {} — config updated + togglefloating dispatched",
+                if enabled { "ON" } else { "OFF" }
+            );
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_keybinds(move |enabled| {
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.keybinds_enabled = enabled;
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_keybinds_mode(enabled);
+            }
+            set_keybinds(enabled);
+            tracing::info!("[settings] Keyboard shortcuts {}", if enabled { "ON" } else { "OFF" });
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_toggle_autostart(move |enabled| {
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.auto_start = enabled;
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_autostart(enabled);
+            }
+            set_autostart(enabled);
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        let eng = eng.clone();
+        window.on_change_theme(move |theme| {
+            let theme_str = theme.to_string();
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.theme = theme_str.clone();
+                let _ = c.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                // Apply new palette immediately (no restart needed)
+                crate::refresh_visual_state(&w, &eng, &theme_str);
+                w.set_theme(theme);
+            }
+            tracing::info!("Theme changed to {}", theme_str);
+        });
+    }
+
+    // Restart the app: release the exclusive lock so the new instance can
+    // acquire it, spawn ourselves again, then quit the event loop.
+    {
+        let restart_lock = restart_lock.clone();
+        window.on_restart_app(move || {
+            tracing::info!("[settings] Restarting app...");
+            // 1. Release the exclusive lock so the new instance can start
+            if let Ok(mut guard) = restart_lock.lock() {
+                drop(guard.take());
+            }
+            // 2. Spawn the new instance
+            let exe = resolve_exe();
+            match std::process::Command::new(&exe)
+                .args(std::env::args().skip(1))
+                .spawn()
+            {
+                Ok(child) => {
+                    tracing::info!(
+                        "[settings] New instance spawned (PID: {}), quitting event loop",
+                        child.id()
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("[settings] Failed to restart: {}", e);
+                    return;
+                }
+            }
+            // 3. Gracefully quit the event loop — the main function continues past
+            //    run_event_loop_until_quit() and returns Ok(()), letting the process
+            //    die naturally. The new instance already has the lock released.
+            let _ = slint::quit_event_loop();
+        });
+    }
+
+    {
+        let settings_cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_reset_presets(move || {
+            tracing::info!("[settings] Resetting presets...");
+            if let Some(w) = weak.upgrade() {
+                w.set_active_anim_index(-1);
+                w.set_active_border_index(-1);
+                w.set_active_shader_index(-1);
+            }
+            {
+                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+                c.active_anim_file = String::new();
+                c.active_border_file = String::new();
+                c.active_shader_file = String::new();
+                let _ = c.save();
+            }
+            tracing::info!("[settings] Presets reset complete.");
+        });
+    }
+
+    // ── Theme callbacks ──
+    {
+        let tm = tm.clone();
+        let weak = window.as_weak();
+        window.on_save_theme(move |name| {
+            let name_str = name.to_string();
+            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
+
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Saved theme: {}", name_str);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_busy(true);
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::refresh_theme_list(&w, &tm);
+                        w.set_theme_busy(false);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Save failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let eng = eng.clone();
+        let tm = tm.clone();
+        let cfg = cfg.clone();
+        let weak = window.as_weak();
+        window.on_apply_theme(move |name| {
+            let name_str = name.to_string();
+            // Suprime el auto-minimize mientras se aplica: hyprctl reload y la
+            // regeneración de window rules hacen que la ventana pierda foco
+            // varias veces, y eso no debe disparar un countdown espurio.
+            crate::countdown::suppress_auto_minimize(std::time::Duration::from_secs(4));
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).apply(&name_str, || {
+                // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
+                // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
+                tracing::info!("[themes] Reloading Hyprland after theme apply...");
+                std::process::Command::new("hyprctl")
+                    .arg("reload")
+                    .output()
+                    .map(|_| ())
+                    .map_err(|e| format!("hyprctl reload failed: {e}"))
+            });
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Applied theme: {}", name_str);
+                    // Reload config from disk — the provider may have updated it
+                    let updated_cfg = Config::load();
+                    // Update in-memory config and persist
+                    if let Ok(mut c) = cfg.lock() {
+                        *c = updated_cfg.clone();
+                        c.last_applied_theme = name_str.clone();
+                        let _ = c.save();
+                    }
+                    if let Some(w) = weak.upgrade() {
+                        sync_preset_indices(&w, &updated_cfg);
+                        // Re-read colors from the restored files and update the UI
+                        crate::refresh_visual_state(&w, &eng, &w.get_theme().to_string());
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::refresh_theme_list(&w, &tm);
+                        w.set_home_active_theme_name(name_str.clone().into());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Apply failed: {}", e);
+                }
+            }
+        });
+    }
+
+    {
+        let tm = tm.clone();
+        let weak = window.as_weak();
+        window.on_delete_theme(move |name| {
+            let name_str = name.to_string();
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).delete(&name_str);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Deleted theme: {}", name_str);
+                    if let Some(w) = weak.upgrade() {
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::refresh_theme_list(&w, &tm);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Delete failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let tm = tm.clone();
+        let weak = window.as_weak();
+        window.on_rename_theme(move |old, new| {
+            let old_str = old.to_string();
+            let new_str = new.to_string();
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).rename(&old_str, &new_str);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
+                    if let Some(w) = weak.upgrade() {
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::refresh_theme_list(&w, &tm);
+                        w.set_home_active_theme_name(tm.last_applied.clone().into());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Rename failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let tm = tm.clone();
+        let weak = window.as_weak();
+        window.on_overwrite_theme(move |name| {
+            let name_str = name.to_string();
+            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
+
+            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
+            match result {
+                Ok(_) => {
+                    tracing::info!("[themes] Overwritten theme: {}", name_str);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_busy(true);
+                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::refresh_theme_list(&w, &tm);
+                        w.set_theme_busy(false);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[themes] Overwrite failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_theme_error_text(e.into());
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let eng = eng.clone();
+        let tm = tm.clone();
+        let weak = window.as_weak();
+        window.on_refresh_themes(move || {
+            if let Some(w) = weak.upgrade() {
+                // 1. Re-read colors from the current system state and update the UI
+                crate::refresh_visual_state(&w, &eng, &w.get_theme().to_string());
+
+                // 2. If there's a last applied theme, overwrite it with the current state
+                //    so the ↻ acts as "save current changes to active theme"
+                let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
+
+                let last = tm.lock().unwrap_or_else(|e| e.into_inner()).last_applied.clone();
+                if !last.is_empty() {
+                    let _ = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&last, &provider_ids);
+                }
+
+                // 3. Refresh the theme list
+                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                crate::refresh_theme_list(&w, &tm);
+                w.set_home_active_theme_name(tm.last_applied.clone().into());
+            }
+        });
+    }
+
+    {
+        let tm = tm.clone();
+        let weak = window.as_weak();
+        window.on_search_query_changed(move |query| {
+            if let Some(w) = weak.upgrade() {
+                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
+                let all = tm.list().unwrap_or_default();
+                let q = query.to_lowercase();
+                let filtered: Vec<_> = all.iter()
+                    .filter(|t| t.name.to_lowercase().contains(&q))
+                    .collect();
+
+                use slint::{ModelRc, SharedString};
+                let names: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.name)).collect();
+                let saved_ats: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.saved_at)).collect();
+                let is_actives: Vec<bool> = filtered.iter().map(|t| t.is_active).collect();
+
+                w.set_theme_names(ModelRc::from(names.as_slice()));
+                w.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
+                w.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
+            }
+        });
+    }
+
+    // ── Intercept close events — always hide instead of destroying
+    //     the window so the global event loop keeps running. ──
+    {
+        let win_weak_for_close = window.as_weak();
+        window.window().on_close_requested(move || {
+            // "Secuestramos" el cierre (SUPER+C) para que haga lo MISMO que el
+            // toggle de SUPER+H: esconder la ventana en el escritorio oculto
+            // (special workspace) en lugar de destruir la superficie. Así nunca se
+            // recrea y el foco de teclado se conserva. KeepWindowShown rechaza la
+            // destrucción y el hide() del compositor la retira a pantalla aparte.
+            let needs_slint_hide = {
+                if let Some(win) = win_weak_for_close.upgrade() {
+                    if let Some(mut ctrl) = crate::composer::global_controller() {
+                        // La ventana está visible al cerrar → hide path (al escondite).
+                        ctrl.toggle_tray(&win);
+                        // Si el compositor no pudo mover al escondite (hide() cayó al
+                        // fallback Slint), la ventana no quedó oculta por hyprctl →
+                        // hay que ocultarla por Slint.
+                        !ctrl.window_hidden()
+                    } else {
+                        // Unreachable in production: the controller is initialized
+                        // in main() before the event loop runs. Keep the window.
+                        false
+                    }
+                } else {
+                    // Ventana ya muerta: nada que ocultar, que respete el codigo default.
+                    true
+                }
+            };
+            crate::tray::refresh_global_menu();
+            if needs_slint_hide {
+                slint::CloseRequestResponse::HideWindow
+            } else {
+                // El compositor ya la movió al escondite: rechazamos la destrucción
+                // y dejamos que la superficie siga viva.
+                slint::CloseRequestResponse::KeepWindowShown
+            }
+        });
+    }
+}
+
+/// After applying a theme, sync the GUI preset indices (anim, border, shader, border-size)
+/// so they reflect what the theme restored, not the stale values from before apply.
+fn sync_preset_indices(
+    window: &crate::MainWindow,
+    cfg: &Config,
+) {
+    use slint::Model;
+
+    let find = |files: &slint::ModelRc<slint::SharedString>, target: &str| -> i32 {
+        if target.is_empty() {
+            return -1;
+        }
+        for i in 0..files.row_count() {
+            if files.row_data(i).as_ref().map(|s| s.as_str()) == Some(target) {
+                return i as i32;
+            }
+        }
+        -1
+    };
+
+    window.set_active_anim_index(find(&window.get_anim_files(), &cfg.active_anim_file));
+    window.set_active_border_index(find(&window.get_border_files(), &cfg.active_border_file));
+    window.set_active_shader_index(find(&window.get_shader_files(), &cfg.active_shader_file));
+    window.set_border_size(cfg.border_size);
+    window.set_corner_radius(cfg.border_radius);
+    window.set_gap_in(cfg.gaps_in);
+    window.set_gap_out(cfg.gaps_out);
+}
+
+/// Resolve the current executable path for the restart action.
+fn resolve_exe() -> PathBuf {
+    if let Ok(path) = std::env::current_exe() {
+        if path.is_file() {
+            return path;
+        }
+    }
+    if let Some(arg0) = std::env::args().next() {
+        let p = PathBuf::from(&arg0);
+        if p.is_absolute() {
+            if p.is_file() {
+                return p;
+            }
+        } else if let Ok(paths) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                let candidate = dir.join(&arg0);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from("hve")
 }

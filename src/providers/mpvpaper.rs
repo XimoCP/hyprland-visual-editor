@@ -49,7 +49,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::providers::noctalia::{noctalia_msg, noctalia_state_dir};
+use crate::providers::noctalia_runtime::{noctalia_msg, noctalia_state_dir};
 
 /// File HVE stores inside the theme provider dir.
 pub const MANIFEST_FILE: &str = "mpvpaper-assignments.json";

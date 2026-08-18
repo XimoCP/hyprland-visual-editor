@@ -18,7 +18,7 @@ pub struct HyprlandSettingsProvider {
 impl HyprlandSettingsProvider {
     pub fn new() -> Self {
         Self {
-            format: crate::hve_format().to_string(),
+            format: crate::config::hve_format().to_string(),
         }
     }
 
@@ -61,7 +61,7 @@ impl HyprlandSettingsProvider {
     }
 
     fn settings_path(&self) -> std::path::PathBuf {
-        crate::hve_settings_path()
+        crate::config::hve_settings_path()
     }
 }
 
@@ -132,7 +132,7 @@ impl ThemeProvider for HyprlandSettingsProvider {
 
         // Ensure settings file exists before applying
         if !path.exists() {
-            crate::ensure_settings_file();
+            crate::settings::ensure_settings_file();
         }
 
         let state_path = theme_dir.join("providers").join(self.id()).join("state.json");
@@ -204,13 +204,13 @@ mod tests {
     use tempfile::TempDir;
 
     fn write_settings(content: &str) {
-        let path = crate::hve_settings_path();
+        let path = crate::config::hve_settings_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, content).unwrap();
     }
 
     fn read_settings() -> String {
-        std::fs::read_to_string(crate::hve_settings_path()).unwrap()
+        std::fs::read_to_string(crate::config::hve_settings_path()).unwrap()
     }
 
     fn provider_dir(theme: &std::path::Path) -> std::path::PathBuf {

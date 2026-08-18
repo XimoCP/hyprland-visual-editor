@@ -218,6 +218,55 @@ impl Config {
     }
 }
 
+/// Detect whether HVE is in lua or conf mode by reading the format cache.
+pub fn hve_format() -> &'static str {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let format_path = hve_cache_dir().join("hve_format");
+        match std::fs::read_to_string(&format_path) {
+            Ok(content) if content.trim() == "lua" => "lua".to_string(),
+            _ => "conf".to_string(),
+        }
+    })
+}
+
+/// HVE cache directory: ~/.cache/hve/
+pub fn hve_cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(home).join(".cache")
+        })
+        .join("hve")
+}
+
+/// Path to the HVE settings file (hve-settings.lua or .conf).
+/// This file controls HVE's window rules and keyboard shortcuts.
+/// Replaces the old hve-windowrules.{lua,conf} naming.
+/// Migrates the old file to the new name on first call if it exists.
+pub fn hve_settings_path() -> PathBuf {
+    let ext = if hve_format() == "lua" { "lua" } else { "conf" };
+    let new_path = hve_cache_dir().join(format!("hve-settings.{}", ext));
+    let old_path = hve_cache_dir().join(format!("hve-windowrules.{}", ext));
+
+    // Migrate old hve-windowrules file to hve-settings if it exists and new one doesn't
+    if old_path.exists() && !new_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&old_path) {
+            if std::fs::write(&new_path, &content).is_ok() {
+                let _ = std::fs::remove_file(&old_path);
+                tracing::info!(
+                    "[settings] Migrated {} → {}",
+                    old_path.display(),
+                    new_path.display()
+                );
+            }
+        }
+    }
+
+    new_path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

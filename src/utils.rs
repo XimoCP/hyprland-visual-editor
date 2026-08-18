@@ -4,7 +4,6 @@ use std::path::Path;
 /// Replaces content between two markers in a file.
 /// If markers don't exist, creates the block at the end of the file.
 /// Returns Ok(true) if content was replaced, Ok(false) if markers weren't found and block was appended.
-#[allow(dead_code)]
 pub fn edit_between_markers(
     path: &Path,
     start_marker: &str,
@@ -35,7 +34,6 @@ pub fn edit_between_markers(
 
 /// Extracts content between two markers from a string.
 /// Returns Ok(Some(content)) if found, Ok(None) if markers don't exist.
-#[allow(dead_code)]
 pub fn extract_block(content: &str, start_marker: &str, end_marker: &str) -> Option<String> {
     let start_idx = content.find(start_marker)?;
     let end_idx = content.find(end_marker)?;

@@ -7,6 +7,7 @@ mod hypr_ipc;
 mod ipc;
 mod presets;
 mod providers;
+mod settings;
 mod theme;
 mod theme_manager;
 mod tr;
@@ -18,7 +19,8 @@ mod test_utils;
 
 use clap::Parser;
 use config::Config;
-use engine::Engine;
+use engine::{ColorScheme, Engine};
+use settings::{ensure_settings_file, set_autostart, set_keybinds, set_tiling_window_rules};
 use slint::{Color, ComponentHandle, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,517 +65,8 @@ fn project_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Create or update the autostart desktop entry at
-/// `~/.config/autostart/hve.desktop`.
-/// Detect whether HVE is in lua or conf mode by reading the format cache.
-#[allow(dead_code)]
-pub fn hve_format() -> &'static str {
-    use std::sync::OnceLock;
-    static CACHE: OnceLock<String> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let format_path = hve_cache_dir().join("hve_format");
-        match std::fs::read_to_string(&format_path) {
-            Ok(content) if content.trim() == "lua" => "lua".to_string(),
-            _ => "conf".to_string(),
-        }
-    })
-}
-
-/// HVE cache directory: ~/.cache/hve/
-#[allow(dead_code)]
-pub fn hve_cache_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(home).join(".cache")
-        })
-        .join("hve")
-}
-
-/// Path to the HVE settings file (hve-settings.lua or .conf).
-/// This file controls HVE's window rules and keyboard shortcuts.
-/// Replaces the old hve-windowrules.{lua,conf} naming.
-/// Migrates the old file to the new name on first call if it exists.
-#[allow(dead_code)]
-pub fn hve_settings_path() -> PathBuf {
-    let ext = if hve_format() == "lua" { "lua" } else { "conf" };
-    let new_path = hve_cache_dir().join(format!("hve-settings.{}", ext));
-    let old_path = hve_cache_dir().join(format!("hve-windowrules.{}", ext));
-
-    // Migrate old hve-windowrules file to hve-settings if it exists and new one doesn't
-    if old_path.exists() && !new_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&old_path) {
-            if std::fs::write(&new_path, &content).is_ok() {
-                let _ = std::fs::remove_file(&old_path);
-                tracing::info!(
-                    "[settings] Migrated {} → {}",
-                    old_path.display(),
-                    new_path.display()
-                );
-            }
-        }
-    }
-
-    new_path
-}
-
-/// Ensure the settings file exists with a default float rule and empty keybinds section.
-/// Called once at startup — does NOT overwrite an existing file.
-#[allow(dead_code)]
-pub fn ensure_settings_file() {
-    let path = hve_settings_path();
-    if path.exists() {
-        return;
-    }
-
-    let format = hve_format();
-    let wr_marker_start = if format == "lua" {
-        "-- >>> HVE WINDOW RULES <<<"
-    } else {
-        "# >>> HVE WINDOW RULES <<<"
-    };
-    let wr_marker_end = if format == "lua" {
-        "-- >>> HVE WINDOW RULES END <<<"
-    } else {
-        "# >>> HVE WINDOW RULES END <<<"
-    };
-    let kb_marker_start = if format == "lua" {
-        "-- >>> HVE KEYBINDS <<<"
-    } else {
-        "# >>> HVE KEYBINDS <<<"
-    };
-    let kb_marker_end = if format == "lua" {
-        "-- >>> HVE KEYBINDS END <<<"
-    } else {
-        "# >>> HVE KEYBINDS END <<<"
-    };
-    let as_marker_start = if format == "lua" {
-        "-- >>> HVE AUTOSTART <<<"
-    } else {
-        "# >>> HVE AUTOSTART <<<"
-    };
-    let as_marker_end = if format == "lua" {
-        "-- >>> HVE AUTOSTART END <<<"
-    } else {
-        "# >>> HVE AUTOSTART END <<<"
-    };
-    let _ = std::fs::create_dir_all(hve_cache_dir());
-
-    let content = if format == "lua" {
-        format!(
-            r#"{wr_marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  float = true,
-  size  = {{ "95%", "95%" }},
-  move  = {{ "center", "center" }},
-}})
-{wr_marker_end}
-{kb_marker_start}
-{kb_marker_end}
-{as_marker_start}
-{as_marker_end}
-"#,
-        )
-    } else {
-        format!(
-            r#"{wr_marker_start}
-windowrulev2 = float, title:^(Hyprland Visual Editor)$
-windowrulev2 = center, title:^(Hyprland Visual Editor)$
-windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
-{wr_marker_end}
-{kb_marker_start}
-{kb_marker_end}
-{as_marker_start}
-{as_marker_end}
-"#,
-        )
-    };
-
-    match std::fs::write(&path, content) {
-        Ok(_) => tracing::info!("[settings] Created at {}", path.display()),
-        Err(e) => tracing::error!("[settings] Failed to create: {}", e),
-    }
-}
-
-/// Toggle HVE window rules between float (default) and tile.
-///
-/// Operates on hve-settings.lua/.conf — a dedicated file separate from
-/// the overlay (which is managed by assemble.sh). This file is loaded AFTER
-/// the user's windowrules.lua so its rule wins.
-///
-/// When `tiling` is false (default): `float = true` → window floats
-/// When `tiling` is true:           `tile  = true` → window tiles
-fn set_tiling_window_rules(tiling: bool) {
-    let path = hve_settings_path();
-    if !path.exists() {
-        tracing::warn!("[windowrules] File not found — creating default");
-        ensure_settings_file();
-    }
-
-    let format = hve_format();
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("[windowrules] Failed to read: {}", e);
-            return;
-        }
-    };
-
-    let marker_start = if format == "lua" {
-        "-- >>> HVE WINDOW RULES <<<"
-    } else {
-        "# >>> HVE WINDOW RULES <<<"
-    };
-    let marker_end = if format == "lua" {
-        "-- >>> HVE WINDOW RULES END <<<"
-    } else {
-        "# >>> HVE WINDOW RULES END <<<"
-    };
-
-    // Build the replacement block
-    let rules_block: String = if tiling {
-        // Tiling ON → tile rule (overrides float from user's windowrules.lua)
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  tile  = true,
-}})
-{marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-windowrulev2 = tile, title:^(Hyprland Visual Editor)$
-{marker_end}"#,
-            )
-        }
-    } else {
-        // Tiling OFF → float rule (default)
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  float = true,
-  size  = {{ "95%", "95%" }},
-  move  = {{ "center", "center" }},
-}})
-{marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-windowrulev2 = float, title:^(Hyprland Visual Editor)$
-windowrulev2 = center, title:^(Hyprland Visual Editor)$
-windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
-{marker_end}"#,
-            )
-        }
-    };
-
-    // Replace content between markers
-    let new_content = if content.contains(marker_start) {
-        let mut result = String::new();
-        let mut in_block = false;
-        let mut replaced = false;
-        for line in content.lines() {
-            if line.trim() == marker_start {
-                in_block = true;
-                if !replaced {
-                    result.push_str(&rules_block);
-                    result.push('\n');
-                    replaced = true;
-                }
-                continue;
-            }
-            if line.trim() == marker_end {
-                in_block = false;
-                continue;
-            }
-            if !in_block {
-                result.push_str(line);
-                result.push('\n');
-            }
-        }
-        result
-    } else {
-        // No markers yet → append the block
-        let mut result = content;
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push('\n');
-        result.push_str(&rules_block);
-        result.push('\n');
-        result
-    };
-
-    match std::fs::write(&path, new_content) {
-        Ok(_) => {
-            tracing::info!(
-                "[windowrules] {} mode applied (tile={})",
-                if tiling { "TILING" } else { "FLOATING" },
-                tiling,
-            );
-            if let Err(e) = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .output()
-                .map(|_| ())
-            {
-                tracing::warn!("[hve] hyprctl reload failed: {}", e);
-            }
-        }
-        Err(e) => {
-            tracing::error!("[windowrules] Failed to write: {}", e);
-        }
-    }
-}
-
-/// Write or remove the 5 HVE keybinds between `>>> HVE KEYBINDS <<<` markers
-/// in the hve-settings file. Supports both Lua and conf formats.
-///
-/// When `enabled` is true: writes the 5 IPC keybind entries between markers.
-/// When `enabled` is false: removes the markers and their content entirely.
-/// Calls `hyprctl reload` after a successful write.
-fn set_keybinds(enabled: bool) {
-    let path = hve_settings_path();
-    if !path.exists() {
-        tracing::warn!("[keybinds] File not found — creating default");
-        ensure_settings_file();
-    }
-
-    let format = hve_format();
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("[keybinds] Failed to read: {}", e);
-            return;
-        }
-    };
-
-    let marker_start = if format == "lua" {
-        "-- >>> HVE KEYBINDS <<<"
-    } else {
-        "# >>> HVE KEYBINDS <<<"
-    };
-    let marker_end = if format == "lua" {
-        "-- >>> HVE KEYBINDS END <<<"
-    } else {
-        "# >>> HVE KEYBINDS END <<<"
-    };
-
-    // Build the replacement block when enabled
-    let keybinds_block: String = if enabled {
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.bind("SUPER + H", hl.dsp.exec_cmd("hve-ipc toggle-tray"))
-hl.bind("SUPER + ALT + Q", hl.dsp.exec_cmd("hve-ipc pause-restart"))
-hl.bind("SUPER + ALT + N", hl.dsp.exec_cmd("hve-ipc next-anim"))
-hl.bind("SUPER + ALT + B", hl.dsp.exec_cmd("hve-ipc next-border"))
-hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd("hve-ipc next-shader"))
-{marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-bind = SUPER, H, exec, hve-ipc toggle-tray
-bind = SUPER ALT, Q, exec, hve-ipc pause-restart
-bind = SUPER ALT, N, exec, hve-ipc next-anim
-bind = SUPER ALT, B, exec, hve-ipc next-border
-bind = SUPER ALT, S, exec, hve-ipc next-shader
-{marker_end}"#,
-            )
-        }
-    } else {
-        String::new()
-    };
-
-    // Replace or remove content between markers
-    let new_content = if content.contains(marker_start) {
-        let mut result = String::new();
-        let mut in_block = false;
-        for line in content.lines() {
-            if line.trim() == marker_start {
-                in_block = true;
-                if enabled {
-                    result.push_str(&keybinds_block);
-                    result.push('\n');
-                }
-                continue;
-            }
-            if line.trim() == marker_end {
-                in_block = false;
-                continue;
-            }
-            if !in_block {
-                result.push_str(line);
-                result.push('\n');
-            }
-        }
-        result
-    } else if enabled {
-        // No markers yet → append the block
-        let mut result = content;
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push('\n');
-        result.push_str(&keybinds_block);
-        result.push('\n');
-        result
-    } else {
-        // Already no markers and disabled → nothing to do
-        content
-    };
-
-    match std::fs::write(&path, new_content) {
-        Ok(_) => {
-            tracing::info!(
-                "[keybinds] {}",
-                if enabled { "WRITTEN" } else { "REMOVED" }
-            );
-            if let Err(e) = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .output()
-                .map(|_| ())
-            {
-                tracing::warn!("[hve] hyprctl reload failed: {}", e);
-            }
-        }
-        Err(e) => {
-            tracing::error!("[keybinds] Failed to write: {}", e);
-        }
-    }
-}
-
-/// Toggle HVE autostart in hve-settings.lua.
-///
-/// When enabled, writes `hl.on("hyprland.start", ...)` with `hl.exec_cmd("hve --tray")`
-/// between markers. When disabled, removes the block entirely (markers stay in the
-/// template for next enable).
-///
-/// This avoids touching the user's exec.lua — everything lives in our managed file,
-/// which is dofile'd from hyprland.lua. Clean uninstall: delete hve-settings.lua
-/// and remove the dofile line from hyprland.lua.
-fn set_autostart(enabled: bool) {
-    let path = hve_settings_path();
-    if !path.exists() {
-        tracing::warn!("[autostart] hve-settings not found — creating default");
-        ensure_settings_file();
-    }
-
-    let format = hve_format();
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("[autostart] Failed to read hve-settings: {}", e);
-            return;
-        }
-    };
-
-    let marker_start = if format == "lua" {
-        "-- >>> HVE AUTOSTART <<<"
-    } else {
-        "# >>> HVE AUTOSTART <<<"
-    };
-    let marker_end = if format == "lua" {
-        "-- >>> HVE AUTOSTART END <<<"
-    } else {
-        "# >>> HVE AUTOSTART END <<<"
-    };
-
-    let exe = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("hve"))
-        .display()
-        .to_string();
-
-    let autostart_block: String = if enabled {
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.on("hyprland.start", function()
-    hl.exec_cmd("{} --tray")
-end)
-{marker_end}"#,
-                exe
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-exec-once = {} --tray
-{marker_end}"#,
-                exe
-            )
-        }
-    } else {
-        String::new()
-    };
-
-    // Replace or remove content between markers
-    let new_content = if content.contains(marker_start) {
-        let mut result = String::new();
-        let mut in_block = false;
-        for line in content.lines() {
-            if line.trim() == marker_start {
-                in_block = true;
-                if enabled {
-                    result.push_str(&autostart_block);
-                    result.push('\n');
-                }
-                continue;
-            }
-            if line.trim() == marker_end {
-                in_block = false;
-                continue;
-            }
-            if !in_block {
-                result.push_str(line);
-                result.push('\n');
-            }
-        }
-        result
-    } else if enabled {
-        // No markers yet → append the block
-        let mut result = content;
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push('\n');
-        result.push_str(&autostart_block);
-        result.push('\n');
-        result
-    } else {
-        // Disabled with no markers → nothing to do
-        content
-    };
-
-    match std::fs::write(&path, new_content) {
-        Ok(_) => {
-            tracing::info!(
-                "[autostart] {} in hve-settings.lua",
-                if enabled { "Enabled" } else { "Disabled" }
-            );
-            if let Err(e) = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .output()
-                .map(|_| ())
-            {
-                tracing::warn!("[hve] hyprctl reload failed: {}", e);
-            }
-        }
-        Err(e) => tracing::error!("[autostart] Failed to write hve-settings: {}", e),
-    }
-}
-
 /// Refresh the Slint theme list UI from the ThemeManager state.
-fn refresh_theme_list(
+pub(crate) fn refresh_theme_list(
     window: &crate::MainWindow,
     tm: &crate::theme_manager::ThemeManager,
 ) {
@@ -591,35 +84,6 @@ fn refresh_theme_list(
     // Update active theme index
     let active_idx = themes.iter().position(|t| t.is_active).map(|i| i as i32).unwrap_or(-1);
     window.set_active_theme_index(active_idx);
-}
-
-/// After applying a theme, sync the GUI preset indices (anim, border, shader, border-size)
-/// so they reflect what the theme restored, not the stale values from before apply.
-fn sync_preset_indices(
-    window: &crate::MainWindow,
-    cfg: &Config,
-) {
-    use slint::Model;
-
-    let find = |files: &slint::ModelRc<slint::SharedString>, target: &str| -> i32 {
-        if target.is_empty() {
-            return -1;
-        }
-        for i in 0..files.row_count() {
-            if files.row_data(i).as_ref().map(|s| s.as_str()) == Some(target) {
-                return i as i32;
-            }
-        }
-        -1
-    };
-
-    window.set_active_anim_index(find(&window.get_anim_files(), &cfg.active_anim_file));
-    window.set_active_border_index(find(&window.get_border_files(), &cfg.active_border_file));
-    window.set_active_shader_index(find(&window.get_shader_files(), &cfg.active_shader_file));
-    window.set_border_size(cfg.border_size);
-    window.set_corner_radius(cfg.border_radius);
-    window.set_gap_in(cfg.gaps_in);
-    window.set_gap_out(cfg.gaps_out);
 }
 
 /// Pre-warm tab layouts so the first user interaction after a show()
@@ -658,6 +122,59 @@ pub(crate) fn warmup_navigation(win: &crate::MainWindow) {
             w.set_nav_ready(true);
         }
     });
+}
+
+/// Re-read the current palette from the system and refresh every window
+/// visual that depends on it: resolve the color scheme, apply it to the
+/// window, regenerate the sidebar logo, and update the tray icon.
+///
+/// Convenience wrapper that combines [`fetch_visual_colors`] and
+/// [`apply_visual_state`]. Callers that must keep the UI thread free
+/// (e.g. the IPC server) should call the two halves separately instead.
+///
+/// Returns `(tray icon RGBA, primary color)` so callers that START the
+/// tray (instead of updating an already-registered one) can reuse the
+/// freshly rendered icon and log the loaded palette.
+pub(crate) fn refresh_visual_state(
+    window: &MainWindow,
+    engine: &Engine,
+    theme_pref: &str,
+) -> Option<(Vec<u8>, String)> {
+    apply_visual_state(window, &fetch_visual_colors(engine)?, theme_pref)
+}
+
+/// Fetch the current palette from the active color source. This spawns the
+/// `get_colors.sh` subprocess, so it is blocking and must be called off
+/// the UI thread.
+pub(crate) fn fetch_visual_colors(engine: &Engine) -> Option<ColorScheme> {
+    engine.get_colors().ok()
+}
+
+/// Apply a fetched palette to every window visual that depends on it:
+/// resolve the color scheme, apply it to the window, regenerate the
+/// sidebar logo, and update the tray icon. Pure UI work — safe to call
+/// on the event-loop thread.
+pub(crate) fn apply_visual_state(
+    window: &MainWindow,
+    colors: &ColorScheme,
+    theme_pref: &str,
+) -> Option<(Vec<u8>, String)> {
+    let resolved = theme::resolve_scheme(colors, theme_pref);
+    theme::apply_theme(window, &resolved);
+    let secondary = theme::parse_hex(&resolved.secondary);
+    let tertiary = theme::parse_hex(&resolved.tertiary);
+    let accent = theme::parse_hex(&resolved.accent);
+    // Sidebar logo (multi-color)
+    let logo = theme::render_logo_image(&secondary, &tertiary, &accent);
+    window.set_logo_image(logo);
+    // Tray icon (48x48 square, centered — tray scales down)
+    // Lighten accent so the tray icon is visible on dark panels
+    let tray_color = theme::lighten(&accent, 0.6);
+    let icon = theme::render_logo_square_mono(&tray_color, 48);
+    if let Some(icon) = &icon {
+        tray::update_global_icon(icon.clone());
+    }
+    Some((icon?, colors.primary.clone()))
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -701,7 +218,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let tray_mode = cli.tray;
 
     let proj = project_dir();
-    let engine = Engine::new(&proj);
+    let engine = Arc::new(Engine::new(&proj));
     let cfg = Config::load();
     // Use saved language, or auto-detect from system locale
     let tr_lang = if cfg.language.is_empty() {
@@ -755,7 +272,7 @@ fn main() -> Result<(), slint::PlatformError> {
         theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
         tracing::warn!("[shell] Noctalia no detectado — registrando provider v4 por defecto");
     }
-    theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new(engine.clone())));
+    theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new((*engine).clone())));
     theme_manager.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
     // Restore last applied theme from config
     if !cfg!(test) {
@@ -888,26 +405,12 @@ fn main() -> Result<(), slint::PlatformError> {
     )));
 
     // ── Dynamic theme + logo + tray icon ──
-    let tray_handle = match engine.get_colors() {
-        Ok(colors) => {
-            let resolved = theme::resolve_scheme(&colors, &cfg.theme);
-            theme::apply_theme(&window, &resolved);
-            let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
-            let secondary = theme::parse_hex(&resolved.secondary);
-            let tertiary = theme::parse_hex(&resolved.tertiary);
-            let accent = theme::parse_hex(&resolved.accent);
-            // Sidebar logo (multi-color)
-            let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
-            window.set_logo_image(logo);
-            // Tray icon (48x48 square, centered — tray scales down)
-            // Lighten accent so the tray icon is visible on dark panels
-                    let tray_color = theme::lighten(&accent, 0.6);
-            let icon = theme::render_logo_square_mono(&tray_color, 48)
-                .unwrap_or_default();
-            tracing::info!("Theme loaded: {} (pref={})", colors.primary, cfg.theme);
+    let tray_handle = match refresh_visual_state(&window, &engine, &cfg.theme) {
+        Some((icon, primary)) => {
+            tracing::info!("Theme loaded: {} (pref={})", primary, cfg.theme);
             tray::start_tray(window.as_weak(), tr.clone(), icon, 48, 48)
         }
-        Err(_) => tray::start_tray(window.as_weak(), tr.clone(), Vec::new(), 48, 48),
+        None => tray::start_tray(window.as_weak(), tr.clone(), Vec::new(), 48, 48),
     };
     let tray_system_active = tray_handle.system_active.clone();
     tray::init_global(tray_handle);
@@ -915,7 +418,15 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── Shared config for all callbacks (prevents stale clones from overwriting each other) ──
     let cfg = Arc::new(std::sync::Mutex::new(cfg));
 
-    callbacks::setup_callbacks(&window, &cfg, proj.clone(), tray_system_active);
+    callbacks::setup_callbacks(
+        &window,
+        &engine,
+        &cfg,
+        &theme_manager,
+        proj.clone(),
+        tray_system_active,
+        &lock,
+    );
 
     // ── Nav modules (data-driven sidebar, translated) ──
     let nav_modules = Vec::from([
@@ -959,483 +470,6 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── Countdown auto-minimize on focus loss ──
     let _focus_listener = countdown::setup_countdown(window.as_weak());
 
-    // ── Close button callback ──
-    {
-        let weak = window.as_weak();
-        window.on_close_button_clicked(move || {
-            countdown::minimize_now(weak.clone());
-        });
-    }
-
-    // ── Settings callbacks ──
-    // We use clone-then-save since all Slint callbacks run on the same thread
-    {
-        let window_weak = window.as_weak();
-        window.on_toggle_settings(move || {
-            let w = window_weak.upgrade().unwrap();
-            w.set_settings_open(!w.get_settings_open());
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_toggle_auto_minimize(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.auto_minimize_enabled = enabled;
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_auto_minimize(enabled);
-            }
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_change_minimize_seconds(move |secs| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.minimize_seconds = secs;
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_minimize_seconds(secs);
-            }
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_change_language(move |lang| {
-            let lang_str = lang.to_string();
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.language = lang_str.clone();
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_language(lang);
-                w.set_restart_required(true);
-            }
-            tracing::info!("Language changed to {}. Restart to apply fully.", lang_str);
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_toggle_tiling_mode(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.tiling_mode = enabled;
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_tiling_mode(enabled);
-                w.set_restart_required(false);
-            }
-
-            // Toggle window rules in hyprland.conf — this persists across restarts
-            set_tiling_window_rules(enabled);
-
-            // Try to toggle the CURRENT window immediately via Composer
-            if let Some(ctrl) = composer::global_controller() {
-                ctrl.composer().toggle_float();
-            }
-
-            // Show restart banner explaining that full effect requires restart
-            if let Some(w) = weak.upgrade() {
-                w.set_restart_required(true);
-            }
-            tracing::info!(
-                "[settings] Tiling mode {} — config updated + togglefloating dispatched",
-                if enabled { "ON" } else { "OFF" }
-            );
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_toggle_keybinds(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.keybinds_enabled = enabled;
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_keybinds_mode(enabled);
-            }
-            set_keybinds(enabled);
-            tracing::info!("[settings] Keyboard shortcuts {}", if enabled { "ON" } else { "OFF" });
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_toggle_autostart(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.auto_start = enabled;
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_autostart(enabled);
-            }
-            set_autostart(enabled);
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        let eng = engine.clone();
-        window.on_change_theme(move |theme| {
-            let theme_str = theme.to_string();
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.theme = theme_str.clone();
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                // Apply new palette immediately (no restart needed)
-                if let Ok(colors) = eng.get_colors() {
-                    let resolved = theme::resolve_scheme(&colors, &theme_str);
-                    theme::apply_theme(&w, &resolved);
-                    // Regenerate logo with new theme colors (multi-color)
-                    let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
-                    let secondary = theme::parse_hex(&resolved.secondary);
-                    let tertiary = theme::parse_hex(&resolved.tertiary);
-                    let accent = theme::parse_hex(&resolved.accent);
-                    let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
-                    w.set_logo_image(logo);
-                    // Update tray icon too
-            let tray_color = theme::lighten(&accent, 0.6);
-                    if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
-                        tray::update_global_icon(icon);
-                    }
-                }
-                w.set_theme(theme);
-            }
-            tracing::info!("Theme changed to {}", theme_str);
-        });
-    }
-
-    {
-        fn resolve_exe() -> PathBuf {
-            if let Ok(path) = std::env::current_exe() {
-                if path.is_file() {
-                    return path;
-                }
-            }
-            if let Some(arg0) = std::env::args().next() {
-                let p = PathBuf::from(&arg0);
-                if p.is_absolute() {
-                    if p.is_file() {
-                        return p;
-                    }
-                } else if let Ok(paths) = std::env::var("PATH") {
-                    for dir in std::env::split_paths(&paths) {
-                        let candidate = dir.join(&arg0);
-                        if candidate.is_file() {
-                            return candidate;
-                        }
-                    }
-                }
-            }
-            PathBuf::from("hve")
-        }
-
-        let restart_lock = lock.clone();
-        window.on_restart_app(move || {
-            tracing::info!("[settings] Restarting app...");
-            // 1. Release the exclusive lock so the new instance can start
-            if let Ok(mut guard) = restart_lock.lock() {
-                drop(guard.take());
-            }
-            // 2. Spawn the new instance
-            let exe = resolve_exe();
-            match std::process::Command::new(&exe)
-                .args(std::env::args().skip(1))
-                .spawn()
-            {
-                Ok(child) => {
-                    tracing::info!(
-                        "[settings] New instance spawned (PID: {}), quitting event loop",
-                        child.id()
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("[settings] Failed to restart: {}", e);
-                    return;
-                }
-            }
-            // 3. Gracefully quit the event loop — the main function continues past
-            //    run_event_loop_until_quit() and returns Ok(()), letting the process
-            //    die naturally. The new instance already has the lock released.
-            let _ = slint::quit_event_loop();
-        });
-    }
-
-    {
-        let settings_cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_reset_presets(move || {
-            tracing::info!("[settings] Resetting presets...");
-            if let Some(w) = weak.upgrade() {
-                w.set_active_anim_index(-1);
-                w.set_active_border_index(-1);
-                w.set_active_shader_index(-1);
-            }
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.active_anim_file = String::new();
-                c.active_border_file = String::new();
-                c.active_shader_file = String::new();
-                let _ = c.save();
-            }
-            tracing::info!("[settings] Presets reset complete.");
-        });
-    }
-
-    // ── Theme callbacks ──
-    {
-        let tm = theme_manager.clone();
-        let weak = window.as_weak();
-        window.on_save_theme(move |name| {
-            let name_str = name.to_string();
-            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
-
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Saved theme: {}", name_str);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_busy(true);
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        refresh_theme_list(&w, &tm);
-                        w.set_theme_busy(false);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Save failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let eng = engine.clone();
-        let tm = theme_manager.clone();
-        let cfg = cfg.clone();
-        let weak = window.as_weak();
-        window.on_apply_theme(move |name| {
-            let name_str = name.to_string();
-            // Suprime el auto-minimize mientras se aplica: hyprctl reload y la
-            // regeneración de window rules hacen que la ventana pierda foco
-            // varias veces, y eso no debe disparar un countdown espurio.
-            countdown::suppress_auto_minimize(std::time::Duration::from_secs(4));
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).apply(&name_str, || {
-                // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
-                // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
-                tracing::info!("[themes] Reloading Hyprland after theme apply...");
-                std::process::Command::new("hyprctl")
-                    .arg("reload")
-                    .output()
-                    .map(|_| ())
-                    .map_err(|e| format!("hyprctl reload failed: {e}"))
-            });
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Applied theme: {}", name_str);
-                    // Reload config from disk — the provider may have updated it
-                    let updated_cfg = Config::load();
-                    // Update in-memory config and persist
-                    if let Ok(mut c) = cfg.lock() {
-                        *c = updated_cfg.clone();
-                        c.last_applied_theme = name_str.clone();
-                        let _ = c.save();
-                    }
-                    if let Some(w) = weak.upgrade() {
-                        sync_preset_indices(&w, &updated_cfg);
-                        // Re-read colors from the restored files and update the UI
-                        if let Ok(colors) = eng.get_colors() {
-                            let theme_pref = w.get_theme().to_string();
-                            let resolved = theme::resolve_scheme(&colors, &theme_pref);
-                            theme::apply_theme(&w, &resolved);
-                            let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
-                            let secondary = theme::parse_hex(&resolved.secondary);
-                            let tertiary = theme::parse_hex(&resolved.tertiary);
-                            let accent = theme::parse_hex(&resolved.accent);
-                            let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
-                            w.set_logo_image(logo);
-                            let tray_color = theme::lighten(&accent, 0.6);
-                            if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
-                                tray::update_global_icon(icon);
-                            }
-                        }
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        refresh_theme_list(&w, &tm);
-                        w.set_home_active_theme_name(name_str.clone().into());
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Apply failed: {}", e);
-                }
-            }
-        });
-    }
-
-    {
-        let tm = theme_manager.clone();
-        let weak = window.as_weak();
-        window.on_delete_theme(move |name| {
-            let name_str = name.to_string();
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).delete(&name_str);
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Deleted theme: {}", name_str);
-                    if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        refresh_theme_list(&w, &tm);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Delete failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let tm = theme_manager.clone();
-        let weak = window.as_weak();
-        window.on_rename_theme(move |old, new| {
-            let old_str = old.to_string();
-            let new_str = new.to_string();
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).rename(&old_str, &new_str);
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
-                    if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        refresh_theme_list(&w, &tm);
-                        w.set_home_active_theme_name(tm.last_applied.clone().into());
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Rename failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let tm = theme_manager.clone();
-        let weak = window.as_weak();
-        window.on_overwrite_theme(move |name| {
-            let name_str = name.to_string();
-            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
-
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Overwritten theme: {}", name_str);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_busy(true);
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        refresh_theme_list(&w, &tm);
-                        w.set_theme_busy(false);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Overwrite failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let eng = engine.clone();
-        let tm = theme_manager.clone();
-        let weak = window.as_weak();
-        window.on_refresh_themes(move || {
-            if let Some(w) = weak.upgrade() {
-                // 1. Re-read colors from the current system state and update the UI
-                if let Ok(colors) = eng.get_colors() {
-                    let theme_pref = w.get_theme().to_string();
-                    let resolved = theme::resolve_scheme(&colors, &theme_pref);
-                    theme::apply_theme(&w, &resolved);
-                    let surface_lowest = theme::parse_hex(&resolved.surface_lowest);
-                    let secondary = theme::parse_hex(&resolved.secondary);
-                    let tertiary = theme::parse_hex(&resolved.tertiary);
-                    let accent = theme::parse_hex(&resolved.accent);
-                    let logo = theme::render_logo_image(&surface_lowest, &secondary, &tertiary, &accent);
-                    w.set_logo_image(logo);
-                    let tray_color = theme::lighten(&accent, 0.6);
-                    if let Some(icon) = theme::render_logo_square_mono(&tray_color, 48) {
-                        tray::update_global_icon(icon);
-                    }
-                }
-
-                // 2. If there's a last applied theme, overwrite it with the current state
-                //    so the ↻ acts as "save current changes to active theme"
-                let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
-
-                let last = tm.lock().unwrap_or_else(|e| e.into_inner()).last_applied.clone();
-                if !last.is_empty() {
-                    let _ = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&last, &provider_ids);
-                }
-
-                // 3. Refresh the theme list
-                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                refresh_theme_list(&w, &tm);
-                w.set_home_active_theme_name(tm.last_applied.clone().into());
-            }
-        });
-    }
-
-    {
-        let tm = theme_manager.clone();
-        let weak = window.as_weak();
-        window.on_search_query_changed(move |query| {
-            if let Some(w) = weak.upgrade() {
-                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                let all = tm.list().unwrap_or_default();
-                let q = query.to_lowercase();
-                let filtered: Vec<_> = all.iter()
-                    .filter(|t| t.name.to_lowercase().contains(&q))
-                    .collect();
-
-                use slint::{ModelRc, SharedString};
-                let names: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.name)).collect();
-                let saved_ats: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.saved_at)).collect();
-                let is_actives: Vec<bool> = filtered.iter().map(|t| t.is_active).collect();
-
-                w.set_theme_names(ModelRc::from(names.as_slice()));
-                w.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
-                w.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
-            }
-        });
-    }
-
     // ── Start color watcher (bash inotify) ──
     // The bash-based watcher uses inotify for efficient file monitoring.
     let _color_watcher = watcher::spawn_color_watcher(&proj);
@@ -1447,44 +481,6 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── IPC server (Unix socket) ──
     ipc::start_ipc_server(window.as_weak(), proj.clone());
-
-    // ── Intercept close events — always hide instead of destroying
-    //     the window so the global event loop keeps running. ──
-    let win_weak_for_close = window.as_weak();
-    window.window().on_close_requested(move || {
-        // "Secuestramos" el cierre (SUPER+C) para que haga lo MISMO que el
-        // toggle de SUPER+H: esconder la ventana en el escritorio oculto
-        // (special workspace) en lugar de destruir la superficie. Así nunca se
-        // recrea y el foco de teclado se conserva. KeepWindowShown rechaza la
-        // destrucción y el hide() del compositor la retira a pantalla aparte.
-        let needs_slint_hide = {
-            if let Some(win) = win_weak_for_close.upgrade() {
-                if let Some(mut ctrl) = composer::global_controller() {
-                    // La ventana está visible al cerrar → hide path (al escondite).
-                    ctrl.toggle_tray(&win);
-                    // Si el compositor no pudo mover al escondite (hide() cayó al
-                    // fallback Slint), la ventana no quedó oculta por hyprctl →
-                    // hay que ocultarla por Slint.
-                    !ctrl.window_hidden()
-                } else {
-                    // Inalcanzable en producción: el controller se inicializa en
-                    // main() antes de cablear este callback. Mantener la ventana.
-                    false
-                }
-            } else {
-                // Ventana ya muerta: nada que ocultar, que respete el codigo default.
-                true
-            }
-        };
-        crate::tray::refresh_global_menu();
-        if needs_slint_hide {
-            slint::CloseRequestResponse::HideWindow
-        } else {
-            // El compositor ya la movió al escondite: rechazamos la destrucción
-            // y dejamos que la superficie siga viva.
-            slint::CloseRequestResponse::KeepWindowShown
-        }
-    });
 
     // ── Startup: sync keybinds + autostart from saved config ──
     let cfg_guard = cfg.lock().unwrap_or_else(|e| e.into_inner());
@@ -1568,86 +564,6 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TempEnv;
-
-    // ── set_keybinds ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_set_keybinds_writes_and_removes() {
-        let _env = TempEnv::new();
-
-        // Ensure settings file exists (default conf format since hve_format is absent)
-        ensure_settings_file();
-        assert!(hve_settings_path().exists(), "settings file should exist");
-
-        // Enable keybinds
-        set_keybinds(true);
-        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
-        assert!(
-            content.contains(">>> HVE KEYBINDS <<<"),
-            "should have keybinds start marker"
-        );
-        assert!(
-            content.contains(">>> HVE KEYBINDS END <<<"),
-            "should have keybinds end marker"
-        );
-        assert!(content.contains("hve-ipc"), "should have hve-ipc commands");
-        assert!(
-            content.contains("toggle-tray"),
-            "should have toggle-tray bind"
-        );
-        assert!(
-            content.contains("pause-restart"),
-            "should have pause-restart bind"
-        );
-        assert!(content.contains("next-anim"), "should have next-anim bind");
-        assert!(
-            content.contains("next-border"),
-            "should have next-border bind"
-        );
-        assert!(
-            content.contains("next-shader"),
-            "should have next-shader bind"
-        );
-
-        // Disable keybinds
-        set_keybinds(false);
-        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
-        assert!(
-            !content.contains(">>> HVE KEYBINDS <<<"),
-            "should NOT have keybinds start marker"
-        );
-        assert!(
-            !content.contains(">>> HVE KEYBINDS END <<<"),
-            "should NOT have keybinds end marker"
-        );
-        assert!(
-            !content.contains("hve-ipc"),
-            "should NOT have hve-ipc commands"
-        );
-    }
-
-    #[test]
-    fn test_set_keybinds_noop_when_disabled_and_markers_absent() {
-        let _env = TempEnv::new();
-
-        // Create settings file manually WITHOUT keybinds markers
-        let path = hve_settings_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let no_kb_content = "# >>> HVE WINDOW RULES <<<\nwindowrulev2 = float, title:^(Hyprland Visual Editor)$\n# >>> HVE WINDOW RULES END <<<\n";
-        std::fs::write(&path, no_kb_content).unwrap();
-
-        let before = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !before.contains("HVE KEYBINDS"),
-            "test file should not have keybinds markers"
-        );
-
-        // Disable when no markers exist → should be no-op
-        set_keybinds(false);
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(before, after, "disabling when markers absent should be no-op");
-    }
 
     // ── Keyboard navigation logic (backend-testing) ──────────────────
     // Ignored by default: initializes the Slint testing backend which can
