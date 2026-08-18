@@ -1,31 +1,37 @@
+use crate::app_state::{AppState, SharedState};
 use crate::config::Config;
-use crate::engine::Engine;
 use crate::settings::{set_autostart, set_keybinds, set_tiling_window_rules};
-use crate::theme_manager::ThemeManager;
 use slint::ComponentHandle;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// Lock the shared state, recovering from a poisoned mutex (same policy the
+/// previous per-piece locks used).
+fn lock_state(state: &SharedState) -> MutexGuard<'_, AppState> {
+    state.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Generates a toggle callback for the animation/border/shader pattern.
 ///
 /// These three callbacks are structurally identical — only the config field
-/// name, the Engine method, and the UI setter differ.
+/// name, the Engine method, and the UI setter differ. All callbacks run on
+/// the Slint event-loop thread, so holding the single `AppState` lock across
+/// the engine subprocess call is safe (no other thread contends on it).
 macro_rules! make_toggle_callback {
-    ($eng:expr, $cfg:expr, $weak:expr, $active_field:ident, $apply_method:ident, $set_ui:ident, $err_label:expr) => {
+    ($state:expr, $weak:expr, $active_field:ident, $apply_method:ident, $set_ui:ident, $err_label:expr) => {
         move |idx, file| {
             let file_str = file.to_string();
-            let (is_deactivate, new_file) = {
-                let mut cfg = $cfg.lock().unwrap_or_else(|e| e.into_inner());
-                let is_deact = cfg.$active_field == file_str;
+            let (is_deactivate, result) = {
+                let mut state = lock_state(&$state);
+                let is_deact = state.cfg().$active_field == file_str;
                 let new = if is_deact { String::new() } else { file_str.clone() };
-                cfg.$active_field = new.clone();
-                let _ = cfg.save();
-                (is_deact, new)
+                state.cfg_mut().$active_field = new.clone();
+                let _ = state.cfg().save();
+                let arg = if is_deact { "none" } else { &new };
+                let result = state.engine().$apply_method(arg);
+                (is_deact, result)
             };
-
-            let arg = if is_deactivate { "none" } else { &new_file };
-            let result = $eng.$apply_method(arg);
             if let Err(e) = result {
                 tracing::error!("[HVE] {} error: {}", $err_label, e);
             }
@@ -38,41 +44,30 @@ macro_rules! make_toggle_callback {
 }
 
 /// Registers every Slint UI callback. Call once from `main()` after the
-/// window, config, engine, theme manager and tray are initialized.
+/// window and the shared `AppState` are initialized.
 ///
 /// Dependencies are passed by reference; each callback clones what it
 /// captures. All Slint callbacks run on the same thread, so
 /// clone-then-save is safe.
 pub fn setup_callbacks(
     window: &crate::MainWindow,
-    engine: &Arc<Engine>,
-    cfg: &Arc<Mutex<Config>>,
-    theme_manager: &Arc<Mutex<ThemeManager>>,
+    state: &SharedState,
     proj: PathBuf,
     tray_active: Arc<AtomicBool>,
     restart_lock: &Arc<Mutex<Option<std::fs::File>>>,
 ) {
-    // Single Engine + Config + ThemeManager instances shared across all callbacks
-    let eng = engine.clone();
-    let cfg = cfg.clone();
-    let tm = theme_manager.clone();
+    // Single AppState instance shared across all callbacks
+    let state = state.clone();
 
     // System toggle — skip first call (UI fires on init)
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_system(move |active| {
             tray_active.store(active, Ordering::Relaxed);
-            {
-                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                cfg.is_system_active = active;
-                let _ = cfg.save();
-            }
-            let result = if active {
-                eng.init_enable()
-            } else {
-                eng.init_disable()
+            let result = {
+                let mut state = lock_state(&state);
+                state.toggle_system(active)
             };
             if let Err(e) = result {
                 tracing::error!("[HVE] Init error: {}", e);
@@ -85,12 +80,10 @@ pub fn setup_callbacks(
 
     // Animation toggle
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_apply_animation(make_toggle_callback!(
-            eng,
-            cfg,
+            state,
             weak,
             active_anim_file,
             apply_animation,
@@ -101,12 +94,10 @@ pub fn setup_callbacks(
 
     // Border toggle
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_apply_border(make_toggle_callback!(
-            eng,
-            cfg,
+            state,
             weak,
             active_border_file,
             apply_border,
@@ -117,12 +108,10 @@ pub fn setup_callbacks(
 
     // Shader toggle
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_apply_shader(make_toggle_callback!(
-            eng,
-            cfg,
+            state,
             weak,
             active_shader_file,
             apply_shader,
@@ -133,8 +122,7 @@ pub fn setup_callbacks(
 
     // Geometry change — skip first call (Slider fires on init)
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         let mut geo_init = true;
         window.on_apply_geometry(move |size| {
@@ -142,24 +130,14 @@ pub fn setup_callbacks(
                 geo_init = false;
                 return;
             }
-            let (radius, gaps_in, gaps_out, current) = {
-                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    cfg.border_radius,
-                    cfg.gaps_in,
-                    cfg.gaps_out,
-                    cfg.border_size,
-                )
+            let result = {
+                let mut state = lock_state(&state);
+                if size == state.cfg().border_size {
+                    return;
+                }
+                state.cfg_mut().border_size = size;
+                state.apply_geometry()
             };
-            if size == current {
-                return;
-            }
-            {
-                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                cfg.border_size = size;
-                let _ = cfg.save();
-            }
-            let result = eng.apply_geometry(size, radius, gaps_in, gaps_out);
             if let Err(e) = result {
                 tracing::error!("[HVE] Geometry error: {}", e);
             }
@@ -172,8 +150,7 @@ pub fn setup_callbacks(
 
     // Corner radius change — skip first call (Slider fires on init)
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         let mut radius_init = true;
         window.on_apply_geometry_radius(move |radius| {
@@ -181,24 +158,14 @@ pub fn setup_callbacks(
                 radius_init = false;
                 return;
             }
-            let (size, gaps_in, gaps_out, current) = {
-                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    cfg.border_size,
-                    cfg.gaps_in,
-                    cfg.gaps_out,
-                    cfg.border_radius,
-                )
+            let result = {
+                let mut state = lock_state(&state);
+                if radius == state.cfg().border_radius {
+                    return;
+                }
+                state.cfg_mut().border_radius = radius;
+                state.apply_geometry()
             };
-            if radius == current {
-                return;
-            }
-            {
-                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                cfg.border_radius = radius;
-                let _ = cfg.save();
-            }
-            let result = eng.apply_geometry(size, radius, gaps_in, gaps_out);
             if let Err(e) = result {
                 tracing::error!("[HVE] Radius error: {}", e);
             }
@@ -211,8 +178,7 @@ pub fn setup_callbacks(
 
     // Gaps-in change (between windows) — skip first call (Slider fires on init)
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         let mut gaps_init = true;
         window.on_apply_geometry_gaps_in(move |gap| {
@@ -220,24 +186,14 @@ pub fn setup_callbacks(
                 gaps_init = false;
                 return;
             }
-            let (size, radius, current_in, current_out) = {
-                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    cfg.border_size,
-                    cfg.border_radius,
-                    cfg.gaps_in,
-                    cfg.gaps_out,
-                )
+            let result = {
+                let mut state = lock_state(&state);
+                if gap == state.cfg().gaps_in {
+                    return;
+                }
+                state.cfg_mut().gaps_in = gap;
+                state.apply_geometry()
             };
-            if gap == current_in {
-                return;
-            }
-            {
-                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                cfg.gaps_in = gap;
-                let _ = cfg.save();
-            }
-            let result = eng.apply_geometry(size, radius, gap, current_out);
             if let Err(e) = result {
                 tracing::error!("[HVE] Gaps-in error: {}", e);
             }
@@ -250,8 +206,7 @@ pub fn setup_callbacks(
 
     // Gaps-out change (windows ↔ monitor edges) — skip first call
     {
-        let eng = eng.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         let mut gaps_init = true;
         window.on_apply_geometry_gaps_out(move |gap| {
@@ -259,24 +214,14 @@ pub fn setup_callbacks(
                 gaps_init = false;
                 return;
             }
-            let (size, radius, current_in, current_out) = {
-                let cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    cfg.border_size,
-                    cfg.border_radius,
-                    cfg.gaps_in,
-                    cfg.gaps_out,
-                )
+            let result = {
+                let mut state = lock_state(&state);
+                if gap == state.cfg().gaps_out {
+                    return;
+                }
+                state.cfg_mut().gaps_out = gap;
+                state.apply_geometry()
             };
-            if gap == current_out {
-                return;
-            }
-            {
-                let mut cfg = cfg.lock().unwrap_or_else(|e| e.into_inner());
-                cfg.gaps_out = gap;
-                let _ = cfg.save();
-            }
-            let result = eng.apply_geometry(size, radius, current_in, gap);
             if let Err(e) = result {
                 tracing::error!("[HVE] Gaps-out error: {}", e);
             }
@@ -320,14 +265,10 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_auto_minimize(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.auto_minimize_enabled = enabled;
-                let _ = c.save();
-            }
+            lock_state(&state).update_cfg(|c| c.auto_minimize_enabled = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_auto_minimize(enabled);
             }
@@ -335,14 +276,10 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_change_minimize_seconds(move |secs| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.minimize_seconds = secs;
-                let _ = c.save();
-            }
+            lock_state(&state).update_cfg(|c| c.minimize_seconds = secs);
             if let Some(w) = weak.upgrade() {
                 w.set_minimize_seconds(secs);
             }
@@ -350,15 +287,11 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_change_language(move |lang| {
             let lang_str = lang.to_string();
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.language = lang_str.clone();
-                let _ = c.save();
-            }
+            lock_state(&state).update_cfg(|c| c.language = lang_str.clone());
             if let Some(w) = weak.upgrade() {
                 w.set_language(lang);
                 w.set_restart_required(true);
@@ -368,14 +301,10 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_tiling_mode(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.tiling_mode = enabled;
-                let _ = c.save();
-            }
+            lock_state(&state).update_cfg(|c| c.tiling_mode = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_tiling_mode(enabled);
                 w.set_restart_required(false);
@@ -401,14 +330,10 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_keybinds(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.keybinds_enabled = enabled;
-                let _ = c.save();
-            }
+            lock_state(&state).update_cfg(|c| c.keybinds_enabled = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_keybinds_mode(enabled);
             }
@@ -418,14 +343,10 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_autostart(move |enabled| {
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.auto_start = enabled;
-                let _ = c.save();
-            }
+            lock_state(&state).update_cfg(|c| c.auto_start = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_autostart(enabled);
             }
@@ -434,20 +355,18 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
-        let eng = eng.clone();
         window.on_change_theme(move |theme| {
             let theme_str = theme.to_string();
             {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
-                c.theme = theme_str.clone();
-                let _ = c.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                // Apply new palette immediately (no restart needed)
-                crate::refresh_visual_state(&w, &eng, &theme_str);
-                w.set_theme(theme);
+                let mut state = lock_state(&state);
+                state.update_cfg(|c| c.theme = theme_str.clone());
+                if let Some(w) = weak.upgrade() {
+                    // Apply new palette immediately (no restart needed)
+                    state.refresh_visual_state(&w, &theme_str);
+                    w.set_theme(theme);
+                }
             }
             tracing::info!("Theme changed to {}", theme_str);
         });
@@ -488,7 +407,7 @@ pub fn setup_callbacks(
     }
 
     {
-        let settings_cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_reset_presets(move || {
             tracing::info!("[settings] Resetting presets...");
@@ -497,33 +416,32 @@ pub fn setup_callbacks(
                 w.set_active_border_index(-1);
                 w.set_active_shader_index(-1);
             }
-            {
-                let mut c = settings_cfg.lock().unwrap_or_else(|e| e.into_inner());
+            lock_state(&state).update_cfg(|c| {
                 c.active_anim_file = String::new();
                 c.active_border_file = String::new();
                 c.active_shader_file = String::new();
-                let _ = c.save();
-            }
+            });
             tracing::info!("[settings] Presets reset complete.");
         });
     }
 
     // ── Theme callbacks ──
     {
-        let tm = tm.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_save_theme(move |name| {
             let name_str = name.to_string();
-            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
-
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
+            let result = {
+                let mut state = lock_state(&state);
+                let provider_ids = state.theme_manager().provider_ids();
+                state.theme_manager_mut().save(&name_str, &provider_ids)
+            };
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Saved theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
                         w.set_theme_busy(true);
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        crate::refresh_theme_list(&w, &tm);
+                        lock_state(&state).refresh_theme_list(&w);
                         w.set_theme_busy(false);
                     }
                 }
@@ -538,9 +456,7 @@ pub fn setup_callbacks(
     }
 
     {
-        let eng = eng.clone();
-        let tm = tm.clone();
-        let cfg = cfg.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_apply_theme(move |name| {
             let name_str = name.to_string();
@@ -548,33 +464,33 @@ pub fn setup_callbacks(
             // regeneración de window rules hacen que la ventana pierda foco
             // varias veces, y eso no debe disparar un countdown espurio.
             crate::countdown::suppress_auto_minimize(std::time::Duration::from_secs(4));
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).apply(&name_str, || {
-                // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
-                // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
-                tracing::info!("[themes] Reloading Hyprland after theme apply...");
-                std::process::Command::new("hyprctl")
-                    .arg("reload")
-                    .output()
-                    .map(|_| ())
-                    .map_err(|e| format!("hyprctl reload failed: {e}"))
-            });
+            let result = {
+                let mut state = lock_state(&state);
+                state.theme_manager_mut().apply(&name_str, || {
+                    // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
+                    // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
+                    tracing::info!("[themes] Reloading Hyprland after theme apply...");
+                    std::process::Command::new("hyprctl")
+                        .arg("reload")
+                        .output()
+                        .map(|_| ())
+                        .map_err(|e| format!("hyprctl reload failed: {e}"))
+                })
+            };
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Applied theme: {}", name_str);
                     // Reload config from disk — the provider may have updated it
-                    let updated_cfg = Config::load();
-                    // Update in-memory config and persist
-                    if let Ok(mut c) = cfg.lock() {
-                        *c = updated_cfg.clone();
-                        c.last_applied_theme = name_str.clone();
-                        let _ = c.save();
-                    }
+                    let updated_cfg = {
+                        let mut state = lock_state(&state);
+                        state.reload_config_after_theme(&name_str)
+                    };
                     if let Some(w) = weak.upgrade() {
                         sync_preset_indices(&w, &updated_cfg);
+                        let state = lock_state(&state);
                         // Re-read colors from the restored files and update the UI
-                        crate::refresh_visual_state(&w, &eng, &w.get_theme().to_string());
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        crate::refresh_theme_list(&w, &tm);
+                        state.refresh_visual_state(&w, &w.get_theme().to_string());
+                        state.refresh_theme_list(&w);
                         w.set_home_active_theme_name(name_str.clone().into());
                     }
                 }
@@ -586,17 +502,19 @@ pub fn setup_callbacks(
     }
 
     {
-        let tm = tm.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_delete_theme(move |name| {
             let name_str = name.to_string();
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).delete(&name_str);
+            let result = {
+                let mut state = lock_state(&state);
+                state.theme_manager_mut().delete(&name_str)
+            };
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Deleted theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        crate::refresh_theme_list(&w, &tm);
+                        lock_state(&state).refresh_theme_list(&w);
                     }
                 }
                 Err(e) => {
@@ -610,19 +528,22 @@ pub fn setup_callbacks(
     }
 
     {
-        let tm = tm.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_rename_theme(move |old, new| {
             let old_str = old.to_string();
             let new_str = new.to_string();
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).rename(&old_str, &new_str);
+            let result = {
+                let mut state = lock_state(&state);
+                state.theme_manager_mut().rename(&old_str, &new_str)
+            };
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
                     if let Some(w) = weak.upgrade() {
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        crate::refresh_theme_list(&w, &tm);
-                        w.set_home_active_theme_name(tm.last_applied.clone().into());
+                        let state = lock_state(&state);
+                        state.refresh_theme_list(&w);
+                        w.set_home_active_theme_name(state.theme_manager().last_applied.clone().into());
                     }
                 }
                 Err(e) => {
@@ -636,20 +557,21 @@ pub fn setup_callbacks(
     }
 
     {
-        let tm = tm.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_overwrite_theme(move |name| {
             let name_str = name.to_string();
-            let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
-
-            let result = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&name_str, &provider_ids);
+            let result = {
+                let mut state = lock_state(&state);
+                let provider_ids = state.theme_manager().provider_ids();
+                state.theme_manager_mut().save(&name_str, &provider_ids)
+            };
             match result {
                 Ok(_) => {
                     tracing::info!("[themes] Overwritten theme: {}", name_str);
                     if let Some(w) = weak.upgrade() {
                         w.set_theme_busy(true);
-                        let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                        crate::refresh_theme_list(&w, &tm);
+                        lock_state(&state).refresh_theme_list(&w);
                         w.set_theme_busy(false);
                     }
                 }
@@ -664,38 +586,38 @@ pub fn setup_callbacks(
     }
 
     {
-        let eng = eng.clone();
-        let tm = tm.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_refresh_themes(move || {
             if let Some(w) = weak.upgrade() {
+                let mut state = lock_state(&state);
                 // 1. Re-read colors from the current system state and update the UI
-                crate::refresh_visual_state(&w, &eng, &w.get_theme().to_string());
+                state.refresh_visual_state(&w, &w.get_theme().to_string());
 
                 // 2. If there's a last applied theme, overwrite it with the current state
                 //    so the ↻ acts as "save current changes to active theme"
-                let provider_ids = tm.lock().unwrap_or_else(|e| e.into_inner()).provider_ids();
-
-                let last = tm.lock().unwrap_or_else(|e| e.into_inner()).last_applied.clone();
+                let provider_ids = state.theme_manager().provider_ids();
+                let last = state.theme_manager().last_applied.clone();
                 if !last.is_empty() {
-                    let _ = tm.lock().unwrap_or_else(|e| e.into_inner()).save(&last, &provider_ids);
+                    let _ = state.theme_manager_mut().save(&last, &provider_ids);
                 }
 
                 // 3. Refresh the theme list
-                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                crate::refresh_theme_list(&w, &tm);
-                w.set_home_active_theme_name(tm.last_applied.clone().into());
+                state.refresh_theme_list(&w);
+                let last_applied = state.theme_manager().last_applied.clone();
+                drop(state);
+                w.set_home_active_theme_name(last_applied.into());
             }
         });
     }
 
     {
-        let tm = tm.clone();
+        let state = state.clone();
         let weak = window.as_weak();
         window.on_search_query_changed(move |query| {
             if let Some(w) = weak.upgrade() {
-                let tm = tm.lock().unwrap_or_else(|e| e.into_inner());
-                let all = tm.list().unwrap_or_default();
+                let state = lock_state(&state);
+                let all = state.theme_manager().list().unwrap_or_default();
                 let q = query.to_lowercase();
                 let filtered: Vec<_> = all.iter()
                     .filter(|t| t.name.to_lowercase().contains(&q))

@@ -1,3 +1,4 @@
+mod app_state;
 mod callbacks;
 mod composer;
 mod config;
@@ -17,6 +18,7 @@ mod watcher;
 #[cfg(test)]
 mod test_utils;
 
+use app_state::AppState;
 use clap::Parser;
 use config::Config;
 use engine::{ColorScheme, Engine};
@@ -278,13 +280,9 @@ fn main() -> Result<(), slint::PlatformError> {
     if !cfg!(test) {
         theme_manager.last_applied = cfg.last_applied_theme.clone();
     }
-    let theme_manager = Arc::new(std::sync::Mutex::new(theme_manager));
 
     // Refresh UI theme list
-    {
-        let tm = theme_manager.lock().unwrap_or_else(|e| e.into_inner());
-        refresh_theme_list(&window, &tm);
-    }
+    refresh_theme_list(&window, &theme_manager);
 
     // ── i18n: static UI strings ──
     window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual Editor"));
@@ -415,14 +413,19 @@ fn main() -> Result<(), slint::PlatformError> {
     let tray_system_active = tray_handle.system_active.clone();
     tray::init_global(tray_handle);
 
-    // ── Shared config for all callbacks (prevents stale clones from overwriting each other) ──
-    let cfg = Arc::new(std::sync::Mutex::new(cfg));
+    // ── Central view-model: Config + Engine + ThemeManager behind one lock ──
+    // The engine now lives inside AppState; the providers registered above
+    // keep their own engine clones, so the outer Arc can be dropped.
+    let state = Arc::new(std::sync::Mutex::new(AppState::new(
+        cfg,
+        (*engine).clone(),
+        theme_manager,
+    )));
+    drop(engine);
 
     callbacks::setup_callbacks(
         &window,
-        &engine,
-        &cfg,
-        &theme_manager,
+        &state,
         proj.clone(),
         tray_system_active,
         &lock,
@@ -483,13 +486,14 @@ fn main() -> Result<(), slint::PlatformError> {
     ipc::start_ipc_server(window.as_weak(), proj.clone());
 
     // ── Startup: sync keybinds + autostart from saved config ──
-    let cfg_guard = cfg.lock().unwrap_or_else(|e| e.into_inner());
-    if cfg_guard.keybinds_enabled {
-        set_keybinds(true);
+    {
+        let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        if state_guard.cfg().keybinds_enabled {
+            set_keybinds(true);
+        }
+        window.set_keybinds_mode(state_guard.cfg().keybinds_enabled);
+        set_autostart(state_guard.cfg().auto_start);
     }
-    window.set_keybinds_mode(cfg_guard.keybinds_enabled);
-    set_autostart(cfg_guard.auto_start);
-    drop(cfg_guard);
 
     // ── Visibilidad inicial según el modo ──
     if tray_mode {
@@ -526,7 +530,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via Composer para evitar el doble-click inicial.
-        let startup_tiling = cfg.lock().unwrap_or_else(|e| e.into_inner()).tiling_mode;
+        let startup_tiling = state.lock().unwrap_or_else(|e| e.into_inner()).cfg().tiling_mode;
         // First timer: focus window + sync config rules
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
             if let Some(ctrl) = composer::global_controller() {
