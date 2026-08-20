@@ -44,12 +44,21 @@ export component ShellRoot inherits Rectangle {
     in-out property <bool> expanded: false;    // ExpansionState mirror; drives set_size in delivery 4
     in-out property <int> focused-card: 0;     // keyboard focus on Home (0 = Gallery, 1 = Workshop)
 
-    // ── Chrome strings — English placeholders; i18n `shell.*` keys land in
-    //    task 4.4 (nav-shell spec R5) ──
+    // ── Chrome strings — i18n `shell.*` keys (nav-shell spec R5) ──
+    // Default values are the English fallbacks; main.rs overwrites them
+    // from tr.rs at startup.
     in property <string> brand-text: "HVE";
     in property <string> brand-subtitle: "Hyprland Visual Editor";
     in property <string> status-text: "Ready";
     in property <string> back-hint: "Esc collapses";
+
+    // ── Slot-area placeholder strings (i18n) ──
+    // The real gallery/workshop slot views land in modules 2/4; until then
+    // these placeholders describe the slot. Rust sets them from `shell.*`
+    // i18n keys at startup.
+    in property <string> slot-home-hint: "Home — theme cards land in module 2";
+    in property <string> slot-gallery-hint: "Gallery slot — module 2";
+    in property <string> slot-workshop-hint: "Workshop slot — module 4";
 
     // ── Navigation callbacks (wired to NavCommand in delivery 4) ──
     callback card-activated(screen: int);  // mouse click or Return on the focused card
@@ -123,7 +132,7 @@ export component ShellRoot inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 Text {
-                    text: "Home — theme cards land in module 2";
+                    text: root.slot-home-hint;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-14;
                     color: SkwdTokens.outline;
@@ -132,11 +141,11 @@ export component ShellRoot inherits Rectangle {
                 }
             }
             if root.mounted-screen == 1 : SlotPlaceholder {
-                placeholder-text: "Gallery slot — module 2";
+                placeholder-text: root.slot-gallery-hint;
                 accent: SkwdTokens.tertiary;
             }
             if root.mounted-screen == 2 : SlotPlaceholder {
-                placeholder-text: "Workshop slot — module 4";
+                placeholder-text: root.slot-workshop-hint;
                 accent: SkwdTokens.fallback-accent;
             }
         }

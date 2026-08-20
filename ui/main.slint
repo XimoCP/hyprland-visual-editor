@@ -7,6 +7,11 @@ import {
     ShadersModule,
     ThemesModule,
 } from "./modules.slint";
+import { ShellRoot, SkwdTokens } from "./shell.slint";
+
+// Re-export SkwdTokens so Rust can access it via crate::SkwdTokens.
+export { SkwdTokens }
+
 
 // ─── MAIN WINDOW ────────────────────────────────────────────────────
 export component MainWindow inherits Window {
@@ -171,6 +176,27 @@ export component MainWindow inherits Window {
     in-out property <bool> countdown-active: false;
     in-out property <int> countdown-seconds: 5;
     in-out property <float> countdown-progress: 1.0;
+
+    // ── HVE 2 shell state mirrors (delivery 4/5) ──
+    // Written by the Rust Shell, read by ShellRoot.
+    in-out property <int> mounted-screen: 0;
+    in-out property <bool> expanded: false;
+    in-out property <int> focused-card: 0;
+
+    // ── Shell chrome i18n strings (nav-shell spec R5) ──
+    in property <string> shell-brand-text: "HVE";
+    in property <string> shell-brand-subtitle: "Hyprland Visual Editor";
+    in property <string> shell-status-text: "Ready";
+    in property <string> shell-back-hint: "Esc collapses";
+    in property <string> shell-home-hint: "Home — theme cards land in module 2";
+    in property <string> shell-gallery-hint: "Gallery slot — module 2";
+    in property <string> shell-workshop-hint: "Workshop slot — module 4";
+
+    // ── Shell navigation callbacks (nav-shell spec R4; design D8) ──
+    callback card-activated(screen: int);
+    callback back-activated();
+    callback nav-move(direction: string);
+
 
     // ── Settings ──
     in-out property <bool> settings-open: false;
@@ -426,359 +452,67 @@ export component MainWindow inherits Window {
         }
     }
 
-    Rectangle {
-        // ── Main content (sidebar + content area) ──
-        HorizontalLayout {
-            // ── Sidebar ──
-            Rectangle {
-                width: 240px;
-                background: HveColors.bg-surface;
+    // ── HVE 2 shell mount (delivery 4/5) ──
+    shell := ShellRoot {
+        width: 100%;
+        height: 100%;
+        mounted-screen: root.mounted-screen;
+        expanded: root.expanded;
+        focused-card: root.focused-card;
+        brand-text: root.shell-brand-text;
+        brand-subtitle: root.shell-brand-subtitle;
+        status-text: root.shell-status-text;
+        back-hint: root.shell-back-hint;
+        slot-home-hint: root.shell-home-hint;
+        slot-gallery-hint: root.shell-gallery-hint;
+        slot-workshop-hint: root.shell-workshop-hint;
+        card-activated(screen) => { root.card-activated(screen); }
+        back-activated => { root.back-activated(); }
+        nav-move(direction) => { root.nav-move(direction); }
+    }
 
-                // Sombra lateral para separar del contenido
-                drop-shadow-blur: 15px;
-                drop-shadow-color: #00000040;
-                drop-shadow-offset-x: 5px;
+    // ── Close button floating at top-left (absolute, overlays shell) ──
+    CloseButton {
+        x: 12px;
+        y: 12px;
+        countdown-active: root.countdown-active;
+        countdown-seconds: root.countdown-seconds;
+        countdown-progress: root.countdown-progress;
+        clicked => { root.close-button-clicked(); }
+    }
 
-                VerticalLayout {
-                    padding-left: 20px;
-                    padding-right: 20px;
-                    spacing: 12px;
+    // ── Settings Panel overlay ──
+    if root.settings-open : SettingsPanel {
+        is-open: root.settings-open;
+        auto-minimize: root.auto-minimize;
+        minimize-seconds: root.minimize-seconds;
+        language: root.language;
+        tiling-mode: root.tiling-mode;
+        keybinds-mode: root.keybinds-mode;
+        autostart: root.autostart;
+        theme: root.theme;
+        restart-banner-text: root.settings-restart-banner;
+        restart-button-text: root.settings-restart-button;
+        settings-title: root.settings-title;
+        auto-minimize-label: root.auto-minimize-label;
+        timer-label: root.timer-label;
+        language-label: root.language-label;
+        tiling-label: root.tiling-label;
+        autostart-label: root.autostart-label;
+        theme-label: root.theme-label;
+        reset-label: root.reset-label;
+        keybinds-label: root.keybinds-label;
 
-                    // Logo anclado en la zona superior (sin alignment vertical)
-                    VerticalLayout {
-                        padding-top: 28px;
-                        padding-bottom: 12px;
-                        spacing: 8px;
-
-                        // Contenedor del logo centrado horizontalmente
-                        HorizontalLayout {
-                            alignment: center;
-
-                            Rectangle {
-                                width: 140px;
-                                height: 73px;
-
-                                Image {
-                                    source: root.logo-image;
-                                    width: 100%;
-                                    height: 100%;
-                                    image-fit: contain;
-                                }
-                            }
-                        }
-
-                        // Subtitle "Hyprland Visual Editor" centrado horizontalmente
-                        HorizontalLayout {
-                            alignment: center;
-                            spacing: 0px;
-
-                            Text { text: "H"; color: HveColors.accent-amber; font-weight: 700; font-size: 14px; }
-                            Text { text: "yprland "; color: HveColors.text-muted; font-size: 14px; }
-                            Text { text: "V"; color: HveColors.accent-purple; font-weight: 700; font-size: 14px; }
-                            Text { text: "isual "; color: HveColors.text-muted; font-size: 14px; }
-                            Text { text: "E"; color: HveColors.accent-green; font-weight: 700; font-size: 14px; }
-                            Text { text: "ditor"; color: HveColors.text-muted; font-size: 14px; }
-                        }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: HveColors.border;
-                    }
-
-                    // Nav (data-driven from Rust)
-                    for nav-module in root.nav-modules: NavButton {
-                        label: nav-module.label;
-                        icon-text: nav-module.icon;
-                        accent: nav-module.accent;
-                        selected: root.active-tab == nav-module.tab-index;
-                        sidebar-mode: root.sidebar-mode;
-                        clicked => {
-                            root.anim-focused-index = -1;
-                            root.border-focused-index = -1;
-                            root.shader-focused-index = -1;
-                            root.theme-focused-index = -1;
-                            root.active-tab = nav-module.tab-index;
-                        }
-                    }
-
-                    // Spacer variable: absorbe el espacio extra debajo de los nav buttons
-                    Rectangle {
-                        vertical-stretch: 1;
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: HveColors.border;
-                    }
-
-                    // ── Gear button + version ──
-                    HorizontalLayout {
-                        padding-bottom: 8px;
-                        spacing: 8px;
-                        alignment: start;
-
-                        SettingsButton {
-                            settings-open: root.settings-open;
-                            clicked => { root.toggle-settings(); }
-                        }
-
-                        Text {
-                            text: root.app-version-label;
-                            color: HveColors.text-muted;
-                            font-size: 9px;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                }
-            }
-
-            // ── Sidebar right border ──
-            Rectangle {
-                width: 1px;
-                background: HveColors.border;
-            }
-
-            // ── Content ──
-            Rectangle {
-                background: HveColors.bg-dark;
-                vertical-stretch: 1;
-
-                // ── Home ──────────────────────────────────────────────────
-                Rectangle {
-                    width: root.active-tab == 0 ? 100% : 0%;
-                    height: root.active-tab == 0 ? 100% : 0%;
-                    clip: true;
-
-                    HomeModule {
-                        width: 100%;
-                        height: 100%;
-                        anim-titles: root.anim-titles;
-                        border-titles: root.border-titles;
-                        shader-titles: root.shader-titles;
-                        active-anim-index: root.active-anim-index;
-                        active-border-index: root.active-border-index;
-                        active-shader-index: root.active-shader-index;
-                        activation-title: root.activation-title;
-                        activation-active-text: root.activation-active-text;
-                        activation-inactive-text: root.activation-inactive-text;
-                        system-active: root.system-active;
-                        // i18n wired properties
-                        status-active: root.home-status-active;
-                        status-inactive: root.home-status-inactive;
-                        nav-animations: root.home-nav-animations;
-                        nav-borders: root.home-nav-borders;
-                        nav-shaders: root.home-nav-shaders;
-                        count-styles: root.home-count-styles;
-                        count-filters: root.home-count-filters;
-                        active-config-title: root.home-active-config-title;
-                        active-anim-label: root.home-active-anim-label;
-                        active-border-label: root.home-active-border-label;
-                        active-shader-label: root.home-active-shader-label;
-                        active-theme-label: root.home-active-theme-label;
-                        none-anim: root.home-none-anim;
-                        none-border: root.home-none-border;
-                        none-shader: root.home-none-shader;
-                        none-theme: root.home-none-theme;
-                        active-theme-name: root.home-active-theme-name;
-                        about-title: root.home-about-title;
-                        about-short: root.home-about-short;
-                        about-full: root.home-about-full;
-                        about-items: root.home-about-items;
-                        about-tree-label: root.home-about-tree-label;
-                        about-tree-paths: root.home-about-tree-paths;
-                        about-tree-descs: root.home-about-tree-descs;
-                        about-tree-path-max: root.home-about-tree-path-max;
-                        about-docs-label: root.home-about-docs-label;
-                        toggle-system(v) => { root.toggle-system(v); }
-                        navigate-to(tab) => {
-                            root.anim-focused-index = -1;
-                            root.border-focused-index = -1;
-                            root.shader-focused-index = -1;
-                            root.theme-focused-index = -1;
-                            root.active-tab = tab;
-                        }
-                        open-docs => { root.open-docs(); }
-                    }
-                }
-
-                // ── Animaciones ──────────────────────────────────────
-                Rectangle {
-                    width: root.active-tab == 1 ? 100% : 0%;
-                    height: root.active-tab == 1 ? 100% : 0%;
-                    clip: true;
-
-                    AnimationsModule {
-                        width: 100%;
-                        height: 100%;
-                        header-title: root.anim-header-title;
-                        header-subtitle: root.anim-header-subtitle;
-                        anim-titles: root.anim-titles;
-                        anim-descs: root.anim-descs;
-                        anim-tags: root.anim-tags;
-                        anim-files: root.anim-files;
-                        active-index: root.active-anim-index;
-                        focused-index: root.anim-focused-index;
-                        is-active: root.active-tab == 1;
-                        fast-expand: root._nav-rapid;
-                        focus-requested(idx) => { root.anim-focused-index = idx; }
-                        anim-toggled(idx, file) => { root.apply-animation(idx, file); }
-                    }
-                }
-
-                // ── Bordes ───────────────────────────────────────────
-                Rectangle {
-                    width: root.active-tab == 2 ? 100% : 0%;
-                    height: root.active-tab == 2 ? 100% : 0%;
-                    clip: true;
-
-                    BordersModule {
-                        width: 100%;
-                        height: 100%;
-                        header-title: root.border-header-title;
-                        header-subtitle: root.border-header-subtitle;
-                        geometry-label: root.border-geometry-label;
-                        border-titles: root.border-titles;
-                        border-descs: root.border-descs;
-                        border-tags: root.border-tags;
-                        border-files: root.border-files;
-                        active-index: root.active-border-index;
-                        border-size: root.border-size;
-                        corner-radius: root.corner-radius;
-                        border-radius-label: root.border-radius-label;
-                        gap-in: root.gap-in;
-                        gap-out: root.gap-out;
-                        gap-in-label: root.gap-in-label;
-                        gap-out-label: root.gap-out-label;
-                        focused-index: root.border-focused-index;
-                        is-active: root.active-tab == 2;
-                        fast-expand: root._nav-rapid;
-                        focus-requested(idx) => { root.border-focused-index = idx; }
-                        border-toggled(idx, file) => { root.apply-border(idx, file); }
-                        geometry-changed(v) => { root.apply-geometry(v); }
-                        geometry-radius-changed(v) => { root.apply-geometry-radius(v); }
-                        geometry-gaps-in-changed(v) => { root.apply-geometry-gaps-in(v); }
-                        geometry-gaps-out-changed(v) => { root.apply-geometry-gaps-out(v); }
-                    }
-                }
-
-                // ── Shaders ──────────────────────────────────────────
-                Rectangle {
-                    width: root.active-tab == 3 ? 100% : 0%;
-                    height: root.active-tab == 3 ? 100% : 0%;
-                    clip: true;
-
-                    ShadersModule {
-                        width: 100%;
-                        height: 100%;
-                        header-title: root.shader-header-title;
-                        header-subtitle: root.shader-header-subtitle;
-                        shader-titles: root.shader-titles;
-                        shader-descs: root.shader-descs;
-                        shader-tags: root.shader-tags;
-                        shader-files: root.shader-files;
-                        active-index: root.active-shader-index;
-                        focused-index: root.shader-focused-index;
-                        is-active: root.active-tab == 3;
-                        fast-expand: root._nav-rapid;
-                        focus-requested(idx) => { root.shader-focused-index = idx; }
-                        shader-toggled(idx, file) => { root.apply-shader(idx, file); }
-                    }
-                }
-
-                // ── Themes ──────────────────────────────────────────────
-                Rectangle {
-                    width: root.active-tab == 4 ? 100% : 0%;
-                    height: root.active-tab == 4 ? 100% : 0%;
-                    clip: true;
-
-                    ThemesModule {
-                        width: 100%;
-                        height: 100%;
-                        theme-names: root.theme-names;
-                        theme-saved-ats: root.theme-saved-ats;
-                        theme-is-actives: root.theme-is-actives;
-                        is-busy: root.theme-busy;
-                        focused-index: root.theme-focused-index;
-                        is-active: root.active-tab == 4;
-                        fast-expand: root._nav-rapid;
-                        active-index: root.active-theme-index;
-                        focus-requested(idx) => { root.theme-focused-index = idx; }
-                        header-title: root.theme-header-title;
-                        header-subtitle: root.theme-header-subtitle;
-                        save-placeholder: root.theme-save-placeholder;
-                        save-button: root.theme-save-button;
-                        search-placeholder: root.theme-search-placeholder;
-                        empty-text: root.theme-empty-text;
-                        apply-text: root.theme-apply-text;
-                        rename-text: root.theme-rename-text;
-                        delete-text: root.theme-delete-text;
-                        refresh-text: root.theme-refresh-text;
-                        cancel-text: root.theme-cancel-text;
-                        confirm-delete: root.theme-confirm-delete;
-                        confirm-delete-msg: root.theme-confirm-delete-msg;
-                        confirm-refresh: root.theme-confirm-refresh;
-                        confirm-refresh-msg: root.theme-confirm-refresh-msg;
-                        rename-title: root.theme-rename-title;
-                        save-section-text: root.theme-save-section-text;
-                        list-section-text: root.theme-list-section-text;
-                        error-text: root.theme-error-text;
-                        save-theme(v) => { root.save-theme(v); }
-                        apply-theme(v) => { root.apply-theme(v); }
-                        delete-theme(v) => { root.delete-theme(v); }
-                        rename-theme(old, new) => { root.rename-theme(old, new); }
-                        overwrite-theme(v) => { root.overwrite-theme(v); }
-                        refresh-themes => { root.refresh-themes(); }
-                        search-query-changed(q) => { root.search-query-changed(q); }
-                    }
-                }
-            }
-        }
-
-        // ── Close button floating at top-left (absolute, overlays sidebar) ──
-        CloseButton {
-            x: 12px;
-            y: 12px;
-            countdown-active: root.countdown-active;
-            countdown-seconds: root.countdown-seconds;
-            countdown-progress: root.countdown-progress;
-            clicked => { root.close-button-clicked(); }
-        }
-
-        // ── Settings Panel overlay ──
-        if root.settings-open : SettingsPanel {
-            is-open: root.settings-open;
-            auto-minimize: root.auto-minimize;
-            minimize-seconds: root.minimize-seconds;
-            language: root.language;
-            tiling-mode: root.tiling-mode;
-            keybinds-mode: root.keybinds-mode;
-            autostart: root.autostart;
-            theme: root.theme;
-            restart-banner-text: root.settings-restart-banner;
-            restart-button-text: root.settings-restart-button;
-            settings-title: root.settings-title;
-            auto-minimize-label: root.auto-minimize-label;
-            timer-label: root.timer-label;
-            language-label: root.language-label;
-            tiling-label: root.tiling-label;
-            autostart-label: root.autostart-label;
-            theme-label: root.theme-label;
-            reset-label: root.reset-label;
-            keybinds-label: root.keybinds-label;
-
-            restart-required: root.restart-required;
-            close-panel => { root.toggle-settings(); }
-            toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
-            change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
-            change-language(v) => { root.change-language(v); }
-            toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
-            toggle-keybinds(v) => { root.toggle-keybinds(v); }
-            toggle-autostart(v) => { root.toggle-autostart(v); }
-            change-theme(v) => { root.change-theme(v); }
-            reset-presets => { root.reset-presets(); }
-            restart-app => { root.restart-app(); }
-        }
+        restart-required: root.restart-required;
+        close-panel => { root.toggle-settings(); }
+        toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+        change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+        change-language(v) => { root.change-language(v); }
+        toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
+        toggle-keybinds(v) => { root.toggle-keybinds(v); }
+        toggle-autostart(v) => { root.toggle-autostart(v); }
+        change-theme(v) => { root.change-theme(v); }
+        reset-presets => { root.reset-presets(); }
+        restart-app => { root.restart-app(); }
     }
 }
