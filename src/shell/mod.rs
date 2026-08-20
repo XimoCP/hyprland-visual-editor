@@ -19,3 +19,5 @@ pub mod nav;
 pub mod size;
 #[allow(dead_code)]
 pub mod slots;
+#[cfg(test)]
+mod ui_tests;

@@ -1,0 +1,192 @@
+// HVE 2 — Shell chrome (trunk, delivery 3/5).
+//
+// MIT credit: visual language, geometry and tokens are translated from
+// skwd-wall (MIT, © liixini, https://github.com/liixini/skwd-wall).
+// No GPL code (hyprmod) is used.
+
+import { SkwdTokens } from "tokens.slint";
+// Re-export the token singleton so consumers of this compilation unit (and
+// delivery 4's ui/main.slint) can read it under its own name from Rust.
+export { SkwdTokens }
+
+// Placeholder body shown inside the slot area while a screen is mounted.
+// Real slot views (gallery/workshop) replace it in modules 2 and 4.
+component SlotPlaceholder inherits Rectangle {
+    in property <string> placeholder-text;
+    in property <color> accent;
+
+    background: SkwdTokens.surface-container;
+    border-radius: SkwdTokens.radius-12;
+
+    Text {
+        text: placeholder-text;
+        font-family: SkwdTokens.font-body;
+        font-size: SkwdTokens.size-14;
+        color: accent;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// ─── ShellRoot — the navigation shell chrome (design D1, D8) ───────────
+// The trunk chrome ui/main.slint mounts in delivery 4: a root layout with a
+// slot area where mounted screens render (`if`+enum replaces the QML Loader,
+// design D3), branding/status placeholders and KeyBindings that emit
+// navigation callbacks. The UI is a read-only view of the Rust NavState
+// (nav-shell spec R1): it mirrors `mounted-screen`/`expanded`/`focused-card`
+// but never mutates navigation state itself — input is reported through the
+// callbacks below and Rust maps them to NavCommand (design D8: keyboard ==
+// mouse). The animated `set_size` Timer lands in delivery 4 (design D4);
+// this file only exposes the state that timer drives.
+export component ShellRoot inherits Rectangle {
+    // ── State mirrors (written by Rust, read by the UI) ──
+    in-out property <int> mounted-screen: 0;   // 0 = Home (base), 1 = Gallery, 2 = Workshop
+    in-out property <bool> expanded: false;    // ExpansionState mirror; drives set_size in delivery 4
+    in-out property <int> focused-card: 0;     // keyboard focus on Home (0 = Gallery, 1 = Workshop)
+
+    // ── Chrome strings — English placeholders; i18n `shell.*` keys land in
+    //    task 4.4 (nav-shell spec R5) ──
+    in property <string> brand-text: "HVE";
+    in property <string> brand-subtitle: "Hyprland Visual Editor";
+    in property <string> status-text: "Ready";
+    in property <string> back-hint: "Esc collapses";
+
+    // ── Navigation callbacks (wired to NavCommand in delivery 4) ──
+    callback card-activated(screen: int);  // mouse click or Return on the focused card
+    callback back-activated();             // Escape or the back affordance
+    callback nav-move(direction: string);  // arrows: "up" | "down" | "left" | "right"
+
+    background: SkwdTokens.surface;
+    forward-focus: shell-kbd;
+
+    VerticalLayout {
+        // ── Chrome top bar: branding + status placeholders ──
+        Rectangle {
+            height: 56px;
+            background: SkwdTokens.surface-container;
+
+            HorizontalLayout {
+                padding-left: SkwdTokens.spacing-16;
+                padding-right: SkwdTokens.spacing-16;
+                spacing: SkwdTokens.spacing-8;
+
+                // Branding placeholder
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.brand-text;
+                        font-family: SkwdTokens.font-heading;
+                        font-size: SkwdTokens.size-18;
+                        font-weight: 700;
+                        color: SkwdTokens.primary;
+                    }
+                    Text {
+                        text: root.brand-subtitle;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        color: SkwdTokens.outline;
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // Status area placeholder
+                Text {
+                    text: root.status-text;
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Separator between chrome and the slot area
+        Rectangle { height: SkwdTokens.border-1; background: SkwdTokens.outline; }
+
+        // ── Slot area: the mounted screen renders here. `if`+enum replaces
+        //    the QML Loader (design D3); the gallery/workshop slot views land
+        //    in modules 2/4 — these are placeholders ──
+        Rectangle {
+            vertical-stretch: 1;
+            background: SkwdTokens.surface;
+            opacity: root.expanded ? 1.0 : 0.6;
+            // OutCubic (skwd default `Behavior` curve, design D4): not a
+            // SkwdTokens property — Slint 1.17 cannot expose `easing` through
+            // the public API, so the token value is inlined here (see the
+            // "Animation" section comment in tokens.slint).
+            animate opacity { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+            clip: true;
+
+            if root.mounted-screen == 0 : Rectangle {
+                // Home — the base screen; cards land in module 2 (gallery).
+                width: 100%;
+                height: 100%;
+                Text {
+                    text: "Home — theme cards land in module 2";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-14;
+                    color: SkwdTokens.outline;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            if root.mounted-screen == 1 : SlotPlaceholder {
+                placeholder-text: "Gallery slot — module 2";
+                accent: SkwdTokens.tertiary;
+            }
+            if root.mounted-screen == 2 : SlotPlaceholder {
+                placeholder-text: "Workshop slot — module 4";
+                accent: SkwdTokens.fallback-accent;
+            }
+        }
+
+        // ── Chrome bottom bar: back affordance hint ──
+        Rectangle {
+            height: 32px;
+            background: SkwdTokens.surface-container;
+
+            HorizontalLayout {
+                padding-left: SkwdTokens.spacing-16;
+                padding-right: SkwdTokens.spacing-16;
+                Text {
+                    text: root.back-hint;
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // Keyboard navigation (nav-shell spec R4; design D8: keyboard == mouse):
+    // arrows → nav-move (Rust moves focus, mirrors `focused-card` back),
+    // Return → activate the focused card, Escape → back/collapse.
+    shell-kbd := FocusScope {
+        KeyBinding {
+            keys: @keys(DownArrow);
+            activated => { root.nav-move("down"); }
+        }
+        KeyBinding {
+            keys: @keys(UpArrow);
+            activated => { root.nav-move("up"); }
+        }
+        KeyBinding {
+            keys: @keys(RightArrow);
+            activated => { root.nav-move("right"); }
+        }
+        KeyBinding {
+            keys: @keys(LeftArrow);
+            activated => { root.nav-move("left"); }
+        }
+        KeyBinding {
+            keys: @keys(Return);
+            activated => { root.card-activated(root.focused-card); }
+        }
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => { root.back-activated(); }
+        }
+    }
+}
