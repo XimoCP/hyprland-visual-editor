@@ -1,0 +1,108 @@
+// HVE 2 — Design tokens (trunk, delivery 3/5).
+//
+// MIT credit: visual language, geometry and tokens are translated from
+// skwd-wall (MIT, © liixini, https://github.com/liixini/skwd-wall).
+// No GPL code (hyprmod) is used. Source values: openspec/changes/
+// hve2-trunk/design.md, "Design Tokens" section (task 3.1).
+
+// ─── SkwdTokens — design token singleton (design D6) ───────────────────
+// The `pragma Singleton` analog: one exported global the whole shell reads
+// for fonts, sizes, radii, spacing, animation cadence, borders, opacity,
+// the skwd color palette and the gallery geometry (modules 2-3 seams).
+export global SkwdTokens {
+    // ── Fonts ──
+    in-out property <string> font-body: "Roboto Condensed";
+    in-out property <string> font-heading: "Roboto";
+    in-out property <string> font-mono: "Roboto Mono";
+
+    // ── Sizes (px): 9, 11, 12, 13, 14, 16, 18, 24, 32, 36 ──
+    in-out property <length> size-9: 9px;
+    in-out property <length> size-11: 11px;
+    in-out property <length> size-12: 12px;
+    in-out property <length> size-13: 13px;
+    in-out property <length> size-14: 14px;
+    in-out property <length> size-16: 16px;
+    in-out property <length> size-18: 18px;
+    in-out property <length> size-24: 24px;
+    in-out property <length> size-32: 32px;
+    in-out property <length> size-36: 36px;
+
+    // ── Radii (px): 2, 4, 8, 12, 16, 20, 40 ──
+    in-out property <length> radius-2: 2px;
+    in-out property <length> radius-4: 4px;
+    in-out property <length> radius-8: 8px;
+    in-out property <length> radius-12: 12px;
+    in-out property <length> radius-16: 16px;
+    in-out property <length> radius-20: 20px;
+    in-out property <length> radius-40: 40px;
+
+    // ── Spacing (px): 2, 4, 8, 12, 16, 20 ──
+    in-out property <length> spacing-2: 2px;
+    in-out property <length> spacing-4: 4px;
+    in-out property <length> spacing-8: 8px;
+    in-out property <length> spacing-12: 12px;
+    in-out property <length> spacing-16: 16px;
+    in-out property <length> spacing-20: 20px;
+
+    // ── Animation (ms): 100, 150, 200, 250, 300, 350 (expand), 400, 1000 ──
+    // 350ms is the skwd `animExpand` cadence the stepped `set_size` Timer
+    // follows (design D4). Default easing: OutCubic ≈ cubic-bezier(0.215,
+    // 0.61, 0.355, 1) — the skwd default `Behavior` curve. NOTE: Slint 1.17
+    // does not expose `easing` values through the public API, so the cubic
+    // bezier is NOT a token property here; ui/shell.slint inlines it in its
+    // `animate` blocks (see the inline comment at the slot-area animation).
+    // The value above is the single source of truth for the design token
+    // (design D4).
+    in-out property <duration> anim-100: 100ms;
+    in-out property <duration> anim-150: 150ms;
+    in-out property <duration> anim-200: 200ms;
+    in-out property <duration> anim-250: 250ms;
+    in-out property <duration> anim-300: 300ms;
+    in-out property <duration> anim-expand: 350ms;
+    in-out property <duration> anim-400: 400ms;
+    in-out property <duration> anim-1000: 1000ms;
+
+    // ── Border (px): 1, 2, 3 ──
+    in-out property <length> border-1: 1px;
+    in-out property <length> border-2: 2px;
+    in-out property <length> border-3: 3px;
+
+    // ── Opacity: .35, .5, .6 ──
+    in-out property <float> opacity-dim: 0.35;
+    in-out property <float> opacity-mid: 0.5;
+    in-out property <float> opacity-strong: 0.6;
+
+    // ── Colors (skwd-wall palette → HveColors mapping, design.md) ──
+    in-out property <color> primary: #ffb4ab;
+    in-out property <color> tertiary: #8bceff;
+    in-out property <color> surface: #1d100e;
+    in-out property <color> surface-variant: #5a413e;
+    in-out property <color> surface-container: #2c1f1d;
+    in-out property <color> outline: #a98986;
+    in-out property <color> fallback-accent: #4fc3f7;
+
+    // ── Gallery geometry (design.md tokens; modules 2-3 seams) ──
+    // Slice carousel: 135/924/520/−30/skew 35/visible 12.
+    in-out property <length> gallery-slice-w: 135px;
+    in-out property <length> gallery-slice-h: 924px;
+    in-out property <length> gallery-slice-card-w: 520px;
+    in-out property <angle> gallery-slice-angle: -30deg;
+    in-out property <angle> gallery-slice-skew: 35deg;
+    in-out property <int> gallery-slice-visible: 12;
+    // Hex columns: 140/3/7.
+    in-out property <length> gallery-hex-h: 140px;
+    in-out property <int> gallery-hex-cols: 3;
+    in-out property <int> gallery-hex-rows: 7;
+    // Grid: 6×3, thumb 300×169.
+    in-out property <int> gallery-grid-cols: 6;
+    in-out property <int> gallery-grid-rows: 3;
+    in-out property <length> gallery-thumb-w: 300px;
+    in-out property <length> gallery-thumb-h: 169px;
+    // Mosaic: 48, relax 2, 1500×800.
+    in-out property <length> gallery-mosaic-cell: 48px;
+    in-out property <int> gallery-mosaic-relax: 2;
+    in-out property <length> gallery-mosaic-w: 1500px;
+    in-out property <length> gallery-mosaic-h: 800px;
+    // uiScale 1.0.
+    in-out property <float> ui-scale: 1.0;
+}
