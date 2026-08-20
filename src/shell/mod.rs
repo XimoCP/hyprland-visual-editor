@@ -9,8 +9,13 @@
 //! skwd-wall (MIT, © liixini, https://github.com/liixini/skwd-wall). No GPL
 //! code from hyprmod is used.
 
-// `NavState` is not reachable from `main` until the Shell root is wired
-// (task 4.3); deliveries 2-4 consume these types. Remove this allow once
-// `main.rs` builds `Shell` (it keeps `cargo check` warning-free meanwhile).
+// `NavState`, `SlotRegistry` and `SizePolicy` are not reachable from `main`
+// until the Shell root is wired (task 4.3); deliveries 2-4 consume these
+// types. Remove this allow once `main.rs` builds `Shell` (it keeps `cargo
+// check` warning-free meanwhile).
 #[allow(dead_code)]
 pub mod nav;
+#[allow(dead_code)]
+pub mod size;
+#[allow(dead_code)]
+pub mod slots;

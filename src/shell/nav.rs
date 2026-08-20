@@ -15,7 +15,9 @@ const CARD_COUNT: usize = 2;
 
 /// The three shell screens. `Home` is the root screen that hosts the
 /// expandable cards; `Gallery` and `Workshop` are expansion targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `Hash` is required because `SlotRegistry` keys its `HashMap` by screen
+/// (design D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Screen {
     Home,
     Gallery,
