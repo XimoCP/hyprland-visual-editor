@@ -14,6 +14,8 @@ pub mod size;
 pub mod slots;
 #[cfg(test)]
 mod ui_tests;
+#[cfg(test)]
+mod integration_tests;
 
 use self::nav::{ExpansionState, NavCommand, NavState};
 #[cfg(test)]
@@ -388,7 +390,7 @@ mod tests {
         Shell::dispatch(&shell, NavCommand::Expand(Screen::Gallery));
         {
             let s = shell.borrow();
-            let slot = s.slots.get(Screen::Gallery).unwrap();
+            let _slot = s.slots.get(Screen::Gallery).unwrap();
             // Downcast via the trait — StubSlot's counter is internal.
             // Verify through the registry's on_mount firing indirectly:
             // the mounted-screen mirror must be Gallery now.
