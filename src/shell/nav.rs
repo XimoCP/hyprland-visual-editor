@@ -6,6 +6,10 @@
 //! holds navigation state of its own. The module is intentionally free of
 //! Slint types so it stays unit-testable headless (R2: deterministic
 //! transitions).
+//!
+//! MIT credit: visual language, geometry and tokens are translated from
+//! skwd-wall (MIT, © liixini, https://github.com/liixini/skwd-wall). No GPL
+//! code from hyprmod is used.
 
 use std::collections::VecDeque;
 
