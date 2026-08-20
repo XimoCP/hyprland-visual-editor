@@ -9,6 +9,7 @@ mod ipc;
 mod presets;
 mod providers;
 mod settings;
+mod shell;
 mod theme;
 mod theme_manager;
 mod tr;
