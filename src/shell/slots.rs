@@ -22,6 +22,7 @@ use std::collections::HashMap;
 /// a slot never holds shell state of its own (nav-shell spec R1). The mount
 /// and unmount hooks let a module react to being shown/hidden, and `label`
 /// provides its i18n name for the chrome.
+#[allow(dead_code)]
 pub trait Slot: Send + Sync {
     /// The screen this slot is mounted for.
     fn screen(&self) -> Screen;
@@ -68,17 +69,19 @@ impl SlotRegistry {
 ///
 /// Each stub counts its mount/unmount hook invocations so tests can assert
 /// that the shell actually showed and hid the slot.
-#[cfg(test)]
-pub(crate) struct StubSlot {
+///
+/// Production code: registered by main.rs for Gallery and Workshop until
+/// modules 2 and 4 provide real slot views.
+#[cfg_attr(not(test), allow(dead_code))]
+pub struct StubSlot {
     screen: Screen,
     mount_count: std::sync::atomic::AtomicU32,
     unmount_count: std::sync::atomic::AtomicU32,
 }
 
-#[cfg(test)]
 impl StubSlot {
     /// A stub mounted for `screen` with zero hook invocations.
-    pub(crate) fn new(screen: Screen) -> Self {
+    pub fn new(screen: Screen) -> Self {
         Self {
             screen,
             mount_count: std::sync::atomic::AtomicU32::new(0),
@@ -87,17 +90,18 @@ impl StubSlot {
     }
 
     /// How many times the mount hook has fired on this stub.
-    pub(crate) fn mount_count(&self) -> u32 {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn mount_count(&self) -> u32 {
         self.mount_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many times the unmount hook has fired on this stub.
-    pub(crate) fn unmount_count(&self) -> u32 {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn unmount_count(&self) -> u32 {
         self.unmount_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
-#[cfg(test)]
 impl Slot for StubSlot {
     fn screen(&self) -> Screen {
         self.screen
@@ -112,8 +116,6 @@ impl Slot for StubSlot {
     }
 
     fn label(&self, tr: &Tr) -> SharedString {
-        // shell.* i18n keys land in task 4.4; until then the fallback is
-        // the English label (tr.rs fallback chain: selected → en → key).
         match self.screen {
             Screen::Home => tr.tr_shared("shell.slots.home", "Home"),
             Screen::Gallery => tr.tr_shared("shell.slots.gallery", "Gallery"),

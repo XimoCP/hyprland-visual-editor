@@ -401,6 +401,26 @@
       "Technical wiki"
     ]
   },
+  "shell": {
+    "brand": "HVE",
+    "subtitle": "Hyprland Visual Editor",
+    "status_ready": "Ready",
+    "back_hint": "Esc collapses",
+    "slots": {
+      "home": "Home",
+      "gallery": "Gallery",
+      "workshop": "Workshop"
+    },
+    "home": {
+      "hint": "Theme cards land in module 2"
+    },
+    "gallery": {
+      "hint": "Gallery slot — module 2"
+    },
+    "workshop": {
+      "hint": "Workshop slot — module 4"
+    }
+  },
   "themes": {
     "header_title": "Theme Manager",
     "header_subtitle": "Save and apply full desktop themes",

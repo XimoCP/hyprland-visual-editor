@@ -1,8 +1,12 @@
 use crate::app_state::{AppState, SharedState};
 use crate::config::Config;
 use crate::settings::{set_autostart, set_keybinds, set_tiling_window_rules};
+use crate::shell::nav::{NavCommand, Screen};
+use crate::shell::Shell;
 use slint::ComponentHandle;
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -55,9 +59,40 @@ pub fn setup_callbacks(
     proj: PathBuf,
     tray_active: Arc<AtomicBool>,
     restart_lock: &Arc<Mutex<Option<std::fs::File>>>,
+    shell: &Rc<RefCell<Shell>>,
 ) {
     // Single AppState instance shared across all callbacks
     let state = state.clone();
+
+    // ── HVE 2 shell callbacks (delivery 4/5) ──
+    // Map shell UI callbacks to NavCommand (nav-shell spec R4; design D8).
+    {
+        let shell = shell.clone();
+        window.on_card_activated(move |card_idx| {
+            if let Some(screen) = Screen::from_card_index(card_idx as usize) {
+                Shell::dispatch(&shell, NavCommand::Expand(screen));
+            }
+        });
+    }
+    {
+        let shell = shell.clone();
+        window.on_back_activated(move || {
+            Shell::dispatch(&shell, NavCommand::Back);
+        });
+    }
+    {
+        let shell = shell.clone();
+        window.on_nav_move(move |direction| {
+            let delta = match direction.as_str() {
+                "down" | "right" => 1,
+                "up" | "left" => -1,
+                _ => 0,
+            };
+            if delta != 0 {
+                Shell::move_focus(&shell, delta);
+            }
+        });
+    }
 
     // System toggle — skip first call (UI fires on init)
     {

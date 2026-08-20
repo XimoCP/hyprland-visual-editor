@@ -220,4 +220,41 @@ mod tests {
         assert_eq!(t.lang, "es");
         assert_eq!(t.tr("panel.tabs.home"), Some("Inicio"));
     }
+
+    // ── Shell i18n keys (delivery 4, task 4.4 — nav-shell spec R5) ────
+
+    #[test]
+    fn test_shell_keys_resolve_in_english() {
+        let t = Tr::with_lang("en");
+        assert_eq!(t.tr("shell.brand"), Some("HVE"));
+        assert_eq!(t.tr("shell.subtitle"), Some("Hyprland Visual Editor"));
+        assert_eq!(t.tr("shell.status_ready"), Some("Ready"));
+        assert_eq!(t.tr("shell.back_hint"), Some("Esc collapses"));
+        assert_eq!(t.tr("shell.slots.home"), Some("Home"));
+        assert_eq!(t.tr("shell.slots.gallery"), Some("Gallery"));
+        assert_eq!(t.tr("shell.slots.workshop"), Some("Workshop"));
+        assert_eq!(t.tr("shell.home.hint"), Some("Theme cards land in module 2"));
+    }
+
+    #[test]
+    fn test_shell_keys_resolve_in_spanish() {
+        let t = Tr::with_lang("es");
+        assert_eq!(t.tr("shell.brand"), Some("HVE"));
+        assert_eq!(t.tr("shell.subtitle"), Some("Editor Visual de Hyprland"));
+        assert_eq!(t.tr("shell.status_ready"), Some("Listo"));
+        assert_eq!(t.tr("shell.back_hint"), Some("Esc colapsa"));
+        assert_eq!(t.tr("shell.slots.home"), Some("Inicio"));
+        assert_eq!(t.tr("shell.slots.gallery"), Some("Galería"));
+        assert_eq!(t.tr("shell.slots.workshop"), Some("Taller"));
+        assert_eq!(t.tr("shell.home.hint"), Some("Las tarjetas de temas llegan en el módulo 2"));
+    }
+
+    #[test]
+    fn test_shell_unknown_locale_falls_back_to_english() {
+        // tr.rs only knows "es" and "en"; any other code falls back to the
+        // embedded English map (nav-shell spec R5 "Unknown locale fallback").
+        let t = Tr::with_lang("fr");
+        assert_eq!(t.tr("shell.brand"), Some("HVE"));
+        assert_eq!(t.tr("shell.back_hint"), Some("Esc collapses"));
+    }
 }

@@ -24,6 +24,32 @@ pub enum Screen {
     Workshop,
 }
 
+impl Screen {
+    /// Map a card-activated index to its expansion target.
+    ///
+    /// The Home screen hosts `CARD_COUNT` cards; index 0 is Gallery, index
+    /// 1 is Workshop. Out-of-range indices return `None` (delivery 4:
+    /// callbacks.rs maps the UI callback to a NavCommand through this).
+    pub fn from_card_index(idx: usize) -> Option<Screen> {
+        match idx {
+            0 => Some(Screen::Gallery),
+            1 => Some(Screen::Workshop),
+            _ => None,
+        }
+    }
+
+    /// The UI mirror index for this screen: `Home=0`, `Gallery=1`,
+    /// `Workshop=2`. This is what the `mounted-screen` Slint property
+    /// carries (delivery 4: Shell writes it back to the chrome).
+    pub fn mounted_index(self) -> usize {
+        match self {
+            Screen::Home => 0,
+            Screen::Gallery => 1,
+            Screen::Workshop => 2,
+        }
+    }
+}
+
 /// Whether the window is collapsed (base size, Home visible) or expanded
 /// into a target screen (window grown, target slot mounted).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +61,7 @@ pub enum ExpansionState {
 /// A navigation command queued by the shell. Keyboard and mouse both emit
 /// these — activation is identical regardless of input source (spec R4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum NavCommand {
     /// Expand into a target screen (grow the window, mount the slot).
     Expand(Screen),
@@ -355,5 +382,33 @@ mod tests {
         ns.move_focus(1);
         assert_eq!(ns.move_focus(-5), 0, "clamped at the first card");
         assert_eq!(ns.focused_card(), 0);
+    }
+
+    // ── Screen ↔ card index mapping (delivery 4: callbacks ↔ NavCommand) ──
+
+    #[test]
+    fn from_card_index_maps_gallery_and_workshop() {
+        // card-activated fires with the focused card index: 0 = Gallery,
+        // 1 = Workshop (Home is the root screen, not a card).
+        assert_eq!(Screen::from_card_index(0), Some(Screen::Gallery));
+        assert_eq!(Screen::from_card_index(1), Some(Screen::Workshop));
+        assert_eq!(Screen::from_card_index(2), None, "out of range → no target");
+        assert_eq!(Screen::from_card_index(99), None);
+    }
+
+    #[test]
+    fn mounted_index_round_trips_with_from_card_index() {
+        // mounted_index is the UI mirror: Home=0, Gallery=1, Workshop=2.
+        assert_eq!(Screen::Home.mounted_index(), 0);
+        assert_eq!(Screen::Gallery.mounted_index(), 1);
+        assert_eq!(Screen::Workshop.mounted_index(), 2);
+
+        // Round trip: card index → screen → mounted index → same screen.
+        for card in 0..CARD_COUNT {
+            let screen = Screen::from_card_index(card).unwrap();
+            // mounted_index is Home=0, but card indices skip Home (0=Gallery).
+            // The mounted_index of a card target is card+1.
+            assert_eq!(screen.mounted_index(), card + 1);
+        }
     }
 }

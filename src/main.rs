@@ -238,6 +238,24 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let window = MainWindow::new()?;
 
+    // ── HVE 2 shell init (delivery 4/5) ──
+    // The Shell owns navigation state, slot registry, and the stepped
+    // size animator. It lives in Rc<RefCell<>> because slint::Timer is
+    // !Send + !Sync.
+    let shell = shell::Shell::new(window.as_weak());
+    // Register production stub slots for Gallery and Workshop. Real
+    // slot views land in modules 2 and 4.
+    shell::Shell::register_slot(&shell, Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Gallery)));
+    shell::Shell::register_slot(&shell, Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Workshop)));
+    // Set shell i18n strings (nav-shell spec R5).
+    window.set_shell_brand_text(tr.tr_shared("shell.brand", "HVE"));
+    window.set_shell_brand_subtitle(tr.tr_shared("shell.subtitle", "Hyprland Visual Editor"));
+    window.set_shell_status_text(tr.tr_shared("shell.status_ready", "Ready"));
+    window.set_shell_back_hint(tr.tr_shared("shell.back_hint", "Esc collapses"));
+    window.set_shell_home_hint(tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"));
+    window.set_shell_gallery_hint(tr.tr_shared("shell.gallery.hint", "Gallery slot — module 2"));
+    window.set_shell_workshop_hint(tr.tr_shared("shell.workshop.hint", "Workshop slot — module 4"));
+
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
     window.set_border_size(cfg.border_size);
@@ -430,6 +448,7 @@ fn main() -> Result<(), slint::PlatformError> {
         proj.clone(),
         tray_system_active,
         &lock,
+        &shell,
     );
 
     // ── Nav modules (data-driven sidebar, translated) ──

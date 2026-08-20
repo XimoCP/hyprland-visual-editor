@@ -401,6 +401,26 @@
     "about_docs": "Ver documentación",
     "about_line_5": "Temas — guardá y aplicá configuraciones completas"
   },
+  "shell": {
+    "brand": "HVE",
+    "subtitle": "Editor Visual de Hyprland",
+    "status_ready": "Listo",
+    "back_hint": "Esc colapsa",
+    "slots": {
+      "home": "Inicio",
+      "gallery": "Galería",
+      "workshop": "Taller"
+    },
+    "home": {
+      "hint": "Las tarjetas de temas llegan en el módulo 2"
+    },
+    "gallery": {
+      "hint": "Slot Galería — módulo 2"
+    },
+    "workshop": {
+      "hint": "Slot Taller — módulo 4"
+    }
+  },
   "themes": {
     "header_title": "Gestor de Temas",
     "header_subtitle": "Guardá y aplicá temas completos del escritorio",
