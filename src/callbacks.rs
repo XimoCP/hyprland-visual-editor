@@ -106,15 +106,35 @@ pub fn setup_callbacks(
     }
     {
         let shell = shell.clone();
+        let weak = window.as_weak();
         window.on_nav_move(move |direction| {
-            // S1/S2/S12: Home→Expand arrow→apply keyboard chain. When Gallery expanded, arrow moves gallery focus (clamped, no-wrap S13) — for now delegates to Shell focus which is clamped 0..1 (Home) but gallery slot handles its own clamp via GallerySlot::move_focus. We mirror to Shell for headless test compatibility.
-            let delta = match direction.as_str() {
+            use crate::shell::nav::ExpansionState;
+            use crate::shell::nav::Screen;
+            use slint::Model;
+            let is_gallery = Shell::with_nav(&shell, |n| {
+                n.screen() == Screen::Gallery && n.expansion() != ExpansionState::Collapsed
+            });
+            let delta: i32 = match direction.as_str() {
                 "down" | "right" => 1,
                 "up" | "left" => -1,
                 _ => 0,
             };
-            if delta != 0 {
-                Shell::move_focus(&shell, delta);
+            if delta == 0 {
+                return;
+            }
+            if is_gallery {
+                if let Some(w) = weak.upgrade() {
+                    let len = w.get_gallery_cards().row_count() as i32;
+                    if len > 0 {
+                        let cur = w.get_gallery_focused();
+                        let max = len - 1;
+                        // S13 clamp: no wrap inside the gallery.
+                        let next = (cur + delta).clamp(0, max);
+                        w.set_gallery_focused(next);
+                    }
+                }
+            } else {
+                Shell::move_focus(&shell, delta as isize);
             }
         });
     }

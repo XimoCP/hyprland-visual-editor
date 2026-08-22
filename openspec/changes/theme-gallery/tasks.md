@@ -76,4 +76,8 @@ Stacked to `hve2-visual-rewrite`, merge in order.
 - [x] 5.3 Reduced-motion S23 + MIT footer R7 + LRU200 R8 [f: Chrome,model.rs] [t: `cargo test reduced_lru`] [dep:P3][S]
 - [x] 5.4 Headless mount Expand verify 22steps 350ms OutCubic [f: gallery tests] [t: `cargo test headless_expand`] [dep:4.6][S]
 
-Total: 32 tasks, 5 phases, 4 stacked PRs, <400/slice, TDD `cargo test`.
+## Post-Verify Micro-Slice — PR4.5 Visible Gallery Wiring (pre-archive)
+
+- [x] PV1 GalleryRoot.slint (Chrome + Slice/Hex/Mosaic stage) + main.slint import cleanup + nav_move gallery arrows (S13 clamp) + dead-code warnings to zero [f: ui/gallery/GalleryRoot.slint, ui/main.slint, ui/shell.slint, src/callbacks.rs, src/main.rs, src/shell/gallery/*] [t: `cargo check` 0 warnings, `cargo test` 299 pass, `cargo run` smoke OK] [dep:5.4][M]
+
+Total: 32 tasks, 5 phases, 4 stacked PRs, <400/slice, TDD `cargo test`. (+1 post-verify PV1 wiring task)

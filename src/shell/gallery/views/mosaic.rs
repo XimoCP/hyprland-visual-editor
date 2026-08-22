@@ -25,8 +25,6 @@ pub const MOSAIC_CLOUD_OUTER: f32 = 1.05;
 pub const MOSAIC_STRIPE_COUNT: usize = 2;
 /// Warmup async guard token increments on filter change.
 pub const MOSAIC_WARMUP_INTERVAL_MS: u64 = 16;
-/// Chrome switch cross-fade 200ms S6.
-pub const CHROME_SWITCH_DURATION_MS: u64 = 200;
 /// Stagger base for reveal per cellKey (ms).
 pub const MOSAIC_STAGGER_MS: u64 = 40;
 
@@ -570,7 +568,11 @@ mod tests {
     // ── 3.8 dual-stripe + switch_focus 200ms S6 ────────────────────
     #[test]
     fn switch_focus_dual_stripe_and_chrome_200ms() {
-        assert_eq!(CHROME_SWITCH_DURATION_MS, 200, "Chrome switch 200ms S6");
+        assert_eq!(
+            super::super::CHROME_SWITCH_DURATION_MS,
+            200,
+            "Chrome switch 200ms S6"
+        );
         assert_eq!(MOSAIC_STRIPE_COUNT, 2, "dual stripe");
         let mut view = MosaicView::new(20);
         view.ensure_cells("all", 20);

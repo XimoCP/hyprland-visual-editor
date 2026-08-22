@@ -1,0 +1,112 @@
+// HVE 2 — GalleryRoot (theme-gallery PR4.5 visible wiring).
+//
+// Mounts GalleryChrome on top and swaps the active presentation view below
+// it: Slice (parallelogram carousel), Hexagon (honeycomb) or Mosaic (Voronoi
+// stripes). Pure UI assembly — navigation state stays in Rust (nav-shell D8):
+// clicks and keys are reported upward through callbacks and Rust mirrors
+// style/focus back through the in-properties below.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+import { GalleryChrome } from "GalleryChrome.slint";
+import { GalleryCardData } from "ThemeCardDelegate.slint";
+import { SliceDelegate } from "SliceDelegate.slint";
+import { HexDelegate } from "HexDelegate.slint";
+import { MosaicView } from "MosaicView.slint";
+
+export component GalleryRoot inherits Rectangle {
+    // ── State mirrors (written by Rust, read-only here) ──
+    in property <int> current-style: 0; // 0 Slice, 1 Hexagon, 2 Mosaic
+    in property <int> focused-index: 0;
+    in property <[GalleryCardData]> cards;
+    in property <bool> empty: false;
+    in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
+    in property <string> mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
+    in property <string> mit-link: "https://github.com/liixini/skwd-wall";
+    in property <bool> reduced-motion: false;
+
+    // ── Events reported to Rust ──
+    callback style-selected(int);
+    callback card-clicked(int);
+    callback card-right-clicked(int);
+
+    background: SkwdTokens.surface;
+
+    VerticalLayout {
+        // Toolbar (style switcher) + empty-state banner + MIT footer.
+        GalleryChrome {
+            current-style: root.current-style;
+            focused-index: root.focused-index;
+            reduced-motion: root.reduced-motion;
+            empty: root.empty;
+            empty-text: root.empty-text;
+            mit-footer: root.mit-footer;
+            mit-link: root.mit-link;
+            style-selected(style) => { root.style-selected(style); }
+        }
+
+        // ── Stage: exactly one presentation view mounted at a time ──
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            // Style 0 — Slice: parallelogram carousel, focused card expands
+            // 108↔768 (R2.1) driven purely by `is-current`.
+            if root.current-style == 0 : Rectangle {
+                width: 100%;
+                height: 100%;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: SkwdTokens.spacing-8;
+                    padding-left: SkwdTokens.spacing-20;
+                    padding-right: SkwdTokens.spacing-20;
+
+                    for card[i] in root.cards : SliceDelegate {
+                        card-name: card.name;
+                        is-current: i == root.focused-index;
+                        accent: card.accent;
+                        clicked => { root.card-clicked(i); }
+                        right-clicked => { root.card-right-clicked(i); }
+                    }
+                }
+            }
+
+            // Style 1 — Hexagon: honeycomb grid, rows of three with odd-row
+            // offset (pointy-top cells, pull-out on selection R2.2).
+            if root.current-style == 1 : Rectangle {
+                width: 100%;
+                height: 100%;
+
+                for card[i] in root.cards : HexDelegate {
+                    property <int> grid-col: i - Math.floor(i / 3) * 3;
+                    property <int> grid-row: Math.floor(i / 3);
+                    x: SkwdTokens.spacing-16
+                        + self.grid-col * 300px
+                        + ((self.grid-row - Math.floor(self.grid-row / 2) * 2) == 1 ? 150px : 0px);
+                    y: SkwdTokens.spacing-16 + self.grid-row * 190px;
+                    card-name: card.name;
+                    is-selected: i == root.focused-index;
+                    accent: card.accent;
+                    clicked => { root.card-clicked(i); }
+                    flip-requested(px, py) => { root.card-right-clicked(i); }
+                }
+            }
+
+            // Style 2 — Mosaic: dual-stripe Voronoi stage (R2.3). Placeholder
+            // cells until the Voronoi model lands; clicks map onto real
+            // themes only while the index exists.
+            if root.current-style == 2 : MosaicView {
+                width: 100%;
+                height: 100%;
+                viewport-w: self.width;
+                cell-clicked(idx) => {
+                    if (idx < root.cards.length) { root.card-clicked(idx); }
+                }
+                cell-flip(idx) => {
+                    if (idx < root.cards.length) { root.card-right-clicked(idx); }
+                }
+            }
+        }
+    }
+}

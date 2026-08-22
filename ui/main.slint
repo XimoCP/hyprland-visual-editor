@@ -8,6 +8,7 @@ import {
     ThemesModule,
 } from "./modules.slint";
 import { ShellRoot, SkwdTokens } from "./shell.slint";
+import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 
 // Re-export SkwdTokens so Rust can access it via crate::SkwdTokens.
 export { SkwdTokens }
@@ -196,6 +197,19 @@ export component MainWindow inherits Window {
     callback card-activated(screen: int);
     callback back-activated();
     callback nav-move(direction: string);
+
+    // ── Gallery wiring (PR4.5) — visible gallery ──
+    in-out property <int> gallery-style: 0;
+    in-out property <int> gallery-focused: 0;
+    in property <[GalleryCardData]> gallery-cards;
+    in property <bool> gallery-empty: false;
+    in property <string> gallery-empty-text: "No themes yet. Save your current setup as a theme.";
+    in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
+    in property <string> gallery-mit-link: "https://github.com/liixini/skwd-wall";
+    in property <bool> gallery-reduced-motion: false;
+    callback gallery-style-selected(int);
+    callback gallery-card-clicked(int);
+    callback gallery-card-right-clicked(int);
 
 
     // ── Settings ──
@@ -452,7 +466,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── HVE 2 shell mount (delivery 4/5) ──
+    // ── HVE 2 shell mount (delivery 4/5 + PR4.5 gallery wiring) ──
     shell := ShellRoot {
         width: 100%;
         height: 100%;
@@ -469,6 +483,17 @@ export component MainWindow inherits Window {
         card-activated(screen) => { root.card-activated(screen); }
         back-activated => { root.back-activated(); }
         nav-move(direction) => { root.nav-move(direction); }
+        gallery-style: root.gallery-style;
+        gallery-focused: root.gallery-focused;
+        gallery-cards: root.gallery-cards;
+        gallery-empty: root.gallery-empty;
+        gallery-empty-text: root.gallery-empty-text;
+        gallery-mit-footer: root.gallery-mit-footer;
+        gallery-mit-link: root.gallery-mit-link;
+        gallery-reduced-motion: root.gallery-reduced-motion;
+        gallery-style-selected(style) => { root.gallery-style-selected(style); }
+        gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
+        gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──

@@ -80,6 +80,9 @@ impl Default for BorderConfig {
 /// Background for a card: wallpaper file or solid color.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Background {
+    // Kept per design §1 (Background = Wallpaper(path) | Solid(color));
+    // providers currently emit solid colors only.
+    #[allow(dead_code)]
     Wallpaper(PathBuf),
     Solid(String),
 }
@@ -136,6 +139,9 @@ impl ThemeCard {
 pub struct ThemeGalleryModel {
     themes: Vec<ThemeCard>,
     focused_index: usize,
+    // Style is owned by the UI layer (GalleryRoot current-style mirror);
+    // kept here per design §1 and exercised via with_style in tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     style: GalleryStyle,
 }
 
@@ -150,6 +156,8 @@ impl ThemeGalleryModel {
     }
 
     /// Create with explicit style.
+    /// Intentional design §1 API; style currently mirrors through the UI.
+    #[allow(dead_code)]
     pub fn with_style(themes: Vec<ThemeCard>, style: GalleryStyle) -> Self {
         Self {
             themes,
@@ -168,14 +176,19 @@ impl ThemeGalleryModel {
         self.themes.len()
     }
 
+    // ── Headless-verified accessors: the UI mirrors focus/style via its own
+    //    properties, so these design §1 accessors are exercised by tests. ──
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_empty(&self) -> bool {
         self.themes.is_empty()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn focused_index(&self) -> usize {
         self.focused_index
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn focused_card(&self) -> Option<&ThemeCard> {
         self.themes.get(self.focused_index)
     }
@@ -184,16 +197,19 @@ impl ThemeGalleryModel {
         &self.themes
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn style(&self) -> GalleryStyle {
         self.style
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_style(&mut self, style: GalleryStyle) {
         self.style = style;
     }
 
     /// Move focus by delta, clamped to 0..len-1, no wrap (S13).
     /// Returns new focused index.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn move_focus(&mut self, delta: isize) -> usize {
         if self.themes.is_empty() {
             self.focused_index = 0;
@@ -206,6 +222,7 @@ impl ThemeGalleryModel {
     }
 
     /// Set focused index directly, clamped.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_focused_index(&mut self, idx: usize) -> usize {
         if self.themes.is_empty() {
             self.focused_index = 0;
@@ -257,14 +274,19 @@ impl ThumbnailCache {
         self.capacity
     }
 
+    // LRU inspection API (R8): exercised by tests; the runtime path only
+    // inserts/evicts through GallerySlot.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn contains(&self, key: &str) -> bool {
         self.map.contains_key(key)
     }
@@ -283,6 +305,8 @@ impl ThumbnailCache {
     }
 
     /// Get path and promote to most-recent.
+    /// Intentional LRU API (R8); runtime path inserts via prewarm only.
+    #[allow(dead_code)]
     pub fn get(&mut self, key: &str) -> Option<PathBuf> {
         if self.map.contains_key(key) {
             self.order.retain(|k| k != key);
@@ -293,6 +317,7 @@ impl ThumbnailCache {
         }
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.map.clear();
         self.order.clear();

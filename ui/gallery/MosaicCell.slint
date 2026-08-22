@@ -25,7 +25,7 @@ export component MosaicCell inherits Rectangle {
     in property <int> cell-key: 0;
     in property <duration> reveal-delay: 0ms;
     // stagger alpha: 0 → 1 after reveal-delay
-    in property <float> image-alpha: 1.0;
+    in-out property <float> image-alpha: 1.0;
     animate image-alpha { duration: 250ms; easing: ease-in-out; delay: root.reveal-delay; }
 
     callback clicked();

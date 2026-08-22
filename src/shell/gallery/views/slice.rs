@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn slice_key_gallery_view_trait_dispatch() {
-        let mut view = SliceView::new(2);
+        let view = SliceView::new(2);
         // Via trait object, Right still moves
         let mut boxed: Box<dyn GalleryView> = Box::new(view);
         assert!(boxed.handle_key(GalleryKey::Right));

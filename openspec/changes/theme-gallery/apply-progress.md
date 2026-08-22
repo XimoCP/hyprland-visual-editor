@@ -127,3 +127,14 @@ Budget: PR4 ~820 lines Rust (slot 819 + shell/size delta + model LRU 80) + 40 Sl
 - ui/tokens.slint, ui/shell.slint (unchanged)
 - openspec/changes/theme-gallery/tasks.md (PR4 4.1-5.4 checked — CLOSED)
 - openspec/changes/theme-gallery/apply-progress.md (this file merged PR4)
+
+## PR4.5 — Visible Gallery Wiring (post-verify micro-slice, pre-archive)
+
+**Goal**: `cargo run` shows GalleryChrome + Slice view by default, styles switchable, zero warnings.
+
+- Previous session left shell.slint importing `gallery/GalleryRoot.slint` but the file never existed — build was broken (`Cannot find requested import`).
+- NEW ui/gallery/GalleryRoot.slint: VerticalLayout { GalleryChrome top; stage below } where stage mounts exactly one of: Slice carousel (`for card[i] in cards : SliceDelegate`, is-current = focused-index), Hexagon honeycomb (rows of three, odd-row offset 150px), MosaicView (viewport-w bound, cell-clicked guarded by cards.length).
+- ui/main.slint: removed now-unused gallery component imports (GalleryChrome/SliceDelegate/HexDelegate/MosaicView/MosaicCell live behind GalleryRoot); ShellRoot full-window mount + gallery props/callbacks were already in place from previous session.
+- src/callbacks.rs nav_move: arrows move gallery focus when Gallery expanded (clamped S13, model length from ModelRc row_count via slint::Model trait) else Shell::move_focus; fixed isize cast.
+- Dead-code elimination by real usage + honest annotations: removed duplicate CHROME_SWITCH_DURATION_MS in mosaic.rs (test uses views:: one), unused re-exports in gallery/mod.rs, HashMap import, cfg-gated Duration; module-level allow on view engines (test-verified headless logic, Slint delegates render at runtime); cfg_attr(not(test)) on assertion accessors/counters.
+- Verification: cargo check 0 warnings; cargo test 299 passed 0 failed 1 ignored; cargo build clean; runtime smoke on Hyprland session: app boots, GallerySlot registered, no panic (countdown auto-minimize on focus loss is pre-existing behavior).
