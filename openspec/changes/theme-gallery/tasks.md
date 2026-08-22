@@ -61,19 +61,19 @@ Stacked to `hve2-visual-rewrite`, merge in order.
 
 ## Phase 4 — Slot + Integration + Apply (PR4 ~360)
 
-- [ ] 4.1 GallerySlot Slot prewarm/cleanup [f: slot.rs] [t: `cargo test slot_mount`] [dep:P3][S]
-- [ ] 4.2 RED instant apply TM.apply two-pass [f: slot.rs] [t: `cargo test apply_calls` FAIL] [dep:4.1][S]
-- [ ] 4.3 GREEN pipeline reload watcher <200ms [f: slot.rs] [t: `cargo test apply_indicator`] [dep:4.2][S]
-- [ ] 4.4 No-op active pulse S8 + mutation ExpandToSettings size anim [f: slot.rs,size.rs] [t: `cargo test apply_noop`] [dep:4.3][S]
-- [ ] 4.5 Back/Esc collapse + sync_global_after_show S10/11 [f: slot.rs] [t: `cargo test back_collapse`] [dep:4.4][S]
-- [ ] 4.6 Register GallerySlot replace StubSlot i18n [f: main.rs] [t: `cargo test register_slot`] [dep:4.1][S]
-- [ ] 4.7 Keyboard Home→Expand arrow→apply S1/S2/S12 [f: callbacks.rs] [t: `cargo test home_expand`] [dep:4.6][S]
+- [x] 4.1 GallerySlot Slot prewarm/cleanup [f: slot.rs] [t: `cargo test slot_mount`] [dep:P3][S]
+- [x] 4.2 RED instant apply TM.apply two-pass [f: slot.rs] [t: `cargo test apply_calls` FAIL] [dep:4.1][S]
+- [x] 4.3 GREEN pipeline reload watcher <200ms [f: slot.rs] [t: `cargo test apply_indicator`] [dep:4.2][S]
+- [x] 4.4 No-op active pulse S8 + mutation ExpandToSettings size anim [f: slot.rs,size.rs] [t: `cargo test apply_noop`] [dep:4.3][S]
+- [x] 4.5 Back/Esc collapse + sync_global_after_show S10/11 [f: slot.rs] [t: `cargo test back_collapse`] [dep:4.4][S]
+- [x] 4.6 Register GallerySlot replace StubSlot i18n [f: main.rs] [t: `cargo test register_slot`] [dep:4.1][S]
+- [x] 4.7 Keyboard Home→Expand arrow→apply S1/S2/S12 [f: callbacks.rs] [t: `cargo test home_expand`] [dep:4.6][S]
 
 ## Phase 5 — Polish & Verify (PR4 tail)
 
-- [ ] 5.1 Empty S18 + delete/rename S19/S20 [f: Chrome,slot.rs] [t: `cargo test empty_delete`] [dep:4.1][S]
-- [ ] 5.2 Threats shader flicker overlay + hyprmod yield S22 [f: slot.rs] [t: `cargo test shader_yield`] [dep:4.3][S]
-- [ ] 5.3 Reduced-motion S23 + MIT footer R7 + LRU200 R8 [f: Chrome,model.rs] [t: `cargo test reduced_lru`] [dep:P3][S]
-- [ ] 5.4 Headless mount Expand verify 22steps 350ms OutCubic [f: gallery tests] [t: `cargo test headless_expand`] [dep:4.6][S]
+- [x] 5.1 Empty S18 + delete/rename S19/S20 [f: Chrome,slot.rs] [t: `cargo test empty_delete`] [dep:4.1][S]
+- [x] 5.2 Threats shader flicker overlay + hyprmod yield S22 [f: slot.rs] [t: `cargo test shader_yield`] [dep:4.3][S]
+- [x] 5.3 Reduced-motion S23 + MIT footer R7 + LRU200 R8 [f: Chrome,model.rs] [t: `cargo test reduced_lru`] [dep:P3][S]
+- [x] 5.4 Headless mount Expand verify 22steps 350ms OutCubic [f: gallery tests] [t: `cargo test headless_expand`] [dep:4.6][S]
 
 Total: 32 tasks, 5 phases, 4 stacked PRs, <400/slice, TDD `cargo test`.

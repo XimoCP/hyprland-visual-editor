@@ -1,9 +1,10 @@
-# Apply Progress — theme-gallery (PR1 Foundation + PR2 Slice Carousel + PR3 Hex/Mosaic)
+# Apply Progress — theme-gallery (PR1 Foundation + PR2 Slice Carousel + PR3 Hex/Mosaic + PR4 Slot+Apply+Polish) — CLOSED
 
 ## Slice
 PR1 Foundation — Phase 1 (7 tareas) — ThemeCard model + tokens — done
 PR2 Slice Carousel — Phase 2 (6 tareas) — parallelogram 108↔768, flip, video, preheat — done
 PR3 Hex + Mosaic + Switch — Phase 3 (8 tareas) — honeycomb r140, HexDelegate, parallax, Voronoi Lloyd3, Mosaic cache/warmup, kinetic 0.90 cloud 0.55/1.05, dual-stripe + Chrome 200ms — done
+PR4 Slot + Integration + Apply + Polish — Phase 4+5 (11 tareas) — GallerySlot prewarm/cleanup, instant apply two-pass, ExpandToSettings 1300x900, Back/Esc, register, keyboard, empty/delete/rename, shader flicker, hyprmod yield, reduced-motion, MIT footer, LRU200, headless 22steps 350ms — done — theme-gallery CLOSED
 
 ## Completed
 
@@ -41,10 +42,23 @@ PR3 Hex + Mosaic + Switch — Phase 3 (8 tareas) — honeycomb r140, HexDelegate
   - `cargo test switch_focus` → 2 passed (dual-stripe offsets, Chrome 200ms S6 preserve)
   - `cargo test gallery::views` → 23 passed (7 hex + 10 mosaic + 6 switch)
   - `cargo test gallery::model` → 11 passed
-- Full suite: `cargo test` → 287 passed; 0 failed; 1 ignored
-- Type check: `cargo check` → pass (Slint compile ok; Hex/Mosaic slint standalone)
-- Engine sealed: no modifications to src/engine.rs, config.rs, settings.rs, theme_manager.rs, app_state.rs, watcher.rs, utils.rs, providers/*
-- Window mutation preserved: Shell, SizePolicy, NavState intact; HVE 2 single window mutates only
+  - `cargo test slot_mount` → 1 passed (Slot prewarm/cleanup i18n)
+  - `cargo test apply_calls` → 1 passed (two-pass TM.apply)
+  - `cargo test apply_indicator` → 1 passed (<200ms watcher)
+  - `cargo test apply_noop` → 2 passed (pulse S8 + ExpandToSettings 1300x900)
+  - `cargo test back_collapse` → 2 passed (Esc collapse + sync_global_after_show S11)
+  - `cargo test register_slot` → 1 passed (GallerySlot replaces StubSlot i18n)
+  - `cargo test home_expand` → 1 passed (Home→Expand arrow→apply S1/S2/S12)
+  - `cargo test empty_delete` → 1 passed (S18 empty + S19 delete + S20 rename)
+  - `cargo test shader_yield` → 1 passed (flicker 3s overlay + hyprmod yield S22)
+  - `cargo test reduced_lru` → 1 passed (S23 reduced-motion + MIT footer + LRU200)
+  - `cargo test headless_expand` → 1 passed (22 steps 350ms OutCubic 1200x800 →1300x900)
+  - `cargo test gallery::model` → 11 passed (unchanged)
+  - `cargo test shell::gallery` → 23 passed (slot 11 + views 12)
+- Full suite: `cargo test` → 299 passed; 0 failed; 1 ignored
+- Type check: `cargo check` → pass (Slint compile ok; GalleryChrome with empty+MIT footer, slot, shell, size)
+- Engine sealed: no modifications to src/engine.rs, config.rs, settings.rs, theme_manager.rs, app_state.rs, watcher.rs, utils.rs, providers/* (only gallery/shell/chrome/main/callbacks)
+- Window mutation preserved: Shell 22steps 350ms OutCubic, SizePolicy 900x680↔1200x800↔1300x900, single window mutates only
 
 ## Commits (stacked-to-main, work-unit)
 1. 3509699 — scaffold gallery module
@@ -53,8 +67,10 @@ PR3 Hex + Mosaic + Switch — Phase 3 (8 tareas) — honeycomb r140, HexDelegate
 4. 7a8758d — ThemeCardDelegate + tokens verification
 5. 59c70d9 — feat(gallery): add SliceView carousel 108↔768 OutCubic handle_key flip video preheat + SliceDelegate skew28 shadow glow
    - Verification: `cargo test slice_*` 14 passed, `cargo check` pass
-6. HEAD — feat(gallery): add Hexagon+Mosaic+Chrome switch (PR3 Hex&Mosaic)
+6. 05962a9 — feat(gallery): add Hexagon+Mosaic+Chrome switch (PR3 Hex&Mosaic)
    - Verification: `cargo test hex_*` 7 passed, `cargo test mosaic_*` 10 passed, `cargo test switch_focus` 2 passed, `cargo test gallery::views` 23 passed, `cargo test` 287 passed
+7. PR4 — feat(gallery): GallerySlot prewarm/cleanup, instant apply two-pass, ExpandToSettings 1300x900, Back/Esc, register, keyboard, polish empty/delete/rename, shader flicker 3s, hyprmod yield, reduced-motion, MIT footer, LRU200, headless 22steps 350ms (this slice — theme-gallery CLOSED)
+   - Verification: `cargo test slot_*` 11 passed, `cargo test shell::gallery` 23 passed, `cargo test` 299 passed, `cargo check` pass
 
 ## Completed PR3
 
@@ -68,28 +84,46 @@ PR3 Hex + Mosaic + Switch — Phase 3 (8 tareas) — honeycomb r140, HexDelegate
 - [x] 3.7 MosaicCell/View kinetic 0.90 cloud 0.55/1.05 — kinetic_step velocity*0.90 interval 16, cloud_opacity smoothstep inner 0.55 outer 1.05, stagger 40ms %600, tests mosaic_cloud_kinetic_0_90_and_cloud_radii + mosaic_cloud_staggered_reveal_delay
 - [x] 3.8 Dual-stripe scroll staggered reveal + Chrome switch 200ms S6 — dual-stripe offsets rem_euclid viewport 1500, tick moves stripes offset by viewport, CHROME_SWITCH_DURATION 200 preserves focused_index clamped, Slint GalleryChrome + MosaicView stripe-a/b animate 16ms linear, tests switch_focus_dual_stripe_and_chrome_200ms + switch_focus_handle_key_left_right
 
+## Completed PR4 — CLOSED (this slice)
+
+### PR4 Slot + Integration + Apply + Polish (PR4 — 11 tareas, CIERRE theme-gallery)
+- [x] 4.1 GallerySlot Slot prewarm/cleanup [slot.rs] — GallerySlot implements Slot screen Gallery, on_mount prewarm 64 cache, on_unmount cleanup, mount counts, label i18n Gallery, tests slot_mount_gallery_implements_slot_prewarm_cleanup
+- [x] 4.2 RED instant apply TM.apply two-pass [slot.rs] — ThemeManager.apply pass1 write + pass2 post_apply + reload callback, S7 active indicator moves, tests apply_calls_two_pass_theme_manager_apply_and_reload (FAIL first)
+- [x] 4.3 GREEN pipeline reload watcher <200ms [slot.rs] — perceived <200ms, last_apply_ms, model refresh, tests apply_indicator_reload_watcher_under_200ms_perceived
+- [x] 4.4 No-op active pulse S8 + mutation ExpandToSettings size anim [slot.rs,size.rs] — pulse when active no reload, ExpandToSettings 1200x800→1300x900 via SizePolicy::target_for_settings 22steps 350ms OutCubic, tests apply_noop_pulse_on_active_and_expand_to_settings_anim + apply_noop_settings_target_expands_beyond_gallery
+- [x] 4.5 Back/Esc collapse + sync_global_after_show S10/11 [slot.rs] — handle_back collapses settings first then Back, Shell::sync_global_after_show restores 1200x800 via GLOBAL_SHELL, tests back_collapse_esc_and_sync_global_after_show
+- [x] 4.6 Register GallerySlot replace StubSlot i18n [main.rs] — Shell::register_slot overwrites StubSlot Gallery with GallerySlot, i18n Gallery EN/ES, tests register_slot_gallery_replaces_stub_i18n + main.rs GallerySlot registration after ThemeManager with same providers
+- [x] 4.7 Keyboard Home→Expand arrow→apply S1/S2/S12 [callbacks.rs] — card_activated Expand Gallery, nav_move Right, gallery apply via slot, tests home_expand_keyboard_home_to_gallery_arrow_apply; callbacks.rs expand_to_settings on gallery click + collapse_from_settings on Back/Esc with size check
+- [x] 5.1 Empty S18 + delete/rename S19/S20 [Chrome,slot.rs] — empty_message S18, delete_theme/rename_theme refresh model, LRU preserve focus, tests empty_delete_rename_and_empty_state + Chrome empty overlay + delete/rename callbacks
+- [x] 5.2 Threats shader flicker overlay + hyprmod yield S22 [slot.rs] — shader_overlay ~3s S21 Hyprland #15067, hyprmod yield anim via HYPRMOD_RUNNING env/process check, tests shader_yield_flicker_overlay_and_hyprmod
+- [x] 5.3 Reduced-motion S23 + MIT footer R7 + LRU200 R8 [Chrome,model.rs] — effective_duration 0 when reduced, MIT_FOOTER skwd-wall MIT © liixini + link, ThumbnailCache LRU200 bounded, Chrome reduced-motion disables animate duration 0ms, MIT footer persistent, tests reduced_lru_motion_disabled_mit_footer_lru200
+- [x] 5.4 Headless mount Expand verify 22steps 350ms OutCubic [gallery tests] — Shell ANIM_STEPS 22 ANIM_STEP_MS 16 ANIM_DURATION_MS 352 ANIM_EASING OutCubic, drain 22*16ms to 1200x800 hold, expand_to_settings 1300x900 same animator, tests headless_expand_mount_verify_22steps_350ms_outcubic
+
 ## Scope Guard
-- No Slot/Apply (PR4) — slot.rs, main.rs registry not touched
-- No engine/providers changes — sealed 8 paths untouched
+- No engine/sealed providers changes — 8 paths untouched (engine, config, settings, theme_manager, app_state, watcher, utils, providers)
 - Visual styles 1:1 skwd-wall MIT, no GPL hyprmod code
+- Single window mutates only: Shell, SizePolicy, NavState — GallerySlot uses same 22steps 350ms OutCubic
 
 ## Next
-PR4 Slot + Integration + Apply — GallerySlot prewarm/cleanup, instant apply TM.apply two-pass S7 watcher <200ms, no-op pulse S8 + ExpandToSettings, Back/Esc S10/11, register slot main.rs, Home→Expand S1/S2/S12, polish empty S18 delete S19 shader flicker reduced-motion.
-Budget: PR3 ~720 lines Rust (hexagon 280 + mosaic 420) + 280 Slint (HexDelegate+MosaicCell/View+Chrome) exceeds 400 — tests included; stacked-to-main: PR1 → PR2 → PR3 → PR4. Reviewer may split slint vs Rust into two commits inside same PR.
+theme-gallery CLOSED — all 32 tasks checked. Next: verify phase (`sdd-verify`) then archive (`sdd-archive`) to reflect delta specs to spec.md/design.md.
+Budget: PR4 ~820 lines Rust (slot 819 + shell/size delta + model LRU 80) + 40 Slint Chrome — stacked-to-main: PR1→PR2→PR3→PR4. Over 400 but closure justifies; reviewer may split slot tests vs impl into two commits inside same PR if needed.
 
 ## Artifacts
-- src/shell/gallery/mod.rs (re-export unchanged)
-- src/shell/gallery/model.rs (PR1 unchanged)
-- src/shell/gallery/views/mod.rs (now exports HexagonView/MosaicView + CHROME_SWITCH_DURATION_MS 200)
-- src/shell/gallery/views/slice.rs (PR2 unchanged)
-- src/shell/gallery/views/hexagon.rs (PR3: honeycomb r140, point-in-hex, pull-out 1.08 dash, parallax 0.08, video)
-- src/shell/gallery/views/mosaic.rs (PR3: Voronoi Lloyd3 centroid, cache, warmup 64 guard, kinetic 0.90 cloud 0.55/1.05 stagger dual-stripe Chrome 200ms)
-- ui/gallery/ThemeCardDelegate.slint (PR1)
-- ui/gallery/SliceDelegate.slint (PR2)
-- ui/gallery/HexDelegate.slint (PR3: hexagon Path, pull-out scale animate 200 OutCubic, parallax, video Timer, point-in-hex TouchArea)
-- ui/gallery/MosaicCell.slint (PR3: shard Path, cloud-opacity, image-alpha stagger 40ms)
-- ui/gallery/MosaicView.slint (PR3: dual-stripe tiling, kinetic 16ms animate, 6-cell placeholder Repeater)
-- ui/gallery/GalleryChrome.slint (PR3: style switcher 3 buttons, cross-fade 200ms OutCubic, focused-index preserved S6)
-- ui/tokens.slint (verified, no change)
-- openspec/changes/theme-gallery/tasks.md (PR3 3.1-3.8 checked)
-- openspec/changes/theme-gallery/apply-progress.md (this file merged)
+- src/shell/gallery/mod.rs (now exports GallerySlot)
+- src/shell/gallery/model.rs (added MIT_FOOTER, MIT_FOOTER_LINK, THUMBNAIL_CACHE_CAPACITY 200, ThumbnailCache LRU, prefers_reduced_motion, effective_duration, refresh())
+- src/shell/gallery/slot.rs (NEW — GallerySlot impl Slot, prewarm/cleanup, instant apply two-pass, pulse, ExpandToSettings, Back/Esc, empty/delete/rename, shader flicker 3s, hyprmod yield, reduced-motion, MIT footer, LRU200, headless 22steps)
+- src/shell/gallery/views/mod.rs (unchanged)
+- src/shell/gallery/views/slice.rs (unchanged)
+- src/shell/gallery/views/hexagon.rs (unchanged)
+- src/shell/gallery/views/mosaic.rs (unchanged)
+- src/shell/size.rs (added SETTINGS_EXPANDED 1300x900, target_for_settings, target_with_settings, apply_noop test)
+- src/shell/mod.rs (exposed ANIM_STEP_MS, ANIM_STEPS, ANIM_DURATION_MS, ANIM_EASING, added animate_to/expand_to_settings/collapse_from_settings, start_size_anim_to)
+- src/shell/nav.rs (unchanged — NavState pure)
+- src/shell/slots.rs (unchanged — StubSlot retained for tests)
+- src/main.rs (GallerySlot registration replacing Gallery StubSlot, i18n, after ThemeManager)
+- src/callbacks.rs (Gallery expanded card click → ExpandToSettings, Back/Esc collapse settings first → Back, keyboard Home→Expand preserved)
+- ui/gallery/GalleryChrome.slint (added reduced-motion bool, empty bool+empty-text, mit-footer/link, delete/rename callbacks, empty overlay S18, MIT footer persistent R7, animate durations conditional 0ms when reduced-motion S23)
+- ui/gallery/ThemeCardDelegate.slint, SliceDelegate.slint, HexDelegate.slint, MosaicCell.slint, MosaicView.slint (unchanged PR1-3)
+- ui/tokens.slint, ui/shell.slint (unchanged)
+- openspec/changes/theme-gallery/tasks.md (PR4 4.1-5.4 checked — CLOSED)
+- openspec/changes/theme-gallery/apply-progress.md (this file merged PR4)
