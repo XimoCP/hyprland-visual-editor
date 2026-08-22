@@ -1,0 +1,169 @@
+// HVE 2 — ThemeCardDelegate (theme-gallery PR1 Foundation).
+//
+// Shared visual delegate for gallery cards. Displays complete-look preview:
+// thumbnail image, color swatches, border line, shader badge and active
+// indicator. Pure visual — no navigation state. Spec R1, tokens R6.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+
+export struct GalleryCardData {
+    name: string,
+    saved-at: string,
+    is-active: bool,
+    providers: [string],
+    accent: color,
+    primary: color,
+    secondary: color,
+    tertiary: color,
+    surface: color,
+    border-size: int,
+    border-radius: int,
+    border-color: color,
+    shader: string,
+    thumb-path: string,
+}
+
+export component ThemeCardDelegate inherits Rectangle {
+    in property <GalleryCardData> card;
+    in property <bool> is-current: false;
+    in property <bool> is-hovered: false;
+
+    callback clicked();
+    callback right-clicked();
+
+    // Card container
+    width: 320px;
+    height: 180px;
+    border-radius: SkwdTokens.radius-12;
+    background: SkwdTokens.surface-container;
+    border-width: is-current ? SkwdTokens.border-3 : (is-hovered ? SkwdTokens.border-2 : SkwdTokens.border-1);
+    border-color: is-current ? card.accent : (is-hovered ? card.accent.transparentize(0.5) : SkwdTokens.outline.transparentize(0.7));
+    clip: true;
+
+    // Glow when current / hover
+    drop-shadow-blur: is-current ? 16px : (is-hovered ? 8px : 0px);
+    drop-shadow-color: is-current ? card.accent.transparentize(0.7) : transparent;
+
+    animate border-color { duration: SkwdTokens.anim-200; easing: ease-in-out; }
+    animate drop-shadow-blur { duration: SkwdTokens.anim-200; easing: ease-out; }
+
+    VerticalLayout {
+        padding: SkwdTokens.spacing-8;
+        spacing: SkwdTokens.spacing-8;
+
+        // Thumbnail area
+        Rectangle {
+            height: 110px;
+            border-radius: SkwdTokens.radius-8;
+            background: SkwdTokens.surface;
+            clip: true;
+
+            // Thumbnail — real image preheat with sourceSize 400x720 lands in PR2;
+            // PR1 shows placeholder swatch (valid Slint, no @image-url dynamic path).
+            Rectangle {
+                background: card.surface;
+                Text {
+                    text: "◇";
+                    color: card.accent;
+                    font-size: 32px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Active checkmark overlay
+            if card.is-active : Rectangle {
+                width: 24px;
+                height: 24px;
+                x: parent.width - self.width - SkwdTokens.spacing-8;
+                y: SkwdTokens.spacing-8;
+                border-radius: SkwdTokens.radius-20;
+                background: SkwdTokens.fallback-accent;
+
+                Text {
+                    text: "✓";
+                    color: SkwdTokens.surface;
+                    font-size: 14px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Shader badge
+            if card.shader != "" : Rectangle {
+                height: 18px;
+                width: shader-text.preferred-width + 12px;
+                x: SkwdTokens.spacing-8;
+                y: parent.height - self.height - SkwdTokens.spacing-4;
+                border-radius: SkwdTokens.radius-4;
+                background: SkwdTokens.surface.transparentize(0.2);
+                border-width: SkwdTokens.border-1;
+                border-color: SkwdTokens.outline;
+
+                shader-text := Text {
+                    text: card.shader;
+                    color: SkwdTokens.outline;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Color dots + border preview + name
+        HorizontalLayout {
+            spacing: SkwdTokens.spacing-4;
+            // Color swatches
+            for col in [card.primary, card.secondary, card.tertiary, card.accent] : Rectangle {
+                width: 14px;
+                height: 14px;
+                border-radius: SkwdTokens.radius-20;
+                background: col;
+                border-width: SkwdTokens.border-1;
+                border-color: SkwdTokens.outline.transparentize(0.5);
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            // Border size indicator
+            Rectangle {
+                width: 40px;
+                height: 14px;
+                border-radius: SkwdTokens.radius-4;
+                background: transparent;
+                border-width: SkwdTokens.border-1;
+                border-color: card.border-color;
+
+                Text {
+                    text: card.border-size + "px";
+                    color: SkwdTokens.outline;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Text {
+            text: card.name;
+            color: SkwdTokens.primary;
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-14;
+            font-weight: 600;
+            overflow: elide;
+            horizontal-alignment: left;
+        }
+    }
+
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.clicked(); }
+        // Right-click maps to flip in PR2 — signal stub for PR1
+        // Slint TouchArea has no right-button distinction in 1.17; PR2 adds
+        // PointerEvent handling for right-click flip.
+    }
+}
