@@ -37,6 +37,75 @@ impl HyprlandComposer {
         })
     }
 
+    /// Startup sanity check (spec scenario: crash left HVE stuck fullscreen).
+    /// Parses the same `hyprctl clients -j` query path as `hve_in_special`
+    /// and, before the first show, repairs a stuck state: exit fullscreen,
+    /// then restore floating. Focus-by-title precedes every dispatch.
+    /// Best-effort by design — any failure is swallowed; HVE simply starts.
+    pub fn startup_sanity(&self) {
+        let Some(text) = self.clients_json() else {
+            return;
+        };
+        let state = parse_stuck_state(&text);
+        if !state.needs_repair() {
+            return;
+        }
+        tracing::info!(
+            fullscreen = state.fullscreen,
+            tiled = state.tiled,
+            "startup sanity: repairing stuck gallery fullscreen"
+        );
+        // Dispatches act on the focused window — focus HVE by title first.
+        if !self.focus_by_title() {
+            return;
+        }
+        for step in repair_plan(&state) {
+            match step {
+                "fullscreen_off" => match self.hypr_mode() {
+                    HyprMode::V5 => {
+                        let s = format!(
+                            "hl.dsp.window.fullscreen({{ action = \"unset\", \
+                             window = \"title:{HVE_TITLE}\" }})"
+                        );
+                        self.hypr_dispatch_v5(&s);
+                    }
+                    HyprMode::V4 => {
+                        self.hypr_dispatch_v4(&["fullscreen", "0"]);
+                    }
+                    HyprMode::None => {}
+                },
+                "refloat" => match self.hypr_mode() {
+                    HyprMode::V5 => {
+                        let s = format!(
+                            "hl.dsp.window.float({{ action = \"on\", \
+                             window = \"title:{HVE_TITLE}\" }})"
+                        );
+                        self.hypr_dispatch_v5(&s);
+                    }
+                    // Tiled per the parsed snapshot, so toggle == set float.
+                    HyprMode::V4 => {
+                        self.hypr_dispatch_v4(&["togglefloating", HVE_TITLE]);
+                    }
+                    HyprMode::None => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    /// Focus HVE by title (constant argv) — prerequisite for every
+    /// subsequent window-targeted dispatch. Returns dispatch success.
+    fn focus_by_title(&self) -> bool {
+        match self.hypr_mode() {
+            HyprMode::V5 => {
+                let s = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                self.hypr_dispatch_v5(&s)
+            }
+            HyprMode::V4 => self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]),
+            HyprMode::None => false,
+        }
+    }
+
     fn hypr_dispatch_v5(&self, script: &str) -> bool {
         std::process::Command::new("hyprctl")
             .args(["dispatch", script])
@@ -55,19 +124,11 @@ impl HyprlandComposer {
     }
 
     fn hve_in_special(&self) -> bool {
-        let out = match std::process::Command::new("hyprctl")
-            .args(["clients", "-j"])
-            .output() {
-            Ok(o) => o,
-            Err(_) => return false,
+        let Some(text) = self.clients_json() else {
+            return false;
         };
-        let text = match String::from_utf8(out.stdout) {
-            Ok(t) => t,
-            Err(_) => return false,
-        };
-        let v: serde_json::Value = match serde_json::from_str(&text) {
-            Ok(v) => v,
-            Err(_) => return false,
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return false;
         };
         v.as_array().into_iter().flatten().any(|w| {
             w.get("title")
@@ -78,6 +139,16 @@ impl HyprlandComposer {
                     .and_then(|n| n.as_str())
                     .is_some_and(|n| n.contains("special"))
         })
+    }
+
+    /// Fetch `hyprctl clients -j` stdout. Shared query path for
+    /// `hve_in_special` and the startup sanity check.
+    fn clients_json(&self) -> Option<String> {
+        let out = std::process::Command::new("hyprctl")
+            .args(["clients", "-j"])
+            .output()
+            .ok()?;
+        String::from_utf8(out.stdout).ok()
     }
 
     fn active_workspace(&self) -> Option<String> {
@@ -392,6 +463,70 @@ impl Composer for HyprlandComposer {
 const HVE_TITLE: &str = "Hyprland Visual Editor";
 const SPECIAL: &str = "minimized";
 
+// ── Startup sanity (gallery-immersive-redesign 1.4/1.5) ────────────────
+
+/// Stuck-fullscreen state of the HVE window, parsed from a
+/// `hyprctl clients -j` snapshot. Pure data — headless-testable.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct StuckState {
+    /// An HVE-titled client was found at all.
+    present: bool,
+    /// Window sits in a fullscreen/maximized state (internal or client flag).
+    fullscreen: bool,
+    /// Window is tiled (`floating == false`).
+    tiled: bool,
+}
+
+impl StuckState {
+    /// Whether any repair dispatch is required.
+    fn needs_repair(&self) -> bool {
+        self.fullscreen || self.tiled
+    }
+}
+
+/// Parse a `hyprctl clients -j` snapshot and locate HVE by title substring,
+/// reporting its stuck flags. Malformed JSON or a missing HVE client yields
+/// the default (nothing stuck) state — never panic on compositor output.
+///
+/// JSON field shapes verified against Hyprland 0.56.2 live output:
+/// `fullscreen`/`fullscreenClient` are ints (0 none, 1 fullscreen, 2
+/// maximized), `floating` is a bool.
+fn parse_stuck_state(clients_json: &str) -> StuckState {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(clients_json) else {
+        return StuckState::default();
+    };
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| {
+            let title = w.get("title")?.as_str()?;
+            if !title.contains(HVE_TITLE) {
+                return None;
+            }
+            let flag = |key: &str| w.get(key).and_then(|f| f.as_i64()).unwrap_or(0) > 0;
+            Some(StuckState {
+                present: true,
+                fullscreen: flag("fullscreen") || flag("fullscreenClient"),
+                tiled: w.get("floating").and_then(|f| f.as_bool()) == Some(false),
+            })
+        })
+        .next()
+        .unwrap_or_default()
+}
+
+/// Symbolic repair dispatches derived from a stuck state, in execution
+/// order: exit fullscreen first, then restore float.
+fn repair_plan(state: &StuckState) -> Vec<&'static str> {
+    let mut plan = Vec::new();
+    if state.fullscreen {
+        plan.push("fullscreen_off");
+    }
+    if state.tiled {
+        plan.push("refloat");
+    }
+    plan
+}
+
 /// SECURITY: workspace names are interpolated into a Lua string sent to
 /// hyprctl dispatch (`hl.dsp.window.move({ workspace = "..." })`). Validate
 /// against a strict allowlist so a crafted name (quotes, backslashes, `;`,
@@ -421,4 +556,72 @@ fn hypr_dispatch_v4_standalone(args: &[&str]) -> bool {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
         .unwrap_or(false)
+}
+
+// ── Tests (gallery-immersive-redesign 1.4) ─────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A crash left HVE stuck fullscreen while still floating: the repair
+    /// plan must demand the fullscreen-off dispatch only.
+    #[test]
+    fn sanity_stuck_fullscreen_demands_fullscreen_off() {
+        let st = parse_stuck_state(
+            r#"[
+            {"title": "other app", "fullscreen": 2, "fullscreenClient": 2, "floating": false},
+            {"title": "Hyprland Visual Editor", "fullscreen": 1, "fullscreenClient": 0, "floating": true}
+        ]"#,
+        );
+        assert!(st.present, "HVE must be located by title");
+        assert!(st.fullscreen, "internal fullscreen flag must be detected");
+        assert!(!st.tiled, "a floating window is not tiled");
+        assert_eq!(
+            repair_plan(&st),
+            vec!["fullscreen_off"],
+            "stuck fullscreen must yield the fullscreen 0 repair"
+        );
+    }
+
+    /// Fullscreen OTHER windows (games, video players) must never trigger
+    /// a repair: only the HVE-titled client counts.
+    #[test]
+    fn sanity_ignores_non_hve_fullscreen_clients() {
+        let st = parse_stuck_state(
+            r#"[{"title": "Some Game", "fullscreen": 2, "fullscreenClient": 2, "floating": false}]"#,
+        );
+        assert!(!st.present);
+        assert!(repair_plan(&st).is_empty());
+    }
+
+    /// A stuck fullscreen that ALSO lost float (tiled) adds the float
+    /// restore step after the fullscreen-off step.
+    #[test]
+    fn sanity_tiled_stuck_adds_refloat_after_fullscreen_off() {
+        let st = parse_stuck_state(
+            r#"[{"title": "Hyprland Visual Editor", "fullscreen": 2, "fullscreenClient": 1, "floating": false}]"#,
+        );
+        assert!(st.fullscreen && st.tiled);
+        assert_eq!(
+            repair_plan(&st),
+            vec!["fullscreen_off", "refloat"],
+            "float restore follows the fullscreen 0 repair"
+        );
+    }
+
+    /// Healthy (floating, windowed) or absent HVE needs no repair at all.
+    #[test]
+    fn sanity_healthy_or_absent_hve_needs_nothing() {
+        let healthy = parse_stuck_state(
+            r#"[{"title": "Hyprland Visual Editor", "fullscreen": 0, "fullscreenClient": 0, "floating": true}]"#,
+        );
+        assert!(healthy.present && !healthy.needs_repair());
+
+        let absent = parse_stuck_state(r#"[]"#);
+        assert!(!absent.present && !absent.needs_repair());
+
+        let garbage = parse_stuck_state("not json");
+        assert!(!garbage.present && !garbage.needs_repair());
+    }
 }

@@ -170,6 +170,13 @@ impl Controller {
 mod hyprland;
 pub use hyprland::HyprlandComposer;
 
+/// Startup sanity check (gallery-immersive-redesign 1.5): detect an HVE
+/// window left stuck fullscreen by a crash and restore floating BEFORE the
+/// first show. Best-effort; a no-op without a Hyprland session.
+pub fn startup_fullscreen_sanity() {
+    HyprlandComposer::new().startup_sanity();
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]

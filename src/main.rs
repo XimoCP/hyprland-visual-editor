@@ -686,6 +686,10 @@ fn main() -> Result<(), slint::PlatformError> {
         set_autostart(state_guard.cfg().auto_start);
     }
 
+    // ── Startup sanity: repair a fullscreen state left stuck by a crash
+    //     BEFORE the first show (gallery-immersive-redesign 1.5) ──
+    composer::startup_fullscreen_sanity();
+
     // ── Visibilidad inicial según el modo ──
     if tray_mode {
         // Lazy load: no llamamos a show() hasta que el usuario pulse SUPER+H.
