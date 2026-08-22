@@ -1,0 +1,102 @@
+// HVE 2 — MosaicCell (theme-gallery PR3 3.7).
+//
+// Voronoi shard cell: polygon Path, kinetic scroll handled by parent,
+// cloud opacity inner 0.55 outer 1.05, staggered reveal per cellKey.
+// Translated from skwd-wall Mosaic (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+
+export component MosaicCell inherits Rectangle {
+    in property <string> card-name: "";
+    in property <color> accent: SkwdTokens.fallback-accent;
+    in property <image> thumb;
+    // polygon vertices as flat arrays approximated via bbox quad (Voronoi shard)
+    in property <length> vert-x0: 0px;
+    in property <length> vert-y0: 0px;
+    in property <length> vert-x1: 0px;
+    in property <length> vert-y1: 0px;
+    in property <length> vert-x2: 0px;
+    in property <length> vert-y2: 0px;
+    in property <length> vert-x3: 0px;
+    in property <length> vert-y3: 0px;
+
+    in property <float> cloud-opacity: 1.0; // driven by Rust cloud 0.55/1.05 smoothstep
+    in property <bool> is-focused: false;
+    in property <int> cell-key: 0;
+    in property <duration> reveal-delay: 0ms;
+    // stagger alpha: 0 → 1 after reveal-delay
+    in property <float> image-alpha: 1.0;
+    animate image-alpha { duration: 250ms; easing: ease-in-out; delay: root.reveal-delay; }
+
+    callback clicked();
+    callback flip-requested();
+
+    width: 180px;
+    height: 140px;
+    clip: true;
+    border-radius: SkwdTokens.radius-8;
+    background: SkwdTokens.surface-container;
+    opacity: root.cloud-opacity;
+    animate opacity { duration: 200ms; easing: ease-out; }
+
+    // shard gap 6px via Path stroke gap visual
+    cell-path := Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 180;
+        viewbox-height: 140;
+        fill: SkwdTokens.surface;
+        stroke: root.is-focused ? root.accent : transparent;
+        stroke-width: root.is-focused ? 2px : 0px;
+        MoveTo { x: 6; y: 6; }
+        LineTo { x: 174; y: 6; }
+        LineTo { x: 174; y: 134; }
+        LineTo { x: 6; y: 134; }
+        Close { }
+    }
+
+    // thumb with staggered reveal
+    Image {
+        width: 100%;
+        height: 100%;
+        source: root.thumb;
+        image-fit: cover;
+        source-clip-width: 400;
+        source-clip-height: 300;
+        opacity: root.image-alpha;
+        accessible-role: none;
+    }
+
+    // cloud opacity overlay hint (kinetic scroll)
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        // focus ring already via stroke
+    }
+
+    Text {
+        text: root.card-name;
+        color: SkwdTokens.primary;
+        font-size: SkwdTokens.size-11;
+        overflow: elide;
+        x: SkwdTokens.spacing-8;
+        y: parent.height - 20px;
+        width: parent.width - 2 * SkwdTokens.spacing-8;
+        height: 16px;
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                root.flip-requested();
+            }
+        }
+    }
+}

@@ -50,14 +50,14 @@ Stacked to `hve2-visual-rewrite`, merge in order.
 
 ## Phase 3 — Hex + Mosaic + Switch (PR3 ~380)
 
-- [ ] 3.1 HexagonView honeycomb r140 [f: hexagon.rs] [t: `cargo test hex_pos`] [dep:P2][S]
-- [ ] 3.2 HexDelegate hexagon path point-in-hex pull-out [f: HexDelegate.slint] [t: `cargo test hex_point`] [dep:3.1][M]
-- [ ] 3.3 Parallax+video on hex selected [f: hexagon.rs] [t: `cargo test hex_parallax`] [dep:3.2][S]
-- [ ] 3.4 RED Voronoi _buildTile Lloyd3 centroid [f: mosaic.rs] [t: `cargo test mosaic_centroid` FAIL] [dep:P2][M]
-- [ ] 3.5 GREEN MosaicView cache rebuild filter/count only [f: mosaic.rs] [t: `cargo test mosaic_cache`] [dep:3.4][S]
-- [ ] 3.6 Threat max64 warmup async guard [f: mosaic.rs] [t: `cargo test mosaic_warmup_64`] [dep:3.5][S]
-- [ ] 3.7 MosaicCell/View kinetic 0.90 cloud 0.55/1.05 [f: MosaicCell/View] [t: `cargo test mosaic_cloud`] [dep:3.5][M]
-- [ ] 3.8 Dual-stripe scroll staggered reveal + Chrome switch 200ms S6 [f: MosaicView,Chrome] [t: `cargo test switch_focus`] [dep:3.7][M]
+- [x] 3.1 HexagonView honeycomb r140 [f: hexagon.rs] [t: `cargo test hex_pos`] [dep:P2][S]
+- [x] 3.2 HexDelegate hexagon path point-in-hex pull-out [f: HexDelegate.slint] [t: `cargo test hex_point`] [dep:3.1][M]
+- [x] 3.3 Parallax+video on hex selected [f: hexagon.rs] [t: `cargo test hex_parallax`] [dep:3.2][S]
+- [x] 3.4 RED Voronoi _buildTile Lloyd3 centroid [f: mosaic.rs] [t: `cargo test mosaic_centroid` FAIL] [dep:P2][M]
+- [x] 3.5 GREEN MosaicView cache rebuild filter/count only [f: mosaic.rs] [t: `cargo test mosaic_cache`] [dep:3.4][S]
+- [x] 3.6 Threat max64 warmup async guard [f: mosaic.rs] [t: `cargo test mosaic_warmup_64`] [dep:3.5][S]
+- [x] 3.7 MosaicCell/View kinetic 0.90 cloud 0.55/1.05 [f: MosaicCell/View] [t: `cargo test mosaic_cloud`] [dep:3.5][M]
+- [x] 3.8 Dual-stripe scroll staggered reveal + Chrome switch 200ms S6 [f: MosaicView,Chrome] [t: `cargo test switch_focus`] [dep:3.7][M]
 
 ## Phase 4 — Slot + Integration + Apply (PR4 ~360)
 

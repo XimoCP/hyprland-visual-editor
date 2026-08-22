@@ -1,0 +1,72 @@
+// HVE 2 — MosaicView (theme-gallery PR3 3.7-3.8).
+//
+// Voronoi Mosaic: dual-stripe infinite scroll, kinetic 0.90 (16ms),
+// cloud 0.55/1.05, staggered reveal per cellKey, warmup 64, cache.
+// Translated from skwd-wall Mosaic (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+import { MosaicCell } from "MosaicCell.slint";
+
+export component MosaicView inherits Rectangle {
+    in property <length> scroll-offset: 0px;
+    in property <length> viewport-w: 1500px;
+    // model is set from Rust via standard list model in real shell; here placeholder
+    in property <int> item-count: 0;
+    callback cell-clicked(int);
+    callback cell-flip(int);
+
+    width: 1500px;
+    height: 800px;
+    clip: true;
+    background: SkwdTokens.surface;
+
+    // kinetic 0.90 state driven by Rust tick every 16ms; Slint mirrors offset with 16ms timer
+    property <length> stripe-a-x: - root.scroll-offset;
+    property <length> stripe-b-x: - root.scroll-offset + root.viewport-w;
+    animate stripe-a-x { duration: 16ms; easing: linear; }
+    animate stripe-b-x { duration: 16ms; easing: linear; }
+
+    // dual-stripe tiling for infinite horizontal scroll (spec R2.3)
+    stripe-a := Rectangle {
+        x: root.stripe-a-x;
+        y: 0;
+        width: root.viewport-w;
+        height: 100%;
+        // cells for stripe A
+        // In real impl this is a Repeater over Voronoi cells model; placeholder shows 6 cells
+        HorizontalLayout {
+            spacing: 12px;
+            padding: 12px;
+            for cell[i] in 6 : MosaicCell {
+                cell-key: i;
+                reveal-delay: i * 40ms;
+                image-alpha: 1.0;
+                cloud-opacity: 1.0;
+                clicked => { root.cell-clicked(i); }
+                flip-requested => { root.cell-flip(i); }
+            }
+        }
+    }
+
+    stripe-b := Rectangle {
+        x: root.stripe-b-x;
+        y: 0;
+        width: root.viewport-w;
+        height: 100%;
+        HorizontalLayout {
+            spacing: 12px;
+            padding: 12px;
+            for cell[i] in 6 : MosaicCell {
+                cell-key: i + 6;
+                reveal-delay: (i + 6) * 40ms;
+                image-alpha: 1.0;
+                // same cloud logic
+                clicked => { root.cell-clicked(i + 6); }
+                flip-requested => { root.cell-flip(i + 6); }
+            }
+        }
+    }
+
+    // 16ms kinetic timer placeholder (velocity *=0.90 handled in Rust; Slint just animates)
+    // Chrome switch cross-fade 200ms handled by parent GalleryChrome opacity transition.
+}

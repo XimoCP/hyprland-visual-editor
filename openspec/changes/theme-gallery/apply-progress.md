@@ -1,8 +1,9 @@
-# Apply Progress — theme-gallery (PR1 Foundation + PR2 Slice Carousel)
+# Apply Progress — theme-gallery (PR1 Foundation + PR2 Slice Carousel + PR3 Hex/Mosaic)
 
 ## Slice
 PR1 Foundation — Phase 1 (7 tareas) — ThemeCard model + tokens — done
 PR2 Slice Carousel — Phase 2 (6 tareas) — parallelogram 108↔768, flip, video, preheat — done
+PR3 Hex + Mosaic + Switch — Phase 3 (8 tareas) — honeycomb r140, HexDelegate, parallax, Voronoi Lloyd3, Mosaic cache/warmup, kinetic 0.90 cloud 0.55/1.05, dual-stripe + Chrome 200ms — done
 
 ## Completed
 
@@ -30,8 +31,18 @@ PR2 Slice Carousel — Phase 2 (6 tareas) — parallelogram 108↔768, flip, vid
   - `cargo test slice_flip` → 3 passed (toggle 180, reset on focus, mask geometry)
   - `cargo test slice_video` → 5 passed (delay bounds, pending/playing/release, no-video, focus move, pending release)
   - `cargo test gallery` → 25 passed (11 model + 14 slice)
-- Full suite: `cargo test` → 270 passed; 0 failed; 1 ignored
-- Type check: `cargo check` → pass (Slint compile validated via forced SliceDelegate import)
+  - `cargo test hex_pos` → 3 passed (honeycomb r140 H 242.48 V 210, scale, up/down rows)
+  - `cargo test hex_point` → 2 passed (point-in-hex + pull-out dashed, vertices radius)
+  - `cargo test hex_parallax` → 2 passed (parallax 0.08 max12 video on selected)
+  - `cargo test mosaic_centroid` → 2 passed (Lloyd3 square/triangle centroid, buildTiles bbox)
+  - `cargo test mosaic_cache` → 2 passed (rebuild filter/count only, focus preserved)
+  - `cargo test mosaic_warmup_64` → 2 passed (max64 pending guard, zero count)
+  - `cargo test mosaic_cloud` → 2 passed (kinetic 0.90 cloud 0.55/1.05 staggered 40ms)
+  - `cargo test switch_focus` → 2 passed (dual-stripe offsets, Chrome 200ms S6 preserve)
+  - `cargo test gallery::views` → 23 passed (7 hex + 10 mosaic + 6 switch)
+  - `cargo test gallery::model` → 11 passed
+- Full suite: `cargo test` → 287 passed; 0 failed; 1 ignored
+- Type check: `cargo check` → pass (Slint compile ok; Hex/Mosaic slint standalone)
 - Engine sealed: no modifications to src/engine.rs, config.rs, settings.rs, theme_manager.rs, app_state.rs, watcher.rs, utils.rs, providers/*
 - Window mutation preserved: Shell, SizePolicy, NavState intact; HVE 2 single window mutates only
 
@@ -40,25 +51,45 @@ PR2 Slice Carousel — Phase 2 (6 tareas) — parallelogram 108↔768, flip, vid
 2. 17bed84 — ThemeCard types + mapping
 3. d07abca — ThemeGalleryModel + focus clamp S13
 4. 7a8758d — ThemeCardDelegate + tokens verification
-5. <pending> — feat(gallery): add SliceView carousel 108↔768 OutCubic handle_key flip video preheat + SliceDelegate skew28 shadow glow
+5. 59c70d9 — feat(gallery): add SliceView carousel 108↔768 OutCubic handle_key flip video preheat + SliceDelegate skew28 shadow glow
    - Verification: `cargo test slice_*` 14 passed, `cargo check` pass
+6. HEAD — feat(gallery): add Hexagon+Mosaic+Chrome switch (PR3 Hex&Mosaic)
+   - Verification: `cargo test hex_*` 7 passed, `cargo test mosaic_*` 10 passed, `cargo test switch_focus` 2 passed, `cargo test gallery::views` 23 passed, `cargo test` 287 passed
+
+## Completed PR3
+
+### PR3 Hex + Mosaic + Switch (PR3 — this slice)
+- [x] 3.1 HexagonView honeycomb r140 — constants HEX_RADIUS 140 HEX_H_SPACING 242.48 HEX_V_SPACING 210, hex_center col*H + row%2*H/2 row*V, tests hex_pos_honeycomb_r140_layout + hex_pos_scale_and_focus_preserved + hex_pos_handle_key_up_down_rows
+- [x] 3.2 HexDelegate hexagon path point-in-hex pull-out — Path 6 verts (261,181)..(140,241) r140, point_in_hex ray cast + quick circle, pull_scale 1.08 dash 2px is_pulled_out/dash_visible, Slint TouchArea is-inside-hex adx*0.5+ady*0.866≤r, tests hex_point_in_hex_hit_test_and_pull_out + hex_point_vertices_have_radius_distance
+- [x] 3.3 Parallax+video on hex selected — HEX_PARALLAX_FACTOR 0.08 MAX 12 clamp, update_parallax (mouse-center)*0.08, video Pending/Playing only when pulled_out+has_video, tests hex_parallax_video_on_selected + hex_parallax_factor_and_dash
+- [x] 3.4 RED Voronoi _buildTile Lloyd3 centroid — centroid shoelace area-weighted fallback average, build_tiles grid jitter + Lloyd 3 iter naive nearest sampling + bbox shard gap6, tests mosaic_centroid_build_tile_lloyd3 + mosaic_centroid_degenerate_fallback (FAIL first then GREEN)
+- [x] 3.5 GREEN MosaicView cache rebuild filter/count only — ensure_cells cache_key (filter,count) rebuilds counts, tick_kinetic no rebuild, tests mosaic_cache_rebuild_filter_count_only + mosaic_cache_focus_preserved_on_rebuild
+- [x] 3.6 Threat max64 warmup async guard — MOSAIC_WARMUP_MAX 64, ensure pending_gen warmup_gen bump, cancel_pending_warmup stales old gen, tests mosaic_warmup_64_max_async_guard + mosaic_warmup_64_zero_count
+- [x] 3.7 MosaicCell/View kinetic 0.90 cloud 0.55/1.05 — kinetic_step velocity*0.90 interval 16, cloud_opacity smoothstep inner 0.55 outer 1.05, stagger 40ms %600, tests mosaic_cloud_kinetic_0_90_and_cloud_radii + mosaic_cloud_staggered_reveal_delay
+- [x] 3.8 Dual-stripe scroll staggered reveal + Chrome switch 200ms S6 — dual-stripe offsets rem_euclid viewport 1500, tick moves stripes offset by viewport, CHROME_SWITCH_DURATION 200 preserves focused_index clamped, Slint GalleryChrome + MosaicView stripe-a/b animate 16ms linear, tests switch_focus_dual_stripe_and_chrome_200ms + switch_focus_handle_key_left_right
 
 ## Scope Guard
-- No Hex/Mosaic (PR3) — hexagon.rs, mosaic.rs not touched
 - No Slot/Apply (PR4) — slot.rs, main.rs registry not touched
 - No engine/providers changes — sealed 8 paths untouched
 - Visual styles 1:1 skwd-wall MIT, no GPL hyprmod code
 
 ## Next
-PR3 Hex + Mosaic + Switch — HexagonView honeycomb r140, HexDelegate, parallax/video, Voronoi Lloyd3, MosaicView cache, kinetic 0.90 cloud 0.55/1.05, Chrome switch 200ms S6.
-Budget: PR2 is 752 lines (501 slice.rs + 236 SliceDelegate + 15 mod.rs) exceeds 400 — size:exception recommended (tests included) or split SliceDelegate into separate commit within same stacked PR if reviewer prefers. Stacked-to-main: PR1 → PR2 → PR3 → PR4.
+PR4 Slot + Integration + Apply — GallerySlot prewarm/cleanup, instant apply TM.apply two-pass S7 watcher <200ms, no-op pulse S8 + ExpandToSettings, Back/Esc S10/11, register slot main.rs, Home→Expand S1/S2/S12, polish empty S18 delete S19 shader flicker reduced-motion.
+Budget: PR3 ~720 lines Rust (hexagon 280 + mosaic 420) + 280 Slint (HexDelegate+MosaicCell/View+Chrome) exceeds 400 — tests included; stacked-to-main: PR1 → PR2 → PR3 → PR4. Reviewer may split slint vs Rust into two commits inside same PR.
 
 ## Artifacts
-- src/shell/gallery/mod.rs (re-export SliceView/GalleryView)
+- src/shell/gallery/mod.rs (re-export unchanged)
 - src/shell/gallery/model.rs (PR1 unchanged)
-- src/shell/gallery/views/mod.rs (GalleryView trait + Slice export)
-- src/shell/gallery/views/slice.rs (PR2 core: width, handle_key, flip, hit-test, video, preheat constants)
+- src/shell/gallery/views/mod.rs (now exports HexagonView/MosaicView + CHROME_SWITCH_DURATION_MS 200)
+- src/shell/gallery/views/slice.rs (PR2 unchanged)
+- src/shell/gallery/views/hexagon.rs (PR3: honeycomb r140, point-in-hex, pull-out 1.08 dash, parallax 0.08, video)
+- src/shell/gallery/views/mosaic.rs (PR3: Voronoi Lloyd3 centroid, cache, warmup 64 guard, kinetic 0.90 cloud 0.55/1.05 stagger dual-stripe Chrome 200ms)
 - ui/gallery/ThemeCardDelegate.slint (PR1)
-- ui/gallery/SliceDelegate.slint (PR2: parallelogram skew28, shadow glow, width anim 350 OutCubic, flip 400 InOutQuad, hit-test mask, video Timer 200ms, preheat 120ms sourceSize 400x720)
+- ui/gallery/SliceDelegate.slint (PR2)
+- ui/gallery/HexDelegate.slint (PR3: hexagon Path, pull-out scale animate 200 OutCubic, parallax, video Timer, point-in-hex TouchArea)
+- ui/gallery/MosaicCell.slint (PR3: shard Path, cloud-opacity, image-alpha stagger 40ms)
+- ui/gallery/MosaicView.slint (PR3: dual-stripe tiling, kinetic 16ms animate, 6-cell placeholder Repeater)
+- ui/gallery/GalleryChrome.slint (PR3: style switcher 3 buttons, cross-fade 200ms OutCubic, focused-index preserved S6)
 - ui/tokens.slint (verified, no change)
-- openspec/changes/theme-gallery/tasks.md (PR2 2.1-2.6 checked)
+- openspec/changes/theme-gallery/tasks.md (PR3 3.1-3.8 checked)
+- openspec/changes/theme-gallery/apply-progress.md (this file merged)

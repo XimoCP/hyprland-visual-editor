@@ -1,0 +1,168 @@
+// HVE 2 — HexDelegate (theme-gallery PR3 3.2).
+//
+// Honeycomb hexagon Path, point-in-hex hit test, pull-out scale 1.08
+// dashed border, parallax 0.08 clamp 12px, video Timer 100-300ms,
+// preheat 120ms sourceSize 400. Translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+
+export component HexDelegate inherits Rectangle {
+    in property <string> card-name: "Theme";
+    in property <bool> is-selected: false;
+    in property <bool> is-hovered: false;
+    in property <color> accent: SkwdTokens.fallback-accent;
+    in property <image> thumb;
+    in property <bool> has-video: false;
+    in property <length> hex-radius: 140px;
+    // parallax offsets from Rust (mouse - center)*0.08 clamped
+    in property <length> parallax-x: 0px;
+    in property <length> parallax-y: 0px;
+
+    callback clicked();
+    callback flip-requested(length, length);
+
+    width: 280px;
+    height: 242px; // sqrt3 * r ≈ 242 for pointy-top
+    clip: false;
+    background: transparent;
+
+    // pull-out scale animate 200ms OutCubic (spec R2.2)
+    property <float> pull-scale: is-selected ? 1.08 : 1.0;
+    animate pull-scale { duration: 200ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+
+    // dashed border visible when selected (pull-out)
+    property <bool> dash-visible: is-selected;
+    border-width: dash-visible ? 2px : (is-hovered ? 2px : 1px);
+    border-color: is-selected ? accent : (is-hovered ? accent.transparentize(0.5) : SkwdTokens.outline.transparentize(0.7));
+    border-radius: 0px;
+    animate border-color { duration: SkwdTokens.anim-200; easing: ease-in-out; }
+
+    // hexagon Path (pointy-top, center 140,121)
+    hex-path := Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 280;
+        viewbox-height: 242;
+        fill: SkwdTokens.surface;
+        stroke: dash-visible ? accent : transparent;
+        stroke-width: dash-visible ? 2px : 0px;
+        // hexagon vertices for r=140 at center (140,121): angles 30+60*k
+        // precomputed: (261,181) (261,61) (140,1) (19,61) (19,181) (140,241)
+        MoveTo { x: 261; y: 181; }
+        LineTo { x: 261; y: 61; }
+        LineTo { x: 140; y: 1; }
+        LineTo { x: 19; y: 61; }
+        LineTo { x: 19; y: 181; }
+        LineTo { x: 140; y: 241; }
+        Close { }
+    }
+
+    // parallax thumb clipped to hex
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        clip: true;
+        // use hex mask via Path clip not available, so clip via parent
+        // thumb with parallax offset
+        Image {
+            x: root.parallax-x;
+            y: root.parallax-y;
+            width: 100%;
+            height: 100%;
+            source: root.thumb;
+            image-fit: cover;
+            source-clip-width: 400;
+            source-clip-height: 400;
+            accessible-role: none;
+        }
+        // video badge when selected and has-video
+        if root.is-selected && root.has-video : Rectangle {
+            width: 36px;
+            height: 24px;
+            x: parent.width - self.width - SkwdTokens.spacing-8;
+            y: SkwdTokens.spacing-8;
+            border-radius: SkwdTokens.radius-4;
+            background: #000000.transparentize(0.3);
+            Text {
+                text: "▶";
+                color: #ffffff;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            opacity: video-playing ? 1.0 : 0.6;
+            animate opacity { duration: 150ms; easing: ease-in-out; }
+        }
+    }
+
+    Text {
+        text: root.card-name;
+        x: 0;
+        y: parent.height - 28px;
+        width: 100%;
+        height: 28px;
+        color: SkwdTokens.primary;
+        font-family: SkwdTokens.font-body;
+        font-size: SkwdTokens.size-14;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // video Timer 100-300ms default 200
+    property <bool> video-playing: false;
+    property <duration> video-delay: 200ms;
+    video-timer := Timer {
+        interval: root.video-delay;
+        running: root.is-selected && root.has-video && !root.video-playing;
+        triggered => { root.video-playing = true; }
+    }
+    states [
+        blurred when !root.is-selected : { video-playing: false; }
+    ]
+
+    // point-in-hex hit test + pull-out dashed
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        // hex hit test: |dx|<=h/2 && |dy|<=r && |dx|*0.5 + |dy|*0.866 <= r
+        property <bool> is-inside-hex: {
+            let cx = root.width / 2;
+            let cy = root.height / 2;
+            let dx = self.mouse-x - cx;
+            let adx = dx < 0px ? -dx : dx;
+            let dy = self.mouse-y - cy;
+            let ady = dy < 0px ? -dy : dy;
+            let r = root.hex-radius;
+            // sqrt3/2 ≈ 0.866
+            let inside-rect = adx <= 121px && ady <= r;
+            let diag = adx * 0.5 + ady * 0.8660254 <= r;
+            inside-rect && diag
+        }
+
+        clicked => {
+            if (self.is-inside-hex) { root.clicked(); }
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                if (self.is-inside-hex) {
+                    root.flip-requested(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+        // subtle parallax follows mouse while hovered
+        mouse-cursor: pointer;
+    }
+
+    // preheat placeholder 120ms before thumb visible (R8)
+    property <bool> preheat-done: false;
+    preheat-timer := Timer {
+        interval: 120ms;
+        running: root.visible && !preheat-done;
+        triggered => { preheat-done = true; self.running = false; }
+    }
+}

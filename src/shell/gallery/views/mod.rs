@@ -5,9 +5,16 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 // No GPL code from hyprmod is used.
 
+pub mod hexagon;
+pub mod mosaic;
 pub mod slice;
 
+pub use hexagon::HexagonView;
+pub use mosaic::MosaicView;
 pub use slice::{GalleryKey, SliceView};
+
+/// Chrome style-switch cross-fade duration 200ms S6 (3.8).
+pub const CHROME_SWITCH_DURATION_MS: u64 = 200;
 
 /// Presentation styles 1:1 with skwd-wall (spec R2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
