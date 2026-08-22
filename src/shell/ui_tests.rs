@@ -112,13 +112,17 @@ fn tokens_gallery_geometry_matches_design() {
     let win = crate::MainWindow::new().unwrap();
     let t = tokens(&win);
 
-    // Slice carousel: 135/924/520/−30/skew 35/visible 12.
+    // Slice carousel, skwd-wall exact: w135/expanded-w924/h520/
+    // spacing −30 (overlap)/skew 35px offset/visible 12/radius 0.
+    // gallery-immersive-redesign 1.7 fixed the swapped h/card-w and
+    // replaced angle tokens with px spacing + skew offset.
     assert_eq!(t.get_gallery_slice_w(), 135.0);
-    assert_eq!(t.get_gallery_slice_h(), 924.0);
-    assert_eq!(t.get_gallery_slice_card_w(), 520.0);
-    assert_eq!(t.get_gallery_slice_angle(), -30.0);
-    assert_eq!(t.get_gallery_slice_skew(), 35.0);
+    assert_eq!(t.get_gallery_slice_expanded_w(), 924.0);
+    assert_eq!(t.get_gallery_slice_h(), 520.0);
+    assert_eq!(t.get_gallery_slice_spacing(), -30.0);
+    assert_eq!(t.get_gallery_slice_skew_offset(), 35.0);
     assert_eq!(t.get_gallery_slice_visible(), 12);
+    assert_eq!(t.get_gallery_slice_radius(), 0.0);
 
     // Hex columns: 140/3/7.
     assert_eq!(t.get_gallery_hex_h(), 140.0);
