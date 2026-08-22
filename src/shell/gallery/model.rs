@@ -1,16 +1,41 @@
-// HVE 2 — Gallery model (theme-gallery PR1 Foundation).
+// HVE 2 — Gallery model (theme-gallery PR1 Foundation + PR4 Polish).
 //
-// Data layer for the theme gallery: ThemeCard + ThemeGalleryModel.
-// Engine is sealed — reads ThemeManager::list() → ThemeInfo only.
+// Data layer for the theme gallery: ThemeCard + ThemeGalleryModel + LRU200
+// thumbnail cache + reduced-motion + MIT footer. Engine sealed — reads
+// ThemeManager::list() → ThemeInfo only.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 use crate::shell::gallery::views::GalleryStyle;
 use crate::theme_manager::ThemeInfo;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 /// Fallback accent color when a theme has no palette (spec R6).
 pub const FALLBACK_ACCENT: &str = "#4fc3f7";
+
+/// MIT credit footer (spec R7): persistent footer attribution to skwd-wall.
+pub const MIT_FOOTER: &str =
+    "Visual language translated from skwd-wall (MIT, \u{00A9} liixini) https://github.com/liixini/skwd-wall";
+/// Link to skwd-wall MIT repo.
+pub const MIT_FOOTER_LINK: &str = "https://github.com/liixini/skwd-wall";
+
+/// Thumbnail cache capacity R8: bounded LRU 200 items.
+pub const THUMBNAIL_CACHE_CAPACITY: usize = 200;
+
+/// Whether the system prefers reduced motion (S23). Checks env var
+/// `HVE_REDUCED_MOTION=1` or `PREFERS_REDUCED_MOTION`. Pure helper for
+/// tests and the Chrome reduced-motion path.
+pub fn prefers_reduced_motion() -> bool {
+    std::env::var("HVE_REDUCED_MOTION").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false)
+        || std::env::var("PREFERS_REDUCED_MOTION").map(|v| v == "1").unwrap_or(false)
+}
+
+/// Duration 0 when reduced-motion is active, otherwise original duration.
+/// S23: all animations disabled (duration 0) when prefers-reduced-motion.
+pub fn effective_duration(original_ms: u64, reduced: bool) -> u64 {
+    if reduced { 0 } else { original_ms }
+}
 
 /// Complete-look color scheme carried by each card (spec R1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +213,95 @@ impl ThemeGalleryModel {
         }
         self.focused_index = idx.min(self.themes.len() - 1);
         self.focused_index
+    }
+
+    /// Refresh model from fresh ThemeInfos (e.g. after delete/rename).
+    /// Preserves focus clamped.
+    pub fn refresh(&mut self, infos: &[ThemeInfo]) {
+        let new_themes = ThemeCard::from_infos(infos);
+        let was_empty = self.themes.is_empty();
+        self.themes = new_themes;
+        if was_empty {
+            self.focused_index = 0;
+        } else if self.focused_index >= self.themes.len().max(1) {
+            self.focused_index = self.themes.len().saturating_sub(1);
+        }
+    }
+}
+
+// ── Thumbnail LRU cache R8 (bounded 200) ──────────────────────────────
+
+/// Simple LRU cache for thumbnails (R8). Bounded at
+/// `THUMBNAIL_CACHE_CAPACITY` 200 entries. `get` promotes to most-recent,
+/// `insert` evicts least-recent when full.
+pub struct ThumbnailCache {
+    capacity: usize,
+    map: HashMap<String, PathBuf>,
+    order: VecDeque<String>,
+}
+
+impl ThumbnailCache {
+    pub fn new() -> Self {
+        Self::with_capacity(THUMBNAIL_CACHE_CAPACITY)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity,
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub fn contains(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
+    /// Insert or update; promotes to most-recent. Evicts LRU when over capacity.
+    pub fn insert(&mut self, key: String, path: PathBuf) {
+        if self.map.contains_key(&key) {
+            self.order.retain(|k| k != &key);
+        } else if self.map.len() >= self.capacity {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.map.insert(key, path);
+    }
+
+    /// Get path and promote to most-recent.
+    pub fn get(&mut self, key: &str) -> Option<PathBuf> {
+        if self.map.contains_key(key) {
+            self.order.retain(|k| k != key);
+            self.order.push_back(key.to_string());
+            self.map.get(key).cloned()
+        } else {
+            None
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+}
+
+impl Default for ThumbnailCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

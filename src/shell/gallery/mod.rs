@@ -6,7 +6,9 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 pub mod model;
+pub mod slot;
 pub mod views;
 
 pub use model::{Background, BorderConfig, GalleryColors, ThemeCard, ThemeGalleryModel};
+pub use slot::GallerySlot;
 pub use views::GalleryStyle;

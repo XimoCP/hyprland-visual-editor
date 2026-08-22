@@ -33,10 +33,14 @@ thread_local! {
 }
 
 /// Stepped animator cadence: one `set_size` call per tick (design D4).
-const ANIM_STEP_MS: u64 = 16;
+pub const ANIM_STEP_MS: u64 = 16;
 /// Number of steps to complete an expand/collapse transition. 350ms / 16ms
 /// ≈ 22 steps (skwd `animExpand` OutCubic cadence).
-const ANIM_STEPS: u32 = 22;
+pub const ANIM_STEPS: u32 = 22;
+/// Total animation duration ~352ms (≈350ms OutCubic skwd animExpand).
+pub const ANIM_DURATION_MS: u64 = ANIM_STEPS as u64 * ANIM_STEP_MS;
+/// OutCubic easing cubic-bezier(0.215, 0.61, 0.355, 1.0) — skwd default.
+pub const ANIM_EASING: (f32, f32, f32, f32) = (0.215, 0.61, 0.355, 1.0);
 
 /// The shell root — single mutable owner of navigation state, slot
 /// registry, window sizing and the stepped size animator (design D1, D3,
@@ -134,6 +138,27 @@ impl Shell {
         s.push_size_to_window();
     }
 
+    /// Animate the window to an arbitrary target size (S9 ExpandToSettings,
+    /// 4.4). Uses the same 22-step 350ms OutCubic stepped animator.
+    pub fn animate_to(shell: &Rc<RefCell<Self>>, target: (f32, f32)) {
+        let clamped = shell.borrow().size.clamp(target);
+        Self::start_size_anim_to(shell, clamped);
+    }
+
+    /// Expand the Gallery card into the settings panel (S9, 4.4):
+    /// same window mutates 1200×800 → 1300×900 via SizePolicy::target_for_settings.
+    pub fn expand_to_settings(shell: &Rc<RefCell<Self>>) {
+        let target = shell.borrow().size.target_for_settings(true);
+        Self::animate_to(shell, target);
+    }
+
+    /// Collapse the settings panel back to the gallery expanded size
+    /// (S10 Back/Esc, 4.5): 1300×900 → 1200×800.
+    pub fn collapse_from_settings(shell: &Rc<RefCell<Self>>) {
+        let target = shell.borrow().size.target_for_settings(false);
+        Self::animate_to(shell, target);
+    }
+
     /// The current navigation state (read-only accessor for tests and
     /// the callbacks layer).
     pub fn with_nav<F, R>(shell: &Rc<RefCell<Self>>, f: F) -> R
@@ -203,15 +228,21 @@ impl Shell {
             let expanded = s.nav.expansion() != ExpansionState::Collapsed;
             s.size.clamp(s.size.target(expanded))
         };
+        Self::start_size_anim_to(shell, target);
+    }
+
+    /// Start animator toward an explicit target (S9ExpandToSettings, 4.4).
+    fn start_size_anim_to(shell: &Rc<RefCell<Self>>, target: (f32, f32)) {
+        let clamped = shell.borrow().size.clamp(target);
         let (from_w, from_h) = {
             let s = shell.borrow();
             s.current_size
         };
-        let dw = (target.0 - from_w) / ANIM_STEPS as f32;
-        let dh = (target.1 - from_h) / ANIM_STEPS as f32;
+        let dw = (clamped.0 - from_w) / ANIM_STEPS as f32;
+        let dh = (clamped.1 - from_h) / ANIM_STEPS as f32;
         {
             let mut s = shell.borrow_mut();
-            s.target_size = target;
+            s.target_size = clamped;
             s.step_delta = (dw, dh);
             s.remaining_steps = ANIM_STEPS;
         }

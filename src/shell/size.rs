@@ -15,6 +15,9 @@
 const BASE: (f32, f32) = (900.0, 680.0);
 /// Expanded window size: 1200×800.
 const EXPANDED: (f32, f32) = (1200.0, 800.0);
+/// Settings panel size (Gallery card → Settings expansion, S9, 4.4): 1300×900.
+/// Same window mutates to settings via stepped animator (22 steps 350ms OutCubic).
+const SETTINGS_EXPANDED: (f32, f32) = (1300.0, 900.0);
 /// Minimum window size on any axis: 800×580.
 const MIN: (f32, f32) = (800.0, 580.0);
 
@@ -27,7 +30,7 @@ pub struct SizePolicy;
 
 impl SizePolicy {
     /// A policy with the trunk defaults: base 900×680, expanded 1200×800,
-    /// minimum 800×580.
+    /// minimum 800×580, settings 1300×900 (S9ExpandToSettings).
     pub fn new() -> Self {
         Self
     }
@@ -36,6 +39,19 @@ impl SizePolicy {
     /// expanded (base-window spec R8 growth scenarios).
     pub fn target(&self, expanded: bool) -> (f32, f32) {
         if expanded { EXPANDED } else { BASE }
+    }
+
+    /// Settings panel target (S9): when Gallery card expands to settings
+    /// the same window mutates to SETTINGS_EXPANDED (1300×900) via the
+    /// same 22-step 350ms OutCubic animator (task 4.4).
+    pub fn target_for_settings(&self, settings: bool) -> (f32, f32) {
+        if settings { SETTINGS_EXPANDED } else { EXPANDED }
+    }
+
+    /// Combined target helper: collapsed → BASE, expanded gallery → EXPANDED,
+    /// expanded + settings → SETTINGS_EXPANDED.
+    pub fn target_with_settings(&self, expanded: bool, settings_open: bool) -> (f32, f32) {
+        if !expanded { BASE } else if settings_open { SETTINGS_EXPANDED } else { EXPANDED }
     }
 
     /// `size` raised to the minimum on every axis that falls below it;
@@ -88,5 +104,18 @@ mod tests {
     fn clamp_accepts_the_exact_minimum() {
         let policy = SizePolicy::new();
         assert_eq!(policy.clamp((800.0, 580.0)), (800.0, 580.0));
+    }
+
+    // ── 4.4 ExpandToSettings mutation S9 (PR4) ────────────────────────
+
+    #[test]
+    fn apply_noop_settings_target_expands_beyond_gallery() {
+        let policy = SizePolicy::new();
+        assert_eq!(policy.target_for_settings(false), (1200.0, 800.0), "gallery expanded");
+        assert_eq!(policy.target_for_settings(true), (1300.0, 900.0), "settings panel larger than gallery");
+        assert_eq!(policy.target_with_settings(false, false), (900.0, 680.0), "collapsed base");
+        assert_eq!(policy.target_with_settings(true, false), (1200.0, 800.0), "expanded gallery");
+        assert_eq!(policy.target_with_settings(true, true), (1300.0, 900.0), "expanded settings S9");
+        assert_eq!(policy.target_with_settings(false, true), (900.0, 680.0), "collapsed ignores settings flag");
     }
 }
