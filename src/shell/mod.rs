@@ -191,11 +191,13 @@ impl Shell {
                     slot.on_unmount();
                 }
                 // Leaving the Gallery closes the immersive fullscreen
-                // session (spec: restore prior floating geometry). No-op
-                // when no global controller exists (headless tests).
+                // session (spec GIVEN: a fullscreen session is active).
+                // No-op when no global controller exists (headless tests).
                 if unmount == Screen::Gallery {
                     if let Some(mut ctrl) = crate::composer::global_controller() {
-                        ctrl.exit_gallery_session();
+                        if ctrl.gallery_session_active() {
+                            ctrl.exit_gallery_session();
+                        }
                     }
                 }
             }
