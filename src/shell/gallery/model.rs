@@ -95,4 +95,82 @@ impl ThemeCard {
             thumb_path: None,
         }
     }
+
+    /// Map a slice of ThemeInfo to ThemeCards (preserves order).
+    pub fn from_infos(infos: &[ThemeInfo]) -> Vec<Self> {
+        infos.iter().map(Self::from_info).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme_manager::ThemeInfo;
+
+    fn info(name: &str, active: bool, providers: &[&str], saved_at: &str) -> ThemeInfo {
+        ThemeInfo {
+            name: name.to_string(),
+            saved_at: saved_at.to_string(),
+            is_active: active,
+            providers: providers.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // ── 1.2 RED: mapping empty/active/providers ────────────────────
+
+    #[test]
+    fn gallery_maps_empty() {
+        let infos: Vec<ThemeInfo> = vec![];
+        let cards = ThemeCard::from_infos(&infos);
+        assert!(cards.is_empty(), "empty ThemeManager.list() must map to empty cards");
+    }
+
+    #[test]
+    fn gallery_active_flag() {
+        let infos = vec![
+            info("Nord", true, &["hve-presets"], "2026-01-01T00:00:00.000Z"),
+            info("Cyber", false, &["hve-presets"], "2026-01-02T00:00:00.000Z"),
+        ];
+        let cards = ThemeCard::from_infos(&infos);
+        assert_eq!(cards.len(), 2);
+        assert!(cards[0].is_active, "first card active flag must be true");
+        assert!(!cards[1].is_active, "second card active flag must be false");
+        assert_eq!(cards[0].name, "Nord");
+        assert_eq!(cards[1].name, "Cyber");
+    }
+
+    #[test]
+    fn gallery_maps_providers_and_timestamp() {
+        let infos = vec![info(
+            "Ocean",
+            false,
+            &["hve-presets", "noctalia"],
+            "2026-03-15T12:34:56.000Z",
+        )];
+        let cards = ThemeCard::from_infos(&infos);
+        assert_eq!(cards[0].providers, vec!["hve-presets", "noctalia"]);
+        assert_eq!(cards[0].saved_at, "2026-03-15T12:34:56.000Z");
+    }
+
+    #[test]
+    fn gallery_card_defaults_match_tokens() {
+        let i = info("Test", false, &[], "");
+        let c = ThemeCard::from_info(&i);
+        assert_eq!(c.colors.accent, FALLBACK_ACCENT, "accent defaults to fallback #4fc3f7");
+        assert_eq!(c.colors.primary, FALLBACK_ACCENT);
+        assert_eq!(c.border.size, 2, "border size default 2");
+        assert_eq!(c.border.radius, 32, "border radius default 32");
+        assert_eq!(c.border.color, FALLBACK_ACCENT);
+        assert!(c.shader.is_none(), "shader defaults to None");
+        assert!(c.thumb_path.is_none());
+        assert_eq!(c.background, Background::Solid("#1d100e".to_string()));
+    }
+
+    #[test]
+    fn gallery_from_info_preserves_name() {
+        let i = info("My Theme", false, &[], "2026-08-22T00:00:00.000Z");
+        let c = ThemeCard::from_info(&i);
+        assert_eq!(c.name, "My Theme");
+        assert_eq!(c.saved_at, "2026-08-22T00:00:00.000Z");
+    }
 }
