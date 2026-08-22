@@ -134,7 +134,9 @@ export component ShellRoot inherits Rectangle {
         //    in modules 2/4 — these are placeholders ──
         Rectangle {
             vertical-stretch: 1;
-            background: SkwdTokens.surface;
+            // Gallery mounts over the LIVE DESKTOP (gallery-immersive-
+            // redesign 1.8): the slot area must not paint under it.
+            background: root.mounted-screen == 1 ? transparent : SkwdTokens.surface;
             opacity: root.expanded ? 1.0 : 0.6;
             // OutCubic (skwd default `Behavior` curve, design D4): not a
             // SkwdTokens property — Slint 1.17 cannot expose `easing` through

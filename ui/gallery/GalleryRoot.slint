@@ -25,15 +25,38 @@ export component GalleryRoot inherits Rectangle {
     in property <string> mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> reduced-motion: false;
+    // Backdrop scrim level (skwd selectorBackdropOpacity/100; default 0
+    // keeps the live desktop fully visible behind the cards).
+    in property <float> backdrop-alpha: 0.0;
 
     // ── Events reported to Rust ──
     callback style-selected(int);
     callback card-clicked(int);
     callback card-right-clicked(int);
 
-    background: SkwdTokens.surface;
+    // Immersive presentation (gallery-immersive-redesign 1.8): the root
+    // stops painting an opaque surface — HVE runs fullscreen over the live
+    // desktop during a gallery session (skwd transparent layer-shell).
+    background: transparent;
+
+    // ── Backdrop scrim: fullscreen black Rect fading in on open ──
+    // skwd: alpha = selectorBackdropOpacity/100 (default 0 → NO dim),
+    // fade 300ms (animMedium). Flipped after mount so the fade always
+    // plays from 0 on open.
+    property <bool> opened: false;
+    init => { self.opened = true; }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: black;
+        opacity: opened ? root.backdrop-alpha : 0.0;
+        animate opacity { duration: SkwdTokens.anim-300; }
+    }
 
     VerticalLayout {
+        width: 100%;
+        height: 100%;
         // Toolbar (style switcher) + empty-state banner + MIT footer.
         GalleryChrome {
             current-style: root.current-style;
