@@ -18,9 +18,7 @@ mod ui_tests;
 #[cfg(test)]
 mod integration_tests;
 
-use self::nav::{ExpansionState, NavCommand, NavState};
-#[cfg(test)]
-use self::nav::Screen;
+use self::nav::{ExpansionState, NavCommand, NavState, Screen};
 use self::size::SizePolicy;
 use self::slots::SlotRegistry;
 use slint::{ComponentHandle, LogicalSize, WindowSize};
@@ -192,10 +190,26 @@ impl Shell {
                 if let Some(slot) = shell.borrow().slots.get(unmount) {
                     slot.on_unmount();
                 }
+                // Leaving the Gallery closes the immersive fullscreen
+                // session (spec: restore prior floating geometry). No-op
+                // when no global controller exists (headless tests).
+                if unmount == Screen::Gallery {
+                    if let Some(mut ctrl) = crate::composer::global_controller() {
+                        ctrl.exit_gallery_session();
+                    }
+                }
             }
             if let Some(mount) = transition.mount {
                 if let Some(slot) = shell.borrow().slots.get(mount) {
                     slot.on_mount();
+                }
+                // Entering the Gallery opens the immersive session before
+                // the new screen paints (spec: undecorated fullscreen
+                // covering the monitor before content displays).
+                if mount == Screen::Gallery {
+                    if let Some(mut ctrl) = crate::composer::global_controller() {
+                        ctrl.enter_gallery_session();
+                    }
                 }
             }
             // Mirror state back to the UI.

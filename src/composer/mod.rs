@@ -94,6 +94,8 @@ pub struct Controller {
     window_hidden: bool,
     tray_mode: bool,
     prev_workspace: Option<String>,
+    /// Immersive Gallery fullscreen session active (gallery session spec).
+    gallery_session: bool,
     composer: Box<dyn Composer>,
 }
 
@@ -104,8 +106,33 @@ impl Controller {
             window_hidden: false,
             tray_mode: false,
             prev_workspace: None,
+            gallery_session: false,
             composer,
         }
+    }
+
+    /// Enter an immersive Gallery session (gallery-immersive-redesign 1.6):
+    /// switch to undecorated fullscreen BEFORE the gallery content shows.
+    /// Returns false when the compositor refused — the caller continues
+    /// windowed and the session is not marked active.
+    pub fn enter_gallery_session(&mut self) -> bool {
+        let ok = self.composer.set_fullscreen(true);
+        self.gallery_session = ok;
+        ok
+    }
+
+    /// Exit the immersive Gallery session: restore the previous floating
+    /// geometry and float mode. The session always closes, even when the
+    /// compositor reports failure.
+    pub fn exit_gallery_session(&mut self) -> bool {
+        let ok = self.composer.set_fullscreen(false);
+        self.gallery_session = false;
+        ok
+    }
+
+    /// Whether an immersive Gallery fullscreen session is active.
+    pub fn gallery_session_active(&self) -> bool {
+        self.gallery_session
     }
 
     /// Toggle tray: hides if visible, shows if hidden.
@@ -509,6 +536,49 @@ pub(crate) mod tests {
     }
 
     // ── Gallery fullscreen session (gallery-immersive-redesign 1.1) ───
+
+    /// Controller sessions wrap the composer contract: entering the
+    /// session dispatches `set_fullscreen(true)` exactly once, exiting
+    /// `(false)` exactly once (spec scenarios: enter-on-open,
+    /// restore-floating-on-close).
+    #[test]
+    fn test_gallery_session_enter_exit_records_exact_sequence() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        assert!(!controller.gallery_session_active(), "no session initially");
+
+        assert!(controller.enter_gallery_session(), "enter accepted");
+        assert!(controller.gallery_session_active(), "session marked active");
+        assert_eq!(*calls.lock().unwrap(), vec!["set_fullscreen(true)"]);
+
+        assert!(controller.exit_gallery_session(), "exit accepted");
+        assert!(!controller.gallery_session_active(), "session closed");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["set_fullscreen(true)", "set_fullscreen(false)"]
+        );
+        let _ = &win; // platform guard
+    }
+
+    /// A failed enter must NOT mark the session active: the UI continues
+    /// windowed and the gallery stays fully functional (spec fallback).
+    #[test]
+    fn test_gallery_session_failed_enter_stays_windowed() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, _calls) = FakeComposer::with_fullscreen_result(false);
+        let mut controller = Controller::new(Box::new(fake));
+
+        assert!(!controller.enter_gallery_session(), "dispatch failed");
+        assert!(
+            !controller.gallery_session_active(),
+            "failed enter must leave the session inactive"
+        );
+        let _ = &win; // platform guard
+    }
 
     /// Session enter must record `set_fullscreen(true)` and exit must
     /// record `set_fullscreen(false)` — the exact dispatch sequence the
