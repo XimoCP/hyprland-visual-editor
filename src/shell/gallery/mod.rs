@@ -8,5 +8,5 @@
 pub mod model;
 pub mod views;
 
-pub use model::{Background, BorderConfig, GalleryColors, ThemeCard};
+pub use model::{Background, BorderConfig, GalleryColors, ThemeCard, ThemeGalleryModel};
 pub use views::GalleryStyle;

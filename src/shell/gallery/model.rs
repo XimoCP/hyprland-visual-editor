@@ -5,6 +5,7 @@
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
+use crate::shell::gallery::views::GalleryStyle;
 use crate::theme_manager::ThemeInfo;
 use std::path::PathBuf;
 
@@ -102,6 +103,94 @@ impl ThemeCard {
     }
 }
 
+/// Gallery data model: owned theme cards + focused index + style.
+///
+/// Pure Rust, no Slint types; Engine sealed — only ThemeInfo is read.
+/// Focus movement is clamped, no wrap (spec S13).
+#[derive(Debug, Clone)]
+pub struct ThemeGalleryModel {
+    themes: Vec<ThemeCard>,
+    focused_index: usize,
+    style: GalleryStyle,
+}
+
+impl ThemeGalleryModel {
+    /// Create a model from cards, focus at 0, style Slice.
+    pub fn new(themes: Vec<ThemeCard>) -> Self {
+        Self {
+            themes,
+            focused_index: 0,
+            style: GalleryStyle::default(),
+        }
+    }
+
+    /// Create with explicit style.
+    pub fn with_style(themes: Vec<ThemeCard>, style: GalleryStyle) -> Self {
+        Self {
+            themes,
+            focused_index: 0,
+            style,
+        }
+    }
+
+    /// Map ThemeInfos directly to a model (focus 0, Slice).
+    pub fn from_infos(infos: &[ThemeInfo]) -> Self {
+        Self::new(ThemeCard::from_infos(infos))
+    }
+
+    /// Number of cards.
+    pub fn len(&self) -> usize {
+        self.themes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.themes.is_empty()
+    }
+
+    pub fn focused_index(&self) -> usize {
+        self.focused_index
+    }
+
+    pub fn focused_card(&self) -> Option<&ThemeCard> {
+        self.themes.get(self.focused_index)
+    }
+
+    pub fn themes(&self) -> &[ThemeCard] {
+        &self.themes
+    }
+
+    pub fn style(&self) -> GalleryStyle {
+        self.style
+    }
+
+    pub fn set_style(&mut self, style: GalleryStyle) {
+        self.style = style;
+    }
+
+    /// Move focus by delta, clamped to 0..len-1, no wrap (S13).
+    /// Returns new focused index.
+    pub fn move_focus(&mut self, delta: isize) -> usize {
+        if self.themes.is_empty() {
+            self.focused_index = 0;
+            return 0;
+        }
+        let max = self.themes.len() as isize - 1;
+        let next = self.focused_index as isize + delta;
+        self.focused_index = next.clamp(0, max) as usize;
+        self.focused_index
+    }
+
+    /// Set focused index directly, clamped.
+    pub fn set_focused_index(&mut self, idx: usize) -> usize {
+        if self.themes.is_empty() {
+            self.focused_index = 0;
+            return 0;
+        }
+        self.focused_index = idx.min(self.themes.len() - 1);
+        self.focused_index
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +261,76 @@ mod tests {
         let c = ThemeCard::from_info(&i);
         assert_eq!(c.name, "My Theme");
         assert_eq!(c.saved_at, "2026-08-22T00:00:00.000Z");
+    }
+
+    // ── 1.4 ThemeGalleryModel + 1.5 focus clamp S13 ────────────────
+
+    #[test]
+    fn gallery_focus_clamped_initial_zero() {
+        let model = ThemeGalleryModel::new(vec![
+            ThemeCard::from_info(&info("A", false, &[], "")),
+            ThemeCard::from_info(&info("B", false, &[], "")),
+        ]);
+        assert_eq!(model.focused_index(), 0);
+        assert_eq!(model.len(), 2);
+    }
+
+    #[test]
+    fn gallery_focus_clamped_move_right() {
+        let mut model = ThemeGalleryModel::new(vec![
+            ThemeCard::from_info(&info("A", false, &[], "")),
+            ThemeCard::from_info(&info("B", false, &[], "")),
+            ThemeCard::from_info(&info("C", false, &[], "")),
+        ]);
+        assert_eq!(model.move_focus(1), 1);
+        assert_eq!(model.move_focus(1), 2);
+        assert_eq!(model.move_focus(1), 2, "clamped at last, no wrap S13");
+    }
+
+    #[test]
+    fn clamp_bounds_left_and_right_no_wrap() {
+        let mut model = ThemeGalleryModel::new(vec![
+            ThemeCard::from_info(&info("A", false, &[], "")),
+            ThemeCard::from_info(&info("B", false, &[], "")),
+        ]);
+        // At 0, moving left stays 0
+        assert_eq!(model.move_focus(-1), 0, "clamped at first, no wrap");
+        assert_eq!(model.move_focus(-5), 0);
+        // Move to last
+        assert_eq!(model.move_focus(5), 1, "clamped at last, no wrap");
+        assert_eq!(model.move_focus(1), 1);
+    }
+
+    #[test]
+    fn gallery_model_empty_focus_is_zero() {
+        let mut model = ThemeGalleryModel::new(vec![]);
+        assert_eq!(model.focused_index(), 0);
+        assert!(model.focused_card().is_none());
+        assert_eq!(model.move_focus(1), 0);
+        assert_eq!(model.move_focus(-1), 0);
+        assert!(model.is_empty());
+    }
+
+    #[test]
+    fn gallery_model_style_switch() {
+        let mut model = ThemeGalleryModel::new(vec![ThemeCard::from_info(&info("A", false, &[], ""))]);
+        assert_eq!(model.style(), crate::shell::gallery::views::GalleryStyle::Slice);
+        model.set_style(crate::shell::gallery::views::GalleryStyle::Hexagon);
+        assert_eq!(model.style(), crate::shell::gallery::views::GalleryStyle::Hexagon);
+        model.set_style(crate::shell::gallery::views::GalleryStyle::Mosaic);
+        assert_eq!(model.style(), crate::shell::gallery::views::GalleryStyle::Mosaic);
+    }
+
+    #[test]
+    fn gallery_model_from_infos_sets_focus_zero() {
+        let infos = vec![
+            info("One", false, &[], "2026-01-01T00:00:00.000Z"),
+            info("Two", true, &[], "2026-01-02T00:00:00.000Z"),
+        ];
+        let model = ThemeGalleryModel::from_infos(&infos);
+        assert_eq!(model.len(), 2);
+        assert_eq!(model.focused_index(), 0);
+        assert_eq!(model.themes()[0].name, "One");
+        assert!(model.themes()[1].is_active);
     }
 }
