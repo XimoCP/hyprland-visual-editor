@@ -145,6 +145,15 @@ impl HyprlandComposer {
         win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
         win.window().request_redraw();
     }
+
+    fn show_and_sync(&self, win: &crate::MainWindow) {
+        let _ = win.window().show();
+        crate::shell::Shell::sync_global_after_show();
+    }
+
+    fn sync_after_show(&self) {
+        crate::shell::Shell::sync_global_after_show();
+    }
 }
 
 impl Composer for HyprlandComposer {
@@ -218,7 +227,7 @@ impl Composer for HyprlandComposer {
                     // SECURITY: reject workspace names that could break out of
                     // the Lua string below (see safe_workspace_target).
                     if !safe_workspace_target(&target) {
-                        let _ = win.window().show();
+                        self.show_and_sync(win);
                         return false;
                     }
                     // 1) Enfocar HVE PRIMERO. Imprescindible: `movetoworkspacesilent`
@@ -232,12 +241,13 @@ impl Composer for HyprlandComposer {
                     let s_move = format!("hl.dsp.window.move({{ workspace = \"{target}\" }})");
                     let did_move = self.hypr_dispatch_v5(&s_move);
                     if !(did_focus && did_move) {
-                        let _ = win.window().show();
+                        self.show_and_sync(win);
                         return false;
                     }
                     // 3) Re-afirmar foco tras el roundtrip de Wayland (ver
                     //    schedule_focus_reassert: re-dispatch + WindowActiveChanged).
                     self.schedule_focus_reassert(win);
+                    self.sync_after_show();
                     true
                 } else {
                     // Ventana NO estaba en el special (p.ej. cerrada con SUPER+C,
@@ -248,7 +258,7 @@ impl Composer for HyprlandComposer {
                     // FIX: despertar la FocusScope de forma INMEDIATA (antes de que
                     // el usuario pueda presionar una tecla) y también arrancar el
                     // Timer de 150ms que re-dispatcha foco a Hyprland como safety net.
-                    let _ = win.window().show();
+                    self.show_and_sync(win);
                     self.activate_focus_immediately(win);
                     self.schedule_focus_reassert(win);
                     false
@@ -262,7 +272,7 @@ impl Composer for HyprlandComposer {
                         .unwrap_or_else(|| "1".to_string());
                     // SECURITY: same allowlist as the v5 path.
                     if !safe_workspace_target(&target) {
-                        let _ = win.window().show();
+                        self.show_and_sync(win);
                         return false;
                     }
                     // 1) Enfocar HVE primero (movetoworkspacesilent actúa sobre la focada).
@@ -271,19 +281,20 @@ impl Composer for HyprlandComposer {
                     let did_move =
                         self.hypr_dispatch_v4(&["movetoworkspacesilent", &target]);
                     if !(did_focus && did_move) {
-                        let _ = win.window().show();
+                        self.show_and_sync(win);
                         return false;
                     }
                     // 3) Re-afirmar foco de teclado tras el roundtrip (mismo
                     //    motivo que en V5: re-activar Slint para que la FocusScope
                     //    raíz re-gane su focus_item y la navegación no quede sorda).
                     self.schedule_focus_reassert(win);
+                    self.sync_after_show();
                     true
                 } else {
                     // Ventana NO estaba en el special (p.ej. cerrada con SUPER+C).
                     // Re-mostrar + despertar inmediato de FocusScope + Timer de
                     // 150ms como safety net, igual que en V5.
-                    let _ = win.window().show();
+                    self.show_and_sync(win);
                     self.activate_focus_immediately(win);
                     self.schedule_focus_reassert(win);
                     false
@@ -292,7 +303,7 @@ impl Composer for HyprlandComposer {
             HyprMode::None => {
                 // Sin compositor Hyprland disponible. Solo mostrar y despertar
                 // la FocusScope de Slint de inmediato.
-                let _ = win.window().show();
+                self.show_and_sync(win);
                 self.activate_focus_immediately(win);
                 false
             }

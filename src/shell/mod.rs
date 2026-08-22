@@ -27,6 +27,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+thread_local! {
+    static GLOBAL_SHELL: RefCell<Option<Rc<RefCell<Shell>>>> = const { RefCell::new(None) };
+}
+
 /// Stepped animator cadence: one `set_size` call per tick (design D4).
 const ANIM_STEP_MS: u64 = 16;
 /// Number of steps to complete an expand/collapse transition. 350ms / 16ms
@@ -79,6 +83,19 @@ impl Shell {
         // (base-window spec R6 startup scenario).
         shell.borrow().push_size_to_window();
         shell
+    }
+
+    /// Register the UI-thread shell used by compositor lifecycle callbacks.
+    pub fn set_global(shell: Rc<RefCell<Self>>) {
+        GLOBAL_SHELL.with(|global| *global.borrow_mut() = Some(shell));
+    }
+
+    /// Restore the registered shell after a compositor show operation.
+    pub fn sync_global_after_show() {
+        let shell = GLOBAL_SHELL.with(|global| global.borrow().clone());
+        if let Some(shell) = shell {
+            Self::sync_after_show(&shell);
+        }
     }
 
     /// Register a mountable slot. One insert per call (design D3).

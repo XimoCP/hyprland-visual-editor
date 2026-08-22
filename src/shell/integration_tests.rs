@@ -231,3 +231,22 @@ fn integration_toggle_tray_restores_collapsed_state() {
     assert_eq!(win.get_mounted_screen(), 0, "Home still mounted");
     assert!(!win.get_expanded(), "still collapsed");
 }
+
+#[test]
+fn integration_production_show_sync_restores_expanded_state() {
+    let (win, shell) = integration_setup();
+    win.invoke_card_activated(0);
+    drain_anim();
+    assert_eq!(window_logical(&win), (1200.0, 800.0), "precondition: expanded");
+    win.invoke_nav_move("right".into());
+    assert_eq!(Shell::with_nav(&shell, |nav| nav.focused_card()), 1, "precondition: focus moved");
+
+    win.window().set_size(slint::WindowSize::Logical(slint::LogicalSize::new(1.0, 1.0)));
+    Shell::set_global(shell.clone());
+    Shell::sync_global_after_show();
+
+    assert_eq!(window_logical(&win), (1200.0, 800.0), "production show sync restores size");
+    assert_eq!(win.get_mounted_screen(), 1, "Gallery remains mounted");
+    assert!(win.get_expanded(), "shell remains expanded");
+    assert_eq!(Shell::with_nav(&shell, |nav| nav.focused_card()), 1, "focus remains on the selected card");
+}

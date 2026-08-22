@@ -243,6 +243,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // size animator. It lives in Rc<RefCell<>> because slint::Timer is
     // !Send + !Sync.
     let shell = shell::Shell::new(window.as_weak());
+    shell::Shell::set_global(shell.clone());
     // Register production stub slots for Gallery and Workshop. Real
     // slot views land in modules 2 and 4.
     shell::Shell::register_slot(&shell, Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Gallery)));
