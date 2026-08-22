@@ -338,6 +338,52 @@ impl Composer for HyprlandComposer {
         }
     }
 
+    /// Fullscreen lifecycle for immersive Gallery sessions (design D1).
+    ///
+    /// Dispatches act on the focused window, so HVE is focused BY TITLE
+    /// first (proven pattern from hide/show). All arguments are compile-time
+    /// constants — no dynamic interpolation, no new injection surface.
+    ///
+    /// V5 spelling verified against the installed Hyprland 0.56.2 source
+    /// (`src/config/lua/bindings/LuaBindingsDispatchers.cpp`): the dispatcher
+    /// is nested under `window.` and takes `{ mode, action, window }` where
+    /// mode `"fullscreen"` is borderless fullscreen (`"0"` literal) and
+    /// `"maximized"` is `"1"`. Enter uses `action = "set"`, exit
+    /// `action = "unset"` — both idempotent, so a lost event can never wedge
+    /// the state machine.
+    ///
+    /// V4 keeps the classic fallback contract: `focuswindow` +
+    /// `fullscreen 1|0`.
+    ///
+    /// Any failed focus or fullscreen dispatch returns false: the caller
+    /// continues windowed and the gallery stays fully functional.
+    fn set_fullscreen(&self, on: bool) -> bool {
+        match self.hypr_mode() {
+            HyprMode::V5 => {
+                let s_focus = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                let did_focus = self.hypr_dispatch_v5(&s_focus);
+                let s_fs = if on {
+                    format!(
+                        "hl.dsp.window.fullscreen({{ mode = \"fullscreen\", action = \"set\", \
+                         window = \"title:{HVE_TITLE}\" }})"
+                    )
+                } else {
+                    format!(
+                        "hl.dsp.window.fullscreen({{ action = \"unset\", \
+                         window = \"title:{HVE_TITLE}\" }})"
+                    )
+                };
+                did_focus && self.hypr_dispatch_v5(&s_fs)
+            }
+            HyprMode::V4 => {
+                let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
+                let mode = if on { "1" } else { "0" };
+                did_focus && self.hypr_dispatch_v4(&["fullscreen", mode])
+            }
+            HyprMode::None => false,
+        }
+    }
+
     fn active_workspace(&self) -> Option<String> {
         self.active_workspace()
     }

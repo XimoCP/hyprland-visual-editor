@@ -76,6 +76,13 @@ pub trait Composer: Send + Sync {
     /// Toggle floating (for tiling mode).
     fn toggle_float(&self);
 
+    /// Enter (`on = true`) or exit (`on = false`) an undecorated fullscreen
+    /// surface for an immersive Gallery session. Returns true when the
+    /// compositor accepted the transition; false means HVE continues
+    /// windowed — the gallery stays fully functional either way and the
+    /// UI never blocks on it.
+    fn set_fullscreen(&self, on: bool) -> bool;
+
     /// Read-only discovery: current active workspace name, if queryable.
     fn active_workspace(&self) -> Option<String>;
 }
@@ -184,6 +191,8 @@ pub(crate) mod tests {
     pub struct FakeComposer {
         calls: Arc<Mutex<Vec<String>>>,
         show_fast: bool,
+        /// Result reported by `set_fullscreen` (true = dispatch accepted).
+        fullscreen_ok: bool,
     }
 
     impl FakeComposer {
@@ -193,6 +202,7 @@ pub(crate) mod tests {
                 Self {
                     calls: calls.clone(),
                     show_fast: true,
+                    fullscreen_ok: true,
                 },
                 calls,
             )
@@ -204,6 +214,20 @@ pub(crate) mod tests {
                 Self {
                     calls: calls.clone(),
                     show_fast,
+                    fullscreen_ok: true,
+                },
+                calls,
+            )
+        }
+
+        /// Fake composer whose `set_fullscreen` reports `ok`.
+        pub fn with_fullscreen_result(ok: bool) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: ok,
                 },
                 calls,
             )
@@ -237,6 +261,11 @@ pub(crate) mod tests {
 
         fn toggle_float(&self) {
             self.record("toggle_float");
+        }
+
+        fn set_fullscreen(&self, on: bool) -> bool {
+            self.record(&format!("set_fullscreen({on})"));
+            self.fullscreen_ok
         }
 
         fn active_workspace(&self) -> Option<String> {
@@ -470,6 +499,42 @@ pub(crate) mod tests {
 
         assert!(!controller.window_hidden());
         assert!(!controller.tray_mode());
+    }
+
+    // ── Gallery fullscreen session (gallery-immersive-redesign 1.1) ───
+
+    /// Session enter must record `set_fullscreen(true)` and exit must
+    /// record `set_fullscreen(false)` — the exact dispatch sequence the
+    /// Hyprland driver will replay (threat matrix: constant argv only).
+    #[test]
+    fn test_set_fullscreen_session_records_true_then_false() {
+        let (fake, calls) = FakeComposer::new();
+
+        assert!(fake.set_fullscreen(true), "enter session reports success");
+        assert!(fake.set_fullscreen(false), "exit session reports success");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["set_fullscreen(true)", "set_fullscreen(false)"],
+            "session enter/exit must record the exact dispatch sequence"
+        );
+    }
+
+    /// Dispatch failure returns false so the caller continues windowed:
+    /// the gallery stays fully functional and never blocks on the
+    /// compositor (spec fallback scenario).
+    #[test]
+    fn test_set_fullscreen_failure_returns_false_continues_windowed() {
+        let (fake, calls) = FakeComposer::with_fullscreen_result(false);
+
+        assert!(
+            !fake.set_fullscreen(true),
+            "dispatch failure must report false (UI continues windowed)"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["set_fullscreen(true)"],
+            "the attempted dispatch is recorded even when it fails"
+        );
     }
 
     #[test]
