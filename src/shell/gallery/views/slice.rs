@@ -1,0 +1,501 @@
+// HVE 2 — Slice carousel (theme-gallery PR2).
+//
+// Parallelogram carousel: collapsed 108 ↔ expanded 768, 350ms OutCubic,
+// left/right handle_key consumed, skew28 hit-test, flip 180 InOutQuad,
+// video Timer 100-300ms release on blur, preheat 120 sourceSize 400x720.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+use super::{GalleryStyle, GalleryView};
+
+/// Slice carousel geometry (spec R2.1).
+pub const SLICE_COLLAPSED_WIDTH: f32 = 108.0;
+pub const SLICE_EXPANDED_WIDTH: f32 = 768.0;
+pub const SLICE_ANIM_DURATION_MS: u64 = 350;
+/// OutCubic cubic-bezier(0.215, 0.61, 0.355, 1.0) — skwd default Behavior.
+pub const SLICE_ANIM_EASING: (f32, f32, f32, f32) = (0.215, 0.61, 0.355, 1.0);
+/// Parallelogram skew offset (px) — shape geometry (spec R2.1 shadow matching).
+pub const SLICE_SKEW_PX: f32 = 28.0;
+/// Flip 180° Y-axis timing (spec S3).
+pub const SLICE_FLIP_DURATION_MS: u64 = 400;
+/// InOutQuad approx cubic-bezier(0.455, 0.03, 0.515, 0.955).
+pub const SLICE_FLIP_EASING: (f32, f32, f32, f32) = (0.455, 0.03, 0.515, 0.955);
+/// Video preview delay bounds (spec S16/17): 100-300ms.
+pub const SLICE_VIDEO_DELAY_MIN_MS: u64 = 100;
+pub const SLICE_VIDEO_DELAY_MAX_MS: u64 = 300;
+pub const SLICE_VIDEO_DELAY_DEFAULT_MS: u64 = 200;
+/// Image preheat (spec R8): 120ms, sourceSize 400x720, cache async.
+pub const SLICE_PREHEAT_MS: u64 = 120;
+pub const SLICE_SOURCE_W: u32 = 400;
+pub const SLICE_SOURCE_H: u32 = 720;
+
+/// Keyboard key for gallery navigation (pure Rust, no Slint dep).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GalleryKey {
+    Left,
+    Right,
+    Up,
+    Down,
+    Enter,
+    Escape,
+    Other,
+}
+
+/// Video preview state (spec S16/17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoState {
+    Idle,
+    Pending,
+    Playing,
+    Released,
+}
+
+/// Slice carousel view — horizontal ListView, current item expanded.
+///
+/// Pure Rust state, no Slint types; mirrors focus via ThemeGalleryModel
+/// indices and drives width/flip/video via constants above.
+#[derive(Debug, Clone)]
+pub struct SliceView {
+    /// Total number of cards in the carousel.
+    count: usize,
+    /// Currently focused/expanded index (clamped 0..count-1).
+    focused_index: usize,
+    /// Flip state: true = back face visible (180°).
+    flipped: bool,
+    /// Current flip angle (0 or 180, animated 400ms InOutQuad on Slint side).
+    flip_angle: f32,
+    /// Video preview delay (clamped 100-300ms).
+    video_delay_ms: u64,
+    /// Video playback state.
+    video_state: VideoState,
+    /// Whether video source exists for current card (spec S16: has video).
+    has_video_for_current: bool,
+}
+
+impl SliceView {
+    /// Create a new carousel for `count` cards, focus 0.
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            focused_index: 0,
+            flipped: false,
+            flip_angle: 0.0,
+            video_delay_ms: SLICE_VIDEO_DELAY_DEFAULT_MS,
+            video_state: VideoState::Idle,
+            has_video_for_current: false,
+        }
+    }
+
+    /// Number of cards.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Currently focused index.
+    pub fn focused_index(&self) -> usize {
+        self.focused_index
+    }
+
+    /// Is the current card flipped to back face?
+    pub fn is_flipped(&self) -> bool {
+        self.flipped
+    }
+
+    /// Current flip angle (0 or 180 degrees).
+    pub fn flip_angle(&self) -> f32 {
+        self.flip_angle
+    }
+
+    /// Video preview delay (100-300ms, default 200).
+    pub fn video_delay_ms(&self) -> u64 {
+        self.video_delay_ms
+    }
+
+    /// Current video state.
+    pub fn video_state(&self) -> VideoState {
+        self.video_state
+    }
+
+    /// Whether video is currently playing (on current card after delay).
+    pub fn is_video_playing(&self) -> bool {
+        self.video_state == VideoState::Playing
+    }
+
+    /// Set whether the current focused card has a video wallpaper.
+    pub fn set_has_video(&mut self, has_video: bool) {
+        self.has_video_for_current = has_video;
+        if !has_video && self.video_state == VideoState::Playing {
+            self.video_state = VideoState::Released;
+        }
+    }
+
+    /// Width for a given card index: 768 if focused, 108 otherwise (spec R2.1).
+    pub fn card_width(&self, index: usize) -> f32 {
+        if self.count == 0 {
+            return SLICE_COLLAPSED_WIDTH;
+        }
+        if index == self.focused_index {
+            SLICE_EXPANDED_WIDTH
+        } else {
+            SLICE_COLLAPSED_WIDTH
+        }
+    }
+
+    /// Convenience: width of the focused card.
+    pub fn focused_width(&self) -> f32 {
+        self.card_width(self.focused_index)
+    }
+
+    /// Set focused index, clamped, resets flip + releases video on blur (S16/17).
+    pub fn set_focused_index(&mut self, idx: usize) -> usize {
+        if self.count == 0 {
+            self.focused_index = 0;
+            return 0;
+        }
+        let clamped = idx.min(self.count - 1);
+        if clamped != self.focused_index {
+            // Blur previous card: release video, reset flip (S17, flip reset on nav).
+            self.release_video();
+            self.flipped = false;
+            self.flip_angle = 0.0;
+        }
+        self.focused_index = clamped;
+        self.focused_index
+    }
+
+    /// Move focus by delta, clamped, no wrap (S13).
+    pub fn move_focus(&mut self, delta: isize) -> usize {
+        if self.count == 0 {
+            return 0;
+        }
+        let max = self.count as isize - 1;
+        let next = self.focused_index as isize + delta;
+        let clamped = next.clamp(0, max) as usize;
+        self.set_focused_index(clamped)
+    }
+
+    /// Handle a key press: Left/Right consumed and moves focus (S2),
+    /// others not consumed. Returns true if consumed (spec R2 GalleryView).
+    pub fn handle_key(&mut self, key: GalleryKey) -> bool {
+        match key {
+            GalleryKey::Left => {
+                self.move_focus(-1);
+                true
+            }
+            GalleryKey::Right => {
+                self.move_focus(1);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Toggle flip state 180° (right-click on Slice, spec S3, 400ms InOutQuad).
+    pub fn toggle_flip(&mut self) {
+        self.flipped = !self.flipped;
+        self.flip_angle = if self.flipped { 180.0 } else { 0.0 };
+    }
+
+    /// Directly set flip state (for Slint binding).
+    pub fn set_flipped(&mut self, flipped: bool) {
+        self.flipped = flipped;
+        self.flip_angle = if flipped { 180.0 } else { 0.0 };
+    }
+
+    /// Hit-test against the parallelogram mask (spec R2.1 containment mask).
+    ///
+    /// Shape: rect w×h, top edge shifted right by skew, bottom left aligned.
+    /// Point (x,y) in local coords: left bound lerps skew..0 over y.
+    pub fn contains_point(&self, x: f32, y: f32, w: f32, h: f32) -> bool {
+        Self::point_in_parallelogram(x, y, w, h, SLICE_SKEW_PX)
+    }
+
+    /// Static hit-test for a parallelogram with horizontal skew offset.
+    pub fn point_in_parallelogram(x: f32, y: f32, w: f32, h: f32, skew: f32) -> bool {
+        if w <= 0.0 || h <= 0.0 {
+            return false;
+        }
+        if x < 0.0 || x > w || y < 0.0 || y > h {
+            // still need to check skewed bounds; outer rect rejection not sufficient
+            // because top edge extends to w, bottom starts at 0 — but outer rect
+            // already covers max extents, so we keep this quick reject.
+        }
+        if y < 0.0 || y > h {
+            return false;
+        }
+        // Left edge: lerp from skew at y=0 to 0 at y=h.
+        let t = y / h;
+        let left = skew * (1.0 - t);
+        let right = left + (w - skew);
+        x >= left && x <= right
+    }
+
+    /// Video delay setter, clamped to 100-300ms (S16 config).
+    pub fn set_video_delay(&mut self, delay_ms: u64) -> u64 {
+        self.video_delay_ms = delay_ms.clamp(SLICE_VIDEO_DELAY_MIN_MS, SLICE_VIDEO_DELAY_MAX_MS);
+        self.video_delay_ms
+    }
+
+    /// Request video preview for current card — transitions to Pending if has_video.
+    /// Caller should start a Timer for `video_delay_ms` then call `activate_video()`.
+    pub fn request_video(&mut self) {
+        if self.has_video_for_current {
+            self.video_state = VideoState::Pending;
+        } else {
+            self.video_state = VideoState::Idle;
+        }
+    }
+
+    /// Activate video after Timer delay (S16: playing after 100-300ms).
+    pub fn activate_video(&mut self) {
+        if self.video_state == VideoState::Pending && self.has_video_for_current {
+            self.video_state = VideoState::Playing;
+        }
+    }
+
+    /// Release video on blur/focus change (S17) or explicit cleanup.
+    pub fn release_video(&mut self) {
+        if self.video_state == VideoState::Playing || self.video_state == VideoState::Pending {
+            self.video_state = VideoState::Released;
+        }
+    }
+
+    /// Blur the current card: release video (S17). Called on focus change.
+    pub fn on_blur(&mut self) {
+        self.release_video();
+    }
+
+    /// Reset video state to idle (for reuse after Released).
+    pub fn reset_video(&mut self) {
+        self.video_state = VideoState::Idle;
+    }
+
+    /// Update count (when ThemeGalleryModel themes change).
+    pub fn set_count(&mut self, count: usize) {
+        self.count = count;
+        if self.count == 0 {
+            self.focused_index = 0;
+        } else if self.focused_index >= self.count {
+            self.focused_index = self.count - 1;
+        }
+    }
+}
+
+impl GalleryView for SliceView {
+    fn style(&self) -> GalleryStyle {
+        GalleryStyle::Slice
+    }
+
+    fn handle_key(&mut self, key: GalleryKey) -> bool {
+        // delegate to inherent impl to keep single source of truth
+        SliceView::handle_key(self, key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── 2.1 width 108↔768 350ms OutCubic ────────────────────────────────
+
+    #[test]
+    fn slice_width_collapsed_and_expanded_constants() {
+        assert_eq!(SLICE_COLLAPSED_WIDTH, 108.0, "collapsed width must be 108");
+        assert_eq!(SLICE_EXPANDED_WIDTH, 768.0, "expanded width must be 768");
+        assert_eq!(SLICE_ANIM_DURATION_MS, 350, "anim duration 350ms OutCubic");
+        assert_eq!(SLICE_ANIM_EASING, (0.215, 0.61, 0.355, 1.0), "OutCubic bezier");
+    }
+
+    #[test]
+    fn slice_width_focused_vs_collapsed() {
+        let mut view = SliceView::new(5);
+        // Focus 0 → 0 is expanded, others collapsed
+        assert_eq!(view.card_width(0), SLICE_EXPANDED_WIDTH);
+        assert_eq!(view.card_width(1), SLICE_COLLAPSED_WIDTH);
+        assert_eq!(view.card_width(4), SLICE_COLLAPSED_WIDTH);
+        view.set_focused_index(2);
+        assert_eq!(view.card_width(2), SLICE_EXPANDED_WIDTH);
+        assert_eq!(view.card_width(0), SLICE_COLLAPSED_WIDTH);
+        assert_eq!(view.card_width(1), SLICE_COLLAPSED_WIDTH);
+    }
+
+    #[test]
+    fn slice_width_out_of_bounds_returns_collapsed() {
+        let view = SliceView::new(3);
+        // Indices beyond count are treated as collapsed (no panic)
+        assert_eq!(view.card_width(10), SLICE_COLLAPSED_WIDTH);
+        assert_eq!(view.card_width(3), SLICE_COLLAPSED_WIDTH);
+    }
+
+    // ── 2.2 handle_key consumed ─────────────────────────────────────────
+
+    #[test]
+    fn slice_key_left_right_consumed_and_clamped() {
+        let mut view = SliceView::new(3);
+        assert_eq!(view.focused_index(), 0);
+        // Right consumed, moves to 1
+        assert!(view.handle_key(GalleryKey::Right), "Right must be consumed");
+        assert_eq!(view.focused_index(), 1);
+        assert!(view.handle_key(GalleryKey::Right));
+        assert_eq!(view.focused_index(), 2);
+        // Clamped at end, still consumed
+        assert!(view.handle_key(GalleryKey::Right));
+        assert_eq!(view.focused_index(), 2, "clamped at last, no wrap S13");
+        // Left consumed
+        assert!(view.handle_key(GalleryKey::Left));
+        assert_eq!(view.focused_index(), 1);
+        assert!(view.handle_key(GalleryKey::Left));
+        assert_eq!(view.focused_index(), 0);
+        assert!(view.handle_key(GalleryKey::Left));
+        assert_eq!(view.focused_index(), 0, "clamped at first");
+    }
+
+    #[test]
+    fn slice_key_up_down_not_consumed() {
+        let mut view = SliceView::new(3);
+        assert!(!view.handle_key(GalleryKey::Up), "Up not consumed for slice");
+        assert!(!view.handle_key(GalleryKey::Down));
+        assert!(!view.handle_key(GalleryKey::Enter));
+        assert!(!view.handle_key(GalleryKey::Escape));
+        assert!(!view.handle_key(GalleryKey::Other));
+        assert_eq!(view.focused_index(), 0, "focus unchanged for non-consumed keys");
+    }
+
+    #[test]
+    fn slice_key_gallery_view_trait_dispatch() {
+        let mut view = SliceView::new(2);
+        // Via trait object, Right still moves
+        let mut boxed: Box<dyn GalleryView> = Box::new(view);
+        assert!(boxed.handle_key(GalleryKey::Right));
+        // Down not consumed
+        assert!(!boxed.handle_key(GalleryKey::Down));
+        assert_eq!(boxed.style(), GalleryStyle::Slice);
+    }
+
+    // ── 2.4 hit-test + flip 180 InOutQuad ───────────────────────────────
+
+    #[test]
+    fn slice_flip_toggle_and_angle() {
+        let mut view = SliceView::new(1);
+        assert!(!view.is_flipped());
+        assert_eq!(view.flip_angle(), 0.0);
+        assert_eq!(SLICE_FLIP_DURATION_MS, 400);
+        assert_eq!(SLICE_FLIP_EASING, (0.455, 0.03, 0.515, 0.955));
+        view.toggle_flip();
+        assert!(view.is_flipped());
+        assert_eq!(view.flip_angle(), 180.0, "flip 180° Y-axis");
+        view.toggle_flip();
+        assert!(!view.is_flipped());
+        assert_eq!(view.flip_angle(), 0.0);
+    }
+
+    #[test]
+    fn slice_flip_resets_on_focus_change() {
+        let mut view = SliceView::new(3);
+        view.toggle_flip();
+        assert!(view.is_flipped());
+        view.set_focused_index(1);
+        assert!(!view.is_flipped(), "flip resets on blur/focus change");
+        assert_eq!(view.flip_angle(), 0.0);
+    }
+
+    #[test]
+    fn slice_flip_point_in_parallelogram_mask() {
+        // Shape w=108 h=200 skew=28 (collapsed), w=768 h=200 skew=28 (expanded)
+        // Hit-test mask non-rect (spec R2.1)
+        // Center point should be inside
+        assert!(SliceView::point_in_parallelogram(54.0, 100.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(384.0, 100.0, 768.0, 200.0, 28.0));
+        // Top-left corner outside due to skew (0,0 is left of slanted edge)
+        assert!(!SliceView::point_in_parallelogram(0.0, 0.0, 108.0, 200.0, 28.0));
+        // Top edge at skew offset is inside
+        assert!(SliceView::point_in_parallelogram(28.0, 0.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(30.0, 0.0, 108.0, 200.0, 28.0));
+        // Far right top edge at w is inside (right == w at y=0)
+        assert!(SliceView::point_in_parallelogram(108.0, 0.0, 108.0, 200.0, 28.0));
+        // Beyond right should be outside
+        assert!(!SliceView::point_in_parallelogram(109.0, 0.0, 108.0, 200.0, 28.0));
+        // Bottom-left inside (left=0 at y=h)
+        assert!(SliceView::point_in_parallelogram(0.0, 200.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(2.0, 200.0, 108.0, 200.0, 28.0));
+        // Bottom right slanted inside edge: right = w - skew at y=h
+        assert!(!SliceView::point_in_parallelogram(108.0, 200.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(80.0, 200.0, 108.0, 200.0, 28.0));
+        // Below shape
+        assert!(!SliceView::point_in_parallelogram(54.0, 201.0, 108.0, 200.0, 28.0));
+        // contains_point wrapper uses default SKEW 28
+        let view = SliceView::new(1);
+        assert!(view.contains_point(54.0, 100.0, 108.0, 200.0));
+        assert!(!view.contains_point(0.0, 0.0, 108.0, 200.0));
+    }
+
+    // ── 2.5 Video Timer 100-300ms release on blur S16/17 ────────────────
+
+    #[test]
+    fn slice_video_delay_bounds() {
+        let mut view = SliceView::new(3);
+        assert_eq!(view.video_delay_ms(), 200, "default 200 within 100-300");
+        assert_eq!(SLICE_VIDEO_DELAY_MIN_MS, 100);
+        assert_eq!(SLICE_VIDEO_DELAY_MAX_MS, 300);
+        // Clamp below min
+        assert_eq!(view.set_video_delay(50), 100);
+        // Clamp above max
+        assert_eq!(view.set_video_delay(500), 300);
+        assert_eq!(view.set_video_delay(150), 150);
+        assert_eq!(view.set_video_delay(300), 300);
+        assert_eq!(view.set_video_delay(100), 100);
+    }
+
+    #[test]
+    fn slice_video_pending_playing_and_release_on_blur() {
+        let mut view = SliceView::new(3);
+        view.set_has_video(true);
+        assert_eq!(view.video_state(), VideoState::Idle);
+        view.request_video();
+        assert_eq!(view.video_state(), VideoState::Pending, "request → Pending");
+        assert!(!view.is_video_playing());
+        // Simulate Timer 100-300ms firing
+        view.activate_video();
+        assert_eq!(view.video_state(), VideoState::Playing);
+        assert!(view.is_video_playing());
+        // Blur/focus change releases (S17)
+        view.on_blur();
+        assert_eq!(view.video_state(), VideoState::Released);
+        assert!(!view.is_video_playing());
+        // Second blur stays Released
+        view.on_blur();
+        assert_eq!(view.video_state(), VideoState::Released);
+    }
+
+    #[test]
+    fn slice_video_no_video_never_pending() {
+        let mut view = SliceView::new(1);
+        view.set_has_video(false);
+        view.request_video();
+        assert_eq!(view.video_state(), VideoState::Idle, "no video → Idle");
+        view.activate_video();
+        assert_eq!(view.video_state(), VideoState::Idle);
+    }
+
+    #[test]
+    fn slice_video_release_on_focus_move() {
+        let mut view = SliceView::new(3);
+        view.set_has_video(true);
+        view.request_video();
+        view.activate_video();
+        assert!(view.is_video_playing());
+        // Move focus triggers release via set_focused_index blur
+        view.set_focused_index(1);
+        assert_eq!(view.video_state(), VideoState::Released, "release on blur S17");
+    }
+
+    #[test]
+    fn slice_video_pending_released_on_blur_without_play() {
+        let mut view = SliceView::new(2);
+        view.set_has_video(true);
+        view.request_video();
+        assert_eq!(view.video_state(), VideoState::Pending);
+        view.set_focused_index(1);
+        assert_eq!(view.video_state(), VideoState::Released, "pending → released on blur");
+    }
+}

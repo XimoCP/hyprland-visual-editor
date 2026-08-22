@@ -1,11 +1,13 @@
-// HVE 2 — Gallery views (theme-gallery module 2, PR3).
+// HVE 2 — Gallery views (theme-gallery module 2, PR2 Slice).
 //
-// Stub for PR1: the view trait and three presentation styles land in PR2/PR3.
-// This file exists so `gallery::views` is importable and PR1's Scaffold task
-// (`cargo test gallery -- --list`) discovers the gallery module.
+// PR1 scaffold + PR2 Slice carousel. Hex/Mosaic land in PR3.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 // No GPL code from hyprmod is used.
+
+pub mod slice;
+
+pub use slice::{GalleryKey, SliceView};
 
 /// Presentation styles 1:1 with skwd-wall (spec R2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -14,4 +16,13 @@ pub enum GalleryStyle {
     Slice,
     Hexagon,
     Mosaic,
+}
+
+/// Trait for gallery presentation styles (design §2, PR2 Slice).
+///
+/// Each view owns its focus/flip/video state and reports whether a key
+/// was consumed (true = handler took ownership, false = bubble).
+pub trait GalleryView: Send + Sync {
+    fn style(&self) -> GalleryStyle;
+    fn handle_key(&mut self, key: GalleryKey) -> bool;
 }

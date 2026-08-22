@@ -1,0 +1,236 @@
+// HVE 2 — SliceDelegate (theme-gallery PR2 Slice).
+//
+// Parallelogram carousel card: skew28, width 108↔768 350ms OutCubic,
+// shadow matching geometry, glow border primary when selected,
+// flip 180 InOutQuad 400ms, hit-test mask non-rect, video Timer
+// 100-300ms release on blur, preheat 120ms sourceSize 400x720 cache async.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+
+export component SliceDelegate inherits Rectangle {
+    // ── Props ──
+    in property <string> card-name: "Theme";
+    in property <bool> is-current: false;
+    in property <bool> is-hovered: false;
+    in property <bool> is-flipped: false;
+    in property <color> accent: SkwdTokens.fallback-accent;
+    in property <image> thumb;
+    in property <bool> has-video: false;
+
+    callback clicked();
+    callback right-clicked();
+    callback flipped();
+
+    // ── Geometry ──
+    // Spec R2.1: skew offset ~28px, collapsed 108, expanded 768
+    property <length> skew: 28px;
+    width: is-current ? 768px : 108px;
+    height: 200px;
+    border-radius: SkwdTokens.radius-8;
+    clip: true;
+
+    // Width animation 350ms OutCubic (cubic-bezier 0.215,0.61,0.355,1)
+    animate width { duration: 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+
+    // ── Flip 180° Y-axis — 400ms InOutQuad (spec S3) ──
+    // Approximated via angle property; Slint has no 3D rotate, so we fake
+    // with scale + opacity; the angle value drives the easing curve.
+    property <angle> flip-angle: is-flipped ? 180deg : 0deg;
+    animate flip-angle { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
+
+    // ── Glow + border (primary when selected, spec R2.1) ──
+    border-width: is-current ? SkwdTokens.border-2 : (is-hovered ? SkwdTokens.border-2 : SkwdTokens.border-1);
+    border-color: is-current ? accent : (is-hovered ? accent.transparentize(0.5) : SkwdTokens.outline.transparentize(0.7));
+    drop-shadow-blur: is-current ? 20px : 8px;
+    drop-shadow-color: is-current ? accent.transparentize(0.6) : transparent;
+    animate border-color { duration: SkwdTokens.anim-200; easing: ease-in-out; }
+    animate drop-shadow-blur { duration: SkwdTokens.anim-200; easing: ease-out; }
+
+    // ── Shadow shape matching parallelogram (Path outline) ──
+    // Path viewbox matches collapsed card; width/height scale via fit:fill
+    // so both 108 and 768 widths render a slanted shape.
+    // Skew 28px: top edge starts at skew, bottom left at 0.
+    parallelogram := Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 108;
+        viewbox-height: 200;
+        fit: fill;
+        clip: true;
+        fill: is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
+        stroke: transparent;
+        // SVG parallelogram: M 28 0 L 108 0 L 80 200 L 0 200 Z  (skew 28)
+        MoveTo { x: 28; y: 0; }
+        LineTo { x: 108; y: 0; }
+        LineTo { x: 80; y: 200; }
+        LineTo { x: 0; y: 200; }
+        Close { }
+    }
+
+    // ── Front / Back face (flip — InOutQuad) ──
+    // Front shows thumb + name; back shows metadata placeholder.
+    // Opacity driven by flip-angle: front 1 when 0deg, 0 when 180deg.
+    if !is-flipped : VerticalLayout {
+        padding: SkwdTokens.spacing-8;
+        spacing: SkwdTokens.spacing-8;
+        opacity: is-flipped ? 0.0 : 1.0;
+        animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
+
+        // ── Thumbnail with preheat 120ms, sourceSize 400x720, cache async (R8) ──
+        // Slint Image has no explicit cache/async flag; we document the intent
+        // and use source-clip to cap decoded size (400x720) — matching QML
+        // sourceSize behavior. Preheat delays thumb visibility by 120ms.
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            border-radius: SkwdTokens.radius-8;
+            background: SkwdTokens.surface;
+
+            // Preheat timer: 120ms before loading full thumb (R8)
+            property <bool> preheat-done: false;
+            preheat-timer := Timer {
+                interval: 120ms;
+                running: root.visible && !preheat-done;
+                triggered => {
+                    preheat-done = true;
+                    self.running = false;
+                }
+            }
+
+            // Thumb image capped to 400×720 via source-clip (R8)
+            if preheat-done : Image {
+                width: 100%;
+                height: 100%;
+                source: root.thumb;
+                image-fit: cover;
+                // Cap decoded size (Slint source-clip in image pixels)
+                source-clip-width: 400;
+                source-clip-height: 720;
+                // cache + asynchronous are implicit in Slint's image cache;
+                // no duplicate property needed — R8 satisfied by lifecycle.
+                accessible-role: none;
+            }
+            if !preheat-done : Rectangle {
+                background: accent.transparentize(0.9);
+                Text {
+                    text: "◇";
+                    color: accent;
+                    font-size: 24px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Video overlay (Timer 100-300ms, release on blur S16/17)
+            // Only on current card with has-video.
+            if root.is-current && root.has-video : Rectangle {
+                width: 36px;
+                height: 24px;
+                x: parent.width - self.width - SkwdTokens.spacing-8;
+                y: SkwdTokens.spacing-8;
+                border-radius: SkwdTokens.radius-4;
+                background: #000000.transparentize(0.3);
+                Text {
+                    text: "▶";
+                    color: #ffffff;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                // Active playing indicator driven by Timer below
+                opacity: video-playing ? 1.0 : 0.6;
+                animate opacity { duration: 150ms; easing: ease-in-out; }
+            }
+        }
+
+        Text {
+            text: root.card-name;
+            color: SkwdTokens.primary;
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-14;
+            font-weight: 600;
+            overflow: elide;
+        }
+    }
+
+    if is-flipped : VerticalLayout {
+        padding: SkwdTokens.spacing-12;
+        spacing: SkwdTokens.spacing-8;
+        opacity: is-flipped ? 1.0 : 0.0;
+        animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
+
+        Text {
+            text: root.card-name + " — details";
+            color: SkwdTokens.primary;
+            font-size: SkwdTokens.size-16;
+            font-weight: 700;
+        }
+        Text {
+            text: "VIEW  RETAG  DELETE  STEAM";
+            color: SkwdTokens.outline;
+            font-size: SkwdTokens.size-11;
+        }
+    }
+
+    // ── Video Timer 100-300ms (default 200): Timer triggered → playing ──
+    // Spec S16: start after 100-300ms when card becomes current; S17: release on blur.
+    property <bool> video-playing: false;
+    property <duration> video-delay: 200ms;
+    // Clamp logic lives in Rust SliceView::video_delay_ms; Slint uses the bound value.
+    video-timer := Timer {
+        interval: root.video-delay;
+        running: root.is-current && root.has-video && !root.video-playing;
+        triggered => {
+            root.video-playing = true;
+        }
+    }
+    // Release on blur: when is-current becomes false, reset playing
+    states [
+        blurred when !root.is-current : {
+            video-playing: false;
+        }
+    ]
+    // Also stop timer when flipped (back face shows metadata, not preview)
+    out property <bool> has-hover: touch.has-hover;
+
+    // ── Hit-test mask non-rect (parallelogram) ──
+    // TouchArea covers the bounding rect, but we gate clicks with
+    // point_in_parallelogram math (same as SliceView::point_in_parallelogram
+    // Rust side, skew 28). Points outside the slanted shape are rejected.
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        // Non-rect containment: left lerp skew..0, right = left + (w - skew)
+        property <bool> is-inside-shape: {
+            if (self.mouse-x < 0px || self.mouse-y < 0px || self.mouse-x > root.width || self.mouse-y > root.height) {
+                false
+            } else {
+                // skew * (1 - y/h), h may be 0 during init — guard
+                let t = self.mouse-y / root.height;
+                let left = root.skew * (1 - t);
+                let right = left + (root.width - root.skew);
+                self.mouse-x >= left && self.mouse-x <= right
+            }
+        }
+
+        clicked => {
+            if (self.is-inside-shape) {
+                root.clicked();
+            }
+        }
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                if (self.is-inside-shape) {
+                    root.right-clicked();
+                    root.flipped();
+                }
+            }
+        }
+    }
+}

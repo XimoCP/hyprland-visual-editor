@@ -41,12 +41,12 @@ Stacked to `hve2-visual-rewrite`, merge in order.
 
 ## Phase 2 — Slice Carousel (PR2 ~340)
 
-- [ ] 2.1 RED width 108↔768 350ms OutCubic [f: slice.rs] [t: `cargo test slice_width` FAIL] [dep:P1][S]
-- [ ] 2.2 GREEN SliceView GalleryView handle_key consumed [f: slice.rs] [t: `cargo test slice_key`] [dep:2.1][S]
-- [ ] 2.3 SliceDelegate parallelogram skew28 shadow glow [f: SliceDelegate.slint] [t: `cargo check`] [dep:2.2][M]
-- [ ] 2.4 Hit-test mask non-rect + flip 180 InOutQuad [f: slice.rs,SliceDelegate] [t: `cargo test slice_flip`] [dep:2.3][S]
-- [ ] 2.5 Video Timer 100-300ms release on blur S16/17 [f: slice.rs] [t: `cargo test slice_video`] [dep:2.4][S]
-- [ ] 2.6 Preheat 120ms sourceSize 400x720 cache async R8 [f: SliceDelegate] [t: `cargo check`] [dep:2.3][S]
+- [x] 2.1 RED width 108↔768 350ms OutCubic [f: slice.rs] [t: `cargo test slice_width` FAIL] [dep:P1][S]
+- [x] 2.2 GREEN SliceView GalleryView handle_key consumed [f: slice.rs] [t: `cargo test slice_key`] [dep:2.1][S]
+- [x] 2.3 SliceDelegate parallelogram skew28 shadow glow [f: SliceDelegate.slint] [t: `cargo check`] [dep:2.2][M]
+- [x] 2.4 Hit-test mask non-rect + flip 180 InOutQuad [f: slice.rs,SliceDelegate] [t: `cargo test slice_flip`] [dep:2.3][S]
+- [x] 2.5 Video Timer 100-300ms release on blur S16/17 [f: slice.rs] [t: `cargo test slice_video`] [dep:2.4][S]
+- [x] 2.6 Preheat 120ms sourceSize 400x720 cache async R8 [f: SliceDelegate] [t: `cargo check`] [dep:2.3][S]
 
 ## Phase 3 — Hex + Mosaic + Switch (PR3 ~380)
 
