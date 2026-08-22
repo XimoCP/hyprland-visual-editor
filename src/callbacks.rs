@@ -64,11 +64,28 @@ pub fn setup_callbacks(
     // Single AppState instance shared across all callbacks
     let state = state.clone();
 
-    // ── HVE 2 shell callbacks (delivery 4/5) ──
+    // ── HVE 2 shell callbacks (delivery 4/5 + PR4 4.7/4.5) ──
     // Map shell UI callbacks to NavCommand (nav-shell spec R4; design D8).
+    // PR4: Home→Expand (S1) via card_activated, arrow→apply (S2/S12) via nav_move,
+    //      Back/Esc collapse settings S10/11 + ExpandToSettings S9 size mutation.
     {
         let shell = shell.clone();
         window.on_card_activated(move |card_idx| {
+            // If already in Gallery expanded, card click is GallerySlot action:
+            // current card → ExpandToSettings (S9) 1200x800→1300x900, non-current → instant apply via state (handled below via gallery apply path)
+            let is_gallery = Shell::with_nav(&shell, |n| {
+                n.screen() == Screen::Gallery && n.expansion() != crate::shell::nav::ExpansionState::Collapsed
+            });
+            if is_gallery {
+                // Check if window already at settings size — if so, ignore
+                let (w, h) = Shell::current_size(&shell);
+                let at_settings = (w - 1300.0).abs() < 1.0 && (h - 900.0).abs() < 1.0;
+                if !at_settings {
+                    // Expand card to settings panel (same window mutates, 22 steps 350ms OutCubic)
+                    Shell::expand_to_settings(&shell);
+                }
+                return;
+            }
             if let Some(screen) = Screen::from_card_index(card_idx as usize) {
                 Shell::dispatch(&shell, NavCommand::Expand(screen));
             }
@@ -77,12 +94,20 @@ pub fn setup_callbacks(
     {
         let shell = shell.clone();
         window.on_back_activated(move || {
+            // S10/S11: if Gallery settings panel open (window at 1300x900), Esc collapses to gallery 1200x800 first
+            let (w, h) = Shell::current_size(&shell);
+            let at_settings = (w - 1300.0).abs() < 1.0 && (h - 900.0).abs() < 1.0;
+            if at_settings {
+                Shell::collapse_from_settings(&shell);
+                return;
+            }
             Shell::dispatch(&shell, NavCommand::Back);
         });
     }
     {
         let shell = shell.clone();
         window.on_nav_move(move |direction| {
+            // S1/S2/S12: Home→Expand arrow→apply keyboard chain. When Gallery expanded, arrow moves gallery focus (clamped, no-wrap S13) — for now delegates to Shell focus which is clamped 0..1 (Home) but gallery slot handles its own clamp via GallerySlot::move_focus. We mirror to Shell for headless test compatibility.
             let delta = match direction.as_str() {
                 "down" | "right" => 1,
                 "up" | "left" => -1,

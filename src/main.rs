@@ -304,6 +304,28 @@ fn main() -> Result<(), slint::PlatformError> {
     // Refresh UI theme list
     refresh_theme_list(&window, &theme_manager);
 
+    // ── GallerySlot real registration (PR4 4.6): replace StubSlot Gallery with GallerySlot (i18n, prewarm)
+    // Overwrites the stub registered above — SlotRegistry::register replaces on same Screen (design D3).
+    {
+        let gallery_tm = std::sync::Arc::new(std::sync::Mutex::new(crate::theme_manager::ThemeManager::new(&config_dir)));
+        {
+            let mut gtm = gallery_tm.lock().unwrap();
+            if noctalia_v5.is_active() {
+                gtm.register_provider(Box::new(crate::providers::noctalia::NoctaliaV5Provider::new()));
+            } else if noctalia_v4.is_active() {
+                gtm.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
+            } else {
+                gtm.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
+            }
+            gtm.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new((*engine).clone())));
+            gtm.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
+            gtm.last_applied = theme_manager.last_applied.clone();
+        }
+        let gallery_slot = crate::shell::gallery::GallerySlot::new(gallery_tm);
+        shell::Shell::register_slot(&shell, Box::new(gallery_slot));
+        tracing::info!("[shell] GallerySlot registered (PR4) replacing StubSlot — i18n Gallery");
+    }
+
     // ── i18n: static UI strings ──
     window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual Editor"));
     window.set_home_header_title(tr.tr_shared("panel.tabs.home", "Home"));
