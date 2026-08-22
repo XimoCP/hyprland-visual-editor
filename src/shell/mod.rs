@@ -9,6 +9,7 @@
 //! skwd-wall (MIT, © liixini, https://github.com/liixini/skwd-wall). No GPL
 //! code from hyprmod is used.
 
+pub mod gallery;
 pub mod nav;
 pub mod size;
 pub mod slots;
