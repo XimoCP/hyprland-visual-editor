@@ -10,6 +10,7 @@ pub mod slot;
 pub mod thumbs;
 pub mod views;
 
+#[allow(unused_imports)]
 pub use model::{Background, BorderConfig, GalleryColors, ThemeCard, ThemeGalleryModel};
 pub use slot::GallerySlot;
 pub use views::GalleryStyle;
