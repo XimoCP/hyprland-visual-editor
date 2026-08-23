@@ -3,8 +3,9 @@
 // Floating top-center style selector translated 1:1 from skwd-wall
 // (MIT, © liixini): the bar hides behind an INVISIBLE 24px hover-reveal
 // strip pinned to the top edge; entering the strip slides the bar down
-// (250ms) and leaving it arms a 250ms auto-hide Timer. Top margin 30,
-// max width parent − 20 (spec: Floating FilterBar Chrome).
+// (250ms) and leaving it arms a 250ms auto-hide Timer. Top margin 24
+// (flush with strip to eliminate 6px dead zone), max width parent − 20
+// (spec: Floating FilterBar Chrome).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -92,8 +93,10 @@ export component FilterBar inherits Rectangle {
         }
     }
 
-    function arm-hide() {
-        if (!root.bar-hover) {
+    function update-hide() {
+        if (strip.has-hover || bar-touch.has-hover) {
+            hide-timer.stop();
+        } else {
             hide-timer.restart();
         }
     }
@@ -112,17 +115,19 @@ export component FilterBar inherits Rectangle {
                 root.revealed = true;
                 hide-timer.stop();
             } else {
-                root.arm-hide();
+                root.update-hide();
             }
         }
     }
 
-    // ── Bar body: top margin 30, centered, max width parent − 20.
+    // ── Bar body: flush at y=24 when revealed (no 6px dead zone between
+    // strip 0-24 and bar 30-...), centered, max width parent − 20.
     // Hidden state parks it under the top edge (clip-safe slide-up);
-    // reveal slides it to y=30 over 250ms (spec Hover reveal scenario). ──
+    // reveal slides it to y=24 over 250ms (spec Hover reveal scenario,
+    // adjusted from 30 to 24 for contiguous hover). ──
     bar := Rectangle {
         x: (parent.width - self.width) / 2;
-        y: root.revealed ? 30px : -self.height;
+        y: root.revealed ? 24px : -self.height;
         width: min(parent.width - 20px, self.pill-pad * 2 + pills.width);
         height: pills.height;
         border-radius: SkwdTokens.radius-8;
@@ -141,11 +146,7 @@ export component FilterBar inherits Rectangle {
             height: 100%;
             changed has-hover => {
                 root.bar-hover = self.has-hover;
-                if (self.has-hover) {
-                    hide-timer.stop();
-                } else {
-                    root.arm-hide();
-                }
+                root.update-hide();
             }
         }
 
@@ -157,7 +158,7 @@ export component FilterBar inherits Rectangle {
         pills := Rectangle {
             x: parent.pill-pad;
             y: 0;
-            width: slice-pill.width + mosaic-pill.x - 10px + mosaic-pill.width;
+            width: slice-pill.width + mosaic-pill.width - 10px;
             height: 24px + 14px;
 
             slice-pill := SkewPill {
