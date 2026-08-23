@@ -1,7 +1,8 @@
-# Apply Progress — gallery-immersive-redesign (Slice PR1 Tokens & Fullscreen)
+# Apply Progress — gallery-immersive-redesign
 
-## Slice
-PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.2).
+## Slice status
+- PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.2).
+- PR2 Overlap Geometry, Snap, Wheel — tasks 2.1–2.10 done (10 work-unit commits) · 2.11 [V] visual check pending for the user.
 
 ## Completed
 
@@ -45,3 +46,33 @@ PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done 
 - Task 1.8 required one extra line outside its declared file: shell.slint slot-area background conditional — without it the opaque parent would hide the live desktop entirely.
 - True desktop see-through ultimately depends on window-level translucency (MainWindow paints bg-dark). Deferred to 1.9 [V]: if the desktop is NOT visible at check time, next micro-step is making MainWindow background conditional when gallery is mounted.
 - Unrelated pre-existing worktree changes left untouched/uncommitted: assets/fragments/border.lua, .atl/*, src/shell/gallery/mod.rs re-export trim.
+
+# Slice PR2 — Overlap Geometry, Snap, Wheel (2.1–2.10 done · 2.11 [V] pending)
+
+## Completed
+- [x] 2.1 [RED] `cum_offset` exact-px tests for focused=0/mid/last + geometry constants corrected to skwd values in slice.rs (collapsed 108→135, expanded 768→924, skew 28→35, added SLICE_HEIGHT 520 + SLICE_SPACING_PX −30); old constant assertions updated to the corrected contract. RED via 0.0 stub, commit 1946c58
+- [x] 2.2 [GREEN] Pure `cum_offset(i, focused) = Σ_{j<i} width(j) + i·(−30)` + `card_width_at`, commit 6fb5388
+- [x] 2.3 [RED] `snap_x` exact-px tests (center=500, focused 0..4) + pixel-centering invariant swept over 7 indices, commit f25c66c
+- [x] 2.4 [GREEN] `snap_x = viewport_center − 462 − cum_offset(focused, focused)`, commit b3baf84
+- [x] 2.5 [WIRE] New ui/gallery/SliceCarousel.slint: clipped stage, per-card absolute x from a closed-form cum-offset mirror, row container x bound to snap-x mirror with 350ms OutCubic animate, row vertically centered (520px). HorizontalLayout path dropped from GalleryRoot, commit 13b7d4d
+- [x] 2.6 SliceDelegate real parallelogram: dynamic viewbox (width+skew)×520, vertices (35,0)(35+w,0)(w,520)(0,520), slant corners rounded with QuadraticTo and r clamped to min(token radius, w/2−1, slant/2−1); rect border/drop-shadow removed (PR3 replaces with Path shadow/dim/glow), commit 6f58757
+- [x] 2.7 Face mask containers: clip:true boxes inset to the parallelogram safe zone [skew..width] over the same Path fill surface; true bitmap masking deferred to PR4 (thumbs.rs bakes parallelogram alpha into cached PNGs per design D8), commit 09cd055
+- [x] 2.8 [RED] Wheel gesture machine tests: ±1 max per gesture (multi-notch bursts collapse to sign(dir)), clamped no-wrap both ends, dir=0 noop, empty model safe; free fn wheel_target contract test, commit e1629a6
+- [x] 2.9 [GREEN] `wheel_target` signum+clamp implementation shared by SliceView::wheel_step and callbacks, commit c1df9f1
+- [x] 2.10 [WIRE] gallery-wheel-step callback chain SliceCarousel → GalleryRoot → ShellRoot → MainWindow → callbacks.rs; scroll events only arm the gesture (last direction wins), 400ms debounce Timer commits one ±1 step after idle via tested wheel_target; wheel TouchArea sits UNDER the cards so clicks keep working (card touch areas reject scrolls which bubble down); container x animation from 2.5, commit 94177c3
+
+## Pending
+- [ ] 2.11 [V] USER VISUAL CHECK: `cargo run` → slices overlap −30px, all cards 520px tall vertically centered, 35px shear, radius 0; focused card expands to 924px and lands dead-center after the wheel idles; motion glides 350ms OutCubic.
+
+## Verification
+- Focused runs per task recorded in each commit message (`cargo test slice`: 14→17→19→22→26 passed at each GREEN gate)
+- Full suite: `cargo test` → **318 passed, 0 failed** · `cargo check` → clean, 0 warnings (after 2.10)
+
+## Deviations / Notes for review
+- "Per-card x fed from Rust positions" (task 2.5) implemented as token-driven pure Slint bindings mirroring the headless-tested slice.rs fns — same parity convention as hex/mosaic tasks 5.6/5.7. Rationale: feeding a positions array from Rust adds model-sync desync risk on every focused/model change; bindings cannot desync. Numbers flow from SkwdTokens only.
+- Design D3 says "QuadTo"; the Slint element is spelled `QuadraticTo` (compiler-directed fix).
+- Stale slice.rs constants (108/768/28) were replaced (not duplicated) as part of 2.1 — design Component Inventory assigns slice.rs the "135/924/520 constants"; existing tests asserting the old values were updated in the same commit.
+- Wheel delta convention: scroll down = next card (winit LineDelta y<0). If the [V] check finds it inverted, flip one ternary in SliceCarousel.wheel-zone.
+- Debounce semantics (D5 "400ms Timer commits the snap after idle"): events arm, idle commits ONE step — this is what makes "±1 max per gesture" true for trackpads/floods. Container x itself animates immediately on commit (350ms OutCubic retarget).
+- Right-of-focus cards paint OVER the focused card's trailing edge during PR2 (later siblings on top): expected — runtime z-rank layering is exactly PR3's D4 scope.
+- Unrelated pre-existing worktree changes still untouched: assets/fragments/border.lua, .atl/*, src/shell/gallery/mod.rs re-export trim, untracked openspec proposal/design/specs files.

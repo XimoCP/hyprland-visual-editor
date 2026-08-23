@@ -42,16 +42,16 @@ Chain strategy: stacked-to-main
 
 ### Slice PR2 — Overlap Geometry, Snap, Wheel (2.1–2.11)
 
-- [ ] 2.1 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:1.7] [S] Failing `cum_offset` tests: widths 135/924, spacing −30; exact px assertions for focused=0/mid/last.
-- [ ] 2.2 [GREEN] [f: src/shell/gallery/views/slice.rs] [t: cargo test slice] [dep:2.1] [S] Implement pure `cum_offset(i, focused)`.
-- [ ] 2.3 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:2.2] [S] Failing snap tests: `snap_x = viewport_center − 924/2 − cum_offset(focused)`; current card pixel-centered for every index.
-- [ ] 2.4 [GREEN] [f: src/shell/gallery/views/slice.rs] [t: cargo test slice] [dep:2.3] [S] Implement snap_x.
-- [ ] 2.5 [WIRE] [f: ui/gallery/SliceCarousel.slint (new)] [t: cargo check] [dep:2.4] [M] Carousel host: clipped stage, absolute per-card x fed from Rust positions; drop HorizontalLayout path from GalleryRoot.
-- [ ] 2.6 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:2.5] [M] Parallelogram Path, viewbox (0..959 × 0..520), vertices (35,0)(959,0)(924,520)(0,520); `QuadTo`-rounded slant corners with clamped r.
-- [ ] 2.7 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:2.6] [S] Mask wallpaper Image via `clip:true` container whose background is the same Path fill.
-- [ ] 2.8 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:-] [S] Failing wheel state machine: `wheel_step(dir)` advances ±1 max per gesture, clamped, no wrap.
-- [ ] 2.9 [GREEN] [f: src/shell/gallery/views/slice.rs] [t: cargo test slice] [dep:2.8] [S] Implement wheel_step.
-- [ ] 2.10 [WIRE] [f: ui/gallery/SliceCarousel.slint, src/callbacks.rs] [t: cargo check] [dep:2.9] [S] `gallery-wheel-step` callback + 400ms debounce Timer commits snap; container x animates 350ms OutCubic.
+- [x] 2.1 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:1.7] [S] Failing `cum_offset` tests: widths 135/924, spacing −30; exact px assertions for focused=0/mid/last.
+- [x] 2.2 [GREEN] [f: src/shell/gallery/views/slice.rs] [t: cargo test slice] [dep:2.1] [S] Implement pure `cum_offset(i, focused)`.
+- [x] 2.3 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:2.2] [S] Failing snap tests: `snap_x = viewport_center − 924/2 − cum_offset(focused)`; current card pixel-centered for every index.
+- [x] 2.4 [GREEN] [f: src/shell/gallery/views/slice.rs] [t: cargo test slice] [dep:2.3] [S] Implement snap_x.
+- [x] 2.5 [WIRE] [f: ui/gallery/SliceCarousel.slint (new)] [t: cargo check] [dep:2.4] [M] Carousel host: clipped stage, absolute per-card x fed from Rust positions; drop HorizontalLayout path from GalleryRoot.
+- [x] 2.6 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:2.5] [M] Parallelogram Path, viewbox (0..959 × 0..520), vertices (35,0)(959,0)(924,520)(0,520); `QuadTo`-rounded slant corners with clamped r.
+- [x] 2.7 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:2.6] [S] Mask wallpaper Image via `clip:true` container whose background is the same Path fill.
+- [x] 2.8 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:-] [S] Failing wheel state machine: `wheel_step(dir)` advances ±1 max per gesture, clamped, no wrap.
+- [x] 2.9 [GREEN] [f: src/shell/gallery/views/slice.rs] [t: cargo test slice] [dep:2.8] [S] Implement wheel_step.
+- [x] 2.10 [WIRE] [f: ui/gallery/SliceCarousel.slint, src/callbacks.rs] [t: cargo check] [dep:2.9] [S] `gallery-wheel-step` callback + 400ms debounce Timer commits snap; container x animates 350ms OutCubic.
 - [ ] 2.11 [V] [t: cargo run] [dep:2.1–2.10] [S] Verify: slices overlap −30, 35px shear, radius 0; current lands dead-center after wheel idle.
 
 ### Slice PR3 — Depth Cues (3.1–3.7)
