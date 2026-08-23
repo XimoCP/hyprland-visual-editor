@@ -1,9 +1,9 @@
 // HVE 2 — Slice carousel (gallery-immersive-redesign PR2).
 //
 // Parallelogram carousel with skwd-wall exact geometry: collapsed 135 ↔
-// expanded 924, height 520, spacing −30 (overlap), skew 35px X-shear,
+// expanded 924, height 520, spacing +4 (small gap), skew 35px X-shear,
 // radius 0, 350ms OutCubic. Manual x placement (design D2): cum_offset
-// sums per-card widths plus negative gaps; snap_x pixel-centers the
+// sums per-card widths plus small positive gaps; snap_x pixel-centers the
 // focused card (design D5); wheel steps ±1 per gesture.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
@@ -14,8 +14,8 @@ use super::{GalleryStyle, GalleryView};
 pub const SLICE_COLLAPSED_WIDTH: f32 = 135.0;
 pub const SLICE_EXPANDED_WIDTH: f32 = 924.0;
 pub const SLICE_HEIGHT: f32 = 520.0;
-/// Negative gap between cards — cards OVERLAP by 30px (design D2).
-pub const SLICE_SPACING_PX: f32 = -30.0;
+/// Small gap between cards — thin hairline separation (design D2).
+pub const SLICE_SPACING_PX: f32 = 4.0;
 pub const SLICE_ANIM_DURATION_MS: u64 = 350;
 /// OutCubic cubic-bezier(0.215, 0.61, 0.355, 1.0) — skwd default Behavior.
 pub const SLICE_ANIM_EASING: (f32, f32, f32, f32) = (0.215, 0.61, 0.355, 1.0);
@@ -193,7 +193,7 @@ pub fn card_width_at(j: usize, focused: usize) -> f32 {
 /// Cumulative x offset of card `i` (px) when `focused` is the expanded card.
 ///
 /// Design D2: `cum_offset(i, focused) = Σ_{j<i} width(j) + i·spacing` with
-/// `width(j) = 924 if j == focused else 135` and `spacing = −30`.
+/// `width(j) = 924 if j == focused else 135` and `spacing = +4` (small gap).
 pub fn cum_offset(i: usize, focused: usize) -> f32 {
     (0..i).map(|j| card_width_at(j, focused)).sum::<f32>() + i as f32 * SLICE_SPACING_PX
 }
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(SLICE_COLLAPSED_WIDTH, 135.0, "collapsed width must be 135");
         assert_eq!(SLICE_EXPANDED_WIDTH, 924.0, "expanded width must be 924");
         assert_eq!(SLICE_HEIGHT, 520.0, "slice height must be 520");
-        assert_eq!(SLICE_SPACING_PX, -30.0, "spacing must overlap by −30px");
+        assert_eq!(SLICE_SPACING_PX, 4.0, "spacing must be small positive gap");
         assert_eq!(SLICE_SKEW_PX, 35.0, "skew must be 35px X-shear");
         assert_eq!(SLICE_ANIM_DURATION_MS, 350, "anim duration 350ms OutCubic");
         assert_eq!(SLICE_ANIM_EASING, (0.215, 0.61, 0.355, 1.0), "OutCubic bezier");
@@ -445,34 +445,34 @@ mod tests {
     #[test]
     fn cum_offset_focused_first_exact_px() {
         // focused = 0: the first card is expanded; later cards trail it by
-        // expanded + spacing steps (894), collapsed ones add 105 net each.
+        // expanded + gap steps (928), collapsed ones add 139 net each.
         assert_eq!(cum_offset(0, 0), 0.0);
-        assert_eq!(cum_offset(1, 0), 894.0, "924 + (−30)");
-        assert_eq!(cum_offset(2, 0), 999.0);
-        assert_eq!(cum_offset(3, 0), 1104.0, "924+2·135 − 3·30");
-        assert_eq!(cum_offset(4, 0), 1209.0);
+        assert_eq!(cum_offset(1, 0), 928.0, "924 + 4");
+        assert_eq!(cum_offset(2, 0), 1067.0);
+        assert_eq!(cum_offset(3, 0), 1206.0, "924+2·135 + 3·4");
+        assert_eq!(cum_offset(4, 0), 1345.0);
     }
 
     #[test]
     fn cum_offset_focused_mid_exact_px() {
         // focused = 2 in a 5-card row: expanded card sits at index 2.
         assert_eq!(cum_offset(0, 2), 0.0);
-        assert_eq!(cum_offset(1, 2), 105.0);
-        assert_eq!(cum_offset(2, 2), 210.0, "focused lands at 210");
-        assert_eq!(cum_offset(3, 2), 1104.0, "135+135+924 − 3·30");
-        assert_eq!(cum_offset(4, 2), 1209.0);
-        // Crossing the focused edge advances by expanded+spacing = 924−30.
-        assert_eq!(cum_offset(3, 2) - cum_offset(2, 2), 894.0);
+        assert_eq!(cum_offset(1, 2), 139.0);
+        assert_eq!(cum_offset(2, 2), 278.0, "focused lands at 278");
+        assert_eq!(cum_offset(3, 2), 1206.0, "135+135+924 + 3·4");
+        assert_eq!(cum_offset(4, 2), 1345.0);
+        // Crossing the focused edge advances by expanded+gap = 924+4.
+        assert_eq!(cum_offset(3, 2) - cum_offset(2, 2), 928.0);
     }
 
     #[test]
     fn cum_offset_focused_last_exact_px() {
         // focused = last of 5: everything before it is collapsed.
         assert_eq!(cum_offset(0, 4), 0.0);
-        assert_eq!(cum_offset(1, 4), 105.0);
-        assert_eq!(cum_offset(3, 4), 315.0);
-        assert_eq!(cum_offset(4, 4), 420.0);
-        assert_eq!(cum_offset(5, 4), 1314.0, "4·135+924 − 5·30");
+        assert_eq!(cum_offset(1, 4), 139.0);
+        assert_eq!(cum_offset(3, 4), 417.0);
+        assert_eq!(cum_offset(4, 4), 556.0);
+        assert_eq!(cum_offset(5, 4), 1484.0, "4·135+924 + 5·4");
     }
 
     #[test]
@@ -480,10 +480,10 @@ mod tests {
         // snap_x = viewport_center − 924/2 − cum_offset(focused) (design D5).
         let center = 500.0;
         assert_eq!(snap_x(center, 0), 38.0, "500 − 462 − 0");
-        assert_eq!(snap_x(center, 1), -67.0, "500 − 462 − 105");
-        assert_eq!(snap_x(center, 2), -172.0);
-        assert_eq!(snap_x(center, 3), -277.0);
-        assert_eq!(snap_x(center, 4), -382.0, "500 − 462 − 420");
+        assert_eq!(snap_x(center, 1), -101.0, "500 − 462 − 139");
+        assert_eq!(snap_x(center, 2), -240.0);
+        assert_eq!(snap_x(center, 3), -379.0);
+        assert_eq!(snap_x(center, 4), -518.0, "500 − 462 − 556");
     }
 
     #[test]
@@ -747,10 +747,10 @@ mod tests {
 
     #[test]
     fn edge_fade_full_zone_skwd_formula() {
-        // fullZone = min(0.6, (462 + 2·105) / halfView) — numerator 672.
+        // fullZone = min(0.6, (462 + 2·139) / halfView) — numerator 740 (gap 4).
         assert_eq!(edge_fade_full_zone(640.0), 0.6, "1280px viewport clamps at cap");
-        assert_eq!(edge_fade_full_zone(1120.0), 0.6, "672/1120 boundary stays 0.6");
-        assert_eq!(edge_fade_full_zone(1200.0), 0.56, "2400px viewport: 672/1200");
+        assert_eq!(edge_fade_full_zone(1120.0), 0.6, "740/1120 still clamped");
+        assert_eq!(edge_fade_full_zone(1480.0), 0.5, "2960px viewport: 740/1480");
         assert_eq!(edge_fade_full_zone(0.0), 0.6, "degenerate halfView safe");
         assert_eq!(EDGE_FADE_END, 1.2, "fade reaches 0 at normDist 1.2");
         assert_eq!(EDGE_FADE_FULL_ZONE_CAP, 0.6);
@@ -777,18 +777,18 @@ mod tests {
 
     #[test]
     fn fade_opacity_narrow_viewport_zone() {
-        // fz = 0.56 (2400px wide): falloff spans 0.56..1.2.
-        let fz = edge_fade_full_zone(1200.0);
-        assert_eq!(fade_opacity(0.56, fz), 1.0);
-        assert!((fade_opacity(0.88, fz) - 0.5).abs() < 1e-5);
+        // fz = 0.5 (2960px wide, gap 4): falloff spans 0.5..1.2.
+        let fz = edge_fade_full_zone(1480.0);
+        assert_eq!(fade_opacity(0.5, fz), 1.0);
+        assert!((fade_opacity(0.85, fz) - 0.5).abs() < 1e-5);
         assert_eq!(fade_opacity(1.2, fz), 0.0);
     }
 
     #[test]
     fn card_center_x_collapsed_and_expanded() {
         assert_eq!(card_center_x(0, 0), 462.0, "expanded card center");
-        assert_eq!(card_center_x(1, 0), 961.5, "894 + 135/2");
-        assert_eq!(card_center_x(2, 2), 672.0, "210 + 462");
+        assert_eq!(card_center_x(1, 0), 995.5, "928 + 135/2");
+        assert_eq!(card_center_x(2, 2), 740.0, "278 + 462");
     }
 
     // ── 3.1 depth cues: dim level + paint-layer rank (design D4) ────────
