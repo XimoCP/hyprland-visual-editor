@@ -5,7 +5,8 @@
 // overlap), 35px X-shear drawn as one rounded Path (design D3), radius 0
 // default, 350ms OutCubic expand. Border per the skwd-wall contract was
 // restored in PR2.HF (Path stroke: focused primary w3 / hover primary@40%
-// w1 / idle black@60% w1). Flip stays a crossfade until the real two-phase
+// w1 / idle black@60% w1) and given stroke-room in PR2.HF2 so the border
+// renders uncut on all four edges. Flip stays a crossfade until the real two-phase
 // squeeze lands (PR5). Shadow/dim remain PR3 depth cues.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
@@ -51,13 +52,23 @@ export component SliceDelegate inherits Rectangle {
 
     // ── Face: rounded parallelogram Path (vertices (35,0)(35+w,0)(w,h)(0,h),
     // QuadTo rounding at each slant corner; r=0 degenerates to straight). ──
+    // PR2.HF2: Slint clips a Path's paint to its own geometry box, so a
+    // stroke centered on the shape border lost its outer half (1.5px of the
+    // focused w3) wherever an edge coincided with the box. The box now grows
+    // by a uniform stroke-room pad per side; the origin moves to -pad and the
+    // viewbox shifts to -p so every vertex maps back to its exact original
+    // position (scale stays 1:1) — same card, same place, full border.
+    property <length> pad: 4px; // > focused stroke half-width (1.5px)
+    property <float> pn: root.pad / 1px;
     face := Path {
-        width: root.width + root.skew;
-        height: 100%;
-        viewbox-x: 0;
-        viewbox-y: 0;
-        viewbox-width: root.wn + root.sn;
-        viewbox-height: root.hn;
+        x: -root.pad;
+        y: -root.pad;
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        viewbox-x: -root.pn;
+        viewbox-y: -root.pn;
+        viewbox-width: root.wn + root.sn + 2 * root.pn;
+        viewbox-height: root.hn + 2 * root.pn;
         fill: root.is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
         // skwd-wall border contract (PR2.HF regression 1): the PR2.6/2.7
         // refactor left this Path fill-only; borders live on the Path stroke.
