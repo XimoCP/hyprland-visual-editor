@@ -1,10 +1,12 @@
 // HVE 2 — GalleryRoot (theme-gallery PR4.5 visible wiring).
 //
-// Mounts GalleryChrome on top and swaps the active presentation view below
-// it: Slice (parallelogram carousel), Hexagon (honeycomb) or Mosaic (Voronoi
-// stripes). Pure UI assembly — navigation state stays in Rust (nav-shell D8):
-// clicks and keys are reported upward through callbacks and Rust mirrors
-// style/focus back through the in-properties below.
+// Swaps the active presentation view: Slice (parallelogram carousel) or
+// Mosaic (Voronoi stripes) — Hexagon removed per decision #632. Chrome
+// (empty banner + MIT pill) and FilterBar float as overlays on top; the
+// backdrop scrim sits below everything. Pure UI assembly — navigation
+// state stays in Rust (nav-shell D8): clicks and keys are reported
+// upward through callbacks and Rust mirrors style/focus back through
+// the in-properties below.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -13,7 +15,6 @@ import { FilterBar } from "FilterBar.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel } from "SliceCarousel.slint";
-import { HexDelegate } from "HexDelegate.slint";
 import { MosaicView } from "MosaicView.slint";
 
 export component GalleryRoot inherits Rectangle {
@@ -23,7 +24,6 @@ export component GalleryRoot inherits Rectangle {
     in property <[GalleryCardData]> cards;
     in property <bool> empty: false;
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
-    in property <string> mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> reduced-motion: false;
     // Backdrop scrim level (skwd selectorBackdropOpacity/100; default 0
@@ -35,6 +35,7 @@ export component GalleryRoot inherits Rectangle {
     callback card-clicked(int);
     callback card-right-clicked(int);
     callback wheel-step(int); // debounced ±1 gesture from SliceCarousel
+    callback mit-opened();    // D10 pill → Rust opens mit-link (xdg-open)
 
     // Immersive presentation (gallery-immersive-redesign 1.8): the root
     // stops painting an opaque surface — HVE runs fullscreen over the live
@@ -75,6 +76,60 @@ export component GalleryRoot inherits Rectangle {
         animate opacity { duration: SkwdTokens.anim-300; }
     }
 
+    // ── Stage: exactly one presentation view mounted at a time. Fills the
+    // whole window; chrome/filterbar float above it (paint = declaration
+    // order). Opacity follows the shown-style convergence described above. ──
+    stage := Rectangle {
+        width: 100%;
+        height: 100%;
+        clip: true;
+        opacity: root.shown-style == root.current-style ? 1.0 : 0.0;
+        animate opacity {
+            duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        // Style 0 — Slice: overlapping parallelogram carousel. Manual x
+        // placement (−30 overlap) snaps the focused card pixel-centered
+        // (gallery-immersive-redesign PR2, design D2/D5).
+        if root.shown-style == 0 : SliceCarousel {
+            width: 100%;
+            height: 100%;
+            cards: root.cards;
+            focused-index: root.focused-index;
+            card-clicked(i) => { root.card-clicked(i); }
+            card-right-clicked(i) => { root.card-right-clicked(i); }
+            wheel-step(dir) => { root.wheel-step(dir); }
+        }
+
+        // Style 2 — Mosaic: dual-stripe Voronoi stage (R2.3). Placeholder
+        // cells until the Voronoi model lands; clicks map onto real
+        // themes only while the index exists. Style 1 (Hexagon) removed
+        // per decision #632.
+        if root.shown-style == 2 : MosaicView {
+            width: 100%;
+            height: 100%;
+            viewport-w: self.width;
+            cell-clicked(idx) => {
+                if (idx < root.cards.length) { root.card-clicked(idx); }
+            }
+            cell-flip(idx) => {
+                if (idx < root.cards.length) { root.card-right-clicked(idx); }
+            }
+        }
+    }
+
+    // ── Chrome overlay (task 4.4): empty banner + bottom-right MIT pill.
+    // Transparent — paints nothing itself. Declared AFTER the stage so
+    // it paints above it; FilterBar stays topmost. ──
+    GalleryChrome {
+        width: 100%;
+        height: 100%;
+        reduced-motion: root.reduced-motion;
+        mit-link: root.mit-link;
+        mit-opened => { root.mit-opened(); }
+    }
+
     // ── FilterBar (gallery-immersive-redesign 4.1): floating top-center
     // hover-reveal selector over the backdrop. ──
     FilterBar {
@@ -83,82 +138,5 @@ export component GalleryRoot inherits Rectangle {
         current-style: root.current-style;
         reduced-motion: root.reduced-motion;
         style-selected(style) => { root.style-selected(style); }
-    }
-
-    VerticalLayout {
-        width: 100%;
-        height: 100%;
-        // Toolbar (style switcher) + empty-state banner + MIT footer.
-        GalleryChrome {
-            current-style: root.current-style;
-            focused-index: root.focused-index;
-            reduced-motion: root.reduced-motion;
-            empty: root.empty;
-            empty-text: root.empty-text;
-            mit-footer: root.mit-footer;
-            mit-link: root.mit-link;
-            style-selected(style) => { root.style-selected(style); }
-        }
-
-        // ── Stage: exactly one presentation view mounted at a time ──
-        // Opacity follows the shown-style convergence described above.
-        stage := Rectangle {
-            vertical-stretch: 1;
-            clip: true;
-            opacity: root.shown-style == root.current-style ? 1.0 : 0.0;
-            animate opacity {
-                duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200;
-                easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-            }
-
-            // Style 0 — Slice: overlapping parallelogram carousel. Manual x
-            // placement (−30 overlap) snaps the focused card pixel-centered
-            // (gallery-immersive-redesign PR2, design D2/D5).
-            if root.shown-style == 0 : SliceCarousel {
-                width: 100%;
-                height: 100%;
-                cards: root.cards;
-                focused-index: root.focused-index;
-                card-clicked(i) => { root.card-clicked(i); }
-                card-right-clicked(i) => { root.card-right-clicked(i); }
-                wheel-step(dir) => { root.wheel-step(dir); }
-            }
-
-            // Style 1 — Hexagon: honeycomb grid, rows of three with odd-row
-            // offset (pointy-top cells, pull-out on selection R2.2).
-            if root.shown-style == 1 : Rectangle {
-                width: 100%;
-                height: 100%;
-
-                for card[i] in root.cards : HexDelegate {
-                    property <int> grid-col: i - Math.floor(i / 3) * 3;
-                    property <int> grid-row: Math.floor(i / 3);
-                    x: SkwdTokens.spacing-16
-                        + self.grid-col * 300px
-                        + ((self.grid-row - Math.floor(self.grid-row / 2) * 2) == 1 ? 150px : 0px);
-                    y: SkwdTokens.spacing-16 + self.grid-row * 190px;
-                    card-name: card.name;
-                    is-selected: i == root.focused-index;
-                    accent: card.accent;
-                    clicked => { root.card-clicked(i); }
-                    flip-requested(px, py) => { root.card-right-clicked(i); }
-                }
-            }
-
-            // Style 2 — Mosaic: dual-stripe Voronoi stage (R2.3). Placeholder
-            // cells until the Voronoi model lands; clicks map onto real
-            // themes only while the index exists.
-            if root.shown-style == 2 : MosaicView {
-                width: 100%;
-                height: 100%;
-                viewport-w: self.width;
-                cell-clicked(idx) => {
-                    if (idx < root.cards.length) { root.card-clicked(idx); }
-                }
-                cell-flip(idx) => {
-                    if (idx < root.cards.length) { root.card-right-clicked(idx); }
-                }
-            }
-        }
     }
 }

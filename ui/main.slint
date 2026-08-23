@@ -214,6 +214,7 @@ export component MainWindow inherits Window {
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
     callback gallery-wheel-step(int);
+    callback gallery-mit-open();
 
 
     // ── Settings ──
@@ -499,6 +500,7 @@ export component MainWindow inherits Window {
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
         gallery-wheel-step(dir) => { root.gallery-wheel-step(dir); }
+        gallery-mit-open => { root.gallery-mit-open(); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──

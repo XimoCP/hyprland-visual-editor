@@ -482,6 +482,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             });
         }
+        // D10 MIT pill: open the skwd-wall attribution link. Constant argv
+        // (xdg-open + a compile-time URL default) — no user input reaches
+        // the command line (threat matrix: subprocess usage documented).
+        {
+            let win = window.as_weak();
+            window.on_gallery_mit_open(move || {
+                let url = win
+                    .upgrade()
+                    .map(|w| w.get_gallery_mit_link().to_string())
+                    .unwrap_or_else(|| crate::shell::gallery::model::MIT_FOOTER_LINK.to_string());
+                if let Err(e) = std::process::Command::new("xdg-open").arg(&url).spawn() {
+                    tracing::warn!("[gallery] could not open MIT link '{}': {}", url, e);
+                }
+            });
+        }
     }
     // NOTE (PR1.1): the initial Expand(Gallery) dispatch used to run here at
     // setup time — BEFORE composer::init_global existed — so

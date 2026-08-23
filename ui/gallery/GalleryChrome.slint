@@ -1,148 +1,73 @@
-// HVE 2 — GalleryChrome (theme-gallery PR3 3.8).
+// HVE 2 — GalleryChrome (gallery-immersive-redesign PR4.4).
 //
-// Toolbar with style switcher (Slice / Hex / Mosaic), cross-fade 200ms S6,
-// preserves focused index. Translated from skwd-wall toolbar (MIT, © liixini).
+// Transparent chrome OVERLAY over the fullscreen gallery backdrop. The
+// permanent toolbar and MIT footer were dismantled per spec (Floating
+// FilterBar Chrome / design D10): style selection moved to FilterBar,
+// attribution lives in a discrete bottom-right pill that opens mit-link.
+// Keeps the preserved S18 empty-state banner.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
 
 export component GalleryChrome inherits Rectangle {
-    in property <int> current-style: 0; // 0 Slice, 1 Hex, 2 Mosaic
-    in property <int> focused-index: 0;
-    // S23 reduced-motion: disables all animations when true
-    in property <bool> reduced-motion: false;
     // S18 empty state
     in property <bool> empty: false;
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
-    // R7 MIT footer
-    in property <string> mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
+    // R7/D10 MIT pill
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
-    // S19/S20 delete/rename
-    callback delete-theme(string);
-    callback rename-theme(string, string);
-    callback style-selected(int);
+    in property <bool> reduced-motion: false;
+    callback mit-opened();
 
-    // Toolbar + empty + MIT footer stack; height auto via VerticalLayout
-    background: SkwdTokens.surface-container;
-    border-radius: SkwdTokens.radius-8;
-    // cross-fade 200ms OutCubic for style switch (spec R3, S6) — disabled when reduced-motion S23
-    animate opacity { duration: root.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+    // Overlay chrome paints nothing itself (live desktop stays visible).
+    background: transparent;
 
-    VerticalLayout {
-        // Toolbar row
-        Rectangle {
-            height: 40px;
-            HorizontalLayout {
-                spacing: SkwdTokens.spacing-8;
-                padding: SkwdTokens.spacing-8;
-                alignment: center;
+    // ── S18 Empty state illustration + message (preserved requirement):
+    // centered over the backdrop while the stage is empty. ──
+    if root.empty : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - 80px;
+        height: 28px;
+        background: SkwdTokens.surface.transparentize(0.5);
+        border-radius: SkwdTokens.radius-8;
+        Text {
+            text: root.empty-text;
+            color: SkwdTokens.outline;
+            font-size: SkwdTokens.size-11;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
 
-                Text {
-                    text: "Style";
-                    color: SkwdTokens.primary;
-                    font-size: SkwdTokens.size-11;
-                    vertical-alignment: center;
-                }
+    // ── D10 MIT credit pill: bottom-right over the backdrop, 9px text at
+    // outline @0.6 opacity; click reports mit-opened (Rust opens the link
+    // via xdg-open with a constant argv). ──
+    mit-pill := Rectangle {
+        x: parent.width - self.width - SkwdTokens.spacing-16;
+        y: parent.height - self.height - SkwdTokens.spacing-12;
+        width: mit-text.preferred-width + 2 * SkwdTokens.spacing-8;
+        height: 16px;
+        border-radius: SkwdTokens.radius-8;
+        background: #000000.transparentize(0.7);
 
-                // Slice button — reduced-motion S23 disables animate
-                Rectangle {
-                    width: 72px;
-                    height: 28px;
-                    border-radius: SkwdTokens.radius-8;
-                    background: root.current-style == 0 ? SkwdTokens.fallback-accent : SkwdTokens.surface;
-                    border-width: root.current-style == 0 ? 2px : 1px;
-                    border-color: root.current-style == 0 ? SkwdTokens.fallback-accent : SkwdTokens.outline.transparentize(0.7);
-                    animate background { duration: root.reduced-motion ? 0ms : 200ms; easing: ease-in-out; }
-                    Text {
-                        text: "Slice";
-                        color: root.current-style == 0 ? #ffffff : SkwdTokens.primary;
-                        font-size: SkwdTokens.size-11;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    TouchArea { width: 100%; height: 100%; mouse-cursor: pointer; clicked => { root.style-selected(0); } }
-                }
-
-                // Hex button
-                Rectangle {
-                    width: 72px;
-                    height: 28px;
-                    border-radius: SkwdTokens.radius-8;
-                    background: root.current-style == 1 ? SkwdTokens.fallback-accent : SkwdTokens.surface;
-                    border-width: root.current-style == 1 ? 2px : 1px;
-                    border-color: root.current-style == 1 ? SkwdTokens.fallback-accent : SkwdTokens.outline.transparentize(0.7);
-                    animate background { duration: root.reduced-motion ? 0ms : 200ms; easing: ease-in-out; }
-                    Text {
-                        text: "Hex";
-                        color: root.current-style == 1 ? #ffffff : SkwdTokens.primary;
-                        font-size: SkwdTokens.size-11;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    TouchArea { width: 100%; height: 100%; mouse-cursor: pointer; clicked => { root.style-selected(1); } }
-                }
-
-                // Mosaic button
-                Rectangle {
-                    width: 72px;
-                    height: 28px;
-                    border-radius: SkwdTokens.radius-8;
-                    background: root.current-style == 2 ? SkwdTokens.fallback-accent : SkwdTokens.surface;
-                    border-width: root.current-style == 2 ? 2px : 1px;
-                    border-color: root.current-style == 2 ? SkwdTokens.fallback-accent : SkwdTokens.outline.transparentize(0.7);
-                    animate background { duration: root.reduced-motion ? 0ms : 200ms; easing: ease-in-out; }
-                    Text {
-                        text: "Mosaic";
-                        color: root.current-style == 2 ? #ffffff : SkwdTokens.primary;
-                        font-size: SkwdTokens.size-11;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    TouchArea { width: 100%; height: 100%; mouse-cursor: pointer; clicked => { root.style-selected(2); } }
-                }
-
-                Rectangle { horizontal-stretch: 1; background: transparent; }
-
-                Text {
-                    text: "Focus " + root.focused-index;
-                    color: SkwdTokens.outline;
-                    font-size: SkwdTokens.size-11;
-                    vertical-alignment: center;
-                }
-            }
+        mit-text := Text {
+            width: parent.width;
+            height: parent.height;
+            text: "skwd-wall (MIT, © liixini)";
+            color: SkwdTokens.outline.transparentize(0.6);
+            font-size: 9px;
+            font-family: SkwdTokens.font-body;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
 
-        // S18 Empty state illustration + message + Save button placeholder
-        if root.empty : Rectangle {
-            height: 28px;
-            background: SkwdTokens.surface.transparentize(0.5);
-            border-radius: SkwdTokens.radius-8;
-            Text {
-                text: root.empty-text;
-                color: SkwdTokens.outline;
-                font-size: SkwdTokens.size-11;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                wrap: word-wrap;
-            }
-            // LRU200 hint: cache persists — not visible but documented
-            animate opacity { duration: root.reduced-motion ? 0ms : 150ms; easing: ease-in-out; }
-        }
-
-        // R7 MIT footer persistent
-        Rectangle {
-            height: 18px;
-            HorizontalLayout {
-                padding-left: SkwdTokens.spacing-8;
-                padding-right: SkwdTokens.spacing-8;
-                Text {
-                    text: root.mit-footer;
-                    color: SkwdTokens.outline.transparentize(0.3);
-                    font-size: 9px;
-                    vertical-alignment: center;
-                    horizontal-alignment: center;
-                    overflow: elide;
-                }
-            }
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            mouse-cursor: pointer;
+            clicked => { root.mit-opened(); }
         }
     }
 }
