@@ -43,6 +43,40 @@ export component SliceCarousel inherits Rectangle {
         - self.cum-offset(root.focused-index, root.focused-index)
     }
 
+    // ── Depth cues (design D4, PR3): MIRRORS of slice.rs fns — keep parity,
+    // numbers flow from SkwdTokens only. skwd-wall exact: fullZone =
+    // min(0.6, (expanded/2 + 2·(collapsed+spacing)) / halfView); opacity
+    // flat inside the zone then LINEAR to 0 at normDist 1.2. ──
+    pure function edge-full-zone() -> float {
+        let half-view = root.width / 2 / 1px;
+        if (half-view <= 0.0) { return 0.6; }
+        let zone = ((root.exp-w / 2 + 2 * (root.card-w + root.gap)) / 1px) / half-view;
+        Math.min(0.6, zone)
+    }
+
+    // Distance of card i's center from the viewport center, in half-view
+    // units, computed on TARGET layout (focused index) rather than the
+    // animated row x — the 200ms opacity animation smooths the transition.
+    pure function edge-norm-dist(i: int) -> float {
+        let half-view = root.width / 2 / 1px;
+        if (half-view <= 0.0) { return 0.0; }
+        let card-center = (root.cum-offset(i, root.focused-index)
+            + (i == root.focused-index ? root.exp-w : root.card-w) / 2) / 1px;
+        let view-center = root.width / 2 / 1px - root.snap-x() / 1px;
+        Math.abs(card-center - view-center) / half-view
+    }
+
+    // Mirror of slice.rs::fade_opacity (skwd exact piecewise curve).
+    pure function fade-opacity(nd: float, full-zone: float) -> float {
+        nd <= full-zone || full-zone >= 1.2 ? 1.0
+            : Math.max(0.0, 1.0 - (nd - full-zone) / (1.2 - full-zone))
+    }
+
+    // Per-card edge fade fed to EVERY delegate instance (all paint layers).
+    pure function card-fade-opacity(i: int) -> float {
+        root.fade-opacity(root.edge-norm-dist(i), root.edge-full-zone())
+    }
+
     // ── Wheel (design D5): scroll events only ARM the gesture — the last
     // direction wins and the 400ms debounce Timer commits the snap after
     // the wheel idles. One gesture = one ±1 step, clamped/no-wrap in Rust
@@ -93,6 +127,7 @@ export component SliceCarousel inherits Rectangle {
         for card[i] in root.cards : SliceDelegate {
             visible: i != root.focused-index;
             x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
             accent: card.accent;
@@ -103,6 +138,7 @@ export component SliceCarousel inherits Rectangle {
         for card[i] in root.cards : SliceDelegate {
             visible: i == root.focused-index;
             x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
             accent: card.accent;

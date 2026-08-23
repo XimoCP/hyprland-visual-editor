@@ -34,6 +34,88 @@ pub const SLICE_PREHEAT_MS: u64 = 120;
 pub const SLICE_SOURCE_W: u32 = 400;
 pub const SLICE_SOURCE_H: u32 = 720;
 
+/// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
+/// Edge-fade end: card opacity reaches 0 at this normalized distance.
+pub const EDGE_FADE_END: f32 = 1.2;
+/// Full-opacity zone cap (wide viewports clamp here).
+pub const EDGE_FADE_FULL_ZONE_CAP: f32 = 0.6;
+
+/// Center x of card `i` inside the moving row (row-local px) when
+/// `focused` is the expanded card. Feeds `edge_norm_dist`.
+pub fn card_center_x(i: usize, focused: usize) -> f32 {
+    cum_offset(i, focused) + card_width_at(i, focused) / 2.0
+}
+
+/// Normalized distance of a card center from the viewport center:
+/// `|card_center − view_center| / halfView` (skwd `_normDist`, design D4).
+pub fn edge_norm_dist(card_center_x_px: f32, view_center_x_px: f32, half_view: f32) -> f32 {
+    if half_view <= 0.0 {
+        return 0.0;
+    }
+    (card_center_x_px - view_center_x_px).abs() / half_view
+}
+
+/// Width of the fully-opaque zone in normDist units (skwd `_fullZone`):
+/// `min(0.6, (expanded/2 + 2·(collapsed + spacing)) / halfView)`.
+pub fn edge_fade_full_zone(half_view: f32) -> f32 {
+    if half_view <= 0.0 {
+        return EDGE_FADE_FULL_ZONE_CAP;
+    }
+    let numerator = SLICE_EXPANDED_WIDTH / 2.0 + 2.0 * (SLICE_COLLAPSED_WIDTH + SLICE_SPACING_PX);
+    (numerator / half_view).min(EDGE_FADE_FULL_ZONE_CAP)
+}
+
+/// Edge-fade opacity curve (skwd exact): flat 1.0 inside `full_zone`,
+/// then LINEAR down to 0 at normDist `EDGE_FADE_END` (1.2).
+pub fn fade_opacity(norm_dist: f32, full_zone: f32) -> f32 {
+    if full_zone >= EDGE_FADE_END || norm_dist <= full_zone {
+        return 1.0;
+    }
+    (1.0 - (norm_dist - full_zone) / (EDGE_FADE_END - full_zone)).max(0.0)
+}
+
+/// Visual state of a slice card — drives dim/shadow/paint-layer precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliceCardState {
+    Idle,
+    Hovered,
+    Current,
+}
+
+/// Card state from its identity flags (current wins over hover).
+pub fn card_state(is_current: bool, is_hovered: bool) -> SliceCardState {
+    if is_current {
+        SliceCardState::Current
+    } else if is_hovered {
+        SliceCardState::Hovered
+    } else {
+        SliceCardState::Idle
+    }
+}
+
+/// Dim overlay black alpha (skwd exact): 0 current / 0.15 hover / 0.4 idle.
+pub fn dim_level(state: SliceCardState) -> f32 {
+    match state {
+        SliceCardState::Current => 0.0,
+        SliceCardState::Hovered => 0.15,
+        SliceCardState::Idle => 0.4,
+    }
+}
+
+/// Paint-layer rank for card `i` (design D4): runtime z-index does NOT
+/// exist in Slint (`z` must be a compile-time constant), so the carousel
+/// paints THREE conditional passes in rank order — 0 idle (bottom),
+/// 1 hovered, 2 current (top). Mirrors skwd's z-rank 100/90/50−dist.
+pub fn z_layer(i: usize, focused: usize, hovered: Option<usize>) -> u8 {
+    if i == focused {
+        2
+    } else if Some(i) == hovered {
+        1
+    } else {
+        0
+    }
+}
+
 /// Keyboard key for gallery navigation (pure Rust, no Slint dep).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GalleryKey {
@@ -682,8 +764,8 @@ mod tests {
         let fz = edge_fade_full_zone(640.0); // 0.6
         assert_eq!(fade_opacity(0.0, fz), 1.0);
         assert_eq!(fade_opacity(fz, fz), 1.0, "zone edge still full");
-        assert_eq!(fade_opacity(0.9, fz), 0.5, "falloff midpoint");
-        assert_eq!(fade_opacity(1.199, fz) > 0.0, true, "still fading before end");
+        assert!((fade_opacity(0.9, fz) - 0.5).abs() < 1e-5, "falloff midpoint");
+        assert!(fade_opacity(1.199, fz) > 0.0, "still fading before end");
         assert_eq!(fade_opacity(1.2, fz), 0.0, "gone at normDist 1.2");
         assert_eq!(fade_opacity(2.0, fz), 0.0, "clamped beyond end");
     }
@@ -693,7 +775,7 @@ mod tests {
         // fz = 0.56 (2400px wide): falloff spans 0.56..1.2.
         let fz = edge_fade_full_zone(1200.0);
         assert_eq!(fade_opacity(0.56, fz), 1.0);
-        assert_eq!(fade_opacity(0.88, fz), 0.5);
+        assert!((fade_opacity(0.88, fz) - 0.5).abs() < 1e-5);
         assert_eq!(fade_opacity(1.2, fz), 0.0);
     }
 

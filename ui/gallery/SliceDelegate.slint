@@ -22,6 +22,14 @@ export component SliceDelegate inherits Rectangle {
     in property <color> accent: SkwdTokens.fallback-accent;
     in property <image> thumb;
     in property <bool> has-video: false;
+    // Depth-cue edge fade (design D4): computed by SliceCarousel from the
+    // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
+    in property <float> fade-opacity: 1.0;
+
+    // Edge fade dissolves whole cards (image + shadow + dim) toward the
+    // stage edges; 200ms matches the skwd depth-cue cadence.
+    opacity: root.fade-opacity;
+    animate opacity { duration: SkwdTokens.anim-200; }
 
     callback clicked();
     callback right-clicked();
