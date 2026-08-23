@@ -11,7 +11,7 @@
 import { SkwdTokens } from "../tokens.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
-import { SliceDelegate } from "SliceDelegate.slint";
+import { SliceCarousel } from "SliceCarousel.slint";
 import { HexDelegate } from "HexDelegate.slint";
 import { MosaicView } from "MosaicView.slint";
 
@@ -74,25 +74,16 @@ export component GalleryRoot inherits Rectangle {
             vertical-stretch: 1;
             clip: true;
 
-            // Style 0 — Slice: parallelogram carousel, focused card expands
-            // 108↔768 (R2.1) driven purely by `is-current`.
-            if root.current-style == 0 : Rectangle {
+            // Style 0 — Slice: overlapping parallelogram carousel. Manual x
+            // placement (−30 overlap) snaps the focused card pixel-centered
+            // (gallery-immersive-redesign PR2, design D2/D5).
+            if root.current-style == 0 : SliceCarousel {
                 width: 100%;
                 height: 100%;
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: SkwdTokens.spacing-8;
-                    padding-left: SkwdTokens.spacing-20;
-                    padding-right: SkwdTokens.spacing-20;
-
-                    for card[i] in root.cards : SliceDelegate {
-                        card-name: card.name;
-                        is-current: i == root.focused-index;
-                        accent: card.accent;
-                        clicked => { root.card-clicked(i); }
-                        right-clicked => { root.card-right-clicked(i); }
-                    }
-                }
+                cards: root.cards;
+                focused-index: root.focused-index;
+                card-clicked(i) => { root.card-clicked(i); }
+                card-right-clicked(i) => { root.card-right-clicked(i); }
             }
 
             // Style 1 — Hexagon: honeycomb grid, rows of three with odd-row

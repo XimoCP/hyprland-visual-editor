@@ -1,0 +1,65 @@
+// HVE 2 — SliceCarousel (gallery-immersive-redesign PR2.5).
+//
+// Manual-x carousel host (design D2): HorizontalLayout cannot express the
+// −30px overlap, so every card gets an absolute x from cum_offset while the
+// row container follows snap_x so the focused card lands pixel-centered
+// (design D5). These pure functions MIRROR the headless-tested ones in
+// src/shell/gallery/views/slice.rs (cum_offset/snap_x) — keep both in
+// parity; numbers flow from SkwdTokens only.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+import { GalleryCardData } from "ThemeCardDelegate.slint";
+import { SliceDelegate } from "SliceDelegate.slint";
+
+export component SliceCarousel inherits Rectangle {
+    in property <[GalleryCardData]> cards;
+    in property <int> focused-index: 0;
+
+    callback card-clicked(int);
+    callback card-right-clicked(int);
+
+    // Stage clips the sliding row (cards travel beyond both edges).
+    clip: true;
+
+    // ── Geometry (skwd exact, tokens.slint) ──
+    property <length> card-w: SkwdTokens.gallery-slice-w;         // 135
+    property <length> exp-w: SkwdTokens.gallery-slice-expanded-w; // 924
+    property <length> gap: SkwdTokens.gallery-slice-spacing;      // −30 overlap
+    property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35 shear
+
+    // Mirror of slice.rs::cum_offset (design D2): Σ_{j<i} width(j) + i·gap,
+    // closed form: i·(collapsed+gap) + (focused < i ? expanded−collapsed : 0).
+    pure function cum-offset(i: int, focused: int) -> length {
+        i * (root.card-w + root.gap)
+        + (focused < i ? (root.exp-w - root.card-w) : 0px)
+    }
+
+    // Mirror of slice.rs::snap_x (design D5): center − expanded/2 − cum(focused).
+    pure function snap-x() -> length {
+        root.width / 2 - root.exp-w / 2
+        - self.cum-offset(root.focused-index, root.focused-index)
+    }
+
+    // ── Moving row: one animated x for the whole strip (350ms OutCubic),
+    // vertically centering the 520px cards in the stage. ──
+    row := Rectangle {
+        x: root.snap-x();
+        y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
+        height: SkwdTokens.gallery-slice-h;
+        animate x {
+            duration: SkwdTokens.anim-expand;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        for card[i] in root.cards : SliceDelegate {
+            x: root.cum-offset(i, root.focused-index);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+        }
+    }
+}
