@@ -1,9 +1,10 @@
-// HVE 2 — SliceDelegate (theme-gallery PR2 Slice).
+// HVE 2 — SliceDelegate (gallery-immersive-redesign PR2.6).
 //
-// Parallelogram carousel card: skew28, width 108↔768 350ms OutCubic,
-// shadow matching geometry, glow border primary when selected,
-// flip 180 InOutQuad 400ms, hit-test mask non-rect, video Timer
-// 100-300ms release on blur, preheat 120ms sourceSize 400x720 cache async.
+// Parallelogram carousel card with skwd-wall exact geometry: collapsed
+// 135 ↔ expanded 924 × 520 tall, spacing handled by SliceCarousel (−30
+// overlap), 35px X-shear drawn as one rounded Path (design D3), radius 0
+// default, 350ms OutCubic expand. Flip stays a crossfade until the real
+// two-phase squeeze lands (PR5). Shadow/dim/glow are PR3 depth cues.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -23,51 +24,54 @@ export component SliceDelegate inherits Rectangle {
     callback right-clicked();
     callback flipped();
 
-    // ── Geometry ──
-    // Spec R2.1: skew offset ~28px, collapsed 108, expanded 768
-    property <length> skew: 28px;
-    width: is-current ? 768px : 108px;
-    height: 200px;
-    border-radius: SkwdTokens.radius-8;
-    clip: true;
+    // ── Geometry (design D3): card spans width × 520; the drawn face is a
+    // parallelogram whose top edge shifts right by the 35px shear, so the
+    // Path bounding box is (width + skew) wide. ──
+    property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35px X-shear
+    width: is-current ? SkwdTokens.gallery-slice-expanded-w : SkwdTokens.gallery-slice-w;
+    height: SkwdTokens.gallery-slice-h;
+    animate width {
+        duration: SkwdTokens.anim-expand;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
 
-    // Width animation 350ms OutCubic (cubic-bezier 0.215,0.61,0.355,1)
-    animate width { duration: 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+    // Viewbox numbers (unitless): face spans (width + skew) × height.
+    property <float> wn: root.width / 1px;
+    property <float> hn: root.height / 1px;               // 520
+    property <float> sn: root.skew / 1px;                 // 35
+    property <float> slant: Math.sqrt(sn * sn + hn * hn); // ≈ 521.18
+    // Corner radius clamped to half of the shortest adjacent edge minus 1
+    // (skwd roundCorners clamp). Token default 0px → sharp parallelogram.
+    property <float> rn: Math.max(0.0, Math.min(
+        SkwdTokens.gallery-slice-radius / 1px,
+        wn / 2 - 1,
+        slant / 2 - 1));
 
-    // ── Flip 180° Y-axis — 400ms InOutQuad (spec S3) ──
-    // Approximated via angle property; Slint has no 3D rotate, so we fake
-    // with scale + opacity; the angle value drives the easing curve.
-    property <angle> flip-angle: is-flipped ? 180deg : 0deg;
-    animate flip-angle { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
-
-    // ── Glow + border (primary when selected, spec R2.1) ──
-    border-width: is-current ? SkwdTokens.border-2 : (is-hovered ? SkwdTokens.border-2 : SkwdTokens.border-1);
-    border-color: is-current ? accent : (is-hovered ? accent.transparentize(0.5) : SkwdTokens.outline.transparentize(0.7));
-    drop-shadow-blur: is-current ? 20px : 8px;
-    drop-shadow-color: is-current ? accent.transparentize(0.6) : transparent;
-    animate border-color { duration: SkwdTokens.anim-200; easing: ease-in-out; }
-    animate drop-shadow-blur { duration: SkwdTokens.anim-200; easing: ease-out; }
-
-    // ── Shadow shape matching parallelogram (Path outline) ──
-    // Path viewbox matches collapsed card; width/height scale via fit:fill
-    // so both 108 and 768 widths render a slanted shape.
-    // Skew 28px: top edge starts at skew, bottom left at 0.
-    parallelogram := Path {
-        width: 100%;
+    // ── Face: rounded parallelogram Path (vertices (35,0)(35+w,0)(w,h)(0,h),
+    // QuadTo rounding at each slant corner; r=0 degenerates to straight). ──
+    face := Path {
+        width: root.width + root.skew;
         height: 100%;
         viewbox-x: 0;
         viewbox-y: 0;
-        viewbox-width: 108;
-        viewbox-height: 200;
-        fit: fill;
-        clip: true;
-        fill: is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
+        viewbox-width: root.wn + root.sn;
+        viewbox-height: root.hn;
+        fill: root.is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
         stroke: transparent;
-        // SVG parallelogram: M 28 0 L 108 0 L 80 200 L 0 200 Z  (skew 28)
-        MoveTo { x: 28; y: 0; }
-        LineTo { x: 108; y: 0; }
-        LineTo { x: 80; y: 200; }
-        LineTo { x: 0; y: 200; }
+
+        MoveTo { x: sn + rn; y: 0; }
+        LineTo { x: sn + wn - rn; y: 0; }
+        QuadraticTo { control-x: sn + wn; control-y: 0;
+                 x: sn + wn - sn * rn / slant; y: hn * rn / slant; }
+        LineTo { x: wn + sn * rn / slant; y: hn - hn * rn / slant; }
+        QuadraticTo { control-x: wn; control-y: hn;
+                 x: wn - rn; y: hn; }
+        LineTo { x: rn; y: hn; }
+        QuadraticTo { control-x: 0; control-y: hn;
+                 x: sn * rn / slant; y: hn - hn * rn / slant; }
+        LineTo { x: sn - sn * rn / slant; y: hn * rn / slant; }
+        QuadraticTo { control-x: sn; control-y: 0;
+                 x: sn + rn; y: 0; }
         Close { }
     }
 
