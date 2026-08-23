@@ -81,23 +81,17 @@ export component FilterBar inherits Rectangle {
     // Pointer is over the bar body — keeps it open and disarms the timer.
     property <bool> bar-hover: false;
 
-    // ── Auto-hide (design D7 / spec Auto-hide scenario): pointer leaves
-    // (strip exit or bar exit) arms a 250ms one-shot Timer; entering the
-    // strip or the bar body cancels it. Reduced-motion reveals instantly. ──
+    // ── Auto-hide (design D7 / spec Auto-hide scenario): declarative
+    // one-shot Timer — runs only while revealed and neither strip nor bar
+    // is hovered, hiding after 250ms. Entering strip/bar cancels via the
+    // binding (running → false) so no explicit stop/restart is needed.
+    // Fixes regression where event-driven restart never armed, leaving the
+    // bar stuck visible.
     hide-timer := Timer {
         interval: 250ms;
-        running: false;
+        running: root.revealed && !strip.has-hover && !bar-touch.has-hover;
         triggered => {
             root.revealed = false;
-            self.running = false;
-        }
-    }
-
-    function update-hide() {
-        if (strip.has-hover || bar-touch.has-hover) {
-            hide-timer.stop();
-        } else {
-            hide-timer.restart();
         }
     }
 
@@ -113,9 +107,6 @@ export component FilterBar inherits Rectangle {
         changed has-hover => {
             if (self.has-hover) {
                 root.revealed = true;
-                hide-timer.stop();
-            } else {
-                root.update-hide();
             }
         }
     }
@@ -146,7 +137,6 @@ export component FilterBar inherits Rectangle {
             height: 100%;
             changed has-hover => {
                 root.bar-hover = self.has-hover;
-                root.update-hide();
             }
         }
 
