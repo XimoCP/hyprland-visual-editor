@@ -10,6 +10,62 @@
 
 import { SkwdTokens } from "../tokens.slint";
 
+// One skewed style pill (task 4.2 / spec Floating FilterBar Chrome):
+// parallelogram Path skewed 10px like the slice shear, h24, active filled
+// primary. Fill cross-fades 200ms (legacy S6 cadence).
+component SkewPill inherits Rectangle {
+    in property <string> label: "";
+    in property <bool> active: false;
+    in property <bool> reduced-motion: false;
+    callback selected();
+
+    width: pill-label.preferred-width + 2 * pad + 10px;
+    height: 24px;
+    background: transparent;
+
+    property <length> pad: 12px;
+    property <float> wn: self.width / 1px;
+    property <float> sn: 10px / 1px; // pill skew (spec)
+
+    // Parallelogram face: top edge shifted right by the 10px skew.
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: parent.wn;
+        viewbox-height: 24;
+        fill: root.active ? SkwdTokens.primary : SkwdTokens.surface-container.transparentize(0.35);
+        stroke: root.active ? SkwdTokens.primary : SkwdTokens.outline.transparentize(0.4);
+        stroke-width: 1px;
+        animate fill { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
+        animate stroke { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
+        MoveTo { x: sn; y: 0; }
+        LineTo { x: wn; y: 0; }
+        LineTo { x: wn - sn; y: 24; }
+        LineTo { x: 0; y: 24; }
+        Close { }
+    }
+
+    pill-label := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        color: root.active ? SkwdTokens.surface : SkwdTokens.primary;
+        font-size: SkwdTokens.size-11;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
+    }
+
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.selected(); }
+    }
+}
+
 export component FilterBar inherits Rectangle {
     // ── State ──
     in property <int> current-style: 0; // 0 Slice, 2 Mosaic (Hex removed #632)
@@ -67,8 +123,8 @@ export component FilterBar inherits Rectangle {
     bar := Rectangle {
         x: (parent.width - self.width) / 2;
         y: root.revealed ? 30px : -self.height;
-        width: min(parent.width - 20px, pills.preferred-width);
-        height: pills.preferred-height;
+        width: min(parent.width - 20px, self.pill-pad * 2 + pills.width);
+        height: pills.height;
         border-radius: SkwdTokens.radius-8;
         background: SkwdTokens.surface-container.transparentize(0.15);
         clip: true;
@@ -76,6 +132,9 @@ export component FilterBar inherits Rectangle {
             duration: root.reduced-motion ? 0ms : SkwdTokens.anim-250;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
+
+        // Horizontal padding around the pill cascade.
+        property <length> pill-pad: 12px;
 
         bar-touch := TouchArea {
             width: 100%;
@@ -90,10 +149,33 @@ export component FilterBar inherits Rectangle {
             }
         }
 
-        pills := HorizontalLayout {
-            x: 0;
+        // ── Pills (task 4.2): skewed parallelogram pills, h24, cascaded
+        // with a −10px vertical overlap (step = 24 − 10 = 14px). Exactly
+        // Slice + Mosaic — Hex removed per decision #632. Manual x/y
+        // placement: layouts cannot express the negative vertical overlap.
+        // Style indices keep the legacy numbering (0 Slice / 2 Mosaic). ──
+        pills := Rectangle {
+            x: parent.pill-pad;
             y: 0;
-            // Pills are placed by task 4.2 (skewed parallelogram pills).
+            width: slice-pill.width + mosaic-pill.x - 10px + mosaic-pill.width;
+            height: 24px + 14px;
+
+            slice-pill := SkewPill {
+                x: 0;
+                y: 0;
+                label: "Slice";
+                active: root.current-style == 0;
+                reduced-motion: root.reduced-motion;
+                selected => { root.style-selected(0); }
+            }
+            mosaic-pill := SkewPill {
+                x: slice-pill.width;
+                y: 14px;
+                label: "Mosaic";
+                active: root.current-style == 2;
+                reduced-motion: root.reduced-motion;
+                selected => { root.style-selected(2); }
+            }
         }
     }
 }
