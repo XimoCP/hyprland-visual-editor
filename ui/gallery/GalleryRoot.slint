@@ -48,6 +48,25 @@ export component GalleryRoot inherits Rectangle {
     property <bool> opened: false;
     init => { self.opened = true; }
 
+    // ── Stage cross-fade (task 4.3 / spec S6): the presentation views are
+    // keyed to a UI-side display mirror (`shown-style`) that lags the
+    // Rust-owned style by one 200ms fade-out, then commits and fades the
+    // new view back in. The mirror always converges to the Rust truth, so
+    // state ownership never desyncs (PR2 parity convention); switching
+    // preserves the focused card (Rust clamps, never resets). ──
+    property <int> shown-style: root.current-style;
+    switch-timer := Timer {
+        interval: 200ms;
+        running: false;
+        triggered => {
+            root.shown-style = root.current-style;
+            self.running = false;
+        }
+    }
+    changed current-style => {
+        if (root.shown-style != root.current-style) { switch-timer.restart(); }
+    }
+
     Rectangle {
         width: 100%;
         height: 100%;
@@ -82,14 +101,20 @@ export component GalleryRoot inherits Rectangle {
         }
 
         // ── Stage: exactly one presentation view mounted at a time ──
-        Rectangle {
+        // Opacity follows the shown-style convergence described above.
+        stage := Rectangle {
             vertical-stretch: 1;
             clip: true;
+            opacity: root.shown-style == root.current-style ? 1.0 : 0.0;
+            animate opacity {
+                duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200;
+                easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+            }
 
             // Style 0 — Slice: overlapping parallelogram carousel. Manual x
             // placement (−30 overlap) snaps the focused card pixel-centered
             // (gallery-immersive-redesign PR2, design D2/D5).
-            if root.current-style == 0 : SliceCarousel {
+            if root.shown-style == 0 : SliceCarousel {
                 width: 100%;
                 height: 100%;
                 cards: root.cards;
@@ -101,7 +126,7 @@ export component GalleryRoot inherits Rectangle {
 
             // Style 1 — Hexagon: honeycomb grid, rows of three with odd-row
             // offset (pointy-top cells, pull-out on selection R2.2).
-            if root.current-style == 1 : Rectangle {
+            if root.shown-style == 1 : Rectangle {
                 width: 100%;
                 height: 100%;
 
@@ -123,7 +148,7 @@ export component GalleryRoot inherits Rectangle {
             // Style 2 — Mosaic: dual-stripe Voronoi stage (R2.3). Placeholder
             // cells until the Voronoi model lands; clicks map onto real
             // themes only while the index exists.
-            if root.current-style == 2 : MosaicView {
+            if root.shown-style == 2 : MosaicView {
                 width: 100%;
                 height: 100%;
                 viewport-w: self.width;
