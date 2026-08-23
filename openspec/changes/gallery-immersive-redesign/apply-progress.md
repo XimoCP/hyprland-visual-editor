@@ -86,3 +86,31 @@
 - Debounce semantics (D5 "400ms Timer commits the snap after idle"): events arm, idle commits ONE step — this is what makes "±1 max per gesture" true for trackpads/floods. Container x itself animates immediately on commit (350ms OutCubic retarget).
 - ~~Right-of-focus cards paint OVER the focused card's trailing edge during PR2~~ RESOLVED in PR2.HF.b (two-pass visible-gated rendering, focused paints last). PR3's D4 runtime z-rank remains the proper long-term layering for shadows/dim.
 - Unrelated pre-existing worktree changes still untouched: assets/fragments/border.lua, .atl/*, src/shell/gallery/mod.rs re-export trim, untracked openspec proposal/design/specs files.
+
+# Slice PR3 — Depth Cues (3.1–3.6 done · 3.7 [V] pending)
+
+## Completed
+
+- [x] 3.1 [RED] Depth-cue formula tests in slice.rs: edge_fade_full_zone (min(0.6, 672/halfView) with degenerate guard), edge_norm_dist, fade_opacity (flat inside zone, linear →0 at normDist 1.2), card_center_x, dim_level (0/0.15/0.4), z_layer (2 current > 1 hovered > 0 idle). RED verified: E0425 before fns existed. Commit a2c7186
+- [x] 3.2 [GREEN][WIRE] Pure fns implemented + SliceCarousel declarative mirrors (edge-full-zone / edge-norm-dist / fade-opacity / card-fade-opacity; SkwdTokens only); SliceDelegate binds root opacity to fade-opacity with 200ms animate — dissolves image+shadow+dim together at stage edges. Commit 27d0fdd
+- [x] 3.3 [WIRE] Three visible-gated passes in declaration order (design D4): idle (`i != focused && i != hovered`) → hovered → current; exactly one live delegate per card; instances persist across focus/hover swaps (no remount). Hover routing: delegate `changed has-hover` → `hovered(bool)` callback → carousel hovered-index (−1 none). Entry-animation gating deferred to 5.5 (no entry animation exists yet — D4 risk note not applicable). Commit e9861d8
+- [x] 3.4 Projected shadow: parallelogram command list extracted into local `SliceShape` Path component reused by shadow + face (single source of geometry per PR2.HF2 lesson); shadow declared FIRST (paints below), current x4/y10 α0.5 vs rest x2/y5 α0.3, black fill, 200ms on opacity/x/y. Commit f09d569
+- [x] 3.5 Dim overlay: third SliceShape painted ABOVE front/back content containers, black alpha 0 current / 0.15 hover / 0.4 idle, 200ms; mirrors slice.rs dim_level ∘ card_state. Commit 2c85ef4
+- [x] 3.6 Glow stroke cadence: stroke contract already live from PR2.HF/HF2 (current primary w3 / hover primary@0.4 w1 / idle black@0.6 w1); added 200ms animate on stroke + stroke-width (skwd ColorAnimation parity). Layer copies bind by state flags → no flash on visibility swaps. Commit 6107f76
+
+## Pending
+
+- [ ] 3.7 [V] USER VISUAL CHECK: `cargo run` → edge cards dissolve progressively toward the borders (flat inside fullZone, gone at normDist 1.2); current stacks above hovered above idle; shadow under every card (deeper on current); neighbors dimmed black 0.4, hovered 0.15, current clean; glow primary w3 on current.
+
+## Verification
+
+- `cargo test slice`: 24 → 31 passed (+7 depth-cue tests)
+- Full suite: `cargo test` → **325 passed, 0 failed** · `cargo check` → **0 warnings** (after 3.6)
+
+## Deviations / Notes for review
+
+- Norm-dist computed on TARGET layout (focused index + closed-form cum-offset), NOT the animated row x — skwd reads live ListView contentX; ours would re-evaluate the curve every frame of the slide and the 200ms opacity animate already smooths transitions. Visual delta limited to the 350ms glide.
+- 3.2 file list spillover: SliceDelegate.slint gained the `fade-opacity` property + root opacity binding because the binding target lives there.
+- 3.3 file list spillover (inverse direction): the hover callback plumbing required a small SliceDelegate addition (changed handler + callback).
+- fullZone numerator uses tokens (expW/2 + 2·(cardW+gap) = 462+210 = 672) — matches task's literal "(462+2·105)".
+- Float midpoints asserted with 1e-5 epsilon; exact boundaries (zone edge =1.0, normDist 1.2 =0.0) hit early-return paths and stay exact-equality.

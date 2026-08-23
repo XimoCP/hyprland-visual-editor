@@ -56,12 +56,12 @@ Chain strategy: stacked-to-main
 
 ### Slice PR3 — Depth Cues (3.1–3.7)
 
-- [ ] 3.1 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:2.4] [S] Failing fade tests: fullZone = min(0.6,(462+2·105)/halfView); opacity linear → 0 at normDist 1.2.
-- [ ] 3.2 [GREEN][WIRE] [f: src/shell/gallery/views/slice.rs, ui/gallery/SliceCarousel.slint] [t: cargo test slice] [dep:3.1] [S] Implement edge-fade fn; bind per-delegate opacity with 200ms.
-- [ ] 3.3 [WIRE] [f: ui/gallery/SliceCarousel.slint] [t: cargo check] [dep:3.2] [M] Three conditional paint layers in declaration order — idle (`!current && !hovered`) → hovered → current; exactly one live delegate per card; entry animation gated to first mount.
-- [ ] 3.4 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:3.3] [S] Shadow: identical Path declared first — current x4/y10 α0.5, rest x2/y5 α0.3, 200ms.
-- [ ] 3.5 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:3.3] [S] Dim overlay black: 0 current / 0.15 hover / 0.4 idle, 200ms.
-- [ ] 3.6 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:3.4] [S] Glow stroke: current primary w3 / hover primary@0.4 w1 / idle black@0.6 w1, 200ms.
+- [x] 3.1 [RED] [f: src/shell/gallery/views/slice.rs tests] [t: cargo test slice] [dep:2.4] [S] Failing fade tests: fullZone = min(0.6,(462+2·105)/halfView); opacity linear → 0 at normDist 1.2.
+- [x] 3.2 [GREEN][WIRE] [f: src/shell/gallery/views/slice.rs, ui/gallery/SliceCarousel.slint] [t: cargo test slice] [dep:3.1] [S] Implement edge-fade fn; bind per-delegate opacity with 200ms.
+- [x] 3.3 [WIRE] [f: ui/gallery/SliceCarousel.slint] [t: cargo check] [dep:3.2] [M] Three conditional paint layers in declaration order — idle (`!current && !hovered`) → hovered → current; exactly one live delegate per card; entry animation gated to first mount.
+- [x] 3.4 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:3.3] [S] Shadow: identical Path declared first — current x4/y10 α0.5, rest x2/y5 α0.3, 200ms.
+- [x] 3.5 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:3.3] [S] Dim overlay black: 0 current / 0.15 hover / 0.4 idle, 200ms.
+- [x] 3.6 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:3.4] [S] Glow stroke: current primary w3 / hover primary@0.4 w1 / idle black@0.6 w1, 200ms.
 - [ ] 3.7 [V] [t: cargo run] [dep:3.1–3.6] [S] Verify: edges dissolve, current stacks above hovered above idle; shadow/dim/glow match skwd numbers.
 
 ### Slice PR4 — FilterBar & Thumbnails (4.1–4.9)
