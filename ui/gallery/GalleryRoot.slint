@@ -110,6 +110,7 @@ export component GalleryRoot inherits Rectangle {
             width: 100%;
             height: 100%;
             viewport-w: self.width;
+            cards: root.cards;
             cell-clicked(idx) => {
                 if (idx < root.cards.length) { root.card-clicked(idx); }
             }

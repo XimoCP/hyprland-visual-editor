@@ -6,11 +6,15 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { MosaicCell } from "MosaicCell.slint";
+import { GalleryCardData } from "ThemeCardDelegate.slint";
 
 export component MosaicView inherits Rectangle {
     in property <length> scroll-offset: 0px;
     in property <length> viewport-w: 1500px;
-    // model is set from Rust via standard list model in real shell; here placeholder
+    // Real card data (gallery-immersive-redesign 4.8): thumbs map onto the
+    // placeholder cells; out-of-range indices yield default (empty) images
+    // so those cells keep shimmering until the Voronoi model lands in 5.7.
+    in property <[GalleryCardData]> cards;
     in property <int> item-count: 0;
     callback cell-clicked(int);
     callback cell-flip(int);
@@ -42,6 +46,7 @@ export component MosaicView inherits Rectangle {
                 reveal-delay: i * 40ms;
                 image-alpha: 1.0;
                 cloud-opacity: 1.0;
+                thumb: root.cards[i].thumb;
                 clicked => { root.cell-clicked(i); }
                 flip-requested => { root.cell-flip(i); }
             }
@@ -60,6 +65,7 @@ export component MosaicView inherits Rectangle {
                 cell-key: i + 6;
                 reveal-delay: (i + 6) * 40ms;
                 image-alpha: 1.0;
+                thumb: root.cards[i + 6].thumb;
                 // same cloud logic
                 clicked => { root.cell-clicked(i + 6); }
                 flip-requested => { root.cell-flip(i + 6); }

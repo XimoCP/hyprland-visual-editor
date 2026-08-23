@@ -57,6 +57,19 @@ export component MosaicCell inherits Rectangle {
         Close { }
     }
 
+    // ── Thumbnail pipeline (gallery-immersive-redesign 4.8 / spec Real
+    // Wallpaper Thumbnails): shimmer until the marshaled thumb arrives
+    // (`thumb.width > 0`), then 200ms OutCubic fade-in under the staggered
+    // reveal alpha. source-clip caps decode defensively; the ≤400×720 cap
+    // is enforced upstream by thumbs.rs. ──
+    property <bool> has-thumb: root.thumb.width > 0;
+    property <bool> shimmer-high: false;
+    shimmer-timer := Timer {
+        interval: 700ms;
+        running: !parent.has-thumb;
+        triggered => { parent.shimmer-high = !parent.shimmer-high; }
+    }
+
     // thumb with staggered reveal
     Image {
         width: 100%;
@@ -65,8 +78,23 @@ export component MosaicCell inherits Rectangle {
         image-fit: cover;
         source-clip-width: 400;
         source-clip-height: 300;
-        opacity: root.image-alpha;
+        visible: root.has-thumb;
+        opacity: (root.has-thumb ? 1.0 : 0.0) * root.image-alpha;
+        animate opacity {
+            duration: SkwdTokens.anim-200;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
         accessible-role: none;
+    }
+
+    shimmer := Rectangle {
+        background: #000000;
+        opacity: root.has-thumb ? 0.0
+            : (root.shimmer-high ? 0.06 : 0.16) * root.image-alpha;
+        animate opacity {
+            duration: root.has-thumb ? SkwdTokens.anim-200 : 600ms;
+            easing: ease-in-out;
+        }
     }
 
     // cloud opacity overlay hint (kinetic scroll)
