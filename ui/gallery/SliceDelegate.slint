@@ -103,14 +103,39 @@ export component SliceDelegate inherits Rectangle {
     property <length> pad: 4px; // > focused stroke half-width (1.5px)
     property <float> pn: root.pad / 1px;
 
-    // ── Projected shadow (design D4 / skwd exact): identical shape declared
-    // FIRST so it paints below the face; current x4/y10 α0.35, rest x2/y5
-    // α0.18, black fill, all 200ms. Edge fade on the delegate root dissolves
-    // it together with the card. A second lower-opacity duplicate shifted
-    // +2px down-right acts as a diffuse halo so the hard Path edge is not
-    // razor-sharp — Paths have no blur, and this duplicate survives the
-    // stage `clip:true` (SliceCarousel line 30) because the focused card is
-    // centered, so the +14px halo stays inside the viewport. ──
+    // ── Projected shadow (design D4 / skwd exact): identical shapes
+    // declared FIRST so they paint below the face; core (skwd baseline)
+    // current x4/y10 α0.35 / rest x2/y5 α0.18 preserves skwd identity.
+    // Three diffuse halos simulate a Gaussian falloff — each step further
+    // (+2, +5, +8px beyond core) and fainter, so the hard Path edge reads
+    // as a soft blur. All layers 200ms and fade together via root
+    // fade-opacity. Outermost +24px stays inside the centered stage viewport
+    // (SliceCarousel clip:true line 30, ~500px margin), so no ancestor
+    // clip:false is needed. Order: faintest → strongest → face. ──
+    shadow-soft3 := SliceShape {
+        x: -root.pad + (root.is-current ? 12px : 7px);
+        y: -root.pad + (root.is-current ? 24px : 16px);
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: #000000;
+        opacity: root.is-current ? 0.03 : 0.015;
+        animate opacity { duration: SkwdTokens.anim-200; }
+        animate x { duration: SkwdTokens.anim-200; }
+        animate y { duration: SkwdTokens.anim-200; }
+    }
+    shadow-soft2 := SliceShape {
+        x: -root.pad + (root.is-current ? 9px : 5px);
+        y: -root.pad + (root.is-current ? 19px : 12px);
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: #000000;
+        opacity: root.is-current ? 0.06 : 0.03;
+        animate opacity { duration: SkwdTokens.anim-200; }
+        animate x { duration: SkwdTokens.anim-200; }
+        animate y { duration: SkwdTokens.anim-200; }
+    }
     shadow-soft := SliceShape {
         x: -root.pad + (root.is-current ? 6px : 3px);
         y: -root.pad + (root.is-current ? 14px : 8px);
