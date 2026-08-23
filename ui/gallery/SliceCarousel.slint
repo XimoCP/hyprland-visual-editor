@@ -25,6 +25,19 @@ export component SliceCarousel inherits Rectangle {
     // paint layer (design D4). Delegates report enter/leave via hovered().
     in-out property <int> hovered-index: -1;
 
+    // Direction-aware mirror (feat gallery left): track previous focus to
+    // derive nav direction. Right (dir ≥0) keeps OutCubic exactly as today;
+    // left (dir <0) mirrors the control points so the slide feels inverse.
+    // dir==0 (initial load / programmatic jump to same index) uses default.
+    property <int> prev-focused: 0;
+    property <int> nav-dir: 0;
+    property <easing> ease-right: cubic-bezier(0.215, 0.61, 0.355, 1);
+    property <easing> ease-left: cubic-bezier(0.645, 0.045, 0.785, 0.39);
+    changed focused-index => {
+        root.nav-dir = root.focused-index > root.prev-focused ? 1 : root.focused-index < root.prev-focused ? -1 : 0;
+        root.prev-focused = root.focused-index;
+    }
+
     // Stage clips the sliding row (cards travel beyond both edges).
     clip: true;
 
@@ -115,15 +128,16 @@ export component SliceCarousel inherits Rectangle {
         }
     }
 
-    // ── Moving row: one animated x for the whole strip (350ms OutCubic),
-    // vertically centering the 520px cards in the stage. ──
+    // ── Moving row: one animated x for the whole strip (350ms, direction-aware
+    // OutCubic mirrored for left). Duration stays 350ms via SkwdTokens.anim-expand.
+    // gap=4 and shadows unchanged.
     row := Rectangle {
         x: root.snap-x();
         y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
         height: SkwdTokens.gallery-slice-h;
         animate x {
             duration: SkwdTokens.anim-expand;
-            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+            easing: root.nav-dir < 0 ? root.ease-left : root.ease-right;
         }
 
         // Paint order = declaration order (design D4, PR3): idle passes
@@ -144,6 +158,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
@@ -155,6 +170,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
@@ -166,6 +182,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
@@ -177,6 +194,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
@@ -188,6 +206,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
@@ -200,6 +219,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
@@ -212,6 +232,7 @@ export component SliceCarousel inherits Rectangle {
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
             is-current: i == root.focused-index;
+            nav-dir: root.nav-dir;
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
