@@ -1,0 +1,99 @@
+// HVE 2 — FilterBar (gallery-immersive-redesign PR4.1, design D7).
+//
+// Floating top-center style selector translated 1:1 from skwd-wall
+// (MIT, © liixini): the bar hides behind an INVISIBLE 24px hover-reveal
+// strip pinned to the top edge; entering the strip slides the bar down
+// (250ms) and leaving it arms a 250ms auto-hide Timer. Top margin 30,
+// max width parent − 20 (spec: Floating FilterBar Chrome).
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+
+export component FilterBar inherits Rectangle {
+    // ── State ──
+    in property <int> current-style: 0; // 0 Slice, 2 Mosaic (Hex removed #632)
+    in property <bool> reduced-motion: false;
+    callback style-selected(int);
+
+    // Overlay chrome paints nothing itself.
+    background: transparent;
+
+    // Reveal state: true = bar expanded below the strip.
+    property <bool> revealed: false;
+    // Pointer is over the bar body — keeps it open and disarms the timer.
+    property <bool> bar-hover: false;
+
+    // ── Auto-hide (design D7 / spec Auto-hide scenario): pointer leaves
+    // (strip exit or bar exit) arms a 250ms one-shot Timer; entering the
+    // strip or the bar body cancels it. Reduced-motion reveals instantly. ──
+    hide-timer := Timer {
+        interval: 250ms;
+        running: false;
+        triggered => {
+            root.revealed = false;
+            self.running = false;
+        }
+    }
+
+    function arm-hide() {
+        if (!root.bar-hover) {
+            hide-timer.restart();
+        }
+    }
+
+    // ── Invisible 24px reveal strip: always active across the full top
+    // edge. The top 24px is empty backdrop (design D7 risk note), so the
+    // strip cannot steal clicks from anything else. TouchArea exposes
+    // hover via has-hover (no entered/exited callbacks in Slint 1.17). ──
+    strip := TouchArea {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 24px;
+        changed has-hover => {
+            if (self.has-hover) {
+                root.revealed = true;
+                hide-timer.stop();
+            } else {
+                root.arm-hide();
+            }
+        }
+    }
+
+    // ── Bar body: top margin 30, centered, max width parent − 20.
+    // Hidden state parks it under the top edge (clip-safe slide-up);
+    // reveal slides it to y=30 over 250ms (spec Hover reveal scenario). ──
+    bar := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: root.revealed ? 30px : -self.height;
+        width: min(parent.width - 20px, pills.preferred-width);
+        height: pills.preferred-height;
+        border-radius: SkwdTokens.radius-8;
+        background: SkwdTokens.surface-container.transparentize(0.15);
+        clip: true;
+        animate y {
+            duration: root.reduced-motion ? 0ms : SkwdTokens.anim-250;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        bar-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+            changed has-hover => {
+                root.bar-hover = self.has-hover;
+                if (self.has-hover) {
+                    hide-timer.stop();
+                } else {
+                    root.arm-hide();
+                }
+            }
+        }
+
+        pills := HorizontalLayout {
+            x: 0;
+            y: 0;
+            // Pills are placed by task 4.2 (skewed parallelogram pills).
+        }
+    }
+}
