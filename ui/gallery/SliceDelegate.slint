@@ -104,9 +104,25 @@ export component SliceDelegate inherits Rectangle {
     property <float> pn: root.pad / 1px;
 
     // ── Projected shadow (design D4 / skwd exact): identical shape declared
-    // FIRST so it paints below the face; current x4/y10 α0.5, rest x2/y5
-    // α0.3, black fill, all 200ms. Edge fade on the delegate root dissolves
-    // it together with the card. ──
+    // FIRST so it paints below the face; current x4/y10 α0.35, rest x2/y5
+    // α0.18, black fill, all 200ms. Edge fade on the delegate root dissolves
+    // it together with the card. A second lower-opacity duplicate shifted
+    // +2px down-right acts as a diffuse halo so the hard Path edge is not
+    // razor-sharp — Paths have no blur, and this duplicate survives the
+    // stage `clip:true` (SliceCarousel line 30) because the focused card is
+    // centered, so the +14px halo stays inside the viewport. ──
+    shadow-soft := SliceShape {
+        x: -root.pad + (root.is-current ? 6px : 3px);
+        y: -root.pad + (root.is-current ? 14px : 8px);
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: #000000;
+        opacity: root.is-current ? 0.15 : 0.08;
+        animate opacity { duration: SkwdTokens.anim-200; }
+        animate x { duration: SkwdTokens.anim-200; }
+        animate y { duration: SkwdTokens.anim-200; }
+    }
     shadow := SliceShape {
         x: -root.pad + (root.is-current ? 4px : 2px);
         y: -root.pad + (root.is-current ? 10px : 5px);
@@ -114,7 +130,7 @@ export component SliceDelegate inherits Rectangle {
         height: root.height + 2 * root.pad;
         wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
-        opacity: root.is-current ? 0.5 : 0.3;
+        opacity: root.is-current ? 0.35 : 0.18;
         animate opacity { duration: SkwdTokens.anim-200; }
         animate x { duration: SkwdTokens.anim-200; }
         animate y { duration: SkwdTokens.anim-200; }
