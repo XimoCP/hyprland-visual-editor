@@ -56,8 +56,6 @@ export component SliceDelegate inherits Rectangle {
     in property <color> accent: SkwdTokens.fallback-accent;
     in property <image> thumb;
     in property <bool> has-video: false;
-    // Direction-aware deploy (1=right, -1=left): forwarded from carousel.
-    in property <int> nav-dir: 0;
     // Depth-cue edge fade (design D4): computed by SliceCarousel from the
     // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
     in property <float> fade-opacity: 1.0;
@@ -74,10 +72,7 @@ export component SliceDelegate inherits Rectangle {
     // ── Geometry (design D3): card spans width × 520; the drawn face is a
     // parallelogram whose top edge shifts right by the 35px shear, so the
     // Path bounding box is (width + skew) wide. ──
-    // Direction-aware skew: RIGHT +35, LEFT −35 (mirror); gated to is-current
-    // so idle cards stay at +35 and don't flicker on direction change.
-    property <length> skew: root.is-current && root.nav-dir < 0 ? -SkwdTokens.gallery-slice-skew-offset : SkwdTokens.gallery-slice-skew-offset;
-    animate skew { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+    property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35px X-shear
     width: is-current ? SkwdTokens.gallery-slice-expanded-w : SkwdTokens.gallery-slice-w;
     height: SkwdTokens.gallery-slice-h;
     animate width {
