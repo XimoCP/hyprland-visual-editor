@@ -86,11 +86,12 @@ pub fn snap_x(viewport_center_x: f32, focused: usize) -> f32 {
 /// Wheel gesture target index: advances `current` by **±1 max per gesture**
 /// regardless of the event's notch count (`dir` sign wins), clamped to
 /// 0..count−1, never wrapping (design D5).
-///
-/// PR2.8 RED placeholder — implemented in task 2.9.
-pub fn wheel_target(count: usize, current: usize, _dir: isize) -> usize {
-    let _ = count;
-    current
+pub fn wheel_target(count: usize, current: usize, dir: isize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let next = current as isize + dir.signum();
+    next.clamp(0, count as isize - 1) as usize
 }
 
 /// Width of card `j` (px) when `focused` is the expanded card (design D2).
