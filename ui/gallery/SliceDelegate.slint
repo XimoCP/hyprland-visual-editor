@@ -121,7 +121,10 @@ export component SliceDelegate inherits Rectangle {
     }
 
     // ── Face: same geometry, painted above the shadow; border per the
-    // skwd-wall contract restored in PR2.HF/HF2 (glow cadence lands in 3.6). ──
+    // skwd-wall contract restored in PR2.HF/HF2 — current primary w3 /
+    // hover primary@40% w1 / idle black@60% w1, now at the skwd 200ms
+    // glow cadence (task 3.6): strokes cross-fade as state changes on a
+    // live instance (e.g. hover glow-in on the hovered layer copy). ──
     face := SliceShape {
         x: -root.pad;
         y: -root.pad;
@@ -133,6 +136,8 @@ export component SliceDelegate inherits Rectangle {
             : root.has-hover ? SkwdTokens.primary.transparentize(0.6)
             : #000000.transparentize(0.4);
         stroke-width: root.is-current ? 3px : 1px;
+        animate stroke { duration: SkwdTokens.anim-200; }
+        animate stroke-width { duration: SkwdTokens.anim-200; }
     }
 
     // ── Face mask container (design D3): clip:true box inset to the
