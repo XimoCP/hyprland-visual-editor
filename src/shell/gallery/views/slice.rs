@@ -77,14 +77,21 @@ pub struct SliceView {
     has_video_for_current: bool,
 }
 
+/// Width of card `j` (px) when `focused` is the expanded card (design D2).
+pub fn card_width_at(j: usize, focused: usize) -> f32 {
+    if j == focused {
+        SLICE_EXPANDED_WIDTH
+    } else {
+        SLICE_COLLAPSED_WIDTH
+    }
+}
+
 /// Cumulative x offset of card `i` (px) when `focused` is the expanded card.
 ///
 /// Design D2: `cum_offset(i, focused) = Σ_{j<i} width(j) + i·spacing` with
 /// `width(j) = 924 if j == focused else 135` and `spacing = −30`.
-///
-/// PR2.1 RED placeholder — implemented in task 2.2.
-pub fn cum_offset(_i: usize, _focused: usize) -> f32 {
-    0.0
+pub fn cum_offset(i: usize, focused: usize) -> f32 {
+    (0..i).map(|j| card_width_at(j, focused)).sum::<f32>() + i as f32 * SLICE_SPACING_PX
 }
 
 impl SliceView {
@@ -326,12 +333,13 @@ mod tests {
 
     #[test]
     fn cum_offset_focused_first_exact_px() {
-        // focused = 0: every card collapsed ahead of the expanded first card.
+        // focused = 0: the first card is expanded; later cards trail it by
+        // expanded + spacing steps (894), collapsed ones add 105 net each.
         assert_eq!(cum_offset(0, 0), 0.0);
-        assert_eq!(cum_offset(1, 0), 105.0, "135 + (−30)");
-        assert_eq!(cum_offset(2, 0), 210.0);
-        assert_eq!(cum_offset(3, 0), 315.0);
-        assert_eq!(cum_offset(4, 0), 420.0);
+        assert_eq!(cum_offset(1, 0), 894.0, "924 + (−30)");
+        assert_eq!(cum_offset(2, 0), 999.0);
+        assert_eq!(cum_offset(3, 0), 1104.0, "924+2·135 − 3·30");
+        assert_eq!(cum_offset(4, 0), 1209.0);
     }
 
     #[test]
