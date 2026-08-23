@@ -2030,6 +2030,7 @@ dependencies = [
  "clap 4.6.1",
  "dirs",
  "i-slint-backend-testing",
+ "image",
  "ksni 0.2.2",
  "resvg 0.45.1",
  "rustix 1.1.4",
