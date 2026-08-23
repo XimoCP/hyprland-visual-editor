@@ -29,6 +29,15 @@ pub fn global_controller() -> Option<MutexGuard> {
         .map(|m| MutexGuard(m.lock().unwrap_or_else(|e| e.into_inner())))
 }
 
+/// Try to lock without blocking — avoids deadlock when called from
+/// inside `Controller::toggle_tray` via `Shell::sync_global_after_show`.
+pub fn try_global_controller() -> Option<MutexGuard> {
+    GLOBAL_CONTROLLER
+        .get()
+        .and_then(|m| m.try_lock().ok())
+        .map(MutexGuard)
+}
+
 /// Convenience wrapper for MutexGuard.
 pub struct MutexGuard(std::sync::MutexGuard<'static, Controller>);
 impl std::ops::Deref for MutexGuard {
@@ -151,6 +160,17 @@ impl Controller {
                 crate::warmup_navigation(win);
             }
             self.window_hidden = false;
+            // Re-assert fullscreen gallery when Gallery is mounted expanded.
+            // show() already called sync_global_after_show, but that sync may
+            // have skipped due to try_lock or initial tray-mode expand failure.
+            // This direct reassert is deadlock-free (uses &mut self) and idempotent.
+            if crate::shell::Shell::is_gallery_expanded() {
+                if self.gallery_session_active() {
+                    let _ = self.composer.set_fullscreen(true);
+                } else {
+                    let _ = self.enter_gallery_session();
+                }
+            }
             fast
         } else {
             // Hide path — record where the window lives before moving it away,

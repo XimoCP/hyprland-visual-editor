@@ -101,6 +101,22 @@ impl Shell {
         }
     }
 
+    /// Whether the Gallery is currently mounted expanded (used by
+    /// `Controller::toggle_tray` to reassert fullscreen without deadlock).
+    pub fn is_gallery_expanded() -> bool {
+        GLOBAL_SHELL.with(|global| {
+            global
+                .borrow()
+                .as_ref()
+                .map(|rc| {
+                    let s = rc.borrow();
+                    s.nav.expansion() != ExpansionState::Collapsed
+                        && s.nav.screen() == crate::shell::nav::Screen::Gallery
+                })
+                .unwrap_or(false)
+        })
+    }
+
     /// Register a mountable slot. One insert per call (design D3).
     pub fn register_slot(shell: &Rc<RefCell<Self>>, slot: Box<dyn slots::Slot>) {
         shell.borrow_mut().slots.register(slot);
@@ -146,7 +162,9 @@ impl Shell {
             s.push_size_to_window();
         }
         if is_gallery && expanded {
-            if let Some(mut ctrl) = crate::composer::global_controller() {
+            // Use try_lock to avoid deadlock when sync is called from inside
+            // Controller::toggle_tray (which already holds the controller lock).
+            if let Some(mut ctrl) = crate::composer::try_global_controller() {
                 if ctrl.gallery_session_active() {
                     // Logical session alive but compositor lost fullscreen on
                     // the hide→show round-trip — re-dispatch without flipping
