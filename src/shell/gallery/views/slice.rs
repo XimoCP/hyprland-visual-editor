@@ -83,6 +83,16 @@ pub fn snap_x(viewport_center_x: f32, focused: usize) -> f32 {
     viewport_center_x - SLICE_EXPANDED_WIDTH / 2.0 - cum_offset(focused, focused)
 }
 
+/// Wheel gesture target index: advances `current` by **±1 max per gesture**
+/// regardless of the event's notch count (`dir` sign wins), clamped to
+/// 0..count−1, never wrapping (design D5).
+///
+/// PR2.8 RED placeholder — implemented in task 2.9.
+pub fn wheel_target(count: usize, current: usize, _dir: isize) -> usize {
+    let _ = count;
+    current
+}
+
 /// Width of card `j` (px) when `focused` is the expanded card (design D2).
 pub fn card_width_at(j: usize, focused: usize) -> f32 {
     if j == focused {
@@ -200,6 +210,13 @@ impl SliceView {
         let next = self.focused_index as isize + delta;
         let clamped = next.clamp(0, max) as usize;
         self.set_focused_index(clamped)
+    }
+
+    /// Advance one step per wheel gesture toward `dir` (+1 next / −1 prev),
+    /// clamped, no wrap (design D5). A multi-notch burst still moves ±1.
+    pub fn wheel_step(&mut self, dir: isize) -> usize {
+        self.focused_index = wheel_target(self.count, self.focused_index, dir);
+        self.focused_index
     }
 
     /// Handle a key press: Left/Right consumed and moves focus (S2),
@@ -396,6 +413,53 @@ mod tests {
                 center
             );
         }
+    }
+
+    // ── 2.8 wheel gesture state machine (design D5) ─────────────────────
+
+    #[test]
+    fn wheel_step_advances_one_per_gesture() {
+        let mut view = SliceView::new(6);
+        assert_eq!(view.wheel_step(1), 1, "+1 notch → next");
+        assert_eq!(view.wheel_step(1), 2);
+        assert_eq!(view.wheel_step(-1), 1, "−1 notch → previous");
+    }
+
+    #[test]
+    fn wheel_step_multi_notch_burst_moves_at_most_one() {
+        let mut view = SliceView::new(6);
+        assert_eq!(view.wheel_step(3), 1, "burst of +3 notches → still one step");
+        assert_eq!(view.wheel_step(-5), 0, "burst of −5 notches → one step back");
+        assert_eq!(view.wheel_step(120), 1);
+    }
+
+    #[test]
+    fn wheel_step_clamped_no_wrap() {
+        let mut view = SliceView::new(3);
+        assert_eq!(view.wheel_step(-1), 0, "clamped at first, no wrap");
+        assert_eq!(view.wheel_step(-9), 0);
+        assert_eq!(view.wheel_step(1), 1);
+        assert_eq!(view.wheel_step(1), 2);
+        assert_eq!(view.wheel_step(1), 2, "clamped at last, no wrap");
+        assert_eq!(view.wheel_step(9), 2);
+    }
+
+    #[test]
+    fn wheel_step_zero_dir_and_empty_model_noop() {
+        let mut view = SliceView::new(4);
+        assert_eq!(view.wheel_step(0), 0, "dir 0 moves nothing");
+        let mut empty = SliceView::new(0);
+        assert_eq!(empty.wheel_step(1), 0, "empty model stays at 0");
+    }
+
+    #[test]
+    fn wheel_target_free_fn_matches_method() {
+        // Same contract as SliceView::wheel_step for callback use.
+        assert_eq!(wheel_target(5, 0, 1), 1);
+        assert_eq!(wheel_target(5, 4, 1), 4, "clamp at last");
+        assert_eq!(wheel_target(5, 0, -1), 0, "clamp at first");
+        assert_eq!(wheel_target(5, 2, -7), 1);
+        assert_eq!(wheel_target(0, 0, 1), 0);
     }
 
     #[test]
