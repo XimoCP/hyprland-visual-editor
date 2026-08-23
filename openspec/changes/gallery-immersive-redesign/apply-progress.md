@@ -1,8 +1,8 @@
 # Apply Progress — gallery-immersive-redesign
 
-## Slice status
+- Slice status
 - PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.2).
-- PR2 Overlap Geometry, Snap, Wheel — tasks 2.1–2.10 done (10 work-unit commits) · 2.11 [V] visual check pending for the user.
+- PR2 Overlap Geometry, Snap, Wheel — tasks 2.1–2.10 done (10 work-unit commits) · PR2.HF hotfix done (borders + paint order) · 2.11 [V] visual check pending for the user (RE-RUN after PR2.HF).
 
 ## Completed
 
@@ -50,6 +50,13 @@
 # Slice PR2 — Overlap Geometry, Snap, Wheel (2.1–2.10 done · 2.11 [V] pending)
 
 ## Completed
+
+### PR2.HF Hotfix — card borders lost + collapsed neighbors swallowed (<100 lines)
+- [x] PR2.HF.a REGRESSION 1 (border lost): bound `stroke`/`stroke-width` on the SliceDelegate face Path (PR2.6/2.7 left it fill-only, `stroke: transparent`). skwd-wall contract restored: focused = `SkwdTokens.primary` width 3px; hovered = primary @40% (`transparentize(0.6)`) width 1px; idle = black @60% (`transparentize(0.4)`) width 1px. Stroke is safe from content overdraw: mask boxes are transparent and their opaque children sit ≥8px inside (VerticalLayout padding), so even the 1.5px inner half of the focused stroke stays visible
+- [x] PR2.HF.b REGRESSION 2 (neighbors swallowed): SliceCarousel now renders TWO visible-gated passes over the same model — neighbors first (`visible: i != focused-index`), focused card LAST (`visible: i == focused-index`) so it overlaps each neighbor by exactly gap (−30px) instead of losing its expanded edges to right-of-focus siblings (child order = paint order in Slint; no z-index exists). Geometry audit: all cards already shared unconditional height 520 and y=0 on the centered row baseline — the defect was paint order only
+- [x] PR2.HF.c Supporting tweak: delegate preheat Timer no longer gated on `root.visible` (`running: !preheat-done`) so the hidden overlay copy warms its thumb at startup — without it every focus change flashed the placeholder for 120ms
+
+## Pending
 - [x] 2.1 [RED] `cum_offset` exact-px tests for focused=0/mid/last + geometry constants corrected to skwd values in slice.rs (collapsed 108→135, expanded 768→924, skew 28→35, added SLICE_HEIGHT 520 + SLICE_SPACING_PX −30); old constant assertions updated to the corrected contract. RED via 0.0 stub, commit 1946c58
 - [x] 2.2 [GREEN] Pure `cum_offset(i, focused) = Σ_{j<i} width(j) + i·(−30)` + `card_width_at`, commit 6fb5388
 - [x] 2.3 [RED] `snap_x` exact-px tests (center=500, focused 0..4) + pixel-centering invariant swept over 7 indices, commit f25c66c
@@ -62,11 +69,12 @@
 - [x] 2.10 [WIRE] gallery-wheel-step callback chain SliceCarousel → GalleryRoot → ShellRoot → MainWindow → callbacks.rs; scroll events only arm the gesture (last direction wins), 400ms debounce Timer commits one ±1 step after idle via tested wheel_target; wheel TouchArea sits UNDER the cards so clicks keep working (card touch areas reject scrolls which bubble down); container x animation from 2.5, commit 94177c3
 
 ## Pending
-- [ ] 2.11 [V] USER VISUAL CHECK: `cargo run` → slices overlap −30px, all cards 520px tall vertically centered, 35px shear, radius 0; focused card expands to 924px and lands dead-center after the wheel idles; motion glides 350ms OutCubic.
+- [ ] 2.11 [V] USER VISUAL CHECK (RE-RUN after PR2.HF): `cargo run` → slices overlap −30px, all cards 520px tall vertically centered, 35px shear, radius 0; focused card expands to 924px and lands dead-center after the wheel idles; motion glides 350ms OutCubic; borders visible on every card (idle hairline / focused primary glow w3); collapsed neighbors peek on BOTH sides of the expanded card.
 
 ## Verification
 - Focused runs per task recorded in each commit message (`cargo test slice`: 14→17→19→22→26 passed at each GREEN gate)
 - Full suite: `cargo test` → **318 passed, 0 failed** · `cargo check` → clean, 0 warnings (after 2.10)
+- PR2.HF hotfix (slint-only): full suite `cargo test` → **318 passed, 0 failed** (no new Rust logic ⇒ no new tests) · `cargo check` → clean (build.rs compiles the .slint sources)
 
 ## Deviations / Notes for review
 - "Per-card x fed from Rust positions" (task 2.5) implemented as token-driven pure Slint bindings mirroring the headless-tested slice.rs fns — same parity convention as hex/mosaic tasks 5.6/5.7. Rationale: feeding a positions array from Rust adds model-sync desync risk on every focused/model change; bindings cannot desync. Numbers flow from SkwdTokens only.
@@ -74,5 +82,5 @@
 - Stale slice.rs constants (108/768/28) were replaced (not duplicated) as part of 2.1 — design Component Inventory assigns slice.rs the "135/924/520 constants"; existing tests asserting the old values were updated in the same commit.
 - Wheel delta convention: scroll down = next card (winit LineDelta y<0). If the [V] check finds it inverted, flip one ternary in SliceCarousel.wheel-zone.
 - Debounce semantics (D5 "400ms Timer commits the snap after idle"): events arm, idle commits ONE step — this is what makes "±1 max per gesture" true for trackpads/floods. Container x itself animates immediately on commit (350ms OutCubic retarget).
-- Right-of-focus cards paint OVER the focused card's trailing edge during PR2 (later siblings on top): expected — runtime z-rank layering is exactly PR3's D4 scope.
+- ~~Right-of-focus cards paint OVER the focused card's trailing edge during PR2~~ RESOLVED in PR2.HF.b (two-pass visible-gated rendering, focused paints last). PR3's D4 runtime z-rank remains the proper long-term layering for shadows/dim.
 - Unrelated pre-existing worktree changes still untouched: assets/fragments/border.lua, .atl/*, src/shell/gallery/mod.rs re-export trim, untracked openspec proposal/design/specs files.

@@ -3,8 +3,10 @@
 // Parallelogram carousel card with skwd-wall exact geometry: collapsed
 // 135 ↔ expanded 924 × 520 tall, spacing handled by SliceCarousel (−30
 // overlap), 35px X-shear drawn as one rounded Path (design D3), radius 0
-// default, 350ms OutCubic expand. Flip stays a crossfade until the real
-// two-phase squeeze lands (PR5). Shadow/dim/glow are PR3 depth cues.
+// default, 350ms OutCubic expand. Border per the skwd-wall contract was
+// restored in PR2.HF (Path stroke: focused primary w3 / hover primary@40%
+// w1 / idle black@60% w1). Flip stays a crossfade until the real two-phase
+// squeeze lands (PR5). Shadow/dim remain PR3 depth cues.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -57,7 +59,12 @@ export component SliceDelegate inherits Rectangle {
         viewbox-width: root.wn + root.sn;
         viewbox-height: root.hn;
         fill: root.is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
-        stroke: transparent;
+        // skwd-wall border contract (PR2.HF regression 1): the PR2.6/2.7
+        // refactor left this Path fill-only; borders live on the Path stroke.
+        stroke: root.is-current ? SkwdTokens.primary
+            : root.has-hover ? SkwdTokens.primary.transparentize(0.6)
+            : #000000.transparentize(0.4);
+        stroke-width: root.is-current ? 3px : 1px;
 
         MoveTo { x: sn + rn; y: 0; }
         LineTo { x: sn + wn - rn; y: 0; }
@@ -103,11 +110,14 @@ export component SliceDelegate inherits Rectangle {
             border-radius: SkwdTokens.radius-8;
             background: SkwdTokens.surface;
 
-            // Preheat timer: 120ms before loading full thumb (R8)
+            // Preheat timer: 120ms before loading full thumb (R8). Runs even
+            // while hidden: the focused overlay copy (PR2.HF) must have its
+            // thumb warm before the first focus, or it would flash the
+            // placeholder on every focus change.
             property <bool> preheat-done: false;
             preheat-timer := Timer {
                 interval: 120ms;
-                running: root.visible && !preheat-done;
+                running: !preheat-done;
                 triggered => {
                     preheat-done = true;
                     self.running = false;

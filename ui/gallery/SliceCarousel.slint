@@ -82,7 +82,26 @@ export component SliceCarousel inherits Rectangle {
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
 
+        // Paint order = child order (PR2.HF regression 2): neighbors paint
+        // FIRST, the focused card paints LAST so it overlaps each neighbor
+        // by exactly gap (−30px) instead of losing its expanded edges to
+        // right-of-focus siblings. All cards share the row's 520px height
+        // and baseline (y = 0). Two visible-gated passes keep one instance
+        // per card alive per pass (no state loss on focus change); invisible
+        // copies neither paint nor hit-test, so clicks/wheel behave as with
+        // a single pass.
         for card[i] in root.cards : SliceDelegate {
+            visible: i != root.focused-index;
+            x: root.cum-offset(i, root.focused-index);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+        }
+
+        for card[i] in root.cards : SliceDelegate {
+            visible: i == root.focused-index;
             x: root.cum-offset(i, root.focused-index);
             card-name: card.name;
             is-current: i == root.focused-index;
