@@ -75,14 +75,23 @@ export component SliceDelegate inherits Rectangle {
         Close { }
     }
 
-    // ── Front / Back face (flip — InOutQuad) ──
-    // Front shows thumb + name; back shows metadata placeholder.
-    // Opacity driven by flip-angle: front 1 when 0deg, 0 when 180deg.
-    if !is-flipped : VerticalLayout {
-        padding: SkwdTokens.spacing-8;
-        spacing: SkwdTokens.spacing-8;
-        opacity: is-flipped ? 0.0 : 1.0;
-        animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
+    // ── Face mask container (design D3): clip:true box inset to the
+    // parallelogram's horizontal safe zone [skew .. width], so the wallpaper
+    // Image and labels clear both slant edges while painting OVER the same
+    // Path fill surface (visible behind the transparent container). True
+    // pixel-exact bitmap masking lands in PR4: thumbs.rs bakes the
+    // parallelogram alpha into the cached PNGs (design D8).
+    if !is-flipped : Rectangle {
+        clip: true;
+        x: root.skew;
+        width: root.width - root.skew;
+        height: 100%;
+
+        VerticalLayout {
+            padding: SkwdTokens.spacing-8;
+            spacing: SkwdTokens.spacing-8;
+            opacity: is-flipped ? 0.0 : 1.0;
+            animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
 
         // ── Thumbnail with preheat 120ms, sourceSize 400x720, cache async (R8) ──
         // Slint Image has no explicit cache/async flag; we document the intent
@@ -159,24 +168,34 @@ export component SliceDelegate inherits Rectangle {
             font-weight: 600;
             overflow: elide;
         }
+        }
     }
 
-    if is-flipped : VerticalLayout {
-        padding: SkwdTokens.spacing-12;
-        spacing: SkwdTokens.spacing-8;
-        opacity: is-flipped ? 1.0 : 0.0;
-        animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
+    // Back face rides in the same slant-safe mask box (metadata sheet
+    // becomes functional in PR5).
+    if is-flipped : Rectangle {
+        clip: true;
+        x: root.skew;
+        width: root.width - root.skew;
+        height: 100%;
 
-        Text {
-            text: root.card-name + " — details";
-            color: SkwdTokens.primary;
-            font-size: SkwdTokens.size-16;
-            font-weight: 700;
-        }
-        Text {
-            text: "VIEW  RETAG  DELETE  STEAM";
-            color: SkwdTokens.outline;
-            font-size: SkwdTokens.size-11;
+        VerticalLayout {
+            padding: SkwdTokens.spacing-12;
+            spacing: SkwdTokens.spacing-8;
+            opacity: is-flipped ? 1.0 : 0.0;
+            animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
+
+            Text {
+                text: root.card-name + " — details";
+                color: SkwdTokens.primary;
+                font-size: SkwdTokens.size-16;
+                font-weight: 700;
+            }
+            Text {
+                text: "VIEW  RETAG  DELETE  STEAM";
+                color: SkwdTokens.outline;
+                font-size: SkwdTokens.size-11;
+            }
         }
     }
 
