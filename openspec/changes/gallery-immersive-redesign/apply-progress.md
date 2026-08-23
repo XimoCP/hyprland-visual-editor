@@ -3,8 +3,39 @@
 - Slice status
 - PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.2).
 - PR2 Overlap Geometry, Snap, Wheel — tasks 2.1–2.10 done (10 work-unit commits) · PR2.HF hotfix done (borders + paint order) · 2.11 [V] visual check pending for the user (RE-RUN after PR2.HF).
+- PR4 FilterBar & Thumbnails — tasks 4.1–4.8 done (9 work-unit commits) · 4.9 [V] visual check pending for the user.
 
 ## Completed
+
+### Slice PR4 — FilterBar & Thumbnails (4.1–4.8 done · 4.9 [V] pending)
+
+Commits: 50a491a → c48e0bf (see per-task list below).
+
+- [x] 4.1 [WIRE] ui/gallery/FilterBar.slint NEW: invisible 24px top TouchArea strip reveals bar 250ms slide; pointer-exit arms 250ms one-shot auto-hide Timer; entering bar body cancels it; margin-top 30, maxWidth parent−20. Mounted as overlay in GalleryRoot one task early so build.rs compiles the new file (orphan .slint is invisible to cargo check). Commit 50a491a
+- [x] 4.2 Skewed pills: Path parallelogram skew 10px, h24, cascade step 14px (−10px vertical overlap, manual placement — layouts can't overlap), active filled primary, 200ms fill/stroke/text cross-fade (legacy S6). Slice + Mosaic only (#632), legacy numbering 0/2 kept. Commit 51a17b6
+- [x] 4.3 [WIRE] Stage cross-fade: views key off UI-side `shown-style` mirror lagging Rust style by one 200ms fade-out then commit+fade-in via Timer; mirror converges to Rust truth (no state desync); focused card preserved by existing clamp in on_gallery_style_selected. Commit dc5f7d6
+- [x] 4.4 [WIRE] GalleryChrome → transparent overlay (empty banner + bottom-right MIT pill, 9px outline@0.6); toolbar + footer deleted; mit-opened chain → Rust xdg-open constant argv; unreachable Hex branch removed from GalleryRoot (#632; HexDelegate.slint file untouched). Stage declared first so overlays paint above it. Commit c21ff5e
+- [x] 4.5 [RED] thumbs.rs cache-key + LRU prune contracts — stable per input, differ on path/mtime, 16-hex format; LRU bounded at 200 evicting beyond cutoff. RED via unimplemented!() stubs. Commit d1f969f
+- [x] 4.6 [GREEN] cache_key (SipHash DefaultHasher over path+mtime), cover_geometry pure math (center crop to 400:720, integer-exact, never upscales: 1920×1080→crop 600×1080→out 400×720; 100×100 stays 55×100), generate() decode+resize(Triangle)+PNG write to $XDG_CACHE_HOME/hve/thumbs/<key>.png with disk-cache short-circuit. New dep image = "0.25". Commit 2a80848
+- [x] 4.7 [WIRE] find_source_image (deterministic sorted extension scan of theme dir incl. provider subdirs), plan_jobs, preheat (one std::thread per job → invoke_from_event_loop marshals only the PNG PATH because slint::Image is NOT Send; UI side loads through Weak<MainWindow> upgrade). Stale-write guard re-checks row name before set_row_data. schedule_thumbs() runs on initial build + apply-refresh, skipping rows whose thumb.size().width > 0. GalleryCardData gains `thumb: image`. Sources discovered under config_dir/hve/themes/<name>/ (engine sealed — layout read-only). Commit 099b065
+- [x] 4.8a SliceDelegate shimmer/fade: gate = preheat-done && thumb.width > 0; pulsing veil (Timer phase alternation, stops when ready) cross-fades to thumb 200ms OutCubic using persistent elements (no remount flash); 120ms PR2.HF.c preheat gate kept. SliceCarousel feeds card.thumb into all 7 paint passes. Commit 5a95111
+- [x] 4.8b MosaicCell same shimmer/fade multiplied by staggered reveal alpha; MosaicView takes cards model and maps thumbs onto placeholder cells — out-of-range index yields DEFAULT empty image (verified Slint semantics) so cardless cells keep shimmering until Voronoi lands in 5.7. GalleryRoot passes cards. Commit c48e0bf
+
+## Verification (PR4)
+
+- `cargo test thumbs`: RED 0 passed / 5 failed (4.5) → 9 → **12 passed** (final)
+- Full suite: `cargo test` → **337 passed, 0 failed** (+12 vs PR3 baseline 325)
+- `cargo check` → clean except ONE PRE-EXISTING warning (`unused_imports` in src/shell/gallery/mod.rs re-export trim, present before this batch)
+
+## Deviations / Notes for review (PR4)
+
+- TouchArea has NO entered/exited callbacks in Slint 1.17 → hover-reveal uses `changed has-hover` (SliceDelegate precedent).
+- GOTCHA (compiler panic): `animate opacity` directly on a ROOT-LEVEL conditional element panics i-slint-compiler 1.17.0 remove_unused.rs:99. The old Chrome's banner animated fine inside a VerticalLayout but panicked as a direct conditional child. Workaround: animation dropped (stage cross-fade covers transitions); bisected and documented.
+- D10 pill text is a SHORT label ("skwd-wall (MIT, © liixini)") rather than the full mit-footer string; gallery-mit-footer prop now stops at ShellRoot (Rust still sets it upstream). Pill placement still flagged for user approval at PR4 review per design open question.
+- Cross-fade implemented as fade-out(200ms)→commit→fade-in(200ms) via shown-style mirror; true simultaneous double-mount crossfade would need UI-owned style state (rejected per no-desync convention).
+- Source discovery is a generic theme-dir scan, NOT per-provider wallpapers.json parsing (engine sealed; duplicating provider parsing out of scope). Themes without image files keep shimmer placeholders — pipeline degrades gracefully.
+- Empty-banner 150ms opacity animate removed (panic workaround above).
+- Unrelated pre-existing worktree changes untouched: assets/fragments/border.lua, .atl/*, untracked openspec proposal/design/specs files, stash@{0} hex experiments.
 
 ### PR1.1 Hotfix — fullscreen did not fire at startup (<80 lines)
 - [x] PR1.1.a [RED] `initial_gallery_expand_mounts_gallery_screen` (main.rs tests, headless `init_no_event_loop`) — named-helper contract: dispatching the initial Expand(Gallery) mounts Gallery (`mounted_screen == 1`, expanded). RED verified: E0425 before helper existed

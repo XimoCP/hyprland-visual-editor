@@ -1,5 +1,7 @@
 # Tasks: Immersive Gallery Redesign (gallery-immersive-redesign)
 
+> **Changelog 2026-08-23:** Hexagon removed per user decision #632 — Slice (principal) + Mosaic only. Task 5.6 marked REMOVED; task 4.8 de-scoped from Hex. Numbering preserved for traceability (45 active + 1 removed). Next step: PR4 FilterBar+Mosaic.
+
 Tags: [RED] failing test first · [GREEN] minimal impl · [WIRE] connect UI/Rust · [V] visual check (`cargo run`, eyeball the individual change). Size S<50 / M≤80 changed lines. Dep = prerequisite. Runner: `cargo test`; `.slint`-only tasks gate on `cargo check`.
 
 ## Review Workload Forecast
@@ -26,7 +28,7 @@ Chain strategy: stacked-to-main
 | 2 | Overlap geometry + center snap + wheel | PR2 | `cargo test slice` | `cargo run`: wheel ±1, current snaps pixel-centered | revert → static HorizontalLayout row |
 | 3 | Fade, layer stack, shadows, dim, glow | PR3 | `cargo test slice` | `cargo run`: depth cues at skwd values | revert → flat opaque row |
 | 4 | FilterBar + real thumbnails + MIT pill | PR4 | `cargo test thumbs && cargo check` | `cargo run`: strip reveals bar; thumbs render | revert → permanent toolbar returns |
-| 5 | Y-flip sheet + micro + hex/mosaic parity | PR5 | `cargo test` (full) | `cargo run`: right-click flips; hex arcs | revert → crossfade pseudo-flip |
+| 5 | Y-flip sheet + micro + mosaic parity (Hex removed) | PR5 | `cargo test` (full) | `cargo run`: right-click flips; mosaic staggers | revert → crossfade pseudo-flip |
 
 ### Slice PR1 — Tokens & Fullscreen (1.1–1.9)
 
@@ -66,15 +68,15 @@ Chain strategy: stacked-to-main
 
 ### Slice PR4 — FilterBar & Thumbnails (4.1–4.9)
 
-- [ ] 4.1 [f: ui/gallery/FilterBar.slint (new)] [t: cargo check] [dep:1.8] [M] Top-center bar (margin 30, maxWidth parent−20): invisible 24px TouchArea strip reveals it 250ms; pointer-exit arms 250ms auto-hide Timer.
-- [ ] 4.2 [f: ui/gallery/FilterBar.slint] [t: cargo check] [dep:4.1] [S] Skewed pills: skew 10px, h24, −10px vertical overlap, active filled primary.
-- [ ] 4.3 [WIRE] [f: ui/gallery/FilterBar.slint, ui/gallery/GalleryRoot.slint] [t: cargo check] [dep:4.2] [S] Style-switch cross-fade 200ms preserving focused card (selection state moves out of old toolbar).
-- [ ] 4.4 [WIRE] [f: ui/gallery/GalleryChrome.slint] [t: cargo check] [dep:4.3] [S] Delete permanent toolbar + MIT footer; add bottom-right MIT pill (9px outline@0.6, opens `mit-link`). (Confirm placement with user at PR4 review.)
-- [ ] 4.5 [RED] [f: src/shell/gallery/thumbs.rs tests (new)] [t: cargo test thumbs] [dep:-] [S] Failing: cache key = hash(source path + mtime); LRU 200 prune semantics.
-- [ ] 4.6 [GREEN] [f: src/shell/gallery/thumbs.rs] [t: cargo test thumbs] [dep:4.5] [M] Decode (dep `image = "0.25"`), cover-crop + scale ≤400×720, write PNG to `$XDG_CACHE_HOME/hve/thumbs/<hash>.png`.
-- [ ] 4.7 [WIRE] [f: src/shell/gallery/thumbs.rs, src/shell/gallery/model.rs] [t: cargo test thumbs] [dep:4.6] [M] Generation off-thread (`std::thread`); results marshaled via `slint::invoke_from_event_loop` into `GalleryCardData.thumb`.
-- [ ] 4.8 [f: ui/gallery/SliceDelegate.slint, ui/gallery/HexDelegate.slint, ui/gallery/MosaicCell.slint] [t: cargo check] [dep:4.7] [S] Skeleton shimmer until `thumb.width > 0`; 200ms OutCubic fade-in.
-- [ ] 4.9 [V] [t: cargo run] [dep:4.1–4.8] [S] Verify: toolbar gone; hover strip reveal/auto-hide; real thumbnails in all three views.
+- [x] 4.1 [f: ui/gallery/FilterBar.slint (new)] [t: cargo check] [dep:1.8] [M] Top-center bar (margin 30, maxWidth parent−20): invisible 24px TouchArea strip reveals it 250ms; pointer-exit arms 250ms auto-hide Timer.
+- [x] 4.2 [f: ui/gallery/FilterBar.slint] [t: cargo check] [dep:4.1] [S] Skewed pills: skew 10px, h24, −10px vertical overlap, active filled primary.
+- [x] 4.3 [WIRE] [f: ui/gallery/FilterBar.slint, ui/gallery/GalleryRoot.slint] [t: cargo check] [dep:4.2] [S] Style-switch cross-fade 200ms preserving focused card (selection state moves out of old toolbar).
+- [x] 4.4 [WIRE] [f: ui/gallery/GalleryChrome.slint] [t: cargo check] [dep:4.3] [S] Delete permanent toolbar + MIT footer; add bottom-right MIT pill (9px outline@0.6, opens `mit-link`). (Confirm placement with user at PR4 review.)
+- [x] 4.5 [RED] [f: src/shell/gallery/thumbs.rs tests (new)] [t: cargo test thumbs] [dep:-] [S] Failing: cache key = hash(source path + mtime); LRU 200 prune semantics.
+- [x] 4.6 [GREEN] [f: src/shell/gallery/thumbs.rs] [t: cargo test thumbs] [dep:4.5] [M] Decode (dep `image = "0.25"`), cover-crop + scale ≤400×720, write PNG to `$XDG_CACHE_HOME/hve/thumbs/<hash>.png`.
+- [x] 4.7 [WIRE] [f: src/shell/gallery/thumbs.rs, src/shell/gallery/model.rs] [t: cargo test thumbs] [dep:4.6] [M] Generation off-thread (`std::thread`); results marshaled via `slint::invoke_from_event_loop` into `GalleryCardData.thumb`.
+- [x] 4.8 [f: ui/gallery/SliceDelegate.slint, ui/gallery/MosaicCell.slint] [t: cargo check] [dep:4.7] [S] Skeleton shimmer until `thumb.width > 0`; 200ms OutCubic fade-in. (De-scoped HexDelegate 2026-08-23.)
+- [ ] 4.9 [V] [t: cargo run] [dep:4.1–4.8] [S] Verify: toolbar gone; hover strip reveal/auto-hide; real thumbnails in both views (Slice + Mosaic).
 
 ### Slice PR5 — Flip, Micro-interactions, Parity (5.1–5.9)
 
@@ -83,11 +85,11 @@ Chain strategy: stacked-to-main
 - [ ] 5.3 [f: ui/gallery/SliceDelegate.slint] [t: cargo check] [dep:5.2] [M] Back-face metadata sheet: name 13px bold tertiary, ext·dims·size 10px, tag pills h26/11px, actions VIEW/RETAG/DELETE h30 uppercase (no STEAM).
 - [ ] 5.4 [WIRE] [f: ui/gallery/SliceDelegate.slint, src/shell/gallery/slot.rs] [t: cargo test gallery] [dep:5.3] [S] Favourite parallelogram toggle 48×24, knob 22×18, 150ms OutCubic; state persists via model.
 - [ ] 5.5 [WIRE] [f: ui/gallery/SliceCarousel.slint, src/callbacks.rs] [t: cargo check] [dep:2.5] [S] Micro-interactions: hover-select after >2px travel mirrors `gallery-focused`; staggered entry opacity 0→1 + scale 0.85→1, 250ms OutCubic.
-- [ ] 5.6 [f: src/shell/gallery/views/hexagon.rs, ui/gallery/HexDelegate.slint] [t: cargo test gallery] [dep:1.7] [S] Hex parity: arc yOffset = −normDist²·140·1.2; pull-out grows to bigR 420 from source cell position, 400ms.
+- [ ] 5.6 — REMOVED (Hex dropped 2026-08-23) — [f: src/shell/gallery/views/hexagon.rs, ui/gallery/HexDelegate.slint] Hex parity: arc yOffset = −normDist²·140·1.2; pull-out bigR 420 — *cancelled per decision #632, Slice+Mosaic only*.
 - [ ] 5.7 [f: src/shell/gallery/views/mosaic.rs, ui/gallery/MosaicView.slint] [t: cargo test gallery] [dep:1.7] [S] Mosaic parity: exactly 2 Lloyd iterations per activation; reveal delays 20+(key%7)·14ms, alpha 0→1 over 200ms OutCubic.
-- [ ] 5.8 [V] [t: cargo run] [dep:5.1–5.7] [S] Verify: flip swaps faces at 90° with functional sheet; hex columns bow and pull out; mosaic staggers.
+- [ ] 5.8 [V] [t: cargo run] [dep:5.1–5.7] [S] Verify: flip swaps faces at 90° with functional sheet; mosaic staggers (hex no longer in scope).
 - [ ] 5.9 [t: cargo test] [dep:5.1–5.8] [S] Full suite green: 299 GallerySlot tests + all new headless tests, zero regressions.
 
 ## Traceability
 
-Fullscreen delta → 1.1–1.6 · Slice geometry/nav → 1.7, 2.1–2.11, 5.5 · Depth cues → 3.1–3.7 · FilterBar → 4.1–4.4 · Thumbnails → 4.5–4.8 · Entry choreography → 1.8, 5.5 · Flip/sheet → 5.1–5.4 · Hex → 5.6 · Mosaic → 5.7 · Preserved (instant apply, settings mutation, empty state) → untouched, guarded by 5.9.
+Fullscreen delta → 1.1–1.6 · Slice geometry/nav → 1.7, 2.1–2.11, 5.5 · Depth cues → 3.1–3.7 · FilterBar → 4.1–4.4 · Thumbnails → 4.5–4.8 · Entry choreography → 1.8, 5.5 · Flip/sheet → 5.1–5.4 · Hex → 5.6 REMOVED (2026-08-23) · Mosaic → 5.7 · Preserved (instant apply, settings mutation, empty state) → untouched, guarded by 5.9.
