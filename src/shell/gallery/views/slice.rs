@@ -77,11 +77,10 @@ pub struct SliceView {
     has_video_for_current: bool,
 }
 
-/// Container x that pixel-centers the focused card (design D5).
-///
-/// PR2.3 RED placeholder — implemented in task 2.4.
-pub fn snap_x(_viewport_center_x: f32, _focused: usize) -> f32 {
-    0.0
+/// Container x that pixel-centers the focused card (design D5):
+/// `viewport_center − expanded/2 − cum_offset(focused, focused)`.
+pub fn snap_x(viewport_center_x: f32, focused: usize) -> f32 {
+    viewport_center_x - SLICE_EXPANDED_WIDTH / 2.0 - cum_offset(focused, focused)
 }
 
 /// Width of card `j` (px) when `focused` is the expanded card (design D2).
