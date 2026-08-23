@@ -192,6 +192,23 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
     );
 }
 
+/// Re-assert immersive fullscreen after the initial Gallery expand. The
+/// first `enter_gallery_session → set_fullscreen(true)` can fail when the
+/// window is not yet mapped/focused (200ms post-show race); the later
+/// show-path reassert succeeds, so this delayed retry mirrors that path
+/// without touching the hide/show logic.
+fn reassert_gallery_fullscreen() {
+    if crate::shell::Shell::is_gallery_expanded() {
+        if let Some(mut ctrl) = crate::composer::global_controller() {
+            if ctrl.gallery_session_active() {
+                let _ = ctrl.composer().set_fullscreen(true);
+            } else {
+                let _ = ctrl.enter_gallery_session();
+            }
+        }
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
@@ -839,9 +856,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
                     dispatch_initial_gallery_expand(&shell_for_expand);
+                    slint::Timer::single_shot(std::time::Duration::from_millis(400), || {
+                        reassert_gallery_fullscreen();
+                    });
                 });
             } else {
                 dispatch_initial_gallery_expand(&shell_for_expand);
+                slint::Timer::single_shot(std::time::Duration::from_millis(400), || {
+                    reassert_gallery_fullscreen();
+                });
             }
         });
     }
