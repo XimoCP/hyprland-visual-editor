@@ -125,15 +125,40 @@ impl Shell {
     /// Restore the shell state after the composer shows the window again
     /// (base-window spec R9: hide preserves state, focus restored on show).
     /// Re-applies the current expansion's size so the window returns to
-    /// the same geometry it had before the hide.
+    /// the same geometry it had before the hide. When the Gallery is the
+    /// expanded screen, re-assert immersive fullscreen: Hyprland clears
+    /// fullscreen on workspace moves (special hide/show), so the logical
+    /// session is still active but the physical window is windowed.
     pub fn sync_after_show(shell: &Rc<RefCell<Self>>) {
-        let expanded = shell.borrow().nav.expansion() != ExpansionState::Collapsed;
+        let (expanded, is_gallery) = {
+            let s = shell.borrow();
+            (
+                s.nav.expansion() != ExpansionState::Collapsed,
+                s.nav.screen() == crate::shell::nav::Screen::Gallery,
+            )
+        };
         let target = shell.borrow().size.target(expanded);
-        let mut s = shell.borrow_mut();
-        s.target_size = target;
-        s.current_size = target;
-        s.remaining_steps = 0;
-        s.push_size_to_window();
+        {
+            let mut s = shell.borrow_mut();
+            s.target_size = target;
+            s.current_size = target;
+            s.remaining_steps = 0;
+            s.push_size_to_window();
+        }
+        if is_gallery && expanded {
+            if let Some(mut ctrl) = crate::composer::global_controller() {
+                if ctrl.gallery_session_active() {
+                    // Logical session alive but compositor lost fullscreen on
+                    // the hide→show round-trip — re-dispatch without flipping
+                    // the logical flag.
+                    let _ = ctrl.composer().set_fullscreen(true);
+                } else {
+                    // Should be fullscreen but logical flag cleared (e.g.
+                    // first show after eager expand) — enter cleanly.
+                    let _ = ctrl.enter_gallery_session();
+                }
+            }
+        }
     }
 
     /// Animate the window to an arbitrary target size (S9 ExpandToSettings,

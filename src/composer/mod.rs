@@ -114,8 +114,13 @@ impl Controller {
     /// Enter an immersive Gallery session (gallery-immersive-redesign 1.6):
     /// switch to undecorated fullscreen BEFORE the gallery content shows.
     /// Returns false when the compositor refused — the caller continues
-    /// windowed and the session is not marked active.
+    /// windowed and the session is not marked active. Idempotent: a second
+    /// enter while the session is already active is a no-op and returns
+    /// true without re-dispatching.
     pub fn enter_gallery_session(&mut self) -> bool {
+        if self.gallery_session {
+            return true;
+        }
         let ok = self.composer.set_fullscreen(true);
         self.gallery_session = ok;
         ok
