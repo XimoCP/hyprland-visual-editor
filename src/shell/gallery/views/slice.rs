@@ -1,21 +1,26 @@
-// HVE 2 — Slice carousel (theme-gallery PR2).
+// HVE 2 — Slice carousel (gallery-immersive-redesign PR2).
 //
-// Parallelogram carousel: collapsed 108 ↔ expanded 768, 350ms OutCubic,
-// left/right handle_key consumed, skew28 hit-test, flip 180 InOutQuad,
-// video Timer 100-300ms release on blur, preheat 120 sourceSize 400x720.
+// Parallelogram carousel with skwd-wall exact geometry: collapsed 135 ↔
+// expanded 924, height 520, spacing −30 (overlap), skew 35px X-shear,
+// radius 0, 350ms OutCubic. Manual x placement (design D2): cum_offset
+// sums per-card widths plus negative gaps; snap_x pixel-centers the
+// focused card (design D5); wheel steps ±1 per gesture.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 use super::{GalleryStyle, GalleryView};
 
-/// Slice carousel geometry (spec R2.1).
-pub const SLICE_COLLAPSED_WIDTH: f32 = 108.0;
-pub const SLICE_EXPANDED_WIDTH: f32 = 768.0;
+/// Slice carousel geometry (skwd-wall exact values, design D2/D3).
+pub const SLICE_COLLAPSED_WIDTH: f32 = 135.0;
+pub const SLICE_EXPANDED_WIDTH: f32 = 924.0;
+pub const SLICE_HEIGHT: f32 = 520.0;
+/// Negative gap between cards — cards OVERLAP by 30px (design D2).
+pub const SLICE_SPACING_PX: f32 = -30.0;
 pub const SLICE_ANIM_DURATION_MS: u64 = 350;
 /// OutCubic cubic-bezier(0.215, 0.61, 0.355, 1.0) — skwd default Behavior.
 pub const SLICE_ANIM_EASING: (f32, f32, f32, f32) = (0.215, 0.61, 0.355, 1.0);
-/// Parallelogram skew offset (px) — shape geometry (spec R2.1 shadow matching).
-pub const SLICE_SKEW_PX: f32 = 28.0;
+/// Parallelogram skew offset (px) — horizontal X-shear (design D3).
+pub const SLICE_SKEW_PX: f32 = 35.0;
 /// Flip 180° Y-axis timing (spec S3).
 pub const SLICE_FLIP_DURATION_MS: u64 = 400;
 /// InOutQuad approx cubic-bezier(0.455, 0.03, 0.515, 0.955).
@@ -70,6 +75,16 @@ pub struct SliceView {
     video_state: VideoState,
     /// Whether video source exists for current card (spec S16: has video).
     has_video_for_current: bool,
+}
+
+/// Cumulative x offset of card `i` (px) when `focused` is the expanded card.
+///
+/// Design D2: `cum_offset(i, focused) = Σ_{j<i} width(j) + i·spacing` with
+/// `width(j) = 924 if j == focused else 135` and `spacing = −30`.
+///
+/// PR2.1 RED placeholder — implemented in task 2.2.
+pub fn cum_offset(_i: usize, _focused: usize) -> f32 {
+    0.0
 }
 
 impl SliceView {
@@ -296,14 +311,49 @@ impl GalleryView for SliceView {
 mod tests {
     use super::*;
 
-    // ── 2.1 width 108↔768 350ms OutCubic ────────────────────────────────
+    // ── 2.1 skwd geometry constants + cum_offset overlap (design D2) ────
 
     #[test]
     fn slice_width_collapsed_and_expanded_constants() {
-        assert_eq!(SLICE_COLLAPSED_WIDTH, 108.0, "collapsed width must be 108");
-        assert_eq!(SLICE_EXPANDED_WIDTH, 768.0, "expanded width must be 768");
+        assert_eq!(SLICE_COLLAPSED_WIDTH, 135.0, "collapsed width must be 135");
+        assert_eq!(SLICE_EXPANDED_WIDTH, 924.0, "expanded width must be 924");
+        assert_eq!(SLICE_HEIGHT, 520.0, "slice height must be 520");
+        assert_eq!(SLICE_SPACING_PX, -30.0, "spacing must overlap by −30px");
+        assert_eq!(SLICE_SKEW_PX, 35.0, "skew must be 35px X-shear");
         assert_eq!(SLICE_ANIM_DURATION_MS, 350, "anim duration 350ms OutCubic");
         assert_eq!(SLICE_ANIM_EASING, (0.215, 0.61, 0.355, 1.0), "OutCubic bezier");
+    }
+
+    #[test]
+    fn cum_offset_focused_first_exact_px() {
+        // focused = 0: every card collapsed ahead of the expanded first card.
+        assert_eq!(cum_offset(0, 0), 0.0);
+        assert_eq!(cum_offset(1, 0), 105.0, "135 + (−30)");
+        assert_eq!(cum_offset(2, 0), 210.0);
+        assert_eq!(cum_offset(3, 0), 315.0);
+        assert_eq!(cum_offset(4, 0), 420.0);
+    }
+
+    #[test]
+    fn cum_offset_focused_mid_exact_px() {
+        // focused = 2 in a 5-card row: expanded card sits at index 2.
+        assert_eq!(cum_offset(0, 2), 0.0);
+        assert_eq!(cum_offset(1, 2), 105.0);
+        assert_eq!(cum_offset(2, 2), 210.0, "focused lands at 210");
+        assert_eq!(cum_offset(3, 2), 1104.0, "135+135+924 − 3·30");
+        assert_eq!(cum_offset(4, 2), 1209.0);
+        // Crossing the focused edge advances by expanded+spacing = 924−30.
+        assert_eq!(cum_offset(3, 2) - cum_offset(2, 2), 894.0);
+    }
+
+    #[test]
+    fn cum_offset_focused_last_exact_px() {
+        // focused = last of 5: everything before it is collapsed.
+        assert_eq!(cum_offset(0, 4), 0.0);
+        assert_eq!(cum_offset(1, 4), 105.0);
+        assert_eq!(cum_offset(3, 4), 315.0);
+        assert_eq!(cum_offset(4, 4), 420.0);
+        assert_eq!(cum_offset(5, 4), 1314.0, "4·135+924 − 5·30");
     }
 
     #[test]
