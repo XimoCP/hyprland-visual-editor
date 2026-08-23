@@ -77,6 +77,13 @@ pub struct SliceView {
     has_video_for_current: bool,
 }
 
+/// Container x that pixel-centers the focused card (design D5).
+///
+/// PR2.3 RED placeholder — implemented in task 2.4.
+pub fn snap_x(_viewport_center_x: f32, _focused: usize) -> f32 {
+    0.0
+}
+
 /// Width of card `j` (px) when `focused` is the expanded card (design D2).
 pub fn card_width_at(j: usize, focused: usize) -> f32 {
     if j == focused {
@@ -362,6 +369,34 @@ mod tests {
         assert_eq!(cum_offset(3, 4), 315.0);
         assert_eq!(cum_offset(4, 4), 420.0);
         assert_eq!(cum_offset(5, 4), 1314.0, "4·135+924 − 5·30");
+    }
+
+    #[test]
+    fn snap_x_exact_px_for_every_focused_index() {
+        // snap_x = viewport_center − 924/2 − cum_offset(focused) (design D5).
+        let center = 500.0;
+        assert_eq!(snap_x(center, 0), 38.0, "500 − 462 − 0");
+        assert_eq!(snap_x(center, 1), -67.0, "500 − 462 − 105");
+        assert_eq!(snap_x(center, 2), -172.0);
+        assert_eq!(snap_x(center, 3), -277.0);
+        assert_eq!(snap_x(center, 4), -382.0, "500 − 462 − 420");
+    }
+
+    #[test]
+    fn snap_x_pixel_centers_focused_card_for_every_index() {
+        // Invariant: container_x + cum_offset(focused) + expanded/2 == center.
+        let center = 1280.0;
+        for focused in 0..7 {
+            let x = snap_x(center, focused);
+            let card_center = x + cum_offset(focused, focused) + SLICE_EXPANDED_WIDTH / 2.0;
+            assert!(
+                (card_center - center).abs() < 0.001,
+                "focused {} must land dead-center: {} vs {}",
+                focused,
+                card_center,
+                center
+            );
+        }
     }
 
     #[test]
