@@ -199,21 +199,22 @@ export component SliceDelegate inherits Rectangle {
             opacity: is-flipped ? 0.0 : 1.0;
             animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
 
-        // ── Thumbnail with preheat 120ms, sourceSize 400x720, cache async (R8) ──
-        // Slint Image has no explicit cache/async flag; we document the intent
-        // and use source-clip to cap decoded size (400x720) — matching QML
-        // sourceSize behavior. Preheat delays thumb visibility by 120ms.
+        // ── Thumbnail pipeline (gallery-immersive-redesign 4.8 / spec Real
+        // Wallpaper Thumbnails): skeleton SHIMMER while no decoded thumb is
+        // marshaled (`thumb.width == 0`), 200ms OutCubic fade-in when it
+        // lands. The 120ms preheat Timer stays as the anti-flash gate from
+        // PR2.HF.c: the hidden focused-overlay copy warms before first use.
+        // sourceSize 400x720 is enforced upstream by thumbs.rs cover-crop;
+        // source-clip here caps decode memory defensively (R8). ──
         Rectangle {
             vertical-stretch: 1;
             clip: true;
             border-radius: SkwdTokens.radius-8;
             background: SkwdTokens.surface;
 
-            // Preheat timer: 120ms before loading full thumb (R8). Runs even
-            // while hidden: the focused overlay copy (PR2.HF) must have its
-            // thumb warm before the first focus, or it would flash the
-            // placeholder on every focus change.
             property <bool> preheat-done: false;
+            property <bool> has-thumb: self.preheat-done && root.thumb.width > 0;
+
             preheat-timer := Timer {
                 interval: 120ms;
                 running: !preheat-done;
@@ -223,28 +224,43 @@ export component SliceDelegate inherits Rectangle {
                 }
             }
 
-            // Thumb image capped to 400×720 via source-clip (R8)
-            if preheat-done : Image {
-                width: 100%;
-                height: 100%;
-                source: root.thumb;
-                image-fit: cover;
-                // Cap decoded size (Slint source-clip in image pixels)
-                source-clip-width: 400;
-                source-clip-height: 720;
-                // cache + asynchronous are implicit in Slint's image cache;
-                // no duplicate property needed — R8 satisfied by lifecycle.
-                accessible-role: none;
+            // Shimmer: accent-tinted veil pulsing while waiting (Timer-driven
+            // phase alternation; stops once the thumb arrives).
+            property <bool> shimmer-high: false;
+            shimmer-timer := Timer {
+                interval: 700ms;
+                running: !parent.has-thumb;
+                triggered => { parent.shimmer-high = !parent.shimmer-high; }
             }
-            if !preheat-done : Rectangle {
-                background: accent.transparentize(0.9);
+
+            shimmer := Rectangle {
+                background: #000000;
+                opacity: parent.has-thumb ? 0.0
+                    : (parent.shimmer-high ? 0.06 : 0.16);
+                animate opacity { duration: 600ms; easing: ease-in-out; }
                 Text {
                     text: "◇";
-                    color: accent;
+                    color: accent.transparentize(0.4);
                     font-size: 24px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
+            }
+
+            thumb-image := Image {
+                width: 100%;
+                height: 100%;
+                source: root.thumb;
+                image-fit: cover;
+                source-clip-width: 400;
+                source-clip-height: 720;
+                visible: parent.has-thumb;
+                opacity: parent.has-thumb ? 1.0 : 0.0;
+                animate opacity {
+                    duration: SkwdTokens.anim-200;
+                    easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+                }
+                accessible-role: none;
             }
 
             // Video overlay (Timer 100-300ms, release on blur S16/17)
