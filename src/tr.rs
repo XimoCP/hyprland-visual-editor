@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(t.tr("shell.brand"), Some("HVE"));
         assert_eq!(t.tr("shell.subtitle"), Some("Hyprland Visual Editor"));
         assert_eq!(t.tr("shell.status_ready"), Some("Ready"));
-        assert_eq!(t.tr("shell.back_hint"), Some("Esc collapses"));
+        assert_eq!(t.tr("shell.back_hint"), Some("Esc hides"));
         assert_eq!(t.tr("shell.slots.home"), Some("Home"));
         assert_eq!(t.tr("shell.slots.gallery"), Some("Gallery"));
         assert_eq!(t.tr("shell.slots.workshop"), Some("Workshop"));
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(t.tr("shell.brand"), Some("HVE"));
         assert_eq!(t.tr("shell.subtitle"), Some("Editor Visual de Hyprland"));
         assert_eq!(t.tr("shell.status_ready"), Some("Listo"));
-        assert_eq!(t.tr("shell.back_hint"), Some("Esc colapsa"));
+        assert_eq!(t.tr("shell.back_hint"), Some("Esc oculta"));
         assert_eq!(t.tr("shell.slots.home"), Some("Inicio"));
         assert_eq!(t.tr("shell.slots.gallery"), Some("Galería"));
         assert_eq!(t.tr("shell.slots.workshop"), Some("Taller"));
@@ -255,6 +255,6 @@ mod tests {
         // embedded English map (nav-shell spec R5 "Unknown locale fallback").
         let t = Tr::with_lang("fr");
         assert_eq!(t.tr("shell.brand"), Some("HVE"));
-        assert_eq!(t.tr("shell.back_hint"), Some("Esc collapses"));
+        assert_eq!(t.tr("shell.back_hint"), Some("Esc hides"));
     }
 }

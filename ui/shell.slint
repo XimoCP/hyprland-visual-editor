@@ -53,7 +53,7 @@ export component ShellRoot inherits Rectangle {
     in property <string> brand-text: "HVE";
     in property <string> brand-subtitle: "Hyprland Visual Editor";
     in property <string> status-text: "Ready";
-    in property <string> back-hint: "Esc collapses";
+    in property <string> back-hint: "Esc hides";
 
     // ── Slot-area placeholder strings (i18n) ──
     // The real gallery/workshop slot views land in modules 2/4; until then
@@ -65,7 +65,7 @@ export component ShellRoot inherits Rectangle {
 
     // ── Navigation callbacks (wired to NavCommand in delivery 4) ──
     callback card-activated(screen: int);  // mouse click or Return on the focused card
-    callback back-activated();             // Escape or the back affordance
+    callback back-activated();             // Escape hides/minimizes window (tray hide)
     callback nav-move(direction: string);  // arrows: "up" | "down" | "left" | "right"
 
     // ── Gallery wiring (PR4.5) ──
@@ -215,7 +215,7 @@ export component ShellRoot inherits Rectangle {
 
     // Keyboard navigation (nav-shell spec R4; design D8: keyboard == mouse):
     // arrows → nav-move (Rust moves focus, mirrors `focused-card` back),
-    // Return → activate the focused card, Escape → back/collapse.
+    // Return → activate the focused card, Escape → hide/minimize window (tray).
     shell-kbd := FocusScope {
         KeyBinding {
             keys: @keys(DownArrow);

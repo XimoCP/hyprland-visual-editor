@@ -92,16 +92,19 @@ pub fn setup_callbacks(
         });
     }
     {
-        let shell = shell.clone();
+        let weak = window.as_weak();
         window.on_back_activated(move || {
-            // S10/S11: if Gallery settings panel open (window at 1300x900), Esc collapses to gallery 1200x800 first
-            let (w, h) = Shell::current_size(&shell);
-            let at_settings = (w - 1300.0).abs() < 1.0 && (h - 900.0).abs() < 1.0;
-            if at_settings {
-                Shell::collapse_from_settings(&shell);
+            // Esc now hides/minimizes the window (same as tray minimize via
+            // Controller::toggle_tray hide path → composer.hide). Idempotent:
+            // if already hidden, do nothing. Supersedes spec Settings Mutation
+            // & Esc Collapse — gallery/settings no longer collapses via Esc.
+            let Some(win) = weak.upgrade() else { return; };
+            let Some(mut ctrl) = crate::composer::global_controller() else { return; };
+            if ctrl.window_hidden() {
                 return;
             }
-            Shell::dispatch(&shell, NavCommand::Back);
+            ctrl.toggle_tray(&win);
+            crate::tray::refresh_global_menu();
         });
     }
     {

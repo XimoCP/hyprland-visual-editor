@@ -264,7 +264,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_shell_brand_text(tr.tr_shared("shell.brand", "HVE"));
     window.set_shell_brand_subtitle(tr.tr_shared("shell.subtitle", "Hyprland Visual Editor"));
     window.set_shell_status_text(tr.tr_shared("shell.status_ready", "Ready"));
-    window.set_shell_back_hint(tr.tr_shared("shell.back_hint", "Esc collapses"));
+    window.set_shell_back_hint(tr.tr_shared("shell.back_hint", "Esc hides"));
     window.set_shell_home_hint(tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"));
     window.set_shell_gallery_hint(tr.tr_shared("shell.gallery.hint", "Gallery slot — module 2"));
     window.set_shell_workshop_hint(tr.tr_shared("shell.workshop.hint", "Workshop slot — module 4"));

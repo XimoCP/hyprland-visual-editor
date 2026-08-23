@@ -405,7 +405,7 @@
     "brand": "HVE",
     "subtitle": "Editor Visual de Hyprland",
     "status_ready": "Listo",
-    "back_hint": "Esc colapsa",
+    "back_hint": "Esc oculta",
     "slots": {
       "home": "Inicio",
       "gallery": "Galería",

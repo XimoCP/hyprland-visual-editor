@@ -166,7 +166,7 @@ fn main_window_exposes_shell_i18n_properties() {
     assert_eq!(win.get_shell_brand_text(), "HVE");
     assert_eq!(win.get_shell_brand_subtitle(), "Hyprland Visual Editor");
     assert_eq!(win.get_shell_status_text(), "Ready");
-    assert_eq!(win.get_shell_back_hint(), "Esc collapses");
+    assert_eq!(win.get_shell_back_hint(), "Esc hides");
 }
 
 #[test]
