@@ -234,7 +234,13 @@ export component ShellRoot inherits Rectangle {
         }
         KeyBinding {
             keys: @keys(Return);
-            activated => { root.card-activated(root.focused-card); }
+            activated => {
+                if (root.mounted-screen == 1) {
+                    root.gallery-card-clicked(root.gallery-focused);
+                } else {
+                    root.card-activated(root.focused-card);
+                }
+            }
         }
         KeyBinding {
             keys: @keys(Escape);
