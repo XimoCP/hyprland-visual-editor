@@ -38,7 +38,10 @@ export component MainWindow inherits Window {
     in-out property <color> accent-red <=> HveColors.accent-red;
     in-out property <color> border <=> HveColors.border;
 
-    background: HveColors.bg-dark;
+    // Immersive Gallery session (PR1.1): a transparent WINDOW background lets
+    // the desktop show through behind the gallery's alpha-0 backdrop. Any other
+    // screen keeps the opaque dark base.
+    background: root.mounted-screen == 1 ? transparent : HveColors.bg-dark;
 
     // ── State ──
     in-out property <int> active-tab: 0;

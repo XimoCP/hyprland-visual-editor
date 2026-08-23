@@ -180,6 +180,18 @@ pub(crate) fn apply_visual_state(
     Some((icon?, colors.primary.clone()))
 }
 
+/// Mount the Gallery screen as the initial shell screen (HVE 2 visual
+/// rewrite, PR1.1): queues Expand(Gallery) so the shell mounts the gallery
+/// slot and opens the immersive fullscreen session. Must be called only
+/// AFTER `composer::init_global` — with no global controller the session
+/// entry is a silent no-op and the window stays windowed.
+fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate::shell::Shell>>) {
+    shell::Shell::dispatch(
+        shell,
+        crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery),
+    );
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
@@ -470,9 +482,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             });
         }
-        // Expand Gallery as initial screen (Home → Expand Gallery, shell mutates)
-        shell::Shell::dispatch(&shell, crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery));
     }
+    // NOTE (PR1.1): the initial Expand(Gallery) dispatch used to run here at
+    // setup time — BEFORE composer::init_global existed — so
+    // enter_gallery_session was a silent no-op and the window stayed
+    // floating. It now fires from the post-show startup timer, after the
+    // composer focus() pass (see "Startup order" below).
 
     // ── i18n: static UI strings ──
     window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual Editor"));
@@ -704,6 +719,11 @@ fn main() -> Result<(), slint::PlatformError> {
             ctrl.set_tray_mode(true);
         }
         tracing::info!("Starting in tray mode (lazy load — first toggle shows window)");
+        // Still mount Gallery as the initial screen so the first reveal
+        // lands there. The composer dispatch is a harmless no-op while the
+        // window is hidden (no mapped client → session stays inactive);
+        // PR1.1 scopes the fullscreen wiring to the eager-show path only.
+        dispatch_initial_gallery_expand(&shell);
     } else {
         window.show()?;
         if let Some(mut ctrl) = composer::global_controller() {
@@ -726,7 +746,14 @@ fn main() -> Result<(), slint::PlatformError> {
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via Composer para evitar el doble-click inicial.
         let startup_tiling = state.lock().unwrap_or_else(|e| e.into_inner()).cfg().tiling_mode;
-        // First timer: focus window + sync config rules
+        // ── Startup order (gallery-immersive-redesign PR1.1) ──
+        // show() → focus() → initial Gallery expand(fullscreen session).
+        //
+        // The expand MUST live here instead of at setup time: the global
+        // Composer controller is initialized later than the old call site,
+        // and Hyprland only honors a fullscreen dispatch once HVE is mapped
+        // AND focused — both are guaranteed after this 200ms post-show pass.
+        let shell_for_expand = shell.clone();
         slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
             if let Some(ctrl) = composer::global_controller() {
                 ctrl.composer().focus();
@@ -735,17 +762,22 @@ fn main() -> Result<(), slint::PlatformError> {
             // ── Ensure hyprland.conf rules match saved config ──
             set_tiling_window_rules(startup_tiling);
 
-            // ── Second timer: toggle current window if tiling mode is ON ──
-            // The config file change only affects NEW windows. For the already-mapped
-            // window, we dispatch togglefloating after a short delay to let the
-            // config reload complete.
+            // Tiling ON: float BEFORE entering the immersive session.
+            // exit_gallery_session restores floating geometry, so sessions
+            // are designed to start from a floating window; toggling float
+            // AFTER fullscreen could drop the fullscreen flag. The 600ms
+            // delay lets the config reload settle for the mapped window,
+            // then the expand runs in the same tick (float → fullscreen).
             if startup_tiling {
                 slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
                     if let Some(ctrl) = composer::global_controller() {
                         ctrl.composer().toggle_float();
                     }
                     tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
+                    dispatch_initial_gallery_expand(&shell_for_expand);
                 });
+            } else {
+                dispatch_initial_gallery_expand(&shell_for_expand);
             }
         });
     }
@@ -763,6 +795,23 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Startup Gallery expand wiring (gallery-immersive-redesign PR1.1) ──
+    // The initial Expand(Gallery) must exist as a named helper so the
+    // post-show startup timer can fire it AFTER composer::init_global and
+    // composer focus() (the old setup-time dispatch ran while the global
+    // controller was still None → fullscreen session was a silent no-op).
+    #[test]
+    fn initial_gallery_expand_mounts_gallery_screen() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+        let shell = shell::Shell::new(win.as_weak());
+        assert_eq!(win.get_mounted_screen(), 0, "precondition: Home");
+        dispatch_initial_gallery_expand(&shell);
+        assert_eq!(win.get_mounted_screen(), 1, "initial expand mounts Gallery");
+        assert!(win.get_expanded(), "Gallery mounts expanded");
+    }
 
     // ── Keyboard navigation logic (backend-testing) ──────────────────
     // Ignored by default: initializes the Slint testing backend which can

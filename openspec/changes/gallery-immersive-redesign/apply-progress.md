@@ -1,9 +1,18 @@
 # Apply Progress — gallery-immersive-redesign (Slice PR1 Tokens & Fullscreen)
 
 ## Slice
-PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · 1.9 [V] visual check pending for the user.
+PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 hotfix done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.1).
 
 ## Completed
+
+### PR1.1 Hotfix — fullscreen did not fire at startup (<80 lines)
+- [x] PR1.1.a [RED] `initial_gallery_expand_mounts_gallery_screen` (main.rs tests, headless `init_no_event_loop`) — named-helper contract: dispatching the initial Expand(Gallery) mounts Gallery (`mounted_screen == 1`, expanded). RED verified: E0425 before helper existed
+- [x] PR1.1.b [GREEN+WIRE] Extracted `dispatch_initial_gallery_expand(&Rc<RefCell<Shell>>)` in main.rs; REMOVED the setup-time dispatch (old line ~474) that ran BEFORE `composer::init_global` → `enter_gallery_session` was a silent no-op and the window stayed floating. The dispatch now fires from the 200ms post-show timer AFTER `ctrl.composer().focus()`: show → focus → expand(fullscreen session), so Hyprland has HVE mapped+focused when the fullscreen dispatch arrives
+- [x] PR1.1.c Tiling-mode ordering decision (documented per orchestrator request): when `startup_tiling` is ON, `toggle_float()` runs FIRST and the expand fires in the SAME 600ms tick after it (float → fullscreen). Rationale: `exit_gallery_session` restores floating geometry, so sessions are designed to start from a floating window; toggling float AFTER fullscreen risks dropping the fullscreen flag in Hyprland. Non-tiling path: expand right at 200ms after focus+rules
+- [x] PR1.1.d [WIRE] Tray-mode branch keeps an immediate initial expand so the first reveal still lands on Gallery (regression guard): composer dispatch is a harmless no-op while hidden (no mapped client → session stays inactive). Fullscreen-on-reveal for tray mode remains out of PR1.1 scope (noted risk below)
+- [x] PR1.1.e [WIRE] FIX 3 — ui/main.slint window background now conditional: `mounted-screen == 1 ? transparent : HveColors.bg-dark`. Real per-pixel window transparency via `background: transparent` (same keyword pattern as shell.slint slot-area from 1.8); Hyprland/Wayland composites ARGB so the desktop shows through behind GalleryRoot's alpha-0 backdrop. If [V] shows a black/opaque window instead, fallback plan is an elegant semi-transparent dark scrim (documented limit)
+
+## Pending
 
 ### PR1 Tokens & Fullscreen
 - [x] 1.1 [RED] FakeComposer session contract tests — `test_set_fullscreen_session_records_true_then_false` (exact sequence `set_fullscreen(true)`, `set_fullscreen(false)`) + `test_set_fullscreen_failure_returns_false_continues_windowed` (fallback-on-false), commit 046fb5e (RED verified: compile failure before trait method existed)
@@ -16,13 +25,14 @@ PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · 1.9 [V] visual check pending
 - [x] 1.8 [WIRE] GalleryRoot root transparent + black backdrop scrim fading 0→`backdrop-alpha` (in-property, default 0 = skwd no-dim default) over anim-300 on mount (`init => opened=true`); VerticalLayout now explicit 100%×100% (sibling breaks lone-layout auto-fill); shell.slint slot-area paints transparent only under gallery (`mounted-screen == 1`). Commit b7fd438
 
 ## Pending
-- [ ] 1.9 [V] USER VISUAL CHECK: `cargo run` → expand Gallery: undecorated fullscreen over live desktop; Esc/close restores prior float+geometry; simulate stuck start (fullscreen an HVE window, kill, relaunch) repairs to floating before first show.
+- [ ] 1.9 [V] USER VISUAL CHECK (re-run after PR1.1): `cargo run` → at startup Gallery mounts AND the window goes undecorated fullscreen over the live desktop (desktop visible through the transparent window); Esc/close restores prior float+geometry; simulate stuck start (fullscreen an HVE window, kill, relaunch) repairs to floating before first show.
 
 ## Verification
 - `cargo test composer` → 21 passed (13 prior + 2 session contract + 2 controller session + 4 sanity)
 - `cargo test ui_tests` → 7 passed (tokens corrected contract included)
 - `cargo test shell::` → 136 passed (hook path exercised with global=None skip)
-- Full suite: `cargo test` → **307 passed, 0 failed** · `cargo check` → **0 warnings**
+- Full suite: `cargo test` → **307 passed, 0 failed** · `cargo check` → **0 warnings** (PR1 baseline)
+- PR1.1 hotfix: `cargo test initial_gallery_expand` → RED (E0425) then GREEN; full suite `cargo test` → **308 passed, 0 failed** (+1 helper test) · `cargo check` → **0 warnings**
 
 ## Deviations / Notes for review
 - Design D1's V5 spelling was an open question and is now RESOLVED and corrected (see 1.3): `hl.dsp.window.fullscreen` nested under `window.`, string modes, set/unset actions. V4 branch kept exactly per design fallback contract.
