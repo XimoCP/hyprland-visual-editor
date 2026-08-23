@@ -1,7 +1,7 @@
 # Apply Progress — gallery-immersive-redesign (Slice PR1 Tokens & Fullscreen)
 
 ## Slice
-PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 hotfix done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.1).
+PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.2).
 
 ## Completed
 
@@ -11,6 +11,10 @@ PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 hotfix done · 1.9 [V]
 - [x] PR1.1.c Tiling-mode ordering decision (documented per orchestrator request): when `startup_tiling` is ON, `toggle_float()` runs FIRST and the expand fires in the SAME 600ms tick after it (float → fullscreen). Rationale: `exit_gallery_session` restores floating geometry, so sessions are designed to start from a floating window; toggling float AFTER fullscreen risks dropping the fullscreen flag in Hyprland. Non-tiling path: expand right at 200ms after focus+rules
 - [x] PR1.1.d [WIRE] Tray-mode branch keeps an immediate initial expand so the first reveal still lands on Gallery (regression guard): composer dispatch is a harmless no-op while hidden (no mapped client → session stays inactive). Fullscreen-on-reveal for tray mode remains out of PR1.1 scope (noted risk below)
 - [x] PR1.1.e [WIRE] FIX 3 — ui/main.slint window background now conditional: `mounted-screen == 1 ? transparent : HveColors.bg-dark`. Real per-pixel window transparency via `background: transparent` (same keyword pattern as shell.slint slot-area from 1.8); Hyprland/Wayland composites ARGB so the desktop shows through behind GalleryRoot's alpha-0 backdrop. If [V] shows a black/opaque window instead, fallback plan is an elegant semi-transparent dark scrim (documented limit)
+
+### PR1.2 Hotfix — dead keyboard after gallery mount + shell paints over the live desktop (<80 lines)
+- [x] PR1.2.a FIX B — ui/shell.slint ShellRoot background now conditional: `mounted-screen == 1 ? transparent : SkwdTokens.surface` (same proven ternary pattern as slot-area 1.8 and main.slint window bg from PR1.1). Root cause: the unconditional surface fill covers the WHOLE window (a Rectangle fills its bounds, including behind children), hiding MainWindow's transparent backdrop and GalleryRoot's alpha-0 scrim → user still saw a fullscreen opaque window
+- [x] PR1.2.b FIX A — keyboard focus re-seed: `init => { shell-kbd.focus(); }` + `changed mounted-screen => { shell-kbd.focus(); }` on ShellRoot. Root cause: `forward-focus` only seeds focus when the window is CREATED; when Gallery mounts and the compositor mutates to fullscreen the FocusScope loses internal focus → keys dead until a mouse click. Syntax verified against Slint docs: `changed` callbacks fire queued on the next event-loop tick and only when the value actually changed — i.e. after the newly mounted subtree settled. Rust-side `focus_window()` reinforcement NOT needed: window-level focus is already handled by the composer dispatch chain (PR1.1); the defect was internal widget focus
 
 ## Pending
 
@@ -33,6 +37,7 @@ PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 hotfix done · 1.9 [V]
 - `cargo test shell::` → 136 passed (hook path exercised with global=None skip)
 - Full suite: `cargo test` → **307 passed, 0 failed** · `cargo check` → **0 warnings** (PR1 baseline)
 - PR1.1 hotfix: `cargo test initial_gallery_expand` → RED (E0425) then GREEN; full suite `cargo test` → **308 passed, 0 failed** (+1 helper test) · `cargo check` → **0 warnings**
+- PR1.2 hotfix (slint-only): full suite `cargo test` → **308 passed, 0 failed** (no new Rust logic ⇒ no new tests) · `cargo build` + `cargo check` → clean, 0 warnings (build.rs compiles the .slint sources)
 
 ## Deviations / Notes for review
 - Design D1's V5 spelling was an open question and is now RESOLVED and corrected (see 1.3): `hl.dsp.window.fullscreen` nested under `window.`, string modes, set/unset actions. V4 branch kept exactly per design fallback contract.

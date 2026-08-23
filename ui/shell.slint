@@ -81,8 +81,22 @@ export component ShellRoot inherits Rectangle {
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
 
-    background: SkwdTokens.surface;
+    // Gallery mounts over the LIVE DESKTOP (gallery-immersive-redesign 1.8):
+    // while Gallery holds the screen the shell root must not paint either —
+    // an opaque surface fill here would cover MainWindow's transparent
+    // window backdrop and the alpha-0 GalleryRoot backdrop (hotfix PR1.2).
+    background: root.mounted-screen == 1 ? transparent : SkwdTokens.surface;
     forward-focus: shell-kbd;
+
+    // Keep keyboard focus across window mutations (hotfix PR1.2):
+    // `forward-focus` only seeds focus when the window is CREATED. When a
+    // screen mounts (e.g. Gallery at startup) and the compositor mutates the
+    // window to fullscreen, the FocusScope loses the internal focus and keys
+    // go dead until a mouse click. Re-seed on init and on every mount change;
+    // `changed` callbacks fire queued on the next event-loop tick, i.e. after
+    // the newly mounted subtree settled.
+    init => { shell-kbd.focus(); }
+    changed mounted-screen => { shell-kbd.focus(); }
 
     VerticalLayout {
         // ── Chrome top bar: branding + status placeholders ──
