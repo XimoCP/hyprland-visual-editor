@@ -81,6 +81,11 @@ export component SliceCarousel inherits Rectangle {
         root.fade-opacity(root.edge-norm-dist(i), root.edge-full-zone())
     }
 
+    pure function abs-dist(i: int, focused: int) -> int {
+        let d = i - focused;
+        d < 0 ? -d : d
+    }
+
     // ── Wheel (design D5): scroll events only ARM the gesture — the last
     // direction wins and the 400ms debounce Timer commits the snap after
     // the wheel idles. One gesture = one ±1 step, clamped/no-wrap in Rust
@@ -120,16 +125,63 @@ export component SliceCarousel inherits Rectangle {
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
 
-        // Paint order = declaration order (design D4, PR3): THREE visible-
-        // gated passes over the same model — idle row first (bottom), then
-        // the hovered card, then the current card (top). Runtime z-index
-        // does not exist in Slint (`z` must be a compile-time constant), so
-        // layering is expressed as conditional layers; exactly one LIVE
-        // delegate per card (the others neither paint nor hit-test), and
-        // instances persist across swaps so no state is lost on focus/hover
-        // changes (PR2.HF regression 2 extended to three layers).
+        // Paint order = declaration order (design D4, PR3): idle passes
+        // tiered by distance from focused (skwd-wall z: 50 - |index -
+        // currentIndex|, current 100, hovered 90) — Slint `z` is
+        // compile-time constant so only paint order can encode distance.
+        // Farthest idle behind, nearest idle on top, then hovered, then
+        // current on top. 6 idle distance tiers (≥5..1) + hovered + current
+        // = 8 passes total, covering the visible −30 overlap exactly:
+        // left side already paints far→near via left→right but right side
+        // needed reversal — the distance tiers make both sides far-first.
+        // Instances persist across swaps (PR2.HF regression) so no state is
+        // lost when a card hops layers.
         for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i != root.hovered-index;
+            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) >= 5;
+            x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+            hovered(h) => { root.hovered-index = h ? i : -1; }
+        }
+        for card[i] in root.cards : SliceDelegate {
+            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 4;
+            x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+            hovered(h) => { root.hovered-index = h ? i : -1; }
+        }
+        for card[i] in root.cards : SliceDelegate {
+            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 3;
+            x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+            hovered(h) => { root.hovered-index = h ? i : -1; }
+        }
+        for card[i] in root.cards : SliceDelegate {
+            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 2;
+            x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+            hovered(h) => { root.hovered-index = h ? i : -1; }
+        }
+        for card[i] in root.cards : SliceDelegate {
+            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 1;
             x: root.cum-offset(i, root.focused-index);
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;

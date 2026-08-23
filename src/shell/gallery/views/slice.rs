@@ -104,8 +104,13 @@ pub fn dim_level(state: SliceCardState) -> f32 {
 
 /// Paint-layer rank for card `i` (design D4): runtime z-index does NOT
 /// exist in Slint (`z` must be a compile-time constant), so the carousel
-/// paints THREE conditional passes in rank order — 0 idle (bottom),
-/// 1 hovered, 2 current (top). Mirrors skwd's z-rank 100/90/50−dist.
+/// paints distance-tiered idle passes (farthest behind, nearest on top,
+/// matching skwd `z: 50 - |index - currentIndex|`) plus hovered/current
+/// on top. `z_layer` encodes only the three-state tier — 0 idle (bottom),
+/// 1 hovered, 2 current (top) — and the Slint distance-tiered paint order
+/// in `ui/gallery/SliceCarousel.slint` is the source of truth for the
+/// right-side reversal (farther first, nearer later). Mirrors skwd's
+/// z-rank 100/90/50−dist.
 pub fn z_layer(i: usize, focused: usize, hovered: Option<usize>) -> u8 {
     if i == focused {
         2
