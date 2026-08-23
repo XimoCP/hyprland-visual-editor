@@ -21,6 +21,10 @@ export component SliceCarousel inherits Rectangle {
     callback card-right-clicked(int);
     callback wheel-step(int); // +1 next / −1 previous, once per gesture
 
+    // Index currently under the pointer (−1 = none); feeds the hovered
+    // paint layer (design D4). Delegates report enter/leave via hovered().
+    in-out property <int> hovered-index: -1;
+
     // Stage clips the sliding row (cards travel beyond both edges).
     clip: true;
 
@@ -116,16 +120,16 @@ export component SliceCarousel inherits Rectangle {
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
 
-        // Paint order = child order (PR2.HF regression 2): neighbors paint
-        // FIRST, the focused card paints LAST so it overlaps each neighbor
-        // by exactly gap (−30px) instead of losing its expanded edges to
-        // right-of-focus siblings. All cards share the row's 520px height
-        // and baseline (y = 0). Two visible-gated passes keep one instance
-        // per card alive per pass (no state loss on focus change); invisible
-        // copies neither paint nor hit-test, so clicks/wheel behave as with
-        // a single pass.
+        // Paint order = declaration order (design D4, PR3): THREE visible-
+        // gated passes over the same model — idle row first (bottom), then
+        // the hovered card, then the current card (top). Runtime z-index
+        // does not exist in Slint (`z` must be a compile-time constant), so
+        // layering is expressed as conditional layers; exactly one LIVE
+        // delegate per card (the others neither paint nor hit-test), and
+        // instances persist across swaps so no state is lost on focus/hover
+        // changes (PR2.HF regression 2 extended to three layers).
         for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index;
+            visible: i != root.focused-index && i != root.hovered-index;
             x: root.cum-offset(i, root.focused-index);
             fade-opacity: root.card-fade-opacity(i);
             card-name: card.name;
@@ -133,6 +137,19 @@ export component SliceCarousel inherits Rectangle {
             accent: card.accent;
             clicked => { root.card-clicked(i); }
             right-clicked => { root.card-right-clicked(i); }
+            hovered(h) => { root.hovered-index = h ? i : -1; }
+        }
+
+        for card[i] in root.cards : SliceDelegate {
+            visible: i != root.focused-index && i == root.hovered-index;
+            x: root.cum-offset(i, root.focused-index);
+            fade-opacity: root.card-fade-opacity(i);
+            card-name: card.name;
+            is-current: i == root.focused-index;
+            accent: card.accent;
+            clicked => { root.card-clicked(i); }
+            right-clicked => { root.card-right-clicked(i); }
+            hovered(h) => { root.hovered-index = h ? i : -1; }
         }
 
         for card[i] in root.cards : SliceDelegate {

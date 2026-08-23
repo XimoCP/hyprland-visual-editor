@@ -248,6 +248,10 @@ export component SliceDelegate inherits Rectangle {
     ]
     // Also stop timer when flipped (back face shows metadata, not preview)
     out property <bool> has-hover: touch.has-hover;
+    // Hover routing for the three-layer paint order (design D4): the
+    // carousel lifts the hovered card one layer above idle siblings.
+    changed has-hover => { root.hovered(self.has-hover); }
+    callback hovered(bool);
 
     // ── Hit-test mask non-rect (parallelogram) ──
     // TouchArea covers the bounding rect, but we gate clicks with
