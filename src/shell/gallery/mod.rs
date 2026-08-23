@@ -7,6 +7,7 @@
 
 pub mod model;
 pub mod slot;
+pub mod thumbs;
 pub mod views;
 
 pub use model::{Background, BorderConfig, GalleryColors, ThemeCard, ThemeGalleryModel};
