@@ -139,6 +139,28 @@ pub fn setup_callbacks(
         });
     }
 
+    // ── Gallery wheel (PR2.10, design D5): the Slint debounce Timer fires
+    // once per idle gesture; here we advance ±1 via the headless-tested
+    // wheel_target (clamped, no wrap) and mirror gallery-focused back. ──
+    {
+        let weak = window.as_weak();
+        window.on_gallery_wheel_step(move |dir| {
+            use slint::Model;
+            if let Some(w) = weak.upgrade() {
+                let len = w.get_gallery_cards().row_count();
+                if len > 0 {
+                    let cur = w.get_gallery_focused();
+                    let next = crate::shell::gallery::views::slice::wheel_target(
+                        len,
+                        cur.max(0) as usize,
+                        dir as isize,
+                    );
+                    w.set_gallery_focused(next as i32);
+                }
+            }
+        });
+    }
+
     // System toggle — skip first call (UI fires on init)
     {
         let state = state.clone();

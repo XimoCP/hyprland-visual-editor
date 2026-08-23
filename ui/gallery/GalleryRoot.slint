@@ -33,6 +33,7 @@ export component GalleryRoot inherits Rectangle {
     callback style-selected(int);
     callback card-clicked(int);
     callback card-right-clicked(int);
+    callback wheel-step(int); // debounced ±1 gesture from SliceCarousel
 
     // Immersive presentation (gallery-immersive-redesign 1.8): the root
     // stops painting an opaque surface — HVE runs fullscreen over the live
@@ -84,6 +85,7 @@ export component GalleryRoot inherits Rectangle {
                 focused-index: root.focused-index;
                 card-clicked(i) => { root.card-clicked(i); }
                 card-right-clicked(i) => { root.card-right-clicked(i); }
+                wheel-step(dir) => { root.wheel-step(dir); }
             }
 
             // Style 1 — Hexagon: honeycomb grid, rows of three with odd-row

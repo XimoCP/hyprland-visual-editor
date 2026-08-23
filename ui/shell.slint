@@ -80,6 +80,7 @@ export component ShellRoot inherits Rectangle {
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
+    callback gallery-wheel-step(int);
 
     // Gallery mounts over the LIVE DESKTOP (gallery-immersive-redesign 1.8):
     // while Gallery holds the screen the shell root must not paint either —
@@ -184,6 +185,7 @@ export component ShellRoot inherits Rectangle {
                 style-selected(style) => { root.gallery-style-selected(style); }
                 card-clicked(idx) => { root.gallery-card-clicked(idx); }
                 card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
+                wheel-step(dir) => { root.gallery-wheel-step(dir); }
             }
             if root.mounted-screen == 2 : SlotPlaceholder {
                 placeholder-text: root.slot-workshop-hint;
