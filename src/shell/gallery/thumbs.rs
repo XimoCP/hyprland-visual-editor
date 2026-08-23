@@ -108,11 +108,50 @@ pub fn cache_dir() -> PathBuf {
 /// File extensions eligible as thumbnail sources.
 const SOURCE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
 
+/// Try the provider wallpapers.json files first (FIX1): themes store the
+/// real wallpaper paths there, not as loose files. Priority:
+/// wallpapers[DP-3].dark/light, wallpapers[""].dark/light,
+/// wallpapers[FALLBACK].dark/light, defaultWallpaper,
+/// usedRandomWallpapers[DP-3][0]. First existing path wins.
+fn wallpaper_from_provider_json(theme_dir: &Path) -> Option<PathBuf> {
+    for rel in ["providers/noctalia/wallpapers.json", "providers/wallpaper/wallpapers.json"] {
+        let p = theme_dir.join(rel);
+        if !p.exists() { continue; }
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                let mut cands: Vec<String> = Vec::new();
+                if let Some(wp) = v.get("wallpapers").and_then(|x| x.as_object()) {
+                    for key in ["DP-3", "", "FALLBACK"] {
+                        if let Some(e) = wp.get(key) {
+                            if let Some(s) = e.get("dark").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
+                            if let Some(s) = e.get("light").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
+                        }
+                    }
+                }
+                if let Some(s) = v.get("defaultWallpaper").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
+                if let Some(used) = v.get("usedRandomWallpapers").and_then(|x| x.as_object()) {
+                    if let Some(arr) = used.get("DP-3").and_then(|x| x.as_array()) {
+                        if let Some(s) = arr.first().and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
+                    }
+                }
+                for cand in cands {
+                    let pb = PathBuf::from(&cand);
+                    if pb.exists() { return Some(pb); }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Find the first usable image file inside a theme directory (task 4.7
 /// source discovery). Themes currently persist provider state under their
 /// directory; the scan is depth-first over sorted entries so results are
 /// deterministic. None = theme has no image source (skeleton stays).
 pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
+    if let Some(hit) = wallpaper_from_provider_json(theme_dir) {
+        return Some(hit);
+    }
     let mut files: Vec<PathBuf> = std::fs::read_dir(theme_dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -325,4 +364,41 @@ mod tests {
         assert_eq!(jobs[1].index, 2);
         assert_eq!(jobs[1].name, "C");
     }
+
+    // ── FIX1: wallpapers.json provider discovery ─────────────────────
+
+    #[test]
+    fn find_source_prefers_wallpaper_json_over_loose_scan() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let real = dir.path().join("real.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([0u8, 0, 0, 255])).save(&real).unwrap();
+        let prov = dir.path().join("providers/noctalia");
+        std::fs::create_dir_all(&prov).unwrap();
+        let json = serde_json::json!({
+            "wallpapers": { "DP-3": { "dark": real.to_string_lossy(), "light": real.to_string_lossy() } },
+            "defaultWallpaper": "/nope/missing.png"
+        });
+        std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&json).unwrap()).unwrap();
+        // loose file that would be found by scan but should be ignored when JSON hits
+        std::fs::write(dir.path().join("loose.jpg"), b"dummy").unwrap();
+        let found = find_source_image(dir.path()).expect("json source");
+        assert_eq!(found, real);
+    }
+
+    #[test]
+    fn find_source_json_falls_back_to_scan_when_candidates_missing() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let prov = dir.path().join("providers/wallpaper");
+        std::fs::create_dir_all(&prov).unwrap();
+        let json = serde_json::json!({
+            "wallpapers": { "DP-3": { "dark": "/tmp/missing-a.png", "light": "/tmp/missing-b.png" } },
+            "defaultWallpaper": "/tmp/missing-c.png"
+        });
+        std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&json).unwrap()).unwrap();
+        let loose = dir.path().join("fallback.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255])).save(&loose).unwrap();
+        let found = find_source_image(dir.path()).expect("fallback scan");
+        assert_eq!(found.file_name().unwrap(), "fallback.png");
+    }
+
 }
