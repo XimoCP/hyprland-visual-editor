@@ -56,11 +56,6 @@ export component SliceDelegate inherits Rectangle {
     in property <color> accent: SkwdTokens.fallback-accent;
     in property <image> thumb;
     in property <bool> has-video: false;
-    // Direction-aware mirror forwarded from SliceCarousel nav-dir (1 right,
-    // -1 left, 0 init): left mirrors the OutCubic so expand feels inverse.
-    in property <int> nav-dir: 0;
-    property <easing> ease-right: cubic-bezier(0.215, 0.61, 0.355, 1);
-    property <easing> ease-left: cubic-bezier(0.645, 0.045, 0.785, 0.39);
     // Depth-cue edge fade (design D4): computed by SliceCarousel from the
     // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
     in property <float> fade-opacity: 1.0;
@@ -82,7 +77,7 @@ export component SliceDelegate inherits Rectangle {
     height: SkwdTokens.gallery-slice-h;
     animate width {
         duration: SkwdTokens.anim-expand;
-        easing: root.nav-dir < 0 ? root.ease-left : root.ease-right;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
     }
 
     // Viewbox numbers (unitless): face spans (width + skew) × height.
