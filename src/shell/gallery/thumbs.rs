@@ -144,12 +144,24 @@ fn wallpaper_from_provider_json(theme_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+fn wallpaper_from_txt(theme_dir: &Path) -> Option<PathBuf> {
+    for rel in ["providers/noctalia-v5/wallpaper.txt", "providers/noctalia/wallpaper.txt"] {
+        if let Ok(text) = std::fs::read_to_string(theme_dir.join(rel)) {
+            if let Some(line) = text.lines().map(|l| l.trim()).find(|l| !l.is_empty()) { let p = PathBuf::from(line); if p.exists() { return Some(p); } }
+        }
+    }
+    None
+}
+
 /// Find the first usable image file inside a theme directory (task 4.7
 /// source discovery). Themes currently persist provider state under their
 /// directory; the scan is depth-first over sorted entries so results are
 /// deterministic. None = theme has no image source (skeleton stays).
 pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
     if let Some(hit) = wallpaper_from_provider_json(theme_dir) {
+        return Some(hit);
+    }
+    if let Some(hit) = wallpaper_from_txt(theme_dir) {
         return Some(hit);
     }
     let mut files: Vec<PathBuf> = std::fs::read_dir(theme_dir)
@@ -399,6 +411,22 @@ mod tests {
         image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255])).save(&loose).unwrap();
         let found = find_source_image(dir.path()).expect("fallback scan");
         assert_eq!(found.file_name().unwrap(), "fallback.png");
+    }
+
+    #[test]
+    fn find_source_discovers_wallpaper_txt_and_json_takes_priority() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let a = dir.path().join("a.png"); image::RgbaImage::from_pixel(10,10,image::Rgba([0u8,0,0,255])).save(&a).unwrap();
+        let b = dir.path().join("b.png"); image::RgbaImage::from_pixel(10,10,image::Rgba([1u8,1,1,255])).save(&b).unwrap();
+        let tp = dir.path().join("providers/noctalia-v5/wallpaper.txt");
+        std::fs::create_dir_all(tp.parent().unwrap()).unwrap();
+        std::fs::write(&tp, format!("{}\n", a.display())).unwrap();
+        assert_eq!(find_source_image(dir.path()).unwrap(), a);
+        let prov = dir.path().join("providers/noctalia");
+        std::fs::create_dir_all(&prov).unwrap();
+        let j = serde_json::json!({"wallpapers":{"DP-3":{"dark":b.to_string_lossy()}}});
+        std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&j).unwrap()).unwrap();
+        assert_eq!(find_source_image(dir.path()).unwrap(), b, "JSON priority over txt");
     }
 
 }
