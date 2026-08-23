@@ -1,11 +1,11 @@
 // HVE 2 — FilterBar (gallery-immersive-redesign PR4.1, design D7).
 //
 // Floating top-center style selector translated 1:1 from skwd-wall
-// (MIT, © liixini): the bar hides behind an INVISIBLE 24px hover-reveal
+// (MIT, © liixini): the bar hides behind an INVISIBLE 30px hover-reveal
 // strip pinned to the top edge; entering the strip slides the bar down
-// (250ms) and leaving it arms a 250ms auto-hide Timer. Top margin 24
-// (flush with strip to eliminate 6px dead zone), max width parent − 20
-// (spec: Floating FilterBar Chrome).
+// (250ms) and leaving it arms a 250ms auto-hide Timer. Top margin 30
+// (strip 0-30 contiguous with bar y30, no dead zone), max width
+// parent − 20 (spec: Floating FilterBar Chrome).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -95,15 +95,15 @@ export component FilterBar inherits Rectangle {
         }
     }
 
-    // ── Invisible 24px reveal strip: always active across the full top
-    // edge. The top 24px is empty backdrop (design D7 risk note), so the
+    // ── Invisible 30px reveal strip: always active across the full top
+    // edge. The top 30px is empty backdrop (design D7 risk note), so the
     // strip cannot steal clicks from anything else. TouchArea exposes
     // hover via has-hover (no entered/exited callbacks in Slint 1.17). ──
     strip := TouchArea {
         x: 0;
         y: 0;
         width: 100%;
-        height: 24px;
+        height: 30px;
         changed has-hover => {
             if (self.has-hover) {
                 root.revealed = true;
@@ -111,14 +111,13 @@ export component FilterBar inherits Rectangle {
         }
     }
 
-    // ── Bar body: flush at y=24 when revealed (no 6px dead zone between
-    // strip 0-24 and bar 30-...), centered, max width parent − 20.
-    // Hidden state parks it under the top edge (clip-safe slide-up);
-    // reveal slides it to y=24 over 250ms (spec Hover reveal scenario,
-    // adjusted from 30 to 24 for contiguous hover). ──
+    // ── Bar body: flush at y=30 when revealed (strip 0-30 contiguous with
+    // bar, no 6px dead zone), centered, max width parent − 20. Hidden
+    // state parks it under the top edge (clip-safe slide-up); reveal
+    // slides it to y=30 over 250ms (spec Hover reveal, top-margin 30). ──
     bar := Rectangle {
         x: (parent.width - self.width) / 2;
-        y: root.revealed ? 24px : -self.height;
+        y: root.revealed ? 30px : -self.height;
         width: min(parent.width - 20px, self.pill-pad * 2 + pills.width);
         height: pills.height;
         border-radius: SkwdTokens.radius-8;
@@ -160,7 +159,7 @@ export component FilterBar inherits Rectangle {
                 selected => { root.style-selected(0); }
             }
             mosaic-pill := SkewPill {
-                x: slice-pill.width;
+                x: slice-pill.width - 10px;
                 y: 14px;
                 label: "Mosaic";
                 active: root.current-style == 2;
