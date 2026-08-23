@@ -655,4 +655,70 @@ mod tests {
         view.set_focused_index(1);
         assert_eq!(view.video_state(), VideoState::Released, "pending → released on blur");
     }
+
+    // ── 3.1 depth cues: edge fade (design D4, skwd-wall exact) ──────────
+
+    #[test]
+    fn edge_fade_full_zone_skwd_formula() {
+        // fullZone = min(0.6, (462 + 2·105) / halfView) — numerator 672.
+        assert_eq!(edge_fade_full_zone(640.0), 0.6, "1280px viewport clamps at cap");
+        assert_eq!(edge_fade_full_zone(1120.0), 0.6, "672/1120 boundary stays 0.6");
+        assert_eq!(edge_fade_full_zone(1200.0), 0.56, "2400px viewport: 672/1200");
+        assert_eq!(edge_fade_full_zone(0.0), 0.6, "degenerate halfView safe");
+        assert_eq!(EDGE_FADE_END, 1.2, "fade reaches 0 at normDist 1.2");
+        assert_eq!(EDGE_FADE_FULL_ZONE_CAP, 0.6);
+    }
+
+    #[test]
+    fn edge_norm_dist_uses_half_view_units() {
+        assert_eq!(edge_norm_dist(1000.0, 640.0, 640.0), 0.5625, "|360|/640");
+        assert_eq!(edge_norm_dist(300.0, 1000.0, 700.0), 1.0, "one half-view away");
+        assert_eq!(edge_norm_dist(500.0, 500.0, 640.0), 0.0, "centered card");
+        assert_eq!(edge_norm_dist(100.0, 900.0, 0.0), 0.0, "zero halfView safe");
+    }
+
+    #[test]
+    fn fade_opacity_flat_inside_full_zone_linear_to_zero_at_1_2() {
+        let fz = edge_fade_full_zone(640.0); // 0.6
+        assert_eq!(fade_opacity(0.0, fz), 1.0);
+        assert_eq!(fade_opacity(fz, fz), 1.0, "zone edge still full");
+        assert_eq!(fade_opacity(0.9, fz), 0.5, "falloff midpoint");
+        assert_eq!(fade_opacity(1.199, fz) > 0.0, true, "still fading before end");
+        assert_eq!(fade_opacity(1.2, fz), 0.0, "gone at normDist 1.2");
+        assert_eq!(fade_opacity(2.0, fz), 0.0, "clamped beyond end");
+    }
+
+    #[test]
+    fn fade_opacity_narrow_viewport_zone() {
+        // fz = 0.56 (2400px wide): falloff spans 0.56..1.2.
+        let fz = edge_fade_full_zone(1200.0);
+        assert_eq!(fade_opacity(0.56, fz), 1.0);
+        assert_eq!(fade_opacity(0.88, fz), 0.5);
+        assert_eq!(fade_opacity(1.2, fz), 0.0);
+    }
+
+    #[test]
+    fn card_center_x_collapsed_and_expanded() {
+        assert_eq!(card_center_x(0, 0), 462.0, "expanded card center");
+        assert_eq!(card_center_x(1, 0), 961.5, "894 + 135/2");
+        assert_eq!(card_center_x(2, 2), 672.0, "210 + 462");
+    }
+
+    // ── 3.1 depth cues: dim level + paint-layer rank (design D4) ────────
+
+    #[test]
+    fn dim_level_skwd_values() {
+        assert_eq!(dim_level(SliceCardState::Current), 0.0);
+        assert_eq!(dim_level(SliceCardState::Hovered), 0.15);
+        assert_eq!(dim_level(SliceCardState::Idle), 0.4);
+    }
+
+    #[test]
+    fn z_layer_current_above_hovered_above_idle() {
+        assert_eq!(z_layer(2, 2, None), 2, "current paints topmost");
+        assert_eq!(z_layer(2, 2, Some(2)), 2, "hover on current stays current layer");
+        assert_eq!(z_layer(1, 2, Some(1)), 1, "hovered above idle");
+        assert_eq!(z_layer(0, 2, None), 0, "idle bottom");
+        assert_eq!(z_layer(0, 2, Some(3)), 0);
+    }
 }
