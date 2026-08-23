@@ -413,14 +413,62 @@ fn main() -> Result<(), slint::PlatformError> {
                                 .map(|p| p.to_string_lossy().to_string())
                                 .unwrap_or_default(),
                         ),
+                        // Filled asynchronously by the thumbs pipeline (4.7).
+                        thumb: slint::Image::default(),
                     }
                 })
                 .collect()
+        }
+        // ── Thumbs pipeline (gallery-immersive-redesign 4.7 / design D8):
+        // plan jobs for cards whose source image exists, generate off-thread
+        // and marshal finished images back through the window weak handle.
+        // Sources are DISCOVERED under the theme storage root (config_dir/
+        // hve/themes/<name>/...) — the engine is sealed, so no accessor is
+        // added; the layout is only read, never written here. ──
+        let gallery_themes_root = config_dir.join("hve").join("themes");
+        fn schedule_thumbs(
+            weak: &slint::Weak<crate::MainWindow>,
+            themes_root: &std::path::Path,
+        ) {
+            use crate::shell::gallery::thumbs;
+            use slint::Model;
+            let Some(w) = weak.upgrade() else { return };
+            let model = w.get_gallery_cards();
+            let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
+            for i in 0..model.row_count() {
+                if let Some(row) = model.row_data(i) {
+                    if row.thumb.size().width > 0 {
+                        continue; // already marshaled — no duplicate work
+                    }
+                    let src = thumbs::find_source_image(&themes_root.join(row.name.as_str()));
+                    sources.push((i as usize, row.name.to_string(), src));
+                }
+            }
+            drop(w);
+            let ready_weak = weak.clone();
+            thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png| {
+                // Runs ON the UI thread (invoke_from_event_loop). The stale-
+                // write guard re-reads the CURRENT model so a refresh that
+                // reordered rows between schedule and marshal cannot misplace
+                // a thumbnail. Image loading happens here too — slint::Image
+                // is not Send, only the path crosses threads.
+                if let Some(w) = ready_weak.upgrade() {
+                    let model = w.get_gallery_cards();
+                    let img = slint::Image::load_from_path(&png).unwrap_or_default();
+                    if let Some(mut row) = model.row_data(idx) {
+                        if row.name.as_str() == &*name {
+                            row.thumb = img;
+                            model.set_row_data(idx, row);
+                        }
+                    }
+                }
+            });
         }
         let cards = to_gallery_cards(&gallery_tm.lock().unwrap());
         let empty = cards.is_empty();
         window.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
         window.set_gallery_empty(empty);
+        schedule_thumbs(&window.as_weak(), &gallery_themes_root);
         window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
         window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
         window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
@@ -469,6 +517,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if let Some(w) = win.upgrade() {
                             w.set_gallery_cards(ModelRc::new(VecModel::from(refreshed)));
                         }
+                        schedule_thumbs(&win, &gallery_themes_root);
                     }
                 }
             });

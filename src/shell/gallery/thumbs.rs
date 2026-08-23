@@ -105,6 +105,87 @@ pub fn cache_dir() -> PathBuf {
     base.join("hve").join("thumbs")
 }
 
+/// File extensions eligible as thumbnail sources.
+const SOURCE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
+
+/// Find the first usable image file inside a theme directory (task 4.7
+/// source discovery). Themes currently persist provider state under their
+/// directory; the scan is depth-first over sorted entries so results are
+/// deterministic. None = theme has no image source (skeleton stays).
+pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(theme_dir)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    files.sort();
+    // Images first at this level, then recurse into subdirectories
+    // (provider subdirs like wallpaper/), keeping traversal ordered.
+    if let Some(hit) = files.iter().find(|p| {
+        p.is_file()
+            && p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| SOURCE_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+                .unwrap_or(false)
+    }) {
+        return Some(hit.clone());
+    }
+    for dir in files.iter().filter(|p| p.is_dir()) {
+        if let Some(hit) = find_source_image(dir) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+/// One off-thread thumbnail request (task 4.7).
+#[derive(Debug, Clone)]
+pub struct PreheatJob {
+    /// Card row index in the UI model.
+    pub index: usize,
+    /// Card name captured for stale-write guards on marshal.
+    pub name: String,
+    pub source: PathBuf,
+}
+
+/// Pure planner: keep only cards that have a source image (task 4.7).
+pub fn plan_jobs(sources: Vec<(usize, String, Option<PathBuf>)>) -> Vec<PreheatJob> {
+    sources
+        .into_iter()
+        .filter_map(|(index, name, source)| {
+            source.map(|source| PreheatJob { index, name, source })
+        })
+        .collect()
+}
+
+/// Generate thumbnails OFF-THREAD and marshal each finished one to the UI
+/// thread via `slint::invoke_from_event_loop`, invoking `ready(index, name,
+/// png_path)` there (task 4.7 / design D8). One thread per job — galleries
+/// are small; failures log a warning and never block the UI. Only Send data
+/// crosses the boundary (the PNG PATH, not a decoded image): `slint::Image`
+/// wraps non-Send backend storage, so the UI side loads it from disk.
+/// `ready` must be Send+Sync because it travels inside an Arc.
+pub fn preheat(
+    jobs: Vec<PreheatJob>,
+    ready: impl Fn(usize, std::sync::Arc<str>, PathBuf) + Send + Sync + 'static,
+) {
+    let ready = std::sync::Arc::new(ready);
+    for job in jobs {
+        let ready = ready.clone();
+        std::thread::spawn(move || {
+            match generate(&job.source, &cache_dir()) {
+                Ok(png) => {
+                    let idx = job.index;
+                    let name: std::sync::Arc<str> = std::sync::Arc::from(job.name.as_str());
+                    let _ = slint::invoke_from_event_loop(move || ready(idx, name, png));
+                }
+                Err(e) => {
+                    tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.source.display(), e);
+                }
+            }
+        });
+    }
+}
+
 // ── 4.5 RED tests ──────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -204,5 +285,44 @@ mod tests {
 
         let second = super::generate(&src, &out_dir).expect("regenerate");
         assert_eq!(first, second, "same key short-circuits to the cached png");
+    }
+
+    // ── 4.7 WIRE: source discovery + off-thread planner ──
+
+    #[test]
+    fn find_source_scans_theme_dir_deterministically() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let nested = dir.path().join("wallpaper");
+        std::fs::create_dir_all(&nested).expect("mkdir");
+        std::fs::write(dir.path().join("meta.json"), b"{}").expect("meta");
+        std::fs::write(nested.join("a.txt"), b"nope").expect("txt");
+        let img = nested.join("bg.jpg");
+        // Discovery is extension-based (decode happens later in generate),
+        // so plain bytes are enough here.
+        std::fs::write(&img, b"not-a-real-image").expect("jpg");
+
+        let found = find_source_image(dir.path()).expect("source found");
+        assert_eq!(found.file_name().unwrap(), "bg.jpg");
+    }
+
+    #[test]
+    fn find_source_none_without_images() {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::write(dir.path().join("meta.json"), b"{}").expect("meta");
+        assert!(find_source_image(dir.path()).is_none(), "no images -> None");
+        assert!(find_source_image(&dir.path().join("missing")).is_none(), "missing dir safe");
+    }
+
+    #[test]
+    fn plan_jobs_keeps_only_sourced_cards() {
+        let jobs = plan_jobs(vec![
+            (0, "A".into(), Some(PathBuf::from("/a.png"))),
+            (1, "B".into(), None),
+            (2, "C".into(), Some(PathBuf::from("/c.jpg"))),
+        ]);
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].index, 0);
+        assert_eq!(jobs[1].index, 2);
+        assert_eq!(jobs[1].name, "C");
     }
 }

@@ -23,6 +23,10 @@ export struct GalleryCardData {
     border-color: color,
     shader: string,
     thumb-path: string,
+    // Decoded thumbnail (gallery-immersive-redesign 4.7, design D8):
+    // marshaled from the Rust thumbs pipeline; empty until ready so
+    // delegates can gate a skeleton shimmer on `thumb.width > 0`.
+    thumb: image,
 }
 
 export component ThemeCardDelegate inherits Rectangle {
