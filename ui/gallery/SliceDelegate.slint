@@ -262,6 +262,22 @@ export component SliceDelegate inherits Rectangle {
         }
     }
 
+    // ── Dim overlay (design D4 / skwd DimOverlay): black alpha 0 current /
+    // 0.15 hover / 0.4 idle, 200ms — mirrors slice.rs::dim_level ∘
+    // card_state (current wins over hover). Same SliceShape geometry,
+    // painted ABOVE the front/back containers so the whole face dims
+    // uniformly; edge fade on the root dissolves it at the stage edges. ──
+    dim := SliceShape {
+        x: -root.pad;
+        y: -root.pad;
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: #000000;
+        opacity: root.is-current ? 0.0 : (root.has-hover ? 0.15 : 0.4);
+        animate opacity { duration: SkwdTokens.anim-200; }
+    }
+
     // ── Video Timer 100-300ms (default 200): Timer triggered → playing ──
     // Spec S16: start after 100-300ms when card becomes current; S17: release on blur.
     property <bool> video-playing: false;
