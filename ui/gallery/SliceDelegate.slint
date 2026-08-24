@@ -55,6 +55,9 @@ export component SliceDelegate inherits Rectangle {
     in property <bool> is-flipped: false;
     in property <color> accent: SkwdTokens.fallback-accent;
     in property <image> thumb;
+    // Aspect-true hero decode (HF5): large CONTAIN fit ≤1600×900 shown on
+    // the expanded card instead of the stretched portrait thumb.
+    in property <image> hero;
     in property <bool> has-video: false;
     // Depth-cue edge fade (design D4): computed by SliceCarousel from the
     // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
@@ -199,13 +202,17 @@ export component SliceDelegate inherits Rectangle {
             opacity: is-flipped ? 0.0 : 1.0;
             animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
 
-        // ── Thumbnail pipeline (gallery-immersive-redesign 4.8 / spec Real
-        // Wallpaper Thumbnails): skeleton SHIMMER while no decoded thumb is
-        // marshaled (`thumb.width == 0`), 200ms OutCubic fade-in when it
-        // lands. The 120ms preheat Timer stays as the anti-flash gate from
+        // ── Thumbnail + hero pipeline (gallery-immersive-redesign 4.8 +
+        // HF5 / spec Real Wallpaper Thumbnails): skeleton SHIMMER while no
+        // decoded image is marshaled, 200ms OutCubic fade-in when it lands.
+        // The 120ms preheat Timer stays as the anti-flash gate from
         // PR2.HF.c: the hidden focused-overlay copy warms before first use.
-        // sourceSize 400x720 is enforced upstream by thumbs.rs cover-crop;
-        // source-clip here caps decode memory defensively (R8). ──
+        // The portrait thumb keeps its defensive 400×720 source-clip (R8);
+        // the hero uses a SEPARATE Image element WITHOUT source-clip —
+        // source-clip crops in SOURCE coordinates and would destroy the
+        // ≤1600×900 aspect-true decode. Expanded card shows the hero with
+        // cover (fills the landscape face, no distortion); collapsed cards
+        // keep the cover-cropped thumb. `fill` is banned: it stretches.
         Rectangle {
             vertical-stretch: 1;
             clip: true;
@@ -214,6 +221,9 @@ export component SliceDelegate inherits Rectangle {
 
             property <bool> preheat-done: false;
             property <bool> has-thumb: self.preheat-done && root.thumb.width > 0;
+            // Hero only ever shows on the expanded (current) card; a
+            // collapsed card never consumes its hero decode.
+            property <bool> has-hero: self.preheat-done && root.is-current && root.hero.width > 0;
 
             preheat-timer := Timer {
                 interval: 120ms;
@@ -225,17 +235,17 @@ export component SliceDelegate inherits Rectangle {
             }
 
             // Shimmer: accent-tinted veil pulsing while waiting (Timer-driven
-            // phase alternation; stops once the thumb arrives).
+            // phase alternation; stops once any decoded image arrives).
             property <bool> shimmer-high: false;
             shimmer-timer := Timer {
                 interval: 700ms;
-                running: !parent.has-thumb;
+                running: !(parent.has-thumb || parent.has-hero);
                 triggered => { parent.shimmer-high = !parent.shimmer-high; }
             }
 
             shimmer := Rectangle {
                 background: #000000;
-                opacity: parent.has-thumb ? 0.0
+                opacity: (parent.has-thumb || parent.has-hero) ? 0.0
                     : (parent.shimmer-high ? 0.06 : 0.16);
                 animate opacity { duration: 600ms; easing: ease-in-out; }
                 Text {
@@ -251,11 +261,30 @@ export component SliceDelegate inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 source: root.thumb;
-                image-fit: root.is-current ? fill : cover;
+                image-fit: cover;
                 source-clip-width: 400;
                 source-clip-height: 720;
-                visible: parent.has-thumb;
-                opacity: parent.has-thumb ? 1.0 : 0.0;
+                visible: parent.has-thumb && !parent.has-hero;
+                opacity: parent.has-thumb && !parent.has-hero ? 1.0 : 0.0;
+                animate opacity {
+                    duration: SkwdTokens.anim-200;
+                    easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+                }
+                accessible-role: none;
+            }
+
+            // Hero: aspect-true ≤1600×900 decode shown ONLY on the expanded
+            // card; separate element from thumb-image so the thumb's
+            // source-clip can never crop it. Cover fit fills the landscape
+            // face while preserving the wallpaper's own proportions —
+            // portrait thumbs fall back here only when no hero landed yet.
+            hero-image := Image {
+                width: 100%;
+                height: 100%;
+                source: root.hero;
+                image-fit: cover;
+                visible: parent.has-hero;
+                opacity: parent.has-hero ? 1.0 : 0.0;
                 animate opacity {
                     duration: SkwdTokens.anim-200;
                     easing: cubic-bezier(0.215, 0.61, 0.355, 1);
