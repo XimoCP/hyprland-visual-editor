@@ -279,7 +279,23 @@ pub fn extract_video_frame(video: &Path, cache_dir: &Path) -> Option<PathBuf> {
 /// source discovery). Themes currently persist provider state under their
 /// directory; the scan is depth-first over sorted entries so results are
 /// deterministic. None = theme has no image source (skeleton stays).
+///
+/// Piano 3: mpvpaper assignments are the truth of what the desktop shows,
+/// so they are consulted BEFORE every static source. An assigned video
+/// renders its cached frame; when extraction fails we fall through to the
+/// legacy chain below — today's stale-txt fallback still beats showing a
+/// skeleton card.
 pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
+    if let Some(assigned) = video_assignment(theme_dir) {
+        if is_video_source(&assigned) {
+            if let Some(frame) = extract_video_frame(&assigned, &cache_dir()) {
+                return Some(frame);
+            }
+        } else {
+            // Image assignments win outright: they ARE the live wallpaper.
+            return Some(assigned);
+        }
+    }
     if let Some(hit) = wallpaper_from_provider_json(theme_dir) {
         return Some(hit);
     }
@@ -757,6 +773,57 @@ mod tests {
 
         // Second call short-circuits to the SAME cached artifact.
         assert_eq!(extract_video_frame(&video, &out_dir), Some(frame));
+    }
+
+    // ── Piano 3 WIRE: video-aware ordering inside find_source_image ──
+
+    #[test]
+    fn find_source_prefers_assigned_image_over_full_legacy_chain() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let assigned = dir.path().join("assigned.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255])).save(&assigned).unwrap();
+        let stale = dir.path().join("stale.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([9u8, 9, 9, 255])).save(&stale).unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(v5.join("wallpaper.txt"), format!("{}\n", stale.display())).unwrap();
+        let noc = dir.path().join("providers/noctalia");
+        std::fs::create_dir_all(&noc).unwrap();
+        let j = serde_json::json!({"wallpapers":{"DP-3":{"dark":stale.to_string_lossy()}}});
+        std::fs::write(noc.join("wallpapers.json"), serde_json::to_string(&j).unwrap()).unwrap();
+        write_assignments(
+            &v5,
+            serde_json::json!({"assignments":{"*":{"filename":"a.png","local_path":assigned.to_string_lossy()}}}),
+        );
+        std::fs::write(dir.path().join("loose.png"), b"loose").unwrap();
+        assert_eq!(
+            find_source_image(dir.path()),
+            Some(assigned),
+            "assignment beats wallpapers.json, wallpaper.txt and loose scan"
+        );
+    }
+
+    #[test]
+    fn find_source_falls_back_to_legacy_chain_when_frame_fails() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let broken = dir.path().join("broken.mp4");
+        // Exists (passes discovery) but is not a decodable video: ffmpeg
+        // fails (or is absent) -> extraction None -> legacy chain answers.
+        std::fs::write(&broken, b"definitely not a video").unwrap();
+        let stale = dir.path().join("stale.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([7u8, 7, 7, 255])).save(&stale).unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(v5.join("wallpaper.txt"), format!("{}\n", stale.display())).unwrap();
+        write_assignments(
+            &v5,
+            serde_json::json!({"assignments":{"*":{"local_path":broken.to_string_lossy()}}}),
+        );
+        assert_eq!(
+            find_source_image(dir.path()),
+            Some(stale),
+            "failed frame extraction falls through instead of skeleton"
+        );
     }
 
 }
