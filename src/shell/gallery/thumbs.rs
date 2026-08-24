@@ -238,6 +238,43 @@ pub fn video_assignment(theme_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Extract a representative frame from a video source into the thumb cache
+/// (Piano 3): `<cache-key>-frame.png` under `cache_dir`, keyed by the same
+/// SipHash path+mtime scheme as image thumbs. A cached PNG short-circuits
+/// ffmpeg entirely. Seeks 1s in to skip black lead-in frames; all ffmpeg
+/// output is suppressed. Returns Some only when the output exists AND
+/// decodes via the image crate — any failure (ffmpeg missing, non-zero
+/// exit, empty output) yields None and malformed video never panics.
+pub fn extract_video_frame(video: &Path, cache_dir: &Path) -> Option<PathBuf> {
+    let mtime = source_mtime(video).unwrap_or(SystemTime::UNIX_EPOCH);
+    let out = cache_dir.join(format!("{}-frame.png", cache_key(video, mtime)));
+    if out.exists() {
+        return Some(out);
+    }
+    std::fs::create_dir_all(cache_dir).ok()?;
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-ss", "1", "-i"])
+        .arg(video)
+        .args(["-frames:v", "1", "-y"])
+        .arg(&out)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    // Trust the artifact only when it decodes as a real image.
+    image::ImageReader::open(&out)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    Some(out)
+}
+
 /// Find the first usable image file inside a theme directory (task 4.7
 /// source discovery). Themes currently persist provider state under their
 /// directory; the scan is depth-first over sorted entries so results are
@@ -678,6 +715,48 @@ mod tests {
         for (name, want) in cases {
             assert_eq!(is_video_source(Path::new(name)), want, "extension case: {name}");
         }
+    }
+
+    // ── Piano 3: ffmpeg frame extraction + cache ─────────────────────
+
+    fn ffmpeg_available() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn extract_video_frame_writes_decodable_cached_png() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping video frame extraction test");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("src.mp4");
+        // Fixture duration > 1s: the extractor seeks to t=1s and a shorter
+        // clip yields no frame at that seek point (verified with ffmpeg 9).
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=10", "-y"])
+            .arg(&video)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "failed to synthesize testsrc mp4 fixture");
+
+        let out_dir = dir.path().join("thumbs");
+        let frame = extract_video_frame(&video, &out_dir).expect("frame extracted");
+        assert!(frame.exists(), "cached frame png written");
+        let decoded = image::ImageReader::open(&frame).unwrap().decode().unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (320, 240), "full source frame");
+
+        // Second call short-circuits to the SAME cached artifact.
+        assert_eq!(extract_video_frame(&video, &out_dir), Some(frame));
     }
 
 }
