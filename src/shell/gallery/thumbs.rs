@@ -15,6 +15,11 @@ use std::time::SystemTime;
 pub const THUMB_MAX_W: u32 = 400;
 pub const THUMB_MAX_H: u32 = 720;
 
+/// Hero upper bound (HF5): aspect-true CONTAIN fit shown on the EXPANDED
+/// (current) card so the wallpaper reads undistorted at landscape size.
+pub const HERO_MAX_W: u32 = 1600;
+pub const HERO_MAX_H: u32 = 900;
+
 /// Cache-key contract (task 4.5): deterministic hash of the SOURCE PATH +
 /// MTIME so a changed wallpaper invalidates its stale thumbnail. Uses
 /// std's SipHash via DefaultHasher — no crypto dependency; collisions are
@@ -70,6 +75,31 @@ pub fn cover_geometry(
 pub fn thumb_path(source: &Path, out_dir: &Path) -> PathBuf {
     let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
     out_dir.join(format!("{}.png", cache_key(source, mtime)))
+}
+
+/// Hero PNG cache path for a source inside `out_dir` (no IO): dedicated
+/// `<cache-key>-hero.png` filename under the SAME cache key + mtime scheme
+/// and the SAME directory as the portrait thumb (HF5).
+pub fn hero_path(_source: &Path, _out_dir: &Path) -> PathBuf {
+    unimplemented!("HF5 hero cache filename")
+}
+
+/// Pure CONTAIN fit math (HF5): scale the WHOLE source to fit ENTIRELY
+/// within (max_w × max_h) preserving aspect ratio — integer-exact in the
+/// same style as `cover_geometry`, NEVER upscaling. Returns `(out_w, out_h)`.
+pub fn hero_geometry(
+    _src_w: u32,
+    _src_h: u32,
+    _max_w: u32,
+    _max_h: u32,
+) -> (u32, u32) {
+    unimplemented!("HF5 hero contain geometry")
+}
+
+/// Decode ONCE, write BOTH cached PNGs (HF5): the 400×720 cover thumb AND
+/// the ≤1600×900 aspect-true hero. Returns `(thumb_path, hero_path)`.
+pub fn generate_pair(_source: &Path, _out_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    unimplemented!("HF5 thumb+hero pipeline")
 }
 
 /// Decode `source`, cover-crop + scale to ≤400×720 and write the PNG to
@@ -294,6 +324,56 @@ mod tests {
         assert!(!s.contains(&cache_key(Path::new("/i/49.png"), st(49))), "pre-eviction cutoff gone");
         assert!(s.contains(&cache_key(Path::new("/i/50.png"), st(50))), "cutoff retained");
         assert!(s.contains(&cache_key(Path::new("/i/249.png"), st(249))), "newest retained");
+    }
+
+    // ── HF5: hero contain-fit geometry + dedicated cache filename ──────
+
+    #[test]
+    fn hero_geometry_landscape_fits_exact() {
+        assert_eq!(hero_geometry(1920, 1080, HERO_MAX_W, HERO_MAX_H), (1600, 900));
+    }
+
+    #[test]
+    fn hero_geometry_portrait_scales_by_height() {
+        assert_eq!(hero_geometry(720, 1600, HERO_MAX_W, HERO_MAX_H), (405, 900));
+    }
+
+    #[test]
+    fn hero_geometry_never_upscales_tiny_sources() {
+        assert_eq!(hero_geometry(100, 100, HERO_MAX_W, HERO_MAX_H), (100, 100));
+    }
+
+    #[test]
+    fn hero_path_uses_dedicated_hero_filename() {
+        let dir = Path::new("/cache/thumbs");
+        let src = Path::new("/imgs/wall.png");
+        let expected = format!("{}-hero.png", cache_key(src, st(100)));
+        assert_eq!(
+            hero_path(src, dir),
+            dir.join(expected),
+            "hero shares the cache key + mtime scheme under a -hero suffix"
+        );
+    }
+
+    #[test]
+    fn generate_pair_writes_thumb_and_hero_and_hits_cache() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = dir.path().join("src.png");
+        image::RgbaImage::from_pixel(40, 30, image::Rgba([255u8, 0, 0, 255]))
+            .save(&src)
+            .expect("write source png");
+        let out_dir = dir.path().join("thumbs");
+
+        let (thumb, hero) = generate_pair(&src, &out_dir).expect("generate pair");
+        assert_eq!(thumb, thumb_path(&src, &out_dir), "thumb keeps its path");
+        assert_eq!(hero, hero_path(&src, &out_dir), "hero uses its own path");
+        assert!(thumb.exists() && hero.exists(), "both PNGs written");
+        // 40×30 is smaller than the hero bound in both axes → no upscale.
+        let decoded = image::ImageReader::open(&hero).unwrap().decode().unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (40, 30));
+
+        let again = generate_pair(&src, &out_dir).expect("regenerate");
+        assert_eq!(again, (thumb, hero), "existing cache files short-circuit");
     }
 
     // ── 4.6 GREEN: cover-crop geometry + decode/scale/write roundtrip ──
