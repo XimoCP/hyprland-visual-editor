@@ -12,6 +12,7 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { FilterBar } from "FilterBar.slint";
+import { ChromeButton } from "ChromeButton.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel } from "SliceCarousel.slint";
@@ -48,6 +49,11 @@ export component GalleryRoot inherits Rectangle {
     // plays from 0 on open.
     property <bool> opened: false;
     init => { self.opened = true; }
+
+    // ── Style menu state (HF5): UI-side toggle for the FilterBar chrome.
+    // The arrow button flips it; picking a style closes it. Pure UI
+    // concern — Rust stays the source of truth for WHICH style is active. ──
+    property <bool> style-menu-open: false;
 
     // ── Stage cross-fade (task 4.3 / spec S6): the presentation views are
     // keyed to a UI-side display mirror (`shown-style`) that lags the
@@ -131,13 +137,28 @@ export component GalleryRoot inherits Rectangle {
         mit-opened => { root.mit-opened(); }
     }
 
-    // ── FilterBar (gallery-immersive-redesign 4.1): floating top-center
-    // hover-reveal selector over the backdrop. ──
+    // ── FilterBar (gallery-immersive-redesign 4.1, HF5): top-center style
+    // menu, shown only while style-menu-open; a pick closes it. ──
     FilterBar {
         width: 100%;
         height: 100%;
         current-style: root.current-style;
+        open: root.style-menu-open;
         reduced-motion: root.reduced-motion;
-        style-selected(style) => { root.style-selected(style); }
+        style-selected(style) => {
+            root.style-menu-open = false;
+            root.style-selected(style);
+        }
+    }
+
+    // ── Chrome arrow (HF5): click-toggles the style menu; the chevron
+    // flips with the state. Top-center, above the carousel, clear of the
+    // bar's open position (y42) so neither steals clicks from the other. ──
+    ChromeButton {
+        x: (parent.width - self.width) / 2;
+        y: 2px;
+        open: root.style-menu-open;
+        reduced-motion: root.reduced-motion;
+        toggled => { root.style-menu-open = !root.style-menu-open; }
     }
 }

@@ -1,0 +1,43 @@
+// HVE 2 — ChromeButton (gallery-immersive-redesign HF5).
+//
+// Generic ghost chrome control for the gallery overlays: transparent
+// background, a glyph that flips with `open`, outline-at-50% idle color
+// warming to primary on hover, 200ms cadence, 36×36 minimum hit area.
+// Reusable because more chrome buttons will join the gallery chrome
+// later — the glyphs are plain properties, no behavior is hardcoded.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+
+export component ChromeButton inherits Rectangle {
+    // Menu state mirrored by the parent so the chevron flips direction.
+    in property <bool> open: false;
+    in property <string> closed-glyph: "▾";
+    in property <string> open-glyph: "▴";
+    in property <bool> reduced-motion: false;
+    callback toggled();
+
+    width: 36px;
+    height: 36px;
+    background: transparent;
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+
+    glyph := Text {
+        width: 100%;
+        height: 100%;
+        text: root.open ? root.open-glyph : root.closed-glyph;
+        color: touch.has-hover ? SkwdTokens.primary
+            : SkwdTokens.outline.transparentize(0.5);
+        font-size: SkwdTokens.size-18;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
+    }
+}
