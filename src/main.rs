@@ -432,6 +432,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         ),
                         // Filled asynchronously by the thumbs pipeline (4.7).
                         thumb: slint::Image::default(),
+                        // Aspect-true hero for the expanded card (HF5).
+                        hero: slint::Image::default(),
                     }
                 })
                 .collect()
@@ -463,18 +465,20 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             drop(w);
             let ready_weak = weak.clone();
-            thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png| {
+            thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png, hero_png| {
                 // Runs ON the UI thread (invoke_from_event_loop). The stale-
                 // write guard re-reads the CURRENT model so a refresh that
                 // reordered rows between schedule and marshal cannot misplace
                 // a thumbnail. Image loading happens here too — slint::Image
-                // is not Send, only the path crosses threads.
+                // is not Send, only the paths cross threads.
                 if let Some(w) = ready_weak.upgrade() {
                     let model = w.get_gallery_cards();
                     let img = slint::Image::load_from_path(&png).unwrap_or_default();
+                    let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
                     if let Some(mut row) = model.row_data(idx) {
                         if row.name.as_str() == &*name {
                             row.thumb = img;
+                            row.hero = hero_img;
                             model.set_row_data(idx, row);
                         }
                     }

@@ -126,13 +126,6 @@ pub fn generate_pair(source: &Path, out_dir: &Path) -> Result<(PathBuf, PathBuf)
     Ok((thumb_out, hero_out))
 }
 
-/// Single-output entry point (task 4.6 contract preserved): delegates to
-/// `generate_pair` (which since HF5 also writes the hero companion) and
-/// returns the thumb path.
-pub fn generate(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
-    generate_pair(source, out_dir).map(|(thumb, _)| thumb)
-}
-
 /// `$XDG_CACHE_HOME/hve/thumbs`, falling back to `~/.cache/hve/thumbs`
 /// (design D8 cache location).
 pub fn cache_dir() -> PathBuf {
@@ -248,26 +241,27 @@ pub fn plan_jobs(sources: Vec<(usize, String, Option<PathBuf>)>) -> Vec<PreheatJ
         .collect()
 }
 
-/// Generate thumbnails OFF-THREAD and marshal each finished one to the UI
-/// thread via `slint::invoke_from_event_loop`, invoking `ready(index, name,
-/// png_path)` there (task 4.7 / design D8). One thread per job — galleries
+/// Generate thumbnails AND heroes OFF-THREAD and marshal each finished pair
+/// to the UI thread via `slint::invoke_from_event_loop`, invoking
+/// `ready(index, name, thumb_png_path, hero_png_path)` there (task 4.7 /
+/// design D8; HF5 adds the aspect-true hero). One thread per job — galleries
 /// are small; failures log a warning and never block the UI. Only Send data
-/// crosses the boundary (the PNG PATH, not a decoded image): `slint::Image`
-/// wraps non-Send backend storage, so the UI side loads it from disk.
+/// crosses the boundary (PNG PATHS, not decoded images): `slint::Image`
+/// wraps non-Send backend storage, so the UI side loads them from disk.
 /// `ready` must be Send+Sync because it travels inside an Arc.
 pub fn preheat(
     jobs: Vec<PreheatJob>,
-    ready: impl Fn(usize, std::sync::Arc<str>, PathBuf) + Send + Sync + 'static,
+    ready: impl Fn(usize, std::sync::Arc<str>, PathBuf, PathBuf) + Send + Sync + 'static,
 ) {
     let ready = std::sync::Arc::new(ready);
     for job in jobs {
         let ready = ready.clone();
         std::thread::spawn(move || {
-            match generate(&job.source, &cache_dir()) {
-                Ok(png) => {
+            match generate_pair(&job.source, &cache_dir()) {
+                Ok((png, hero)) => {
                     let idx = job.index;
                     let name: std::sync::Arc<str> = std::sync::Arc::from(job.name.as_str());
-                    let _ = slint::invoke_from_event_loop(move || ready(idx, name, png));
+                    let _ = slint::invoke_from_event_loop(move || ready(idx, name, png, hero));
                 }
                 Err(e) => {
                     tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.source.display(), e);
@@ -420,13 +414,13 @@ mod tests {
             .expect("write source png");
         let out_dir = dir.path().join("thumbs");
 
-        let first = super::generate(&src, &out_dir).expect("generate");
+        let (first, _) = generate_pair(&src, &out_dir).expect("generate");
         assert!(first.exists(), "png written");
         let decoded = image::ImageReader::open(&first).unwrap().decode().unwrap();
         // 40×30 → aspect crop 16×30; small source must not upscale.
         assert_eq!((decoded.width(), decoded.height()), (16, 30));
 
-        let second = super::generate(&src, &out_dir).expect("regenerate");
+        let (second, _) = generate_pair(&src, &out_dir).expect("regenerate");
         assert_eq!(first, second, "same key short-circuits to the cached png");
     }
 

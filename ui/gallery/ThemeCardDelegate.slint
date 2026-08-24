@@ -27,6 +27,10 @@ export struct GalleryCardData {
     // marshaled from the Rust thumbs pipeline; empty until ready so
     // delegates can gate a skeleton shimmer on `thumb.width > 0`.
     thumb: image,
+    // Aspect-true hero decode (HF5): CONTAIN fit ≤1600×900 for the
+    // EXPANDED (current) card; empty until marshaled so delegates fall
+    // back to the portrait thumb without stretching it.
+    hero: image,
 }
 
 export component ThemeCardDelegate inherits Rectangle {
