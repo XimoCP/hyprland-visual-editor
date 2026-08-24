@@ -186,6 +186,16 @@ fn wallpaper_from_txt(theme_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// RED stub (Piano 3): real implementation lands in the GREEN commit.
+pub fn video_assignment(_theme_dir: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// RED stub (Piano 3): real implementation lands in the GREEN commit.
+pub fn is_video_source(_path: &Path) -> bool {
+    false
+}
+
 /// Find the first usable image file inside a theme directory (task 4.7
 /// source discovery). Themes currently persist provider state under their
 /// directory; the scan is depth-first over sorted entries so results are
@@ -513,6 +523,119 @@ mod tests {
         let j = serde_json::json!({"wallpapers":{"DP-3":{"dark":b.to_string_lossy()}}});
         std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&j).unwrap()).unwrap();
         assert_eq!(find_source_image(dir.path()).unwrap(), b, "JSON priority over txt");
+    }
+
+    // ── Piano 3 RED: mpvpaper video-assignment discovery contracts ──
+
+    /// Fixture helper: write mpvpaper-assignments.json into `provider_dir`.
+    fn write_assignments(provider_dir: &Path, json: serde_json::Value) {
+        std::fs::create_dir_all(provider_dir).expect("mkdir providers");
+        std::fs::write(
+            provider_dir.join("mpvpaper-assignments.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .expect("write assignments");
+    }
+
+    #[test]
+    fn video_assignment_hits_wildcard_local_path() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("neon.mp4");
+        std::fs::write(&video, b"fake-video").expect("video fixture");
+        write_assignments(
+            &dir.path().join("providers/noctalia-v5"),
+            serde_json::json!({
+                "version": 1,
+                "assignments": { "*": {
+                    "filename": "neon.mp4",
+                    "local_path": video.to_string_lossy()
+                }}
+            }),
+        );
+        assert_eq!(video_assignment(dir.path()), Some(video));
+    }
+
+    #[test]
+    fn video_assignment_none_without_assignments_file() {
+        let dir = tempfile::tempdir().expect("tmp");
+        assert_eq!(video_assignment(dir.path()), None, "no providers dir at all");
+        std::fs::create_dir_all(dir.path().join("providers/noctalia-v5")).expect("mkdir");
+        assert_eq!(video_assignment(dir.path()), None, "provider without the file");
+        assert_eq!(video_assignment(&dir.path().join("missing")), None, "missing theme dir safe");
+    }
+
+    #[test]
+    fn video_assignment_rejects_empty_local_path() {
+        let dir = tempfile::tempdir().expect("tmp");
+        write_assignments(
+            &dir.path().join("providers/noctalia-v5"),
+            serde_json::json!({ "assignments": { "*": { "filename": "x.mp4", "local_path": "" } } }),
+        );
+        assert_eq!(video_assignment(dir.path()), None);
+    }
+
+    #[test]
+    fn video_assignment_rejects_missing_target_file() {
+        let dir = tempfile::tempdir().expect("tmp");
+        write_assignments(
+            &dir.path().join("providers/wallpaper"),
+            serde_json::json!({ "assignments": { "*": { "local_path": "/nope/gone.mp4" } } }),
+        );
+        assert_eq!(video_assignment(dir.path()), None);
+    }
+
+    #[test]
+    fn video_assignment_falls_back_to_sorted_first_key_without_star() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let chosen = dir.path().join("chosen.mkv");
+        std::fs::write(&chosen, b"v").expect("fixture");
+        write_assignments(
+            &dir.path().join("providers/mpvpaper"),
+            serde_json::json!({ "assignments": {
+                "HDMI-A-1": { "local_path": "/nope/z.mp4" },
+                "DP-1": { "local_path": chosen.to_string_lossy() }
+            }}),
+        );
+        assert_eq!(video_assignment(dir.path()), Some(chosen), "DP-1 sorts before HDMI-A-1");
+    }
+
+    #[test]
+    fn video_assignment_scans_provider_dirs_sorted_deterministically() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let early = dir.path().join("a.mp4");
+        std::fs::write(&early, b"a").expect("fixture");
+        let late = dir.path().join("z.mp4");
+        std::fs::write(&late, b"z").expect("fixture");
+        write_assignments(
+            &dir.path().join("providers/zzz-late"),
+            serde_json::json!({ "assignments": { "*": { "local_path": late.to_string_lossy() } } }),
+        );
+        write_assignments(
+            &dir.path().join("providers/aaa-early"),
+            serde_json::json!({ "assignments": { "*": { "local_path": early.to_string_lossy() } } }),
+        );
+        assert_eq!(video_assignment(dir.path()), Some(early), "aaa-early wins by provider sort");
+    }
+
+    #[test]
+    fn is_video_source_extension_table() {
+        let cases = [
+            ("clip.mp4", true),
+            ("clip.mkv", true),
+            ("clip.webm", true),
+            ("clip.mov", true),
+            ("clip.avi", true),
+            ("clip.m4v", true),
+            ("CLIP.MP4", true),
+            ("Upper.Mkv", true),
+            ("clip.png", false),
+            ("clip.jpg", false),
+            ("clip", false),
+            ("clip.tar.gz", false),
+        ];
+        for (name, want) in cases {
+            assert_eq!(is_video_source(Path::new(name)), want, "extension case: {name}");
+        }
     }
 
 }
