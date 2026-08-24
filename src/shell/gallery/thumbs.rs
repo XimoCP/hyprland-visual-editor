@@ -80,35 +80,32 @@ pub fn thumb_path(source: &Path, out_dir: &Path) -> PathBuf {
 /// Hero PNG cache path for a source inside `out_dir` (no IO): dedicated
 /// `<cache-key>-hero.png` filename under the SAME cache key + mtime scheme
 /// and the SAME directory as the portrait thumb (HF5).
-pub fn hero_path(_source: &Path, _out_dir: &Path) -> PathBuf {
-    unimplemented!("HF5 hero cache filename")
+pub fn hero_path(source: &Path, out_dir: &Path) -> PathBuf {
+    let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
+    out_dir.join(format!("{}-hero.png", cache_key(source, mtime)))
 }
 
 /// Pure CONTAIN fit math (HF5): scale the WHOLE source to fit ENTIRELY
 /// within (max_w × max_h) preserving aspect ratio — integer-exact in the
 /// same style as `cover_geometry`, NEVER upscaling. Returns `(out_w, out_h)`.
-pub fn hero_geometry(
-    _src_w: u32,
-    _src_h: u32,
-    _max_w: u32,
-    _max_h: u32,
-) -> (u32, u32) {
-    unimplemented!("HF5 hero contain geometry")
+pub fn hero_geometry(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let (w, h) = (src_w as f64, src_h as f64);
+    // Contain scale caps at 1.0 — a small source keeps its pixels.
+    let scale = 1.0_f64.min(max_w as f64 / w).min(max_h as f64 / h);
+    (
+        ((w * scale).round() as u32).max(1),
+        ((h * scale).round() as u32).max(1),
+    )
 }
 
 /// Decode ONCE, write BOTH cached PNGs (HF5): the 400×720 cover thumb AND
-/// the ≤1600×900 aspect-true hero. Returns `(thumb_path, hero_path)`.
-pub fn generate_pair(_source: &Path, _out_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
-    unimplemented!("HF5 thumb+hero pipeline")
-}
-
-/// Decode `source`, cover-crop + scale to ≤400×720 and write the PNG to
-/// `out_dir/<key>.png` (task 4.6). Existing cache files short-circuit the
-/// decode ("cache async": callers may probe this cheaply off-thread).
-pub fn generate(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
-    let out = thumb_path(source, out_dir);
-    if out.exists() {
-        return Ok(out);
+/// the ≤1600×900 aspect-true hero. Existing cache files short-circuit the
+/// decode only when both are present. Returns `(thumb_path, hero_path)`.
+pub fn generate_pair(source: &Path, out_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let thumb_out = thumb_path(source, out_dir);
+    let hero_out = hero_path(source, out_dir);
+    if thumb_out.exists() && hero_out.exists() {
+        return Ok((thumb_out, hero_out));
     }
     std::fs::create_dir_all(out_dir)
         .map_err(|e| format!("cannot create thumb dir {}: {e}", out_dir.display()))?;
@@ -118,9 +115,22 @@ pub fn generate(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("cannot decode {}: {e}", source.display()))?;
     let (cx, cy, cw, ch, ow, oh) =
         cover_geometry(img.width(), img.height(), THUMB_MAX_W, THUMB_MAX_H);
-    let thumb = img.crop_imm(cx, cy, cw, ch).resize_exact(ow, oh, image::imageops::FilterType::Triangle);
-    thumb.save(&out).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
-    Ok(out)
+    img.crop_imm(cx, cy, cw, ch)
+        .resize_exact(ow, oh, image::imageops::FilterType::Triangle)
+        .save(&thumb_out)
+        .map_err(|e| format!("cannot write {}: {e}", thumb_out.display()))?;
+    let (hw, hh) = hero_geometry(img.width(), img.height(), HERO_MAX_W, HERO_MAX_H);
+    img.resize_exact(hw, hh, image::imageops::FilterType::Triangle)
+        .save(&hero_out)
+        .map_err(|e| format!("cannot write {}: {e}", hero_out.display()))?;
+    Ok((thumb_out, hero_out))
+}
+
+/// Single-output entry point (task 4.6 contract preserved): delegates to
+/// `generate_pair` (which since HF5 also writes the hero companion) and
+/// returns the thumb path.
+pub fn generate(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    generate_pair(source, out_dir).map(|(thumb, _)| thumb)
 }
 
 /// `$XDG_CACHE_HOME/hve/thumbs`, falling back to `~/.cache/hve/thumbs`
@@ -347,7 +357,9 @@ mod tests {
     fn hero_path_uses_dedicated_hero_filename() {
         let dir = Path::new("/cache/thumbs");
         let src = Path::new("/imgs/wall.png");
-        let expected = format!("{}-hero.png", cache_key(src, st(100)));
+        // Same mtime resolution as thumb_path (missing file → UNIX_EPOCH).
+        let mtime = source_mtime(src).unwrap_or(SystemTime::UNIX_EPOCH);
+        let expected = format!("{}-hero.png", cache_key(src, mtime));
         assert_eq!(
             hero_path(src, dir),
             dir.join(expected),
