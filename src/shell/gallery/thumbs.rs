@@ -186,14 +186,56 @@ fn wallpaper_from_txt(theme_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// RED stub (Piano 3): real implementation lands in the GREEN commit.
-pub fn video_assignment(_theme_dir: &Path) -> Option<PathBuf> {
-    None
+/// Video extension allowlist (Piano 3): animated wallpaper sources served
+/// by mpvpaper.
+const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
+
+/// True when `path` carries a video extension (case-insensitive check).
+pub fn is_video_source(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| VIDEO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
 }
 
-/// RED stub (Piano 3): real implementation lands in the GREEN commit.
-pub fn is_video_source(_path: &Path) -> bool {
-    false
+/// Resolve a theme's mpvpaper video assignment (Piano 3): scan
+/// `providers/*/mpvpaper-assignments.json` in sorted, deterministic order,
+/// take `assignments["*"].local_path` — falling back to the first entry by
+/// sorted key — and return it only when non-empty AND the target file
+/// exists; otherwise keep scanning. None = no live video assignment.
+pub fn video_assignment(theme_dir: &Path) -> Option<PathBuf> {
+    let mut providers: Vec<PathBuf> = std::fs::read_dir(theme_dir.join("providers"))
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    providers.sort();
+    for dir in providers {
+        let Ok(text) =
+            std::fs::read_to_string(dir.join("mpvpaper-assignments.json"))
+        else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let Some(assignments) = v.get("assignments").and_then(|a| a.as_object())
+        else { continue };
+        // Wildcard "*" wins; remaining entries keep sorted-key order
+        // (stable sort preserves the lexical pass above).
+        let mut keys: Vec<&String> = assignments.keys().collect();
+        keys.sort();
+        keys.sort_by_key(|k| k.as_str() != "*");
+        for key in keys {
+            let Some(local) = assignments
+                .get(key.as_str())
+                .and_then(|e| e.get("local_path"))
+                .and_then(|l| l.as_str())
+                .filter(|s| !s.is_empty())
+            else { continue };
+            let path = PathBuf::from(local);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 /// Find the first usable image file inside a theme directory (task 4.7
