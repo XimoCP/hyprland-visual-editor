@@ -1,8 +1,15 @@
-// HVE 2 — MosaicCell (theme-gallery PR3 3.7).
+// HVE 2 — MosaicCell (theme-gallery PR3 3.7; relaxed for masonry in PR5).
 //
 // Voronoi shard cell: polygon Path, kinetic scroll handled by parent,
 // cloud opacity inner 0.55 outer 1.05, staggered reveal per cellKey.
 // Translated from skwd-wall Mosaic (MIT, © liixini).
+//
+// PR5 (masonry span mosaic): the cell no longer fixes its own size — the
+// parent sets width/height per slot geometry (mosaic.rs::mosaic_card_rect).
+// The bbox-quad Path adapts via a pixel viewbox so it renders at both
+// 320×320 (square) and 320×160 (rect) slots with the same 6px inset.
+// Thumbnails use image-fit contain centered: the FULL wallpaper is always
+// visible (letterboxing on mismatched aspects is intended, never cropped).
 
 import { SkwdTokens } from "../tokens.slint";
 
@@ -31,29 +38,31 @@ export component MosaicCell inherits Rectangle {
     callback clicked();
     callback flip-requested();
 
-    width: 180px;
-    height: 140px;
+    // Size is parent-driven (masonry slot geometry, PR5). Cell edge in px
+    // feeds the Path viewbox so the shard quad scales with any slot size.
+    property <float> px-w: self.width / 1px;
+    property <float> px-h: self.height / 1px;
     clip: true;
     border-radius: SkwdTokens.radius-8;
     background: SkwdTokens.surface-container;
     opacity: root.cloud-opacity;
     animate opacity { duration: 200ms; easing: ease-out; }
 
-    // shard gap 6px via Path stroke gap visual
+    // shard gap 6px via Path stroke gap visual — inset adapts to cell size
     cell-path := Path {
         width: 100%;
         height: 100%;
         viewbox-x: 0;
         viewbox-y: 0;
-        viewbox-width: 180;
-        viewbox-height: 140;
+        viewbox-width: root.px-w;
+        viewbox-height: root.px-h;
         fill: SkwdTokens.surface;
         stroke: root.is-focused ? root.accent : transparent;
         stroke-width: root.is-focused ? 2px : 0px;
         MoveTo { x: 6; y: 6; }
-        LineTo { x: 174; y: 6; }
-        LineTo { x: 174; y: 134; }
-        LineTo { x: 6; y: 134; }
+        LineTo { x: root.px-w - 6; y: 6; }
+        LineTo { x: root.px-w - 6; y: root.px-h - 6; }
+        LineTo { x: 6; y: root.px-h - 6; }
         Close { }
     }
 
@@ -70,12 +79,13 @@ export component MosaicCell inherits Rectangle {
         triggered => { parent.shimmer-high = !parent.shimmer-high; }
     }
 
-    // thumb with staggered reveal
+    // thumb with staggered reveal — contain centered: full wallpaper
+    // visible (letterbox bands on aspect mismatch are intended, PR5)
     Image {
         width: 100%;
         height: 100%;
         source: root.thumb;
-        image-fit: cover;
+        image-fit: contain;
         source-clip-width: 400;
         source-clip-height: 300;
         visible: root.has-thumb;
