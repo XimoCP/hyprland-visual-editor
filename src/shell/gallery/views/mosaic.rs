@@ -45,6 +45,10 @@ pub const MOSAIC_STAGGER_MS: u64 = 40;
 // `W = max natural row width` by scaling its row height — tile rects
 // always keep each image's aspect, so nothing is ever cropped or
 // letterboxed. The last row keeps the natural `th`, left-aligned.
+/// Central band height divisor: the packed block is bounded to
+/// `band = stage_h / 2.0` (≈520px on a 1040px stage), matching the Slice
+/// carousel's fixed presentation band proportionally.
+pub const MOSAIC_BAND_HEIGHT_DIVISOR: f32 = 2.0;
 /// Target row height divisor: `th = stage_h / 2.6` shows ≈2 rows + margins.
 pub const MOSAIC_ROW_HEIGHT_DIVISOR: f32 = 2.6;
 /// Thin uniform gutter between tiles (no frames, no padding).
@@ -745,6 +749,14 @@ mod tests {
         assert!((a - b).abs() < 1e-2, "{a} !≈ {b}");
     }
 
+    /// Band-contracted row height: the block is bounded to the central band
+    /// `stage_h / MOSAIC_BAND_HEIGHT_DIVISOR`; its rows split the band minus
+    /// the inter-row gutters evenly.
+    fn band_row_h(stage_h: f32) -> f32 {
+        let band = stage_h / MOSAIC_BAND_HEIGHT_DIVISOR;
+        (band - (MOSAIC_ROW_COUNT as f32 - 1.0) * MOSAIC_GUTTER_PX) / MOSAIC_ROW_COUNT as f32
+    }
+
     #[test]
     fn justified_empty_and_degenerate_stage_are_zero() {
         let l = justified_layout(&[], 1920.0, 1040.0);
@@ -760,7 +772,12 @@ mod tests {
     fn justified_single_card_centered_natural() {
         let a = MOSAIC_DEFAULT_ASPECT;
         let l = justified_layout(&[a], 1920.0, 1040.0);
-        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let th = band_row_h(1040.0);
+        // Exact band pins: 1040/2 = 520 band → (520 − 12)/2 = 254 rows,
+        // centered vertically in the full stage.
+        approx(th, 254.0);
+        approx(l.content_h, 520.0);
+        approx(l.offset_y, 393.0);
         let w = th * a;
         assert_eq!(l.tiles.len(), 1);
         approx(l.tiles[0].w, w);
@@ -778,7 +795,9 @@ mod tests {
         // Greedy with R=2: after any first card S=a0 and T=(a0+a1)/2, so
         // a0 + a1/2 > T always → one card per row. Both centered.
         let l = justified_layout(&[2.0, 1.0], 1200.0, 780.0);
-        let th = 780.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let th = band_row_h(780.0);
+        // Two equal natural rows + one gutter fill the band exactly.
+        approx(l.content_h, 780.0 / MOSAIC_BAND_HEIGHT_DIVISOR);
         assert_eq!(l.tiles.len(), 2);
         // Row 0 is non-last → justified to W = max natural width = th·2.
         let big_w = th * 2.0;
@@ -802,7 +821,7 @@ mod tests {
         let a = 16.0f32 / 9.0;
         let aspects = [a; 5];
         let l = justified_layout(&aspects, 1920.0, 1040.0);
-        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let th = band_row_h(1040.0);
         // A=5a, T=A/2: after two cards sum + a/2 == 2.5a == T exactly, so
         // the strict `>` KEEPS card 3 in row 0 → split [3, 2].
         let s0 = 3.0 * a;
@@ -836,6 +855,9 @@ mod tests {
         // Content box + centering: W exceeds stage width → no x offset.
         approx(l.content_w, big_w);
         approx(l.content_h, h0 + th + MOSAIC_GUTTER_PX);
+        // Row 0 keeps the natural height here (it is the widest), so both
+        // rows + gutter land exactly on the band.
+        approx(l.content_h, 1040.0 / MOSAIC_BAND_HEIGHT_DIVISOR);
         approx(l.offset_x, 0.0);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
@@ -844,7 +866,7 @@ mod tests {
     fn justified_mixed_aspects_greedy_split_and_justify() {
         let aspects = [2.0, 1.78, 1.5, 1.78, 2.35];
         let l = justified_layout(&aspects, 1920.0, 1040.0);
-        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let th = band_row_h(1040.0);
         // Greedy: [2.0, 1.78, 1.5] (sum 5.28) then force-free last [1.78, 2.35].
         let s0 = 2.0 + 1.78 + 1.5;
         let s1 = 1.78 + 2.35;
@@ -874,6 +896,8 @@ mod tests {
         // Content + centering.
         approx(l.content_w, big_w);
         approx(l.content_h, 2.0 * th + MOSAIC_GUTTER_PX);
+        // Row 0 is the widest (justify scale 1), so the block equals band.
+        approx(l.content_h, 1040.0 / MOSAIC_BAND_HEIGHT_DIVISOR);
         approx(l.offset_x, 0.0);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
@@ -885,7 +909,7 @@ mod tests {
         // HEIGHT to reach W while every tile keeps its true aspect.
         let aspects = [10.0, 2.35, 2.35, 2.35, 2.35, 2.35];
         let l = justified_layout(&aspects, 1920.0, 1040.0);
-        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let th = band_row_h(1040.0);
         assert_eq!(l.tiles.len(), 6);
         let s1 = 5.0 * 2.35;
         let big_w = th * s1 + 4.0 * MOSAIC_GUTTER_PX;
@@ -909,7 +933,7 @@ mod tests {
         assert_eq!(l.tiles.len(), 20, "never drops cards");
         // Greedy splits identicals 10/10; both rows equal width.
         let per_row = 10.0 * a;
-        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let th = band_row_h(1040.0);
         let expected_w = th * per_row + 9.0 * MOSAIC_GUTTER_PX;
         approx(l.content_w, expected_w);
         assert!(l.content_w > 1920.0, "block overflows stage → scrollable");
