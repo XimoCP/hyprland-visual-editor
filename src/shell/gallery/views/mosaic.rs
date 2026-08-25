@@ -669,10 +669,13 @@ mod tests {
         assert!(!view.handle_key(GalleryKey::Up));
     }
 
-    // ── PR5 masonry span layout contracts ───────────────────────────
+    // ── PR5 masonry span layout contracts (viewport-scaled) ─────────
     #[test]
     fn masonry_module_constants_and_slot_tables() {
-        assert_eq!(MOSAIC_CELL_BASE_PX, 160.0, "base cell edge");
+        assert_eq!(
+            MOSAIC_BASE_VIEWPORT_DIVISOR, 3.5,
+            "base cell = stage height / 3.5"
+        );
         assert_eq!(MOSAIC_MODULE_CARDS, 5, "1 square + 4 rects per module");
         assert_eq!(MOSAIC_SLOT_COLSPAN, 2, "every slot spans 2 columns");
         let cols: Vec<usize> = (0..5).map(mosaic_slot_col).collect();
@@ -686,23 +689,48 @@ mod tests {
     }
 
     #[test]
+    fn masonry_cell_base_scales_with_stage_height() {
+        // A ~1040px stage yields base ≈ 297.14 so one module (6·base ≈
+        // 1782px) fills a fullscreen 1920px window with a single band.
+        let base = mosaic_cell_base(1040.0);
+        assert!((base - 297.14).abs() < 0.01, "1040/3.5 ≈ 297.14");
+        assert_eq!(mosaic_cell_base(0.0), 0.0, "no stage → no base");
+        // Proportional scaling: double the stage doubles the base.
+        assert!((mosaic_cell_base(2080.0) - 2.0 * base).abs() < 0.01);
+    }
+
+    #[test]
     fn masonry_card_rect_first_two_modules() {
+        // Parameterized geometry at the legacy 160px reference base.
+        let b = 160.0;
         // Module 0: square leads at origin, rects fill the 6×2 band.
-        assert_eq!(mosaic_card_rect(0), (0.0, 0.0, 320.0, 320.0), "square 2×2");
-        assert_eq!(mosaic_card_rect(1), (320.0, 0.0, 320.0, 160.0), "rect top mid");
-        assert_eq!(mosaic_card_rect(2), (640.0, 0.0, 320.0, 160.0), "rect top right");
-        assert_eq!(mosaic_card_rect(3), (320.0, 160.0, 320.0, 160.0), "rect bottom mid");
-        assert_eq!(mosaic_card_rect(4), (640.0, 160.0, 320.0, 160.0), "rect bottom right");
-        // Module 1 shifts a full module width (6 cols × 160 = 960).
-        assert_eq!(mosaic_card_rect(5), (960.0, 0.0, 320.0, 320.0), "next module square");
-        assert_eq!(mosaic_card_rect(7), (1600.0, 0.0, 320.0, 160.0), "module + slot col 4");
+        assert_eq!(mosaic_card_rect(0, b), (0.0, 0.0, 320.0, 320.0), "square 2×2");
+        assert_eq!(mosaic_card_rect(1, b), (320.0, 0.0, 320.0, 160.0), "rect top mid");
+        assert_eq!(mosaic_card_rect(2, b), (640.0, 0.0, 320.0, 160.0), "rect top right");
+        assert_eq!(mosaic_card_rect(3, b), (320.0, 160.0, 320.0, 160.0), "rect bottom mid");
+        assert_eq!(mosaic_card_rect(4, b), (640.0, 160.0, 320.0, 160.0), "rect bottom right");
+        // Module 1 shifts a full module width (6 cols × base).
+        assert_eq!(mosaic_card_rect(5, b), (960.0, 0.0, 320.0, 320.0), "next module square");
+        assert_eq!(mosaic_card_rect(7, b), (1600.0, 0.0, 320.0, 160.0), "module + slot col 4");
+        // Viewport-derived base (stage ~1040): rect ≈ 594×297.
+        let vb = mosaic_cell_base(1040.0);
+        let (x, y, w, h) = mosaic_card_rect(1, vb);
+        assert!((x - 2.0 * vb).abs() < f32::EPSILON, "x = slot col × base");
+        assert_eq!(y, 0.0);
+        assert_eq!(w, 2.0 * vb, "width = colspan × base");
+        assert_eq!(h, vb, "height = rowspan × base");
+        assert!((w - 594.28).abs() < 0.01, "rect ≈ 594px wide on a ~1040 stage");
     }
 
     #[test]
     fn masonry_content_width_ceil_modules() {
-        assert_eq!(mosaic_content_width(0), 0.0, "no cards → no width");
-        assert_eq!(mosaic_content_width(5), 960.0, "exactly one module");
-        assert_eq!(mosaic_content_width(6), 1920.0, "partial module reserves full band");
-        assert_eq!(mosaic_content_width(11), 2880.0, "ceil(11/5)=3 modules");
+        let b = 160.0;
+        assert_eq!(mosaic_content_width(0, b), 0.0, "no cards → no width");
+        assert_eq!(mosaic_content_width(5, b), 960.0, "exactly one module");
+        assert_eq!(mosaic_content_width(6, b), 1920.0, "partial module reserves full band");
+        assert_eq!(mosaic_content_width(11, b), 2880.0, "ceil(11/5)=3 modules");
+        // Viewport-scaled: one module at a ~1040 stage ≈ 1782px wide.
+        let vw = mosaic_content_width(5, mosaic_cell_base(1040.0));
+        assert!((vw - 1782.86).abs() < 0.01, "one module ≈ 1782px fills 1920 window");
     }
 }
