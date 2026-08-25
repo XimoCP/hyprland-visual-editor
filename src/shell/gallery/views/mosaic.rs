@@ -71,18 +71,82 @@ pub struct MosaicLayout {
 /// Aspect ratio `w/h` of an image pixel size; falls back to
 /// [`MOSAIC_DEFAULT_ASPECT`] for zero dimensions.
 pub fn tile_aspect(w: u32, h: u32) -> f32 {
-    let _ = (w, h); // RED stub
-    MOSAIC_DEFAULT_ASPECT
+    if w == 0 || h == 0 { return MOSAIC_DEFAULT_ASPECT; }
+    w as f32 / h as f32
 }
 
 /// Pack `aspects` (in display order) into a justified-rows block sized
 /// for `(stage_w, stage_h)`. Empty input or non-positive stage → all
 /// zeros. See the module docs for the deterministic algorithm.
 pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLayout {
-    let _ = (aspects, stage_w, stage_h); // RED stub
-    MosaicLayout {
-        tiles: vec![], content_w: 0.0, content_h: 0.0, offset_x: 0.0, offset_y: 0.0,
+    if aspects.is_empty() || !(stage_w > 0.0) || !(stage_h > 0.0) {
+        return MosaicLayout {
+            tiles: vec![], content_w: 0.0, content_h: 0.0, offset_x: 0.0, offset_y: 0.0,
+        };
     }
+    let g = MOSAIC_GUTTER_PX;
+    let th = stage_h / MOSAIC_ROW_HEIGHT_DIVISOR;
+    // Sanitize first so the per-row target uses valid aspects only.
+    let sanitized: Vec<f32> = aspects
+        .iter()
+        .map(|&a| if a.is_finite() && a > 0.0 { a } else { MOSAIC_DEFAULT_ASPECT })
+        .collect();
+    let target = sanitized.iter().sum::<f32>() / MOSAIC_ROW_COUNT as f32;
+    // Greedy in-order packing; overflow force-closes into the last row.
+    let mut rows: Vec<Vec<f32>> = Vec::new();
+    let mut sums: Vec<f32> = Vec::new();
+    for &a in &sanitized {
+        let open_new = match rows.len() {
+            0 => true,
+            n => n < MOSAIC_ROW_COUNT && sums[n - 1] + a * 0.5 > target,
+        };
+        if open_new {
+            rows.push(vec![a]);
+            sums.push(a);
+        } else {
+            let n = rows.len() - 1;
+            rows[n].push(a);
+            sums[n] += a;
+        }
+    }
+    // Natural row width at th; the widest row defines the common width W.
+    let nat_w = |sum: f32, k: usize| th * sum + (k as f32 - 1.0) * g;
+    let big_w = rows
+        .iter()
+        .zip(&sums)
+        .map(|(row, s)| nat_w(*s, row.len()))
+        .fold(f32::MIN, f32::max);
+    // Shape-preserving justification: non-last rows scale their HEIGHT to
+    // fill W exactly (tile aspect stays true — no crop, no letterbox); the
+    // last row keeps th, left-aligned.
+    let mut tiles: Vec<MosaicTile> = Vec::with_capacity(sanitized.len());
+    let n_rows = rows.len();
+    let mut y = 0.0f32;
+    for (r, row) in rows.iter().enumerate() {
+        let is_last = r + 1 == n_rows;
+        let h_r = if is_last {
+            th
+        } else {
+            (big_w - (row.len() as f32 - 1.0) * g) / sums[r]
+        };
+        let mut x = 0.0f32;
+        for &a in row {
+            let w = h_r * a;
+            tiles.push(MosaicTile { x, y, w, h: h_r });
+            x += w + g;
+        }
+        y += h_r + g;
+    }
+    let content_h = y - g; // drop the trailing gutter after the last row
+    let last_nat = nat_w(sums[n_rows - 1], rows[n_rows - 1].len());
+    let content_w = big_w.max(last_nat);
+    let offset_x = ((stage_w - content_w) / 2.0).max(0.0);
+    let offset_y = ((stage_h - content_h) / 2.0).max(0.0);
+    for t in &mut tiles {
+        t.x += offset_x;
+        t.y += offset_y;
+    }
+    MosaicLayout { tiles, content_w, content_h, offset_x, offset_y }
 }
 
 // ── Geometry helpers ────────────────────────────────────────────────
@@ -675,6 +739,12 @@ mod tests {
         assert!((a - b).abs() < 1e-4, "{a} != {b}");
     }
 
+    /// Row right edges accumulate x per tile, so they pick up a few ulps
+    /// against the closed-form natural width at ~2000px scale.
+    fn approx_acc(a: f32, b: f32) {
+        assert!((a - b).abs() < 1e-2, "{a} !≈ {b}");
+    }
+
     #[test]
     fn justified_empty_and_degenerate_stage_are_zero() {
         let l = justified_layout(&[], 1920.0, 1040.0);
@@ -733,33 +803,36 @@ mod tests {
         let aspects = [a; 5];
         let l = justified_layout(&aspects, 1920.0, 1040.0);
         let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
-        // A=5a, T=A/2: row closes when sum + a/2 > T → split [2, 3].
-        let s0 = 2.0 * a;
-        let s1 = 3.0 * a;
-        let nat0 = th * s0 + MOSAIC_GUTTER_PX;
-        let nat1 = th * s1 + 2.0 * MOSAIC_GUTTER_PX;
-        let big_w = nat1.max(nat0);
-        assert!((nat1 - nat0).abs() > 1e-4, "rows must differ for this contract");
+        // A=5a, T=A/2: after two cards sum + a/2 == 2.5a == T exactly, so
+        // the strict `>` KEEPS card 3 in row 0 → split [3, 2].
+        let s0 = 3.0 * a;
+        let s1 = 2.0 * a;
+        let nat0 = th * s0 + 2.0 * MOSAIC_GUTTER_PX;
+        let nat1 = th * s1 + MOSAIC_GUTTER_PX;
+        let big_w = nat0.max(nat1);
+        assert!((nat0 - nat1).abs() > 1e-4, "rows must differ for this contract");
         assert_eq!(l.tiles.len(), 5);
-        // Row 0 justified shape-preservingly to W.
-        let h0 = (big_w - MOSAIC_GUTTER_PX) / s0;
+        // Row 0 justified shape-preservingly to W (scale 1: it is widest).
+        let h0 = (big_w - 2.0 * MOSAIC_GUTTER_PX) / s0;
         approx(l.tiles[0].h, h0);
         approx(l.tiles[0].w, h0 * a);
         approx(l.tiles[0].x, l.offset_x);
         approx(l.tiles[1].x, l.offset_x + h0 * a + MOSAIC_GUTTER_PX);
-        approx(l.tiles[1].w, h0 * a);
-        approx(l.tiles[1].y, l.tiles[0].y);
-        // Flush right edge within epsilon.
-        let right0 = l.tiles[1].x + l.tiles[1].w - l.offset_x;
-        approx(right0, big_w);
-        // Row 1 (last) natural: NOT stretched, still ends flush at W.
-        approx(l.tiles[2].h, th);
-        approx(l.tiles[2].w, th * a);
-        approx(l.tiles[2].y, l.tiles[0].y + h0 + MOSAIC_GUTTER_PX);
-        approx(l.tiles[2].x, l.offset_x);
+        approx(l.tiles[2].x, l.offset_x + 2.0 * (h0 * a + MOSAIC_GUTTER_PX));
+        approx(l.tiles[0].y, l.tiles[1].y);
+        approx(l.tiles[1].y, l.tiles[2].y);
+        // Justified row flush right edge within epsilon.
+        let right0 = l.tiles[2].x + l.tiles[2].w - l.offset_x;
+        approx_acc(right0, nat0);
+        approx_acc(right0, big_w);
+        // Row 1 (last) natural: NOT stretched, left-aligned at x=offset.
+        approx(l.tiles[3].h, th);
+        approx(l.tiles[3].w, th * a);
+        approx(l.tiles[3].y, l.tiles[0].y + h0 + MOSAIC_GUTTER_PX);
+        approx(l.tiles[3].x, l.offset_x);
+        approx(l.tiles[4].x, l.offset_x + th * a + MOSAIC_GUTTER_PX);
         let right1 = l.tiles[4].x + l.tiles[4].w - l.offset_x;
-        approx(right1, nat1);
-        approx(right1, big_w, );
+        approx(right1, nat1, );
         // Content box + centering: W exceeds stage width → no x offset.
         approx(l.content_w, big_w);
         approx(l.content_h, h0 + th + MOSAIC_GUTTER_PX);
@@ -789,19 +862,43 @@ mod tests {
         approx(l.tiles[1].w, th * 1.78);
         approx(l.tiles[2].x, l.tiles[1].x + l.tiles[1].w + MOSAIC_GUTTER_PX);
         approx(l.tiles[2].w, th * 1.5);
-        approx(l.tiles[2].x + l.tiles[2].w - l.offset_x, nat0);
-        // Row 1 justified up to W (taller than th), still aspect-true.
-        let h1 = (big_w - MOSAIC_GUTTER_PX) / s1;
-        approx(l.tiles[3].h, h1);
-        approx(l.tiles[3].w, h1 * 1.78);
+        approx_acc(l.tiles[2].x + l.tiles[2].w - l.offset_x, nat0);
+        // Row 1 (last) natural: NOT stretched, left-aligned short of W.
+        approx(l.tiles[3].h, th);
+        approx(l.tiles[3].w, th * 1.78);
         approx(l.tiles[3].y, l.offset_y + th + MOSAIC_GUTTER_PX);
-        approx(l.tiles[4].x, l.offset_x + h1 * 1.78 + MOSAIC_GUTTER_PX);
-        approx(l.tiles[4].w, h1 * 2.35);
-        approx(l.tiles[4].x + l.tiles[4].w - l.offset_x, big_w);
+        approx(l.tiles[4].x, l.offset_x + th * 1.78 + MOSAIC_GUTTER_PX);
+        approx(l.tiles[4].w, th * 2.35);
+        let right1 = l.tiles[4].x + l.tiles[4].w - l.offset_x;
+        approx_acc(right1, nat1);
         // Content + centering.
         approx(l.content_w, big_w);
-        approx(l.content_h, th + h1 + MOSAIC_GUTTER_PX);
+        approx(l.content_h, 2.0 * th + MOSAIC_GUTTER_PX);
         approx(l.offset_x, 0.0);
+        approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
+    }
+
+    #[test]
+    fn justified_narrow_first_row_scales_up_shape_preserving() {
+        // One ultra-panorama closes row 0 immediately (10 + 2.35/2 > T);
+        // the forced five-card last row is widest → row 0 must grow its
+        // HEIGHT to reach W while every tile keeps its true aspect.
+        let aspects = [10.0, 2.35, 2.35, 2.35, 2.35, 2.35];
+        let l = justified_layout(&aspects, 1920.0, 1040.0);
+        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        assert_eq!(l.tiles.len(), 6);
+        let s1 = 5.0 * 2.35;
+        let big_w = th * s1 + 4.0 * MOSAIC_GUTTER_PX;
+        let h0 = big_w / 10.0; // justified row height ABOVE th
+        assert!(h0 > th + 1e-4, "narrow non-last row scales UP, got {h0} vs {th}");
+        approx(l.tiles[0].h, h0);
+        approx(l.tiles[0].w, big_w); // single panorama spans W exactly
+        approx(l.tiles[0].x + l.tiles[0].w - l.offset_x, big_w);
+        // Last row: five identical naturals at th.
+        approx(l.tiles[1].h, th);
+        approx(l.tiles[1].y, l.offset_y + h0 + MOSAIC_GUTTER_PX);
+        approx(l.tiles[1].w, th * 2.35);
+        approx(l.content_h, h0 + th + MOSAIC_GUTTER_PX);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
 
