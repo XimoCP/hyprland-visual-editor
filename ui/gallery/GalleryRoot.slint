@@ -16,13 +16,15 @@ import { ChromeButton } from "ChromeButton.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel } from "SliceCarousel.slint";
-import { MosaicView } from "MosaicView.slint";
+import { MosaicView, MosaicTileData } from "MosaicView.slint";
 
 export component GalleryRoot inherits Rectangle {
     // ── State mirrors (written by Rust, read-only here) ──
     in property <int> current-style: 0; // 0 Slice, 1 Hexagon, 2 Mosaic
     in property <int> focused-index: 0;
     in property <[GalleryCardData]> cards;
+    // Justified-rows Mosaic tile geometry (Rust-computed model).
+    in property <[MosaicTileData]> mosaic-tiles;
     in property <bool> empty: false;
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
@@ -117,6 +119,7 @@ export component GalleryRoot inherits Rectangle {
             height: 100%;
             viewport-w: self.width;
             cards: root.cards;
+            tiles: root.mosaic-tiles;
             cell-clicked(idx) => {
                 if (idx < root.cards.length) { root.card-clicked(idx); }
             }

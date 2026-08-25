@@ -1,26 +1,35 @@
-// HVE 2 — MosaicView (theme-gallery PR3 3.7-3.8; masonry spans in PR5).
+// HVE 2 — MosaicView (justified-rows rewrite, gallery-immersive-redesign).
 //
-// Pinterest-adapted span mosaic: modules of 5 cards on a 6col × 2row grid
-// whose base cell derives from the stage height (cell-base = height / 3.5,
-// parity mirror of mosaic.rs::mosaic_cell_base), so one module ≈ 1.71×
-// stage height wide fills the window instead of floating as a small band.
-// Slot 0 square 2×2, slots 1-4 rects 2×1. GridLayout cannot express
-// computed spans (compile-time constants only), so every card gets manual
-// x/y/width/height from index arithmetic — the same technique as
-// SliceCarousel's manual-x row. Dual-stripe infinite scroll, kinetic 0.90
-// (16ms), staggered reveal per cellKey unchanged.
+// Google Photos / Flickr style photo wall: Rust computes the FULL tile
+// geometry as a `tiles` model (mosaic.rs::justified_layout — Slint
+// GridLayout cannot compute spans and bindings cannot know per-image
+// aspects), so this view only paints: each MosaicCell sits at its final
+// centered stage coordinates, edge-to-edge with a thin uniform gutter,
+// every tile shaped like its image (no crop, no letterbox). Dual-stripe
+// infinite scroll, kinetic 0.90 (16ms), staggered reveal per cellKey
+// unchanged.
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
 import { MosaicCell } from "MosaicCell.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 
+export struct MosaicTileData {
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+}
+
 export component MosaicView inherits Rectangle {
     in property <length> scroll-offset: 0px;
     in property <length> viewport-w: 1500px;
-    // Real card data (gallery-immersive-redesign 4.8): cards drive the
-    // masonry repeaters; out-of-range indices yield default (empty) images.
+    // Real card data (gallery-immersive-redesign 4.8): out-of-range card
+    // indices in the repeater below yield default (empty) images.
     in property <[GalleryCardData]> cards;
+    // Paint-ready geometry computed by Rust (justified_layout); same row
+    // order as `cards` so idx maps 1:1.
+    in property <[MosaicTileData]> tiles;
     in property <int> item-count: 0;
     callback cell-clicked(int);
     callback cell-flip(int);
@@ -30,36 +39,6 @@ export component MosaicView inherits Rectangle {
     clip: true;
     background: SkwdTokens.surface;
 
-    // ── Masonry geometry (PR5): pure fns MIRROR mosaic.rs::mosaic_* ──
-    // slot tables — keep both sides in parity. Base cell scales with the
-    // stage (divisor 3.5 = mosaic.rs MOSAIC_BASE_VIEWPORT_DIVISOR) so the
-    // masonry fills the window; module stride is 6·base, colspan constant
-    // 2. NOTE: `/` is FLOAT division in Slint, so the module index uses
-    // Math.floor and the slot is derived without `%`.
-    property <length> cell-base: root.height / 3.5;
-    pure function slot-of(idx: int) -> int {
-        idx - Math.floor(idx / 5) * 5
-    }
-    pure function slot-col(slot: int) -> length {
-        if (slot <= 0) { return 0px; }
-        if (slot == 1 || slot == 3) { return 2 * root.cell-base; }
-        return 4 * root.cell-base;
-    }
-    pure function card-x(idx: int) -> length {
-        Math.floor(idx / 5) * 6 * root.cell-base + self.slot-col(self.slot-of(idx))
-    }
-    pure function card-y(idx: int) -> length {
-        self.slot-of(idx) >= 3 ? root.cell-base : 0px
-    }
-    // Square slot 0 → rowspan 2, rect slots → 1. Width is constant:
-    // colspan 2 × base for every slot.
-    pure function card-h(slot: int) -> length {
-        slot == 0 ? 2 * root.cell-base : root.cell-base
-    }
-
-    // Masonry strip height = 2 rows × base, vertically centered in stage.
-    property <length> strip-h: 2 * root.cell-base;
-
     // kinetic 0.90 state driven by Rust tick every 16ms; Slint mirrors offset with 16ms timer
     property <length> stripe-a-x: - root.scroll-offset;
     property <length> stripe-b-x: - root.scroll-offset + root.viewport-w;
@@ -67,24 +46,26 @@ export component MosaicView inherits Rectangle {
     animate stripe-b-x { duration: 16ms; easing: linear; }
 
     // dual-stripe tiling for infinite horizontal scroll (spec R2.3):
-    // stripe A hosts the gallery masonry; stripe B repeats it one viewport
-    // to the right as the tiling continuation (same mechanism as before).
+    // stripe A hosts the justified block (tiles already carry the stage
+    // centering offsets); stripe B repeats it one viewport to the right
+    // as the tiling continuation. Full-height stripes: y placement comes
+    // from the tiles themselves.
     stripe-a := Rectangle {
         x: root.stripe-a-x;
-        y: (parent.height - root.strip-h) / 2;
+        y: 0;
         width: root.viewport-w;
-        height: root.strip-h;
-        for card[idx] in root.cards : MosaicCell {
-            x: root.card-x(idx);
-            y: root.card-y(idx);
-            width: 2 * root.cell-base; // colspan 2 × cell-base (mosaic.rs MOSAIC_SLOT_COLSPAN)
-            height: root.card-h(root.slot-of(idx));
+        height: 100%;
+        for t[idx] in root.tiles : MosaicCell {
+            x: t.x;
+            y: t.y;
+            width: t.w;
+            height: t.h;
             cell-key: idx;
             reveal-delay: (idx - Math.floor(idx / 15) * 15) * 40ms; // mirrors reveal_delay_for 600ms wrap
             image-alpha: 1.0;
             cloud-opacity: 1.0;
-            thumb: card.thumb;
-            hero: card.hero;
+            thumb: root.cards[idx].thumb;
+            hero: root.cards[idx].hero;
             clicked => { root.cell-clicked(idx); }
             flip-requested => { root.cell-flip(idx); }
         }
@@ -92,20 +73,20 @@ export component MosaicView inherits Rectangle {
 
     stripe-b := Rectangle {
         x: root.stripe-b-x;
-        y: (parent.height - root.strip-h) / 2;
+        y: 0;
         width: root.viewport-w;
-        height: root.strip-h;
-        for card[idx] in root.cards : MosaicCell {
-            x: root.card-x(idx);
-            y: root.card-y(idx);
-            width: 2 * root.cell-base;
-            height: root.card-h(root.slot-of(idx));
+        height: 100%;
+        for t[idx] in root.tiles : MosaicCell {
+            x: t.x;
+            y: t.y;
+            width: t.w;
+            height: t.h;
             cell-key: idx;
             reveal-delay: (idx - Math.floor(idx / 15) * 15) * 40ms;
             image-alpha: 1.0;
             cloud-opacity: 1.0;
-            thumb: card.thumb;
-            hero: card.hero;
+            thumb: root.cards[idx].thumb;
+            hero: root.cards[idx].hero;
             clicked => { root.cell-clicked(idx); }
             flip-requested => { root.cell-flip(idx); }
         }

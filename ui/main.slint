@@ -9,6 +9,7 @@ import {
 } from "./modules.slint";
 import { ShellRoot, SkwdTokens } from "./shell.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
+import { MosaicTileData } from "gallery/MosaicView.slint";
 
 // Re-export SkwdTokens so Rust can access it via crate::SkwdTokens.
 export { SkwdTokens }
@@ -205,6 +206,8 @@ export component MainWindow inherits Window {
     in-out property <int> gallery-style: 0;
     in-out property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
+    // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
+    in property <[MosaicTileData]> gallery-mosaic-tiles;
     in property <bool> gallery-empty: false;
     in property <string> gallery-empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
@@ -491,6 +494,7 @@ export component MainWindow inherits Window {
         gallery-style: root.gallery-style;
         gallery-focused: root.gallery-focused;
         gallery-cards: root.gallery-cards;
+        gallery-mosaic-tiles: root.gallery-mosaic-tiles;
         gallery-empty: root.gallery-empty;
         gallery-empty-text: root.gallery-empty-text;
         gallery-mit-footer: root.gallery-mit-footer;

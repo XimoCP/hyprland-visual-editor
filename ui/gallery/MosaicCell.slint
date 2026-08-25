@@ -1,39 +1,23 @@
-// HVE 2 — MosaicCell (theme-gallery PR3 3.7; relaxed for masonry in PR5).
+// HVE 2 — MosaicCell (justified-rows rewrite, gallery-immersive-redesign).
 //
-// Voronoi shard cell: polygon Path, kinetic scroll handled by parent,
-// cloud opacity inner 0.55 outer 1.05, staggered reveal per cellKey.
+// Full-bleed photo tile: the parent sets width/height from the Rust
+// justified-rows model (mosaic.rs::justified_layout), so the tile's shape
+// already matches its image — `image-fit: contain` renders edge-to-edge
+// with ≈0 bands (never cropped, never letterboxed). No frame, no focus
+// stroke: images sit edge-to-edge separated only by the uniform gutter.
+// Hero-preferred gating + shimmer + 200ms fade kept from 4.8/HF5.
 // Translated from skwd-wall Mosaic (MIT, © liixini).
-//
-// PR5 (masonry span mosaic): the cell no longer fixes its own size — the
-// parent sets width/height per slot geometry (mosaic.rs::mosaic_card_rect).
-// The bbox-quad Path adapts via a pixel viewbox so it renders at both
-// square (2·base × 2·base) and rect (2·base × base) slots with the same
-// 6px inset. Images use image-fit contain centered: the FULL wallpaper is
-// always visible (letterboxing on mismatched aspects is intended, never
-// cropped).
 
 import { SkwdTokens } from "../tokens.slint";
 
 export component MosaicCell inherits Rectangle {
     in property <string> card-name: "";
-    in property <color> accent: SkwdTokens.fallback-accent;
     in property <image> thumb;
-    // Aspect-true hero decode (HF5): preferred over the 400×720 portrait
-    // thumb so landscape masonry slots letterbox instead of shrinking a
-    // cover-crop into a tiny centered image with giant side bands.
+    // Aspect-true hero decode (HF5): preferred over the thumb so tiles
+    // show the large CONTAIN decode instead of a small portrait artifact.
     in property <image> hero;
-    // polygon vertices as flat arrays approximated via bbox quad (Voronoi shard)
-    in property <length> vert-x0: 0px;
-    in property <length> vert-y0: 0px;
-    in property <length> vert-x1: 0px;
-    in property <length> vert-y1: 0px;
-    in property <length> vert-x2: 0px;
-    in property <length> vert-y2: 0px;
-    in property <length> vert-x3: 0px;
-    in property <length> vert-y3: 0px;
 
     in property <float> cloud-opacity: 1.0; // driven by Rust cloud 0.55/1.05 smoothstep
-    in property <bool> is-focused: false;
     in property <int> cell-key: 0;
     in property <duration> reveal-delay: 0ms;
     // stagger alpha: 0 → 1 after reveal-delay
@@ -43,33 +27,13 @@ export component MosaicCell inherits Rectangle {
     callback clicked();
     callback flip-requested();
 
-    // Size is parent-driven (masonry slot geometry, PR5). Cell edge in px
-    // feeds the Path viewbox so the shard quad scales with any slot size.
-    property <float> px-w: self.width / 1px;
-    property <float> px-h: self.height / 1px;
     clip: true;
     border-radius: SkwdTokens.radius-8;
+    // Background only ever shows through while the shimmer runs; once an
+    // image lands it covers 100% of the tile.
     background: SkwdTokens.surface-container;
     opacity: root.cloud-opacity;
     animate opacity { duration: 200ms; easing: ease-out; }
-
-    // shard gap 6px via Path stroke gap visual — inset adapts to cell size
-    cell-path := Path {
-        width: 100%;
-        height: 100%;
-        viewbox-x: 0;
-        viewbox-y: 0;
-        viewbox-width: root.px-w;
-        viewbox-height: root.px-h;
-        fill: SkwdTokens.surface;
-        stroke: root.is-focused ? root.accent : transparent;
-        stroke-width: root.is-focused ? 2px : 0px;
-        MoveTo { x: 6; y: 6; }
-        LineTo { x: root.px-w - 6; y: 6; }
-        LineTo { x: root.px-w - 6; y: root.px-h - 6; }
-        LineTo { x: 6; y: root.px-h - 6; }
-        Close { }
-    }
 
     // ── Image pipeline (gallery-immersive-redesign 4.8 + HF5): prefer
     // the hero (≤1600×900 CONTAIN, aspect-true) and fall back to the
@@ -87,8 +51,8 @@ export component MosaicCell inherits Rectangle {
         triggered => { parent.shimmer-high = !parent.shimmer-high; }
     }
 
-    // effective image with staggered reveal — contain centered: full
-    // wallpaper visible (letterbox bands on aspect mismatch are intended)
+    // Full-bleed effective image with staggered reveal — contain fit is
+    // band-free because each tile's shape matches its image's aspect.
     Image {
         width: 100%;
         height: 100%;
@@ -111,14 +75,6 @@ export component MosaicCell inherits Rectangle {
             duration: root.has-image ? SkwdTokens.anim-200 : 600ms;
             easing: ease-in-out;
         }
-    }
-
-    // cloud opacity overlay hint (kinetic scroll)
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        background: transparent;
-        // focus ring already via stroke
     }
 
     Text {

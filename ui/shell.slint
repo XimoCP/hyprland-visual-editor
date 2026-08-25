@@ -7,6 +7,7 @@
 import { SkwdTokens } from "tokens.slint";
 import { GalleryRoot } from "gallery/GalleryRoot.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
+import { MosaicTileData } from "gallery/MosaicView.slint";
 // Re-export the token singleton so consumers of this compilation unit (and
 // delivery 4's ui/main.slint) can read it under its own name from Rust.
 export { SkwdTokens }
@@ -72,6 +73,9 @@ export component ShellRoot inherits Rectangle {
     in property <int> gallery-style: 0;
     in property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
+    // Justified-rows Mosaic geometry, computed by Rust (mosaic.rs) and
+    // piped exactly like gallery-cards.
+    in property <[MosaicTileData]> gallery-mosaic-tiles;
     in property <bool> gallery-empty: false;
     in property <string> gallery-empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
@@ -178,6 +182,7 @@ export component ShellRoot inherits Rectangle {
                 current-style: root.gallery-style;
                 focused-index: root.gallery-focused;
                 cards: root.gallery-cards;
+                mosaic-tiles: root.gallery-mosaic-tiles;
                 empty: root.gallery-empty;
                 empty-text: root.gallery-empty-text;
                 mit-link: root.gallery-mit-link;
