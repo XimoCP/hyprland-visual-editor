@@ -30,17 +30,26 @@ pub const MOSAIC_STAGGER_MS: u64 = 40;
 
 // ── Masonry span layout (PR5): Pinterest-adapted span mosaic ────────
 //
-// Module of 5 cards on a 6col × 2row grid (base cell 160px → module
-// 960×320). Slot 0 is a square (colspan 2 × rowspan 2) breaking the
-// uniformity; slots 1-4 are rects (colspan 2 × rowspan 1). GridLayout
-// cannot express computed spans in Slint (compile-time constants only),
-// so MosaicView.slint positions cards manually via absolute x/y — these
-// pure fns are the parity source of truth for that mirror.
-/// Base cell edge in px (grid unit for all slot geometry).
-pub const MOSAIC_CELL_BASE_PX: f32 = 160.0;
+// Module of 5 cards on a 6col × 2row grid. Slot 0 is a square (colspan 2
+// × rowspan 2) breaking the uniformity; slots 1-4 are rects (colspan 2 ×
+// rowspan 1). The base cell is NOT a fixed pixel value: it derives from
+// the visible stage height (`mosaic_cell_base`) so the masonry fills the
+// window instead of floating as a small band. GridLayout cannot express
+// computed spans in Slint (compile-time constants only), so
+// MosaicView.slint positions cards manually via absolute x/y — these pure
+// fns are the parity source of truth for that mirror.
+/// Viewport divisor for the base cell: `base = stage_h / 3.5` keeps one
+/// module ≈ 1.71× stage height wide (~1782px at a ~1040px stage), which
+/// fills a fullscreen 1920px window with a single 5-card band.
+pub const MOSAIC_BASE_VIEWPORT_DIVISOR: f32 = 3.5;
+/// Base cell edge in px for a given stage height (parity mirror of
+/// MosaicView.slint `cell-base`). All slot geometry scales from it.
+pub fn mosaic_cell_base(stage_h: f32) -> f32 {
+    stage_h / MOSAIC_BASE_VIEWPORT_DIVISOR
+}
 /// Cards per module: 1 square + 4 rects.
 pub const MOSAIC_MODULE_CARDS: usize = 5;
-/// Every slot spans 2 columns (320px wide) in the 6-col module grid.
+/// Every slot spans 2 columns (2·base wide) in the 6-col module grid.
 pub const MOSAIC_SLOT_COLSPAN: usize = 2;
 /// Columns per module band: square takes cols 0-1, rects take 2-3 and 4-5.
 pub const MOSAIC_MODULE_COLS: usize = 6;
@@ -61,27 +70,29 @@ pub fn mosaic_slot_rowspan(slot: usize) -> usize {
     SPANS[slot % MOSAIC_MODULE_CARDS]
 }
 
-/// Absolute card rect `(x, y, w, h)` in px for global card index `idx`.
-/// `x = module·960 + slot_col·160`, `y = slot_row·160`,
-/// `w = colspan·160` (always 320), `h = rowspan·160`.
-pub fn mosaic_card_rect(idx: usize) -> (f32, f32, f32, f32) {
-    let module_w = MOSAIC_MODULE_COLS as f32 * MOSAIC_CELL_BASE_PX;
+/// Absolute card rect `(x, y, w, h)` in px for global card index `idx`,
+/// scaled by the base cell edge `base` (see `mosaic_cell_base`).
+/// `x = module·(6·base) + slot_col·base`, `y = slot_row·base`,
+/// `w = colspan·base`, `h = rowspan·base`.
+pub fn mosaic_card_rect(idx: usize, base: f32) -> (f32, f32, f32, f32) {
+    let module_w = MOSAIC_MODULE_COLS as f32 * base;
     let module = (idx / MOSAIC_MODULE_CARDS) as f32;
     let slot = idx % MOSAIC_MODULE_CARDS;
-    let x = module * module_w + mosaic_slot_col(slot) as f32 * MOSAIC_CELL_BASE_PX;
-    let y = mosaic_slot_row(slot) as f32 * MOSAIC_CELL_BASE_PX;
-    let w = MOSAIC_SLOT_COLSPAN as f32 * MOSAIC_CELL_BASE_PX;
-    let h = mosaic_slot_rowspan(slot) as f32 * MOSAIC_CELL_BASE_PX;
+    let x = module * module_w + mosaic_slot_col(slot) as f32 * base;
+    let y = mosaic_slot_row(slot) as f32 * base;
+    let w = MOSAIC_SLOT_COLSPAN as f32 * base;
+    let h = mosaic_slot_rowspan(slot) as f32 * base;
     (x, y, w, h)
 }
 
-/// Total masonry content width in px for `card_count` cards
-/// (whole modules, ceil division: partial trailing modules still reserve
-/// their full band so the dual-stripe tiling period stays stable).
-pub fn mosaic_content_width(card_count: usize) -> f32 {
+/// Total masonry content width in px for `card_count` cards at base cell
+/// edge `base` (whole modules, ceil division: partial trailing modules
+/// still reserve their full band so the dual-stripe tiling period stays
+/// stable).
+pub fn mosaic_content_width(card_count: usize, base: f32) -> f32 {
     if card_count == 0 { return 0.0; }
     let modules = (card_count + MOSAIC_MODULE_CARDS - 1) / MOSAIC_MODULE_CARDS;
-    modules as f32 * MOSAIC_MODULE_COLS as f32 * MOSAIC_CELL_BASE_PX
+    modules as f32 * MOSAIC_MODULE_COLS as f32 * base
 }
 
 // ── Geometry helpers ────────────────────────────────────────────────
