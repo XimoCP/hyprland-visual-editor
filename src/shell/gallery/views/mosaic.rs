@@ -80,6 +80,17 @@ pub fn tile_aspect(w: u32, h: u32) -> f32 {
     w as f32 / h as f32
 }
 
+/// Artificial display aspect (`w/h`) for card `idx` — the "real
+/// Pinterest" pattern. Real image aspects are IGNORED on purpose: the
+/// user's library is uniformly 16:9, which would pack a boring uniform
+/// grid, so tiles get a deterministic shape variety instead and images
+/// cover-crop into their tile (user-approved). Square every 4th card,
+/// medium 3:2 every 4th+2, wide 16:9 otherwise.
+pub fn mosaic_display_aspect(idx: usize) -> f32 {
+    let _ = idx;
+    unimplemented!("gallery-immersive-redesign: display-aspect pattern")
+}
+
 /// Pack `aspects` (in display order) into a justified-rows block sized
 /// for `(stage_w, stage_h)`. Empty input or non-positive stage → all
 /// zeros. See the module docs for the deterministic algorithm.
@@ -969,5 +980,73 @@ mod tests {
         approx(tile_aspect(1920, 1080), 16.0 / 9.0);
         assert_eq!(tile_aspect(720, 720), 1.0);
         approx(tile_aspect(1080, 1920), 9.0 / 16.0);
+    }
+
+    // ── Display-aspect pattern contracts ("real Pinterest") ─────────
+
+    #[test]
+    fn display_aspect_pattern_exact_values_indices_0_to_9() {
+        let wide = 16.0f32 / 9.0;
+        let expected = [
+            1.0, wide, 1.5, wide, // square every 4th, medium every 4th+2
+            1.0, wide, 1.5, wide, //
+            1.0, wide,
+        ];
+        for (idx, &want) in expected.iter().enumerate() {
+            approx(mosaic_display_aspect(idx), want);
+        }
+    }
+
+    #[test]
+    fn display_aspect_pattern_cyclic_over_12_indices() {
+        for idx in 0..8 {
+            assert!(
+                mosaic_display_aspect(idx) == mosaic_display_aspect(idx + 4),
+                "pattern must repeat with period 4 at idx {idx}"
+            );
+        }
+        for idx in 12..16 {
+            assert_eq!(mosaic_display_aspect(idx), mosaic_display_aspect(idx % 4));
+        }
+    }
+
+    #[test]
+    fn justified_pattern_aspects_variety_flush_rows_centered() {
+        // Four cards fed the display pattern produce a NON-uniform block:
+        // one square (~row_h × row_h), two wide, one medium — while the
+        // packer keeps justified flush rows and stage centering.
+        let aspects: Vec<f32> = (0..4).map(mosaic_display_aspect).collect();
+        let l = justified_layout(&aspects, 1920.0, 1040.0);
+        assert_eq!(l.tiles.len(), 4);
+        let th = band_row_h(1040.0);
+        // Greedy packing: row 0 [square, wide], row 1 [medium, wide].
+        let s0 = 1.0 + 16.0f32 / 9.0;
+        let s1 = 1.5 + 16.0f32 / 9.0;
+        let nat0 = th * s0 + MOSAIC_GUTTER_PX;
+        let nat1 = th * s1 + MOSAIC_GUTTER_PX;
+        let big_w = nat0.max(nat1);
+        assert!((nat0 - nat1).abs() > 1e-4, "rows differ → justification kicks in");
+        // Variety: no two tiles in a row share a width.
+        assert!((l.tiles[0].w - l.tiles[1].w).abs() > 1e-3, "row 0 varied");
+        assert!((l.tiles[2].w - l.tiles[3].w).abs() > 1e-3, "row 1 varied");
+        // Tile shapes follow the pattern.
+        approx(l.tiles[0].h, (big_w - MOSAIC_GUTTER_PX) / s0);
+        approx(l.tiles[0].w, l.tiles[0].h); // square ≈ row_h × row_h
+        approx(l.tiles[1].w / l.tiles[1].h, 16.0 / 9.0); // wide
+        approx(l.tiles[2].h, th);
+        approx(l.tiles[2].w / l.tiles[2].h, 1.5); // medium
+        approx(l.tiles[3].w / l.tiles[3].h, 16.0 / 9.0); // wide
+        // Row membership and stacking.
+        approx(l.tiles[1].y, l.tiles[0].y);
+        approx(l.tiles[2].y, l.tiles[0].y + l.tiles[0].h + MOSAIC_GUTTER_PX);
+        approx(l.tiles[3].y, l.tiles[2].y);
+        // Justified flush rows: both rows end exactly at W.
+        approx_acc(l.tiles[1].x + l.tiles[1].w - l.offset_x, big_w);
+        approx_acc(l.tiles[3].x + l.tiles[3].w - l.offset_x, big_w);
+        // Centered content box on the stage.
+        approx(l.content_w, big_w);
+        approx(l.content_h, l.tiles[0].h + th + MOSAIC_GUTTER_PX);
+        approx(l.offset_x, (1920.0 - big_w) / 2.0);
+        approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
 }
