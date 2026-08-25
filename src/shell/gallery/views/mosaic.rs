@@ -42,21 +42,47 @@ pub const MOSAIC_CELL_BASE_PX: f32 = 160.0;
 pub const MOSAIC_MODULE_CARDS: usize = 5;
 /// Every slot spans 2 columns (320px wide) in the 6-col module grid.
 pub const MOSAIC_SLOT_COLSPAN: usize = 2;
+/// Columns per module band: square takes cols 0-1, rects take 2-3 and 4-5.
+pub const MOSAIC_MODULE_COLS: usize = 6;
 
 /// Column offset (in base cells) of a slot within its module.
-pub fn mosaic_slot_col(_slot: usize) -> usize { 0 }
+pub fn mosaic_slot_col(slot: usize) -> usize {
+    const COLS: [usize; MOSAIC_MODULE_CARDS] = [0, 2, 4, 2, 4];
+    COLS[slot % MOSAIC_MODULE_CARDS]
+}
 /// Row offset (in base cells) of a slot within its module.
-pub fn mosaic_slot_row(_slot: usize) -> usize { 0 }
+pub fn mosaic_slot_row(slot: usize) -> usize {
+    const ROWS: [usize; MOSAIC_MODULE_CARDS] = [0, 0, 0, 1, 1];
+    ROWS[slot % MOSAIC_MODULE_CARDS]
+}
 /// Row span (in base cells) of a slot: square slot 0 → 2, rects → 1.
-pub fn mosaic_slot_rowspan(_slot: usize) -> usize { 0 }
+pub fn mosaic_slot_rowspan(slot: usize) -> usize {
+    const SPANS: [usize; MOSAIC_MODULE_CARDS] = [2, 1, 1, 1, 1];
+    SPANS[slot % MOSAIC_MODULE_CARDS]
+}
 
 /// Absolute card rect `(x, y, w, h)` in px for global card index `idx`.
-pub fn mosaic_card_rect(_idx: usize) -> (f32, f32, f32, f32) { (0.0, 0.0, 0.0, 0.0) }
+/// `x = module·960 + slot_col·160`, `y = slot_row·160`,
+/// `w = colspan·160` (always 320), `h = rowspan·160`.
+pub fn mosaic_card_rect(idx: usize) -> (f32, f32, f32, f32) {
+    let module_w = MOSAIC_MODULE_COLS as f32 * MOSAIC_CELL_BASE_PX;
+    let module = (idx / MOSAIC_MODULE_CARDS) as f32;
+    let slot = idx % MOSAIC_MODULE_CARDS;
+    let x = module * module_w + mosaic_slot_col(slot) as f32 * MOSAIC_CELL_BASE_PX;
+    let y = mosaic_slot_row(slot) as f32 * MOSAIC_CELL_BASE_PX;
+    let w = MOSAIC_SLOT_COLSPAN as f32 * MOSAIC_CELL_BASE_PX;
+    let h = mosaic_slot_rowspan(slot) as f32 * MOSAIC_CELL_BASE_PX;
+    (x, y, w, h)
+}
 
 /// Total masonry content width in px for `card_count` cards
 /// (whole modules, ceil division: partial trailing modules still reserve
 /// their full band so the dual-stripe tiling period stays stable).
-pub fn mosaic_content_width(_card_count: usize) -> f32 { 0.0 }
+pub fn mosaic_content_width(card_count: usize) -> f32 {
+    if card_count == 0 { return 0.0; }
+    let modules = (card_count + MOSAIC_MODULE_CARDS - 1) / MOSAIC_MODULE_CARDS;
+    modules as f32 * MOSAIC_MODULE_COLS as f32 * MOSAIC_CELL_BASE_PX
+}
 
 // ── Geometry helpers ────────────────────────────────────────────────
 
