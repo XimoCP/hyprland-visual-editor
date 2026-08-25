@@ -73,13 +73,6 @@ pub struct MosaicLayout {
     pub offset_y: f32,
 }
 
-/// Aspect ratio `w/h` of an image pixel size; falls back to
-/// [`MOSAIC_DEFAULT_ASPECT`] for zero dimensions.
-pub fn tile_aspect(w: u32, h: u32) -> f32 {
-    if w == 0 || h == 0 { return MOSAIC_DEFAULT_ASPECT; }
-    w as f32 / h as f32
-}
-
 /// Artificial display aspect (`w/h`) for card `idx` — the "real
 /// Pinterest" pattern. Real image aspects are IGNORED on purpose: the
 /// user's library is uniformly 16:9, which would pack a boring uniform
@@ -975,15 +968,6 @@ mod tests {
             justified_layout(&good, 1920.0, 1040.0),
             "non-finite or ≤ 0 aspects behave exactly like the default"
         );
-    }
-
-    #[test]
-    fn tile_aspect_pixel_size_contracts() {
-        assert_eq!(tile_aspect(0, 100), MOSAIC_DEFAULT_ASPECT, "zero width");
-        assert_eq!(tile_aspect(100, 0), MOSAIC_DEFAULT_ASPECT, "zero height");
-        approx(tile_aspect(1920, 1080), 16.0 / 9.0);
-        assert_eq!(tile_aspect(720, 720), 1.0);
-        approx(tile_aspect(1080, 1920), 9.0 / 16.0);
     }
 
     // ── Display-aspect pattern contracts ("real Pinterest") ─────────

@@ -480,8 +480,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             row.thumb = img;
                             row.hero = hero_img;
                             model.set_row_data(idx, row);
-                            // Hero landed → aspects changed: recompute the
-                            // justified block once, on the UI thread.
+                            // Kept per spec: an existing cheap idempotent
+                            // refresh point on the UI thread.
                             refresh_mosaic_tiles(&w);
                         }
                     }
@@ -489,33 +489,25 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         }
         // ── Mosaic justified-rows tiles (gallery-immersive-redesign):
-        // per-card aspects come from the ALREADY-marshaled images (hero
-        // preferred, else thumb, else 16:9 default — sizes only, no
-        // decoding here) and the pure packer mosaic.rs::justified_layout
-        // computes paint-ready geometry. The tiles model is created once
-        // and mutated ROW-WISE so repeaters never remount (the reveal
-        // stagger must not replay on refresh). Recompute happens ONLY at
-        // marshal points: initial build, each preheat hero arrival (UI
-        // thread via invoke_from_event_loop), and apply-refresh. ──
+        // per-card aspects come from the DETERMINISTIC DISPLAY-ASPECT
+        // PATTERN ("real Pinterest", user-approved artificial variety) —
+        // the user's wallpapers are all 16:9, so real aspects would pack
+        // a uniform grid; instead tiles get synthetic shape variety and
+        // images cover-crop into their tile (MosaicCell). The pure packer
+        // mosaic.rs::justified_layout computes paint-ready geometry. The
+        // tiles model is created once and mutated ROW-WISE so repeaters
+        // never remount (the reveal stagger must not replay on refresh).
+        // Recompute happens ONLY at marshal points: initial build, each
+        // preheat hero arrival (UI thread via invoke_from_event_loop),
+        // and apply-refresh. ──
         fn refresh_mosaic_tiles(w: &crate::MainWindow) {
             use crate::shell::gallery::views::mosaic::{
-                justified_layout, tile_aspect, MOSAIC_DEFAULT_ASPECT,
+                justified_layout, mosaic_display_aspect,
             };
             use slint::{Model, VecModel};
             let cards = w.get_gallery_cards();
-            let mut aspects = Vec::with_capacity(cards.row_count());
-            for i in 0..cards.row_count() {
-                let aspect = cards.row_data(i).map_or(MOSAIC_DEFAULT_ASPECT, |row| {
-                    let img = if row.hero.size().width > 0 { row.hero } else { row.thumb };
-                    let size = img.size();
-                    if size.width > 0 && size.height > 0 {
-                        tile_aspect(size.width, size.height)
-                    } else {
-                        MOSAIC_DEFAULT_ASPECT
-                    }
-                });
-                aspects.push(aspect);
-            }
+            let aspects: Vec<f32> =
+                (0..cards.row_count()).map(mosaic_display_aspect).collect();
             // The gallery stage fills the window: use its logical size.
             let scale = w.window().scale_factor();
             let physical = w.window().size();
