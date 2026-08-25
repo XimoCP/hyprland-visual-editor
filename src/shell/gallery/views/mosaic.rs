@@ -28,6 +28,36 @@ pub const MOSAIC_WARMUP_INTERVAL_MS: u64 = 16;
 /// Stagger base for reveal per cellKey (ms).
 pub const MOSAIC_STAGGER_MS: u64 = 40;
 
+// ── Masonry span layout (PR5): Pinterest-adapted span mosaic ────────
+//
+// Module of 5 cards on a 6col × 2row grid (base cell 160px → module
+// 960×320). Slot 0 is a square (colspan 2 × rowspan 2) breaking the
+// uniformity; slots 1-4 are rects (colspan 2 × rowspan 1). GridLayout
+// cannot express computed spans in Slint (compile-time constants only),
+// so MosaicView.slint positions cards manually via absolute x/y — these
+// pure fns are the parity source of truth for that mirror.
+/// Base cell edge in px (grid unit for all slot geometry).
+pub const MOSAIC_CELL_BASE_PX: f32 = 160.0;
+/// Cards per module: 1 square + 4 rects.
+pub const MOSAIC_MODULE_CARDS: usize = 5;
+/// Every slot spans 2 columns (320px wide) in the 6-col module grid.
+pub const MOSAIC_SLOT_COLSPAN: usize = 2;
+
+/// Column offset (in base cells) of a slot within its module.
+pub fn mosaic_slot_col(_slot: usize) -> usize { 0 }
+/// Row offset (in base cells) of a slot within its module.
+pub fn mosaic_slot_row(_slot: usize) -> usize { 0 }
+/// Row span (in base cells) of a slot: square slot 0 → 2, rects → 1.
+pub fn mosaic_slot_rowspan(_slot: usize) -> usize { 0 }
+
+/// Absolute card rect `(x, y, w, h)` in px for global card index `idx`.
+pub fn mosaic_card_rect(_idx: usize) -> (f32, f32, f32, f32) { (0.0, 0.0, 0.0, 0.0) }
+
+/// Total masonry content width in px for `card_count` cards
+/// (whole modules, ceil division: partial trailing modules still reserve
+/// their full band so the dual-stripe tiling period stays stable).
+pub fn mosaic_content_width(_card_count: usize) -> f32 { 0.0 }
+
 // ── Geometry helpers ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -611,5 +641,42 @@ mod tests {
         assert!(view.handle_key(GalleryKey::Left));
         assert_eq!(view.focused_index(), 0);
         assert!(!view.handle_key(GalleryKey::Up));
+    }
+
+    // ── PR5 masonry span layout contracts ───────────────────────────
+    #[test]
+    fn masonry_module_constants_and_slot_tables() {
+        assert_eq!(MOSAIC_CELL_BASE_PX, 160.0, "base cell edge");
+        assert_eq!(MOSAIC_MODULE_CARDS, 5, "1 square + 4 rects per module");
+        assert_eq!(MOSAIC_SLOT_COLSPAN, 2, "every slot spans 2 columns");
+        let cols: Vec<usize> = (0..5).map(mosaic_slot_col).collect();
+        assert_eq!(cols, vec![0, 2, 4, 2, 4], "slot col table");
+        let rows: Vec<usize> = (0..5).map(mosaic_slot_row).collect();
+        assert_eq!(rows, vec![0, 0, 0, 1, 1], "slot row table");
+        let spans: Vec<usize> = (0..5).map(mosaic_slot_rowspan).collect();
+        assert_eq!(spans, vec![2, 1, 1, 1, 1], "slot rowspan table (square first)");
+        // Slot lookups wrap for any index (defensive against bad callers).
+        assert_eq!(mosaic_slot_col(7), mosaic_slot_col(2), "col wraps mod 5");
+    }
+
+    #[test]
+    fn masonry_card_rect_first_two_modules() {
+        // Module 0: square leads at origin, rects fill the 6×2 band.
+        assert_eq!(mosaic_card_rect(0), (0.0, 0.0, 320.0, 320.0), "square 2×2");
+        assert_eq!(mosaic_card_rect(1), (320.0, 0.0, 320.0, 160.0), "rect top mid");
+        assert_eq!(mosaic_card_rect(2), (640.0, 0.0, 320.0, 160.0), "rect top right");
+        assert_eq!(mosaic_card_rect(3), (320.0, 160.0, 320.0, 160.0), "rect bottom mid");
+        assert_eq!(mosaic_card_rect(4), (640.0, 160.0, 320.0, 160.0), "rect bottom right");
+        // Module 1 shifts a full module width (6 cols × 160 = 960).
+        assert_eq!(mosaic_card_rect(5), (960.0, 0.0, 320.0, 320.0), "next module square");
+        assert_eq!(mosaic_card_rect(7), (1600.0, 0.0, 320.0, 160.0), "module + slot col 4");
+    }
+
+    #[test]
+    fn masonry_content_width_ceil_modules() {
+        assert_eq!(mosaic_content_width(0), 0.0, "no cards → no width");
+        assert_eq!(mosaic_content_width(5), 960.0, "exactly one module");
+        assert_eq!(mosaic_content_width(6), 1920.0, "partial module reserves full band");
+        assert_eq!(mosaic_content_width(11), 2880.0, "ceil(11/5)=3 modules");
     }
 }
