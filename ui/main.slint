@@ -218,6 +218,9 @@ export component MainWindow inherits Window {
     callback gallery-card-right-clicked(int);
     callback gallery-wheel-step(int);
     callback gallery-mit-open();
+    // Stage geometry events piped from GalleryRoot through ShellRoot
+    // (logical lengths) — drives the mosaic tiles recompute.
+    callback gallery-stage-geometry-changed(length, length);
 
 
     // ── Settings ──
@@ -505,6 +508,7 @@ export component MainWindow inherits Window {
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
         gallery-wheel-step(dir) => { root.gallery-wheel-step(dir); }
         gallery-mit-open => { root.gallery-mit-open(); }
+        gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──

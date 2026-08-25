@@ -445,9 +445,16 @@ fn main() -> Result<(), slint::PlatformError> {
         // hve/themes/<name>/...) — the engine is sealed, so no accessor is
         // added; the layout is only read, never written here. ──
         let gallery_themes_root = config_dir.join("hve").join("themes");
+        // Last stage dims reported by the Slint side (logical lengths);
+        // shared by every recompute point so they all read the SAME
+        // geometry source instead of per-call window snapshots.
+        // Arc<Mutex> because the thumbs marshal closure must be Send+Sync.
+        let stage_dims: std::sync::Arc<std::sync::Mutex<StageDims>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
         fn schedule_thumbs(
             weak: &slint::Weak<crate::MainWindow>,
             themes_root: &std::path::Path,
+            stage_dims: &std::sync::Arc<std::sync::Mutex<StageDims>>,
         ) {
             use crate::shell::gallery::thumbs;
             use slint::Model;
@@ -465,6 +472,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             drop(w);
             let ready_weak = weak.clone();
+            let dims = stage_dims.clone();
             thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png, hero_png| {
                 // Runs ON the UI thread (invoke_from_event_loop). The stale-
                 // write guard re-reads the CURRENT model so a refresh that
@@ -482,7 +490,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             model.set_row_data(idx, row);
                             // Kept per spec: an existing cheap idempotent
                             // refresh point on the UI thread.
-                            refresh_mosaic_tiles(&w);
+                            refresh_mosaic_tiles(&w, dims.lock().unwrap().as_ref().copied());
                         }
                     }
                 }
@@ -494,13 +502,17 @@ fn main() -> Result<(), slint::PlatformError> {
         // the user's wallpapers are all 16:9, so real aspects would pack
         // a uniform grid; instead tiles get synthetic shape variety and
         // images cover-crop into their tile (MosaicCell). The pure packer
-        // mosaic.rs::justified_layout computes paint-ready geometry. The
-        // tiles model is created once and mutated ROW-WISE so repeaters
-        // never remount (the reveal stagger must not replay on refresh).
-        // Recompute happens ONLY at marshal points: initial build, each
-        // preheat hero arrival (UI thread via invoke_from_event_loop),
-        // and apply-refresh. ──
-        fn refresh_mosaic_tiles(w: &crate::MainWindow) {
+        // mosaic.rs::justified_layout computes paint-ready geometry from
+        // the LAST stage dims reported by the Slint side
+        // (stage-geometry-changed); before the first event arrives the
+        // window logical size is the fallback. The tiles model is created
+        // once and mutated ROW-WISE so repeaters never remount (the
+        // reveal stagger must not replay on refresh). Recompute happens
+        // ONLY at marshal points: initial build, each preheat hero
+        // arrival (UI thread via invoke_from_event_loop), apply-refresh,
+        // and stage geometry changes. ──
+        type StageDims = Option<(f32, f32)>;
+        fn refresh_mosaic_tiles(w: &crate::MainWindow, stage: StageDims) {
             use crate::shell::gallery::views::mosaic::{
                 justified_layout, mosaic_display_aspect,
             };
@@ -508,11 +520,18 @@ fn main() -> Result<(), slint::PlatformError> {
             let cards = w.get_gallery_cards();
             let aspects: Vec<f32> =
                 (0..cards.row_count()).map(mosaic_display_aspect).collect();
-            // The gallery stage fills the window: use its logical size.
-            let scale = w.window().scale_factor();
-            let physical = w.window().size();
-            let stage_w = physical.width as f32 / scale;
-            let stage_h = physical.height as f32 / scale;
+            // Prefer Slint-reported stage dims; fall back to reading the
+            // window logical size (startup path before the first event).
+            let (stage_w, stage_h) = stage.unwrap_or_else(|| {
+                let scale = w.window().scale_factor();
+                let physical = w.window().size();
+                (physical.width as f32 / scale, physical.height as f32 / scale)
+            });
+            // Degenerate geometry cannot host tiles — skip the recompute
+            // (also keeps stale last-known-good dims untouched upstream).
+            if !(stage_w > 0.0) || !(stage_h > 0.0) {
+                return;
+            }
             let layout = justified_layout(&aspects, stage_w, stage_h);
             // Always constructed as a VecModel below; downcast is total.
             let tiles_rc = w.get_gallery_mosaic_tiles();
@@ -539,8 +558,26 @@ fn main() -> Result<(), slint::PlatformError> {
         let empty = cards.is_empty();
         window.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
         window.set_gallery_empty(empty);
-        refresh_mosaic_tiles(&window);
-        schedule_thumbs(&window.as_weak(), &gallery_themes_root);
+        refresh_mosaic_tiles(&window, stage_dims.lock().unwrap().as_ref().copied());
+        schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims);
+        // Slint-driven stage geometry: recompute the mosaic tiles whenever
+        // the gallery stage resizes (fullscreen transition, tiling float).
+        // Only the tiles MODEL is mutated here — never width/height — so
+        // no feedback loop is possible. Slint `length` callback args map
+        // to logical-pixel f32.
+        {
+            let win = window.as_weak();
+            let dims = stage_dims.clone();
+            window.on_gallery_stage_geometry_changed(move |width: f32, height: f32| {
+                if !(width > 0.0) || !(height > 0.0) {
+                    return; // degenerate dims: keep last-known-good state
+                }
+                *dims.lock().unwrap() = Some((width, height));
+                if let Some(w) = win.upgrade() {
+                    refresh_mosaic_tiles(&w, Some((width, height)));
+                }
+            });
+        }
         window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
         window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
         window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
@@ -573,6 +610,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let win = window.as_weak();
             let slot = gallery_slot.clone();
             let tm = gallery_tm.clone();
+            let stage_dims = stage_dims.clone();
             window.on_gallery_card_clicked(move |idx| {
                 let i = idx as usize;
                 if let Some(w) = win.upgrade() {
@@ -588,9 +626,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         let refreshed = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
                             w.set_gallery_cards(ModelRc::new(VecModel::from(refreshed)));
-                            refresh_mosaic_tiles(&w);
+                            refresh_mosaic_tiles(&w, stage_dims.lock().unwrap().as_ref().copied());
                         }
-                        schedule_thumbs(&win, &gallery_themes_root);
+                        schedule_thumbs(&win, &gallery_themes_root, &stage_dims);
                     }
                 }
             });
