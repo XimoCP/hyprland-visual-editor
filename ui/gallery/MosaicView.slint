@@ -10,7 +10,6 @@
 // unchanged.
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
-import { SkwdTokens } from "../tokens.slint";
 import { MosaicCell } from "MosaicCell.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 
@@ -37,7 +36,10 @@ export component MosaicView inherits Rectangle {
     width: 1500px;
     height: 800px;
     clip: true;
-    background: SkwdTokens.surface;
+    // Immersive presentation (like Slice): the live desktop shows through.
+    // GalleryRoot is transparent and the backdrop scrim sits BEHIND this
+    // stage, so no opaque surface may be painted here.
+    background: transparent;
 
     // kinetic 0.90 state driven by Rust tick every 16ms; Slint mirrors offset with 16ms timer
     property <length> stripe-a-x: - root.scroll-offset;
