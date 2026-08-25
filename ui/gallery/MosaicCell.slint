@@ -1,11 +1,12 @@
 // HVE 2 — MosaicCell (justified-rows rewrite, gallery-immersive-redesign).
 //
 // Full-bleed photo tile: the parent sets width/height from the Rust
-// justified-rows model (mosaic.rs::justified_layout), so the tile's shape
-// already matches its image — `image-fit: contain` renders edge-to-edge
-// with ≈0 bands (never cropped, never letterboxed). No frame, no focus
-// stroke: images sit edge-to-edge separated only by the uniform gutter.
-// Hero-preferred gating + shimmer + 200ms fade kept from 4.8/HF5.
+// justified-rows model (mosaic.rs::justified_layout), whose aspects come
+// from the display-aspect pattern ("real Pinterest") — tiles are
+// INTENTIONALLY varied shapes, so each image fills its tile edge-to-edge
+// with `image-fit: cover` (centered crop, user-approved). No frame, no
+// focus stroke: images sit edge-to-edge separated only by the uniform
+// gutter. Hero-preferred gating + shimmer + 200ms fade kept from 4.8/HF5.
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
@@ -51,13 +52,13 @@ export component MosaicCell inherits Rectangle {
         triggered => { parent.shimmer-high = !parent.shimmer-high; }
     }
 
-    // Full-bleed effective image with staggered reveal — contain fit is
-    // band-free because each tile's shape matches its image's aspect.
+    // Full-bleed effective image with staggered reveal — cover fit fills
+    // each intentionally-varied tile edge-to-edge with a centered crop.
     Image {
         width: 100%;
         height: 100%;
         source: root.effective-image;
-        image-fit: contain;
+        image-fit: cover;
         visible: root.has-image;
         opacity: (root.has-image ? 1.0 : 0.0) * root.image-alpha;
         animate opacity {
