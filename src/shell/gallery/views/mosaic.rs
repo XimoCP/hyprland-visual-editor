@@ -87,8 +87,12 @@ pub fn tile_aspect(w: u32, h: u32) -> f32 {
 /// cover-crop into their tile (user-approved). Square every 4th card,
 /// medium 3:2 every 4th+2, wide 16:9 otherwise.
 pub fn mosaic_display_aspect(idx: usize) -> f32 {
-    let _ = idx;
-    unimplemented!("gallery-immersive-redesign: display-aspect pattern")
+    const WIDE: f32 = 16.0 / 9.0;
+    match idx % 4 {
+        0 => 1.0,
+        2 => 1.5,
+        _ => WIDE,
+    }
 }
 
 /// Pack `aspects` (in display order) into a justified-rows block sized
