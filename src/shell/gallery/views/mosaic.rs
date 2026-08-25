@@ -28,71 +28,61 @@ pub const MOSAIC_WARMUP_INTERVAL_MS: u64 = 16;
 /// Stagger base for reveal per cellKey (ms).
 pub const MOSAIC_STAGGER_MS: u64 = 40;
 
-// ── Masonry span layout (PR5): Pinterest-adapted span mosaic ────────
+// ── Justified-rows layout (gallery-immersive-redesign): ─────────────
+// Google Photos / Flickr style packer (the horizontal cousin of
+// Pinterest masonry) replacing the PR5 span-masonry. Rust computes the
+// FULL tile geometry as a model (Slint GridLayout cannot compute spans
+// and pure bindings cannot know per-image aspects); Slint only paints.
+// Pure f32 math, no Slint types — headless testable.
 //
-// Module of 5 cards on a 6col × 2row grid. Slot 0 is a square (colspan 2
-// × rowspan 2) breaking the uniformity; slots 1-4 are rects (colspan 2 ×
-// rowspan 1). The base cell is NOT a fixed pixel value: it derives from
-// the visible stage height (`mosaic_cell_base`) so the masonry fills the
-// window instead of floating as a small band. GridLayout cannot express
-// computed spans in Slint (compile-time constants only), so
-// MosaicView.slint positions cards manually via absolute x/y — these pure
-// fns are the parity source of truth for that mirror.
-/// Viewport divisor for the base cell: `base = stage_h / 3.5` keeps one
-/// module ≈ 1.71× stage height wide (~1782px at a ~1040px stage), which
-/// fills a fullscreen 1920px window with a single 5-card band.
-pub const MOSAIC_BASE_VIEWPORT_DIVISOR: f32 = 3.5;
-/// Base cell edge in px for a given stage height (parity mirror of
-/// MosaicView.slint `cell-base`). All slot geometry scales from it.
-pub fn mosaic_cell_base(stage_h: f32) -> f32 {
-    stage_h / MOSAIC_BASE_VIEWPORT_DIVISOR
-}
-/// Cards per module: 1 square + 4 rects.
-pub const MOSAIC_MODULE_CARDS: usize = 5;
-/// Every slot spans 2 columns (2·base wide) in the 6-col module grid.
-pub const MOSAIC_SLOT_COLSPAN: usize = 2;
-/// Columns per module band: square takes cols 0-1, rects take 2-3 and 4-5.
-pub const MOSAIC_MODULE_COLS: usize = 6;
+// Deterministic algorithm: target row height `th = stage_h / DIVISOR`;
+// sanitized aspects (non-finite or ≤ 0 → DEFAULT); per-row target
+// aspect sum `T = Σa / ROW_COUNT`; greedy in-order packing closes the
+// current row when adding the next card would overshoot `T` beyond
+// half that card's aspect (`sum + a/2 > T`); never more than ROW_COUNT
+// rows (overflow force-closes into the last row). Every row EXCEPT the
+// last is justified shape-preservingly to the common width
+// `W = max natural row width` by scaling its row height — tile rects
+// always keep each image's aspect, so nothing is ever cropped or
+// letterboxed. The last row keeps the natural `th`, left-aligned.
+/// Target row height divisor: `th = stage_h / 2.6` shows ≈2 rows + margins.
+pub const MOSAIC_ROW_HEIGHT_DIVISOR: f32 = 2.6;
+/// Thin uniform gutter between tiles (no frames, no padding).
+pub const MOSAIC_GUTTER_PX: f32 = 12.0;
+/// Fallback aspect when the real image size is unknown/invalid.
+pub const MOSAIC_DEFAULT_ASPECT: f32 = 16.0 / 9.0;
+/// Two-row strip (spec: ≈2 rows visible).
+pub const MOSAIC_ROW_COUNT: usize = 2;
 
-/// Column offset (in base cells) of a slot within its module.
-pub fn mosaic_slot_col(slot: usize) -> usize {
-    const COLS: [usize; MOSAIC_MODULE_CARDS] = [0, 2, 4, 2, 4];
-    COLS[slot % MOSAIC_MODULE_CARDS]
-}
-/// Row offset (in base cells) of a slot within its module.
-pub fn mosaic_slot_row(slot: usize) -> usize {
-    const ROWS: [usize; MOSAIC_MODULE_CARDS] = [0, 0, 0, 1, 1];
-    ROWS[slot % MOSAIC_MODULE_CARDS]
-}
-/// Row span (in base cells) of a slot: square slot 0 → 2, rects → 1.
-pub fn mosaic_slot_rowspan(slot: usize) -> usize {
-    const SPANS: [usize; MOSAIC_MODULE_CARDS] = [2, 1, 1, 1, 1];
-    SPANS[slot % MOSAIC_MODULE_CARDS]
+/// Final paint-ready tile rect in stage coordinates (offsets applied).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MosaicTile { pub x: f32, pub y: f32, pub w: f32, pub h: f32 }
+
+/// Packed block: tiles plus centered content box on the stage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MosaicLayout {
+    pub tiles: Vec<MosaicTile>,
+    pub content_w: f32,
+    pub content_h: f32,
+    pub offset_x: f32,
+    pub offset_y: f32,
 }
 
-/// Absolute card rect `(x, y, w, h)` in px for global card index `idx`,
-/// scaled by the base cell edge `base` (see `mosaic_cell_base`).
-/// `x = module·(6·base) + slot_col·base`, `y = slot_row·base`,
-/// `w = colspan·base`, `h = rowspan·base`.
-pub fn mosaic_card_rect(idx: usize, base: f32) -> (f32, f32, f32, f32) {
-    let module_w = MOSAIC_MODULE_COLS as f32 * base;
-    let module = (idx / MOSAIC_MODULE_CARDS) as f32;
-    let slot = idx % MOSAIC_MODULE_CARDS;
-    let x = module * module_w + mosaic_slot_col(slot) as f32 * base;
-    let y = mosaic_slot_row(slot) as f32 * base;
-    let w = MOSAIC_SLOT_COLSPAN as f32 * base;
-    let h = mosaic_slot_rowspan(slot) as f32 * base;
-    (x, y, w, h)
+/// Aspect ratio `w/h` of an image pixel size; falls back to
+/// [`MOSAIC_DEFAULT_ASPECT`] for zero dimensions.
+pub fn tile_aspect(w: u32, h: u32) -> f32 {
+    let _ = (w, h); // RED stub
+    MOSAIC_DEFAULT_ASPECT
 }
 
-/// Total masonry content width in px for `card_count` cards at base cell
-/// edge `base` (whole modules, ceil division: partial trailing modules
-/// still reserve their full band so the dual-stripe tiling period stays
-/// stable).
-pub fn mosaic_content_width(card_count: usize, base: f32) -> f32 {
-    if card_count == 0 { return 0.0; }
-    let modules = (card_count + MOSAIC_MODULE_CARDS - 1) / MOSAIC_MODULE_CARDS;
-    modules as f32 * MOSAIC_MODULE_COLS as f32 * base
+/// Pack `aspects` (in display order) into a justified-rows block sized
+/// for `(stage_w, stage_h)`. Empty input or non-positive stage → all
+/// zeros. See the module docs for the deterministic algorithm.
+pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLayout {
+    let _ = (aspects, stage_w, stage_h); // RED stub
+    MosaicLayout {
+        tiles: vec![], content_w: 0.0, content_h: 0.0, offset_x: 0.0, offset_y: 0.0,
+    }
 }
 
 // ── Geometry helpers ────────────────────────────────────────────────
@@ -680,68 +670,175 @@ mod tests {
         assert!(!view.handle_key(GalleryKey::Up));
     }
 
-    // ── PR5 masonry span layout contracts (viewport-scaled) ─────────
+    // ── Justified-rows layout contracts (epsilon 1e-4) ──────────────
+    fn approx(a: f32, b: f32) {
+        assert!((a - b).abs() < 1e-4, "{a} != {b}");
+    }
+
     #[test]
-    fn masonry_module_constants_and_slot_tables() {
+    fn justified_empty_and_degenerate_stage_are_zero() {
+        let l = justified_layout(&[], 1920.0, 1040.0);
+        assert!(l.tiles.is_empty(), "empty input → empty tiles");
+        assert_eq!(l, MosaicLayout { tiles: vec![], content_w: 0.0, content_h: 0.0, offset_x: 0.0, offset_y: 0.0 });
+        // Non-positive stage cannot host a block → zeros too.
+        let l0 = justified_layout(&[16.0 / 9.0], 1920.0, 0.0);
+        assert_eq!(l0.tiles.len(), 0);
+        assert_eq!(l0.content_w, 0.0);
+    }
+
+    #[test]
+    fn justified_single_card_centered_natural() {
+        let a = MOSAIC_DEFAULT_ASPECT;
+        let l = justified_layout(&[a], 1920.0, 1040.0);
+        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let w = th * a;
+        assert_eq!(l.tiles.len(), 1);
+        approx(l.tiles[0].w, w);
+        approx(l.tiles[0].h, th);
+        approx(l.content_w, w);
+        approx(l.content_h, th);
+        approx(l.offset_x, (1920.0 - w) / 2.0, );
+        approx(l.offset_y, (1040.0 - th) / 2.0);
+        approx(l.tiles[0].x, l.offset_x, );
+        approx(l.tiles[0].y, l.offset_y);
+    }
+
+    #[test]
+    fn justified_two_cards_two_rows_centered() {
+        // Greedy with R=2: after any first card S=a0 and T=(a0+a1)/2, so
+        // a0 + a1/2 > T always → one card per row. Both centered.
+        let l = justified_layout(&[2.0, 1.0], 1200.0, 780.0);
+        let th = 780.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        assert_eq!(l.tiles.len(), 2);
+        // Row 0 is non-last → justified to W = max natural width = th·2.
+        let big_w = th * 2.0;
+        approx(l.tiles[0].x, l.offset_x);
+        approx(l.tiles[0].y, l.offset_y);
+        approx(l.tiles[0].w, big_w);
+        approx(l.tiles[0].h, big_w / 2.0); // shape-preserving justify
+        // Row 1 (last): natural height, left-aligned at x=offset.
+        approx(l.tiles[1].w, th);
+        approx(l.tiles[1].h, th);
+        approx(l.tiles[1].x, l.offset_x);
+        approx(l.tiles[1].y, l.offset_y + big_w / 2.0 + MOSAIC_GUTTER_PX);
+        approx(l.content_w, big_w);
+        approx(l.content_h, big_w / 2.0 + th + MOSAIC_GUTTER_PX);
+        approx(l.offset_x, (1200.0 - big_w) / 2.0);
+        approx(l.offset_y, (780.0 - l.content_h) / 2.0);
+    }
+
+    #[test]
+    fn justified_five_identical_16_9_both_rows_flush_right() {
+        let a = 16.0f32 / 9.0;
+        let aspects = [a; 5];
+        let l = justified_layout(&aspects, 1920.0, 1040.0);
+        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        // A=5a, T=A/2: row closes when sum + a/2 > T → split [2, 3].
+        let s0 = 2.0 * a;
+        let s1 = 3.0 * a;
+        let nat0 = th * s0 + MOSAIC_GUTTER_PX;
+        let nat1 = th * s1 + 2.0 * MOSAIC_GUTTER_PX;
+        let big_w = nat1.max(nat0);
+        assert!((nat1 - nat0).abs() > 1e-4, "rows must differ for this contract");
+        assert_eq!(l.tiles.len(), 5);
+        // Row 0 justified shape-preservingly to W.
+        let h0 = (big_w - MOSAIC_GUTTER_PX) / s0;
+        approx(l.tiles[0].h, h0);
+        approx(l.tiles[0].w, h0 * a);
+        approx(l.tiles[0].x, l.offset_x);
+        approx(l.tiles[1].x, l.offset_x + h0 * a + MOSAIC_GUTTER_PX);
+        approx(l.tiles[1].w, h0 * a);
+        approx(l.tiles[1].y, l.tiles[0].y);
+        // Flush right edge within epsilon.
+        let right0 = l.tiles[1].x + l.tiles[1].w - l.offset_x;
+        approx(right0, big_w);
+        // Row 1 (last) natural: NOT stretched, still ends flush at W.
+        approx(l.tiles[2].h, th);
+        approx(l.tiles[2].w, th * a);
+        approx(l.tiles[2].y, l.tiles[0].y + h0 + MOSAIC_GUTTER_PX);
+        approx(l.tiles[2].x, l.offset_x);
+        let right1 = l.tiles[4].x + l.tiles[4].w - l.offset_x;
+        approx(right1, nat1);
+        approx(right1, big_w, );
+        // Content box + centering: W exceeds stage width → no x offset.
+        approx(l.content_w, big_w);
+        approx(l.content_h, h0 + th + MOSAIC_GUTTER_PX);
+        approx(l.offset_x, 0.0);
+        approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
+    }
+
+    #[test]
+    fn justified_mixed_aspects_greedy_split_and_justify() {
+        let aspects = [2.0, 1.78, 1.5, 1.78, 2.35];
+        let l = justified_layout(&aspects, 1920.0, 1040.0);
+        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        // Greedy: [2.0, 1.78, 1.5] (sum 5.28) then force-free last [1.78, 2.35].
+        let s0 = 2.0 + 1.78 + 1.5;
+        let s1 = 1.78 + 2.35;
+        let t_target = (s0 + s1) / 2.0;
+        assert!(s0 + 1.78 / 2.0 > t_target, "card 4 must not fit row 0");
+        let nat0 = th * s0 + 2.0 * MOSAIC_GUTTER_PX;
+        let nat1 = th * s1 + MOSAIC_GUTTER_PX;
+        let big_w = nat0.max(nat1);
+        assert!((nat0 - nat1).abs() > 1e-4);
+        assert_eq!(l.tiles.len(), 5);
+        // Row 0 is the widest → justified scale is 1 (keeps th).
+        approx(l.tiles[0].h, th);
+        approx(l.tiles[0].w, th * 2.0);
+        approx(l.tiles[1].x, l.offset_x + th * 2.0 + MOSAIC_GUTTER_PX);
+        approx(l.tiles[1].w, th * 1.78);
+        approx(l.tiles[2].x, l.tiles[1].x + l.tiles[1].w + MOSAIC_GUTTER_PX);
+        approx(l.tiles[2].w, th * 1.5);
+        approx(l.tiles[2].x + l.tiles[2].w - l.offset_x, nat0);
+        // Row 1 justified up to W (taller than th), still aspect-true.
+        let h1 = (big_w - MOSAIC_GUTTER_PX) / s1;
+        approx(l.tiles[3].h, h1);
+        approx(l.tiles[3].w, h1 * 1.78);
+        approx(l.tiles[3].y, l.offset_y + th + MOSAIC_GUTTER_PX);
+        approx(l.tiles[4].x, l.offset_x + h1 * 1.78 + MOSAIC_GUTTER_PX);
+        approx(l.tiles[4].w, h1 * 2.35);
+        approx(l.tiles[4].x + l.tiles[4].w - l.offset_x, big_w);
+        // Content + centering.
+        approx(l.content_w, big_w);
+        approx(l.content_h, th + h1 + MOSAIC_GUTTER_PX);
+        approx(l.offset_x, 0.0);
+        approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
+    }
+
+    #[test]
+    fn justified_twenty_cards_scrollable_no_offset() {
+        let a = 16.0f32 / 9.0;
+        let l = justified_layout(&[a; 20], 1920.0, 1040.0);
+        assert_eq!(l.tiles.len(), 20, "never drops cards");
+        // Greedy splits identicals 10/10; both rows equal width.
+        let per_row = 10.0 * a;
+        let th = 1040.0 / MOSAIC_ROW_HEIGHT_DIVISOR;
+        let expected_w = th * per_row + 9.0 * MOSAIC_GUTTER_PX;
+        approx(l.content_w, expected_w);
+        assert!(l.content_w > 1920.0, "block overflows stage → scrollable");
+        approx(l.offset_x, 0.0);
+        // Equal rows keep the natural height (justify scale 1).
+        approx(l.tiles[0].h, th);
+        approx(l.tiles[10].y, l.tiles[0].y + th + MOSAIC_GUTTER_PX);
+    }
+
+    #[test]
+    fn justified_invalid_aspects_fall_back_to_default() {
+        let bad = [0.0, -3.0, f32::NAN, f32::INFINITY];
+        let good = [MOSAIC_DEFAULT_ASPECT; 4];
         assert_eq!(
-            MOSAIC_BASE_VIEWPORT_DIVISOR, 3.5,
-            "base cell = stage height / 3.5"
+            justified_layout(&bad, 1920.0, 1040.0),
+            justified_layout(&good, 1920.0, 1040.0),
+            "non-finite or ≤ 0 aspects behave exactly like the default"
         );
-        assert_eq!(MOSAIC_MODULE_CARDS, 5, "1 square + 4 rects per module");
-        assert_eq!(MOSAIC_SLOT_COLSPAN, 2, "every slot spans 2 columns");
-        let cols: Vec<usize> = (0..5).map(mosaic_slot_col).collect();
-        assert_eq!(cols, vec![0, 2, 4, 2, 4], "slot col table");
-        let rows: Vec<usize> = (0..5).map(mosaic_slot_row).collect();
-        assert_eq!(rows, vec![0, 0, 0, 1, 1], "slot row table");
-        let spans: Vec<usize> = (0..5).map(mosaic_slot_rowspan).collect();
-        assert_eq!(spans, vec![2, 1, 1, 1, 1], "slot rowspan table (square first)");
-        // Slot lookups wrap for any index (defensive against bad callers).
-        assert_eq!(mosaic_slot_col(7), mosaic_slot_col(2), "col wraps mod 5");
     }
 
     #[test]
-    fn masonry_cell_base_scales_with_stage_height() {
-        // A ~1040px stage yields base ≈ 297.14 so one module (6·base ≈
-        // 1782px) fills a fullscreen 1920px window with a single band.
-        let base = mosaic_cell_base(1040.0);
-        assert!((base - 297.14).abs() < 0.01, "1040/3.5 ≈ 297.14");
-        assert_eq!(mosaic_cell_base(0.0), 0.0, "no stage → no base");
-        // Proportional scaling: double the stage doubles the base.
-        assert!((mosaic_cell_base(2080.0) - 2.0 * base).abs() < 0.01);
-    }
-
-    #[test]
-    fn masonry_card_rect_first_two_modules() {
-        // Parameterized geometry at the legacy 160px reference base.
-        let b = 160.0;
-        // Module 0: square leads at origin, rects fill the 6×2 band.
-        assert_eq!(mosaic_card_rect(0, b), (0.0, 0.0, 320.0, 320.0), "square 2×2");
-        assert_eq!(mosaic_card_rect(1, b), (320.0, 0.0, 320.0, 160.0), "rect top mid");
-        assert_eq!(mosaic_card_rect(2, b), (640.0, 0.0, 320.0, 160.0), "rect top right");
-        assert_eq!(mosaic_card_rect(3, b), (320.0, 160.0, 320.0, 160.0), "rect bottom mid");
-        assert_eq!(mosaic_card_rect(4, b), (640.0, 160.0, 320.0, 160.0), "rect bottom right");
-        // Module 1 shifts a full module width (6 cols × base).
-        assert_eq!(mosaic_card_rect(5, b), (960.0, 0.0, 320.0, 320.0), "next module square");
-        assert_eq!(mosaic_card_rect(7, b), (1600.0, 0.0, 320.0, 160.0), "module + slot col 4");
-        // Viewport-derived base (stage ~1040): rect ≈ 594×297.
-        let vb = mosaic_cell_base(1040.0);
-        let (x, y, w, h) = mosaic_card_rect(1, vb);
-        assert!((x - 2.0 * vb).abs() < f32::EPSILON, "x = slot col × base");
-        assert_eq!(y, 0.0);
-        assert_eq!(w, 2.0 * vb, "width = colspan × base");
-        assert_eq!(h, vb, "height = rowspan × base");
-        assert!((w - 594.28).abs() < 0.01, "rect ≈ 594px wide on a ~1040 stage");
-    }
-
-    #[test]
-    fn masonry_content_width_ceil_modules() {
-        let b = 160.0;
-        assert_eq!(mosaic_content_width(0, b), 0.0, "no cards → no width");
-        assert_eq!(mosaic_content_width(5, b), 960.0, "exactly one module");
-        assert_eq!(mosaic_content_width(6, b), 1920.0, "partial module reserves full band");
-        assert_eq!(mosaic_content_width(11, b), 2880.0, "ceil(11/5)=3 modules");
-        // Viewport-scaled: one module at a ~1040 stage ≈ 1782px wide.
-        let vw = mosaic_content_width(5, mosaic_cell_base(1040.0));
-        assert!((vw - 1782.86).abs() < 0.01, "one module ≈ 1782px fills 1920 window");
+    fn tile_aspect_pixel_size_contracts() {
+        assert_eq!(tile_aspect(0, 100), MOSAIC_DEFAULT_ASPECT, "zero width");
+        assert_eq!(tile_aspect(100, 0), MOSAIC_DEFAULT_ASPECT, "zero height");
+        approx(tile_aspect(1920, 1080), 16.0 / 9.0);
+        assert_eq!(tile_aspect(720, 720), 1.0);
+        approx(tile_aspect(1080, 1920), 9.0 / 16.0);
     }
 }
