@@ -35,7 +35,10 @@ pub const MOSAIC_STAGGER_MS: u64 = 40;
 // and pure bindings cannot know per-image aspects); Slint only paints.
 // Pure f32 math, no Slint types — headless testable.
 //
-// Deterministic algorithm: target row height `th = stage_h / DIVISOR`;
+// Deterministic algorithm: the block is bounded to a central band
+// `band = stage_h / BAND_DIVISOR` (like the Slice carousel's fixed
+// presentation strip) and the rows split it evenly: target row height
+// `th = (band − (ROW_COUNT−1)·GUTTER) / ROW_COUNT`;
 // sanitized aspects (non-finite or ≤ 0 → DEFAULT); per-row target
 // aspect sum `T = Σa / ROW_COUNT`; greedy in-order packing closes the
 // current row when adding the next card would overshoot `T` beyond
@@ -49,8 +52,6 @@ pub const MOSAIC_STAGGER_MS: u64 = 40;
 /// `band = stage_h / 2.0` (≈520px on a 1040px stage), matching the Slice
 /// carousel's fixed presentation band proportionally.
 pub const MOSAIC_BAND_HEIGHT_DIVISOR: f32 = 2.0;
-/// Target row height divisor: `th = stage_h / 2.6` shows ≈2 rows + margins.
-pub const MOSAIC_ROW_HEIGHT_DIVISOR: f32 = 2.6;
 /// Thin uniform gutter between tiles (no frames, no padding).
 pub const MOSAIC_GUTTER_PX: f32 = 12.0;
 /// Fallback aspect when the real image size is unknown/invalid.
@@ -89,7 +90,10 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
         };
     }
     let g = MOSAIC_GUTTER_PX;
-    let th = stage_h / MOSAIC_ROW_HEIGHT_DIVISOR;
+    // Central band constraint: rows split `band` minus the inter-row
+    // gutters evenly, so the 2-row block is exactly one band tall.
+    let band = stage_h / MOSAIC_BAND_HEIGHT_DIVISOR;
+    let th = (band - (MOSAIC_ROW_COUNT as f32 - 1.0) * g) / MOSAIC_ROW_COUNT as f32;
     // Sanitize first so the per-row target uses valid aspects only.
     let sanitized: Vec<f32> = aspects
         .iter()
@@ -774,9 +778,11 @@ mod tests {
         let l = justified_layout(&[a], 1920.0, 1040.0);
         let th = band_row_h(1040.0);
         // Exact band pins: 1040/2 = 520 band → (520 − 12)/2 = 254 rows,
-        // centered vertically in the full stage.
+        // centered vertically in the full stage. One card packs a single
+        // row, so the content box is that row (band equality is the
+        // fully-packed 2-row case).
         approx(th, 254.0);
-        approx(l.content_h, 520.0);
+        approx(l.content_h, th);
         approx(l.offset_y, 393.0);
         let w = th * a;
         assert_eq!(l.tiles.len(), 1);
@@ -858,7 +864,8 @@ mod tests {
         // Row 0 keeps the natural height here (it is the widest), so both
         // rows + gutter land exactly on the band.
         approx(l.content_h, 1040.0 / MOSAIC_BAND_HEIGHT_DIVISOR);
-        approx(l.offset_x, 0.0);
+        // At band scale W (~1380px) is narrower than the stage → centered.
+        approx(l.offset_x, (1920.0 - big_w) / 2.0);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
 
@@ -898,7 +905,8 @@ mod tests {
         approx(l.content_h, 2.0 * th + MOSAIC_GUTTER_PX);
         // Row 0 is the widest (justify scale 1), so the block equals band.
         approx(l.content_h, 1040.0 / MOSAIC_BAND_HEIGHT_DIVISOR);
-        approx(l.offset_x, 0.0);
+        // At band scale W (~1365px) is narrower than the stage → centered.
+        approx(l.offset_x, (1920.0 - big_w) / 2.0);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
 
