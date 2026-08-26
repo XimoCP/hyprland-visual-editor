@@ -165,6 +165,140 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
     MosaicLayout { tiles, content_w, content_h, offset_x, offset_y }
 }
 
+// ── Page model (Mosaic final scheme) ───────────────────────────────
+// Split the justified-rows block into PAGES. A PAGE = the rows that fit
+// the same central band used for the single Pinterest block today
+// (MOSAIC_PAGE_ROW_COUNT rows). Pure Rust, headless-testable so the UI
+// only mirrors `current`/`total_pages` and the current page's tiles.
+/// Rows per page — equals the band-filling row count so one page == one
+/// central band of justified rows.
+pub const MOSAIC_PAGE_ROW_COUNT: usize = MOSAIC_ROW_COUNT;
+/// Per-column curtain stagger (spec: ~50ms per column).
+pub const MOSAIC_CURTAIN_COL_STAGGER_MS: u64 = 50;
+/// Per-tile curtain wipe duration (spec: ~300ms).
+pub const MOSAIC_CURTAIN_TILE_MS: u64 = 300;
+
+/// Group tiles by row using their y (within a 1px tolerance). Justified
+/// rows share an exact y; different rows differ by ~hundreds of px, so a
+/// 1px threshold cleanly separates them.
+pub fn mosaic_layout_rows(layout: &MosaicLayout) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut cur_y = f32::NAN;
+    for (i, t) in layout.tiles.iter().enumerate() {
+        if rows.is_empty() || (t.y - cur_y).abs() > 1.0 {
+            rows.push(vec![]);
+            cur_y = t.y;
+        }
+        rows.last_mut().unwrap().push(i);
+    }
+    rows
+}
+
+/// Geometric capacity of one page: how many tiles fill MOSAIC_PAGE_ROW_COUNT
+/// rows for a FULL cloned aspect set. Deterministic from stage dims + the
+/// display-aspect pattern. Degenerate (non-positive) stage → 0.
+pub fn mosaic_page_capacity(_stage_w: f32, _stage_h: f32) -> usize {
+    0 // STUB (RED)
+}
+
+/// Per-tile curtain delay (ms) staggered per column (~50ms/column). Tiles
+/// sharing an x-cluster form a column; delay = column_index * stagger.
+/// Deterministic and bounded. Consumed only by the Slint curtain.
+pub fn mosaic_curtain_delays(tiles: &[MosaicTile]) -> Vec<u64> {
+    let mut cols: Vec<f32> = Vec::new();
+    for t in tiles {
+        if !cols.iter().any(|&c| (c - t.x).abs() < 2.0) {
+            cols.push(t.x);
+        }
+    }
+    cols.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    tiles
+        .iter()
+        .map(|t| {
+            let ci = cols.iter().position(|&c| (c - t.x).abs() < 2.0).unwrap_or(0);
+            (ci as u64) * MOSAIC_CURTAIN_COL_STAGGER_MS
+        })
+        .collect()
+}
+
+/// Page model: source of truth for mosaic pagination. Holds the real theme
+/// count, the geometric page capacity, the total page count and the current
+/// page. UI mirrors `current`/`total_pages`; `page_render` produces the
+/// current page's geometry inputs (with clone-fill) so the wall never
+/// touches disk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MosaicPages {
+    real_count: usize,
+    capacity: usize,
+    total_pages: usize,
+    current: usize,
+    geometry_rebuilds: usize,
+}
+
+impl MosaicPages {
+    pub fn new(real_count: usize, stage_w: f32, stage_h: f32) -> Self {
+        // STUB (RED): capacity 0, single page for any non-empty library.
+        let _ = mosaic_page_capacity(stage_w, stage_h);
+        Self {
+            real_count,
+            capacity: 0,
+            total_pages: if real_count == 0 { 0 } else { 1 },
+            current: 0,
+            geometry_rebuilds: 0,
+        }
+    }
+
+    /// Recompute on a real-count / stage change. The ONLY operation that
+    /// increments `geometry_rebuilds`; page flips never call this.
+    pub fn recompute(&mut self, real_count: usize, stage_w: f32, stage_h: f32) {
+        // STUB (RED): no real capacity, single page.
+        self.real_count = real_count;
+        self.capacity = mosaic_page_capacity(stage_w, stage_h);
+        self.total_pages = if real_count == 0 { 0 } else { 1 };
+        self.current = self.current.min(self.total_pages.saturating_sub(1));
+        self.geometry_rebuilds += 1;
+    }
+
+    pub fn current(&self) -> usize { self.current }
+    pub fn total_pages(&self) -> usize { self.total_pages }
+    pub fn capacity(&self) -> usize { self.capacity }
+    pub fn real_count(&self) -> usize { self.real_count }
+    pub fn geometry_rebuilds(&self) -> usize { self.geometry_rebuilds }
+
+    /// Flip pages: +1 next, −1 previous. Clamped, no wrap. Returns true if
+    /// the current page actually changed.
+    pub fn step(&mut self, _delta: isize) -> bool {
+        false // STUB (RED)
+    }
+
+    /// Pagination UI is hidden when there is at most one page.
+    pub fn hidden(&self) -> bool { self.total_pages <= 1 }
+
+    /// 1-based page-number list for the pagination UI.
+    pub fn page_numbers(&self) -> Vec<usize> {
+        (1..=self.total_pages).collect()
+    }
+
+    /// How many clones (repeated real themes) were added to fill the current
+    /// page when the library is smaller than a page. 0 otherwise.
+    pub fn clone_fill_count(&self) -> usize {
+        0 // STUB (RED)
+    }
+
+    /// Map a displayed (rendered) tile index to its REAL theme index. In
+    /// clone mode real = displayed % real_count; otherwise 1:1.
+    pub fn clone_real_index(&self, displayed: usize) -> usize {
+        displayed // STUB (RED)
+    }
+
+    /// Aspects + real indices for rendering the current page. Applies
+    /// clone-fill so exactly `capacity` tiles are produced when the library
+    /// is smaller than a page. Purity: no disk, no engine.
+    pub fn page_render(&self) -> (Vec<f32>, Vec<usize>) {
+        (vec![], vec![]) // STUB (RED)
+    }
+}
+
 // ── Geometry helpers ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1036,5 +1170,140 @@ mod tests {
         approx(l.content_h, l.tiles[0].h + th + MOSAIC_GUTTER_PX);
         approx(l.offset_x, (1920.0 - big_w) / 2.0);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
+    }
+}
+
+// ── Mosaic page-model contracts (Mosaic final scheme) ──────────────
+// Headless: page math, clone-fill, pagination, clamp/no-wrap, no-rebuild.
+#[cfg(test)]
+mod mosaic_pages_tests {
+    use super::*;
+
+    const STAGE_W: f32 = 1920.0;
+    const STAGE_H: f32 = 1040.0;
+
+    /// Expected total_pages for a given real count + capacity (guards the
+    /// RED capacity==0 case so assertions fail cleanly instead of dividing).
+    fn expected_pages(real: usize, cap: usize) -> usize {
+        if real == 0 { 0 } else if cap == 0 { 1 } else { (real + cap - 1) / cap }
+    }
+
+    #[test]
+    fn mosaic_page_capacity_positive_for_valid_stage() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        assert!(cap > 0, "capacity must be positive for a valid stage, got {cap}");
+        assert_eq!(mosaic_page_capacity(0.0, STAGE_H), 0, "degenerate stage → 0");
+        assert_eq!(mosaic_page_capacity(STAGE_W, 0.0), 0);
+    }
+
+    #[test]
+    fn mosaic_total_pages_formula() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        // empty library → 0 pages, hidden
+        let p0 = MosaicPages::new(0, STAGE_W, STAGE_H);
+        assert_eq!(p0.total_pages(), 0);
+        assert!(p0.hidden());
+        // small library (<= capacity) → single page, hidden
+        let small = 3usize;
+        let ps = MosaicPages::new(small, STAGE_W, STAGE_H);
+        assert_eq!(ps.total_pages(), expected_pages(small, cap));
+        assert_eq!(ps.hidden(), ps.total_pages() <= 1);
+        // large library → multiple pages, NOT hidden
+        let big = cap * 3 + 2;
+        let pb = MosaicPages::new(big, STAGE_W, STAGE_H);
+        assert_eq!(pb.total_pages(), expected_pages(big, cap));
+        assert!(!pb.hidden(), "multiple pages must show pagination");
+    }
+
+    #[test]
+    fn mosaic_page_clamp_no_wrap() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let total = cap * 3 + 2;
+        let mut p = MosaicPages::new(total, STAGE_W, STAGE_H);
+        let tp = p.total_pages();
+        assert!(tp >= 2, "need >=2 pages to exercise clamp, got {tp}");
+        // forward clamps at the last page, never wraps to 0
+        for _ in 0..50 { p.step(1); }
+        assert_eq!(p.current(), tp - 1, "forward must clamp at last page");
+        // backward clamps at the first page, never wraps to last
+        for _ in 0..50 { p.step(-1); }
+        assert_eq!(p.current(), 0, "backward must clamp at first page");
+        // stays strictly within [0, total_pages)
+        for d in [1, -1, 1, 1, -1, 1, 1, 1] {
+            p.step(d);
+            assert!(p.current() < p.total_pages());
+        }
+    }
+
+    #[test]
+    fn mosaic_clone_fill_count_and_mapping() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let real = 3usize;
+        assert!(cap > real, "need capacity > real for clone-fill test (cap={cap})");
+        let p = MosaicPages::new(real, STAGE_W, STAGE_H);
+        assert_eq!(p.clone_fill_count(), cap - real, "clones fill the page");
+        // mapping displayed -> real is cyclic (displayed % real_count)
+        for k in 0..cap {
+            assert_eq!(p.clone_real_index(k), k % real, "displayed {k} -> real {}", k % real);
+        }
+        // page_render yields exactly `capacity` tiles, all mapped to real
+        let (aspects, reals) = p.page_render();
+        assert_eq!(aspects.len(), cap, "clone page fills capacity tiles");
+        assert_eq!(reals.len(), cap);
+        for (k, &r) in reals.iter().enumerate() {
+            assert_eq!(r, k % real, "rendered tile {k} maps to real {}", k % real);
+        }
+    }
+
+    #[test]
+    fn mosaic_pagination_numbers_list() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let total = cap * 5; // exactly 5 pages
+        let p = MosaicPages::new(total, STAGE_W, STAGE_H);
+        assert_eq!(p.total_pages(), 5, "cap*5 real themes → 5 pages");
+        assert_eq!(p.page_numbers(), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn mosaic_hidden_single_page_rule() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        // exactly one page worth → hidden
+        let one = MosaicPages::new(cap, STAGE_W, STAGE_H);
+        assert_eq!(one.total_pages(), 1);
+        assert!(one.hidden());
+        // one over the capacity → two pages → visible
+        let two = MosaicPages::new(cap + 1, STAGE_W, STAGE_H);
+        assert_eq!(two.total_pages(), 2);
+        assert!(!two.hidden());
+        // zero themes → hidden
+        let zero = MosaicPages::new(0, STAGE_W, STAGE_H);
+        assert!(zero.hidden());
+    }
+
+    #[test]
+    fn mosaic_page_flip_does_not_rebuild_thumbs() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let total = cap * 4 + 1;
+        let mut p = MosaicPages::new(total, STAGE_W, STAGE_H);
+        let before = p.geometry_rebuilds();
+        // flipping pages must NOT recompute geometry/thumbs
+        for _ in 0..10 { p.step(1); p.step(-1); }
+        assert_eq!(p.geometry_rebuilds(), before, "page flip must not rebuild geometry");
+        // only an explicit recompute (count/stage change) rebuilds
+        p.recompute(total, STAGE_W, STAGE_H);
+        assert_eq!(p.geometry_rebuilds(), before + 1, "recompute rebuilds once");
+    }
+
+    #[test]
+    fn mosaic_curtain_delays_staggered_and_bounded() {
+        let aspects: Vec<f32> = (0..8).map(mosaic_display_aspect).collect();
+        let layout = justified_layout(&aspects, STAGE_W, STAGE_H);
+        let delays = mosaic_curtain_delays(&layout.tiles);
+        assert_eq!(delays.len(), layout.tiles.len());
+        // every delay is a non-negative multiple of the column stagger
+        for d in &delays {
+            assert_eq!(d % MOSAIC_CURTAIN_COL_STAGGER_MS, 0);
+            assert!(*d < 1000, "delays must stay bounded");
+        }
     }
 }
