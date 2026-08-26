@@ -4,8 +4,68 @@
 - PR1 Tokens & Fullscreen — tasks 1.1–1.8 done · PR1.1 + PR1.2 hotfixes done · 1.9 [V] visual check pending for the user (RE-RUN after PR1.2).
 - PR2 Overlap Geometry, Snap, Wheel — tasks 2.1–2.10 done (10 work-unit commits) · PR2.HF hotfix done (borders + paint order) · 2.11 [V] visual check pending for the user (RE-RUN after PR2.HF).
 - PR4 FilterBar & Thumbnails — tasks 4.1–4.8 done (9 work-unit commits) · 4.9 [V] visual check pending for the user.
+- HF5 Visual Hotfix Batch — WU1 hero pipeline (4 commits) + WU2 arrow-toggle chrome (2 commits) done · user visual check pending.
+- HF6 Video-Theme Hotfix (Piano 3) — video-aware source discovery + ffmpeg frame extraction (4 commits, Rust-only) done · user visual check pending.
 
 ## Completed
+
+### HF5 Work Unit 1 — hero image pipeline (size coherence)
+
+Commits: 3878a41 (RED) → b2e694b (GREEN) → cb409ca (WIRE schedule) → 1aee214 (WIRE display).
+
+- [x] WU1.1 [RED] `hero_geometry` CONTAIN contracts + `hero_path` dedicated-filename contract + `generate_pair` roundtrip contract, all failing via unimplemented!() stubs (suite compile-passing): 1920×1080→(1600,900), 720×1600→(405,900), tiny never upscales; `<cache-key>-hero.png` under the same SipHash path+mtime scheme. Commit 3878a41
+- [x] WU1.2 [GREEN] `hero_geometry` implemented (contain scale capped at 1.0, integer-exact); `generate_pair` decodes ONCE and writes thumb (unchanged 400×720 cover) + hero (≤1600×900 contain) PNGs, short-circuiting only when BOTH cache files exist. `generate()` wrapper removed after it went dead (zero-warning rule) and its roundtrip test migrated to `generate_pair` (same coverage). Test-fix note: `hero_path` test now derives mtime through `source_mtime` fallback instead of a hardcoded epoch+100s. Commit b2e694b
+- [x] WU1.3 [WIRE] `preheat` generates pairs (one thread per job unchanged) and marshals BOTH PNG paths (`slint::Image` still not Send); `GalleryCardData` gains `hero: image` (slint struct + Rust mirror init `slint::Image::default()`); stale-write-guarded marshal sets thumb + hero together. Commit cb409ca
+- [x] WU1.4 [WIRE] SliceDelegate gains `in property <image> hero`; SEPARATE hero Image element with NO source-clip (source-clip crops in SOURCE coordinates per Slint docs — it would destroy the hero decode); current card shows hero w/ `cover` when marshaled else thumb fallback; collapsed cards unchanged (thumb, cover); EVERY `fill` usage removed; shimmer/preheat gating settles for either artifact. SliceCarousel feeds card.hero through all 7 paint passes. Commit 1aee214
+
+### HF5 Work Unit 2 — arrow-toggle chrome (FilterBar rework)
+
+Commits: 8ec68da (FilterBar rework) → 3bcfe65 (ChromeButton + wiring). Slint-only ⇒ no RED required.
+
+- [x] WU2.1 FilterBar rework: strip TouchArea + hide Timer + bar-hover tracking DELETED; new API `in property <bool> open` (parent-owned); bar slides to open position y42 with existing 250ms OutCubic, parks hidden at −height when closed. Pills SIDE BY SIDE in HorizontalLayout (diagonal cascade killed): h24→32, font 11→13, padding 12→16, ~6px gap, parallelogram skew identity kept; bar width hugs pill row via preferred-width, centered, max parent−20. Commit 8ec68da
+- [x] WU2.2 NEW ui/gallery/ChromeButton.slint: generic ghost chrome button — transparent bg, 36×36 min hit area, glyph flips with `open` (closed-glyph/open-glyph properties keep it reusable), outline@50% → primary on hover, 200ms animate. GalleryRoot owns `style-menu-open`: ChromeButton top-center (y2, clear of bar's y42) toggles it; FilterBar.open mirrors it; style-selected closes the menu. Carousel geometry/engine files untouched. Commit 3bcfe65
+
+## Verification (HF5)
+
+- TDD Cycle Evidence (WU1): RED — `cargo test thumbs` 15 passed / **5 failed** (unimplemented stubs) → GREEN — 20 passed; generate() signature change made a test-only RED impossible without breaking compile, so the pure contracts (hero_geometry/hero_path/generate_pair) carry the RED evidence and the IO roundtrip was asserted at GREEN (documented deviation).
+- WU2 slint-only: no RED required (no new Rust logic); build.rs compiles the .slint sources.
+- Full suite after every commit: `cargo test` → **345 passed, 0 failed** · `cargo build` → clean, **0 warnings**.
+- Budget: batch total 271 insertions / 119 deletions across 6 commits (≤400 ✓). Forbidden paths (.atl/, assets/fragments/border.lua, openspec/, .opencode/) untouched by commits.
+
+## Deviations / Notes for review (HF5)
+
+- `generate()` public fn deleted in GREEN commit instead of kept as dead wrapper — zero-warning repo rule (precedent c58052f); behavior preserved via `generate_pair().0` semantics covered by migrated test.
+- FilterBar open position is y42 (was y30): the 36px arrow occupies y2–38, so y30 would collide; "existing 250ms OutCubic animation" preserved, only the parked target moved.
+- Arrow button placed directly in GalleryRoot (not GalleryChrome): keeps GalleryChrome generic (empty-state + MIT pill) and avoids plumbing state through an extra layer.
+- ChromeButton has no accessible-role yet — noted as future polish, not in HF5 scope.
+- Expanded card briefly shows the portrait thumb with cover until the hero marshal lands, then cross-fades 200ms — graceful degradation when generation is slow.
+
+## Completed (prior batches — unchanged)
+
+### HF6 Hotfix — video themes showed a stale static thumb (Piano 3)
+
+Root cause (pre-diagnosed): theme ThemasAnimados keeps the REAL background in
+`providers/noctalia-v5/mpvpaper-assignments.json` (`assignments["*"].local_path`
+→ an mp4) while `wallpaper.txt` holds a STALE static path; `find_source_image`
+never looked at mpvpaper-assignments.json, so the card showed the stale Cars
+image. ffmpeg present (/usr/bin/ffmpeg, v9). Rust-only unit; no Slint changes.
+
+Commits: 6090503 (RED) → 7ea392c (GREEN) → ef8d67d (extract) → dd4a2dc (WIRE).
+
+- [x] HF6.1 [RED] `video_assignment` contracts via `None` stubs (suite compile-passing, only contracts fail): wildcard local_path hit; None without assignments file / missing providers dir / missing theme dir; empty local_path rejected; missing target file rejected; fallback to first entry by sorted key without "*"; provider dirs scanned in sorted deterministic order. Plus `is_video_source` extension table (mp4/mkv/webm/mov/avi/m4v, case-insensitive; png/jpg/no-ext/double-ext false). Commit 6090503
+- [x] HF6.2 [GREEN] `video_assignment(theme_dir)` — sorted scan of `providers/*/mpvpaper-assignments.json`, serde_json parse, wildcard "*" wins with stable sort (`sort_by_key(|k| k != "*")` after lexical sort), non-empty + exists validation, keep scanning otherwise. `is_video_source(path)` — lowercased extension allowlist. Commit 7ea392c
+- [x] HF6.3 `extract_video_frame(video, cache_dir)` — cache name `<cache_key>-frame.png` reusing the SipHash path+mtime scheme in `$XDG_CACHE_HOME/hve/thumbs`; cached PNG short-circuits ffmpeg; else `ffmpeg -ss 1 -i <video> -frames:v 1 -y <out>` with stdin/stdout/stderr suppressed; Some only when output exists AND decodes via image crate; any failure (ffmpeg absent, non-zero exit, undecodable) → None, never panics. Env-gated test: skips with a note when ffmpeg unavailable; synthesizes `testsrc` mp4, asserts PNG exists + decodes + second call returns same artifact. Local RED proven against a `None` body before GREEN (ffmpeg present on this machine). Commit ef8d67d
+- [x] HF6.4 [WIRE] `find_source_image` consults `video_assignment` BEFORE wallpapers.json: video source → frame path when extraction succeeds; extraction failure falls through to the untouched legacy chain (stale-txt fallback beats skeleton); assigned IMAGE returned directly (assignments are the truth of the desktop). Wire tests: assigned image beats wallpapers.json + wallpaper.txt + loose scan; corrupt .mp4 assignment falls back to legacy chain deterministically. Commit dd4a2dc
+
+Verification (HF6):
+- TDD Cycle Evidence — HF6.1 RED: `cargo test thumbs` 23 passed / **4 failed** (contracts vs stubs); HF6.2 GREEN: 27 passed; HF6.3 RED (local): extraction test failed vs `None` body → GREEN: 28 passed; HF6.4: 30 passed.
+- Full suite: `cargo test` → **355 passed, 0 failed** (+10 vs HF5 baseline 345) · `cargo build` clean.
+- Real-world probe: production command against the actual ThemasAnimados mp4 extracts a valid 3840×2160 PNG.
+- Churn: 311 insertions / 0 deletions across 4 commits — 11 over the ≤300 guide (HF5 precedent: maintainer accepted 424 vs 400). Forbidden paths untouched by commits.
+
+Deviations / notes for review (HF6):
+- Task text said "synthesize a 1s testsrc" but `-ss 1` yields ZERO frames on ≤1s clips (verified empirically with ffmpeg 9); fixture uses duration=5 while production keeps `-ss 1` (correct for real long wallpapers).
+- No numbered tasks.md entry maps to this hotfix (between-batches Piano 3 item from decision #626); tasks.md checkboxes intentionally unchanged.
 
 ### Slice PR4 — FilterBar & Thumbnails (4.1–4.8 done · 4.9 [V] pending)
 
@@ -145,3 +205,24 @@ Commits: 50a491a → c48e0bf (see per-task list below).
 - 3.3 file list spillover (inverse direction): the hover callback plumbing required a small SliceDelegate addition (changed handler + callback).
 - fullZone numerator uses tokens (expW/2 + 2·(cardW+gap) = 462+210 = 672) — matches task's literal "(462+2·105)".
 - Float midpoints asserted with 1e-5 epsilon; exact boundaries (zone edge =1.0, normDist 1.2 =0.0) hit early-return paths and stay exact-equality.
+
+# Mosaic Masonry Redesign — span mosaic + contain thumbs (done · [V] pending)
+
+## Completed
+
+- [x] [RED] Masonry span layout contracts in mosaic.rs: MOSAIC_CELL_BASE_PX=160 / MOSAIC_MODULE_CARDS=5 / MOSAIC_SLOT_COLSPAN=2 / MOSAIC_MODULE_COLS=6; slot tables col [0,2,4,2,4] row [0,0,0,1,1] rowspan [2,1,1,1,1]; mosaic_card_rect (idx0 square 320×320 @origin, module shift ×960); mosaic_content_width ceil-modules (5→960, 6→1920, 11→2880). RED verified: 3 failing vs stubs, 0 warnings. Commit 00b3f18
+- [x] [GREEN] Fns implemented (module_w = 6×160 = 960). Focus `cargo test masonry` 0→3 passed; full suite 355→358. Commit 96496a3
+- [x] [WIRE] MosaicCell.slint: image-fit cover→contain centered (full wallpaper visible, letterboxing intended), fixed 180×140 removed (parent-driven size), Path viewbox parameterized via px-w/px-h (shard quad + 6px inset + focus stroke adapt to both slot sizes). MosaicView.slint: dual-stripe HorizontalLayout placeholder → masonry repeaters `for card[idx] in root.cards` with manual x/y/w/h from parity pure fns mirroring mosaic.rs (Math.floor(idx/5) since `/` is float division in Slint; no `%` dependency); strip 320px vertically centered; stripe-b repeats masonry as tiling continuation at stripe-b-x; kinetic stripe-a-x/stripe-b-x/16ms timers untouched; reveal-delay wraps at 600ms window (mirrors reveal_delay_for) instead of unbounded i*40ms; cell-clicked/cell-flip preserved. Commit e3c3648
+
+## Verification
+
+- Full suite: `cargo test` → **358 passed, 0 failed** (baseline 355 + 3 new contracts)
+- `cargo build` → clean, **0 warnings** (build.rs compiles .slint sources; slint-viewer not installed in env — render check pending user)
+
+## Deviations / Notes for review
+
+- Layout lives in Rust pure fns + Slint parity mirrors (SliceCarousel convention) rather than inline Slint arithmetic — task allowed either; parity keeps headless test coverage.
+- Slint gotcha honored: `/` NEVER integer-divides (float result) — Math.floor used for module index; slot derived arithmetically without `%`.
+- Old stripe-b mapped sequential indices (i+6) over a fixed 12-cell placeholder; new stripes host identical full-card repeaters (tiling semantics: duplicate = infinite continuation; clicks map to same idx). scroll-offset is still unfed (defaults 0px, kinetic wiring lands in 5.7) so stripe-b is not visible yet.
+- MosaicCell reveal-delay previously grew unbounded (i*40ms); now wraps every 15 slots to match Rust reveal_delay_for's 600ms window.
+- Unrelated pre-existing worktree changes untouched (.atl/*, assets/fragments/border.lua, openspec files).
