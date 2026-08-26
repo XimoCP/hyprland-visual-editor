@@ -197,8 +197,16 @@ pub fn mosaic_layout_rows(layout: &MosaicLayout) -> Vec<Vec<usize>> {
 /// Geometric capacity of one page: how many tiles fill MOSAIC_PAGE_ROW_COUNT
 /// rows for a FULL cloned aspect set. Deterministic from stage dims + the
 /// display-aspect pattern. Degenerate (non-positive) stage → 0.
-pub fn mosaic_page_capacity(_stage_w: f32, _stage_h: f32) -> usize {
-    0 // STUB (RED)
+pub fn mosaic_page_capacity(stage_w: f32, stage_h: f32) -> usize {
+    if !(stage_w > 0.0) || !(stage_h > 0.0) {
+        return 0;
+    }
+    // Lay out a long cloned aspect set; the first page-row_count rows hold
+    // exactly the tiles that fill one central band.
+    let long: Vec<f32> = (0..4096).map(mosaic_display_aspect).collect();
+    let layout = justified_layout(&long, stage_w, stage_h);
+    let rows = mosaic_layout_rows(&layout);
+    rows.iter().take(MOSAIC_PAGE_ROW_COUNT).map(|r| r.len()).sum()
 }
 
 /// Per-tile curtain delay (ms) staggered per column (~50ms/column). Tiles
@@ -237,12 +245,18 @@ pub struct MosaicPages {
 
 impl MosaicPages {
     pub fn new(real_count: usize, stage_w: f32, stage_h: f32) -> Self {
-        // STUB (RED): capacity 0, single page for any non-empty library.
-        let _ = mosaic_page_capacity(stage_w, stage_h);
+        let capacity = mosaic_page_capacity(stage_w, stage_h);
+        let total_pages = if real_count == 0 {
+            0
+        } else if real_count <= capacity {
+            1
+        } else {
+            (real_count + capacity - 1) / capacity
+        };
         Self {
             real_count,
-            capacity: 0,
-            total_pages: if real_count == 0 { 0 } else { 1 },
+            capacity,
+            total_pages,
             current: 0,
             geometry_rebuilds: 0,
         }
@@ -251,10 +265,17 @@ impl MosaicPages {
     /// Recompute on a real-count / stage change. The ONLY operation that
     /// increments `geometry_rebuilds`; page flips never call this.
     pub fn recompute(&mut self, real_count: usize, stage_w: f32, stage_h: f32) {
-        // STUB (RED): no real capacity, single page.
+        let capacity = mosaic_page_capacity(stage_w, stage_h);
+        let total_pages = if real_count == 0 {
+            0
+        } else if real_count <= capacity {
+            1
+        } else {
+            (real_count + capacity - 1) / capacity
+        };
         self.real_count = real_count;
-        self.capacity = mosaic_page_capacity(stage_w, stage_h);
-        self.total_pages = if real_count == 0 { 0 } else { 1 };
+        self.capacity = capacity;
+        self.total_pages = total_pages;
         self.current = self.current.min(self.total_pages.saturating_sub(1));
         self.geometry_rebuilds += 1;
     }
@@ -267,8 +288,15 @@ impl MosaicPages {
 
     /// Flip pages: +1 next, −1 previous. Clamped, no wrap. Returns true if
     /// the current page actually changed.
-    pub fn step(&mut self, _delta: isize) -> bool {
-        false // STUB (RED)
+    pub fn step(&mut self, delta: isize) -> bool {
+        if self.total_pages == 0 {
+            return false;
+        }
+        let last = self.total_pages as isize - 1;
+        let next = (self.current as isize + delta).clamp(0, last);
+        let changed = next != self.current as isize;
+        self.current = next as usize;
+        changed
     }
 
     /// Pagination UI is hidden when there is at most one page.
@@ -282,20 +310,48 @@ impl MosaicPages {
     /// How many clones (repeated real themes) were added to fill the current
     /// page when the library is smaller than a page. 0 otherwise.
     pub fn clone_fill_count(&self) -> usize {
-        0 // STUB (RED)
+        if self.real_count > 0 && self.real_count < self.capacity {
+            self.capacity - self.real_count
+        } else {
+            0
+        }
     }
 
     /// Map a displayed (rendered) tile index to its REAL theme index. In
-    /// clone mode real = displayed % real_count; otherwise 1:1.
+    /// clone mode real = displayed % real_count; otherwise the page's real
+    /// block offset + displayed (1:1 within the page).
     pub fn clone_real_index(&self, displayed: usize) -> usize {
-        displayed // STUB (RED)
+        if self.real_count == 0 {
+            return 0;
+        }
+        if self.real_count < self.capacity {
+            displayed % self.real_count
+        } else {
+            self.current * self.capacity + displayed
+        }
     }
 
     /// Aspects + real indices for rendering the current page. Applies
     /// clone-fill so exactly `capacity` tiles are produced when the library
     /// is smaller than a page. Purity: no disk, no engine.
     pub fn page_render(&self) -> (Vec<f32>, Vec<usize>) {
-        (vec![], vec![]) // STUB (RED)
+        if self.real_count == 0 {
+            return (vec![], vec![]);
+        }
+        if self.real_count < self.capacity {
+            let aspects: Vec<f32> =
+                (0..self.capacity).map(mosaic_display_aspect).collect();
+            let reals: Vec<usize> =
+                (0..self.capacity).map(|k| k % self.real_count).collect();
+            (aspects, reals)
+        } else {
+            let start = self.current * self.capacity;
+            let end = ((self.current + 1) * self.capacity).min(self.real_count);
+            let aspects: Vec<f32> =
+                (start..end).map(mosaic_display_aspect).collect();
+            let reals: Vec<usize> = (start..end).collect();
+            (aspects, reals)
+        }
     }
 }
 
