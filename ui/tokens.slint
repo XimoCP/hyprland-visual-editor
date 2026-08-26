@@ -105,6 +105,15 @@ export global SkwdTokens {
     in-out property <int> gallery-mosaic-relax: 2;
     in-out property <length> gallery-mosaic-w: 1500px;
     in-out property <length> gallery-mosaic-h: 800px;
+
+    // ── Card hover focus feedback (approved design, Slice + Mosaic):
+    // subtle expansion (center scale ~1.03) PLUS a slight brightness lift,
+    // animated at the anim-150 cadence. Shared so both views cannot drift.
+    // Note: transform-scale requires a GPU renderer (default femtovg); the
+    // brightness veil still provides hover feedback under a software
+    // renderer fallback. ──
+    in-out property <float> gallery-card-hover-scale: 1.03;
+    in-out property <float> gallery-card-hover-brighten: 0.08;
     // uiScale 1.0.
     in-out property <float> ui-scale: 1.0;
 }

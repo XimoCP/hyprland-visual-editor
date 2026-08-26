@@ -68,6 +68,21 @@ export component SliceDelegate inherits Rectangle {
     opacity: root.fade-opacity;
     animate opacity { duration: SkwdTokens.anim-200; }
 
+    // ── Hover focus feedback (approved design): hovered cards grow ~3%
+    // from their visual center and brighten slightly — combined
+    // lift+brighten reads as premium where a border alone feels rigid and
+    // illumination alone is lost on dark images. Reuses the EXISTING touch
+    // area's has-hover (declared below) so clicks, right-click flip and
+    // the non-rect hit gate stay untouched. transform-scale affects
+    // RENDERING only: layout box and hit regions never move. Exit snaps
+    // back instantly like the stroke/dim cues because the carousel swaps
+    // hover visibility between paint-pass copies. Stage clips stay required
+    // (cards travel beyond both edges); only cards within a few px of a
+    // window edge lose that sliver of growth behind screen bounds. ──
+    transform-origin: { x: self.width / 2, y: self.height / 2 };
+    transform-scale: root.has-hover ? SkwdTokens.gallery-card-hover-scale : 1.0;
+    animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
+
     callback clicked();
     callback right-clicked();
     callback flipped();
@@ -367,6 +382,23 @@ export component SliceDelegate inherits Rectangle {
         fill: #000000;
         opacity: root.is-current ? 0.0 : (root.has-hover ? 0.15 : 0.4);
         animate opacity { duration: SkwdTokens.anim-200; }
+    }
+
+    // ── Hover brighten (approved design): thin white veil over the
+    // parallelogram face, completing the lift+brighten focus cue. Gated to
+    // the FRONT face with a decoded image — empty/loading or flipped cards
+    // skip the veil (shimmer/metadata stay neutral). Painted above the dim
+    // layer so the net effect brightens even idle-dimmed cards. ──
+    hover-brighten := SliceShape {
+        x: -root.pad;
+        y: -root.pad;
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: #ffffff;
+        opacity: !root.is-flipped && (root.thumb.width > 0 || root.hero.width > 0) && root.has-hover
+            ? SkwdTokens.gallery-card-hover-brighten : 0.0;
+        animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
     }
 
     // ── Video Timer 100-300ms (default 200): Timer triggered → playing ──

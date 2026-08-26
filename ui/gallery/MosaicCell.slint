@@ -28,6 +28,22 @@ export component MosaicCell inherits Rectangle {
     callback clicked();
     callback flip-requested();
 
+    // ── Hover focus feedback (approved design): hovered tiles grow ~3%
+    // from their center and brighten slightly — combined lift+brighten
+    // reads as premium where a border alone feels rigid and illumination
+    // alone is lost on dark photos. `transform-scale` affects RENDERING
+    // only, so tile geometry, neighbor gutters and hit-testing never move;
+    // reuses the EXISTING touch area's has-hover instead of stacking a
+    // second TouchArea over it (click/right-click stay identical).
+    // Clipping: MosaicView must keep clip:true for infinite-scroll tiling,
+    // so only tiles within a few px of a stage edge lose that sliver of
+    // growth behind the screen bounds — interior tiles lift freely into
+    // the gutter. ──
+    out property <bool> has-hover: touch.has-hover;
+    transform-origin: { x: self.width / 2, y: self.height / 2 };
+    transform-scale: root.has-hover ? SkwdTokens.gallery-card-hover-scale : 1.0;
+    animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
+
     clip: true;
     border-radius: SkwdTokens.radius-8;
     // Background only ever shows through while the shimmer runs; once an
@@ -76,6 +92,18 @@ export component MosaicCell inherits Rectangle {
             duration: root.has-image ? SkwdTokens.anim-200 : 600ms;
             easing: ease-in-out;
         }
+    }
+
+    // Brightness lift (approved design): thin white veil over the visible
+    // photo only — empty/loading tiles keep the plain shimmer. Painted
+    // under the label so the name stays crisp. Scales with the tile via
+    // the root transform.
+    hover-brighten := Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #ffffff;
+        opacity: root.has-image && root.has-hover ? SkwdTokens.gallery-card-hover-brighten : 0.0;
+        animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
     }
 
     Text {
