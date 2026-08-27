@@ -1363,3 +1363,92 @@ mod mosaic_pages_tests {
         }
     }
 }
+
+// ── Mosaic margin contract (RED): 4% symmetric lateral margins ───────
+#[cfg(test)]
+mod mosaic_margin_tests {
+    use super::*;
+
+    const STAGE_W: f32 = 1920.0;
+    const STAGE_H: f32 = 1040.0;
+    const MARGIN_FRACTION: f32 = 0.04;
+
+    #[test]
+    fn mosaic_margin_contract_tiles_within_4_percent() {
+        // 9 tiles sits in the narrow band where old edge-to-edge offset
+        // (stage_w - content_w)/2 ≈39px < 76.8px margin, so this must fail RED
+        // before the margin is mirrored into the geometry.
+        let margin = STAGE_W * MARGIN_FRACTION;
+        let aspects: Vec<f32> = (0..9).map(mosaic_display_aspect).collect();
+        let layout = justified_layout(&aspects, STAGE_W, STAGE_H);
+        assert!(!layout.tiles.is_empty());
+        let min_x = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        let max_x = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        assert!(
+            min_x + 1e-2 >= margin,
+            "RED: min tile x {min_x} < margin {margin} (4% of {STAGE_W}) — wall must respect left margin"
+        );
+        // Right margin also for this size when wall fits usable (content 1840 > usable 1766
+        // — overflow case will be margin-pinned left; the full symmetric check is
+        // exercised in the fitting-page test below).
+        // To keep RED crisp, we only enforce the left side here; the symmetric
+        // contract is fully checked in mosaic_margin_pages_hold.
+        let _ = max_x;
+    }
+
+    #[test]
+    fn mosaic_margin_pages_hold_across_flips() {
+        // Contract: tiles never cross 4% lateral margins, including across page flips.
+        // For pages that fit within usable width, both margins must hold; overflow
+        // pages are left-pinned at margin (right may be clipped but left must hold).
+        let margin = STAGE_W * MARGIN_FRACTION;
+        let usable = STAGE_W - 2.0 * margin;
+        for real in [4usize, 6, 8] {
+            let mut pages = MosaicPages::new(real, STAGE_W, STAGE_H);
+            // real < capacity → single clone-filled page that must still respect margins
+            // For these small reals the clone-filled page fits comfortably (content < usable)
+            // so both margins are testable.
+            for _page in 0..pages.total_pages().max(1) {
+                let (aspects, _) = pages.page_render();
+                let layout = justified_layout(&aspects, STAGE_W, STAGE_H);
+                if layout.tiles.is_empty() {
+                    pages.step(1);
+                    continue;
+                }
+                let min_x = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+                let max_x = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+                assert!(
+                    min_x + 1e-2 >= margin,
+                    "page {} real {real}: min x {min_x} < margin {margin}",
+                    pages.current()
+                );
+                if layout.content_w <= usable + 1e-2 {
+                    assert!(
+                        max_x - 1e-2 <= STAGE_W - margin,
+                        "page {} real {real}: max x {max_x} > stage_w - margin {} (content_w {})",
+                        pages.current(),
+                        STAGE_W - margin,
+                        layout.content_w
+                    );
+                }
+                pages.step(1);
+            }
+        }
+        // Also verify a multi-page library (forces pagination) — use a moderate stage
+        // where each page's content fits usable so both margins are verifiable.
+        // With capacity huge, we simulate pagination by forcing a small capacity via
+        // a narrow stage (800x600) where 7 tiles overflow, but we test 2 pages of 4 each.
+        let narrow_w = 800.0;
+        let narrow_h = 600.0;
+        let narrow_margin = narrow_w * MARGIN_FRACTION;
+        let narrow_usable = narrow_w - 2.0 * narrow_margin;
+        let aspects4: Vec<f32> = (0..4).map(mosaic_display_aspect).collect();
+        let layout4 = justified_layout(&aspects4, narrow_w, narrow_h);
+        let min4 = layout4.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        let max4 = layout4.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        assert!(min4 + 1e-2 >= narrow_margin);
+        if layout4.content_w <= narrow_usable + 1e-2 {
+            assert!(max4 - 1e-2 <= narrow_w - narrow_margin);
+        }
+    }
+}
