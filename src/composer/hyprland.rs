@@ -1,11 +1,6 @@
 use crate::composer::{Composer, HyprMode};
 use slint::ComponentHandle;
 use std::sync::OnceLock;
-use std::time::Duration;
-use slint::Timer;
-
-/// Deferred keyboard-focus re-assertion delay (ms) — the "mouse fixes it" bug.
-const FOCUS_REASSERT_DELAY_MS: u64 = 150;
 
 pub struct HyprlandComposer {
     hypr_mode: OnceLock<HyprMode>,
@@ -160,64 +155,6 @@ impl HyprlandComposer {
         v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
     }
 
-    /// Re-afirma el foco de teclado tras un roundtrip de Wayland, con un
-    /// retardo corto para que la ventana termine de re-mapearse.
-    ///
-    /// Hace DOS cosas: (a) re-dispatch de foco a Hyprland, y (b) re-emitir
-    /// `WindowActiveChanged(true)` a Slint. Esta segunda parte es la
-    /// decisiva: cuando la ventana vuelve a mostrarse sin pasar por un
-    /// hide/show clásico (especial→real), Slint nunca recibe el evento de
-    /// "ventana activa" y la FocusScope raíz no re-gana su `focus_item` —
-    /// `key-pressed` queda sordo, exactamente lo que el usuario arreglaba
-    /// con un click/hover del ratón. Al forzar este evento, Slint re-dispara
-    /// FocusIn(WaylandActivation) y la navegación por teclado vuelve a
-    /// funcionar sin tocar nada.
-    ///
-    /// Se usa en TODOS los caminos de `show()`: el rápido (ventana estaba en
-    /// el special scratchpad) y el lento (ventana cerrada con SUPER+C, que
-    /// no pasa por el special y por eso sufría el mismo bug del teclado mudo).
-    fn schedule_focus_reassert(&self, win: &crate::MainWindow) {
-        let mode = self.hypr_mode();
-        let win_weak = win.as_weak();
-        Timer::single_shot(Duration::from_millis(FOCUS_REASSERT_DELAY_MS), move || {
-            // (a) Re-dispatch de foco a Hyprland, según versión detectada.
-            match mode {
-                HyprMode::V5 => {
-                    let s = v5_focus();
-                    let _ = hypr_dispatch_v5_standalone(&s);
-                }
-                // V4/conf fallback: no window targeting — focus by title is
-                // the selector; keep this branch and its comment.
-                HyprMode::V4 => {
-                    let _ = hypr_dispatch_v4_standalone(&["focuswindow", HVE_TITLE]);
-                }
-                HyprMode::None => {}
-            }
-            // (b) Re-emitir activación a Slint para despertar la FocusScope.
-            if let Some(win) = win_weak.upgrade() {
-                use slint::platform::WindowEvent;
-                win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
-                win.window().request_redraw();
-            }
-        });
-    }
-
-    /// Despierta la FocusScope de Slint de forma INMEDIATA (síncrona).
-    ///
-    /// Esto es CRÍTICO para el camino lento de `show()` (SUPER+C → SUPER+H):
-    /// cuando la superficie Wayland se re-crea, Slint no recibe
-    /// `WindowActiveChanged` automáticamente. Sin este dispatch, la FocusScope
-    /// raíz queda con `focus_item == None` y los eventos de teclado se
-    /// rechazan inmediatamente. El Timer de 150ms de `schedule_focus_reassert`
-    /// es un safety net para el foco de Hyprland, pero no llega a tiempo: la
-    /// FocusScope necesita despertarse YA, en el mismo turno síncrono que
-    /// `show()`.
-    fn activate_focus_immediately(&self, win: &crate::MainWindow) {
-        use slint::platform::WindowEvent;
-        win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
-        win.window().request_redraw();
-    }
-
     fn show_and_sync(&self, win: &crate::MainWindow) {
         let _ = win.window().show();
         crate::shell::Shell::sync_global_after_show();
@@ -316,23 +253,16 @@ impl Composer for HyprlandComposer {
                         self.show_and_sync(win);
                         return false;
                     }
-                    // 3) Re-afirmar foco tras el roundtrip de Wayland (ver
-                    //    schedule_focus_reassert: re-dispatch + WindowActiveChanged).
-                    self.schedule_focus_reassert(win);
+                    // 3) Sync size after show; focus + fullscreen are deferred
+                    // to the SETTLE path (focus confirm or 1s timeout) — this
+                    // kills the 150ms/400ms reassert races and the
+                    // auto-minimize-on-open focus-lost race.
                     self.sync_after_show();
                     true
                 } else {
-                    // Ventana NO estaba en el special (p.ej. cerrada con SUPER+C,
-                    // que oculta vía Slint sin pasar por el scratchpad). Al
-                    // re-mostrarla, Slint re-mapea la superficie y la FocusScope
-                    // puede quedar sorda — mismo bug del teclado mudo.
-                    //
-                    // FIX: despertar la FocusScope de forma INMEDIATA (antes de que
-                    // el usuario pueda presionar una tecla) y también arrancar el
-                    // Timer de 150ms que re-dispatcha foco a Hyprland como safety net.
+                    // Window not in special (e.g. closed with SUPER+C) — slow path.
+                    // Show via Slint and sync size; settle will wake focus.
                     self.show_and_sync(win);
-                    self.activate_focus_immediately(win);
-                    self.schedule_focus_reassert(win);
                     false
                 }
             }
@@ -359,27 +289,18 @@ impl Composer for HyprlandComposer {
                         self.show_and_sync(win);
                         return false;
                     }
-                    // 3) Re-afirmar foco de teclado tras el roundtrip (mismo
-                    //    motivo que en V5: re-activar Slint para que la FocusScope
-                    //    raíz re-gane su focus_item y la navegación no quede sorda).
-                    self.schedule_focus_reassert(win);
+                    // 3) Sync size; focus is deferred to settle.
                     self.sync_after_show();
                     true
                 } else {
-                    // Ventana NO estaba en el special (p.ej. cerrada con SUPER+C).
-                    // Re-mostrar + despertar inmediato de FocusScope + Timer de
-                    // 150ms como safety net, igual que en V5.
+                    // Window not in special — slow path, settle will wake focus.
                     self.show_and_sync(win);
-                    self.activate_focus_immediately(win);
-                    self.schedule_focus_reassert(win);
                     false
                 }
             }
             HyprMode::None => {
-                // Sin compositor Hyprland disponible. Solo mostrar y despertar
-                // la FocusScope de Slint de inmediato.
+                // No Hyprland — just show via Slint; settle will wake focus.
                 self.show_and_sync(win);
-                self.activate_focus_immediately(win);
                 false
             }
         };
@@ -588,23 +509,7 @@ fn safe_workspace_target(target: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' '))
 }
 
-/// Standalone dispatch — used by Timer closures that can't capture &self.
-fn hypr_dispatch_v5_standalone(script: &str) -> bool {
-    std::process::Command::new("hyprctl")
-        .args(["dispatch", script])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
-}
 
-fn hypr_dispatch_v4_standalone(args: &[&str]) -> bool {
-    std::process::Command::new("hyprctl")
-        .arg("dispatch")
-        .args(args)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
-}
 
 // ── Tests (gallery-immersive-redesign 1.4) ─────────────────────────────
 

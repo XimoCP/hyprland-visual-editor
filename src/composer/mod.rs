@@ -151,19 +151,51 @@ impl Controller {
     }
 
     /// Run the SETTLE path exactly once per show, on the
-    /// Entering→Visible transition. Returns true if settle ran.
-    /// Called from the focus-gained handler or entry timeout.
-    fn run_settle(&mut self, win: &crate::MainWindow) -> bool {
-        // RED stub: do nothing yet so settle tests fail until GREEN
-        let _ = win;
-        false
+    /// Entering→Visible transition. Wake keyboard focus and, if the
+    /// Gallery is mounted expanded, enter fullscreen exactly once.
+    /// Called from the focus-gained handler or entry timeout after a
+    /// successful Entering→Visible transition.
+    pub(crate) fn run_settle(&mut self, win: &crate::MainWindow) {
+        self.composer.focus();
+        {
+            use slint::platform::WindowEvent;
+            win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+            win.window().request_redraw();
+        }
+        if crate::shell::Shell::is_gallery_expanded() {
+            if self.gallery_session_active() {
+                let _ = self.composer.set_fullscreen(true);
+            } else {
+                let _ = self.enter_gallery_session();
+            }
+        }
     }
 
     /// Schedule the single-shot entry timeout (1000ms) after a successful
     /// show. If the compositor never confirms focus, the timeout promotes
     /// Entering→Visible and runs settle exactly once.
-    fn schedule_entry_timeout(&self, _win_weak: slint::Weak<crate::MainWindow>) {
-        // RED stub: not yet scheduling, so timeout tests fail
+    fn schedule_entry_timeout(&self, win_weak: slint::Weak<crate::MainWindow>) {
+        slint::Timer::single_shot(Duration::from_secs(1), move || {
+            // Try to lock without blocking; if contended, the focus-gained
+            // path may already have settled.
+            if let Some(mut ctrl) = crate::composer::try_global_controller() {
+                if ctrl.entry_timed_out_machine(Duration::from_secs(1)) {
+                    if let Some(win) = win_weak.upgrade() {
+                        ctrl.run_settle(&win);
+                    }
+                }
+            } else if let Some(mut ctrl) = crate::composer::global_controller() {
+                // Fallback if try_lock failed but we are on the UI thread
+                // holding no other lock — use blocking lock as last resort.
+                // This path is only for timer fires where the controller is
+                // not already locked by toggle_tray.
+                if ctrl.entry_timed_out_machine(Duration::from_secs(1)) {
+                    if let Some(win) = win_weak.upgrade() {
+                        ctrl.run_settle(&win);
+                    }
+                }
+            }
+        });
     }
 
     /// Enter an immersive Gallery session (gallery-immersive-redesign 1.6):
@@ -196,27 +228,37 @@ impl Controller {
     }
 
     /// Toggle tray: hides if visible, shows if hidden.
+    /// The show path is gated by ShowStateMachine (Hidden→Entering) and
+    /// defers fullscreen to the settle path (focus confirm or 1s timeout).
     /// Returns true if the fast path was taken (special workspace transition).
     pub fn toggle_tray(&mut self, win: &crate::MainWindow) -> bool {
         if self.window_hidden {
-            // Show path
+            // Show path — machine is the single owner of truth.
+            if !self.begin_show_machine() {
+                // Already Entering/Visible → treat as no-op/refresh, do NOT re-dispatch.
+                return false;
+            }
+            let win_weak = win.as_weak();
             let fast = self.composer.show(win, self.prev_workspace.as_deref());
+            // If the composer show failed entirely (no hyprctl success and
+            // no fallback), revert machine and take the slow path. The
+            // HyprlandComposer already falls back to show_and_sync internally
+            // and returns false for the slow path, so a true failure is
+            // rare; this branch covers the edge where show reports failure.
+            // For the pure slow path (window not in special), we keep the
+            // existing prewarm/warmup extras and stay in Entering.
             if !fast {
-                crate::prewarm_tabs(win.as_weak(), 1);
+                // Slow path extras — keep as-is (prewarm/warmup).
+                // Note: HyprlandComposer already performed show_and_sync for
+                // the slow path; this just warms layouts.
+                crate::prewarm_tabs(win_weak.clone(), 1);
                 crate::warmup_navigation(win);
             }
             self.window_hidden = false;
-            // Re-assert fullscreen gallery when Gallery is mounted expanded.
-            // show() already called sync_global_after_show, but that sync may
-            // have skipped due to try_lock or initial tray-mode expand failure.
-            // This direct reassert is deadlock-free (uses &mut self) and idempotent.
-            if crate::shell::Shell::is_gallery_expanded() {
-                if self.gallery_session_active() {
-                    let _ = self.composer.set_fullscreen(true);
-                } else {
-                    let _ = self.enter_gallery_session();
-                }
-            }
+            // Defer fullscreen to settle (focus confirm or timeout). Keep
+            // sync_global_after_show as-is — it is already called inside
+            // HyprlandComposer::show via sync_after_show/show_and_sync.
+            self.schedule_entry_timeout(win_weak);
             fast
         } else {
             // Hide path — record where the window lives before moving it away,
@@ -224,6 +266,7 @@ impl Controller {
             self.prev_workspace = self.composer.active_workspace();
             self.composer.hide(win);
             self.window_hidden = true;
+            let _ = self.on_hide_machine();
             true
         }
     }
@@ -354,9 +397,9 @@ pub(crate) mod tests {
         fn show(&self, _win: &crate::MainWindow, _prev_workspace: Option<&str>) -> bool {
             self.record("focus");
             self.record("move_to_workspace");
-            // Timer fire (simulated immediately for determinism)
-            self.record("focus");
-            self.record("WindowActiveChanged");
+            // Deferred focus + WindowActiveChanged now happens in the SETTLE
+            // path (focus confirm or 1s timeout), not immediately in show.
+            // sync_global_after_show is handled by HyprlandComposer internally.
             self.show_fast
         }
 
@@ -485,8 +528,8 @@ pub(crate) mod tests {
         assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
             *calls.lock().unwrap(),
-            vec!["focus", "move_to_workspace", "focus", "WindowActiveChanged"],
-            "show fast path must emit focus → move → deferred focus → WindowActiveChanged"
+            vec!["focus", "move_to_workspace"],
+            "show fast path must emit focus → move; settle (focus + WindowActiveChanged + fullscreen) is deferred to focus confirm or 1s timeout"
         );
     }
 
@@ -512,8 +555,8 @@ pub(crate) mod tests {
         assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
             *calls.lock().unwrap(),
-            vec!["focus", "move_to_workspace", "focus", "WindowActiveChanged"],
-            "show slow path must emit the same focus → move → deferred focus sequence"
+            vec!["focus", "move_to_workspace"],
+            "show slow path must emit the same focus → move; settle is deferred"
         );
     }
 
@@ -801,17 +844,22 @@ pub(crate) mod tests {
         // First transition via confirm -> settle should fullscreen once
         let did_settle = controller.confirm_focus_machine();
         assert!(did_settle, "confirm must transition Entering→Visible");
-        // Simulate settle dispatch (would be run_settle)
-        let _ = controller.run_settle(&win);
+        // Simulate settle dispatch (would be run_settle) — only when transitioned
+        if did_settle {
+            controller.run_settle(&win);
+        }
         let first_count = calls.lock().unwrap().iter().filter(|c| c.contains("set_fullscreen")).count();
-        // Second transition via timeout must be no-op
+        // Second transition via timeout must be no-op and must NOT re-run settle
         let did_timeout = controller.entry_timed_out_machine(Duration::from_millis(0));
         assert!(!did_timeout, "timeout after confirm must be no-op");
-        let _ = controller.run_settle(&win);
+        if did_timeout {
+            controller.run_settle(&win);
+        }
         let second_count = calls.lock().unwrap().iter().filter(|c| c.contains("set_fullscreen")).count();
         assert_eq!(
             first_count, second_count,
             "settle must run exactly once: timeout after confirm must not re-dispatch fullscreen"
         );
+        assert_eq!(first_count, 1, "first settle must have dispatched fullscreen exactly once");
     }
 }
