@@ -58,6 +58,9 @@ pub const MOSAIC_GUTTER_PX: f32 = 12.0;
 pub const MOSAIC_DEFAULT_ASPECT: f32 = 16.0 / 9.0;
 /// Two-row strip (spec: ≈2 rows visible).
 pub const MOSAIC_ROW_COUNT: usize = 2;
+/// Symmetric lateral margin as fraction of stage width (4% per side).
+/// Usable width = stage_w − 2×margin; wall stays horizontally centered.
+pub const MOSAIC_SIDE_MARGIN_FRACTION: f32 = 0.04;
 
 /// Final paint-ready tile rect in stage coordinates (offsets applied).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -156,7 +159,18 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
     let content_h = y - g; // drop the trailing gutter after the last row
     let last_nat = nat_w(sums[n_rows - 1], rows[n_rows - 1].len());
     let content_w = big_w.max(last_nat);
-    let offset_x = ((stage_w - content_w) / 2.0).max(0.0);
+    let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
+    let usable_w = stage_w - 2.0 * margin;
+    // Symmetric lateral margins: wall is horizontally centered within the
+    // usable width. When content fits (content_w <= usable_w) the wall is
+    // fully inside both margins; when it overflows, it is left-pinned at
+    // margin (right may be clipped but left margin is always respected).
+    // Equivalent to offset_x = ((stage_w - content_w)/2).max(margin).
+    let offset_x = if content_w <= usable_w {
+        margin + ((usable_w - content_w) / 2.0).max(0.0)
+    } else {
+        margin
+    };
     let offset_y = ((stage_h - content_h) / 2.0).max(0.0);
     for t in &mut tiles {
         t.x += offset_x;
@@ -1143,7 +1157,8 @@ mod tests {
         let expected_w = th * per_row + 9.0 * MOSAIC_GUTTER_PX;
         approx(l.content_w, expected_w);
         assert!(l.content_w > 1920.0, "block overflows stage → scrollable");
-        approx(l.offset_x, 0.0);
+        // Symmetric 4% lateral margin: overflow is left-pinned at margin, not 0.
+        approx(l.offset_x, 1920.0 * MOSAIC_SIDE_MARGIN_FRACTION);
         // Equal rows keep the natural height (justify scale 1).
         approx(l.tiles[0].h, th);
         approx(l.tiles[10].y, l.tiles[0].y + th + MOSAIC_GUTTER_PX);
