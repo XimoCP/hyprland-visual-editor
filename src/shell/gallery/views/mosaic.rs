@@ -152,42 +152,62 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
         .zip(&sums)
         .map(|(row, s)| nat_w(*s, row.len()))
         .fold(f32::MIN, f32::max);
-    // Shape-preserving justification: non-last rows scale their HEIGHT to
-    // fill W exactly (tile aspect stays true — no crop, no letterbox); the
-    // last row keeps th, left-aligned.
+    let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
+    let usable_w = stage_w - 2.0 * margin;
+    // Shape-preserving justification + shrink-to-fit: non-last rows scale
+    // their HEIGHT to fill W exactly; when a row's natural width exceeds the
+    // usable width it is shrunk proportionally to fit exactly
+    // `h = (usable - (k-1)*g) / sum`, so the wall never overflows the
+    // symmetric [margin, stage_w - margin] band. Last row keeps th unless it
+    // itself overflows, in which case it is shrunk the same way. No upscaling
+    // beyond natural — fitted rows stay centered.
     let mut tiles: Vec<MosaicTile> = Vec::with_capacity(sanitized.len());
     let n_rows = rows.len();
     let mut y = 0.0f32;
+    let mut max_row_w: f32 = 0.0;
     for (r, row) in rows.iter().enumerate() {
         let is_last = r + 1 == n_rows;
-        let h_r = if is_last {
+        let h_initial = if is_last {
             th
         } else {
             (big_w - (row.len() as f32 - 1.0) * g) / sums[r]
         };
+        let row_nat_w = if is_last {
+            nat_w(sums[r], row.len())
+        } else {
+            big_w
+        };
+        let (h_r, gutter_h) = if row_nat_w > usable_w {
+            let avail = usable_w - (row.len() as f32 - 1.0) * g;
+            if avail > 0.0 {
+                // shrink-to-fit with fixed gutters: h = (usable - (k-1)*g)/sum
+                ((avail) / sums[r], g)
+            } else {
+                // gutters alone exceed usable (huge per-row count): scale whole row
+                let factor = usable_w / row_nat_w;
+                (h_initial * factor, g * factor)
+            }
+        } else {
+            (h_initial, g)
+        };
+        let row_w = h_r * sums[r] + (row.len() as f32 - 1.0) * gutter_h;
+        if row_w > max_row_w {
+            max_row_w = row_w;
+        }
         let mut x = 0.0f32;
         for &a in row {
             let w = h_r * a;
             tiles.push(MosaicTile { x, y, w, h: h_r });
-            x += w + g;
+            x += w + gutter_h;
         }
         y += h_r + g;
     }
     let content_h = y - g; // drop the trailing gutter after the last row
-    let last_nat = nat_w(sums[n_rows - 1], rows[n_rows - 1].len());
-    let content_w = big_w.max(last_nat);
-    let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
-    let usable_w = stage_w - 2.0 * margin;
-    // Symmetric lateral margins: wall is horizontally centered within the
-    // usable width. When content fits (content_w <= usable_w) the wall is
-    // fully inside both margins; when it overflows, it is left-pinned at
-    // margin (right may be clipped but left margin is always respected).
-    // Equivalent to offset_x = ((stage_w - content_w)/2).max(margin).
-    let offset_x = if content_w <= usable_w {
-        margin + ((usable_w - content_w) / 2.0).max(0.0)
-    } else {
-        margin
-    };
+    let content_w = max_row_w;
+    // Symmetric lateral margins: wall is horizontally centered inside the
+    // usable width. After shrink-to-fit content_w <= usable_w always, so this
+    // is simply `margin + (usable - content)/2` (no overflow left-pin needed).
+    let offset_x = margin + ((usable_w - content_w) / 2.0).max(0.0);
     let offset_y = ((stage_h - content_h) / 2.0).max(0.0);
     for t in &mut tiles {
         t.x += offset_x;
@@ -1142,43 +1162,139 @@ mod tests {
     #[test]
     fn justified_narrow_first_row_scales_up_shape_preserving() {
         // One ultra-panorama closes row 0 immediately (10 + 2.35/2 > T);
-        // the forced five-card last row is widest → row 0 must grow its
-        // HEIGHT to reach W while every tile keeps its true aspect.
+        // the forced five-card last row is widest → row 0 would grow its
+        // HEIGHT to reach W (303.25) but W overflows usable (1766), so
+        // shrink-to-fit caps it at usable width.
+        let stage_w = 1920.0;
+        let stage_h = 1040.0;
         let aspects = [10.0, 2.35, 2.35, 2.35, 2.35, 2.35];
-        let l = justified_layout(&aspects, 1920.0, 1040.0);
-        let th = band_row_h(1040.0);
+        let l = justified_layout(&aspects, stage_w, stage_h);
+        let th = band_row_h(stage_h);
         assert_eq!(l.tiles.len(), 6);
+        let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
+        let usable = stage_w - 2.0 * margin;
         let s1 = 5.0 * 2.35;
         let big_w = th * s1 + 4.0 * MOSAIC_GUTTER_PX;
-        let h0 = big_w / 10.0; // justified row height ABOVE th
-        assert!(h0 > th + 1e-4, "narrow non-last row scales UP, got {h0} vs {th}");
-        approx(l.tiles[0].h, h0);
-        approx(l.tiles[0].w, big_w); // single panorama spans W exactly
-        approx(l.tiles[0].x + l.tiles[0].w - l.offset_x, big_w);
-        // Last row: five identical naturals at th.
-        approx(l.tiles[1].h, th);
-        approx(l.tiles[1].y, l.offset_y + h0 + MOSAIC_GUTTER_PX);
-        approx(l.tiles[1].w, th * 2.35);
-        approx(l.content_h, h0 + th + MOSAIC_GUTTER_PX);
-        approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
+        // big_w (3032) > usable (1766) → overflow, so row is shrunk to usable
+        let h0_expected = usable / 10.0; // single tile fills usable exactly
+        assert!(
+            h0_expected < big_w / 10.0 - 1e-3,
+            "shrink should be smaller than original upscaled"
+        );
+        approx(l.tiles[0].h, h0_expected);
+        approx(l.tiles[0].w, usable);
+        approx(l.tiles[0].x + l.tiles[0].w - l.offset_x, usable);
+        // Last row would also overflow if kept at th (th*11.75+48=3032 > usable),
+        // so it is also shrunk to usable.
+        let h1_expected = (usable - 4.0 * MOSAIC_GUTTER_PX) / s1;
+        approx(l.tiles[1].h, h1_expected);
+        approx(l.tiles[1].y, l.tiles[0].y + h0_expected + MOSAIC_GUTTER_PX);
+        approx(l.tiles[1].w, h1_expected * 2.35);
+        // Wall fits inside symmetric margins.
+        assert!(l.content_w <= usable + 1e-2);
+        approx(l.offset_x, margin + (usable - l.content_w) / 2.0);
+        approx(l.content_h, h0_expected + h1_expected + MOSAIC_GUTTER_PX);
+        approx(l.offset_y, (stage_h - l.content_h) / 2.0);
     }
 
     #[test]
     fn justified_twenty_cards_scrollable_no_offset() {
         let a = 16.0f32 / 9.0;
-        let l = justified_layout(&[a; 20], 1920.0, 1040.0);
+        let stage_w = 1920.0;
+        let stage_h = 1040.0;
+        let l = justified_layout(&[a; 20], stage_w, stage_h);
         assert_eq!(l.tiles.len(), 20, "never drops cards");
-        // Greedy splits identicals 10/10; both rows equal width.
-        let per_row = 10.0 * a;
-        let th = band_row_h(1040.0);
-        let expected_w = th * per_row + 9.0 * MOSAIC_GUTTER_PX;
-        approx(l.content_w, expected_w);
-        assert!(l.content_w > 1920.0, "block overflows stage → scrollable");
-        // Symmetric 4% lateral margin: overflow is left-pinned at margin, not 0.
-        approx(l.offset_x, 1920.0 * MOSAIC_SIDE_MARGIN_FRACTION);
-        // Equal rows keep the natural height (justify scale 1).
-        approx(l.tiles[0].h, th);
-        approx(l.tiles[10].y, l.tiles[0].y + th + MOSAIC_GUTTER_PX);
+        let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
+        let usable_w = stage_w - 2.0 * margin;
+        // Contract: wall NEVER overflows — must fit symmetrically inside margins.
+        assert!(
+            l.content_w <= usable_w + 1e-2,
+            "content_w {} must fit inside usable {usable_w} (stage {stage_w})",
+            l.content_w
+        );
+        // Horizontally centered inside the usable area: offset = margin + (usable - content)/2
+        let expected_offset = margin + (usable_w - l.content_w) / 2.0;
+        approx(l.offset_x, expected_offset);
+        assert!(l.offset_x + 1e-2 >= margin, "left margin respected");
+        assert!(
+            l.offset_x + l.content_w - 1e-2 <= stage_w - margin,
+            "right margin respected: offset {} + content {} = {} > {}",
+            l.offset_x,
+            l.content_w,
+            l.offset_x + l.content_w,
+            stage_w - margin
+        );
+        // Every tile inside margins (1px float tolerance).
+        for t in &l.tiles {
+            assert!(
+                t.x + 1.0 >= margin,
+                "tile x {} < margin {margin}",
+                t.x
+            );
+            assert!(
+                t.x + t.w - 1.0 <= stage_w - margin,
+                "tile right {} > stage_w - margin {}",
+                t.x + t.w,
+                stage_w - margin
+            );
+        }
+        // Overflow rows are shrunk: tile height must be < band height th.
+        let th = band_row_h(stage_h);
+        assert!(
+            l.tiles[0].h < th - 1e-3,
+            "overflow row must be shrunk: h {} < th {th}",
+            l.tiles[0].h
+        );
+        // Rows still stacked with gutter.
+        approx(l.tiles[10].y, l.tiles[0].y + l.tiles[0].h + MOSAIC_GUTTER_PX);
+    }
+
+    #[test]
+    fn mosaic_shrink_to_fit_stress_no_overflow_across_pages() {
+        // Stress contract: counts 5..=40 across stage sizes, every tile inside
+        // [margin, stage_w - margin] on every page after flips (1px tolerance).
+        let stage_ws = [1280.0f32, 1920.0, 2560.0];
+        let stage_hs = [720.0f32, 1040.0, 1440.0];
+        for &sw in &stage_ws {
+            for &sh in &stage_hs {
+                let margin = sw * MOSAIC_SIDE_MARGIN_FRACTION;
+                let right = sw - margin;
+                for count in 5usize..=40 {
+                    let mut pages = MosaicPages::new(count, sw, sh);
+                    let total = pages.total_pages().max(1);
+                    for _ in 0..total {
+                        let (aspects, _) = pages.page_render();
+                        let layout = justified_layout(&aspects, sw, sh);
+                        for t in &layout.tiles {
+                            assert!(
+                                t.x + 1.0 >= margin,
+                                "stress count {count} stage {sw}x{sh} page {}: tile x {} < margin {margin}",
+                                pages.current(),
+                                t.x
+                            );
+                            assert!(
+                                t.x + t.w - 1.0 <= right,
+                                "stress count {count} stage {sw}x{sh} page {}: tile right {} > right {right}",
+                                pages.current(),
+                                t.x + t.w
+                            );
+                        }
+                        // Also assert block itself inside margins.
+                        assert!(
+                            layout.offset_x + 1.0 >= margin,
+                            "offset_x {} < margin {margin}",
+                            layout.offset_x
+                        );
+                        assert!(
+                            layout.offset_x + layout.content_w - 1.0 <= right,
+                            "block right {} > right {right}",
+                            layout.offset_x + layout.content_w
+                        );
+                        pages.step(1);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1530,13 +1646,13 @@ mod mosaic_margin_tests {
                 let min_x = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
                 let max_x = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
                 assert!(
-                    min_x + 1e-2 >= margin,
+                    min_x + 1.0 >= margin,
                     "page {} real {real}: min x {min_x} < margin {margin}",
                     pages.current()
                 );
-                if layout.content_w <= usable + 1e-2 {
+                if layout.content_w <= usable + 1.0 {
                     assert!(
-                        max_x - 1e-2 <= STAGE_W - margin,
+                        max_x - 1.0 <= STAGE_W - margin,
                         "page {} real {real}: max x {max_x} > stage_w - margin {} (content_w {})",
                         pages.current(),
                         STAGE_W - margin,
@@ -1558,9 +1674,9 @@ mod mosaic_margin_tests {
         let layout4 = justified_layout(&aspects4, narrow_w, narrow_h);
         let min4 = layout4.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
         let max4 = layout4.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
-        assert!(min4 + 1e-2 >= narrow_margin);
-        if layout4.content_w <= narrow_usable + 1e-2 {
-            assert!(max4 - 1e-2 <= narrow_w - narrow_margin);
+        assert!(min4 + 1.0 >= narrow_margin);
+        if layout4.content_w <= narrow_usable + 1.0 {
+            assert!(max4 - 1.0 <= narrow_w - narrow_margin);
         }
     }
 }
