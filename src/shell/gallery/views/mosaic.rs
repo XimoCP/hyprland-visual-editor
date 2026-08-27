@@ -61,6 +61,14 @@ pub const MOSAIC_ROW_COUNT: usize = 2;
 /// Symmetric lateral margin as fraction of stage width (4% per side).
 /// Usable width = stage_w − 2×margin; wall stays horizontally centered.
 pub const MOSAIC_SIDE_MARGIN_FRACTION: f32 = 0.04;
+/// Pinterest-style display aspect variety — single tuning point each.
+/// WIDER spread (1.0 → 1.95) plus portrait 0.72 sells the Pinterest look.
+/// Portrait 0.72 was evaluated: justified packer handles aspect < 1 without
+/// degenerate row layout (no clamp needed); if a future tuning pushed below
+/// ~0.7 and caused degenerate rows, clamp portrait to 0.8.
+pub const MOSAIC_ASPECT_SQUARE: f32 = 1.0;
+pub const MOSAIC_ASPECT_PORTRAIT: f32 = 0.72;
+pub const MOSAIC_ASPECT_WIDE: f32 = 1.95;
 
 /// Final paint-ready tile rect in stage coordinates (offsets applied).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,15 +88,24 @@ pub struct MosaicLayout {
 /// Pinterest" pattern. Real image aspects are IGNORED on purpose: the
 /// user's library is uniformly 16:9, which would pack a boring uniform
 /// grid, so tiles get a deterministic shape variety instead and images
-/// cover-crop into their tile (user-approved). Square every 4th card,
-/// medium 3:2 every 4th+2, wide 16:9 otherwise.
+/// cover-crop into their tile (user-approved).
+/// Deterministic 10-cycle: [square, portrait, wide, portrait, square,
+/// wide, square, portrait, wide, square] — every window of 10 contains
+/// all three classes and no 4 consecutive share a class.
 pub fn mosaic_display_aspect(idx: usize) -> f32 {
-    const WIDE: f32 = 16.0 / 9.0;
-    match idx % 4 {
-        0 => 1.0,
-        2 => 1.5,
-        _ => WIDE,
-    }
+    const CYCLE: [f32; 10] = [
+        MOSAIC_ASPECT_SQUARE,   // 0 square
+        MOSAIC_ASPECT_PORTRAIT, // 1 portrait
+        MOSAIC_ASPECT_WIDE,     // 2 wide
+        MOSAIC_ASPECT_PORTRAIT, // 3 portrait
+        MOSAIC_ASPECT_SQUARE,   // 4 square
+        MOSAIC_ASPECT_WIDE,     // 5 wide
+        MOSAIC_ASPECT_SQUARE,   // 6 square
+        MOSAIC_ASPECT_PORTRAIT, // 7 portrait
+        MOSAIC_ASPECT_WIDE,     // 8 wide
+        MOSAIC_ASPECT_SQUARE,   // 9 square
+    ];
+    CYCLE[idx % CYCLE.len()]
 }
 
 /// Pack `aspects` (in display order) into a justified-rows block sized
@@ -1179,7 +1196,7 @@ mod tests {
 
     #[test]
     fn display_aspect_pattern_exact_values_indices_0_to_9() {
-        // RED: widened Pinterest spread — square 1.0, portrait 0.72, wide 1.95, period 10
+        // Widened Pinterest spread — square 1.0, portrait 0.72, wide 1.95, period 10
         // Cycle: [square, portrait, wide, portrait, square, wide, square, portrait, wide, square]
         let sq = 1.0f32;
         let po = 0.72f32;
@@ -1188,6 +1205,10 @@ mod tests {
         for (idx, &want) in expected.iter().enumerate() {
             approx(mosaic_display_aspect(idx), want);
         }
+        // Named constants are single tuning points
+        approx(super::MOSAIC_ASPECT_SQUARE, sq);
+        approx(super::MOSAIC_ASPECT_PORTRAIT, po);
+        approx(super::MOSAIC_ASPECT_WIDE, wi);
     }
 
     #[test]
