@@ -66,6 +66,9 @@ impl HyprlandComposer {
                         let s = v5_set_fullscreen(false);
                         self.hypr_dispatch_v5(&s);
                     }
+                    // V4/conf fallback: Hyprland V4 dispatch has NO window
+                    // targeting — must rely on the prior focus_by_title; this
+                    // focus-then-act pattern is required and forbidden to remove.
                     HyprMode::V4 => {
                         self.hypr_dispatch_v4(&["fullscreen", "0"]);
                     }
@@ -77,6 +80,8 @@ impl HyprlandComposer {
                         self.hypr_dispatch_v5(&s);
                     }
                     // Tiled per the parsed snapshot, so toggle == set float.
+                    // V4/conf fallback: no window targeting — relies on prior
+                    // focus_by_title; do not remove the focus step.
                     HyprMode::V4 => {
                         self.hypr_dispatch_v4(&["togglefloating", HVE_TITLE]);
                     }
@@ -181,6 +186,8 @@ impl HyprlandComposer {
                     let s = v5_focus();
                     let _ = hypr_dispatch_v5_standalone(&s);
                 }
+                // V4/conf fallback: no window targeting — focus by title is
+                // the selector; keep this branch and its comment.
                 HyprMode::V4 => {
                     let _ = hypr_dispatch_v4_standalone(&["focuswindow", HVE_TITLE]);
                 }
@@ -242,8 +249,9 @@ impl Composer for HyprlandComposer {
                 } else {
                     // Si el move por lua falló, intentamos mover con la sintaxis
                     // clásica (comunmente "special:minimized" acepta move).
-                    // Enfocar HVE primero como en show(): `movetoworkspacesilent`
-                    // actúa sobre la ventana con foco y no debe atrapar otra.
+                    // V4/conf fallback: Hyprland V4 dispatch has NO window targeting
+                    // — must focus-by-title first; this pattern is required and
+                    // forbidden to remove (movetoworkspacesilent acts on focused window).
                     let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                     let did_move4 =
                         self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
@@ -257,9 +265,10 @@ impl Composer for HyprlandComposer {
                 }
             }
             HyprMode::V4 => {
-                // Enfocar HVE primero: `movetoworkspacesilent` actúa sobre la
-                // ventana con foco. Sin esto, un click simultáneo del ratón en
-                // otra ventana la atraparía al moverla al special.
+                // V4/conf fallback: Hyprland V4 dispatch has NO window targeting
+                // — must focus-by-title first; this focus-then-act pattern is
+                // required and forbidden to remove. Without it a concurrent
+                // click in another window would hijack that window to special.
                 let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                 let did_move =
                     self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
@@ -328,6 +337,9 @@ impl Composer for HyprlandComposer {
                 }
             }
             HyprMode::V4 => {
+                // V4/conf fallback: Hyprland V4 dispatch has NO window targeting
+                // — must focus-by-title first; this focus-then-act pattern is
+                // required and forbidden to remove.
                 if self.hve_in_special() {
                     let target = self
                         .active_workspace()
@@ -338,7 +350,7 @@ impl Composer for HyprlandComposer {
                         self.show_and_sync(win);
                         return false;
                     }
-                    // 1) Enfocar HVE primero (movetoworkspacesilent actúa sobre la focada).
+                    // 1) Enfocar HVE primero (movetoworkspacesilent acts on focused window — V4 has no window selector).
                     let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                     // 2) Devolverla al workspace real.
                     let did_move =
@@ -381,6 +393,8 @@ impl Composer for HyprlandComposer {
                 let s = v5_focus();
                 let _ = self.hypr_dispatch_v5(&s);
             }
+            // V4/conf fallback: no window targeting — focus by title is the
+            // only selector; keep this path and its comment.
             HyprMode::V4 => {
                 let _ = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
             }
@@ -394,6 +408,8 @@ impl Composer for HyprlandComposer {
                 let s = v5_float_toggle();
                 let _ = self.hypr_dispatch_v5(&s);
             }
+            // V4/conf fallback: no window targeting — focus semantics are
+            // carried by the title arg; keep and do not remove.
             HyprMode::V4 => {
                 let _ = self.hypr_dispatch_v4(&["togglefloating", HVE_TITLE]);
             }
@@ -428,6 +444,9 @@ impl Composer for HyprlandComposer {
                 let s_fs = v5_set_fullscreen(on);
                 did_focus && self.hypr_dispatch_v5(&s_fs)
             }
+            // V4/conf fallback: no window targeting — must focus-by-title
+            // first; this focus-then-act pattern is required and forbidden
+            // to remove.
             HyprMode::V4 => {
                 let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                 let mode = if on { "1" } else { "0" };
@@ -461,7 +480,9 @@ pub(crate) fn v5_move_to_special() -> String {
 }
 
 pub(crate) fn v5_move_to_workspace(workspace: &str) -> String {
-    format!("hl.dsp.window.move({{ workspace = \"{workspace}\" }})")
+    format!(
+        "hl.dsp.window.move({{ window = \"title:{HVE_TITLE}\", workspace = \"{workspace}\" }})"
+    )
 }
 
 pub(crate) fn v5_toggle_special() -> String {
