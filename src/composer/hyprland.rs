@@ -63,10 +63,7 @@ impl HyprlandComposer {
             match step {
                 "fullscreen_off" => match self.hypr_mode() {
                     HyprMode::V5 => {
-                        let s = format!(
-                            "hl.dsp.window.fullscreen({{ action = \"unset\", \
-                             window = \"title:{HVE_TITLE}\" }})"
-                        );
+                        let s = v5_set_fullscreen(false);
                         self.hypr_dispatch_v5(&s);
                     }
                     HyprMode::V4 => {
@@ -76,10 +73,7 @@ impl HyprlandComposer {
                 },
                 "refloat" => match self.hypr_mode() {
                     HyprMode::V5 => {
-                        let s = format!(
-                            "hl.dsp.window.float({{ action = \"on\", \
-                             window = \"title:{HVE_TITLE}\" }})"
-                        );
+                        let s = v5_float_on();
                         self.hypr_dispatch_v5(&s);
                     }
                     // Tiled per the parsed snapshot, so toggle == set float.
@@ -98,7 +92,7 @@ impl HyprlandComposer {
     fn focus_by_title(&self) -> bool {
         match self.hypr_mode() {
             HyprMode::V5 => {
-                let s = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                let s = v5_focus();
                 self.hypr_dispatch_v5(&s)
             }
             HyprMode::V4 => self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]),
@@ -184,7 +178,7 @@ impl HyprlandComposer {
             // (a) Re-dispatch de foco a Hyprland, según versión detectada.
             match mode {
                 HyprMode::V5 => {
-                    let s = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                    let s = v5_focus();
                     let _ = hypr_dispatch_v5_standalone(&s);
                 }
                 HyprMode::V4 => {
@@ -235,16 +229,14 @@ impl Composer for HyprlandComposer {
                 // `hl.dsp.window.move` actúa sobre la ventana con foco: si el
                 // usuario está clickeando otra ventana en el mismo instante del
                 // SUPER+H, el move secuestra ESA ventana y la manda al special.
-                let s1 = format!(
-                    "hl.dsp.window.move({{ window = \"title:{HVE_TITLE}\", workspace = \"special:{SPECIAL}\" }})"
-                );
+                let s1 = v5_move_to_special();
                 let did_move = self.hypr_dispatch_v5(&s1);
                 if did_move {
                     // Mover al special lo "abre" como overlay visible. Hay que cerrar
                     // el scratchpad tras mover para que la ventana quede oculta, no
                     // flotando encima del workspace activo (era la regresión de "no
                     // minimiza").
-                    let s2 = format!("hl.dsp.workspace.toggle_special(\"{SPECIAL}\")");
+                    let s2 = v5_toggle_special();
                     let _ = self.hypr_dispatch_v5(&s2);
                     true
                 } else {
@@ -306,10 +298,10 @@ impl Composer for HyprlandComposer {
                     //    con foco. Como HVE estaba en el special scratchpad sin foco,
                     //    el move movía OTRA ventana e HVE quedaba atrapada. Al enfocar
                     //    primero, el move posterior la saca del special al workspace.
-                    let s_focus = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                    let s_focus = v5_focus();
                     let did_focus = self.hypr_dispatch_v5(&s_focus);
                     // 2) Devolverla al workspace real (el move actúa sobre la focada).
-                    let s_move = format!("hl.dsp.window.move({{ workspace = \"{target}\" }})");
+                    let s_move = v5_move_to_workspace(&target);
                     let did_move = self.hypr_dispatch_v5(&s_move);
                     if !(did_focus && did_move) {
                         self.show_and_sync(win);
@@ -386,7 +378,7 @@ impl Composer for HyprlandComposer {
     fn focus(&self) {
         match self.hypr_mode() {
             HyprMode::V5 => {
-                let s = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                let s = v5_focus();
                 let _ = self.hypr_dispatch_v5(&s);
             }
             HyprMode::V4 => {
@@ -399,7 +391,7 @@ impl Composer for HyprlandComposer {
     fn toggle_float(&self) {
         match self.hypr_mode() {
             HyprMode::V5 => {
-                let s = format!("hl.dsp.window.float({{ action = \"toggle\", window = \"title:{HVE_TITLE}\" }})");
+                let s = v5_float_toggle();
                 let _ = self.hypr_dispatch_v5(&s);
             }
             HyprMode::V4 => {
@@ -431,19 +423,9 @@ impl Composer for HyprlandComposer {
     fn set_fullscreen(&self, on: bool) -> bool {
         match self.hypr_mode() {
             HyprMode::V5 => {
-                let s_focus = format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})");
+                let s_focus = v5_focus();
                 let did_focus = self.hypr_dispatch_v5(&s_focus);
-                let s_fs = if on {
-                    format!(
-                        "hl.dsp.window.fullscreen({{ mode = \"fullscreen\", action = \"set\", \
-                         window = \"title:{HVE_TITLE}\" }})"
-                    )
-                } else {
-                    format!(
-                        "hl.dsp.window.fullscreen({{ action = \"unset\", \
-                         window = \"title:{HVE_TITLE}\" }})"
-                    )
-                };
+                let s_fs = v5_set_fullscreen(on);
                 did_focus && self.hypr_dispatch_v5(&s_fs)
             }
             HyprMode::V4 => {
@@ -462,6 +444,51 @@ impl Composer for HyprlandComposer {
 
 const HVE_TITLE: &str = "Hyprland Visual Editor";
 const SPECIAL: &str = "minimized";
+
+// ── V5 command builders (pure, no I/O — testable targeting seam) ──────
+// Extracted for unit 2 scope guard: every HVE-window-acting V5 dispatch
+// must carry an explicit `window="title:..."` selector. Builders are pure
+// so targeting can be asserted without hyprctl or sleeps.
+
+pub(crate) fn v5_focus() -> String {
+    format!("hl.dsp.focus({{ window = \"title:{HVE_TITLE}\" }})")
+}
+
+pub(crate) fn v5_move_to_special() -> String {
+    format!(
+        "hl.dsp.window.move({{ window = \"title:{HVE_TITLE}\", workspace = \"special:{SPECIAL}\" }})"
+    )
+}
+
+pub(crate) fn v5_move_to_workspace(workspace: &str) -> String {
+    format!("hl.dsp.window.move({{ workspace = \"{workspace}\" }})")
+}
+
+pub(crate) fn v5_toggle_special() -> String {
+    format!("hl.dsp.workspace.toggle_special(\"{SPECIAL}\")")
+}
+
+pub(crate) fn v5_set_fullscreen(on: bool) -> String {
+    if on {
+        format!(
+            "hl.dsp.window.fullscreen({{ mode = \"fullscreen\", action = \"set\", \
+             window = \"title:{HVE_TITLE}\" }})"
+        )
+    } else {
+        format!(
+            "hl.dsp.window.fullscreen({{ action = \"unset\", \
+             window = \"title:{HVE_TITLE}\" }})"
+        )
+    }
+}
+
+pub(crate) fn v5_float_on() -> String {
+    format!("hl.dsp.window.float({{ action = \"on\", window = \"title:{HVE_TITLE}\" }})")
+}
+
+pub(crate) fn v5_float_toggle() -> String {
+    format!("hl.dsp.window.float({{ action = \"toggle\", window = \"title:{HVE_TITLE}\" }})")
+}
 
 // ── Startup sanity (gallery-immersive-redesign 1.4/1.5) ────────────────
 
