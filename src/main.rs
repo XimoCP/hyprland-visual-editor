@@ -10,6 +10,7 @@ mod presets;
 mod providers;
 mod settings;
 mod shell;
+mod show_state;
 mod theme;
 mod theme_manager;
 mod tr;
