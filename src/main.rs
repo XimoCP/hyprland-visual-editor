@@ -418,7 +418,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         std::sync::Arc::new(move || {
             use crate::shell::gallery::views::mosaic::{
-                justified_layout, mosaic_curtain_delays,
+                justified_hero_layout, mosaic_curtain_delays,
             };
             use slint::{Model, ModelRc, VecModel};
             let Some(w) = weak.upgrade() else { return; };
@@ -442,7 +442,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 pg.recompute(real_count, stage_w, stage_h);
             }
             let (aspects, real_indices) = pg.page_render();
-            let layout = justified_layout(&aspects, stage_w, stage_h);
+            let layout = justified_hero_layout(&aspects, stage_w, stage_h, pg.current());
             let delays = mosaic_curtain_delays(&layout.tiles);
             w.set_gallery_mosaic_current_page(pg.current() as i32);
             w.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
