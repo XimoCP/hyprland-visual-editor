@@ -211,56 +211,50 @@ export component SliceDelegate inherits Rectangle {
         width: root.width - root.skew;
         height: 100%;
 
-        VerticalLayout {
-            padding: SkwdTokens.spacing-8;
-            spacing: SkwdTokens.spacing-8;
+        // ── Full-bleed wallpaper (edge-to-edge cover, center crop).
+        // Single effective-image (hero → thumb) mirrors MosaicCell; no
+        // source-clip — source-clip crops in SOURCE coordinates and would
+        // slice the ≤1600×900 hero incorrectly. Plain cover on a
+        // full-bounds Image is enough; cropping is accepted (same as
+        // Mosaic). The Image spans 100% × 100% of the face mask so both
+        // expanded (924) and collapsed (135) cards fill width without
+        // side padding or letterboxing. Shimmer + 120ms preheat gate
+        // kept from PR2.HF.c; `fill` remains banned (stretch).
+        image-layer := Rectangle {
+            width: 100%;
+            height: 100%;
+            clip: true;
+            background: SkwdTokens.surface;
             opacity: is-flipped ? 0.0 : 1.0;
             animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
 
-        // ── Thumbnail + hero pipeline (gallery-immersive-redesign 4.8 +
-        // HF5 / spec Real Wallpaper Thumbnails): skeleton SHIMMER while no
-        // decoded image is marshaled, 200ms OutCubic fade-in when it lands.
-        // The 120ms preheat Timer stays as the anti-flash gate from
-        // PR2.HF.c: the hidden focused-overlay copy warms before first use.
-        // The portrait thumb keeps its defensive 400×720 source-clip (R8);
-        // the hero uses a SEPARATE Image element WITHOUT source-clip —
-        // source-clip crops in SOURCE coordinates and would destroy the
-        // ≤1600×900 aspect-true decode. Expanded card shows the hero with
-        // cover (fills the landscape face, no distortion); collapsed cards
-        // keep the cover-cropped thumb. `fill` is banned: it stretches.
-        Rectangle {
-            vertical-stretch: 1;
-            clip: true;
-            border-radius: SkwdTokens.radius-8;
-            background: SkwdTokens.surface;
-
             property <bool> preheat-done: false;
-            property <bool> has-thumb: self.preheat-done && root.thumb.width > 0;
-            // Hero only ever shows on the expanded (current) card; a
-            // collapsed card never consumes its hero decode.
-            property <bool> has-hero: self.preheat-done && root.is-current && root.hero.width > 0;
+            // Effective image: hero when available on the expanded card,
+            // otherwise thumb fallback — same gating as MosaicCell.
+            property <image> effective-image: root.hero.width > 0 && root.is-current ? root.hero : root.thumb;
+            property <bool> has-image: self.preheat-done && self.effective-image.width > 0;
 
             preheat-timer := Timer {
                 interval: 120ms;
-                running: !preheat-done;
+                running: !parent.preheat-done;
                 triggered => {
-                    preheat-done = true;
+                    parent.preheat-done = true;
                     self.running = false;
                 }
             }
 
             // Shimmer: accent-tinted veil pulsing while waiting (Timer-driven
-            // phase alternation; stops once any decoded image arrives).
+            // phase alternation; stops once the effective image arrives).
             property <bool> shimmer-high: false;
             shimmer-timer := Timer {
                 interval: 700ms;
-                running: !(parent.has-thumb || parent.has-hero);
+                running: !parent.has-image;
                 triggered => { parent.shimmer-high = !parent.shimmer-high; }
             }
 
             shimmer := Rectangle {
                 background: #000000;
-                opacity: (parent.has-thumb || parent.has-hero) ? 0.0
+                opacity: parent.has-image ? 0.0
                     : (parent.shimmer-high ? 0.06 : 0.16);
                 animate opacity { duration: 600ms; easing: ease-in-out; }
                 Text {
@@ -272,34 +266,15 @@ export component SliceDelegate inherits Rectangle {
                 }
             }
 
-            thumb-image := Image {
+            // Edge-to-edge cover — spans full bounds, no source-clip,
+            // no letterboxing, center crop on overflow.
+            cover-image := Image {
                 width: 100%;
                 height: 100%;
-                source: root.thumb;
+                source: parent.effective-image;
                 image-fit: cover;
-                source-clip-width: 400;
-                source-clip-height: 720;
-                visible: parent.has-thumb && !parent.has-hero;
-                opacity: parent.has-thumb && !parent.has-hero ? 1.0 : 0.0;
-                animate opacity {
-                    duration: SkwdTokens.anim-200;
-                    easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-                }
-                accessible-role: none;
-            }
-
-            // Hero: aspect-true ≤1600×900 decode shown ONLY on the expanded
-            // card; separate element from thumb-image so the thumb's
-            // source-clip can never crop it. Cover fit fills the landscape
-            // face while preserving the wallpaper's own proportions —
-            // portrait thumbs fall back here only when no hero landed yet.
-            hero-image := Image {
-                width: 100%;
-                height: 100%;
-                source: root.hero;
-                image-fit: cover;
-                visible: parent.has-hero;
-                opacity: parent.has-hero ? 1.0 : 0.0;
+                visible: parent.has-image;
+                opacity: parent.has-image ? 1.0 : 0.0;
                 animate opacity {
                     duration: SkwdTokens.anim-200;
                     easing: cubic-bezier(0.215, 0.61, 0.355, 1);
@@ -308,7 +283,8 @@ export component SliceDelegate inherits Rectangle {
             }
 
             // Video overlay (Timer 100-300ms, release on blur S16/17)
-            // Only on current card with has-video.
+            // Only on current card with has-video — sits above the
+            // full-bleed cover but below the label scrim.
             if root.is-current && root.has-video : Rectangle {
                 width: 36px;
                 height: 24px;
@@ -323,20 +299,31 @@ export component SliceDelegate inherits Rectangle {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
-                // Active playing indicator driven by Timer below
                 opacity: video-playing ? 1.0 : 0.6;
                 animate opacity { duration: 150ms; easing: ease-in-out; }
             }
         }
 
-        Text {
-            text: root.card-name;
-            color: SkwdTokens.primary;
-            font-family: SkwdTokens.font-body;
-            font-size: SkwdTokens.size-14;
-            font-weight: 600;
-            overflow: elide;
-        }
+        // Bottom label — overlayed over the full-bleed image (not in a
+        // padded VerticalLayout) so the wallpaper stays edge-to-edge.
+        // Semi-transparent scrim keeps text legible on bright wallpapers.
+        label-scrim := Rectangle {
+            y: parent.height - 28px;
+            width: 100%;
+            height: 28px;
+            background: #000000.transparentize(0.45);
+            Text {
+                text: root.card-name;
+                color: #ffffff;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-14;
+                font-weight: 600;
+                overflow: elide;
+                x: SkwdTokens.spacing-8;
+                width: parent.width - 2 * SkwdTokens.spacing-8;
+                height: 100%;
+                vertical-alignment: center;
+            }
         }
     }
 
