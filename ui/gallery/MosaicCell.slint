@@ -125,44 +125,11 @@ export component MosaicCell inherits Rectangle {
         height: 16px;
     }
 
-    // ── Curtain cover (Mosaic final scheme) ──
-    // Painted above the image/shimmer/label but below the input TouchArea
-    // so clicks still reach the tile. On flip-token change: snap an opaque
-    // panel over the tile (instant, wipe-duration 0), then WIPE it away
-    // (width 1→0, anchored at the left edge) staggered by the tile's column
-    // delay. reduced-motion → 0ms (no curtain; the parent crossfades instead).
-    property <float> cover-frac;       // 1 fully covered, 0 wiped away
-    property <duration> cover-wipe-duration: 0ms;
-    property <duration> cover-wipe-delay: 0ms;
-    animate cover-frac {
-        duration: root.cover-wipe-duration;
-        delay: root.cover-wipe-delay;
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-    }
-    changed flip-token => {
-        root.cover-wipe-duration = 0ms; // instant cover-in
-        root.cover-frac = 1.0;
-        // Restore the wipe-out duration (0 for reduced-motion → hard cut,
-        // the parent crossfade covers that case).
-        root.cover-wipe-duration = root.reduced-motion ? 0ms : SkwdTokens.mosaic-curtain-tile;
-        // curtain-timer.restart(); // PROBE3
-    }
-    curtain-timer := Timer {
-        interval: 16ms;
-        running: false;
-        triggered => {
-            root.cover-wipe-delay = root.delay-ms * 1ms;
-            root.cover-frac = 0.0; // wipe out, staggered per column
-        }
-    }
-    curtain-cover := Rectangle {
-        x: 0;
-        y: 0;
-        height: root.height;
-        width: root.cover-frac * root.width;
-        background: SkwdTokens.surface;
-        visible: root.cover-frac > 0.001;
-    }
+    // ── Curtain (Mosaic final scheme) — FALLBACK: per-tile wipe
+    // removed to avoid i-slint-compiler 1.17 panic (Timer in repeater).
+    // Page flip is handled by the parent page-alpha crossfade. The
+    // flip-token / delay-ms props are retained for API compat but not
+    // used for a Timer-driven curtain.
 
     touch := TouchArea {
         width: 100%;
