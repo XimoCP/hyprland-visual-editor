@@ -385,6 +385,112 @@ mod tests {
         assert_eq!(result.progress, 2.0 / 3.0);
         assert!(!result.should_minimize);
     }
+
+    // ── FocusAction regression (c5dcc60 — gallery flicker) ───────────────
+
+    #[test]
+    fn test_focus_lost_within_grace_returns_nothing_and_session_stays_active() {
+        // Simulate gallery just entered (settled=false within 900ms grace):
+        // focus lost must NOT hide.
+        let action = decide_focus_action(true, false, false, true);
+        assert_eq!(
+            action,
+            FocusAction::Nothing,
+            "within grace gallery focus-lost must be Nothing (regression c5dcc60)"
+        );
+    }
+
+    #[test]
+    fn test_focus_lost_after_grace_returns_hide_now() {
+        // Gallery settled (elapsed >= grace): immediate hide required.
+        let action = decide_focus_action(true, false, true, true);
+        assert_eq!(
+            action,
+            FocusAction::HideNow,
+            "settled gallery focus-lost must be HideNow"
+        );
+    }
+
+    #[test]
+    fn test_focus_lost_outside_gallery_with_auto_minimize_returns_countdown() {
+        let action = decide_focus_action(false, false, false, true);
+        assert_eq!(
+            action,
+            FocusAction::StartCountdown,
+            "non-gallery with auto_minimize on → StartCountdown"
+        );
+        // auto_minimize off → Nothing
+        let action_off = decide_focus_action(false, false, false, false);
+        assert_eq!(
+            action_off,
+            FocusAction::Nothing,
+            "non-gallery with auto_minimize off → Nothing"
+        );
+    }
+
+    #[test]
+    fn test_double_enter_gallery_does_not_reset_settled_clock() {
+        // Controller double-enter must not reset gallery_entered_at.
+        // Use injected instants so no real sleep is needed.
+        use crate::composer::Controller;
+        use crate::composer::tests::FakeComposer;
+        use std::time::{Duration, Instant};
+
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        assert!(controller.enter_gallery_session());
+        // Inject an entered_at far in the past so gallery is settled.
+        let past = Instant::now() - Duration::from_millis(2000);
+        controller.set_gallery_entered_at_for_test(Some(past));
+        assert!(
+            controller.gallery_settled(GALLERY_HIDE_GRACE),
+            "should be settled after injected past instant"
+        );
+        let settled_before = controller.gallery_settled(GALLERY_HIDE_GRACE);
+        // Second enter is a no-op and must not reset the clock.
+        assert!(controller.enter_gallery_session(), "second enter is no-op true");
+        let settled_after = controller.gallery_settled(GALLERY_HIDE_GRACE);
+        assert_eq!(
+            settled_before, settled_after,
+            "double enter must not reset settled clock"
+        );
+        assert!(
+            settled_after,
+            "still settled after double enter (c5dcc60)"
+        );
+    }
+
+    #[test]
+    fn test_gallery_hide_within_grace_via_controller_settled() {
+        use crate::composer::Controller;
+        use crate::composer::tests::FakeComposer;
+        use std::time::Duration;
+
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        controller.enter_gallery_session();
+        // Just entered → not settled.
+        assert!(
+            !controller.gallery_settled(GALLERY_HIDE_GRACE),
+            "fresh enter must not be settled within grace"
+        );
+        let gallery_active = controller.gallery_session_active();
+        let settled = controller.gallery_settled(GALLERY_HIDE_GRACE);
+        let action = decide_focus_action(gallery_active, false, settled, true);
+        assert_eq!(action, FocusAction::Nothing);
+        assert!(
+            controller.gallery_session_active(),
+            "session must remain active after within-grace focus lost"
+        );
+        // Tiny grace injection: past instant should make it settled.
+        controller.set_gallery_entered_at_for_test(Some(
+            std::time::Instant::now() - Duration::from_millis(10),
+        ));
+        let settled_tiny = controller.gallery_settled(Duration::from_millis(5));
+        assert!(settled_tiny, "injected past instant with tiny grace must be settled");
+        let action_settled = decide_focus_action(true, false, settled_tiny, true);
+        assert_eq!(action_settled, FocusAction::HideNow);
+    }
 }
 
 /// Wrapper para conectar el listener de Hyprland.
