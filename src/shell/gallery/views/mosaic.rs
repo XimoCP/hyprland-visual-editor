@@ -1179,56 +1179,132 @@ mod tests {
 
     #[test]
     fn display_aspect_pattern_exact_values_indices_0_to_9() {
-        let wide = 16.0f32 / 9.0;
-        let expected = [
-            1.0, wide, 1.5, wide, // square every 4th, medium every 4th+2
-            1.0, wide, 1.5, wide, //
-            1.0, wide,
-        ];
+        // RED: widened Pinterest spread — square 1.0, portrait 0.72, wide 1.95, period 10
+        // Cycle: [square, portrait, wide, portrait, square, wide, square, portrait, wide, square]
+        let sq = 1.0f32;
+        let po = 0.72f32;
+        let wi = 1.95f32;
+        let expected = [sq, po, wi, po, sq, wi, sq, po, wi, sq];
         for (idx, &want) in expected.iter().enumerate() {
             approx(mosaic_display_aspect(idx), want);
         }
     }
 
     #[test]
-    fn display_aspect_pattern_cyclic_over_12_indices() {
-        for idx in 0..8 {
+    fn display_aspect_pattern_cyclic_over_10_indices() {
+        for idx in 0..20 {
             assert!(
-                mosaic_display_aspect(idx) == mosaic_display_aspect(idx + 4),
-                "pattern must repeat with period 4 at idx {idx}"
+                (mosaic_display_aspect(idx) - mosaic_display_aspect(idx + 10)).abs() < 1e-6,
+                "pattern must repeat with period 10 at idx {idx}"
             );
         }
-        for idx in 12..16 {
-            assert_eq!(mosaic_display_aspect(idx), mosaic_display_aspect(idx % 4));
+        for idx in 0..30 {
+            let a = mosaic_display_aspect(idx);
+            let b = mosaic_display_aspect(idx % 10);
+            assert!(
+                (a - b).abs() < 1e-6,
+                "cyclic mismatch idx {idx}: {a} vs {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn display_aspect_window_contains_all_three_classes() {
+        // Every consecutive window of 10 tiles must contain all three classes
+        let sq = 1.0f32;
+        let po = 0.72f32;
+        let wi = 1.95f32;
+        let class = |a: f32| -> u8 {
+            if (a - sq).abs() < 1e-4 {
+                0
+            } else if (a - po).abs() < 1e-4 {
+                1
+            } else if (a - wi).abs() < 1e-4 {
+                2
+            } else {
+                99
+            }
+        };
+        for start in 0..40 {
+            let mut has = [false; 3];
+            for i in start..start + 10 {
+                let c = class(mosaic_display_aspect(i));
+                assert!(c < 3, "unexpected aspect {c} at idx {i}");
+                has[c as usize] = true;
+            }
+            assert!(
+                has[0] && has[1] && has[2],
+                "window {start}..{} missing class {has:?}",
+                start + 10
+            );
+        }
+    }
+
+    #[test]
+    fn display_aspect_no_four_consecutive_same_class() {
+        let sq = 1.0f32;
+        let po = 0.72f32;
+        let wi = 1.95f32;
+        let class = |a: f32| -> u8 {
+            if (a - sq).abs() < 1e-4 {
+                0
+            } else if (a - po).abs() < 1e-4 {
+                1
+            } else if (a - wi).abs() < 1e-4 {
+                2
+            } else {
+                99
+            }
+        };
+        let seq: Vec<u8> = (0..60).map(|i| class(mosaic_display_aspect(i))).collect();
+        for w in seq.windows(4) {
+            assert!(
+                !(w[0] == w[1] && w[1] == w[2] && w[2] == w[3]),
+                "four consecutive same class {w:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn display_aspect_values_within_bounds() {
+        for i in 0..100 {
+            let a = mosaic_display_aspect(i);
+            assert!(
+                a >= 0.7 - 1e-6 && a <= 2.0 + 1e-6,
+                "aspect {a} at idx {i} out of [0.7, 2.0]"
+            );
         }
     }
 
     #[test]
     fn justified_pattern_aspects_variety_flush_rows_centered() {
-        // Four cards fed the display pattern produce a NON-uniform block:
-        // one square (~row_h × row_h), two wide, one medium — while the
-        // packer keeps justified flush rows and stage centering.
+        // Four cards with widened Pinterest pattern must still produce a
+        // NON-uniform block with portrait-driven variety, flush rows and
+        // stage centering. New cycle 0..4: [square 1.0, portrait 0.72, wide 1.95, portrait 0.72].
         let aspects: Vec<f32> = (0..4).map(mosaic_display_aspect).collect();
         let l = justified_layout(&aspects, 1920.0, 1040.0);
         assert_eq!(l.tiles.len(), 4);
         let th = band_row_h(1040.0);
-        // Greedy packing: row 0 [square, wide], row 1 [medium, wide].
-        let s0 = 1.0 + 16.0f32 / 9.0;
-        let s1 = 1.5 + 16.0f32 / 9.0;
+        // Greedy packing with s0=1.0+0.72, s1=1.95+0.72 and T≈2.195: row 0 [square, portrait], row 1 [wide, portrait].
+        let s0 = 1.0f32 + 0.72f32;
+        let s1 = 1.95f32 + 0.72f32;
         let nat0 = th * s0 + MOSAIC_GUTTER_PX;
         let nat1 = th * s1 + MOSAIC_GUTTER_PX;
         let big_w = nat0.max(nat1);
         assert!((nat0 - nat1).abs() > 1e-4, "rows differ → justification kicks in");
-        // Variety: no two tiles in a row share a width.
-        assert!((l.tiles[0].w - l.tiles[1].w).abs() > 1e-3, "row 0 varied");
-        assert!((l.tiles[2].w - l.tiles[3].w).abs() > 1e-3, "row 1 varied");
-        // Tile shapes follow the pattern.
-        approx(l.tiles[0].h, (big_w - MOSAIC_GUTTER_PX) / s0);
-        approx(l.tiles[0].w, l.tiles[0].h); // square ≈ row_h × row_h
-        approx(l.tiles[1].w / l.tiles[1].h, 16.0 / 9.0); // wide
+        // Variety: columns differ thanks to wide vs square/portrait spread
+        assert!((l.tiles[0].w - l.tiles[1].w).abs() > 1e-3, "row 0 varied (square vs portrait)");
+        assert!((l.tiles[2].w - l.tiles[3].w).abs() > 1e-3, "row 1 varied (wide vs portrait)");
+        // Tile shapes follow the widened pattern. Row 0 is narrow non-last → scales UP.
+        let h0 = (big_w - MOSAIC_GUTTER_PX) / s0;
+        approx(l.tiles[0].h, h0);
+        approx(l.tiles[1].h, h0);
         approx(l.tiles[2].h, th);
-        approx(l.tiles[2].w / l.tiles[2].h, 1.5); // medium
-        approx(l.tiles[3].w / l.tiles[3].h, 16.0 / 9.0); // wide
+        approx(l.tiles[3].h, th);
+        approx(l.tiles[0].w / l.tiles[0].h, 1.0); // square
+        approx(l.tiles[1].w / l.tiles[1].h, 0.72); // portrait
+        approx(l.tiles[2].w / l.tiles[2].h, 1.95); // wide
+        approx(l.tiles[3].w / l.tiles[3].h, 0.72); // portrait
         // Row membership and stacking.
         approx(l.tiles[1].y, l.tiles[0].y);
         approx(l.tiles[2].y, l.tiles[0].y + l.tiles[0].h + MOSAIC_GUTTER_PX);
@@ -1238,7 +1314,7 @@ mod tests {
         approx_acc(l.tiles[3].x + l.tiles[3].w - l.offset_x, big_w);
         // Centered content box on the stage.
         approx(l.content_w, big_w);
-        approx(l.content_h, l.tiles[0].h + th + MOSAIC_GUTTER_PX);
+        approx(l.content_h, l.tiles[0].h + l.tiles[2].h + MOSAIC_GUTTER_PX);
         approx(l.offset_x, (1920.0 - big_w) / 2.0);
         approx(l.offset_y, (1040.0 - l.content_h) / 2.0);
     }
