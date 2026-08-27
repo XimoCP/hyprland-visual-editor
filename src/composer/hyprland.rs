@@ -652,3 +652,61 @@ mod tests {
         assert!(!garbage.present && !garbage.needs_repair());
     }
 }
+
+#[cfg(test)]
+mod targeting_tests {
+    use super::*;
+
+    const WINDOW_SELECTOR: &str = "window = \"title:Hyprland Visual Editor\"";
+
+    fn assert_window_targeted(s: &str) {
+        assert!(
+            s.contains(WINDOW_SELECTOR),
+            "V5 window-acting dispatch must carry explicit window selector `{WINDOW_SELECTOR}`, got: {s}"
+        );
+    }
+
+    #[test]
+    fn v5_focus_contains_window_selector() {
+        assert_window_targeted(&v5_focus());
+    }
+
+    #[test]
+    fn v5_move_to_special_contains_window_selector() {
+        assert_window_targeted(&v5_move_to_special());
+    }
+
+    #[test]
+    fn v5_move_to_workspace_contains_window_selector() {
+        // Hijack regression: without `window=`, hl.dsp.window.move acts on
+        // focused window and hijacks the user's window.
+        assert_window_targeted(&v5_move_to_workspace("1"));
+        assert_window_targeted(&v5_move_to_workspace("special:minimized"));
+    }
+
+    #[test]
+    fn v5_set_fullscreen_on_contains_window_selector() {
+        assert_window_targeted(&v5_set_fullscreen(true));
+    }
+
+    #[test]
+    fn v5_set_fullscreen_off_contains_window_selector() {
+        assert_window_targeted(&v5_set_fullscreen(false));
+    }
+
+    #[test]
+    fn v5_float_on_contains_window_selector() {
+        assert_window_targeted(&v5_float_on());
+    }
+
+    #[test]
+    fn v5_float_toggle_contains_window_selector() {
+        assert_window_targeted(&v5_float_toggle());
+    }
+
+    #[test]
+    fn v5_move_to_workspace_preserves_workspace_param() {
+        let s = v5_move_to_workspace("3");
+        assert!(s.contains("workspace = \"3\""), "workspace param must be interpolated, got: {s}");
+    }
+}
