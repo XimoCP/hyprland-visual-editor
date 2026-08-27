@@ -52,24 +52,53 @@ impl ShowStateMachine {
     }
 
     pub fn begin_show(&mut self) -> bool {
-        let _ = &self.entered_at;
-        false
+        if self.state == ShowState::Hidden {
+            self.state = ShowState::Entering;
+            self.entered_at = Some(Instant::now());
+            true
+        } else {
+            false
+        }
     }
 
     pub fn confirm_focus(&mut self) -> bool {
-        false
+        match self.state {
+            ShowState::Entering => {
+                self.state = ShowState::Visible;
+                self.entered_at = None;
+                true
+            }
+            ShowState::Visible => true,
+            ShowState::Hidden => false,
+        }
     }
 
-    pub fn entry_timed_out(&mut self, _timeout: Duration) -> bool {
+    pub fn entry_timed_out(&mut self, timeout: Duration) -> bool {
+        if self.state != ShowState::Entering {
+            return false;
+        }
+        if let Some(t0) = self.entered_at {
+            if t0.elapsed() >= timeout {
+                self.state = ShowState::Visible;
+                self.entered_at = None;
+                return true;
+            }
+        }
         false
     }
 
     pub fn on_focus_lost(&self) -> bool {
-        false
+        self.state == ShowState::Visible
     }
 
     pub fn on_hide(&mut self) -> bool {
-        false
+        if self.state == ShowState::Hidden {
+            false
+        } else {
+            self.state = ShowState::Hidden;
+            self.entered_at = None;
+            true
+        }
     }
 
     pub fn state(&self) -> ShowState {
