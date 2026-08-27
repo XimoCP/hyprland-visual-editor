@@ -9,10 +9,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Grace period before a newly entered gallery session allows immediate hide
-/// on focus loss. Single tuning point for the fullscreen transition race.
-pub const GALLERY_HIDE_GRACE: Duration = Duration::from_millis(900);
-
 /// Bandera compartida para indicar si el countdown está activo.
 static COUNTDOWN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -125,18 +121,16 @@ pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
 ///
 /// `gallery_active` is true when an immersive gallery session (fullscreen)
 /// is active. `hidden` is true when the window is already hidden (idempotent
-/// guard). `settled` is true when the gallery session has been stable for
-/// at least `GALLERY_HIDE_GRACE` (avoids racing the fullscreen transition).
-/// Returns true iff immediate hide is required.
+/// guard). Returns true iff immediate hide is required.
 ///
-/// Note: gallery immediate-hide is unconditional once settled — it is the
-/// immersive session contract. Even when `auto_minimize_enabled` is globally
-/// disabled, losing focus during gallery must hide immediately (same as Esc).
-pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool, settled: bool) -> bool {
+/// Note: gallery immediate-hide is unconditional — it is the immersive
+/// session contract. Even when `auto_minimize_enabled` is globally disabled,
+/// losing focus during gallery must hide immediately (same as Esc).
+pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool) -> bool {
     if hidden {
         return false;
     }
-    gallery_active && settled
+    gallery_active
 }
 
 /// Click en el botón X → minimiza inmediatamente.
@@ -236,15 +230,15 @@ mod tests {
     #[test]
     fn test_should_hide_when_gallery_active_and_visible() {
         assert!(
-            should_hide_immediately(true, false, true),
-            "gallery active + visible + settled → immediate hide"
+            should_hide_immediately(true, false),
+            "gallery active + visible → immediate hide"
         );
     }
 
     #[test]
     fn test_should_not_hide_when_gallery_not_active() {
         assert!(
-            !should_hide_immediately(false, false, true),
+            !should_hide_immediately(false, false),
             "not in gallery → do not hide, use countdown"
         );
     }
@@ -252,7 +246,7 @@ mod tests {
     #[test]
     fn test_should_not_hide_when_already_hidden_gallery() {
         assert!(
-            !should_hide_immediately(true, true, true),
+            !should_hide_immediately(true, true),
             "already hidden → never hide again"
         );
     }
@@ -260,45 +254,8 @@ mod tests {
     #[test]
     fn test_should_not_hide_when_already_hidden_not_gallery() {
         assert!(
-            !should_hide_immediately(false, true, true),
+            !should_hide_immediately(false, true),
             "already hidden + not gallery → false"
-        );
-    }
-
-    #[test]
-    fn test_should_not_hide_within_grace() {
-        assert!(
-            !should_hide_immediately(true, false, false),
-            "gallery active but not yet settled (within grace) → do not hide"
-        );
-    }
-
-    #[test]
-    fn test_should_hide_after_grace() {
-        assert!(
-            should_hide_immediately(true, false, true),
-            "gallery active + settled (after grace) → hide"
-        );
-    }
-
-    #[test]
-    fn test_should_not_hide_when_inactive_regardless_of_settled() {
-        assert!(
-            !should_hide_immediately(false, false, false),
-            "inactive + not settled → false"
-        );
-        assert!(
-            !should_hide_immediately(false, false, true),
-            "inactive even if settled flag true → false (settled alone never hides)"
-        );
-    }
-
-    #[test]
-    fn test_gallery_hide_grace_is_900ms() {
-        assert_eq!(
-            GALLERY_HIDE_GRACE,
-            Duration::from_millis(900),
-            "grace constant must be 900ms"
         );
     }
 
@@ -399,18 +356,11 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
             // Check hidden + gallery state via Controller (initialized in main()
             // before this listener starts). Gallery flag is the canonical
             // immersive-session source (Shell::dispatch → enter_gallery_session);
-            // it is available thread-safely via the Controller mutex. Settled
-            // guards the fullscreen transition race (9644864 regression).
-            let (hidden, gallery_active, settled) = crate::composer::global_controller()
-                .map(|c| {
-                    (
-                        c.window_hidden(),
-                        c.gallery_session_active(),
-                        c.gallery_settled(GALLERY_HIDE_GRACE),
-                    )
-                })
-                .unwrap_or((false, false, false));
-            if should_hide_immediately(gallery_active, hidden, settled) {
+            // it is available thread-safely via the Controller mutex.
+            let (hidden, gallery_active) = crate::composer::global_controller()
+                .map(|c| (c.window_hidden(), c.gallery_session_active()))
+                .unwrap_or((false, false));
+            if should_hide_immediately(gallery_active, hidden) {
                 // Gallery immersive session: hide immediately, same as Esc
                 // (minimize_now → cancel + toggle_tray hide). Unconditional —
                 // immersive contract overrides the auto_minimize master switch

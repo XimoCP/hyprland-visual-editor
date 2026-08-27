@@ -12,7 +12,6 @@
 use slint::ComponentHandle;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
 
 // ── Global controller singleton ──────────────────────────────────────
 
@@ -106,7 +105,6 @@ pub struct Controller {
     prev_workspace: Option<String>,
     /// Immersive Gallery fullscreen session active (gallery session spec).
     gallery_session: bool,
-    gallery_entered_at: Mutex<Option<Instant>>,
     composer: Box<dyn Composer>,
 }
 
@@ -118,7 +116,6 @@ impl Controller {
             tray_mode: false,
             prev_workspace: None,
             gallery_session: false,
-            gallery_entered_at: Mutex::new(None),
             composer,
         }
     }
@@ -135,9 +132,6 @@ impl Controller {
         }
         let ok = self.composer.set_fullscreen(true);
         self.gallery_session = ok;
-        if ok {
-            *self.gallery_entered_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
-        }
         ok
     }
 
@@ -147,25 +141,12 @@ impl Controller {
     pub fn exit_gallery_session(&mut self) -> bool {
         let ok = self.composer.set_fullscreen(false);
         self.gallery_session = false;
-        *self.gallery_entered_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
         ok
     }
 
     /// Whether an immersive Gallery fullscreen session is active.
     pub fn gallery_session_active(&self) -> bool {
         self.gallery_session
-    }
-
-    /// Whether the gallery session has been stable for at least `grace`.
-    /// Returns false when no session entry time is recorded (i.e. no active
-    /// session — caller should also check `gallery_session_active`) or when
-    /// the elapsed time since `enter_gallery_session` is still within the
-    /// grace period.
-    pub fn gallery_settled(&self, grace: Duration) -> bool {
-        match *self.gallery_entered_at.lock().unwrap_or_else(|e| e.into_inner()) {
-            Some(t) => t.elapsed() >= grace,
-            None => false,
-        }
     }
 
     /// Toggle tray: hides if visible, shows if hidden.
