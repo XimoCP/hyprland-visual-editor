@@ -139,6 +139,42 @@ pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool, settle
     gallery_active && settled
 }
 
+/// Pure routing for focus-lost: gallery hide, countdown, or no-op.
+///
+/// Keeps `should_hide_immediately` semantics intact (gallery hide
+/// unconditional on settled; non-gallery respects `auto_minimize` gate).
+/// The window-side glue (setup_countdown closure) is trivial: query state,
+/// call this, map the enum.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum FocusAction {
+    HideNow,
+    StartCountdown,
+    Nothing,
+}
+
+pub(crate) fn decide_focus_action(
+    gallery_active: bool,
+    hidden: bool,
+    settled: bool,
+    auto_minimize: bool,
+) -> FocusAction {
+    if should_hide_immediately(gallery_active, hidden, settled) {
+        return FocusAction::HideNow;
+    }
+    // Gallery active but not settled (within grace) or already hidden:
+    // suppress — do not start countdown and do not hide.
+    if gallery_active {
+        return FocusAction::Nothing;
+    }
+    if hidden {
+        return FocusAction::Nothing;
+    }
+    if !auto_minimize {
+        return FocusAction::Nothing;
+    }
+    FocusAction::StartCountdown
+}
+
 /// Click en el botón X → minimiza inmediatamente.
 pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     tracing::info!("[countdown] Minimizando ventana...");
@@ -502,11 +538,11 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
 
     crate::hypr_ipc::spawn_focus_listener(
         move || {
-            // Check hidden + gallery state via Controller (initialized in main()
-            // before this listener starts). Gallery flag is the canonical
-            // immersive-session source (Shell::dispatch → enter_gallery_session);
-            // it is available thread-safely via the Controller mutex. Settled
-            // guards the fullscreen transition race (9644864 regression).
+            // Snapshot compositor state on the IPC thread; decide on the
+            // Slint main thread where `Weak::upgrade` + `get_auto_minimize`
+            // are thread-safe. Gallery HideNow is unconditional on
+            // auto_minimize; `decide_focus_action` keeps the pure truth table
+            // (should_hide_immediately + gallery suppression + auto gate).
             let (hidden, gallery_active, settled) = crate::composer::global_controller()
                 .map(|c| {
                     (
@@ -516,29 +552,27 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
                     )
                 })
                 .unwrap_or((false, false, false));
-            if should_hide_immediately(gallery_active, hidden, settled) {
-                // Gallery immersive session: hide immediately, same as Esc
-                // (minimize_now → cancel + toggle_tray hide). Unconditional —
-                // immersive contract overrides the auto_minimize master switch
-                // (see hard rule in task spec).
-                tracing::info!("[countdown] Gallery focus lost → immediate hide (Esc path)");
-                let w = weak_for_lost.clone();
-                match slint::invoke_from_event_loop(move || minimize_now(w)) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::error!("[countdown] invoke_from_event_loop falló (gallery hide): {:?}", e)
+            let weak = weak_for_lost.clone();
+            let res = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                let auto_minimize = window.get_auto_minimize();
+                let weak2 = window.as_weak();
+                match decide_focus_action(gallery_active, hidden, settled, auto_minimize) {
+                    FocusAction::HideNow => {
+                        tracing::info!("[countdown] Gallery focus lost → immediate hide (Esc path)");
+                        minimize_now(weak2);
                     }
+                    FocusAction::StartCountdown => {
+                        tracing::debug!("[countdown] Foco perdido, posible countdown");
+                        start_countdown(weak2);
+                    }
+                    FocusAction::Nothing => {}
                 }
-                return;
-            }
-            if hidden {
-                return;
-            }
-            tracing::debug!("[countdown] Foco perdido, posible countdown");
-            let w = weak_for_lost.clone();
-            match slint::invoke_from_event_loop(move || start_countdown(w)) {
-                Ok(_) => {}
-                Err(e) => tracing::error!("[countdown] invoke_from_event_loop falló (lost): {:?}", e),
+            });
+            if let Err(e) = res {
+                tracing::error!("[countdown] invoke_from_event_loop falló (lost): {:?}", e);
             }
         },
         move || {

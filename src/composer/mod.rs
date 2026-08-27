@@ -168,6 +168,12 @@ impl Controller {
         }
     }
 
+    /// Test-only setter to inject a gallery entry instant without sleeping.
+    #[cfg(test)]
+    pub(crate) fn set_gallery_entered_at_for_test(&self, t: Option<Instant>) {
+        *self.gallery_entered_at.lock().unwrap_or_else(|e| e.into_inner()) = t;
+    }
+
     /// Toggle tray: hides if visible, shows if hidden.
     /// Returns true if the fast path was taken (special workspace transition).
     pub fn toggle_tray(&mut self, win: &crate::MainWindow) -> bool {
@@ -349,6 +355,99 @@ pub(crate) mod tests {
         fn active_workspace(&self) -> Option<String> {
             self.record("active_workspace");
             Some("2".to_string())
+        }
+    }
+
+    /// Scriptable mock for compositor-dependent tests.
+    ///
+    /// Implements the full `Composer` trait without a Hyprland session:
+    /// every method records its call and returns a panic-free default.
+    /// Scriptable state covers `hidden` (via Controller), `fullscreen`
+    /// (`fullscreen_ok`), and `focus`/`show`/`active_workspace`.
+    pub struct MockComposer {
+        calls: Arc<Mutex<Vec<String>>>,
+        pub show_fast: bool,
+        pub fullscreen_ok: bool,
+        pub active_workspace_name: Option<String>,
+    }
+
+    impl MockComposer {
+        pub fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: true,
+                    active_workspace_name: Some("2".to_string()),
+                },
+                calls,
+            )
+        }
+
+        pub fn with_fullscreen_result(ok: bool) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: ok,
+                    active_workspace_name: Some("2".to_string()),
+                },
+                calls,
+            )
+        }
+
+        pub fn with_show_fast(show_fast: bool) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast,
+                    fullscreen_ok: true,
+                    active_workspace_name: Some("2".to_string()),
+                },
+                calls,
+            )
+        }
+
+        fn record(&self, call: &str) {
+            self.calls.lock().unwrap().push(call.to_string());
+        }
+    }
+
+    impl Composer for MockComposer {
+        fn hide(&self, _win: &crate::MainWindow) -> bool {
+            self.record("record_workspace");
+            self.record("move_to_special");
+            self.record("close_special");
+            true
+        }
+
+        fn show(&self, _win: &crate::MainWindow, _prev_workspace: Option<&str>) -> bool {
+            self.record("focus");
+            self.record("move_to_workspace");
+            self.record("focus");
+            self.record("WindowActiveChanged");
+            self.show_fast
+        }
+
+        fn focus(&self) {
+            self.record("focus");
+        }
+
+        fn toggle_float(&self) {
+            self.record("toggle_float");
+        }
+
+        fn set_fullscreen(&self, on: bool) -> bool {
+            self.record(&format!("set_fullscreen({on})"));
+            self.fullscreen_ok
+        }
+
+        fn active_workspace(&self) -> Option<String> {
+            self.record("active_workspace");
+            self.active_workspace_name.clone()
         }
     }
 
