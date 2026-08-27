@@ -9,9 +9,11 @@
 //! `ipc.rs`, `tray.rs`, and `countdown.rs` can access it without passing
 //! references through every closure.
 
+use crate::show_state::{ShowState, ShowStateMachine};
 use slint::ComponentHandle;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 // ── Global controller singleton ──────────────────────────────────────
 
@@ -106,6 +108,7 @@ pub struct Controller {
     /// Immersive Gallery fullscreen session active (gallery session spec).
     gallery_session: bool,
     composer: Box<dyn Composer>,
+    show_state: ShowStateMachine,
 }
 
 impl Controller {
@@ -117,7 +120,50 @@ impl Controller {
             prev_workspace: None,
             gallery_session: false,
             composer,
+            show_state: ShowStateMachine::new(),
         }
+    }
+
+    /// Accessors for ShowStateMachine — needed by countdown.rs and
+    /// for entry-timeout / settle wiring (unit 3).
+    pub fn show_state(&self) -> ShowState {
+        self.show_state.state()
+    }
+
+    pub fn begin_show_machine(&mut self) -> bool {
+        self.show_state.begin_show()
+    }
+
+    pub fn confirm_focus_machine(&mut self) -> bool {
+        self.show_state.confirm_focus()
+    }
+
+    pub fn entry_timed_out_machine(&mut self, timeout: Duration) -> bool {
+        self.show_state.entry_timed_out(timeout)
+    }
+
+    pub fn on_focus_lost_machine(&self) -> bool {
+        self.show_state.on_focus_lost()
+    }
+
+    pub fn on_hide_machine(&mut self) -> bool {
+        self.show_state.on_hide()
+    }
+
+    /// Run the SETTLE path exactly once per show, on the
+    /// Entering→Visible transition. Returns true if settle ran.
+    /// Called from the focus-gained handler or entry timeout.
+    fn run_settle(&mut self, win: &crate::MainWindow) -> bool {
+        // RED stub: do nothing yet so settle tests fail until GREEN
+        let _ = win;
+        false
+    }
+
+    /// Schedule the single-shot entry timeout (1000ms) after a successful
+    /// show. If the compositor never confirms focus, the timeout promotes
+    /// Entering→Visible and runs settle exactly once.
+    fn schedule_entry_timeout(&self, _win_weak: slint::Weak<crate::MainWindow>) {
+        // RED stub: not yet scheduling, so timeout tests fail
     }
 
     /// Enter an immersive Gallery session (gallery-immersive-redesign 1.6):
@@ -651,5 +697,121 @@ pub(crate) mod tests {
         c.toggle_float();
 
         assert_eq!(*calls.lock().unwrap(), vec!["focus", "toggle_float"]);
+    }
+
+    // ── ShowStateMachine wiring (unit 3 RED) ─────────────────────────
+
+    #[test]
+    fn test_show_enters_entering_and_defers_fullscreen_until_settle() {
+        // RED: show must move machine Hidden→Entering and must NOT
+        // immediately dispatch fullscreen; fullscreen moves to settle
+        // (focus-gained or timeout). Until GREEN this fails because
+        // toggle_tray still dispatches fullscreen immediately.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+        let shell = crate::shell::Shell::new(win.as_weak());
+        crate::shell::Shell::set_global(shell.clone());
+        crate::shell::Shell::dispatch(
+            &shell,
+            crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery),
+        );
+        // Gallery expanded => old code immediately calls set_fullscreen
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        controller.set_window_hidden(true);
+        let _ = controller.toggle_tray(&win);
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Entering,
+            "show must move machine to Entering"
+        );
+        let recorded = calls.lock().unwrap().clone();
+        assert!(
+            !recorded.iter().any(|c| c.contains("set_fullscreen")),
+            "show must NOT immediately fullscreen; fullscreen is deferred to settle (focus confirm or timeout), got: {:?}",
+            recorded
+        );
+    }
+
+    #[test]
+    fn test_second_show_while_entering_is_noop_no_redispatch() {
+        // RED: begin_show returns false while Entering → show is no-op
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        controller.set_window_hidden(true);
+        let _ = controller.toggle_tray(&win);
+        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+        // Simulate rapid second toggle while still Entering but window_hidden
+        // was externally set to hidden again (e.g. IPC debounce edge).
+        controller.set_window_hidden(true);
+        calls.lock().unwrap().clear();
+        let fast = controller.toggle_tray(&win);
+        // Second show while Entering must be no-op: no composer dispatch
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "second show while Entering must not re-dispatch, got: {:?}",
+            *calls.lock().unwrap()
+        );
+        let _ = fast;
+    }
+
+    #[test]
+    fn test_hide_resets_machine_to_hidden() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        controller.set_window_hidden(true);
+        let _ = controller.toggle_tray(&win);
+        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+        // Confirm focus → Visible, then hide → Hidden
+        assert!(controller.confirm_focus_machine());
+        assert_eq!(controller.show_state(), crate::show_state::ShowState::Visible);
+        // Hide via toggle_tray
+        let _ = controller.toggle_tray(&win);
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Hidden,
+            "hide must reset machine to Hidden"
+        );
+    }
+
+    #[test]
+    fn test_settle_runs_once_confirm_then_timeout_no_second_fullscreen() {
+        // RED: settle must run exactly once per show. Confirm → Visible,
+        // then a timeout must be a no-op and not re-dispatch fullscreen.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+        let shell = crate::shell::Shell::new(win.as_weak());
+        crate::shell::Shell::set_global(shell.clone());
+        crate::shell::Shell::dispatch(
+            &shell,
+            crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery),
+        );
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        controller.set_window_hidden(true);
+        let _ = controller.toggle_tray(&win);
+        // First transition via confirm -> settle should fullscreen once
+        let did_settle = controller.confirm_focus_machine();
+        assert!(did_settle, "confirm must transition Entering→Visible");
+        // Simulate settle dispatch (would be run_settle)
+        let _ = controller.run_settle(&win);
+        let first_count = calls.lock().unwrap().iter().filter(|c| c.contains("set_fullscreen")).count();
+        // Second transition via timeout must be no-op
+        let did_timeout = controller.entry_timed_out_machine(Duration::from_millis(0));
+        assert!(!did_timeout, "timeout after confirm must be no-op");
+        let _ = controller.run_settle(&win);
+        let second_count = calls.lock().unwrap().iter().filter(|c| c.contains("set_fullscreen")).count();
+        assert_eq!(
+            first_count, second_count,
+            "settle must run exactly once: timeout after confirm must not re-dispatch fullscreen"
+        );
     }
 }

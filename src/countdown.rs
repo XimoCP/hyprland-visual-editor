@@ -133,6 +133,28 @@ pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool) -> boo
     gallery_active
 }
 
+/// Pure blur decision for focus-lost, gated by ShowStateMachine.
+/// `machine_allows` is `ShowStateMachine::on_focus_lost()` — false during
+/// Hidden/Entering, true only in Visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlurDecision {
+    ImmediateHide,
+    StartCountdown,
+    Nothing,
+}
+
+pub(crate) fn blur_decision(
+    machine_allows: bool,
+    gallery_active: bool,
+    hidden: bool,
+    auto_minimize: bool,
+) -> BlurDecision {
+    // RED stub: intentionally incomplete so the new wiring contracts fail
+    // until the GREEN commit correctly gates by machine_allows.
+    let _ = (machine_allows, gallery_active, hidden, auto_minimize);
+    BlurDecision::Nothing
+}
+
 /// Click en el botón X → minimiza inmediatamente.
 pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     tracing::info!("[countdown] Minimizando ventana...");
@@ -341,6 +363,84 @@ mod tests {
         assert_eq!(result.next_seconds, 2);
         assert_eq!(result.progress, 2.0 / 3.0);
         assert!(!result.should_minimize);
+    }
+
+    // ── blur_decision — gated by ShowStateMachine (unit 3) ──────────────
+
+    #[test]
+    fn test_blur_during_entering_no_hide_no_countdown() {
+        // THE regression: gallery auto-minimize-on-open. Blur while Entering
+        // must be ignored even with gallery active + auto_minimize.
+        assert_eq!(
+            blur_decision(false, true, false, true),
+            BlurDecision::Nothing,
+            "blur during Entering → Nothing (machine_allows=false)"
+        );
+        assert_eq!(
+            blur_decision(false, false, false, true),
+            BlurDecision::Nothing,
+            "blur during Entering without gallery also Nothing"
+        );
+    }
+
+    #[test]
+    fn test_blur_in_visible_with_gallery_immediate_hide() {
+        assert_eq!(
+            blur_decision(true, true, false, true),
+            BlurDecision::ImmediateHide,
+            "blur in Visible + gallery → ImmediateHide"
+        );
+        // gallery is unconditional even if auto_minimize disabled
+        assert_eq!(
+            blur_decision(true, true, false, false),
+            BlurDecision::ImmediateHide,
+            "gallery ImmediateHide even with auto_minimize=false"
+        );
+    }
+
+    #[test]
+    fn test_blur_in_visible_without_gallery_auto_minimize_countdown() {
+        assert_eq!(
+            blur_decision(true, false, false, true),
+            BlurDecision::StartCountdown,
+            "blur in Visible + !gallery + auto_minimize → StartCountdown"
+        );
+    }
+
+    #[test]
+    fn test_blur_in_visible_without_gallery_no_auto_minimize_nothing() {
+        assert_eq!(
+            blur_decision(true, false, false, false),
+            BlurDecision::Nothing,
+            "blur in Visible + !gallery + !auto_minimize → Nothing"
+        );
+    }
+
+    #[test]
+    fn test_blur_while_hidden_nothing() {
+        assert_eq!(
+            blur_decision(false, true, true, true),
+            BlurDecision::Nothing,
+            "blur while Hidden → Nothing even with gallery"
+        );
+        assert_eq!(
+            blur_decision(false, false, true, true),
+            BlurDecision::Nothing,
+            "blur while Hidden → Nothing"
+        );
+        // Even if machine_allows were true but hidden flag set, should stay Nothing
+        assert_eq!(
+            blur_decision(true, true, true, true),
+            BlurDecision::Nothing,
+            "hidden flag overrides ImmediateHide"
+        );
+    }
+
+    #[test]
+    fn test_blur_entering_vs_visible_hidden_flag_interaction() {
+        // Machine allows false must win over every other flag
+        assert_eq!(blur_decision(false, true, false, false), BlurDecision::Nothing);
+        assert_eq!(blur_decision(false, false, false, false), BlurDecision::Nothing);
     }
 }
 
