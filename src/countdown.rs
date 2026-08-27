@@ -115,6 +115,24 @@ pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
     }
 }
 
+/// Decide whether focus-lost should hide immediately (gallery immersive session).
+///
+/// Pure decision function — no IPC or Slint side-effects.
+///
+/// `gallery_active` is true when an immersive gallery session (fullscreen)
+/// is active. `hidden` is true when the window is already hidden (idempotent
+/// guard). Returns true iff immediate hide is required.
+///
+/// Note: gallery immediate-hide is unconditional — it is the immersive
+/// session contract. Even when `auto_minimize_enabled` is globally disabled,
+/// losing focus during gallery must hide immediately (same as Esc).
+pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool) -> bool {
+    if hidden {
+        return false;
+    }
+    gallery_active
+}
+
 /// Click en el botón X → minimiza inmediatamente.
 pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     tracing::info!("[countdown] Minimizando ventana...");
@@ -206,6 +224,40 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── should_hide_immediately — gallery focus-lost immediate hide ────
+
+    #[test]
+    fn test_should_hide_when_gallery_active_and_visible() {
+        assert!(
+            should_hide_immediately(true, false),
+            "gallery active + visible → immediate hide"
+        );
+    }
+
+    #[test]
+    fn test_should_not_hide_when_gallery_not_active() {
+        assert!(
+            !should_hide_immediately(false, false),
+            "not in gallery → do not hide, use countdown"
+        );
+    }
+
+    #[test]
+    fn test_should_not_hide_when_already_hidden_gallery() {
+        assert!(
+            !should_hide_immediately(true, true),
+            "already hidden → never hide again"
+        );
+    }
+
+    #[test]
+    fn test_should_not_hide_when_already_hidden_not_gallery() {
+        assert!(
+            !should_hide_immediately(false, true),
+            "already hidden + not gallery → false"
+        );
+    }
 
     // ── Casos normales ────────────────────────────────────────────────
 
@@ -301,11 +353,28 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
 
     crate::hypr_ipc::spawn_focus_listener(
         move || {
-            // Check hidden state via Controller (initialized in main()
-            // before this listener starts).
-            let hidden = crate::composer::global_controller()
-                .map(|c| c.window_hidden())
-                .unwrap_or(false);
+            // Check hidden + gallery state via Controller (initialized in main()
+            // before this listener starts). Gallery flag is the canonical
+            // immersive-session source (Shell::dispatch → enter_gallery_session);
+            // it is available thread-safely via the Controller mutex.
+            let (hidden, gallery_active) = crate::composer::global_controller()
+                .map(|c| (c.window_hidden(), c.gallery_session_active()))
+                .unwrap_or((false, false));
+            if should_hide_immediately(gallery_active, hidden) {
+                // Gallery immersive session: hide immediately, same as Esc
+                // (minimize_now → cancel + toggle_tray hide). Unconditional —
+                // immersive contract overrides the auto_minimize master switch
+                // (see hard rule in task spec).
+                tracing::info!("[countdown] Gallery focus lost → immediate hide (Esc path)");
+                let w = weak_for_lost.clone();
+                match slint::invoke_from_event_loop(move || minimize_now(w)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!("[countdown] invoke_from_event_loop falló (gallery hide): {:?}", e)
+                    }
+                }
+                return;
+            }
             if hidden {
                 return;
             }
