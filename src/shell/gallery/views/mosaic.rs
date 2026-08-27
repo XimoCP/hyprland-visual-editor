@@ -503,12 +503,30 @@ pub fn mosaic_page_capacity(stage_w: f32, stage_h: f32) -> usize {
     if !(stage_w > 0.0) || !(stage_h > 0.0) {
         return 0;
     }
-    // Lay out a long cloned aspect set; the first page-row_count rows hold
-    // exactly the tiles that fill one central band.
-    let long: Vec<f32> = (0..4096).map(mosaic_display_aspect).collect();
-    let layout = justified_layout(&long, stage_w, stage_h);
-    let rows = mosaic_layout_rows(&layout);
-    rows.iter().take(MOSAIC_PAGE_ROW_COUNT).map(|r| r.len()).sum()
+    // Width-based row fill: the band has exactly MOSAIC_PAGE_ROW_COUNT rows
+    // of height th (same band math as justified_hero_layout), so capacity is
+    // how many pattern tiles fit side-by-side within the usable width at that
+    // height, times the row count. A hard cap guards against pathological
+    // inputs: the justified_* packers never wrap past MOSAIC_ROW_COUNT rows,
+    // so any estimate derived from laying out a long probe list reports the
+    // whole list (4096) and collapses every page tile to sub-pixel dust.
+    let g = MOSAIC_GUTTER_PX;
+    let band = stage_h / MOSAIC_BAND_HEIGHT_DIVISOR;
+    let th =
+        (band - (MOSAIC_PAGE_ROW_COUNT as f32 - 1.0) * g) / MOSAIC_PAGE_ROW_COUNT as f32;
+    let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
+    let usable_w = (stage_w - 2.0 * margin).max(1.0);
+    let mut per_row = 0usize;
+    let mut w = 0.0f32;
+    for idx in 0..256usize {
+        let tile_w = th * mosaic_display_aspect(idx);
+        if w + tile_w > usable_w {
+            break;
+        }
+        w += tile_w + g;
+        per_row += 1;
+    }
+    (per_row.max(1) * MOSAIC_PAGE_ROW_COUNT).min(64)
 }
 
 /// Per-tile curtain delay (ms) staggered per column (~50ms/column). Tiles
@@ -2155,5 +2173,68 @@ mod mosaic_hero_tests {
             assert!((a - expected).abs() < 1e-4, "page_render aspect {i} mismatch");
         }
         let _ = reals;
+    }
+}
+
+#[cfg(test)]
+mod mosaic_capacity_tests {
+    use super::*;
+
+    // Regression: capacity derived from laying out a long probe list reported
+    // 4096 (the probe length) because the packers never wrap past
+    // MOSAIC_ROW_COUNT — every page tile then shrank to sub-pixel dust.
+    #[test]
+    fn capacity_is_sane_across_stages() {
+        for &(sw, sh) in &[
+            (1280.0, 720.0),
+            (1920.0, 1080.0),
+            (2560.0, 1440.0),
+            (1366.0, 768.0),
+            (3840.0, 2160.0),
+        ] {
+            let cap = mosaic_page_capacity(sw, sh);
+            assert!(
+                (4..=64).contains(&cap),
+                "capacity {cap} out of bounds at {sw}x{sh}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_page_tiles_are_never_dust() {
+        // The exact broken scenario: 6 real themes opening at 1920x1080 —
+        // one hero rendered and the rest of the wall collapsed to dust.
+        let (sw, sh) = (1920.0f32, 1080.0f32);
+        let cap = mosaic_page_capacity(sw, sh);
+        assert!(cap <= 64, "capacity {cap}");
+        let pg = MosaicPages::new(6, sw, sh);
+        let (aspects, reals) = pg.page_render();
+        assert_eq!(aspects.len(), cap, "page_render must yield capacity tiles");
+        assert_eq!(reals.len(), cap);
+        let layout = justified_hero_layout(&aspects, sw, sh, pg.current());
+        assert_eq!(layout.tiles.len(), cap);
+        let margin = sw * MOSAIC_SIDE_MARGIN_FRACTION;
+        for t in &layout.tiles {
+            assert!(t.w >= 40.0 && t.h >= 40.0, "dust tile {t:?} (capacity {cap})");
+            assert!(t.x >= margin - 1.0 && t.x + t.w <= sw - margin + 1.0, "tile {t:?} crosses margins");
+        }
+    }
+
+    #[test]
+    fn flip_sweep_never_produces_dust() {
+        let (sw, sh) = (1920.0f32, 1080.0f32);
+        let mut pg = MosaicPages::new(40, sw, sh);
+        let total = pg.total_pages();
+        assert!(total >= 2, "40 themes must paginate");
+        for _ in 0..total {
+            let (aspects, reals) = pg.page_render();
+            assert_eq!(aspects.len(), reals.len());
+            let layout = justified_hero_layout(&aspects, sw, sh, pg.current());
+            assert_eq!(layout.tiles.len(), aspects.len());
+            for t in &layout.tiles {
+                assert!(t.w >= 40.0 && t.h >= 40.0, "dust tile {t:?} on page {}", pg.current());
+            }
+            pg.step(1);
+        }
     }
 }

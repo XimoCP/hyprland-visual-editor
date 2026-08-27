@@ -199,16 +199,16 @@ export component SliceDelegate inherits Rectangle {
         animate stroke-width { duration: SkwdTokens.anim-200; }
     }
 
-    // ── Face mask container (design D3): clip:true box inset to the
-    // parallelogram's horizontal safe zone [skew .. width], so the wallpaper
-    // Image and labels clear both slant edges while painting OVER the same
-    // Path fill surface (visible behind the transparent container). True
-    // pixel-exact bitmap masking lands in PR4: thumbs.rs bakes the
-    // parallelogram alpha into the cached PNGs (design D8).
+    // ── Face mask container (design D3): clip:true box covering the FULL
+    // parallelogram bounding box [0 .. width+skew]. The wallpaper Image
+    // fills this box edge-to-edge and the two outside-face corners are
+    // masked by the slant-mask Path below (rectangular clips cannot follow
+    // the slant) so the image reads as clipped BY the card, not floating
+    // over it. Labels stay inside the slant-safe zone [skew .. width]. ──
     if !is-flipped : Rectangle {
         clip: true;
-        x: root.skew;
-        width: root.width - root.skew;
+        x: 0px;
+        width: root.width + root.skew;
         height: 100%;
 
         // ── Full-bleed wallpaper (edge-to-edge cover, center crop).
@@ -282,6 +282,28 @@ export component SliceDelegate inherits Rectangle {
                 accessible-role: none;
             }
 
+            // Slant masks: the clip box is rectangular but the card is a
+            // parallelogram, so the two outside-face corners of the bounding
+            // box get covered with triangles filled exactly like the face
+            // (surface). One Path, two contours, 1:1 viewbox mapping.
+            slant-mask := Path {
+                x: 0;
+                y: 0;
+                width: root.width + root.skew;
+                height: 100%;
+                viewbox-width: root.wn + root.sn;
+                viewbox-height: root.hn;
+                fill: SkwdTokens.surface;
+                MoveTo { x: 0; y: 0; }
+                LineTo { x: root.sn; y: 0; }
+                LineTo { x: 0; y: root.hn; }
+                Close { }
+                MoveTo { x: root.wn; y: 0; }
+                LineTo { x: root.wn + root.sn; y: 0; }
+                LineTo { x: root.wn; y: root.hn; }
+                Close { }
+            }
+
             // Video overlay (Timer 100-300ms, release on blur S16/17)
             // Only on current card with has-video — sits above the
             // full-bleed cover but below the label scrim.
@@ -306,10 +328,13 @@ export component SliceDelegate inherits Rectangle {
 
         // Bottom label — overlayed over the full-bleed image (not in a
         // padded VerticalLayout) so the wallpaper stays edge-to-edge.
-        // Semi-transparent scrim keeps text legible on bright wallpapers.
+        // Constrained to the slant-safe zone [skew .. width] so the bar
+        // never crosses the slanted card edges. Semi-transparent scrim
+        // keeps text legible on bright wallpapers.
         label-scrim := Rectangle {
+            x: root.skew;
             y: parent.height - 28px;
-            width: 100%;
+            width: root.width - root.skew;
             height: 28px;
             background: #000000.transparentize(0.45);
             Text {
