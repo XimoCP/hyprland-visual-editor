@@ -76,6 +76,10 @@ export component ShellRoot inherits Rectangle {
     // Justified-rows Mosaic geometry, computed by Rust (mosaic.rs) and
     // piped exactly like gallery-cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
+    // Mosaic pagination mirrors (Rust page model is the source of truth).
+    in property <int> gallery-mosaic-current-page: 0;
+    in property <int> gallery-mosaic-total-pages: 1;
+    in property <[int]> gallery-mosaic-page-numbers;
     in property <bool> gallery-empty: false;
     in property <string> gallery-empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
@@ -85,6 +89,7 @@ export component ShellRoot inherits Rectangle {
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
     callback gallery-wheel-step(int);
+    callback gallery-mosaic-page-step(int);
     callback gallery-mit-open();
     // Stage geometry events from GalleryRoot (logical lengths).
     callback gallery-stage-geometry-changed(length, length);
@@ -185,6 +190,9 @@ export component ShellRoot inherits Rectangle {
                 focused-index: root.gallery-focused;
                 cards: root.gallery-cards;
                 mosaic-tiles: root.gallery-mosaic-tiles;
+                mosaic-current-page: root.gallery-mosaic-current-page;
+                mosaic-total-pages: root.gallery-mosaic-total-pages;
+                mosaic-page-numbers: root.gallery-mosaic-page-numbers;
                 empty: root.gallery-empty;
                 empty-text: root.gallery-empty-text;
                 mit-link: root.gallery-mit-link;
@@ -193,6 +201,7 @@ export component ShellRoot inherits Rectangle {
                 card-clicked(idx) => { root.gallery-card-clicked(idx); }
                 card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
                 wheel-step(dir) => { root.gallery-wheel-step(dir); }
+                mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
                 mit-opened => { root.gallery-mit-open(); }
                 stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
             }

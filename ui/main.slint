@@ -208,6 +208,10 @@ export component MainWindow inherits Window {
     in property <[GalleryCardData]> gallery-cards;
     // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
+    // Mosaic pagination mirrors (Rust page model is the source of truth).
+    in property <int> gallery-mosaic-current-page: 0;
+    in property <int> gallery-mosaic-total-pages: 1;
+    in property <[int]> gallery-mosaic-page-numbers;
     in property <bool> gallery-empty: false;
     in property <string> gallery-empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
@@ -217,6 +221,7 @@ export component MainWindow inherits Window {
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
     callback gallery-wheel-step(int);
+    callback gallery-mosaic-page-step(int);
     callback gallery-mit-open();
     // Stage geometry events piped from GalleryRoot through ShellRoot
     // (logical lengths) — drives the mosaic tiles recompute.
@@ -498,6 +503,9 @@ export component MainWindow inherits Window {
         gallery-focused: root.gallery-focused;
         gallery-cards: root.gallery-cards;
         gallery-mosaic-tiles: root.gallery-mosaic-tiles;
+        gallery-mosaic-current-page: root.gallery-mosaic-current-page;
+        gallery-mosaic-total-pages: root.gallery-mosaic-total-pages;
+        gallery-mosaic-page-numbers: root.gallery-mosaic-page-numbers;
         gallery-empty: root.gallery-empty;
         gallery-empty-text: root.gallery-empty-text;
         gallery-mit-footer: root.gallery-mit-footer;
@@ -507,6 +515,7 @@ export component MainWindow inherits Window {
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
         gallery-wheel-step(dir) => { root.gallery-wheel-step(dir); }
+        gallery-mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
         gallery-mit-open => { root.gallery-mit-open(); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
     }

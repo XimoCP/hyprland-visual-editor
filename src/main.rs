@@ -397,8 +397,126 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // ── Gallery UI wiring (PR4.5): expose cards, style, focus, empty, MIT, reduced-motion
     // and bind Chrome switch (200ms) + card click → apply + arrow nav.
+    type StageDims = Option<(f32, f32)>;
+    let gallery_themes_root = config_dir.join("hve").join("themes");
+    // Last stage dims reported by the Slint side (logical lengths);
+    // shared by every recompute point so they all read the SAME
+    // geometry source instead of per-call window snapshots.
+    // Arc<Mutex> because the thumbs marshal closure must be Send+Sync.
+    let stage_dims: std::sync::Arc<std::sync::Mutex<StageDims>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    // ── Mosaic page model (Mosaic final scheme) ──
+    // Rust owns pagination. This closure renders ONLY the current page's
+    // tiles (geometry from justified_layout + clone-fill from the page
+    // model) and mirrors current/total/page-numbers to the UI.
+    let mosaic_pages = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::shell::gallery::views::mosaic::MosaicPages::new(0, 0.0, 0.0),
+    ));
+    let refresh_mosaic_page: std::sync::Arc<dyn Fn() + Send + Sync> = {
+        let pages = mosaic_pages.clone();
+        let dims = stage_dims.clone();
+        let weak = window.as_weak();
+        std::sync::Arc::new(move || {
+            use crate::shell::gallery::views::mosaic::{
+                justified_layout, mosaic_curtain_delays,
+            };
+            use slint::{Model, ModelRc, VecModel};
+            let Some(w) = weak.upgrade() else { return; };
+            let cards = w.get_gallery_cards();
+            let real_count = cards.row_count();
+            let (stage_w, stage_h) = dims
+                .lock()
+                .unwrap()
+                .as_ref()
+                .copied()
+                .unwrap_or_else(|| {
+                    let scale = w.window().scale_factor();
+                    let physical = w.window().size();
+                    (physical.width as f32 / scale, physical.height as f32 / scale)
+                });
+            if !(stage_w > 0.0) || !(stage_h > 0.0) {
+                return;
+            }
+            let mut pg = pages.lock().unwrap();
+            if pg.real_count() != real_count || pg.capacity() == 0 {
+                pg.recompute(real_count, stage_w, stage_h);
+            }
+            let (aspects, real_indices) = pg.page_render();
+            let layout = justified_layout(&aspects, stage_w, stage_h);
+            let delays = mosaic_curtain_delays(&layout.tiles);
+            w.set_gallery_mosaic_current_page(pg.current() as i32);
+            w.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+            w.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
+                pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+            )));
+            let tiles_rc = w.get_gallery_mosaic_tiles();
+            let Some(tiles) =
+                tiles_rc.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
+            else {
+                return;
+            };
+            while tiles.row_count() < layout.tiles.len() {
+                tiles.push(crate::MosaicTileData {
+                    x: 0.0, y: 0.0, w: 0.0, h: 0.0, real_index: 0, delay_ms: 0,
+                });
+            }
+            while tiles.row_count() > layout.tiles.len() {
+                tiles.remove(tiles.row_count() - 1);
+            }
+            for (i, (t, r)) in layout.tiles.iter().zip(real_indices.iter()).enumerate() {
+                tiles.set_row_data(
+                    i,
+                    crate::MosaicTileData {
+                        x: t.x, y: t.y, w: t.w, h: t.h,
+                        real_index: *r as i32,
+                        delay_ms: delays.get(i).copied().unwrap_or(0) as i32,
+                    },
+                );
+            }
+        })
+    };
+    fn schedule_thumbs(
+        weak: &slint::Weak<crate::MainWindow>,
+        themes_root: &std::path::Path,
+        _stage_dims: &std::sync::Arc<std::sync::Mutex<StageDims>>,
+        refresh: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) {
+        use crate::shell::gallery::thumbs;
+        use slint::Model;
+        let Some(w) = weak.upgrade() else { return };
+        let model = w.get_gallery_cards();
+        let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
+        for i in 0..model.row_count() {
+            if let Some(row) = model.row_data(i) {
+                if row.thumb.size().width > 0 {
+                    continue; // already marshaled — no duplicate work
+                }
+                let src = thumbs::find_source_image(&themes_root.join(row.name.as_str()));
+                sources.push((i as usize, row.name.to_string(), src));
+            }
+        }
+        drop(w);
+        let ready_weak = weak.clone();
+        let refresh_clone = refresh.clone();
+        thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png, hero_png| {
+            if let Some(w) = ready_weak.upgrade() {
+                let model = w.get_gallery_cards();
+                let img = slint::Image::load_from_path(&png).unwrap_or_default();
+                let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
+                if let Some(mut row) = model.row_data(idx) {
+                    if row.name.as_str() == &*name {
+                        row.thumb = img;
+                        row.hero = hero_img;
+                        model.set_row_data(idx, row);
+                        refresh_clone();
+                    }
+                }
+            }
+        });
+    }
     {
         fn to_gallery_cards(tm: &crate::theme_manager::ThemeManager) -> Vec<crate::GalleryCardData> {
+
             let infos = tm.list().unwrap_or_default();
             infos
                 .iter()
@@ -438,119 +556,6 @@ fn main() -> Result<(), slint::PlatformError> {
                 })
                 .collect()
         }
-        // ── Thumbs pipeline (gallery-immersive-redesign 4.7 / design D8):
-        // plan jobs for cards whose source image exists, generate off-thread
-        // and marshal finished images back through the window weak handle.
-        // Sources are DISCOVERED under the theme storage root (config_dir/
-        // hve/themes/<name>/...) — the engine is sealed, so no accessor is
-        // added; the layout is only read, never written here. ──
-        let gallery_themes_root = config_dir.join("hve").join("themes");
-        // Last stage dims reported by the Slint side (logical lengths);
-        // shared by every recompute point so they all read the SAME
-        // geometry source instead of per-call window snapshots.
-        // Arc<Mutex> because the thumbs marshal closure must be Send+Sync.
-        let stage_dims: std::sync::Arc<std::sync::Mutex<StageDims>> =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
-        fn schedule_thumbs(
-            weak: &slint::Weak<crate::MainWindow>,
-            themes_root: &std::path::Path,
-            stage_dims: &std::sync::Arc<std::sync::Mutex<StageDims>>,
-        ) {
-            use crate::shell::gallery::thumbs;
-            use slint::Model;
-            let Some(w) = weak.upgrade() else { return };
-            let model = w.get_gallery_cards();
-            let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
-            for i in 0..model.row_count() {
-                if let Some(row) = model.row_data(i) {
-                    if row.thumb.size().width > 0 {
-                        continue; // already marshaled — no duplicate work
-                    }
-                    let src = thumbs::find_source_image(&themes_root.join(row.name.as_str()));
-                    sources.push((i as usize, row.name.to_string(), src));
-                }
-            }
-            drop(w);
-            let ready_weak = weak.clone();
-            let dims = stage_dims.clone();
-            thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png, hero_png| {
-                // Runs ON the UI thread (invoke_from_event_loop). The stale-
-                // write guard re-reads the CURRENT model so a refresh that
-                // reordered rows between schedule and marshal cannot misplace
-                // a thumbnail. Image loading happens here too — slint::Image
-                // is not Send, only the paths cross threads.
-                if let Some(w) = ready_weak.upgrade() {
-                    let model = w.get_gallery_cards();
-                    let img = slint::Image::load_from_path(&png).unwrap_or_default();
-                    let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
-                    if let Some(mut row) = model.row_data(idx) {
-                        if row.name.as_str() == &*name {
-                            row.thumb = img;
-                            row.hero = hero_img;
-                            model.set_row_data(idx, row);
-                            // Kept per spec: an existing cheap idempotent
-                            // refresh point on the UI thread.
-                            refresh_mosaic_tiles(&w, dims.lock().unwrap().as_ref().copied());
-                        }
-                    }
-                }
-            });
-        }
-        // ── Mosaic justified-rows tiles (gallery-immersive-redesign):
-        // per-card aspects come from the DETERMINISTIC DISPLAY-ASPECT
-        // PATTERN ("real Pinterest", user-approved artificial variety) —
-        // the user's wallpapers are all 16:9, so real aspects would pack
-        // a uniform grid; instead tiles get synthetic shape variety and
-        // images cover-crop into their tile (MosaicCell). The pure packer
-        // mosaic.rs::justified_layout computes paint-ready geometry from
-        // the LAST stage dims reported by the Slint side
-        // (stage-geometry-changed); before the first event arrives the
-        // window logical size is the fallback. The tiles model is created
-        // once and mutated ROW-WISE so repeaters never remount (the
-        // reveal stagger must not replay on refresh). Recompute happens
-        // ONLY at marshal points: initial build, each preheat hero
-        // arrival (UI thread via invoke_from_event_loop), apply-refresh,
-        // and stage geometry changes. ──
-        type StageDims = Option<(f32, f32)>;
-        fn refresh_mosaic_tiles(w: &crate::MainWindow, stage: StageDims) {
-            use crate::shell::gallery::views::mosaic::{
-                justified_layout, mosaic_display_aspect,
-            };
-            use slint::{Model, VecModel};
-            let cards = w.get_gallery_cards();
-            let aspects: Vec<f32> =
-                (0..cards.row_count()).map(mosaic_display_aspect).collect();
-            // Prefer Slint-reported stage dims; fall back to reading the
-            // window logical size (startup path before the first event).
-            let (stage_w, stage_h) = stage.unwrap_or_else(|| {
-                let scale = w.window().scale_factor();
-                let physical = w.window().size();
-                (physical.width as f32 / scale, physical.height as f32 / scale)
-            });
-            // Degenerate geometry cannot host tiles — skip the recompute
-            // (also keeps stale last-known-good dims untouched upstream).
-            if !(stage_w > 0.0) || !(stage_h > 0.0) {
-                return;
-            }
-            let layout = justified_layout(&aspects, stage_w, stage_h);
-            // Always constructed as a VecModel below; downcast is total.
-            let tiles_rc = w.get_gallery_mosaic_tiles();
-            let Some(tiles) = tiles_rc
-                .as_any()
-                .downcast_ref::<VecModel<crate::MosaicTileData>>()
-            else {
-                return;
-            };
-            while tiles.row_count() < layout.tiles.len() {
-                tiles.push(crate::MosaicTileData { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-            }
-            while tiles.row_count() > layout.tiles.len() {
-                tiles.remove(tiles.row_count() - 1);
-            }
-            for (i, t) in layout.tiles.iter().enumerate() {
-                tiles.set_row_data(i, crate::MosaicTileData { x: t.x, y: t.y, w: t.w, h: t.h });
-            }
-        }
         window.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(
             Vec::<crate::MosaicTileData>::new(),
         )));
@@ -558,8 +563,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let empty = cards.is_empty();
         window.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
         window.set_gallery_empty(empty);
-        refresh_mosaic_tiles(&window, stage_dims.lock().unwrap().as_ref().copied());
-        schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims);
+        refresh_mosaic_page();
+        schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims, refresh_mosaic_page.clone());
         // Slint-driven stage geometry: recompute the mosaic tiles whenever
         // the gallery stage resizes (fullscreen transition, tiling float).
         // Only the tiles MODEL is mutated here — never width/height — so
@@ -568,13 +573,14 @@ fn main() -> Result<(), slint::PlatformError> {
         {
             let win = window.as_weak();
             let dims = stage_dims.clone();
+            let refresh = refresh_mosaic_page.clone();
             window.on_gallery_stage_geometry_changed(move |width: f32, height: f32| {
                 if !(width > 0.0) || !(height > 0.0) {
                     return; // degenerate dims: keep last-known-good state
                 }
                 *dims.lock().unwrap() = Some((width, height));
-                if let Some(w) = win.upgrade() {
-                    refresh_mosaic_tiles(&w, Some((width, height)));
+                if let Some(_w) = win.upgrade() {
+                    refresh();
                 }
             });
         }
@@ -611,6 +617,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let slot = gallery_slot.clone();
             let tm = gallery_tm.clone();
             let stage_dims = stage_dims.clone();
+            let refresh = refresh_mosaic_page.clone();
+            let gallery_themes_root = gallery_themes_root.clone();
             window.on_gallery_card_clicked(move |idx| {
                 let i = idx as usize;
                 if let Some(w) = win.upgrade() {
@@ -626,9 +634,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         let refreshed = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
                             w.set_gallery_cards(ModelRc::new(VecModel::from(refreshed)));
-                            refresh_mosaic_tiles(&w, stage_dims.lock().unwrap().as_ref().copied());
+                            refresh();
                         }
-                        schedule_thumbs(&win, &gallery_themes_root, &stage_dims);
+                        schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
                     }
                 }
             });
@@ -810,6 +818,8 @@ fn main() -> Result<(), slint::PlatformError> {
         tray_system_active,
         &lock,
         &shell,
+        mosaic_pages,
+        refresh_mosaic_page,
     );
 
     // ── Nav modules (data-driven sidebar, translated) ──

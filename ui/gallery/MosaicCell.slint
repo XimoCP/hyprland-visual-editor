@@ -21,6 +21,13 @@ export component MosaicCell inherits Rectangle {
     in property <float> cloud-opacity: 1.0; // driven by Rust cloud 0.55/1.05 smoothstep
     in property <int> cell-key: 0;
     in property <duration> reveal-delay: 0ms;
+    // ── Curtain (Mosaic final scheme) ──
+    // Bumped by the parent on every page flip; drives the wipe cover.
+    in property <int> flip-token: 0;
+    // When true, skip the curtain (plain crossfade instead).
+    in property <bool> reduced-motion: false;
+    // Column stagger for this tile's curtain (ms).
+    in property <int> delay-ms: 0;
     // stagger alpha: 0 → 1 after reveal-delay
     in-out property <float> image-alpha: 1.0;
     animate image-alpha { duration: 250ms; easing: ease-in-out; delay: root.reveal-delay; }
@@ -46,6 +53,7 @@ export component MosaicCell inherits Rectangle {
 
     clip: true;
     border-radius: SkwdTokens.radius-8;
+
     // Background only ever shows through while the shimmer runs; once an
     // image lands it covers 100% of the tile.
     background: SkwdTokens.surface-container;
@@ -115,6 +123,45 @@ export component MosaicCell inherits Rectangle {
         y: parent.height - 20px;
         width: parent.width - 2 * SkwdTokens.spacing-8;
         height: 16px;
+    }
+
+    // ── Curtain cover (Mosaic final scheme) ──
+    // Painted above the image/shimmer/label but below the input TouchArea
+    // so clicks still reach the tile. On flip-token change: snap an opaque
+    // panel over the tile (instant, wipe-duration 0), then WIPE it away
+    // (width 1→0, anchored at the left edge) staggered by the tile's column
+    // delay. reduced-motion → 0ms (no curtain; the parent crossfades instead).
+    property <float> cover-frac;       // 1 fully covered, 0 wiped away
+    property <duration> cover-wipe-duration: 0ms;
+    property <duration> cover-wipe-delay: 0ms;
+    animate cover-frac {
+        duration: root.cover-wipe-duration;
+        delay: root.cover-wipe-delay;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+    changed flip-token => {
+        root.cover-wipe-duration = 0ms; // instant cover-in
+        root.cover-frac = 1.0;
+        // Restore the wipe-out duration (0 for reduced-motion → hard cut,
+        // the parent crossfade covers that case).
+        root.cover-wipe-duration = root.reduced-motion ? 0ms : SkwdTokens.mosaic-curtain-tile;
+        // curtain-timer.restart(); // PROBE3
+    }
+    curtain-timer := Timer {
+        interval: 16ms;
+        running: false;
+        triggered => {
+            root.cover-wipe-delay = root.delay-ms * 1ms;
+            root.cover-frac = 0.0; // wipe out, staggered per column
+        }
+    }
+    curtain-cover := Rectangle {
+        x: 0;
+        y: 0;
+        height: root.height;
+        width: root.cover-frac * root.width;
+        background: SkwdTokens.surface;
+        visible: root.cover-frac > 0.001;
     }
 
     touch := TouchArea {

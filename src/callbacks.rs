@@ -2,6 +2,7 @@ use crate::app_state::{AppState, SharedState};
 use crate::config::Config;
 use crate::settings::{set_autostart, set_keybinds, set_tiling_window_rules};
 use crate::shell::nav::{NavCommand, Screen};
+use crate::shell::gallery::views::mosaic::MosaicPages;
 use crate::shell::Shell;
 use slint::ComponentHandle;
 use std::cell::RefCell;
@@ -60,6 +61,8 @@ pub fn setup_callbacks(
     tray_active: Arc<AtomicBool>,
     restart_lock: &Arc<Mutex<Option<std::fs::File>>>,
     shell: &Rc<RefCell<Shell>>,
+    mosaic_pages: std::sync::Arc<std::sync::Mutex<MosaicPages>>,
+    refresh_mosaic_page: std::sync::Arc<dyn Fn() + Send + Sync>,
 ) {
     // Single AppState instance shared across all callbacks
     let state = state.clone();
@@ -110,6 +113,10 @@ pub fn setup_callbacks(
     {
         let shell = shell.clone();
         let weak = window.as_weak();
+        // Clone the page-model handles so the later page-step handler (and
+        // this closure) each own a reference without consuming the originals.
+        let mosaic_pages = mosaic_pages.clone();
+        let refresh_mosaic_page = refresh_mosaic_page.clone();
         window.on_nav_move(move |direction| {
             use crate::shell::nav::ExpansionState;
             use crate::shell::nav::Screen;
@@ -126,6 +133,16 @@ pub fn setup_callbacks(
                 return;
             }
             if is_gallery {
+                // Mosaic style: Left/Up = previous page, Right/Down = next.
+                // Reuses the page model; geometry is not rebuilt on a flip.
+                let style = weak.upgrade().map(|w| w.get_gallery_style()).unwrap_or(0);
+                if style == 2 {
+                    let changed = mosaic_pages.lock().unwrap().step(delta as isize);
+                    if changed {
+                        refresh_mosaic_page();
+                    }
+                    return;
+                }
                 if let Some(w) = weak.upgrade() {
                     let len = w.get_gallery_cards().row_count() as i32;
                     if len > 0 {
@@ -160,6 +177,21 @@ pub fn setup_callbacks(
                     );
                     w.set_gallery_focused(next as i32);
                 }
+            }
+        });
+    }
+
+    // ── Mosaic page flip (Mosaic final scheme): the MosaicView wheel debounce
+    // fires ±1; we step the Rust page model and re-render the current page.
+    // Geometry is NOT rebuilt on a flip (MosaicPages::step is pure). Clamped,
+    // no wrap. ──
+    {
+        let pages = mosaic_pages.clone();
+        let refresh = refresh_mosaic_page.clone();
+        window.on_gallery_mosaic_page_step(move |dir| {
+            let changed = pages.lock().unwrap().step(dir as isize);
+            if changed {
+                refresh();
             }
         });
     }

@@ -1,99 +1,141 @@
-// HVE 2 — MosaicView (justified-rows rewrite, gallery-immersive-redesign).
+// HVE 2 — MosaicView (Mosaic final scheme: paginated Pinterest band).
 //
-// Google Photos / Flickr style photo wall: Rust computes the FULL tile
-// geometry as a `tiles` model (mosaic.rs::justified_layout — Slint
-// GridLayout cannot compute spans and bindings cannot know per-image
-// aspects), so this view only paints: each MosaicCell sits at its final
-// centered stage coordinates, edge-to-edge with a thin uniform gutter,
-// every tile shaped like its image (no crop, no letterbox). Dual-stripe
-// infinite scroll, kinetic 0.90 (16ms), staggered reveal per cellKey
-// unchanged.
+// The Rust page model (mosaic.rs::MosaicPages) is the source of truth for
+// pagination; this view renders ONLY the current page's tiles (the wall
+// covers the stage). A page flip is a curtain: each incoming tile is wiped
+// clean by an opaque cover panel (scale-x, staggered ~50ms/column,
+// ~300ms/tile). reduced-motion swaps the curtain for a plain crossfade.
+// Clone-fill is pure model repetition in Rust — never touches disk; each
+// tile carries its REAL theme index (real-index) so clicks report it.
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
 import { MosaicCell } from "MosaicCell.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
+import { SkwdTokens } from "../tokens.slint";
 
 export struct MosaicTileData {
     x: length,
     y: length,
     w: length,
     h: length,
+    // Real theme index this tile maps to (clone-fill safe: displayed % real).
+    real-index: int,
+    // Curtain stagger for this tile (ms) — derived from its column.
+    delay-ms: int,
 }
 
 export component MosaicView inherits Rectangle {
-    in property <length> scroll-offset: 0px;
     in property <length> viewport-w: 1500px;
-    // Real card data (gallery-immersive-redesign 4.8): out-of-range card
-    // indices in the repeater below yield default (empty) images.
+    // Real card data; out-of-range real indices can't happen (clamped in Rust).
     in property <[GalleryCardData]> cards;
-    // Paint-ready geometry computed by Rust (justified_layout); same row
-    // order as `cards` so idx maps 1:1.
+    // Current page's paint-ready geometry (Rust-computed justified_layout).
     in property <[MosaicTileData]> tiles;
-    in property <int> item-count: 0;
+    // Pagination mirrors (Rust source of truth).
+    in property <int> current-page: 0;
+    in property <int> total-pages: 1;
+    in property <[int]> page-numbers;
+    in property <bool> reduced-motion: false;
     callback cell-clicked(int);
     callback cell-flip(int);
+    // +1 next / −1 previous, once per wheel gesture (mirrors SliceCarousel).
+    callback page-step(int);
 
     width: 1500px;
     height: 800px;
     clip: true;
-    // Immersive presentation (like Slice): the live desktop shows through.
-    // GalleryRoot is transparent and the backdrop scrim sits BEHIND this
-    // stage, so no opaque surface may be painted here.
+    // Immersive presentation: the live desktop shows through; no opaque
+    // surface may be painted here (the curtain cover is temporary + local).
     background: transparent;
 
-    // kinetic 0.90 state driven by Rust tick every 16ms; Slint mirrors offset with 16ms timer
-    property <length> stripe-a-x: - root.scroll-offset;
-    property <length> stripe-b-x: - root.scroll-offset + root.viewport-w;
-    animate stripe-a-x { duration: 16ms; easing: linear; }
-    animate stripe-b-x { duration: 16ms; easing: linear; }
+    // Page-flip token bumped whenever current-page changes → drives the
+    // per-tile curtain. Bumped by Rust on every successful flip.
+    in-out property <int> flip-token: 0;
+    changed current-page => { root.flip-token += 1; }
 
-    // dual-stripe tiling for infinite horizontal scroll (spec R2.3):
-    // stripe A hosts the justified block (tiles already carry the stage
-    // centering offsets); stripe B repeats it one viewport to the right
-    // as the tiling continuation. Full-height stripes: y placement comes
-    // from the tiles themselves.
-    stripe-a := Rectangle {
-        x: root.stripe-a-x;
-        y: 0;
-        width: root.viewport-w;
+    // Outgoing page crossfade (reduced-motion uses this instead of curtain).
+    in-out property <float> page-alpha: 1.0;
+    property <duration> page-fade-duration: 0ms;
+    animate page-alpha {
+        duration: root.page-fade-duration;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+    page-fade-timer := Timer {
+        interval: 16ms;
+        running: false;
+        triggered => { root.page-alpha = 1.0; }
+    }
+    changed flip-token => {
+        // FALLBACK: per-tile curtain removed (compiler panic in repeater).
+        // Use page-level crossfade for both motion and reduced-motion.
+        root.page-fade-duration = SkwdTokens.mosaic-page-fade;
+        root.page-alpha = 0.35;
+        page-fade-timer.restart();
+    }
+
+    // ── Current page tiles ──
+    page := Rectangle {
+        width: 100%;
         height: 100%;
+        clip: true;
+        opacity: root.page-alpha;
         for t[idx] in root.tiles : MosaicCell {
             x: t.x;
             y: t.y;
             width: t.w;
             height: t.h;
             cell-key: idx;
-            reveal-delay: (idx - Math.floor(idx / 15) * 15) * 40ms; // mirrors reveal_delay_for 600ms wrap
+            reveal-delay: t.delay-ms * 1ms;
             image-alpha: 1.0;
             cloud-opacity: 1.0;
-            thumb: root.cards[idx].thumb;
-            hero: root.cards[idx].hero;
-            clicked => { root.cell-clicked(idx); }
-            flip-requested => { root.cell-flip(idx); }
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            flip-token: root.flip-token;
+            reduced-motion: root.reduced-motion;
+            delay-ms: t.delay-ms;
+            clicked => { root.cell-clicked(t.real-index); }
+            flip-requested => { root.cell-flip(t.real-index); }
         }
     }
 
-    stripe-b := Rectangle {
-        x: root.stripe-b-x;
-        y: 0;
-        width: root.viewport-w;
+    // ── Pagination UI: bottom-center row of page numbers ──
+    pagination := Rectangle {
+        visible: root.total-pages > 1;
+        width: 100%;
+        height: 28px;
+        y: parent.height - self.height - 12px;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 10px;
+            for n[idx] in root.page-numbers : Text {
+                text: "{n}";
+                color: (n - 1) == root.current-page ? SkwdTokens.primary : SkwdTokens.outline;
+                font-size: SkwdTokens.size-13;
+                font-weight: (n - 1) == root.current-page ? 700 : 400;
+            }
+        }
+    }
+
+    // ── Wheel (mirrors SliceCarousel): arm a debounce Timer, commit one
+    // ±1 step per idle gesture. down/right = next, up/left = previous. ──
+    property <int> wheel-dir: 0;
+    wheel-debounce := Timer {
+        interval: 400ms;
+        running: root.wheel-dir != 0;
+        triggered => {
+            root.page-step(root.wheel-dir);
+            root.wheel-dir = 0;
+        }
+    }
+    wheel-zone := TouchArea {
+        width: 100%;
         height: 100%;
-        for t[idx] in root.tiles : MosaicCell {
-            x: t.x;
-            y: t.y;
-            width: t.w;
-            height: t.h;
-            cell-key: idx;
-            reveal-delay: (idx - Math.floor(idx / 15) * 15) * 40ms;
-            image-alpha: 1.0;
-            cloud-opacity: 1.0;
-            thumb: root.cards[idx].thumb;
-            hero: root.cards[idx].hero;
-            clicked => { root.cell-clicked(idx); }
-            flip-requested => { root.cell-flip(idx); }
+        scroll-event(event) => {
+            let d = event.delta-x + event.delta-y;
+            if (d != 0) {
+                root.wheel-dir = d < 0 ? 1 : -1;
+                wheel-debounce.restart();
+            }
+            accept
         }
     }
-
-    // 16ms kinetic timer placeholder (velocity *=0.90 handled in Rust; Slint just animates)
-    // Chrome switch cross-fade 200ms handled by parent GalleryChrome opacity transition.
 }

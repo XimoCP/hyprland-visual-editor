@@ -105,6 +105,11 @@ export global SkwdTokens {
     in-out property <int> gallery-mosaic-relax: 2;
     in-out property <length> gallery-mosaic-w: 1500px;
     in-out property <length> gallery-mosaic-h: 800px;
+    // Mosaic page-flip curtain (Mosaic final scheme): per-tile wipe ~300ms,
+    // staggered ~50ms per column, plus the reduced-motion crossfade.
+    in-out property <duration> mosaic-curtain-tile: 300ms;
+    in-out property <duration> mosaic-curtain-col-stagger: 50ms;
+    in-out property <duration> mosaic-page-fade: 200ms;
 
     // ── Card hover focus feedback (approved design, Slice + Mosaic):
     // subtle expansion (center scale ~1.03) PLUS a slight brightness lift,

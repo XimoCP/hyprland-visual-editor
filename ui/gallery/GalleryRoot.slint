@@ -25,6 +25,10 @@ export component GalleryRoot inherits Rectangle {
     in property <[GalleryCardData]> cards;
     // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
+    // Mosaic pagination mirrors (Rust page model is the source of truth).
+    in property <int> mosaic-current-page: 0;
+    in property <int> mosaic-total-pages: 1;
+    in property <[int]> mosaic-page-numbers;
     in property <bool> empty: false;
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
@@ -38,6 +42,7 @@ export component GalleryRoot inherits Rectangle {
     callback card-clicked(int);
     callback card-right-clicked(int);
     callback wheel-step(int); // debounced ±1 gesture from SliceCarousel
+    callback mosaic-page-step(int); // debounced ±1 gesture from MosaicView wheel
     callback mit-opened();    // D10 pill → Rust opens mit-link (xdg-open)
     // Stage geometry events (logical lengths): Rust recomputes the mosaic
     // tiles model from these instead of reading the startup window size.
@@ -118,22 +123,28 @@ export component GalleryRoot inherits Rectangle {
             wheel-step(dir) => { root.wheel-step(dir); }
         }
 
-        // Style 2 — Mosaic: dual-stripe Voronoi stage (R2.3). Placeholder
-        // cells until the Voronoi model lands; clicks map onto real
-        // themes only while the index exists. Style 1 (Hexagon) removed
-        // per decision #632.
+        // Style 2 — Mosaic: paginated Pinterest band (Mosaic final scheme).
+        // Renders only the current page; Rust owns the page model and the
+        // curtain + pagination are driven by the mirrors below. Clicks map
+        // onto real themes via the tile's real-index (clone-fill safe).
+        // Style 1 (Hexagon) removed per decision #632.
         if root.shown-style == 2 : MosaicView {
             width: 100%;
             height: 100%;
             viewport-w: self.width;
             cards: root.cards;
             tiles: root.mosaic-tiles;
+            current-page: root.mosaic-current-page;
+            total-pages: root.mosaic-total-pages;
+            page-numbers: root.mosaic-page-numbers;
+            reduced-motion: root.reduced-motion;
             cell-clicked(idx) => {
                 if (idx < root.cards.length) { root.card-clicked(idx); }
             }
             cell-flip(idx) => {
                 if (idx < root.cards.length) { root.card-right-clicked(idx); }
             }
+            page-step(dir) => { root.mosaic-page-step(dir); }
         }
     }
 
