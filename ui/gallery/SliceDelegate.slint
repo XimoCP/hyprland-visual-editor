@@ -179,6 +179,23 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
 
+    // ── Focus glow (S2): subtle outer halo behind the bright border.
+    // Primary 6px stroke at low opacity, only on expanded (is-current), gives
+    // the light/cyan glowing outline from the reference while reusing the
+    // existing SkwdTokens.primary token and its 200ms cadence.
+    focus-glow := SliceShape {
+        x: -root.pad;
+        y: -root.pad;
+        width: root.width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: transparent;
+        stroke: SkwdTokens.primary;
+        stroke-width: 6px;
+        opacity: root.is-current ? 0.22 : 0.0;
+        animate opacity { duration: SkwdTokens.anim-200; }
+    }
+
     // ── Face: same geometry, painted above the shadow; border per the
     // skwd-wall contract restored in PR2.HF/HF2 — current primary w3 /
     // hover primary@40% w1 / idle black@60% w1, now at the skwd 200ms

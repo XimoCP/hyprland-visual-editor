@@ -9,6 +9,7 @@ import {
 } from "./modules.slint";
 import { ShellRoot, SkwdTokens } from "./shell.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
+import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
 
 // Re-export SkwdTokens so Rust can access it via crate::SkwdTokens.
@@ -206,6 +207,8 @@ export component MainWindow inherits Window {
     in-out property <int> gallery-style: 0;
     in-out property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
+    // S2 ring tiles (Rust ring_visible_slots, edge-to-edge clones).
+    in property <[SliceTileData]> gallery-slice-tiles;
     // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
@@ -502,6 +505,7 @@ export component MainWindow inherits Window {
         gallery-style: root.gallery-style;
         gallery-focused: root.gallery-focused;
         gallery-cards: root.gallery-cards;
+        gallery-slice-tiles: root.gallery-slice-tiles;
         gallery-mosaic-tiles: root.gallery-mosaic-tiles;
         gallery-mosaic-current-page: root.gallery-mosaic-current-page;
         gallery-mosaic-total-pages: root.gallery-mosaic-total-pages;

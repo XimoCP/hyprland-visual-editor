@@ -1,11 +1,16 @@
-// HVE 2 — SliceCarousel (gallery-immersive-redesign PR2.5).
+// HVE 2 — SliceCarousel (S2 infinite wall).
 //
-// Manual-x carousel host (design D2): HorizontalLayout cannot express the
-// 4px hairline gap precisely, so every card gets an absolute x from
-// cum_offset while the row container follows snap_x so the focused card
-// lands pixel-centered (design D5). These pure functions MIRROR the
-// headless-tested ones in src/shell/gallery/views/slice.rs (cum_offset/
-// snap_x) — keep both in parity; numbers flow from SkwdTokens only.
+// Infinite carousel wall: focused card dead-center expanded (924), collapsed
+// slats 135 contiguous zero-gap on both sides filling edge-to-edge via clones.
+// Ring math is in Rust (slice::ring_visible_slots); this file CONSUMES it —
+// no cum_offset/snap_x reinvention. Stage width changes re-render via the
+// shared stage-geometry callback (mosaic plumbing). Clicks route REAL index.
+//
+// 3-pass paint: idle distance-tiered (far→near) + hovered + expanded topmost.
+// Brief x animate (350ms OutCubic) avoids flash on step; wheel debounce Timer
+// stays outside the for-repeater (Slint 1.17 panic). Edge fade via per-tile
+// fade from Rust (skwd fullZone curve, subtle). Focus border via SkwdTokens
+// primary w3 + subtle glow (primary transparentize).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -13,86 +18,30 @@ import { SkwdTokens } from "../tokens.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceDelegate } from "SliceDelegate.slint";
 
+export struct SliceTileData {
+    x: length,
+    w: length,
+    real-index: int,
+    is-expanded: bool,
+    fade: float,
+    dist: int,
+}
+
 export component SliceCarousel inherits Rectangle {
     in property <[GalleryCardData]> cards;
-    in property <int> focused-index: 0;
+    in property <[SliceTileData]> tiles;
 
     callback card-clicked(int);
     callback card-right-clicked(int);
     callback wheel-step(int); // +1 next / −1 previous, once per gesture
 
-    // Index currently under the pointer (−1 = none); feeds the hovered
-    // paint layer (design D4). Delegates report enter/leave via hovered().
-    in-out property <int> hovered-index: -1;
+    // Hovered tile index (−1 = none); feeds hovered paint layer.
+    in-out property <int> hovered-tile: -1;
 
-    // Stage clips the sliding row (cards travel beyond both edges).
     clip: true;
+    background: transparent;
 
-    // ── Geometry (skwd exact, tokens.slint) ──
-    property <length> card-w: SkwdTokens.gallery-slice-w;         // 135
-    property <length> exp-w: SkwdTokens.gallery-slice-expanded-w; // 924
-    property <length> gap: SkwdTokens.gallery-slice-spacing;      // 4 hairline gap
-    property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35 shear
-
-    // Mirror of slice.rs::cum_offset (design D2): Σ_{j<i} width(j) + i·gap,
-    // closed form: i·(collapsed+gap) + (focused < i ? expanded−collapsed : 0)
-    // with gap = 4 (small positive separation, cum_offset(i)=Σwidth(j)+i·gap).
-    pure function cum-offset(i: int, focused: int) -> length {
-        i * (root.card-w + root.gap)
-        + (focused < i ? (root.exp-w - root.card-w) : 0px)
-    }
-
-    // Mirror of slice.rs::snap_x (design D5): center − expanded/2 − cum(focused).
-    pure function snap-x() -> length {
-        root.width / 2 - root.exp-w / 2
-        - self.cum-offset(root.focused-index, root.focused-index)
-    }
-
-    // ── Depth cues (design D4, PR3): MIRRORS of slice.rs fns — keep parity,
-    // numbers flow from SkwdTokens only. skwd-wall exact: fullZone =
-    // min(0.6, (expanded/2 + 2·(collapsed+spacing)) / halfView); opacity
-    // flat inside the zone then LINEAR to 0 at normDist 1.2. ──
-    pure function edge-full-zone() -> float {
-        let half-view = root.width / 2 / 1px;
-        if (half-view <= 0.0) { return 0.6; }
-        let zone = ((root.exp-w / 2 + 2 * (root.card-w + root.gap)) / 1px) / half-view;
-        Math.min(0.6, zone)
-    }
-
-    // Distance of card i's center from the viewport center, in half-view
-    // units, computed on TARGET layout (focused index) rather than the
-    // animated row x — the 200ms opacity animation smooths the transition.
-    pure function edge-norm-dist(i: int) -> float {
-        let half-view = root.width / 2 / 1px;
-        if (half-view <= 0.0) { return 0.0; }
-        let card-center = (root.cum-offset(i, root.focused-index)
-            + (i == root.focused-index ? root.exp-w : root.card-w) / 2) / 1px;
-        let view-center = root.width / 2 / 1px - root.snap-x() / 1px;
-        Math.abs(card-center - view-center) / half-view
-    }
-
-    // Mirror of slice.rs::fade_opacity (skwd exact piecewise curve).
-    pure function fade-opacity(nd: float, full-zone: float) -> float {
-        nd <= full-zone || full-zone >= 1.2 ? 1.0
-            : Math.max(0.0, 1.0 - (nd - full-zone) / (1.2 - full-zone))
-    }
-
-    // Per-card edge fade fed to EVERY delegate instance (all paint layers).
-    pure function card-fade-opacity(i: int) -> float {
-        root.fade-opacity(root.edge-norm-dist(i), root.edge-full-zone())
-    }
-
-    pure function abs-dist(i: int, focused: int) -> int {
-        let d = i - focused;
-        d < 0 ? -d : d
-    }
-
-    // ── Wheel (design D5): scroll events only ARM the gesture — the last
-    // direction wins and the 400ms debounce Timer commits the snap after
-    // the wheel idles. One gesture = one ±1 step, clamped/no-wrap in Rust
-    // (slice::wheel_target). Delta convention: wheel down = next card.
-    // Declared BEFORE the row so cards stay on top for clicks; their touch
-    // areas reject scrolls, which bubble down to this zone. ──
+    // ── Wheel (design D5): same debounce as mosaic — arm then commit 1 step.
     property <int> wheel-dir: 0;
     wheel-debounce := Timer {
         interval: 400ms;
@@ -115,120 +64,127 @@ export component SliceCarousel inherits Rectangle {
         }
     }
 
-    // ── Moving row: one animated x for the whole strip (350ms OutCubic),
-    // vertically centering the 520px cards in the stage. ──
-    row := Rectangle {
-        x: root.snap-x();
-        y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
-        height: SkwdTokens.gallery-slice-h;
-        animate x {
-            duration: SkwdTokens.anim-expand;
-            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-        }
+    // Stage content — vertically centers the 520 band; tiles positioned absolute x.
+    content := Rectangle {
+        width: 100%;
+        height: 100%;
+        clip: true;
 
-        // Paint order = declaration order (design D4, PR3): idle passes
-        // tiered by distance from focused (skwd-wall z: 50 - |index -
-        // currentIndex|, current 100, hovered 90) — Slint `z` is
-        // compile-time constant so only paint order can encode distance.
-        // Farthest idle behind, nearest idle on top, then hovered, then
-        // current on top. 6 idle distance tiers (≥5..1) + hovered + current
-        // = 8 passes total, covering the small 4px gap (kept for stacking
-        // correctness with skew; gap makes overlap rare but tiering remains):
-        // left side already paints far→near via left→right but right side
-        // needed reversal — the distance tiers make both sides far-first.
-        // Instances persist across swaps (PR2.HF regression) so no state is
-        // lost when a card hops layers.
-        for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) >= 5;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
-            hovered(h) => { root.hovered-index = h ? i : -1; }
-        }
-        for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 4;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
-            hovered(h) => { root.hovered-index = h ? i : -1; }
-        }
-        for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 3;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
-            hovered(h) => { root.hovered-index = h ? i : -1; }
-        }
-        for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 2;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
-            hovered(h) => { root.hovered-index = h ? i : -1; }
-        }
-        for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i != root.hovered-index && root.abs-dist(i, root.focused-index) == 1;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
-            hovered(h) => { root.hovered-index = h ? i : -1; }
-        }
+        // Band vertical center
+        band := Rectangle {
+            y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
+            height: SkwdTokens.gallery-slice-h;
+            width: 100%;
+            clip: false;
 
-        for card[i] in root.cards : SliceDelegate {
-            visible: i != root.focused-index && i == root.hovered-index;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
-            hovered(h) => { root.hovered-index = h ? i : -1; }
-        }
-
-        for card[i] in root.cards : SliceDelegate {
-            visible: i == root.focused-index;
-            x: root.cum-offset(i, root.focused-index);
-            fade-opacity: root.card-fade-opacity(i);
-            card-name: card.name;
-            is-current: i == root.focused-index;
-            accent: card.accent;
-            thumb: card.thumb;
-            hero: card.hero;
-            clicked => { root.card-clicked(i); }
-            right-clicked => { root.card-right-clicked(i); }
+            // Idle far (dist >=5) behind
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: !t.is-expanded && t.dist >= 5 && idx != root.hovered-tile;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: !t.is-expanded && t.dist == 4 && idx != root.hovered-tile;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: !t.is-expanded && t.dist == 3 && idx != root.hovered-tile;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: !t.is-expanded && t.dist == 2 && idx != root.hovered-tile;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: !t.is-expanded && t.dist == 1 && idx != root.hovered-tile;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
+            // Hovered collapsed one layer above idle
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: !t.is-expanded && idx == root.hovered-tile;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
+            // Expanded centered on top
+            for t[idx] in root.tiles : SliceDelegate {
+                visible: t.is-expanded;
+                x: t.x;
+                y: 0;
+                fade-opacity: t.fade;
+                card-name: root.cards[t.real-index].name;
+                is-current: t.is-expanded;
+                accent: root.cards[t.real-index].accent;
+                thumb: root.cards[t.real-index].thumb;
+                hero: root.cards[t.real-index].hero;
+                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                clicked => { root.card-clicked(t.real-index); }
+                right-clicked => { root.card-right-clicked(t.real-index); }
+                hovered(h) => { root.hovered-tile = h ? idx : -1; }
+            }
         }
     }
 }

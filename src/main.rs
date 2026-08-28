@@ -476,6 +476,52 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         })
     };
+    // S2 ring: contiguous zero-gap wall tiles (Rust ring_visible_slots).
+    let refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync> = {
+        let weak = window.as_weak();
+        let dims = stage_dims.clone();
+        std::sync::Arc::new(move || {
+            use slint::{Model, ModelRc, VecModel};
+            let Some(w) = weak.upgrade() else { return; };
+            let cards = w.get_gallery_cards();
+            let real_count = cards.row_count() as usize;
+            if real_count == 0 {
+                w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(Vec::<crate::SliceTileData>::new())));
+                return;
+            }
+            let focused = w.get_gallery_focused().max(0) as usize;
+            let (stage_w, _stage_h) = dims
+                .lock()
+                .unwrap()
+                .as_ref()
+                .copied()
+                .unwrap_or_else(|| {
+                    let scale = w.window().scale_factor();
+                    let physical = w.window().size();
+                    (physical.width as f32 / scale, physical.height as f32 / scale)
+                });
+            if !(stage_w > 0.0) {
+                return;
+            }
+            let focused = focused.min(real_count.saturating_sub(1));
+            let tiles = crate::shell::gallery::views::slice::slice_ui_tiles(real_count, focused, stage_w);
+            let tiles_rc = w.get_gallery_slice_tiles();
+            if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
+                while vm.row_count() < tiles.len() {
+                    vm.push(crate::SliceTileData { x: 0.0, w: 0.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 });
+                }
+                while vm.row_count() > tiles.len() {
+                    vm.remove(vm.row_count() - 1);
+                }
+                for (i, t) in tiles.iter().enumerate() {
+                    vm.set_row_data(i, crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist });
+                }
+            } else {
+                let slint_tiles: Vec<crate::SliceTileData> = tiles.into_iter().map(|t| crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist }).collect();
+                w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(slint_tiles)));
+            }
+        })
+    };
     fn schedule_thumbs(
         weak: &slint::Weak<crate::MainWindow>,
         themes_root: &std::path::Path,
@@ -560,28 +606,34 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(
             Vec::<crate::MosaicTileData>::new(),
         )));
+        window.set_gallery_slice_tiles(ModelRc::new(VecModel::from(
+            Vec::<crate::SliceTileData>::new(),
+        )));
         let cards = to_gallery_cards(&gallery_tm.lock().unwrap());
         let empty = cards.is_empty();
         window.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
         window.set_gallery_empty(empty);
         refresh_mosaic_page();
+        refresh_slice_ring();
         schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims, refresh_mosaic_page.clone());
-        // Slint-driven stage geometry: recompute the mosaic tiles whenever
-        // the gallery stage resizes (fullscreen transition, tiling float).
+        // Slint-driven stage geometry: recompute BOTH models whenever the
+        // gallery stage resizes (shared plumbing, reused for mosaic + slice ring).
         // Only the tiles MODEL is mutated here — never width/height — so
         // no feedback loop is possible. Slint `length` callback args map
         // to logical-pixel f32.
         {
             let win = window.as_weak();
             let dims = stage_dims.clone();
-            let refresh = refresh_mosaic_page.clone();
+            let refresh_mosaic = refresh_mosaic_page.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_stage_geometry_changed(move |width: f32, height: f32| {
                 if !(width > 0.0) || !(height > 0.0) {
                     return; // degenerate dims: keep last-known-good state
                 }
                 *dims.lock().unwrap() = Some((width, height));
-                if let Some(_w) = win.upgrade() {
-                    refresh();
+                if win.upgrade().is_some() {
+                    refresh_mosaic();
+                    refresh_slice();
                 }
             });
         }
@@ -590,11 +642,13 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
         window.set_gallery_style(0);
         window.set_gallery_focused(0);
+        refresh_slice_ring();
         window.set_gallery_reduced_motion(gallery_slot.is_reduced_motion());
         {
             let win = window.as_weak();
             let slot = gallery_slot.clone();
             let tm = gallery_tm.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_style_selected(move |style| {
                 let idx = (style as usize).min(2);
                 if let Some(w) = win.upgrade() {
@@ -610,6 +664,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         w.set_gallery_focused(len - 1);
                     }
                     let _ = slot.effective_anim_duration(crate::shell::gallery::views::CHROME_SWITCH_DURATION_MS);
+                    refresh_slice();
                 }
             });
         }
@@ -619,12 +674,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let tm = gallery_tm.clone();
             let stage_dims = stage_dims.clone();
             let refresh = refresh_mosaic_page.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             let gallery_themes_root = gallery_themes_root.clone();
             window.on_gallery_card_clicked(move |idx| {
                 let i = idx as usize;
                 if let Some(w) = win.upgrade() {
                     w.set_gallery_focused(idx);
                 }
+                refresh_slice();
                 let name_opt = {
                     let guard = tm.lock().unwrap();
                     guard.list().unwrap_or_default().get(i).map(|info| info.name.clone())
@@ -636,6 +693,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if let Some(w) = win.upgrade() {
                             w.set_gallery_cards(ModelRc::new(VecModel::from(refreshed)));
                             refresh();
+                            refresh_slice();
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
                     }
@@ -644,9 +702,11 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         {
             let win = window.as_weak();
+            let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_card_right_clicked(move |idx| {
                 if let Some(w) = win.upgrade() {
                     w.set_gallery_focused(idx);
+                    refresh_slice();
                     let _ = w.get_gallery_style();
                 }
             });
@@ -821,6 +881,7 @@ fn main() -> Result<(), slint::PlatformError> {
         &shell,
         mosaic_pages,
         refresh_mosaic_page,
+        refresh_slice_ring.clone(),
     );
 
     // ── Nav modules (data-driven sidebar, translated) ──

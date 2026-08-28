@@ -8,6 +8,7 @@ import { SkwdTokens } from "tokens.slint";
 import { GalleryRoot } from "gallery/GalleryRoot.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
+import { SliceTileData } from "gallery/SliceCarousel.slint";
 // Re-export the token singleton so consumers of this compilation unit (and
 // delivery 4's ui/main.slint) can read it under its own name from Rust.
 export { SkwdTokens }
@@ -73,8 +74,9 @@ export component ShellRoot inherits Rectangle {
     in property <int> gallery-style: 0;
     in property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
-    // Justified-rows Mosaic geometry, computed by Rust (mosaic.rs) and
-    // piped exactly like gallery-cards.
+    // S2 ring tiles (Rust ring_visible_slots) + Mosaic geometry, both piped
+    // like gallery-cards (edge-to-edge clones for slice).
+    in property <[SliceTileData]> gallery-slice-tiles;
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> gallery-mosaic-current-page: 0;
@@ -189,6 +191,7 @@ export component ShellRoot inherits Rectangle {
                 current-style: root.gallery-style;
                 focused-index: root.gallery-focused;
                 cards: root.gallery-cards;
+                slice-tiles: root.gallery-slice-tiles;
                 mosaic-tiles: root.gallery-mosaic-tiles;
                 mosaic-current-page: root.gallery-mosaic-current-page;
                 mosaic-total-pages: root.gallery-mosaic-total-pages;

@@ -355,6 +355,7 @@ pub struct SliceUiTile {
     pub real_index: usize,
     pub is_expanded: bool,
     pub fade: f32,
+    pub dist: i32,
 }
 
 /// Edge fade for a single ring slot at `stage_width` (skwd fullZone curve).
@@ -375,7 +376,8 @@ pub fn slice_ui_tiles(real_count: usize, focused: usize, stage_width: f32) -> Ve
         .into_iter()
         .map(|s| {
             let fade = ring_slot_fade(&s, stage_width);
-            SliceUiTile { x: s.x, w: s.width, real_index: s.real_index, is_expanded: s.is_expanded, fade }
+            let dist = (s.virtual_index - focused as isize).abs() as i32;
+            SliceUiTile { x: s.x, w: s.width, real_index: s.real_index, is_expanded: s.is_expanded, fade, dist }
         })
         .collect()
 }

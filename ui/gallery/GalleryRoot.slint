@@ -15,7 +15,7 @@ import { FilterBar } from "FilterBar.slint";
 import { ChromeButton } from "ChromeButton.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
-import { SliceCarousel } from "SliceCarousel.slint";
+import { SliceCarousel, SliceTileData } from "SliceCarousel.slint";
 import { MosaicView, MosaicTileData } from "MosaicView.slint";
 
 export component GalleryRoot inherits Rectangle {
@@ -23,6 +23,8 @@ export component GalleryRoot inherits Rectangle {
     in property <int> current-style: 0; // 0 Slice, 1 Hexagon, 2 Mosaic
     in property <int> focused-index: 0;
     in property <[GalleryCardData]> cards;
+    // S2 ring: contiguous wall tiles (Rust ring_visible_slots + fade).
+    in property <[SliceTileData]> slice-tiles;
     // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
@@ -110,14 +112,14 @@ export component GalleryRoot inherits Rectangle {
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
 
-        // Style 0 — Slice: overlapping parallelogram carousel. Manual x
-        // placement (−30 overlap) snaps the focused card pixel-centered
-        // (gallery-immersive-redesign PR2, design D2/D5).
+        // Style 0 — Slice: infinite wall (S2). Focused dead-center expanded,
+        // collapsed slats zero-gap both sides edge-to-edge via clones; stage
+        // width changes re-render via stage-geometry-changed (shared).
         if root.shown-style == 0 : SliceCarousel {
             width: 100%;
             height: 100%;
             cards: root.cards;
-            focused-index: root.focused-index;
+            tiles: root.slice-tiles;
             card-clicked(i) => { root.card-clicked(i); }
             card-right-clicked(i) => { root.card-right-clicked(i); }
             wheel-step(dir) => { root.wheel-step(dir); }
