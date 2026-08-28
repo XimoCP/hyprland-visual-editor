@@ -1,16 +1,20 @@
-// HVE 2 — SliceCarousel (S2 infinite wall + S4b baked).
+// HVE 2 — SliceCarousel (V3 directional fluid + S4b baked).
 //
-// Infinite carousel wall: focused card dead-center expanded (924), collapsed
-// slats 135 contiguous zero-gap on both sides filling edge-to-edge via clones.
-// Ring math is in Rust (slice::ring_visible_slots); this file CONSUMES it —
-// no cum_offset/snap_x reinvention. Stage width changes re-render via the
-// shared stage-geometry callback (mosaic plumbing). Clicks route REAL index.
-//
-// 3-pass paint: idle distance-tiered (far→near) + hovered + expanded topmost.
-// Brief x animate (350ms OutCubic) avoids flash on step; wheel debounce Timer
-// stays outside the for-repeater (Slint 1.17 panic). Edge fade via per-tile
-// fade from Rust (skwd fullZone curve, S4b softened min 0.55). Focus border
-// via SkwdTokens icy cyan + glow. S4b: baked slat images flow through.
+// Single moving strip with silent rebase (valid in Slint 1.17 via
+// expression animation duration). Container carries ALL delegates at
+// RELATIVE positions (center=0, expanded at -462, collapsed step 135 =
+// 111 face + 12+12 air, zero-gap ring contiguous; visual gap 24 is
+// inset inside the 135 slot). Strip animates x by -delta*135 (350ms
+// OutCubic); is-current flips at slide start via focused-index so
+// widths animate in place; positions stay frozen during slide; at
+// settle (350ms Timer) Rust rebuilds the model for the new focus
+// (identical relative layout, self-similar) and snaps strip back
+// with rebasing=true (0ms, invisible). Wheel debounce Timer stays
+// OUTSIDE the for-repeater (Slint 1.17 panic). Edge fade via per-tile
+// fade, border on top, dim/fade tokens, gaps, hover — approved look.
+// Click on distant card slides the whole distance in one tween via
+// shortest ring delta. Rapid steps coalesced by existing 400ms wheel
+// debounce (simplest robust choice — documented in slice.rs).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -30,6 +34,14 @@ export struct SliceTileData {
 export component SliceCarousel inherits Rectangle {
     in property <[GalleryCardData]> cards;
     in property <[SliceTileData]> tiles;
+    // V3 strip animation state — driven from Rust (strip-offset animates,
+    // rebasing disables animation for the snap-back). Tiles x are RELATIVE
+    // to stage center (center=0).
+    in property <length> strip-offset: 0px;
+    in property <bool> rebasing: false;
+    // Focused index drives is-current (flips at slide start, widths animate
+    // in place while x positions stay frozen; at settle tiles rebuild).
+    in property <int> focused-index: 0;
 
     callback card-clicked(int);
     callback card-right-clicked(int);
@@ -64,141 +76,138 @@ export component SliceCarousel inherits Rectangle {
         }
     }
 
-    // Stage content — vertically centers the 520 band; tiles positioned absolute x.
-    content := Rectangle {
-        width: 100%;
-        height: 100%;
-        clip: true;
+    // ── Single animated strip: ONE x animates (350ms OutCubic), all
+    // delegates inside at fixed strip-local x = t.x (relative to stage
+    // center). Center of strip is at parent.width/2 + strip-offset.
+    strip := Rectangle {
+        // Positioned at stage center + animated offset
+        x: (parent.width / 2) + root.strip-offset;
+        y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
+        height: SkwdTokens.gallery-slice-h;
+        width: 0px;
+        clip: false;
+        animate x {
+            duration: root.rebasing ? 0ms : SkwdTokens.anim-expand;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
 
-        // Band vertical center
-        band := Rectangle {
-            y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
-            height: SkwdTokens.gallery-slice-h;
-            width: 100%;
-            clip: false;
-
-            // Idle far (dist >=5) behind
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: !t.is-expanded && t.dist >= 5 && idx != root.hovered-tile;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: !t.is-expanded && t.dist == 4 && idx != root.hovered-tile;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: !t.is-expanded && t.dist == 3 && idx != root.hovered-tile;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: !t.is-expanded && t.dist == 2 && idx != root.hovered-tile;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: !t.is-expanded && t.dist == 1 && idx != root.hovered-tile;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
-            // Hovered collapsed one layer above idle
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: !t.is-expanded && idx == root.hovered-tile;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
-            // Expanded centered on top
-            for t[idx] in root.tiles : SliceDelegate {
-                visible: t.is-expanded;
-                x: t.x;
-                y: 0;
-                fade-opacity: t.fade;
-                card-name: root.cards[t.real-index].name;
-                is-current: t.is-expanded;
-                accent: root.cards[t.real-index].accent;
-                thumb: root.cards[t.real-index].thumb;
-                hero: root.cards[t.real-index].hero;
-                slat-image: root.cards[t.real-index].slat-image;
-                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
-                animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                clicked => { root.card-clicked(t.real-index); }
-                right-clicked => { root.card-right-clicked(t.real-index); }
-                hovered(h) => { root.hovered-tile = h ? idx : -1; }
-            }
+        // Paint order = declaration order (design D4): idle tiered by
+        // distance from focused (skwd-wall z: 50 - |index - current|),
+        // nearest idle on top, hovered, then current on top. 8 passes.
+        // Is-current driven by focused-index (flips at slide start, width
+        // animates in place). Visible tiers use tile dist (frozen during
+        // slide) but current check uses focused-index equality.
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index != root.focused-index && t.dist >= 5 && idx != root.hovered-tile;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: t.real-index == root.focused-index;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index != root.focused-index && t.dist == 4 && idx != root.hovered-tile;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: t.real-index == root.focused-index;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index != root.focused-index && t.dist == 3 && idx != root.hovered-tile;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: t.real-index == root.focused-index;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index != root.focused-index && t.dist == 2 && idx != root.hovered-tile;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: t.real-index == root.focused-index;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index != root.focused-index && (t.dist == 1 || t.dist == 0) && idx != root.hovered-tile;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: t.real-index == root.focused-index;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index != root.focused-index && idx == root.hovered-tile;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: t.real-index == root.focused-index;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.real-index == root.focused-index;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: true;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
     }
 }

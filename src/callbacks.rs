@@ -64,6 +64,7 @@ pub fn setup_callbacks(
     mosaic_pages: std::sync::Arc<std::sync::Mutex<MosaicPages>>,
     refresh_mosaic_page: std::sync::Arc<dyn Fn() + Send + Sync>,
     refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync>,
+    animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync>,
 ) {
     // Single AppState instance shared across all callbacks
     let state = state.clone();
@@ -118,7 +119,12 @@ pub fn setup_callbacks(
         // this closure) each own a reference without consuming the originals.
         let mosaic_pages = mosaic_pages.clone();
         let refresh_mosaic_page = refresh_mosaic_page.clone();
-        let refresh_slice_ring = refresh_slice_ring.clone();
+        // V3: Slice keys flow directionally via animate_slice_step (fluid
+        // strip), not instant refresh. Pre-clone to avoid moving the original
+        // before the wheel handler below.
+        let animate_nav = animate_slice_step.clone();
+        let refresh_slice_ring_nav = refresh_slice_ring.clone();
+        let _ = &refresh_slice_ring_nav; // keep for non-slice fallback if needed
         window.on_nav_move(move |direction| {
             use crate::shell::nav::ExpansionState;
             use crate::shell::nav::Screen;
@@ -145,17 +151,9 @@ pub fn setup_callbacks(
                     }
                     return;
                 }
-                // Slice style 0: Left/Right wrap via ring_step (S1 infinite)
+                // Slice style 0: fluid directional strip (V3)
                 if style == 0 {
-                    if let Some(w) = weak.upgrade() {
-                        let len = w.get_gallery_cards().row_count() as usize;
-                        if len > 0 {
-                            let cur = w.get_gallery_focused().max(0) as usize;
-                            let next = crate::shell::gallery::views::slice::ring_step(cur, delta as isize, len);
-                            w.set_gallery_focused(next as i32);
-                            refresh_slice_ring();
-                        }
-                    }
+                    animate_nav(delta as isize);
                     return;
                 }
                 if let Some(w) = weak.upgrade() {
@@ -175,25 +173,15 @@ pub fn setup_callbacks(
     }
 
     // ── Gallery wheel (S2 ring): debounce Timer fires once per idle gesture;
-    // wheel_target wraps via ring_step; refresh the ring tiles after focus.
+    // V3 directional fluid — animate strip, not instant.
     {
         let weak = window.as_weak();
-        let refresh_slice_ring = refresh_slice_ring.clone();
+        let animate = animate_slice_step.clone();
+        let _refresh = refresh_slice_ring.clone();
+        let _ = &_refresh;
         window.on_gallery_wheel_step(move |dir| {
-            use slint::Model;
-            if let Some(w) = weak.upgrade() {
-                let len = w.get_gallery_cards().row_count();
-                if len > 0 {
-                    let cur = w.get_gallery_focused();
-                    let next = crate::shell::gallery::views::slice::wheel_target(
-                        len,
-                        cur.max(0) as usize,
-                        dir as isize,
-                    );
-                    w.set_gallery_focused(next as i32);
-                    refresh_slice_ring();
-                }
-            }
+            let _ = &weak;
+            animate(dir as isize);
         });
     }
 

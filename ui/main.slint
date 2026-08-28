@@ -203,12 +203,14 @@ export component MainWindow inherits Window {
     callback back-activated();
     callback nav-move(direction: string);
 
-    // ── Gallery wiring (PR4.5) — visible gallery ──
+    // ── Gallery wiring (PR4.5 + V3 strip) — visible gallery ──
     in-out property <int> gallery-style: 0;
     in-out property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
-    // S2 ring tiles (Rust ring_visible_slots, edge-to-edge clones).
+    // V3 relative strip tiles (center=0) + strip-offset/rebasing for fluid directional slide.
     in property <[SliceTileData]> gallery-slice-tiles;
+    in-out property <length> gallery-slice-strip-offset: 0px;
+    in-out property <bool> gallery-slice-rebasing: false;
     // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
@@ -506,6 +508,8 @@ export component MainWindow inherits Window {
         gallery-focused: root.gallery-focused;
         gallery-cards: root.gallery-cards;
         gallery-slice-tiles: root.gallery-slice-tiles;
+        gallery-slice-strip-offset: root.gallery-slice-strip-offset;
+        gallery-slice-rebasing: root.gallery-slice-rebasing;
         gallery-mosaic-tiles: root.gallery-mosaic-tiles;
         gallery-mosaic-current-page: root.gallery-mosaic-current-page;
         gallery-mosaic-total-pages: root.gallery-mosaic-total-pages;

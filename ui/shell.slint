@@ -70,13 +70,14 @@ export component ShellRoot inherits Rectangle {
     callback back-activated();             // Escape hides/minimizes window (tray hide)
     callback nav-move(direction: string);  // arrows: "up" | "down" | "left" | "right"
 
-    // ── Gallery wiring (PR4.5) ──
+    // ── Gallery wiring (PR4.5 + V3 strip) ──
     in property <int> gallery-style: 0;
     in property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
-    // S2 ring tiles (Rust ring_visible_slots) + Mosaic geometry, both piped
-    // like gallery-cards (edge-to-edge clones for slice).
+    // V3 relative strip tiles (center=0) + strip-offset/rebasing for fluid slide.
     in property <[SliceTileData]> gallery-slice-tiles;
+    in property <length> gallery-slice-strip-offset: 0px;
+    in property <bool> gallery-slice-rebasing: false;
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> gallery-mosaic-current-page: 0;
@@ -192,6 +193,8 @@ export component ShellRoot inherits Rectangle {
                 focused-index: root.gallery-focused;
                 cards: root.gallery-cards;
                 slice-tiles: root.gallery-slice-tiles;
+                slice-strip-offset: root.gallery-slice-strip-offset;
+                slice-rebasing: root.gallery-slice-rebasing;
                 mosaic-tiles: root.gallery-mosaic-tiles;
                 mosaic-current-page: root.gallery-mosaic-current-page;
                 mosaic-total-pages: root.gallery-mosaic-total-pages;

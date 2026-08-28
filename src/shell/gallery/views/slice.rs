@@ -448,6 +448,41 @@ pub fn slice_ui_tiles(real_count: usize, focused: usize, stage_width: f32) -> Ve
         .collect()
 }
 
+/// V3 relative feed — same window but x RELATIVE to stage center (center=0).
+/// Expanded at 0 is -462, first collapsed right at +462, left at -597 etc.
+/// Self-similar: the set of relative x values is identical for every focused
+/// (only real_index mapping shifts).
+pub fn slice_relative_tiles(real_count: usize, focused: usize, stage_width: f32) -> Vec<SliceUiTile> {
+    ring_visible_slots(real_count, focused, stage_width)
+        .into_iter()
+        .map(|s| {
+            let fade = ring_slot_fade(&s, stage_width);
+            let dist = (s.virtual_index - focused as isize).abs() as i32;
+            // Relative left edge = absolute left − stage center
+            let rel_x = s.x - stage_width / 2.0;
+            SliceUiTile { x: rel_x, w: s.width, real_index: s.real_index, is_expanded: s.is_expanded, fade, dist }
+        })
+        .collect()
+}
+
+/// Relative center for a delta (virtual − focused) — pure geometry, no stage.
+pub fn relative_center_for_delta(delta: isize) -> f32 {
+    if delta == 0 {
+        0.0
+    } else if delta > 0 {
+        SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH / 2.0 + (delta - 1) as f32 * SLICE_COLLAPSED_WIDTH
+    } else {
+        -(SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH / 2.0) + (delta + 1) as f32 * SLICE_COLLAPSED_WIDTH
+    }
+}
+
+/// Relative left edge for a delta.
+pub fn relative_x_for_delta(delta: isize) -> f32 {
+    let center = relative_center_for_delta(delta);
+    let w = if delta == 0 { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
+    center - w / 2.0
+}
+
 impl SliceView {
     /// Create a new carousel for `count` cards, focus 0.
     pub fn new(count: usize) -> Self {
