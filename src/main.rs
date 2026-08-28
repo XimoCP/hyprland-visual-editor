@@ -482,20 +482,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // (350ms OutCubic), is-current flips via focused-index so widths animate
     // in place, positions frozen during slide, at settle (350ms) rebuild
     // identical relative layout and snap strip back with rebasing 0ms.
-    // Central relay gate — ~1 step / 875ms. While active, any new step is DROPPED.
-    // AtomicBool is Send+Sync so it can be captured by the Arc<dyn Fn+Send+Sync> closures.
-    let slice_relay_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync> = {
         let weak = window.as_weak();
         let dims = stage_dims.clone();
-        let relay_active = slice_relay_active.clone();
         std::sync::Arc::new(move || {
             use slint::{Model, ModelRc, VecModel};
-            // Geometry refresh during an active relay would rebuild the frozen rows
-            // and kill the bloom/fold width animations — guard it.
-            if relay_active.load(std::sync::atomic::Ordering::SeqCst) {
-                return;
-            }
             let Some(w) = weak.upgrade() else { return; };
             let cards = w.get_gallery_cards();
             let real_count = cards.row_count() as usize;
@@ -547,16 +538,14 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         })
     };
-    // V4 central relay choreography (user-approved design):
-    // BLOOM (t0, 350ms): new center row flips to expanded at its slot one step away, old stays expanded (two coexist), strip stays 0.
-    // SLIDE (t0+175ms, 350ms): strip animates -delta*135, carrying blooming card to center, sliding OVER old (new paints above via dist-split top pass).
-    // FOLD (t0+525ms): rebasing 0ms snap (rows frozen, layout self-similar) — no rebuild — then fold origin 924→135 (350ms).
-    // CONSISTENCY (t0+875ms): rebuild rows for current focus (visually identical, flags already consistent) → clears stale dist → release gate.
-    // Gate drops any new step arriving before fold-settle (~1 step/875ms, wheel debounce 400ms still coalesces but relay gate extends to 875ms).
+    // V3 directional fluid step: immediate focused flip (width in place), animate
+    // strip by -delta*135 (350ms OutCubic), at settle rebuild relative tiles and
+    // snap strip back 0ms. Coalescing: existing 400ms wheel debounce coalesces
+    // rapid input — keep it; a second step during slide is ignored until settle.
     let animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync> = {
         let weak = window.as_weak();
         let dims = stage_dims.clone();
-        let relay_active = slice_relay_active.clone();
+        let refresh = refresh_slice_ring.clone();
         std::sync::Arc::new(move |delta: isize| {
             use slint::Model;
             let Some(w) = weak.upgrade() else { return; };
@@ -573,17 +562,17 @@ fn main() -> Result<(), slint::PlatformError> {
             if next == cur {
                 return;
             }
-            // Gate: drop any step while a relay sequence is active (extends strip-offset guard to whole 875ms)
-            if relay_active.load(std::sync::atomic::Ordering::SeqCst) {
-                return;
-            }
+            // If already animating (strip offset non-zero), coalesce — ignore until settle.
+            // Wheel debounce already coalesces; keys could chain but simplest robust is drop.
             if w.get_gallery_slice_strip_offset() != 0.0 {
                 return;
             }
-            relay_active.store(true, std::sync::atomic::Ordering::SeqCst);
             let plan = crate::shell::gallery::views::slice::slide_plan(delta);
-            // BLOOM: set focused immediately, open neighbor (two expanded coexist), width tweens 350ms in place, strip stays 0.
+            // Flip focused immediately so widths animate in place (now per-SLOT via is-expanded)
             w.set_gallery_focused(next as i32);
+            // Per-slot flip (V3 ghost fix): mutate frozen rows in place so ONLY the
+            // adjacent slot expands during the slide; clones of the focused theme stay
+            // 135px collapsed. Done BEFORE strip animation so width tweens in place.
             {
                 let tiles_rc = w.get_gallery_slice_tiles();
                 if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
@@ -591,9 +580,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if count >= 2 {
                         let mut rows: Vec<crate::SliceTileData> = (0..count).filter_map(|i| vm.row_data(i)).collect();
                         let before = rows.clone();
-                        if crate::shell::gallery::views::slice::relay_open_neighbor(&mut rows, delta) {
+                        if crate::shell::gallery::views::slice::flip_expanded_slot(&mut rows, delta) {
                             for idx in 0..count as usize {
-                                if rows[idx].is_expanded != before[idx].is_expanded || rows[idx].dist != before[idx].dist {
+                                if rows[idx].is_expanded != before[idx].is_expanded {
                                     vm.set_row_data(idx, rows[idx].clone());
                                 }
                             }
@@ -601,106 +590,62 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 }
             }
-            // SLIDE: start ~mid-bloom (175ms), animate strip -delta*135 (350ms OutCubic)
+            // Animate strip: 0 → offset (slide). Next card enters from right for next (+1 → -135).
+            w.set_gallery_slice_rebasing(false);
+            w.set_gallery_slice_strip_offset(plan.offset_px);
+            // At settle (anim duration 350ms) rebuild tiles for new focus and snap strip to 0
             let weak2 = weak.clone();
             let dims2 = dims.clone();
-            let relay_active2 = relay_active.clone();
-            slint::Timer::single_shot(std::time::Duration::from_millis(crate::shell::gallery::views::slice::SLICE_RELAY_BLOOM_SLIDE_STAGGER_MS), move || {
-                let Some(w2) = weak2.upgrade() else {
-                    relay_active2.store(false, std::sync::atomic::Ordering::SeqCst);
+            let refresh2 = refresh.clone();
+            slint::Timer::single_shot(std::time::Duration::from_millis(crate::shell::gallery::views::slice::SLICE_ANIM_DURATION_MS), move || {
+                let Some(w2) = weak2.upgrade() else { return; };
+                // Rebuild relative tiles for new focus (identical relative layout)
+                let cards2 = w2.get_gallery_cards();
+                let rc = cards2.row_count() as usize;
+                if rc == 0 {
+                    w2.set_gallery_slice_rebasing(true);
+                    w2.set_gallery_slice_strip_offset(0.0);
                     return;
-                };
-                w2.set_gallery_slice_rebasing(false);
-                w2.set_gallery_slice_strip_offset(plan.offset_px);
-                // At slide settle (350ms after slide start, t0+525ms) → rebasing snap + FOLD
-                let weak3 = weak2.clone();
-                let dims3 = dims2.clone();
-                let relay_active3 = relay_active2.clone();
-                slint::Timer::single_shot(std::time::Duration::from_millis(crate::shell::gallery::views::slice::SLICE_ANIM_DURATION_MS), move || {
-                    let Some(w3) = weak3.upgrade() else {
-                        relay_active3.store(false, std::sync::atomic::Ordering::SeqCst);
-                        return;
-                    };
-                    // Rebasing 0ms snap (rows frozen, layout self-similar) — NO rebuild here (would kill fold)
-                    w3.set_gallery_slice_rebasing(true);
-                    w3.set_gallery_slice_strip_offset(0.0);
-                    // FOLD: collapse origin in place 924→135 (350ms) at its slot one step off-center
-                    {
-                        let tiles_rc = w3.get_gallery_slice_tiles();
-                        if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
-                            let count = vm.row_count();
-                            if count >= 2 {
-                                let mut rows: Vec<crate::SliceTileData> = (0..count).filter_map(|i| vm.row_data(i)).collect();
-                                let before = rows.clone();
-                                if crate::shell::gallery::views::slice::relay_fold_origin(&mut rows) {
-                                    for idx in 0..count as usize {
-                                        if rows[idx].is_expanded != before[idx].is_expanded || rows[idx].dist != before[idx].dist {
-                                            vm.set_row_data(idx, rows[idx].clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // At fold settle (350ms after fold start, t0+875ms) → CONSISTENCY rebuild + release gate
-                    let weak4 = weak3.clone();
-                    let dims4 = dims3.clone();
-                    let relay_active4 = relay_active3.clone();
-                    slint::Timer::single_shot(std::time::Duration::from_millis(crate::shell::gallery::views::slice::SLICE_RELAY_FOLD_MS), move || {
-                        let Some(w4) = weak4.upgrade() else {
-                            relay_active4.store(false, std::sync::atomic::Ordering::SeqCst);
-                            return;
-                        };
-                        // Rebuild rows for current focus (visually identical: flags already consistent) → clears stale dist
-                        let cards = w4.get_gallery_cards();
-                        let rc = cards.row_count() as usize;
-                        if rc == 0 {
-                            w4.set_gallery_slice_rebasing(true);
-                            w4.set_gallery_slice_strip_offset(0.0);
-                            relay_active4.store(false, std::sync::atomic::Ordering::SeqCst);
-                            return;
-                        }
-                        let (stage_w, _) = dims4.lock().unwrap().as_ref().copied().unwrap_or_else(|| {
-                            let scale = w4.window().scale_factor();
-                            let physical = w4.window().size();
-                            (physical.width as f32 / scale, physical.height as f32 / scale)
-                        });
-                        if !(stage_w > 0.0) {
-                            w4.set_gallery_slice_rebasing(true);
-                            w4.set_gallery_slice_strip_offset(0.0);
-                            relay_active4.store(false, std::sync::atomic::Ordering::SeqCst);
-                            return;
-                        }
-                        let focused = w4.get_gallery_focused().max(0) as usize;
-                        let tiles = crate::shell::gallery::views::slice::slice_relative_tiles(rc, focused.min(rc - 1), stage_w);
-                        let tiles_rc = w4.get_gallery_slice_tiles();
-                        if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
-                            while vm.row_count() < tiles.len() {
-                                vm.push(crate::SliceTileData { x: 0.0, w: 0.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 });
-                            }
-                            while vm.row_count() > tiles.len() {
-                                vm.remove(vm.row_count() - 1);
-                            }
-                            for (i, t) in tiles.iter().enumerate() {
-                                vm.set_row_data(i, crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist });
-                            }
-                        } else {
-                            use slint::{ModelRc, VecModel};
-                            let slint_tiles: Vec<crate::SliceTileData> = tiles.into_iter().map(|t| crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist }).collect();
-                            w4.set_gallery_slice_tiles(ModelRc::new(VecModel::from(slint_tiles)));
-                        }
-                        w4.set_gallery_slice_rebasing(true);
-                        w4.set_gallery_slice_strip_offset(0.0);
-                        let weak5 = weak4.clone();
-                        let relay_active5 = relay_active4.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-                            if let Some(w5) = weak5.upgrade() {
-                                w5.set_gallery_slice_rebasing(false);
-                            }
-                            relay_active5.store(false, std::sync::atomic::Ordering::SeqCst);
-                        });
-                    });
+                }
+                let (stage_w, _) = dims2.lock().unwrap().as_ref().copied().unwrap_or_else(|| {
+                    let scale = w2.window().scale_factor();
+                    let physical = w2.window().size();
+                    (physical.width as f32 / scale, physical.height as f32 / scale)
                 });
+                if !(stage_w > 0.0) {
+                    w2.set_gallery_slice_rebasing(true);
+                    w2.set_gallery_slice_strip_offset(0.0);
+                    return;
+                }
+                let focused2 = w2.get_gallery_focused().max(0) as usize;
+                let tiles = crate::shell::gallery::views::slice::slice_relative_tiles(rc, focused2.min(rc-1), stage_w);
+                // Update tiles in place (same relative x, new mapping) — invisible due to self-similar
+                use slint::{ModelRc, VecModel};
+                let tiles_rc = w2.get_gallery_slice_tiles();
+                if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
+                    while vm.row_count() < tiles.len() {
+                        vm.push(crate::SliceTileData { x: 0.0, w: 0.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 });
+                    }
+                    while vm.row_count() > tiles.len() {
+                        vm.remove(vm.row_count() - 1);
+                    }
+                    for (i, t) in tiles.iter().enumerate() {
+                        vm.set_row_data(i, crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist });
+                    }
+                } else {
+                    let slint_tiles: Vec<crate::SliceTileData> = tiles.into_iter().map(|t| crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist }).collect();
+                    w2.set_gallery_slice_tiles(ModelRc::new(VecModel::from(slint_tiles)));
+                }
+                // Snap strip back with 0ms
+                w2.set_gallery_slice_rebasing(true);
+                w2.set_gallery_slice_strip_offset(0.0);
+                let weak3 = weak2.clone();
+                slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
+                    if let Some(w3) = weak3.upgrade() {
+                        w3.set_gallery_slice_rebasing(false);
+                    }
+                });
+                let _ = refresh2; // keep alive
             });
         })
     };
