@@ -180,11 +180,10 @@ pub fn strip_window(real_count: usize, focused: usize, stage_width: f32) -> Vec<
 }
 
 /// Strip FEED for Slint — rows built from `strip_window` for the
-/// virtualized single-strip carousel. RED stub: always empty so the
-/// RED contract test fails until the GREEN implementation delegates to
-/// `strip_window`.
-pub fn strip_feed(_real_count: usize, _focused: usize, _stage_width: f32) -> Vec<StripSlot> {
-    Vec::new()
+/// virtualized single-strip carousel. Deterministic feed: exactly the
+/// window slots, sorted left-to-right, with wrap and spare handling.
+pub fn strip_feed(real_count: usize, focused: usize, stage_width: f32) -> Vec<StripSlot> {
+    strip_window(real_count, focused, stage_width)
 }
 
 /// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
@@ -1758,7 +1757,10 @@ mod tests {
         let by_virt: std::collections::HashMap<isize, usize> = rows_last.iter().map(|r| (r.virtual_index, r.real_index)).collect();
         assert_eq!(by_virt[&5], 5);
         assert_eq!(by_virt[&6], 0, "forward wrap last→0 via feed");
-        assert_eq!(by_virt[&-1], 5 - 1); // will be 4, but check contiguous
+        // virtual -1 for count 6 is also 5 (duplicate clone 6 away), check presence
+        assert_eq!(by_virt[&-1], 5, "wrap duplicate clone");
+        // also virtual 4 (focused-1) maps to 4
+        assert_eq!(by_virt[&4], 4);
     }
 
     #[test]
