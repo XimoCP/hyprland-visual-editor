@@ -41,6 +41,31 @@ pub const SLICE_SOURCE_H: u32 = 720;
 /// Ring band inset: two collapsed slots per side (~270px background margin).
 pub const RING_EDGE_INSET_SLOTS: usize = 2;
 
+/// ── Strip virtualization V1 (pure math, OLD geometry parity) ───────────
+///
+/// Virtualized single-strip carousel: only the visible window (~7-13 slots) is
+/// rendered. Positions are relative to stage center (expanded centered at 0)
+/// with OLD skwd-wall geometry: collapsed 135 + 4px spacing → step 139.
+pub const STRIP_COLLAPSED_STEP: f32 = 139.0;
+pub const STRIP_WINDOW_SPARE_SLOTS: usize = 2;
+
+/// Virtualized strip slot — position relative to stage center (expanded at 0).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StripSlot {
+    /// Left-edge x relative to stage center is `position - width/2` if position
+    /// is center; `position` is center x (expanded 0). Kept as `position`
+    /// per spec — center relative to stage center.
+    pub position: f32,
+    pub real_index: usize,
+    pub virtual_index: isize,
+    pub is_expanded: bool,
+}
+
+/// Placeholder strip window — RED stub (always empty, tests must fail).
+pub fn strip_window(_real_count: usize, _focused: usize, _stage_width: f32) -> Vec<StripSlot> {
+    Vec::new()
+}
+
 /// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
 /// Edge-fade end: card opacity reaches 0 at this normalized distance.
 pub const EDGE_FADE_END: f32 = 1.2;
@@ -1325,5 +1350,242 @@ mod tests {
         // small stage still valid
         let tiny_slot = RingSlot { virtual_index: 0, real_index: 0, x: 0.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
         assert!((0.0..=1.0).contains(&ring_slot_fade(&tiny_slot, 50.0)));
+    }
+
+    // ── V1 strip virtualization contracts (RED) ───────────────────────
+
+    #[test]
+    fn strip_constants_match_old_geometry() {
+        assert!((STRIP_COLLAPSED_STEP - 139.0).abs() < 0.001, "collapsed step must be 139 (135+4), got {}", STRIP_COLLAPSED_STEP);
+        assert_eq!(STRIP_WINDOW_SPARE_SLOTS, 2, "spare slots per side must be 2");
+        assert_eq!(SLICE_COLLAPSED_WIDTH, 135.0);
+        assert_eq!(SLICE_EXPANDED_WIDTH, 924.0);
+        assert_eq!(SLICE_SPACING_PX, 4.0);
+    }
+
+    #[test]
+    fn strip_geometry_parity_old_step_1920() {
+        let stage_w = 1920.0;
+        let focused = 5usize;
+        let real_count = 48usize;
+        let win = strip_window(real_count, focused, stage_w);
+        assert!(!win.is_empty(), "strip window must not be empty for 1920 stage");
+        // expanded exactly once at position 0
+        let expanded: Vec<_> = win.iter().filter(|s| s.is_expanded).collect();
+        assert_eq!(expanded.len(), 1, "exactly one expanded");
+        assert!((expanded[0].position - 0.0).abs() < 0.001, "expanded must be at 0, got {}", expanded[0].position);
+        // slots sorted ascending by position
+        for w in win.windows(2) {
+            assert!(w[0].position < w[1].position + 0.001, "slots must be sorted ascending");
+        }
+        // step 139 between collapsed neighbours, gap 4
+        let mut collapsed: Vec<_> = win.iter().filter(|s| !s.is_expanded).collect();
+        collapsed.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+        for w in collapsed.windows(2) {
+            let a = w[0];
+            let b = w[1];
+            // skip window across expanded (distance includes expanded half-widths)
+            if (a.position < 0.0 && b.position > 0.0) || (a.position > 0.0 && b.position < 0.0) {
+                // pair straddles expanded; check gap between collapsed and expanded separately via positions
+                continue;
+            }
+            // both on same side of expanded: should be exactly 139 apart (center-to-center)
+            let delta = (b.position - a.position).abs();
+            // allow collapsed-collapsed step 139
+            if a.position.signum() == b.position.signum() {
+                assert!((delta - STRIP_COLLAPSED_STEP).abs() < 0.001, "collapsed step must be 139, got {delta} between {} and {}", a.virtual_index, b.virtual_index);
+                // body gap 4: (position diff) == step == width + gap
+                let gap = delta - SLICE_COLLAPSED_WIDTH;
+                assert!((gap - SLICE_SPACING_PX).abs() < 0.001, "gap must be 4px, got {gap}");
+            }
+        }
+        // exact pinnned positions for 1920, focused 5: expanded 0, neighbours ±533.5, ±672.5 etc.
+        let pos_map: std::collections::HashMap<isize, f32> = win.iter().map(|s| (s.virtual_index, s.position)).collect();
+        let exp_pos = pos_map[&(focused as isize)];
+        assert!((exp_pos - 0.0).abs() < 0.001);
+        let right1 = pos_map[&(focused as isize + 1)];
+        assert!((right1 - 533.5).abs() < 0.001, "right neighbour must be 533.5, got {right1}");
+        let right2 = pos_map[&(focused as isize + 2)];
+        assert!((right2 - 672.5).abs() < 0.001, "right+2 must be 672.5, got {right2}");
+        let left1 = pos_map[&(focused as isize - 1)];
+        assert!((left1 - (-533.5)).abs() < 0.001, "left neighbour must be -533.5, got {left1}");
+        let left2 = pos_map[&(focused as isize - 2)];
+        assert!((left2 - (-672.5)).abs() < 0.001, "left+2 must be -672.5, got {left2}");
+        // expanded width 924 centered at 0 => body [-462,462]; check collapsed bodies not overlapping expanded with correct gap
+        let exp_left = -SLICE_EXPANDED_WIDTH / 2.0;
+        let exp_right = SLICE_EXPANDED_WIDTH / 2.0;
+        // right collapsed left edge = position - collapsed/2 = 533.5-67.5=466 should be exp_right+4
+        let r1_left = right1 - SLICE_COLLAPSED_WIDTH / 2.0;
+        assert!((r1_left - (exp_right + SLICE_SPACING_PX)).abs() < 0.001, "right collapsed must start at expanded right +4, got {r1_left}");
+        let l1_right = left1 + SLICE_COLLAPSED_WIDTH / 2.0;
+        assert!((l1_right - (exp_left - SLICE_SPACING_PX)).abs() < 0.001, "left collapsed must end at expanded left -4, got {l1_right}");
+    }
+
+    #[test]
+    fn strip_coverage_spans_stage_plus_two_spares_per_side() {
+        let stage_w = 1920.0;
+        let half = stage_w / 2.0;
+        let win = strip_window(48, 10, stage_w);
+        assert!(!win.is_empty());
+        // no visible hole: sorted bodies contiguous with gap 4 (except expanded region)
+        let mut sorted = win.clone();
+        sorted.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+        // expanded present exactly once at 0
+        let exp_count = sorted.iter().filter(|s| s.is_expanded).count();
+        assert_eq!(exp_count, 1);
+        let exp = sorted.iter().find(|s| s.is_expanded).unwrap();
+        assert!((exp.position).abs() < 0.001);
+        // every collapsed body that intersects [-half, half] must be present +2 spares per side
+        // compute visible count inside window
+        let visible_in_window: Vec<_> = sorted.iter().filter(|s| {
+            let w = if s.is_expanded { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
+            let left = s.position - w / 2.0;
+            let right = s.position + w / 2.0;
+            right > -half && left < half
+        }).collect();
+        let total = sorted.len();
+        let visible = visible_in_window.len();
+        // total = visible + 4 spares (±1 for edge alignment)
+        assert!((total as isize - visible as isize - 4).abs() <= 1, "total {total} should be visible {visible} +4 spares, got diff {}", total as isize - visible as isize);
+        // at least covers visible edge: no gap larger than step where bodies should cover
+        // check that leftmost body is beyond -half - 2*step and rightmost beyond half+2*step (spares extend)
+        let leftmost = sorted.first().unwrap();
+        let rightmost = sorted.last().unwrap();
+        let lw = if leftmost.is_expanded { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
+        let rw = if rightmost.is_expanded { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
+        let left_edge = leftmost.position - lw / 2.0;
+        let right_edge = rightmost.position + rw / 2.0;
+        assert!(left_edge <= -half - (STRIP_COLLAPSED_STEP) - 0.001, "left spare must extend beyond -half by at least 1 step, got left_edge {left_edge} half {half}");
+        assert!(right_edge >= half + STRIP_COLLAPSED_STEP + 0.001, "right spare must extend beyond +half, got {right_edge}");
+    }
+
+    #[test]
+    fn strip_wrap_continuity_both_directions() {
+        let count = 6usize;
+        let stage_w = 1920.0;
+        // focused=last (5) → forward neighbour wraps to 0
+        let win_last = strip_window(count, 5, stage_w);
+        let mut by_virt: std::collections::HashMap<isize, usize> = std::collections::HashMap::new();
+        for s in &win_last {
+            by_virt.insert(s.virtual_index, s.real_index);
+        }
+        // virtual 5 is focused (expanded) → real 5
+        assert_eq!(by_virt[&5], 5);
+        // virtual 6 should wrap to 0
+        assert_eq!(by_virt[&6], 0, "forward wrap last→0");
+        assert_eq!(by_virt[&7], 1);
+        // virtual 4 should be 4, 3→3
+        assert_eq!(by_virt[&4], 4);
+        // focused=0 → backward neighbour wraps to last
+        let win_zero = strip_window(count, 0, stage_w);
+        let mut by_virt0: std::collections::HashMap<isize, usize> = std::collections::HashMap::new();
+        for s in &win_zero {
+            by_virt0.insert(s.virtual_index, s.real_index);
+        }
+        assert_eq!(by_virt0[&0], 0);
+        assert_eq!(by_virt0[&-1], 5, "backward wrap 0→last");
+        assert_eq!(by_virt0[&-2], 4);
+        // virtual indices unbroken ...-2,-1,0,1,2...
+        let mut v_sorted: Vec<isize> = win_last.iter().map(|s| s.virtual_index).collect();
+        v_sorted.sort_unstable();
+        for w in v_sorted.windows(2) {
+            assert_eq!(w[1] - w[0], 1, "virtual indices must be contiguous");
+        }
+    }
+
+    #[test]
+    fn strip_window_size_bound_independent_of_real_count() {
+        let stage_w = 1920.0;
+        let focused = 3usize;
+        let small = strip_window(6, focused, stage_w);
+        let large = strip_window(48, focused % 48, stage_w);
+        // same stage → same window size (independent of real_count)
+        assert_eq!(small.len(), large.len(), "window size must be independent of real_count, got {} vs {}", small.len(), large.len());
+        // bound: slot count == visible +4 within ±1 (already checked, here check same for large)
+        let half = stage_w / 2.0;
+        for win in [&small, &large] {
+            let visible = win.iter().filter(|s| {
+                let w = if s.is_expanded { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
+                let left = s.position - w / 2.0;
+                let right = s.position + w / 2.0;
+                right > -half && left < half
+            }).count();
+            assert!((win.len() as isize - visible as isize - 4).abs() <= 1);
+        }
+        // tiny stage still yields ~7-13, not huge
+        let tiny = strip_window(48, 10, 50.0);
+        assert!(tiny.len() >= 5 && tiny.len() <= 7, "tiny stage window should be 5-7 (expanded + spares), got {}", tiny.len());
+    }
+
+    #[test]
+    fn strip_real_index_bounds_and_edge_cases() {
+        // real_index always in [0, real_count)
+        for count in [1usize, 6, 48] {
+            for focused in [0usize, 2, 5] {
+                if focused >= count { continue; }
+                let win = strip_window(count, focused, 1920.0);
+                for s in &win {
+                    assert!(s.real_index < count, "real_index {} out of range for count {}", s.real_index, count);
+                    assert_eq!(s.real_index, ring_real_index(s.virtual_index, count));
+                }
+            }
+        }
+        // real_count==1 all real_index 0
+        let win_one = strip_window(1, 0, 1920.0);
+        assert!(!win_one.is_empty());
+        for s in &win_one {
+            assert_eq!(s.real_index, 0);
+        }
+        // real_count==0 empty no panic
+        let win_zero = strip_window(0, 0, 1920.0);
+        assert!(win_zero.is_empty(), "count 0 must be empty");
+        let win_zero2 = strip_window(0, 5, 50.0);
+        assert!(win_zero2.is_empty());
+        // tiny stage no panic, still expanded at 0
+        let win_tiny = strip_window(6, 2, 10.0);
+        assert!(!win_tiny.is_empty());
+        let exp = win_tiny.iter().find(|s| s.is_expanded).unwrap();
+        assert!((exp.position).abs() < 0.001);
+        // zero stage no panic empty
+        let win_no_stage = strip_window(6, 2, 0.0);
+        assert!(win_no_stage.is_empty());
+        let win_neg = strip_window(6, 2, -10.0);
+        assert!(win_neg.is_empty());
+    }
+
+    #[test]
+    fn strip_determinism_and_rebase_idempotence() {
+        let stage_w = 1920.0;
+        let a = strip_window(48, 10, stage_w);
+        let b = strip_window(48, 10, stage_w);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert!((x.position - y.position).abs() < 0.001);
+            assert_eq!(x.real_index, y.real_index);
+            assert_eq!(x.virtual_index, y.virtual_index);
+            assert_eq!(x.is_expanded, y.is_expanded);
+        }
+        // repeated stepping 1..=50 then computing window yields same relative layout (rebase idempotence)
+        // i.e., for any focused, the window's relative positions (distance from expanded) are identical pattern
+        let win5 = strip_window(48, 5, stage_w);
+        let win27 = strip_window(48, 27, stage_w);
+        // relative positions sorted by delta (virtual - focused) should be identical
+        let rel5: Vec<f32> = {
+            let mut v: Vec<(isize, f32)> = win5.iter().map(|s| (s.virtual_index - 5, s.position)).collect();
+            v.sort_by_key(|(d, _)| *d);
+            v.into_iter().map(|(_, p)| p).collect()
+        };
+        let rel27: Vec<f32> = {
+            let mut v: Vec<(isize, f32)> = win27.iter().map(|s| (s.virtual_index - 27, s.position)).collect();
+            v.sort_by_key(|(d, _)| *d);
+            v.into_iter().map(|(_, p)| p).collect()
+        };
+        assert_eq!(rel5.len(), rel27.len());
+        for (p5, p27) in rel5.iter().zip(rel27.iter()) {
+            assert!((p5 - p27).abs() < 0.001, "rebase idempotence: relative position {} != {} for different focused", p5, p27);
+        }
+        // also ring helpers still work
+        assert_eq!(ring_step(5, 1, 6), 0);
+        assert_eq!(ring_real_index(-1, 6), 5);
     }
 }
