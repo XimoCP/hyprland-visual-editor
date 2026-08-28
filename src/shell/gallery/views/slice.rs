@@ -274,8 +274,12 @@ pub fn ring_step(focused: usize, delta: isize, real_count: usize) -> usize {
     (focused as isize + delta).rem_euclid(real_count as isize) as usize
 }
 
-/// All visible slots intersecting [0, stage_width], extending cyclically
-/// outward from focused in both directions. Edge-to-edge fill via clones.
+/// All visible slots intersecting the inset band [inset, stage-inset],
+/// extending cyclically outward from focused in both directions.
+/// Band stops two collapsed slots short of each screen edge (inset
+/// = 2·135 = 270). Focused slot remains centered and is always emitted;
+/// collapsed slats are emitted only when fully inside the band, with no
+/// body inside either inset zone.
 /// Deterministic: computed from focused + geometry, no running offsets.
 pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -> Vec<RingSlot> {
     if real_count == 0 || !(stage_width > 0.0) {
@@ -287,7 +291,7 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
 
     let mut slots: Vec<RingSlot> = Vec::new();
 
-    // Focused slot
+    // Focused slot (always visible, even if band degenerate - keeps centering contract)
     slots.push(RingSlot {
         virtual_index: focused as isize,
         real_index: ring_real_index(focused as isize, real_count),
@@ -296,19 +300,22 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
         is_expanded: true,
     });
 
-    // Expand left: contiguous collapsed slats until left edge covered
+    let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
+    let band_left = inset;
+    let band_right = stage_width - inset;
+
+    // Expand left: contiguous collapsed slats until left inset covered
     let mut left: Vec<RingSlot> = Vec::new();
     let mut v = focused as isize - 1;
     // Guard against huge stage (e.g., 10k) needing many clones
     for _ in 0..10000 {
         let x = ring_slot_x(v, focused, stage_width);
         let w = SLICE_COLLAPSED_WIDTH;
-        // Slot intersects stage iff x < stage_width && x+w > 0
-        // For left side, once x+w <= 0 we have passed left edge; further left will be even more negative
-        if x + w <= 0.0 {
+        // Once x+w <= band_left we have passed left inset; further left will be even more negative
+        if x + w <= band_left {
             break;
         }
-        if x < stage_width && x + w > 0.0 {
+        if x >= band_left && x + w <= band_right {
             left.push(RingSlot {
                 virtual_index: v,
                 real_index: ring_real_index(v, real_count),
@@ -325,10 +332,10 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
     for _ in 0..10000 {
         let x = ring_slot_x(v, focused, stage_width);
         let w = SLICE_COLLAPSED_WIDTH;
-        if x >= stage_width {
+        if x >= band_right {
             break;
         }
-        if x < stage_width && x + w > 0.0 {
+        if x >= band_left && x + w <= band_right {
             right.push(RingSlot {
                 virtual_index: v,
                 real_index: ring_real_index(v, real_count),
@@ -361,15 +368,23 @@ pub struct SliceUiTile {
     pub dist: i32,
 }
 
-/// Edge fade for a single ring slot at `stage_width` (skwd fullZone curve).
+/// Edge fade for a single ring slot at `stage_width` (skwd fullZone curve),
+/// renormalized to the reduced band extent [inset, stage-inset] so the
+/// outermost VISIBLE slats remain clearly visible (lowest visible fade at
+/// band ends, never ~0 while on screen). Brightest at center, dimmest at ends.
 pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
     if !(stage_width > 0.0) {
         return 1.0;
     }
-    let half = stage_width / 2.0;
+    let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
+    let band_width = stage_width - 2.0 * inset;
+    let half = if band_width > 0.0 { band_width / 2.0 } else { stage_width / 2.0 };
+    if half <= 0.0 {
+        return 1.0;
+    }
     let fz = edge_fade_full_zone(half);
     let center = slot.x + slot.width / 2.0;
-    let nd = edge_norm_dist(center, half, half);
+    let nd = edge_norm_dist(center, stage_width / 2.0, half);
     fade_opacity(nd, fz)
 }
 
