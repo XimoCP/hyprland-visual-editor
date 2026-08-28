@@ -38,6 +38,9 @@ pub const SLICE_PREHEAT_MS: u64 = 120;
 pub const SLICE_SOURCE_W: u32 = 400;
 pub const SLICE_SOURCE_H: u32 = 720;
 
+/// Ring band inset: two collapsed slots per side (~270px background margin).
+pub const RING_EDGE_INSET_SLOTS: usize = 2;
+
 /// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
 /// Edge-fade end: card opacity reaches 0 at this normalized distance.
 pub const EDGE_FADE_END: f32 = 1.2;
@@ -1139,23 +1142,47 @@ mod tests {
 
     #[test]
     fn ring_edge_to_edge_fill_no_hole() {
-        for stage_w in [800.0, 1200.0, 1920.0, 2560.0] {
+        // Band now spans [inset, stage-inset] with 2 collapsed slots per side inset.
+        let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
+        for stage_w in [1920.0, 2560.0, 3000.0, 1734.0] {
             for focused in [0usize, 3, 5] {
+                if stage_w < 2.0 * inset + SLICE_EXPANDED_WIDTH {
+                    continue;
+                }
                 let slots = ring_visible_slots(6, focused, stage_w);
-                assert!(!slots.is_empty(), "must have visible slots");
+                assert!(!slots.is_empty(), "must have visible slots stage {stage_w}");
                 let min_x = slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
                 let max_r = slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
-                assert!(min_x <= 0.0 + 0.001, "left edge not covered min_x {min_x} stage {stage_w}");
-                assert!(max_r >= stage_w - 0.001, "right edge not covered max_r {max_r} stage {stage_w}");
+                assert!(min_x >= inset - 0.001, "first visible slot starts at/after inset {inset}, got min_x {min_x} stage {stage_w} focused {focused}");
+                assert!(max_r <= stage_w - inset + 0.001, "last visible slot ends at/before stage-inset, got max_r {max_r} stage {stage_w}");
+                // No slot body inside either inset zone
+                for s in &slots {
+                    assert!(s.x >= inset - 0.001, "slot x {} inside left inset {}", s.x, inset);
+                    assert!(s.x + s.width <= stage_w - inset + 0.001, "slot [{},{}] inside right inset {}", s.x, s.x + s.width, stage_w - inset);
+                }
                 // no hole larger than collapsed width between sorted slots
                 let mut sorted = slots.clone();
                 sorted.sort_by(|a,b| a.x.partial_cmp(&b.x).unwrap());
                 for w in sorted.windows(2) {
                     let gap = w[1].x - (w[0].x + w[0].width);
-                    assert!(gap <= 0.001, "hole {gap} between slots at stage {stage_w}");
+                    assert!(gap <= 0.001, "hole {gap} between slots at stage {stage_w} focused {focused}");
                 }
             }
         }
+    }
+
+    #[test]
+    fn ring_inset_constant_is_two_slots_per_side() {
+        assert_eq!(RING_EDGE_INSET_SLOTS, 2, "inset must be exactly 2 collapsed slots per side");
+        let inset_px = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
+        assert!((inset_px - 270.0).abs() < 0.001, "inset px must be 270 (2*135), got {inset_px}");
+        let stage_w = 1734.0; // aligned stage where band span exactly matches stage-2*inset
+        let slots = ring_visible_slots(6, 2, stage_w);
+        let min_x = slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
+        let max_r = slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+        let span = max_r - min_x;
+        let expected = stage_w - 2.0 * inset_px;
+        assert!((span - expected).abs() < 0.01, "band span {span} != expected {expected} (stage {stage_w} inset {inset_px})");
     }
 
     #[test]
@@ -1207,8 +1234,9 @@ mod tests {
     #[test]
     fn slice_ui_tiles_from_ring_focused_centered_and_fills_stage() {
         let stage_w = 1920.0;
+        let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
         let tiles = slice_ui_tiles(6, 2, stage_w);
-        assert!(!tiles.is_empty(), "tiles must fill stage");
+        assert!(!tiles.is_empty(), "tiles must fill band");
         let expanded = tiles.iter().filter(|t| t.is_expanded).count();
         assert_eq!(expanded, 1, "exactly one expanded");
         let foc = tiles.iter().find(|t| t.is_expanded).unwrap();
@@ -1216,16 +1244,23 @@ mod tests {
         assert_eq!(foc.w, SLICE_EXPANDED_WIDTH);
         let min_x = tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
         let max_r = tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
-        assert!(min_x <= 0.001 && max_r >= stage_w - 0.001, "edge-to-edge fill");
+        assert!(min_x >= inset - 0.001 && max_r <= stage_w - inset + 0.001, "band inset fill min {min_x} max {max_r} inset {inset} stage {stage_w}");
+        for s in &tiles {
+            assert!(s.x >= inset - 0.001, "tile inside left inset");
+            assert!(s.x + s.w <= stage_w - inset + 0.001, "tile inside right inset");
+        }
         // real_index always in range, clone mapping cyclic
         for t in &tiles {
             assert!(t.real_index < 6);
         }
-        // different stage width yields different tile count / x, but still centered
-        let narrow = slice_ui_tiles(6, 2, 800.0);
-        assert!(narrow.len() < tiles.len(), "narrow stage fewer tiles");
-        let foc2 = narrow.iter().find(|t| t.is_expanded).unwrap();
-        assert!((foc2.x + foc2.w / 2.0 - 400.0).abs() < 0.001);
+        // wider stage yields more tiles, but still centered and within band
+        let wide = slice_ui_tiles(6, 2, 2560.0);
+        assert!(wide.len() > tiles.len(), "wider stage more tiles {} vs {}", wide.len(), tiles.len());
+        let foc2 = wide.iter().find(|t| t.is_expanded).unwrap();
+        assert!((foc2.x + foc2.w / 2.0 - 1280.0).abs() < 0.001);
+        let min_w = wide.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        let max_w = wide.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        assert!(min_w >= inset - 0.001 && max_w <= 2560.0 - inset + 0.001);
     }
 
     #[test]
@@ -1236,9 +1271,21 @@ mod tests {
         }
         let foc_fade = tiles.iter().find(|t| t.is_expanded).unwrap().fade;
         assert!((foc_fade - 1.0).abs() < 0.001, "focused fully opaque");
-        // farthest slat should be dimmer than center but not invisible unless beyond 1.2
+        // outermost visible slat renormalized to band extent: dimmer than center but clearly visible (>0.5) and <1.0
         let far = tiles.iter().max_by(|a, b| (a.x).partial_cmp(&b.x).unwrap()).unwrap();
-        assert!(far.fade <= 1.0 && far.fade >= 0.0);
+        assert!(far.fade < 1.0 && far.fade > 0.5, "outermost fade must be dimmer than center but bounded away from 0, got {} (band renormalized)", far.fade);
+        // band-edge slot explicit: leftmost collapsed at ~363 must be <0.9 (full-stage would be 1.0)
+        let band_edge = RingSlot { virtual_index: 0, real_index: 0, x: 363.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
+        let bf = ring_slot_fade(&band_edge, 1920.0);
+        assert!(bf < 0.9, "band-edge fade {bf} must be <0.9 (renormalized, full-stage would be 1.0)");
+        assert!(bf > 0.35, "band-edge must stay visible >0.35, got {bf}");
+        // monotonic: fade non-increasing with distance from center
+        let center_x = 1920.0 / 2.0;
+        let mut by_dist: Vec<_> = tiles.iter().collect();
+        by_dist.sort_by(|a,b| ((a.x + a.w/2.0 - center_x).abs()).partial_cmp(&((b.x + b.w/2.0 - center_x).abs())).unwrap());
+        for w in by_dist.windows(2) {
+            assert!(w[0].fade + 0.001 >= w[1].fade, "fade must be monotonic brightest at center, got {} then {}", w[0].fade, w[1].fade);
+        }
         // degenerate inputs yield empty
         assert!(slice_ui_tiles(0, 0, 1920.0).is_empty());
         assert!(slice_ui_tiles(6, 0, 0.0).is_empty());
@@ -1251,10 +1298,15 @@ mod tests {
         // centered expanded slot fully opaque
         let center_slot = RingSlot { virtual_index: focused as isize, real_index: focused, x: ring_focused_x(stage_w), width: SLICE_EXPANDED_WIDTH, is_expanded: true };
         assert!((ring_slot_fade(&center_slot, stage_w) - 1.0).abs() < 0.001);
-        // far left slot dims toward edge but stays bounded
-        let far_left = ring_visible_slots(6, focused, stage_w).into_iter().min_by(|a,b| a.x.partial_cmp(&b.x).unwrap()).unwrap();
-        let f = ring_slot_fade(&far_left, stage_w);
+        // band-edge slot explicit: renormalized fade <0.9 (full-stage would be flat 1.0) and clearly visible
+        let band_edge = RingSlot { virtual_index: 1, real_index: 1, x: 363.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
+        let f = ring_slot_fade(&band_edge, stage_w);
+        assert!(f < 0.9, "renormalized band-edge fade must be <1.0, got {f} (full-stage would be 1.0)");
+        assert!(f > 0.35, "outermost must stay clearly visible >0.35, got {f}");
         assert!((0.0..=1.0).contains(&f), "far fade {f}");
+        // near-center expanded stays at flat 1.0 zone unchanged
+        let near = ring_visible_slots(6, focused, stage_w).into_iter().find(|s| s.is_expanded).unwrap();
+        assert!((ring_slot_fade(&near, stage_w) - 1.0).abs() < 0.001, "center slot must remain flat 1.0");
         // small stage still valid
         let tiny_slot = RingSlot { virtual_index: 0, real_index: 0, x: 0.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
         assert!((0.0..=1.0).contains(&ring_slot_fade(&tiny_slot, 50.0)));
