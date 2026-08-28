@@ -576,109 +576,21 @@ impl RelayPosition for crate::SliceTileData {
     }
 }
 
-/// Extended row trait for relay — includes dist for logical position.
-pub trait RelayRow: SliceExpandable + RelayPosition {
-    fn row_dist(&self) -> i32;
-    fn set_row_dist(&mut self, v: i32);
-}
-
-impl RelayRow for SliceUiTile {
-    fn row_dist(&self) -> i32 {
-        self.dist
-    }
-    fn set_row_dist(&mut self, v: i32) {
-        self.dist = v;
-    }
-}
-
-impl RelayRow for crate::SliceTileData {
-    fn row_dist(&self) -> i32 {
-        self.dist
-    }
-    fn set_row_dist(&mut self, v: i32) {
-        self.dist = v;
-    }
-}
-
 /// BLOOM: requires exactly one expanded; sets the ADJACENT row (signum direction)
 /// expanded WITHOUT clearing the old. Guards: direction 0, len<2, not-exactly-one → false no-mutation.
-/// Also updates dist so the new row becomes dist 0 (new center) and the old becomes dist 1.
-pub fn relay_open_neighbor<T: RelayRow>(rows: &mut [T], direction: isize) -> bool {
-    if direction == 0 {
-        return false;
-    }
-    if rows.len() < 2 {
-        return false;
-    }
-    let mut expanded_idx: Option<usize> = None;
-    let mut count = 0;
-    for (i, r) in rows.iter().enumerate() {
-        if r.is_expanded() {
-            count += 1;
-            if count > 1 {
-                return false;
-            }
-            expanded_idx = Some(i);
-        }
-    }
-    let cur = match expanded_idx {
-        Some(i) => i,
-        None => return false,
-    };
-    let step = direction.signum();
-    let next = cur as isize + step;
-    if next < 0 || next >= rows.len() as isize {
-        return false;
-    }
-    let next = next as usize;
-    rows[next].set_expanded(true);
-    // Update logical dist: new center 0, old now 1 step away.
-    rows[next].set_row_dist(0);
-    rows[cur].set_row_dist(1);
-    true
+pub fn relay_open_neighbor<T: SliceExpandable>(rows: &mut [T], direction: isize) -> bool {
+    // stub — RED
+    let _ = direction;
+    let _ = rows;
+    false
 }
 
 /// FOLD: requires exactly two expanded; clears the one with larger |position|
 /// (the origin — the non-centered one); false no-mutation otherwise.
-/// Uses dist as primary position (larger dist is origin), falls back to geometric
-/// center for tie or stale dist.
-pub fn relay_fold_origin<T: RelayRow>(rows: &mut [T]) -> bool {
-    if rows.len() < 2 {
-        return false;
-    }
-    let mut expanded: Vec<usize> = Vec::new();
-    for (i, r) in rows.iter().enumerate() {
-        if r.is_expanded() {
-            expanded.push(i);
-            if expanded.len() > 2 {
-                return false;
-            }
-        }
-    }
-    if expanded.len() != 2 {
-        return false;
-    }
-    let a = expanded[0];
-    let b = expanded[1];
-    let dist_a = rows[a].row_dist().abs();
-    let dist_b = rows[b].row_dist().abs();
-    // Primary: larger dist is origin (new center is 0, origin is 1)
-    // If dist equal (e.g., both 0 before update or stale), fall back to geometric |center|.
-    let pos_a = rows[a].relay_position().abs();
-    let pos_b = rows[b].relay_position().abs();
-    let to_clear = if dist_a != dist_b {
-        if dist_a > dist_b { a } else { b }
-    } else if (pos_a - pos_b).abs() > 0.001 {
-        // Dist tie: geometrically farther is origin? In frozen rows new is farther (924 vs 0),
-        // but we want to keep new, so larger pos is new — we would clear larger and keep smaller (old)
-        // which would be wrong. So for tie we use geometric smaller is origin (centered) to keep new.
-        // Documented: when dist tie (stale), clear smaller |center| (origin centered) to keep incoming.
-        if pos_a < pos_b { a } else { b }
-    } else {
-        a
-    };
-    rows[to_clear].set_expanded(false);
-    true
+pub fn relay_fold_origin<T: SliceExpandable + RelayPosition>(rows: &mut [T]) -> bool {
+    // stub — RED
+    let _ = rows;
+    false
 }
 
 impl SliceView {
