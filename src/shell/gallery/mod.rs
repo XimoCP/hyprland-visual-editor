@@ -6,6 +6,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 pub mod model;
+pub mod slat_image;
 pub mod slot;
 pub mod thumbs;
 pub mod views;
