@@ -279,6 +279,36 @@ pub fn ring_step(focused: usize, delta: isize, real_count: usize) -> usize {
     (focused as isize + delta).rem_euclid(real_count as isize) as usize
 }
 
+/// V3 strip step: collapsed slot pitch (current geometry 135 = 111 face + 12+12 air,
+/// gap-free ring contiguous; visual gap 24 is inset inside the 135 slot).
+pub const SLICE_STRIP_STEP: f32 = SLICE_COLLAPSED_WIDTH;
+
+/// Pure directional slide decision — V3 fluid animation.
+/// `delta` is signed ring distance (positive = next, negative = prev).
+/// `offset_px` is the strip translation to animate: `-delta * SLICE_STRIP_STEP`
+/// so next (delta +1) flows LEFT (strip moves left, next card enters from right).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlidePlan {
+    pub offset_px: f32,
+    pub delta: isize,
+}
+
+/// Minimal pure slide plan: offset = `-delta * step`, no-op when delta==0.
+pub fn slide_plan(delta: isize) -> SlidePlan {
+    // RED stub — intentionally wrong (constant 0) so tests fail before GREEN.
+    SlidePlan { offset_px: 0.0, delta }
+}
+
+/// Shortest signed ring distance from `from` to `to` (wrap-aware).
+/// Returns the minimal delta in (-count/2 ..= count/2] taking the wrap path;
+/// ties (even count, exactly half) choose the positive direction.
+/// Degenerate count 0 → 0.
+pub fn ring_shortest_delta(from: usize, to: usize, count: usize) -> isize {
+    // RED stub — intentionally wrong.
+    let _ = (from, to, count);
+    0
+}
+
 /// All visible slots intersecting the inset band [inset, stage-inset],
 /// extending cyclically outward from focused in both directions.
 /// Band stops two collapsed slots short of each screen edge (inset
@@ -1334,5 +1364,62 @@ mod tests {
         // small stage still valid
         let tiny_slot = RingSlot { virtual_index: 0, real_index: 0, x: 0.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
         assert!((0.0..=1.0).contains(&ring_slot_fade(&tiny_slot, 50.0)));
+    }
+
+    // ── V3 directional fluid animation — pure helpers (RED) ──────────────
+
+    #[test]
+    fn slide_plan_next_flows_left_negative_offset() {
+        let plan = slide_plan(1);
+        assert!((plan.offset_px + SLICE_STRIP_STEP).abs() < 0.001, "next (+1) must flow LEFT: offset -135, got {}", plan.offset_px);
+        assert_eq!(plan.delta, 1);
+    }
+
+    #[test]
+    fn slide_plan_prev_flows_right_positive_offset() {
+        let plan = slide_plan(-1);
+        assert!((plan.offset_px - SLICE_STRIP_STEP).abs() < 0.001, "prev (-1) must flow RIGHT: offset +135, got {}", plan.offset_px);
+        assert_eq!(plan.delta, -1);
+    }
+
+    #[test]
+    fn slide_plan_click_plus_three_one_tween() {
+        let plan = slide_plan(3);
+        assert!((plan.offset_px + 3.0 * SLICE_STRIP_STEP).abs() < 0.001, "click +3 must tween -405 in one go, got {}", plan.offset_px);
+        assert_eq!(plan.delta, 3);
+    }
+
+    #[test]
+    fn slide_plan_click_minus_three_one_tween() {
+        let plan = slide_plan(-3);
+        assert!((plan.offset_px - 3.0 * SLICE_STRIP_STEP).abs() < 0.001, "click -3 must tween +405, got {}", plan.offset_px);
+        assert_eq!(plan.delta, -3);
+    }
+
+    #[test]
+    fn slide_plan_delta_zero_noop() {
+        let plan = slide_plan(0);
+        assert!((plan.offset_px).abs() < 0.001, "delta 0 no-op offset 0, got {}", plan.offset_px);
+        assert_eq!(plan.delta, 0);
+    }
+
+    #[test]
+    fn ring_shortest_delta_wrap_across_zero() {
+        // count 6, focused 0, click virtual -2 → real 4, shortest is -2 not +4
+        assert_eq!(ring_shortest_delta(0, 4, 6), -2, "0→4 in 6 should wrap -2");
+        assert_eq!(ring_shortest_delta(4, 0, 6), 2, "4→0 in 6 should be +2");
+        assert_eq!(ring_shortest_delta(0, 5, 6), -1, "0→5 wrap -1");
+        assert_eq!(ring_shortest_delta(5, 0, 6), 1, "5→0 wrap +1");
+        assert_eq!(ring_shortest_delta(0, 3, 6), 3, "tie half chooses positive");
+        assert_eq!(ring_shortest_delta(3, 0, 6), -3, "3→0 tie chooses negative? check sign");
+        assert_eq!(ring_shortest_delta(2, 2, 6), 0);
+        assert_eq!(ring_shortest_delta(0, 1, 1), 0, "count 1 always 0");
+        assert_eq!(ring_shortest_delta(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn slice_strip_step_is_collapsed_pitch_135() {
+        assert!((SLICE_STRIP_STEP - 135.0).abs() < 0.001, "strip step must be 135 (collapsed pitch = 111 face + 12+12 air), got {}", SLICE_STRIP_STEP);
+        assert!((SLICE_STRIP_STEP - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
     }
 }
