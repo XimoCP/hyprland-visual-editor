@@ -57,10 +57,24 @@ pub fn bake_parallelogram(
     let y_off = (scaled_h - target_height) / 2;
     let mut out = imageops::crop_imm(&scaled, x_off, y_off, target_width, target_height).to_image();
 
-    // ── 2. Parallelogram alpha mask (RED stub: intentionally no masking) ─
-    // Intentionally left unmasked for RED phase — tests must fail.
-    let _ = skew_px;
-    let _ = &mut out;
+    // ── 2. Parallelogram alpha mask ──────────────────────────────────
+    // Parallelogram vertices (r=0): (skew,0) (skew+wn,0) (wn,hn) (0,hn)
+    // Bounding box width = wn + skew = target_width.
+    // Lean: top shifted right by skew relative to bottom.
+    // Inside test uses pixel center (x+0.5, y+0.5) vs continuous left/right.
+    let skew = skew_px.clamp(0.0, tw);
+    let inner_w = (tw - skew).max(0.0);
+    for (x, y, pixel) in out.enumerate_pixels_mut() {
+        let cx = x as f32 + 0.5;
+        let cy = y as f32 + 0.5;
+        let t = cy / th;
+        let left = skew * (1.0 - t);
+        let right = left + inner_w;
+        let inside = cx >= left && cx < right;
+        if !inside {
+            pixel[3] = 0;
+        }
+    }
     out
 }
 
@@ -175,11 +189,20 @@ mod tests {
     #[test]
     fn degenerate_one_by_one_source() {
         let src = solid_rgba(1, 1, Rgba([9, 9, 9, 255]));
-        let out = bake_parallelogram(src, 4, 4, 5.0);
+        // Use small skew so interior still covers center; 1×1 source cover-crops to target
+        let out = bake_parallelogram(src, 4, 4, 1.0);
         assert_eq!(out.dimensions(), (4, 4));
-        // With 1×1 source scaled to cover 4×4, all valid interior pixels keep alpha
-        // At least center must be opaque
+        // With 1×1 source scaled to cover 4×4, valid interior pixels keep alpha
+        // At least center must be opaque (parallelogram still covers middle)
         assert_eq!(out.get_pixel(2, 2)[3], 255);
+        // Also verify 1×1 with skew 0 full rectangle
+        let src2 = solid_rgba(1, 1, Rgba([9, 9, 9, 255]));
+        let out2 = bake_parallelogram(src2, 4, 4, 0.0);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(out2.get_pixel(x, y)[3], 255, "skew 0 with 1×1 source → all opaque at {x},{y}");
+            }
+        }
     }
 
     #[test]
