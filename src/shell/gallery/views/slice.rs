@@ -61,9 +61,122 @@ pub struct StripSlot {
     pub is_expanded: bool,
 }
 
-/// Placeholder strip window — RED stub (always empty, tests must fail).
-pub fn strip_window(_real_count: usize, _focused: usize, _stage_width: f32) -> Vec<StripSlot> {
-    Vec::new()
+/// Center x of a strip slot relative to stage center (expanded at 0).
+/// OLD geometry parity: expanded 924 centered at 0; collapsed step 139 (135+4).
+fn strip_slot_center(delta: isize) -> f32 {
+    if delta == 0 {
+        0.0
+    } else if delta > 0 {
+        SLICE_EXPANDED_WIDTH / 2.0
+            + SLICE_SPACING_PX
+            + SLICE_COLLAPSED_WIDTH / 2.0
+            + (delta - 1) as f32 * STRIP_COLLAPSED_STEP
+    } else {
+        -(SLICE_EXPANDED_WIDTH / 2.0 + SLICE_SPACING_PX + SLICE_COLLAPSED_WIDTH / 2.0)
+            + (delta + 1) as f32 * STRIP_COLLAPSED_STEP
+    }
+}
+
+/// Virtualized strip window — deterministic from (real_count, focused, stage_width).
+/// Symmetric window around focused, expanded at 0; includes every collapsed slot
+/// whose body intersects [-half, half] plus exactly 2 spare slots per side
+/// (recycle buffer). Virtual indices run unbroken, real_index wraps via
+/// ring_real_index. No accumulated state (rebase idempotent).
+pub fn strip_window(real_count: usize, focused: usize, stage_width: f32) -> Vec<StripSlot> {
+    if real_count == 0 || !(stage_width > 0.0) || !stage_width.is_finite() {
+        return Vec::new();
+    }
+    let focused = focused.min(real_count.saturating_sub(1));
+    let half = stage_width / 2.0;
+    let mut slots: Vec<StripSlot> = Vec::new();
+
+    // Expanded focused at 0 (centered)
+    slots.push(StripSlot {
+        position: 0.0,
+        real_index: ring_real_index(focused as isize, real_count),
+        virtual_index: focused as isize,
+        is_expanded: true,
+    });
+
+    // Expand right: collect visible intersecting [-half, half] then 2 spares
+    let mut delta: isize = 1;
+    let mut spare_right: usize = 0;
+    // Upper bound guard (huge stage e.g. 10k needs many slots but bounded)
+    for _ in 0..10000 {
+        let center = strip_slot_center(delta);
+        let left = center - SLICE_COLLAPSED_WIDTH / 2.0;
+        // Right side visible if left < half (body starts before right edge)
+        let visible = left < half;
+        if visible {
+            slots.push(StripSlot {
+                position: center,
+                real_index: ring_real_index(focused as isize + delta, real_count),
+                virtual_index: focused as isize + delta,
+                is_expanded: false,
+            });
+        } else if spare_right < STRIP_WINDOW_SPARE_SLOTS {
+            slots.push(StripSlot {
+                position: center,
+                real_index: ring_real_index(focused as isize + delta, real_count),
+                virtual_index: focused as isize + delta,
+                is_expanded: false,
+            });
+            spare_right += 1;
+            if spare_right >= STRIP_WINDOW_SPARE_SLOTS {
+                // collected required spares; break after this batch
+                // need to stop after 2 spares beyond visible edge
+                break;
+            }
+        } else {
+            break;
+        }
+        delta += 1;
+        // If we already passed far beyond half + spares, spare logic will break;
+        // otherwise loop continues for visible slots.
+        // To avoid infinite when stage is huge, continue until visible ends then spare.
+        // But for visible case we need to keep iterating; spare_right stays 0 until non-visible.
+        // So we need to know when to stop: when we've added spare_right == 2 after visible phase.
+        // Above branching handles it.
+    }
+
+    // Expand left: symmetric
+    let mut delta: isize = -1;
+    let mut spare_left: usize = 0;
+    for _ in 0..10000 {
+        let center = strip_slot_center(delta);
+        let right = center + SLICE_COLLAPSED_WIDTH / 2.0;
+        let visible = right > -half;
+        if visible {
+            slots.push(StripSlot {
+                position: center,
+                real_index: ring_real_index(focused as isize + delta, real_count),
+                virtual_index: focused as isize + delta,
+                is_expanded: false,
+            });
+        } else if spare_left < STRIP_WINDOW_SPARE_SLOTS {
+            slots.push(StripSlot {
+                position: center,
+                real_index: ring_real_index(focused as isize + delta, real_count),
+                virtual_index: focused as isize + delta,
+                is_expanded: false,
+            });
+            spare_left += 1;
+            if spare_left >= STRIP_WINDOW_SPARE_SLOTS {
+                break;
+            }
+        } else {
+            break;
+        }
+        delta -= 1;
+    }
+
+    // Deterministic left-to-right order
+    slots.sort_by(|a, b| {
+        a.position
+            .partial_cmp(&b.position)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    slots
 }
 
 /// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
