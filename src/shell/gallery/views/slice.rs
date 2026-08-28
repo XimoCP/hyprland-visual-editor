@@ -198,6 +198,85 @@ pub fn cum_offset(i: usize, focused: usize) -> f32 {
     (0..i).map(|j| card_width_at(j, focused)).sum::<f32>() + i as f32 * SLICE_SPACING_PX
 }
 
+/// ── Ring model S1 (infinite carousel, pure math) ─────────────────────
+/// Focused card centered at stage_width/2 with expanded width 924;
+/// collapsed slats 135 contiguous (zero gap); clones wrap modulo count.
+/// Deterministic: computed from focused index + geometry, no running offsets.
+
+/// Visible slot in the infinite ring — feeds Slint positions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingSlot {
+    /// Virtual index (unwrapped, may be negative or beyond count).
+    pub virtual_index: isize,
+    /// Real theme index in [0, real_count), rem_euclid mapping.
+    pub real_index: usize,
+    /// Absolute x of slot left edge in stage coordinates [0, stage_width].
+    pub x: f32,
+    /// Width of this slot (expanded if focused, else collapsed).
+    pub width: f32,
+    /// Whether this slot is the expanded focused slot.
+    pub is_expanded: bool,
+}
+
+/// Map a virtual (unwrapped) index to its real theme index.
+pub fn ring_real_index(virtual_index: isize, real_count: usize) -> usize {
+    // STUB for RED — intentionally wrong for negative values (uses truncating rem)
+    if real_count == 0 {
+        return 0;
+    }
+    (virtual_index % real_count as isize).abs() as usize
+}
+
+/// X of the focused (expanded) slot's left edge when centered.
+pub fn ring_focused_x(stage_width: f32) -> f32 {
+    // STUB for RED — misses expanded/2 offset
+    stage_width / 2.0
+}
+
+/// Absolute x of slot at virtual_index when focused is centered.
+pub fn ring_slot_x(virtual_index: isize, focused: usize, stage_width: f32) -> f32 {
+    // STUB for RED — constant, breaks centering/contiguity
+    let _ = (virtual_index, focused);
+    stage_width / 2.0
+}
+
+/// Width of slot at virtual_index (expanded iff virtual == focused).
+pub fn ring_slot_width(virtual_index: isize, focused: usize) -> f32 {
+    if virtual_index == focused as isize {
+        SLICE_EXPANDED_WIDTH
+    } else {
+        SLICE_COLLAPSED_WIDTH
+    }
+}
+
+/// Wrap step with modulo (both directions). Degenerate count 0 → 0.
+pub fn ring_step(focused: usize, delta: isize, real_count: usize) -> usize {
+    // STUB for RED — clamped, no wrap
+    if real_count == 0 {
+        return 0;
+    }
+    let next = focused as isize + delta;
+    next.clamp(0, real_count as isize - 1) as usize
+}
+
+/// All visible slots intersecting [0, stage_width], extending cyclically
+/// outward from focused in both directions. Edge-to-edge fill.
+pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -> Vec<RingSlot> {
+    // STUB for RED — only the focused slot, never fills edge-to-edge nor clones beyond count
+    if real_count == 0 || !(stage_width > 0.0) {
+        return Vec::new();
+    }
+    let fx = ring_focused_x(stage_width);
+    let w = if focused < real_count { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
+    vec![RingSlot {
+        virtual_index: focused as isize,
+        real_index: focused.min(real_count - 1),
+        x: fx,
+        width: w,
+        is_expanded: true,
+    }]
+}
+
 impl SliceView {
     /// Create a new carousel for `count` cards, focus 0.
     pub fn new(count: usize) -> Self {
@@ -807,5 +886,183 @@ mod tests {
         assert_eq!(z_layer(1, 2, Some(1)), 1, "hovered above idle");
         assert_eq!(z_layer(0, 2, None), 0, "idle bottom");
         assert_eq!(z_layer(0, 2, Some(3)), 0);
+    }
+
+    // ── S1 ring contracts (RED) ───────────────────────────────────────
+
+    #[test]
+    fn ring_centering_focused_slot_center_is_stage_center() {
+        for stage_w in [800.0, 1200.0, 1920.0, 2560.0] {
+            for focused in [0usize, 2, 5] {
+                let count = 6;
+                // ring_visible must contain focused and it must be centered
+                let slots = ring_visible_slots(count, focused, stage_w);
+                let focused_slot = slots.iter().find(|s| s.virtual_index == focused as isize).expect("focused must be visible");
+                let center = focused_slot.x + focused_slot.width / 2.0;
+                assert!((center - stage_w / 2.0).abs() < 0.001, "focused center {center} != stage center {} (stage {stage_w} focused {focused})", stage_w/2.0);
+            }
+        }
+        // also direct ring_slot_x centering invariant
+        for stage_w in [1200.0, 1920.0] {
+            for focused in 0..6usize {
+                let x = ring_slot_x(focused as isize, focused, stage_w);
+                let center = x + SLICE_EXPANDED_WIDTH / 2.0;
+                assert!((center - stage_w/2.0).abs() < 0.001, "ring_slot_x centering failed stage {stage_w} focused {focused}");
+            }
+        }
+    }
+
+    #[test]
+    fn ring_contiguity_no_gap_between_collapsed_slats() {
+        let stage_w = 1920.0;
+        let focused = 3usize;
+        let count = 8;
+        let slots = ring_visible_slots(count, focused, stage_w);
+        // slots sorted by virtual_index == sorted by x (left to right)
+        let mut sorted = slots.clone();
+        sorted.sort_by(|a, b| a.virtual_index.cmp(&b.virtual_index));
+        for w in sorted.windows(2) {
+            let a = w[0];
+            let b = w[1];
+            // if neither is the focused gap crossing, both collapsed → delta == collapsed width
+            // if one is focused, the step from/to focused is special (collapsed vs expanded edge)
+            if a.is_expanded || b.is_expanded {
+                continue;
+            }
+            let delta = b.x - a.x;
+            assert!((delta - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "collapsed contiguity gap {} != {} between virt {} and {}", delta, SLICE_COLLAPSED_WIDTH, a.virtual_index, b.virtual_index);
+        }
+        // direct ring_slot_x contiguity both sides
+        let fx = ring_focused_x(stage_w);
+        let right1 = ring_slot_x(focused as isize + 1, focused, stage_w);
+        let right2 = ring_slot_x(focused as isize + 2, focused, stage_w);
+        assert!((right2 - right1 - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "right side contiguity");
+        let left1 = ring_slot_x(focused as isize - 1, focused, stage_w);
+        let left2 = ring_slot_x(focused as isize - 2, focused, stage_w);
+        assert!((left1 - left2 - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "left side contiguity");
+        let _ = fx;
+    }
+
+    #[test]
+    fn ring_wrap_forward_and_backward() {
+        assert_eq!(ring_step(5, 1, 6), 0, "forward wrap last→0");
+        assert_eq!(ring_step(0, -1, 6), 5, "backward wrap 0→last");
+        assert_eq!(ring_step(0, 1, 6), 1);
+        assert_eq!(ring_step(2, -1, 6), 1);
+        assert_eq!(ring_step(5, 2, 6), 1, "multi-step wraps modulo");
+        assert_eq!(ring_step(0, -2, 6), 4);
+        // wrapping via SliceView move_focus
+        let mut view = SliceView::new(6);
+        view.set_focused_index(5);
+        assert_eq!(view.move_focus(1), 0);
+        let mut view2 = SliceView::new(6);
+        view2.set_focused_index(0);
+        assert_eq!(view2.move_focus(-1), 5);
+        // wheel_step must also wrap (S1 ring)
+        let mut wv = SliceView::new(3);
+        wv.set_focused_index(2);
+        assert_eq!(wv.wheel_step(1), 0, "wheel wrap forward");
+        let mut wv2 = SliceView::new(3);
+        wv2.set_focused_index(0);
+        assert_eq!(wv2.wheel_step(-1), 2, "wheel wrap backward");
+        // wheel_target free fn wraps
+        assert_eq!(wheel_target(6, 5, 1), 0);
+        assert_eq!(wheel_target(6, 0, -1), 5);
+    }
+
+    #[test]
+    fn ring_clone_mapping_real_index_in_range_and_cyclic() {
+        let count = 6;
+        // all visible slots map into [0, count)
+        for stage_w in [1200.0, 1920.0, 3000.0] {
+            for focused in [0usize, 3, 5] {
+                let slots = ring_visible_slots(count, focused, stage_w);
+                for s in &slots {
+                    assert!(s.real_index < count, "real_index {} out of range", s.real_index);
+                    assert_eq!(s.real_index, ring_real_index(s.virtual_index, count));
+                }
+            }
+        }
+        // explicit cyclic: virtual beyond ±count wraps
+        assert_eq!(ring_real_index(6, 6), 0);
+        assert_eq!(ring_real_index(7, 6), 1);
+        assert_eq!(ring_real_index(-1, 6), 5);
+        assert_eq!(ring_real_index(-7, 6), 5);
+        assert_eq!(ring_real_index(12, 6), 0);
+        assert_eq!(ring_real_index(-12, 6), 0);
+        // slot right of last → theme 0 when focused near end
+        let stage_w = 1920.0;
+        let focused = 5usize; // last
+        let right = ring_slot_x(focused as isize + 1, focused, stage_w);
+        let real = ring_real_index(focused as isize + 1, count);
+        assert_eq!(real, 0, "clone right of last maps to 0");
+        let _ = right;
+        // left of first → last
+        assert_eq!(ring_real_index(-1, 6), 5);
+    }
+
+    #[test]
+    fn ring_edge_to_edge_fill_no_hole() {
+        for stage_w in [800.0, 1200.0, 1920.0, 2560.0] {
+            for focused in [0usize, 3, 5] {
+                let slots = ring_visible_slots(6, focused, stage_w);
+                assert!(!slots.is_empty(), "must have visible slots");
+                let min_x = slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
+                let max_r = slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+                assert!(min_x <= 0.0 + 0.001, "left edge not covered min_x {min_x} stage {stage_w}");
+                assert!(max_r >= stage_w - 0.001, "right edge not covered max_r {max_r} stage {stage_w}");
+                // no hole larger than collapsed width between sorted slots
+                let mut sorted = slots.clone();
+                sorted.sort_by(|a,b| a.x.partial_cmp(&b.x).unwrap());
+                for w in sorted.windows(2) {
+                    let gap = w[1].x - (w[0].x + w[0].width);
+                    assert!(gap <= 0.001, "hole {gap} between slots at stage {stage_w}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ring_degenerate_counts_and_tiny_stage_no_panic() {
+        // count 0 empty no panic
+        assert!(ring_visible_slots(0, 0, 1200.0).is_empty());
+        assert_eq!(ring_step(0, 1, 0), 0);
+        assert_eq!(ring_real_index(5, 0), 0);
+        // count 1 every slot maps to 0
+        let slots = ring_visible_slots(1, 0, 1920.0);
+        assert!(!slots.is_empty());
+        for s in &slots {
+            assert_eq!(s.real_index, 0);
+        }
+        // tiny stage fewer than one slat width — no panic, still centered
+        let tiny = ring_visible_slots(6, 2, 50.0);
+        assert!(!tiny.is_empty(), "tiny stage should still have focused");
+        let focused_slot = tiny.iter().find(|s| s.virtual_index==2).unwrap();
+        assert!((focused_slot.x + focused_slot.width/2.0 - 25.0).abs()<0.001);
+        // wheel/ move with count 1 wraps to 0
+        let mut v1 = SliceView::new(1);
+        assert_eq!(v1.move_focus(1), 0);
+        assert_eq!(v1.move_focus(-1), 0);
+        assert_eq!(v1.wheel_step(1), 0);
+    }
+
+    #[test]
+    fn ring_determinism_same_inputs_same_model() {
+        let a = ring_visible_slots(6, 3, 1920.0);
+        let b = ring_visible_slots(6, 3, 1920.0);
+        assert_eq!(a, b, "deterministic from geometry");
+        let ax = ring_slot_x(5, 3, 1920.0);
+        let bx = ring_slot_x(5, 3, 1920.0);
+        assert_eq!(ax, bx);
+        // after steps, model recomputed from index not accumulated drift
+        let stage_w = 1200.0;
+        let mut view = SliceView::new(6);
+        view.set_focused_index(0);
+        for _ in 0..12 { view.move_focus(1); }
+        let back_to_zero = view.focused_index();
+        assert_eq!(back_to_zero, 0, "12 steps wrap to start deterministically");
+        let sx1 = ring_slot_x(0, back_to_zero, stage_w);
+        let sx0 = ring_slot_x(0, 0, stage_w);
+        assert!((sx1 - sx0).abs()<0.001, "no drift after cycles");
     }
 }
