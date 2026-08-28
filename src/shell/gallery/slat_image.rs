@@ -224,4 +224,42 @@ mod tests {
         assert_eq!(a.dimensions(), b.dimensions());
         assert_eq!(a.as_raw(), b.as_raw(), "pure deterministic: same input → same output");
     }
+
+    // ── S4b RED: baked slat image feed contracts (collapsed/expanded bbox) ──
+
+    #[test]
+    fn baked_slat_image_collapsed_has_expected_bbox() {
+        let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
+        let img = crate::shell::gallery::slat_image::baked_slat_image(src, false);
+        let sz = img.size();
+        assert!(sz.width > 0.0 && sz.height > 0.0, "collapsed baked image must have non-zero dims");
+        // collapsed bbox = SLICE_COLLAPSED_WIDTH(135) + SKEW(35) = 170 × 520
+        assert_eq!(sz.width as u32, 170, "collapsed baked width must be 170 (135+35)");
+        assert_eq!(sz.height as u32, 520, "collapsed baked height must be 520");
+    }
+
+    #[test]
+    fn baked_slat_image_expanded_has_expected_bbox() {
+        let src = solid_rgba(80, 60, Rgba([200, 100, 50, 255]));
+        let img = crate::shell::gallery::slat_image::baked_slat_image(src, true);
+        let sz = img.size();
+        assert!(sz.width > 0.0 && sz.height > 0.0, "expanded baked image must have non-zero dims");
+        // expanded bbox = 924 + 35 = 959 × 520
+        assert_eq!(sz.width as u32, 959, "expanded baked width must be 959 (924+35)");
+        assert_eq!(sz.height as u32, 520, "expanded baked height must be 520");
+    }
+
+    #[test]
+    fn baked_slat_image_idempotent_pure() {
+        let src = solid_rgba(20, 20, Rgba([42, 42, 42, 180]));
+        let a = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false);
+        let b = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false);
+        assert_eq!(a.size().width as u32, b.size().width as u32);
+        assert_eq!(a.size().height as u32, b.size().height as u32);
+        // Also expanded deterministic
+        let c = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), true);
+        let d = crate::shell::gallery::slat_image::baked_slat_image(src, true);
+        assert_eq!(c.size().width as u32, d.size().width as u32);
+        assert_eq!(c.size().height as u32, d.size().height as u32);
+    }
 }
