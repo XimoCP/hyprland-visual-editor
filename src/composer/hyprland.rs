@@ -239,16 +239,16 @@ impl Composer for HyprlandComposer {
                         self.show_and_sync(win);
                         return false;
                     }
-                    // 1) Enfocar HVE PRIMERO. Imprescindible: `movetoworkspacesilent`
-                    //    y `hl.dsp.window.move` sin `window=` actúan sobre la ventana
-                    //    con foco. Como HVE estaba en el special scratchpad sin foco,
-                    //    el move movía OTRA ventana e HVE quedaba atrapada. Al enfocar
-                    //    primero, el move posterior la saca del special al workspace.
-                    let s_focus = v5_focus();
-                    let did_focus = self.hypr_dispatch_v5(&s_focus);
-                    // 2) Devolverla al workspace real (el move actúa sobre la focada).
+                    // 1) Move HVE to the target workspace FIRST — the V5 move
+                    //    is explicitly targeted with `window="title:Hyprland Visual Editor"`
+                    //    (unit 2), so it works without focus. Moving before focusing
+                    //    avoids focusing inside the special overlay, which would open
+                    //    the overlay and emit blur on close -> instant re-hide loop.
                     let s_move = v5_move_to_workspace(&target);
                     let did_move = self.hypr_dispatch_v5(&s_move);
+                    // 2) Focus HVE after it is back in the real workspace.
+                    let s_focus = v5_focus();
+                    let did_focus = self.hypr_dispatch_v5(&s_focus);
                     if !(did_focus && did_move) {
                         self.show_and_sync(win);
                         return false;

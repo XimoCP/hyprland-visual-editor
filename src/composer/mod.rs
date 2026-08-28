@@ -395,8 +395,8 @@ pub(crate) mod tests {
         }
 
         fn show(&self, _win: &crate::MainWindow, _prev_workspace: Option<&str>) -> bool {
-            self.record("focus");
             self.record("move_to_workspace");
+            self.record("focus");
             // Deferred focus + WindowActiveChanged now happens in the SETTLE
             // path (focus confirm or 1s timeout), not immediately in show.
             // sync_global_after_show is handled by HyprlandComposer internally.
@@ -509,7 +509,7 @@ pub(crate) mod tests {
     fn test_composer_show_contract_fast_path() {
         // Real show contract (fast path): a window that is already hidden
         // toggled via toggle_tray() goes through the show path. The
-        // FakeComposer emits focus → move_to_workspace → deferred focus →
+        // FakeComposer emits move_to_workspace → focus → deferred focus →
         // WindowActiveChanged, and returns show_fast=true because the window
         // is in the special workspace. The controller flips back to visible.
         init_test_platform();
@@ -528,8 +528,8 @@ pub(crate) mod tests {
         assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
             *calls.lock().unwrap(),
-            vec!["focus", "move_to_workspace"],
-            "show fast path must emit focus → move; settle (focus + WindowActiveChanged + fullscreen) is deferred to focus confirm or 1s timeout"
+            vec!["move_to_workspace", "focus"],
+            "show fast path must emit move → focus; settle (focus + WindowActiveChanged + fullscreen) is deferred to focus confirm or 1s timeout"
         );
     }
 
@@ -555,8 +555,8 @@ pub(crate) mod tests {
         assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
             *calls.lock().unwrap(),
-            vec!["focus", "move_to_workspace"],
-            "show slow path must emit the same focus → move; settle is deferred"
+            vec!["move_to_workspace", "focus"],
+            "show slow path must emit the same move → focus; settle is deferred"
         );
     }
 
