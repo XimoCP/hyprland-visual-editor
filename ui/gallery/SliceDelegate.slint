@@ -89,7 +89,10 @@ export component SliceDelegate inherits Rectangle {
 
     // ── Geometry (design D3): card spans width × 520; the drawn face is a
     // parallelogram whose top edge shifts right by the 35px shear, so the
-    // Path bounding box is (width + skew) wide. ──
+    // Path bounding box is (width + skew) wide. S3 separated slats: each
+    // collapsed delegate draws its visible face INSET within its 135px slot
+    // (face = step − gap, centered) so the ring math stays untouched. The
+    // expanded card keeps full width (no inset). ──
     property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35px X-shear
     width: is-current ? SkwdTokens.gallery-slice-expanded-w : SkwdTokens.gallery-slice-w;
     height: SkwdTokens.gallery-slice-h;
@@ -98,16 +101,24 @@ export component SliceDelegate inherits Rectangle {
         easing: cubic-bezier(0.215, 0.61, 0.355, 1);
     }
 
+    // S3 face inset: collapsed face is slot minus gap, centered.
+    property <length> face-width: root.is-current ? root.width : root.width - SkwdTokens.gallery-slat-gap;
+    property <length> face-inset: root.is-current ? 0px : SkwdTokens.gallery-slat-gap / 2;
+    property <float> faceWn: root.face-width / 1px;
+
     // Viewbox numbers (unitless): face spans (width + skew) × height.
+    // wn retained for hit-test parity; shape geometry uses faceWn.
     property <float> wn: root.width / 1px;
     property <float> hn: root.height / 1px;               // 520
     property <float> sn: root.skew / 1px;                 // 35
     property <float> slant: Math.sqrt(sn * sn + hn * hn); // ≈ 521.18
     // Corner radius clamped to half of the shortest adjacent edge minus 1
     // (skwd roundCorners clamp). Token default 0px → sharp parallelogram.
+    // S3: clamp against the visible face width (faceWn) so the inset slat
+    // and the full-width expanded card share the same radius logic.
     property <float> rn: Math.max(0.0, Math.min(
         SkwdTokens.gallery-slice-radius / 1px,
-        wn / 2 - 1,
+        faceWn / 2 - 1,
         slant / 2 - 1));
 
     // ── Face: rounded parallelogram Path (vertices (35,0)(35+w,0)(w,h)(0,h),
@@ -131,11 +142,11 @@ export component SliceDelegate inherits Rectangle {
     // (SliceCarousel clip:true line 30, ~500px margin), so no ancestor
     // clip:false is needed. Order: faintest → strongest → face. ──
     shadow-soft3 := SliceShape {
-        x: -root.pad + (root.is-current ? 12px : 7px);
+        x: -root.pad + root.face-inset + (root.is-current ? 12px : 7px);
         y: -root.pad + (root.is-current ? 24px : 16px);
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
         opacity: root.is-current ? 0.03 : 0.015;
         animate opacity { duration: SkwdTokens.anim-200; }
@@ -143,11 +154,11 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow-soft2 := SliceShape {
-        x: -root.pad + (root.is-current ? 9px : 5px);
+        x: -root.pad + root.face-inset + (root.is-current ? 9px : 5px);
         y: -root.pad + (root.is-current ? 19px : 12px);
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
         opacity: root.is-current ? 0.06 : 0.03;
         animate opacity { duration: SkwdTokens.anim-200; }
@@ -155,11 +166,11 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow-soft := SliceShape {
-        x: -root.pad + (root.is-current ? 6px : 3px);
+        x: -root.pad + root.face-inset + (root.is-current ? 6px : 3px);
         y: -root.pad + (root.is-current ? 14px : 8px);
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
         opacity: root.is-current ? 0.15 : 0.08;
         animate opacity { duration: SkwdTokens.anim-200; }
@@ -167,11 +178,11 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow := SliceShape {
-        x: -root.pad + (root.is-current ? 4px : 2px);
+        x: -root.pad + root.face-inset + (root.is-current ? 4px : 2px);
         y: -root.pad + (root.is-current ? 10px : 5px);
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
         opacity: root.is-current ? 0.35 : 0.18;
         animate opacity { duration: SkwdTokens.anim-200; }
@@ -179,53 +190,49 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
 
-    // ── Focus glow (S2): subtle outer halo behind the bright border.
-    // Primary 6px stroke at low opacity, only on expanded (is-current), gives
-    // the light/cyan glowing outline from the reference while reusing the
-    // existing SkwdTokens.primary token and its 200ms cadence.
+    // ── Focus glow (S3): icy cyan outer halo behind the 2px border.
+    // Expanded only, soft outer glow so the border reads unmistakable
+    // even under distance-tiered paint. Tokenized width/opacity.
     focus-glow := SliceShape {
-        x: -root.pad;
+        x: -root.pad + root.face-inset;
         y: -root.pad;
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: transparent;
-        stroke: SkwdTokens.primary;
-        stroke-width: 6px;
-        opacity: root.is-current ? 0.22 : 0.0;
+        stroke: SkwdTokens.gallery-slice-focus-border-color;
+        stroke-width: SkwdTokens.gallery-slice-focus-glow-width;
+        opacity: root.is-current ? SkwdTokens.gallery-slice-focus-glow-opacity : 0.0;
         animate opacity { duration: SkwdTokens.anim-200; }
     }
 
-    // ── Face: same geometry, painted above the shadow; border per the
-    // skwd-wall contract restored in PR2.HF/HF2 — current primary w3 /
-    // hover primary@40% w1 / idle black@60% w1, now at the skwd 200ms
-    // glow cadence (task 3.6): strokes cross-fade as state changes on a
-    // live instance (e.g. hover glow-in on the hovered layer copy). ──
+    // ── Face: same geometry, painted above the shadow; S3 border is
+    // expanded: icy cyan 2px (gallery-slice-focus-border-color + border-2)
+    // / hover primary@40% w1 / idle black@60% w1, 200ms cross-fade.
+    // Inset geometry keeps the gap even; glow sits behind this stroke. ──
     face := SliceShape {
-        x: -root.pad;
+        x: -root.pad + root.face-inset;
         y: -root.pad;
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: root.is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
-        stroke: root.is-current ? SkwdTokens.primary
+        stroke: root.is-current ? SkwdTokens.gallery-slice-focus-border-color
             : root.has-hover ? SkwdTokens.primary.transparentize(0.6)
             : #000000.transparentize(0.4);
-        stroke-width: root.is-current ? 3px : 1px;
+        stroke-width: root.is-current ? SkwdTokens.border-2 : 1px;
         animate stroke { duration: SkwdTokens.anim-200; }
         animate stroke-width { duration: SkwdTokens.anim-200; }
     }
 
-    // ── Face mask container (design D3): clip:true box covering the FULL
-    // parallelogram bounding box [0 .. width+skew]. The wallpaper Image
-    // fills this box edge-to-edge and the two outside-face corners are
-    // masked by the slant-mask Path below (rectangular clips cannot follow
-    // the slant) so the image reads as clipped BY the card, not floating
-    // over it. Labels stay inside the slant-safe zone [skew .. width]. ──
+    // ── Face mask container (design D3): S3 inset — clip box now covers
+    // the INSET face bounds [inset .. inset+face-width+skew]. The image
+    // and slant-mask are recomputed to face-width so the wallpaper clips
+    // exactly to the inset parallelogram and the air gap stays clean. ──
     if !is-flipped : Rectangle {
         clip: true;
-        x: 0px;
-        width: root.width + root.skew;
+        x: root.face-inset;
+        width: root.face-width + root.skew;
         height: 100%;
 
         // ── Full-bleed wallpaper (edge-to-edge cover, center crop).
@@ -299,25 +306,24 @@ export component SliceDelegate inherits Rectangle {
                 accessible-role: none;
             }
 
-            // Slant masks: the clip box is rectangular but the card is a
-            // parallelogram, so the two outside-face corners of the bounding
-            // box get covered with triangles filled exactly like the face
-            // (surface). One Path, two contours, 1:1 viewbox mapping.
+            // Slant masks: S3 inset — viewbox and triangle verts use
+            // faceWn so the two outside-face corners align to the inset
+            // parallelogram. Rectangular clip cannot follow the slant.
             slant-mask := Path {
                 x: 0;
                 y: 0;
-                width: root.width + root.skew;
+                width: root.face-width + root.skew;
                 height: 100%;
-                viewbox-width: root.wn + root.sn;
+                viewbox-width: root.faceWn + root.sn;
                 viewbox-height: root.hn;
                 fill: SkwdTokens.surface;
                 MoveTo { x: 0; y: 0; }
                 LineTo { x: root.sn; y: 0; }
                 LineTo { x: 0; y: root.hn; }
                 Close { }
-                MoveTo { x: root.wn; y: 0; }
-                LineTo { x: root.wn + root.sn; y: 0; }
-                LineTo { x: root.wn; y: root.hn; }
+                MoveTo { x: root.faceWn; y: 0; }
+                LineTo { x: root.faceWn + root.sn; y: 0; }
+                LineTo { x: root.faceWn; y: root.hn; }
                 Close { }
             }
 
@@ -351,7 +357,7 @@ export component SliceDelegate inherits Rectangle {
         label-scrim := Rectangle {
             x: root.skew;
             y: parent.height - 28px;
-            width: root.width - root.skew;
+            width: root.face-width - root.skew;
             height: 28px;
             background: #000000.transparentize(0.45);
             Text {
@@ -369,12 +375,11 @@ export component SliceDelegate inherits Rectangle {
         }
     }
 
-    // Back face rides in the same slant-safe mask box (metadata sheet
-    // becomes functional in PR5).
+    // Back face rides in the same slant-safe mask box (S3 inset).
     if is-flipped : Rectangle {
         clip: true;
-        x: root.skew;
-        width: root.width - root.skew;
+        x: root.face-inset + root.skew;
+        width: root.face-width - root.skew;
         height: 100%;
 
         VerticalLayout {
@@ -403,11 +408,11 @@ export component SliceDelegate inherits Rectangle {
     // painted ABOVE the front/back containers so the whole face dims
     // uniformly; edge fade on the root dissolves it at the stage edges. ──
     dim := SliceShape {
-        x: -root.pad;
+        x: -root.pad + root.face-inset;
         y: -root.pad;
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
         opacity: root.is-current ? 0.0 : (root.has-hover ? 0.15 : 0.4);
         animate opacity { duration: SkwdTokens.anim-200; }
@@ -417,13 +422,13 @@ export component SliceDelegate inherits Rectangle {
     // parallelogram face, completing the lift+brighten focus cue. Gated to
     // the FRONT face with a decoded image — empty/loading or flipped cards
     // skip the veil (shimmer/metadata stay neutral). Painted above the dim
-    // layer so the net effect brightens even idle-dimmed cards. ──
+    // layer so the net effect brightens even idle-dimmed cards. S3 inset. ──
     hover-brighten := SliceShape {
-        x: -root.pad;
+        x: -root.pad + root.face-inset;
         y: -root.pad;
-        width: root.width + root.skew + 2 * root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
-        wn: root.wn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #ffffff;
         opacity: !root.is-flipped && (root.thumb.width > 0 || root.hero.width > 0) && root.has-hover
             ? SkwdTokens.gallery-card-hover-brighten : 0.0;
@@ -463,15 +468,15 @@ export component SliceDelegate inherits Rectangle {
         width: 100%;
         height: 100%;
         mouse-cursor: pointer;
-        // Non-rect containment: left lerp skew..0, right = left + (w - skew)
+        // Non-rect containment S3 inset: face is centered within the
+        // slot (face-inset = gap/2 for collapsed, 0 for expanded).
         property <bool> is-inside-shape: {
             if (self.mouse-x < 0px || self.mouse-y < 0px || self.mouse-x > root.width || self.mouse-y > root.height) {
                 false
             } else {
-                // skew * (1 - y/h), h may be 0 during init — guard
                 let t = self.mouse-y / root.height;
-                let left = root.skew * (1 - t);
-                let right = left + (root.width - root.skew);
+                let left = root.face-inset + root.skew * (1 - t);
+                let right = left + (root.face-width - root.skew);
                 self.mouse-x >= left && self.mouse-x <= right
             }
         }

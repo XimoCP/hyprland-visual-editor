@@ -119,6 +119,15 @@ export global SkwdTokens {
     // renderer fallback. ──
     in-out property <float> gallery-card-hover-scale: 1.03;
     in-out property <float> gallery-card-hover-brighten: 0.08;
+    // ── Slice visual polish (S3): separated slats + icy focus border ──
+    // Gap between collapsed parallelograms (face = slot − gap, centered).
+    // 24px ≈ 18% of 135 slot step sits in the 20-25% reference window.
+    in-out property <length> gallery-slat-gap: 24px;
+    // Icy light-cyan focus border + glow (reference screenshot).
+    in-out property <color> gallery-slice-focus-border-color: #8fd8ff;
+    // Focus glow: soft outer halo behind the 2px border.
+    in-out property <length> gallery-slice-focus-glow-width: 8px;
+    in-out property <float> gallery-slice-focus-glow-opacity: 0.35;
     // uiScale 1.0.
     in-out property <float> ui-scale: 1.0;
 }
