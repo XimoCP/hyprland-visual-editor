@@ -94,11 +94,13 @@ export component SliceCarousel inherits Rectangle {
         // Paint order = declaration order (design D4): idle tiered by
         // distance from focused (skwd-wall z: 50 - |index - current|),
         // nearest idle on top, hovered, then current on top. 8 passes.
-        // Is-current driven by focused-index (flips at slide start, width
-        // animates in place). Visible tiers use tile dist (frozen during
-        // slide) but current check uses focused-index equality.
+        // Is-current comes from each row's is-expanded flag (Rust flips the
+        // two affected rows at slide start, width animates in place).
+        // Visibility is SLOT-based: dist tiers + !is-expanded; the top pass
+        // renders only the expanded slot. Never filter by real-index — with
+        // ring clones, theme identity != slot identity.
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index != root.focused-index && t.dist >= 5 && idx != root.hovered-tile;
+            visible: !t.is-expanded && t.dist >= 5 && idx != root.hovered-tile;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
@@ -114,7 +116,7 @@ export component SliceCarousel inherits Rectangle {
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index != root.focused-index && t.dist == 4 && idx != root.hovered-tile;
+            visible: !t.is-expanded && t.dist == 4 && idx != root.hovered-tile;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
@@ -130,7 +132,7 @@ export component SliceCarousel inherits Rectangle {
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index != root.focused-index && t.dist == 3 && idx != root.hovered-tile;
+            visible: !t.is-expanded && t.dist == 3 && idx != root.hovered-tile;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
@@ -146,7 +148,7 @@ export component SliceCarousel inherits Rectangle {
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index != root.focused-index && t.dist == 2 && idx != root.hovered-tile;
+            visible: !t.is-expanded && t.dist == 2 && idx != root.hovered-tile;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
@@ -162,7 +164,7 @@ export component SliceCarousel inherits Rectangle {
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index != root.focused-index && (t.dist == 1 || t.dist == 0) && idx != root.hovered-tile;
+            visible: !t.is-expanded && (t.dist == 1 || t.dist == 0) && idx != root.hovered-tile;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
@@ -178,7 +180,7 @@ export component SliceCarousel inherits Rectangle {
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index != root.focused-index && idx == root.hovered-tile;
+            visible: !t.is-expanded && idx == root.hovered-tile;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
@@ -194,7 +196,7 @@ export component SliceCarousel inherits Rectangle {
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.real-index == root.focused-index;
+            visible: t.is-expanded;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
