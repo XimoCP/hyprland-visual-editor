@@ -295,18 +295,30 @@ pub struct SlidePlan {
 
 /// Minimal pure slide plan: offset = `-delta * step`, no-op when delta==0.
 pub fn slide_plan(delta: isize) -> SlidePlan {
-    // RED stub — intentionally wrong (constant 0) so tests fail before GREEN.
-    SlidePlan { offset_px: 0.0, delta }
+    SlidePlan { offset_px: -(delta as f32) * SLICE_STRIP_STEP, delta }
 }
 
 /// Shortest signed ring distance from `from` to `to` (wrap-aware).
-/// Returns the minimal delta in (-count/2 ..= count/2] taking the wrap path;
-/// ties (even count, exactly half) choose the positive direction.
-/// Degenerate count 0 → 0.
+/// Returns the minimal delta; ties keep the raw direction (so 0→3=+3, 3→0=-3
+/// for count 6). Degenerate count 0 → 0, count 1 → 0.
 pub fn ring_shortest_delta(from: usize, to: usize, count: usize) -> isize {
-    // RED stub — intentionally wrong.
-    let _ = (from, to, count);
-    0
+    if count <= 1 {
+        return 0;
+    }
+    let n = count as isize;
+    let raw = to as isize - from as isize;
+    // Candidates: raw, raw ± n (wrap once is enough for minimal)
+    let mut best = raw;
+    let mut best_abs = raw.abs();
+    for cand in [raw - n, raw + n] {
+        let abs = cand.abs();
+        if abs < best_abs {
+            best = cand;
+            best_abs = abs;
+        }
+        // tie keeps existing `best` (which is raw first), so raw direction wins
+    }
+    best
 }
 
 /// All visible slots intersecting the inset band [inset, stage-inset],
