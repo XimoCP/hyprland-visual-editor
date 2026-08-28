@@ -98,6 +98,8 @@ export component MosaicView inherits Rectangle {
     }
 
     // ── Pagination UI: bottom-center row of page numbers ──
+    // Visible only when total-pages > 1; current page highlighted.
+    // Click-to-jump is optional stretch — not wired this unit (display only).
     pagination := Rectangle {
         visible: root.total-pages > 1;
         width: 100%;
