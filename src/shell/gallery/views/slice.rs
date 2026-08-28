@@ -100,12 +100,17 @@ pub fn card_state(is_current: bool, is_hovered: bool) -> SliceCardState {
     }
 }
 
-/// Dim overlay black alpha (skwd exact): 0 current / 0.15 hover / 0.4 idle.
+/// Dim overlay black alpha (S4b tune: lighter 0 / 0.08 / 0.16 — every slat shows image).
+pub const SLICE_DIM_HOVER: f32 = 0.08;
+pub const SLICE_DIM_IDLE: f32 = 0.16;
+/// Edge-fade floor — outermost visible slats stay at least this opaque (token gallery-slice-fade-min).
+pub const EDGE_FADE_MIN: f32 = 0.55;
+
 pub fn dim_level(state: SliceCardState) -> f32 {
     match state {
         SliceCardState::Current => 0.0,
-        SliceCardState::Hovered => 0.15,
-        SliceCardState::Idle => 0.4,
+        SliceCardState::Hovered => SLICE_DIM_HOVER,
+        SliceCardState::Idle => SLICE_DIM_IDLE,
     }
 }
 
@@ -371,7 +376,8 @@ pub struct SliceUiTile {
 /// Edge fade for a single ring slot at `stage_width` (skwd fullZone curve),
 /// renormalized to the reduced band extent [inset, stage-inset] so the
 /// outermost VISIBLE slats remain clearly visible (lowest visible fade at
-/// band ends, never ~0 while on screen). Brightest at center, dimmest at ends.
+/// band ends, never ~0 while on screen). S4b softened: clamp to EDGE_FADE_MIN
+/// (token gallery-slice-fade-min 0.55) so outermost never goes near-black.
 pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
     if !(stage_width > 0.0) {
         return 1.0;
@@ -385,7 +391,7 @@ pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
     let fz = edge_fade_full_zone(half);
     let center = slot.x + slot.width / 2.0;
     let nd = edge_norm_dist(center, stage_width / 2.0, half);
-    fade_opacity(nd, fz)
+    fade_opacity(nd, fz).max(EDGE_FADE_MIN)
 }
 
 /// Build Slint tiles from ring_visible_slots with per-slot fade (S2 WIRE).
@@ -1029,8 +1035,11 @@ mod tests {
     #[test]
     fn dim_level_skwd_values() {
         assert_eq!(dim_level(SliceCardState::Current), 0.0);
-        assert_eq!(dim_level(SliceCardState::Hovered), 0.15);
-        assert_eq!(dim_level(SliceCardState::Idle), 0.4);
+        assert_eq!(dim_level(SliceCardState::Hovered), 0.08);
+        assert_eq!(dim_level(SliceCardState::Idle), 0.16);
+        assert_eq!(SLICE_DIM_HOVER, 0.08);
+        assert_eq!(SLICE_DIM_IDLE, 0.16);
+        assert_eq!(EDGE_FADE_MIN, 0.55);
     }
 
     #[test]

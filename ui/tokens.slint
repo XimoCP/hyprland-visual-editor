@@ -128,6 +128,21 @@ export global SkwdTokens {
     // Focus glow: soft outer halo behind the 2px border.
     in-out property <length> gallery-slice-focus-glow-width: 8px;
     in-out property <float> gallery-slice-focus-glow-opacity: 0.35;
+    // ── S4b look tune: lighter distance dim, softened edge fade, trimmed shadows ──
+    // Dim veil: 0 current / 0.08 hover / 0.16 idle — every slat clearly shows image.
+    in-out property <float> gallery-slice-dim-hover: 0.08;
+    in-out property <float> gallery-slice-dim-idle: 0.16;
+    // Edge fade floor — outermost visible slats never drop below this opacity.
+    in-out property <float> gallery-slice-fade-min: 0.55;
+    // Collapsed shadow trimmed spread (4 layers, outward extent reduced so 24px gap reads clean).
+    in-out property <length> gallery-slice-shadow-c1-x: 1px;
+    in-out property <length> gallery-slice-shadow-c1-y: 2px;
+    in-out property <length> gallery-slice-shadow-c2-x: 1px;
+    in-out property <length> gallery-slice-shadow-c2-y: 3px;
+    in-out property <length> gallery-slice-shadow-c3-x: 2px;
+    in-out property <length> gallery-slice-shadow-c3-y: 4px;
+    in-out property <length> gallery-slice-shadow-c4-x: 3px;
+    in-out property <length> gallery-slice-shadow-c4-y: 6px;
     // uiScale 1.0.
     in-out property <float> ui-scale: 1.0;
 }

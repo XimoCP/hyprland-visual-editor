@@ -1,13 +1,13 @@
-// HVE 2 — SliceDelegate (gallery-immersive-redesign PR2.6).
+// HVE 2 — SliceDelegate (gallery-immersive-redesign PR2.6 + S4b baked).
 //
 // Parallelogram carousel card with skwd-wall exact geometry: collapsed
 // 135 ↔ expanded 924 × 520 tall, spacing handled by SliceCarousel (−30
 // overlap), 35px X-shear drawn as one rounded Path (design D3), radius 0
-// default, 350ms OutCubic expand. Border per the skwd-wall contract was
-// restored in PR2.HF (Path stroke: focused primary w3 / hover primary@40%
-// w1 / idle black@60% w1) and given stroke-room in PR2.HF2 so the border
-// renders uncut on all four edges. Flip stays a crossfade until the real two-phase
-// squeeze lands (PR5). Shadow/dim remain PR3 depth cues.
+// default, 350ms OutCubic expand. S4b: tip-to-tip baked parallelogram-alpha
+// images (slat-image / slat-expanded-image) — NO clip, alpha IS mask —
+// border stroke painted ABOVE image so 2px icy cyan reads unmistakably.
+// Dim lightened (0/0.08/0.16) and edge fade softened, shadows trimmed so
+// 24px gaps read as background. Shimmer adapts to baked presence.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -58,6 +58,10 @@ export component SliceDelegate inherits Rectangle {
     // Aspect-true hero decode (HF5): large CONTAIN fit ≤1600×900 shown on
     // the expanded card instead of the stretched portrait thumb.
     in property <image> hero;
+    // S4b baked parallelogram variants — tip-to-tip, no internal padding.
+    // Collapsed bbox 170×520, expanded 959×520, alpha IS mask.
+    in property <image> slat-image;
+    in property <image> slat-expanded-image;
     in property <bool> has-video: false;
     // Depth-cue edge fade (design D4): computed by SliceCarousel from the
     // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
@@ -132,18 +136,17 @@ export component SliceDelegate inherits Rectangle {
     property <length> pad: 4px; // > focused stroke half-width (1.5px)
     property <float> pn: root.pad / 1px;
 
-    // ── Projected shadow (design D4 / skwd exact): identical shapes
-    // declared FIRST so they paint below the face; core (skwd baseline)
-    // current x4/y10 α0.35 / rest x2/y5 α0.18 preserves skwd identity.
-    // Three diffuse halos simulate a Gaussian falloff — each step further
-    // (+2, +5, +8px beyond core) and fainter, so the hard Path edge reads
-    // as a soft blur. All layers 200ms and fade together via root
-    // fade-opacity. Outermost +24px stays inside the centered stage viewport
-    // (SliceCarousel clip:true line 30, ~500px margin), so no ancestor
-    // clip:false is needed. Order: faintest → strongest → face. ──
+    // ── Projected shadow (design D4 / S4b trim): identical shapes
+    // declared FIRST so they paint below the face; core current x4/y10
+    // α0.35 / rest x2/y5 α0.18 preserves skwd identity. S4b trims collapsed
+    // outward spread via tokens so the 24px air gap reads clean. Three
+    // diffuse halos simulate Gaussian falloff — each step further and
+    // fainter, so the hard Path edge reads as soft blur. All layers 200ms
+    // and fade together via root fade-opacity. Order: faintest → strongest
+    // → face. ──
     shadow-soft3 := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 12px : 7px);
-        y: -root.pad + (root.is-current ? 24px : 16px);
+        x: -root.pad + root.face-inset + (root.is-current ? 12px : SkwdTokens.gallery-slice-shadow-c4-x);
+        y: -root.pad + (root.is-current ? 24px : SkwdTokens.gallery-slice-shadow-c4-y);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -154,8 +157,8 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow-soft2 := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 9px : 5px);
-        y: -root.pad + (root.is-current ? 19px : 12px);
+        x: -root.pad + root.face-inset + (root.is-current ? 9px : SkwdTokens.gallery-slice-shadow-c3-x);
+        y: -root.pad + (root.is-current ? 19px : SkwdTokens.gallery-slice-shadow-c3-y);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -166,8 +169,8 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow-soft := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 6px : 3px);
-        y: -root.pad + (root.is-current ? 14px : 8px);
+        x: -root.pad + root.face-inset + (root.is-current ? 6px : SkwdTokens.gallery-slice-shadow-c2-x);
+        y: -root.pad + (root.is-current ? 14px : SkwdTokens.gallery-slice-shadow-c2-y);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -178,8 +181,8 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 4px : 2px);
-        y: -root.pad + (root.is-current ? 10px : 5px);
+        x: -root.pad + root.face-inset + (root.is-current ? 4px : SkwdTokens.gallery-slice-shadow-c1-x);
+        y: -root.pad + (root.is-current ? 10px : SkwdTokens.gallery-slice-shadow-c1-y);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -190,96 +193,52 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
 
-    // ── Focus glow (S3): icy cyan outer halo behind the 2px border.
-    // Expanded only, soft outer glow so the border reads unmistakable
-    // even under distance-tiered paint. Tokenized width/opacity.
-    focus-glow := SliceShape {
-        x: -root.pad + root.face-inset;
-        y: -root.pad;
-        width: root.face-width + root.skew + 2 * root.pad;
-        height: root.height + 2 * root.pad;
-        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
-        fill: transparent;
-        stroke: SkwdTokens.gallery-slice-focus-border-color;
-        stroke-width: SkwdTokens.gallery-slice-focus-glow-width;
-        opacity: root.is-current ? SkwdTokens.gallery-slice-focus-glow-opacity : 0.0;
-        animate opacity { duration: SkwdTokens.anim-200; }
+    // ── Baked image layer (S4b): plain Image consuming the parallelogram-alpha
+    // variants. Size = (face-width + skew) × height at face-inset, NO clip —
+    // alpha IS mask, true background shows through transparent corners and the
+    // 24px gap reads clean. Tip-to-tip with no internal padding.
+    // Effective image: collapsed → slat-image; expanded → slat-expanded-image
+    // (falls back to slat-image when hero not yet baked). Shimmer adapts to
+    // baked presence. ──
+    property <image> effective-slat: root.is-current
+        ? (root.slat-expanded-image.width > 0 ? root.slat-expanded-image : root.slat-image)
+        : root.slat-image;
+    property <bool> has-baked: root.effective-slat.width > 0;
+
+    // Shimmer / preheat (120ms) while baked image loads — adapted from thumb.
+    property <bool> preheat-done: false;
+    property <bool> shimmer-high: false;
+    preheat-timer := Timer {
+        interval: 120ms;
+        running: !root.preheat-done;
+        triggered => {
+            root.preheat-done = true;
+            self.running = false;
+        }
+    }
+    shimmer-timer := Timer {
+        interval: 700ms;
+        running: !root.has-baked;
+        triggered => { root.shimmer-high = !root.shimmer-high; }
     }
 
-    // ── Face: same geometry, painted above the shadow; S3 border is
-    // expanded: icy cyan 2px (gallery-slice-focus-border-color + border-2)
-    // / hover primary@40% w1 / idle black@60% w1, 200ms cross-fade.
-    // Inset geometry keeps the gap even; glow sits behind this stroke. ──
-    face := SliceShape {
-        x: -root.pad + root.face-inset;
-        y: -root.pad;
-        width: root.face-width + root.skew + 2 * root.pad;
-        height: root.height + 2 * root.pad;
-        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
-        fill: root.is-flipped ? SkwdTokens.surface-container : SkwdTokens.surface;
-        stroke: root.is-current ? SkwdTokens.gallery-slice-focus-border-color
-            : root.has-hover ? SkwdTokens.primary.transparentize(0.6)
-            : #000000.transparentize(0.4);
-        stroke-width: root.is-current ? SkwdTokens.border-2 : 1px;
-        animate stroke { duration: SkwdTokens.anim-200; }
-        animate stroke-width { duration: SkwdTokens.anim-200; }
-    }
-
-    // ── Face mask container (design D3): S3 inset — clip box now covers
-    // the INSET face bounds [inset .. inset+face-width+skew]. The image
-    // and slant-mask are recomputed to face-width so the wallpaper clips
-    // exactly to the inset parallelogram and the air gap stays clean. ──
     if !is-flipped : Rectangle {
-        clip: true;
         x: root.face-inset;
+        y: 0;
         width: root.face-width + root.skew;
-        height: 100%;
+        height: root.height;
+        // No clip — baked alpha masks.
 
-        // ── Full-bleed wallpaper (edge-to-edge cover, center crop).
-        // Single effective-image (hero → thumb) mirrors MosaicCell; no
-        // source-clip — source-clip crops in SOURCE coordinates and would
-        // slice the ≤1600×900 hero incorrectly. Plain cover on a
-        // full-bounds Image is enough; cropping is accepted (same as
-        // Mosaic). The Image spans 100% × 100% of the face mask so both
-        // expanded (924) and collapsed (135) cards fill width without
-        // side padding or letterboxing. Shimmer + 120ms preheat gate
-        // kept from PR2.HF.c; `fill` remains banned (stretch).
-        image-layer := Rectangle {
+        // Shimmer backdrop while waiting for baked image.
+        shimmer-bg := Rectangle {
             width: 100%;
             height: 100%;
-            clip: true;
             background: SkwdTokens.surface;
-            opacity: is-flipped ? 0.0 : 1.0;
-            animate opacity { duration: 400ms; easing: cubic-bezier(0.455, 0.03, 0.515, 0.955); }
-
-            property <bool> preheat-done: false;
-            // Effective image: hero when available on the expanded card,
-            // otherwise thumb fallback — same gating as MosaicCell.
-            property <image> effective-image: root.hero.width > 0 && root.is-current ? root.hero : root.thumb;
-            property <bool> has-image: self.preheat-done && self.effective-image.width > 0;
-
-            preheat-timer := Timer {
-                interval: 120ms;
-                running: !parent.preheat-done;
-                triggered => {
-                    parent.preheat-done = true;
-                    self.running = false;
-                }
-            }
-
-            // Shimmer: accent-tinted veil pulsing while waiting (Timer-driven
-            // phase alternation; stops once the effective image arrives).
-            property <bool> shimmer-high: false;
-            shimmer-timer := Timer {
-                interval: 700ms;
-                running: !parent.has-image;
-                triggered => { parent.shimmer-high = !parent.shimmer-high; }
-            }
-
-            shimmer := Rectangle {
+            opacity: root.has-baked ? 0.0 : 1.0;
+            animate opacity { duration: SkwdTokens.anim-200; }
+            Rectangle {
                 background: #000000;
-                opacity: parent.has-image ? 0.0
-                    : (parent.shimmer-high ? 0.06 : 0.16);
+                opacity: root.has-baked ? 0.0 : (root.shimmer-high ? 0.06 : 0.16);
                 animate opacity { duration: 600ms; easing: ease-in-out; }
                 Text {
                     text: "◇";
@@ -289,68 +248,44 @@ export component SliceDelegate inherits Rectangle {
                     vertical-alignment: center;
                 }
             }
-
-            // Edge-to-edge cover — spans full bounds, no source-clip,
-            // no letterboxing, center crop on overflow.
-            cover-image := Image {
-                width: 100%;
-                height: 100%;
-                source: parent.effective-image;
-                image-fit: cover;
-                visible: parent.has-image;
-                opacity: parent.has-image ? 1.0 : 0.0;
-                animate opacity {
-                    duration: SkwdTokens.anim-200;
-                    easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-                }
-                accessible-role: none;
-            }
-
-            // Slant masks: S3 inset — viewbox and triangle verts use
-            // faceWn so the two outside-face corners align to the inset
-            // parallelogram. Rectangular clip cannot follow the slant.
-            slant-mask := Path {
-                x: 0;
-                y: 0;
-                width: root.face-width + root.skew;
-                height: 100%;
-                viewbox-width: root.faceWn + root.sn;
-                viewbox-height: root.hn;
-                fill: SkwdTokens.surface;
-                MoveTo { x: 0; y: 0; }
-                LineTo { x: root.sn; y: 0; }
-                LineTo { x: 0; y: root.hn; }
-                Close { }
-                MoveTo { x: root.faceWn; y: 0; }
-                LineTo { x: root.faceWn + root.sn; y: 0; }
-                LineTo { x: root.faceWn; y: root.hn; }
-                Close { }
-            }
-
-            // Video overlay (Timer 100-300ms, release on blur S16/17)
-            // Only on current card with has-video — sits above the
-            // full-bleed cover but below the label scrim.
-            if root.is-current && root.has-video : Rectangle {
-                width: 36px;
-                height: 24px;
-                x: parent.width - self.width - SkwdTokens.spacing-8;
-                y: SkwdTokens.spacing-8;
-                border-radius: SkwdTokens.radius-4;
-                background: #000000.transparentize(0.3);
-                Text {
-                    text: "▶";
-                    color: #ffffff;
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                opacity: video-playing ? 1.0 : 0.6;
-                animate opacity { duration: 150ms; easing: ease-in-out; }
-            }
         }
 
-        // Bottom label — overlayed over the full-bleed image (not in a
-        // padded VerticalLayout) so the wallpaper stays edge-to-edge.
+        baked-img := Image {
+            width: 100%;
+            height: 100%;
+            source: root.effective-slat;
+            image-fit: cover;
+            visible: root.has-baked && root.preheat-done;
+            opacity: root.has-baked && root.preheat-done ? 1.0 : 0.0;
+            animate opacity {
+                duration: SkwdTokens.anim-200;
+                easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+            }
+            accessible-role: none;
+        }
+
+        // Video overlay (Timer 100-300ms, release on blur S16/17)
+        // Only on current card with has-video — sits above the baked image
+        // but below the label scrim. Preserve original placement.
+        if root.is-current && root.has-video : Rectangle {
+            width: 36px;
+            height: 24px;
+            x: parent.width - self.width - SkwdTokens.spacing-8;
+            y: SkwdTokens.spacing-8;
+            border-radius: SkwdTokens.radius-4;
+            background: #000000.transparentize(0.3);
+            Text {
+                text: "▶";
+                color: #ffffff;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            opacity: video-playing ? 1.0 : 0.6;
+            animate opacity { duration: 150ms; easing: ease-in-out; }
+        }
+
+        // Bottom label — overlayed over the baked image (edge-to-edge).
         // Constrained to the slant-safe zone [skew .. width] so the bar
         // never crosses the slanted card edges. Semi-transparent scrim
         // keeps text legible on bright wallpapers.
@@ -402,11 +337,9 @@ export component SliceDelegate inherits Rectangle {
         }
     }
 
-    // ── Dim overlay (design D4 / skwd DimOverlay): black alpha 0 current /
-    // 0.15 hover / 0.4 idle, 200ms — mirrors slice.rs::dim_level ∘
-    // card_state (current wins over hover). Same SliceShape geometry,
-    // painted ABOVE the front/back containers so the whole face dims
-    // uniformly; edge fade on the root dissolves it at the stage edges. ──
+    // ── Dim overlay (S4b tune: 0 / 0.08 / 0.16 via tokens) — black veil
+    // over the baked image, painted ABOVE image but BELOW border so border
+    // stays crisp. Same SliceShape geometry. ──
     dim := SliceShape {
         x: -root.pad + root.face-inset;
         y: -root.pad;
@@ -414,15 +347,16 @@ export component SliceDelegate inherits Rectangle {
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #000000;
-        opacity: root.is-current ? 0.0 : (root.has-hover ? 0.15 : 0.4);
+        opacity: root.is-current ? 0.0 : (root.has-hover ? SkwdTokens.gallery-slice-dim-hover : SkwdTokens.gallery-slice-dim-idle);
         animate opacity { duration: SkwdTokens.anim-200; }
     }
 
     // ── Hover brighten (approved design): thin white veil over the
     // parallelogram face, completing the lift+brighten focus cue. Gated to
-    // the FRONT face with a decoded image — empty/loading or flipped cards
-    // skip the veil (shimmer/metadata stay neutral). Painted above the dim
-    // layer so the net effect brightens even idle-dimmed cards. S3 inset. ──
+    // the FRONT face with a decoded baked image — empty/loading or flipped
+    // cards skip the veil (shimmer/metadata stay neutral). Painted above
+    // the dim layer so the net effect brightens even idle-dimmed cards.
+    // S3 inset. Border paints above this so brighten never washes border. ──
     hover-brighten := SliceShape {
         x: -root.pad + root.face-inset;
         y: -root.pad;
@@ -430,9 +364,46 @@ export component SliceDelegate inherits Rectangle {
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #ffffff;
-        opacity: !root.is-flipped && (root.thumb.width > 0 || root.hero.width > 0) && root.has-hover
+        opacity: !root.is-flipped && root.has-baked && root.has-hover
             ? SkwdTokens.gallery-card-hover-brighten : 0.0;
         animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
+    }
+
+    // ── Focus glow (S3): icy cyan outer halo behind the 2px border.
+    // Expanded only, soft outer glow so the border reads unmistakable
+    // even under distance-tiered paint. Tokenized width/opacity.
+    // Painted ABOVE image/dim/brighten, BELOW border. ──
+    focus-glow := SliceShape {
+        x: -root.pad + root.face-inset;
+        y: -root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: transparent;
+        stroke: SkwdTokens.gallery-slice-focus-border-color;
+        stroke-width: SkwdTokens.gallery-slice-focus-glow-width;
+        opacity: root.is-current ? SkwdTokens.gallery-slice-focus-glow-opacity : 0.0;
+        animate opacity { duration: SkwdTokens.anim-200; }
+    }
+
+    // ── Border on top (S4b): stroke-only outline ABOVE the baked image
+    // so the full 2px icy cyan traces the parallelogram unmistakably.
+    // Fill transparent — only stroke paints. Hover/idle use existing subtle
+    // strokes; current uses icy cyan 2px. Stroke-room pad keeps outer half
+    // uncut. ──
+    border-top := SliceShape {
+        x: -root.pad + root.face-inset;
+        y: -root.pad;
+        width: root.face-width + root.skew + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
+        fill: transparent;
+        stroke: root.is-current ? SkwdTokens.gallery-slice-focus-border-color
+            : root.has-hover ? SkwdTokens.primary.transparentize(0.6)
+            : #000000.transparentize(0.4);
+        stroke-width: root.is-current ? SkwdTokens.border-2 : 1px;
+        animate stroke { duration: SkwdTokens.anim-200; }
+        animate stroke-width { duration: SkwdTokens.anim-200; }
     }
 
     // ── Video Timer 100-300ms (default 200): Timer triggered → playing ──

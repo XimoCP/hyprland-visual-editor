@@ -1,4 +1,4 @@
-// HVE 2 — SliceCarousel (S2 infinite wall).
+// HVE 2 — SliceCarousel (S2 infinite wall + S4b baked).
 //
 // Infinite carousel wall: focused card dead-center expanded (924), collapsed
 // slats 135 contiguous zero-gap on both sides filling edge-to-edge via clones.
@@ -9,8 +9,8 @@
 // 3-pass paint: idle distance-tiered (far→near) + hovered + expanded topmost.
 // Brief x animate (350ms OutCubic) avoids flash on step; wheel debounce Timer
 // stays outside the for-repeater (Slint 1.17 panic). Edge fade via per-tile
-// fade from Rust (skwd fullZone curve, subtle). Focus border via SkwdTokens
-// primary w3 + subtle glow (primary transparentize).
+// fade from Rust (skwd fullZone curve, S4b softened min 0.55). Focus border
+// via SkwdTokens icy cyan + glow. S4b: baked slat images flow through.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -88,6 +88,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
@@ -103,6 +105,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
@@ -118,6 +122,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
@@ -133,6 +139,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
@@ -148,6 +156,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
@@ -164,6 +174,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
@@ -180,6 +192,8 @@ export component SliceCarousel inherits Rectangle {
                 accent: root.cards[t.real-index].accent;
                 thumb: root.cards[t.real-index].thumb;
                 hero: root.cards[t.real-index].hero;
+                slat-image: root.cards[t.real-index].slat-image;
+                slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
                 animate x { duration: SkwdTokens.anim-expand; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
                 clicked => { root.card-clicked(t.real-index); }
                 right-clicked => { root.card-right-clicked(t.real-index); }
