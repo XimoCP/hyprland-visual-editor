@@ -195,8 +195,27 @@ export component SliceCarousel inherits Rectangle {
             right-clicked => { root.card-right-clicked(t.real-index); }
             hovered(h) => { root.hovered-tile = h ? idx : -1; }
         }
+        // Central relay (V4): two expanded coexist transiently during bloom+slide.
+        // Model order (left-to-right) would put a left incoming behind the old,
+        // so split by dist: old (dist!=0) paints first, new center (dist==0) paints last → incoming always on top.
         for t[idx] in root.tiles : SliceDelegate {
-            visible: t.is-expanded;
+            visible: t.is-expanded && t.dist != 0;
+            x: t.x;
+            y: 0;
+            fade-opacity: t.fade;
+            card-name: root.cards[t.real-index].name;
+            is-current: true;
+            accent: root.cards[t.real-index].accent;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            slat-image: root.cards[t.real-index].slat-image;
+            slat-expanded-image: root.cards[t.real-index].slat-expanded-image;
+            clicked => { root.card-clicked(t.real-index); }
+            right-clicked => { root.card-right-clicked(t.real-index); }
+            hovered(h) => { root.hovered-tile = h ? idx : -1; }
+        }
+        for t[idx] in root.tiles : SliceDelegate {
+            visible: t.is-expanded && t.dist == 0;
             x: t.x;
             y: 0;
             fade-opacity: t.fade;
