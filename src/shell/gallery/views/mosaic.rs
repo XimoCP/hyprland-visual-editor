@@ -568,6 +568,8 @@ impl MosaicPages {
         let capacity = mosaic_page_capacity(stage_w, stage_h);
         let total_pages = if real_count == 0 {
             0
+        } else if capacity == 0 {
+            1
         } else if real_count <= capacity {
             1
         } else {
@@ -588,6 +590,8 @@ impl MosaicPages {
         let capacity = mosaic_page_capacity(stage_w, stage_h);
         let total_pages = if real_count == 0 {
             0
+        } else if capacity == 0 {
+            1
         } else if real_count <= capacity {
             1
         } else {
@@ -639,10 +643,14 @@ impl MosaicPages {
 
     /// Map a displayed (rendered) tile index to its REAL theme index. In
     /// clone mode real = displayed % real_count; otherwise the page's real
-    /// block offset + displayed (1:1 within the page).
+    /// block offset + displayed (1:1 within the page). Degenerate capacity 0
+    /// falls back to clamped identity.
     pub fn clone_real_index(&self, displayed: usize) -> usize {
         if self.real_count == 0 {
             return 0;
+        }
+        if self.capacity == 0 {
+            return displayed.min(self.real_count - 1);
         }
         if self.real_count < self.capacity {
             displayed % self.real_count
@@ -653,10 +661,16 @@ impl MosaicPages {
 
     /// Aspects + real indices for rendering the current page. Applies
     /// clone-fill so exactly `capacity` tiles are produced when the library
-    /// is smaller than a page. Purity: no disk, no engine.
+    /// is smaller than a page. Purity: no disk, no engine. Degenerate
+    /// capacity 0 falls back to real entries single page.
     pub fn page_render(&self) -> (Vec<f32>, Vec<usize>) {
         if self.real_count == 0 {
             return (vec![], vec![]);
+        }
+        if self.capacity == 0 {
+            let aspects: Vec<f32> = (0..self.real_count).map(mosaic_display_aspect).collect();
+            let reals: Vec<usize> = (0..self.real_count).collect();
+            return (aspects, reals);
         }
         if self.real_count < self.capacity {
             let aspects: Vec<f32> =
@@ -672,6 +686,17 @@ impl MosaicPages {
             let reals: Vec<usize> = (start..end).collect();
             (aspects, reals)
         }
+    }
+
+    /// Jump to an absolute page (clamped, no wrap). Returns true if changed.
+    pub fn go_to(&mut self, page: usize) -> bool {
+        if self.total_pages == 0 {
+            return false;
+        }
+        let clamped = page.min(self.total_pages - 1);
+        let changed = clamped != self.current;
+        self.current = clamped;
+        changed
     }
 }
 
@@ -2330,5 +2355,22 @@ mod mosaic_unit_a_tests {
         p.step(-99);
         assert_eq!(p.current(), 0, "step -99 must clamp to first");
         assert!(!p.step(0), "step 0 no change");
+    }
+
+    #[test]
+    fn go_to_clamps_no_wrap() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let mut p = MosaicPages::new(cap * 3, STAGE_W, STAGE_H);
+        assert_eq!(p.total_pages(), 3);
+        assert!(p.go_to(2));
+        assert_eq!(p.current(), 2);
+        assert!(!p.go_to(2), "same page no change");
+        assert!(p.go_to(0));
+        assert_eq!(p.current(), 0);
+        assert!(p.go_to(99));
+        assert_eq!(p.current(), 2, "go_to 99 clamps to last");
+        assert!(!p.go_to(99), "already at last, clamped no change");
+        let mut empty = MosaicPages::new(0, STAGE_W, STAGE_H);
+        assert!(!empty.go_to(5));
     }
 }
