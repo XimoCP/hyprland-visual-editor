@@ -1166,4 +1166,62 @@ mod tests {
         let sx0 = ring_slot_x(0, 0, stage_w);
         assert!((sx1 - sx0).abs()<0.001, "no drift after cycles");
     }
+
+    // ── S2 ring → Slint model builder (WIRE) ──────────────────────────
+
+    #[test]
+    fn slice_ui_tiles_from_ring_focused_centered_and_fills_stage() {
+        let stage_w = 1920.0;
+        let tiles = slice_ui_tiles(6, 2, stage_w);
+        assert!(!tiles.is_empty(), "tiles must fill stage");
+        let expanded = tiles.iter().filter(|t| t.is_expanded).count();
+        assert_eq!(expanded, 1, "exactly one expanded");
+        let foc = tiles.iter().find(|t| t.is_expanded).unwrap();
+        assert!((foc.x + foc.w / 2.0 - stage_w / 2.0).abs() < 0.001, "expanded dead-center");
+        assert_eq!(foc.w, SLICE_EXPANDED_WIDTH);
+        let min_x = tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        let max_r = tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        assert!(min_x <= 0.001 && max_r >= stage_w - 0.001, "edge-to-edge fill");
+        // real_index always in range, clone mapping cyclic
+        for t in &tiles {
+            assert!(t.real_index < 6);
+        }
+        // different stage width yields different tile count / x, but still centered
+        let narrow = slice_ui_tiles(6, 2, 800.0);
+        assert!(narrow.len() < tiles.len(), "narrow stage fewer tiles");
+        let foc2 = narrow.iter().find(|t| t.is_expanded).unwrap();
+        assert!((foc2.x + foc2.w / 2.0 - 400.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn slice_ui_tiles_fade_subtle_and_bounded() {
+        let tiles = slice_ui_tiles(6, 3, 1920.0);
+        for t in &tiles {
+            assert!((0.0..=1.0).contains(&t.fade), "fade {t:?} out of 0..1");
+        }
+        let foc_fade = tiles.iter().find(|t| t.is_expanded).unwrap().fade;
+        assert!((foc_fade - 1.0).abs() < 0.001, "focused fully opaque");
+        // farthest slat should be dimmer than center but not invisible unless beyond 1.2
+        let far = tiles.iter().max_by(|a, b| (a.x).partial_cmp(&b.x).unwrap()).unwrap();
+        assert!(far.fade <= 1.0 && far.fade >= 0.0);
+        // degenerate inputs yield empty
+        assert!(slice_ui_tiles(0, 0, 1920.0).is_empty());
+        assert!(slice_ui_tiles(6, 0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn ring_slot_fade_center_and_edge_values() {
+        let stage_w = 1920.0;
+        let focused = 2usize;
+        // centered expanded slot fully opaque
+        let center_slot = RingSlot { virtual_index: focused as isize, real_index: focused, x: ring_focused_x(stage_w), width: SLICE_EXPANDED_WIDTH, is_expanded: true };
+        assert!((ring_slot_fade(&center_slot, stage_w) - 1.0).abs() < 0.001);
+        // far left slot dims toward edge but stays bounded
+        let far_left = ring_visible_slots(6, focused, stage_w).into_iter().min_by(|a,b| a.x.partial_cmp(&b.x).unwrap()).unwrap();
+        let f = ring_slot_fade(&far_left, stage_w);
+        assert!((0.0..=1.0).contains(&f), "far fade {f}");
+        // small stage still valid
+        let tiny_slot = RingSlot { virtual_index: 0, real_index: 0, x: 0.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
+        assert!((0.0..=1.0).contains(&ring_slot_fade(&tiny_slot, 50.0)));
+    }
 }
