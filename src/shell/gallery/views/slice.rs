@@ -347,6 +347,39 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
     out
 }
 
+/// Slint-facing tile derived from RingSlot — includes subtle edge fade.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceUiTile {
+    pub x: f32,
+    pub w: f32,
+    pub real_index: usize,
+    pub is_expanded: bool,
+    pub fade: f32,
+}
+
+/// Edge fade for a single ring slot at `stage_width` (skwd fullZone curve).
+pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
+    if !(stage_width > 0.0) {
+        return 1.0;
+    }
+    let half = stage_width / 2.0;
+    let fz = edge_fade_full_zone(half);
+    let center = slot.x + slot.width / 2.0;
+    let nd = edge_norm_dist(center, half, half);
+    fade_opacity(nd, fz)
+}
+
+/// Build Slint tiles from ring_visible_slots with per-slot fade (S2 WIRE).
+pub fn slice_ui_tiles(real_count: usize, focused: usize, stage_width: f32) -> Vec<SliceUiTile> {
+    ring_visible_slots(real_count, focused, stage_width)
+        .into_iter()
+        .map(|s| {
+            let fade = ring_slot_fade(&s, stage_width);
+            SliceUiTile { x: s.x, w: s.width, real_index: s.real_index, is_expanded: s.is_expanded, fade }
+        })
+        .collect()
+}
+
 impl SliceView {
     /// Create a new carousel for `count` cards, focus 0.
     pub fn new(count: usize) -> Self {
