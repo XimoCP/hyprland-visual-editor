@@ -23,10 +23,8 @@ export component GalleryRoot inherits Rectangle {
     in property <int> current-style: 0; // 0 Slice, 1 Hexagon, 2 Mosaic
     in property <int> focused-index: 0;
     in property <[GalleryCardData]> cards;
-    // V2 virtualized single-strip tiles (Rust strip_feed, window + spare).
+    // S2 ring: contiguous wall tiles (Rust ring_visible_slots + fade).
     in property <[SliceTileData]> slice-tiles;
-    in property <length> slice-strip-offset: 0px;
-    in property <bool> slice-rebasing: false;
     // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
@@ -122,8 +120,6 @@ export component GalleryRoot inherits Rectangle {
             height: 100%;
             cards: root.cards;
             tiles: root.slice-tiles;
-            strip-offset: root.slice-strip-offset;
-            rebasing: root.slice-rebasing;
             card-clicked(i) => { root.card-clicked(i); }
             card-right-clicked(i) => { root.card-right-clicked(i); }
             wheel-step(dir) => { root.wheel-step(dir); }

@@ -207,10 +207,8 @@ export component MainWindow inherits Window {
     in-out property <int> gallery-style: 0;
     in-out property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
-    // V2 virtualized single-strip tiles (Rust strip_feed, window + spare).
+    // S2 ring tiles (Rust ring_visible_slots, edge-to-edge clones).
     in property <[SliceTileData]> gallery-slice-tiles;
-    in property <length> gallery-slice-strip-offset: 0px;
-    in property <bool> gallery-slice-rebasing: false;
     // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
@@ -508,8 +506,6 @@ export component MainWindow inherits Window {
         gallery-focused: root.gallery-focused;
         gallery-cards: root.gallery-cards;
         gallery-slice-tiles: root.gallery-slice-tiles;
-        gallery-slice-strip-offset: root.gallery-slice-strip-offset;
-        gallery-slice-rebasing: root.gallery-slice-rebasing;
         gallery-mosaic-tiles: root.gallery-mosaic-tiles;
         gallery-mosaic-current-page: root.gallery-mosaic-current-page;
         gallery-mosaic-total-pages: root.gallery-mosaic-total-pages;

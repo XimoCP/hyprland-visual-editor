@@ -476,8 +476,8 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         })
     };
-    // V2 virtualized single-strip (Rust strip_feed, window + spare, old geometry).
-    let refresh_slice_strip: std::sync::Arc<dyn Fn() + Send + Sync> = {
+    // S2 ring: contiguous zero-gap wall tiles (Rust ring_visible_slots).
+    let refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync> = {
         let weak = window.as_weak();
         let dims = stage_dims.clone();
         std::sync::Arc::new(move || {
@@ -487,8 +487,6 @@ fn main() -> Result<(), slint::PlatformError> {
             let real_count = cards.row_count() as usize;
             if real_count == 0 {
                 w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(Vec::<crate::SliceTileData>::new())));
-                w.set_gallery_slice_strip_offset(0.0);
-                w.set_gallery_slice_rebasing(false);
                 return;
             }
             let focused = w.get_gallery_focused().max(0) as usize;
@@ -506,154 +504,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let focused = focused.min(real_count.saturating_sub(1));
-            let slots = crate::shell::gallery::views::slice::strip_feed(real_count, focused, stage_w);
-            let tiles: Vec<crate::SliceTileData> = slots
-                .iter()
-                .map(|s| {
-                    let w_px = if s.is_expanded {
-                        crate::shell::gallery::views::slice::SLICE_EXPANDED_WIDTH
-                    } else {
-                        crate::shell::gallery::views::slice::SLICE_COLLAPSED_WIDTH
-                    };
-                    let x = stage_w / 2.0 + s.position - w_px / 2.0;
-                    let dist = (s.virtual_index - focused as isize).abs() as i32;
-                    crate::SliceTileData {
-                        x,
-                        w: w_px,
-                        real_index: s.real_index as i32,
-                        is_expanded: s.is_expanded,
-                        fade: 1.0,
-                        dist,
-                    }
-                })
-                .collect();
+            let tiles = crate::shell::gallery::views::slice::slice_ui_tiles(real_count, focused, stage_w);
             let tiles_rc = w.get_gallery_slice_tiles();
             if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
                 while vm.row_count() < tiles.len() {
-                    vm.push(crate::SliceTileData {
-                        x: 0.0,
-                        w: 0.0,
-                        real_index: 0,
-                        is_expanded: false,
-                        fade: 1.0,
-                        dist: 0,
-                    });
+                    vm.push(crate::SliceTileData { x: 0.0, w: 0.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 });
                 }
                 while vm.row_count() > tiles.len() {
                     vm.remove(vm.row_count() - 1);
                 }
                 for (i, t) in tiles.iter().enumerate() {
-                    vm.set_row_data(i, t.clone());
+                    vm.set_row_data(i, crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist });
                 }
             } else {
-                w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+                let slint_tiles: Vec<crate::SliceTileData> = tiles.into_iter().map(|t| crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist }).collect();
+                w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(slint_tiles)));
             }
-            // Geometry-driven refresh is a rebase — snap strip to 0 without animation
-            w.set_gallery_slice_rebasing(true);
-            w.set_gallery_slice_strip_offset(0.0);
-            let weak2 = weak.clone();
-            slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-                if let Some(w2) = weak2.upgrade() {
-                    w2.set_gallery_slice_rebasing(false);
-                }
-            });
-        })
-    };
-    // Helper for animated focus step (wheel / keys): slide strip then rebase after 350ms
-    let animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync> = {
-        let weak = window.as_weak();
-        let dims = stage_dims.clone();
-        let refresh = refresh_slice_strip.clone();
-        std::sync::Arc::new(move |delta: isize| {
-            use slint::Model;
-            let Some(w) = weak.upgrade() else { return; };
-            let cards = w.get_gallery_cards();
-            let real_count = cards.row_count() as usize;
-            if real_count == 0 {
-                return;
-            }
-            let cur = w.get_gallery_focused().max(0) as usize;
-            let next = crate::shell::gallery::views::slice::ring_step(cur, delta, real_count);
-            if next == cur {
-                return;
-            }
-            // Build new window tiles immediately but start strip offset away from center
-            // so the strip animates into place (single-strip 350ms OutCubic).
-            let (stage_w, _stage_h) = dims
-                .lock()
-                .unwrap()
-                .as_ref()
-                .copied()
-                .unwrap_or_else(|| {
-                    let scale = w.window().scale_factor();
-                    let physical = w.window().size();
-                    (physical.width as f32 / scale, physical.height as f32 / scale)
-                });
-            if !(stage_w > 0.0) {
-                w.set_gallery_focused(next as i32);
-                refresh();
-                return;
-            }
-            let offset = delta as f32 * crate::shell::gallery::views::slice::STRIP_COLLAPSED_STEP;
-            // Prepare new tiles for next focus
-            w.set_gallery_focused(next as i32);
-            // Instant jump to offset (rebasing true = 0ms), then animate to 0
-            w.set_gallery_slice_rebasing(true);
-            w.set_gallery_slice_strip_offset(offset);
-            // Build tiles for new focus while strip is offset
-            {
-                let slots = crate::shell::gallery::views::slice::strip_feed(real_count, next, stage_w);
-                let tiles: Vec<crate::SliceTileData> = slots
-                    .iter()
-                    .map(|s| {
-                        let w_px = if s.is_expanded {
-                            crate::shell::gallery::views::slice::SLICE_EXPANDED_WIDTH
-                        } else {
-                            crate::shell::gallery::views::slice::SLICE_COLLAPSED_WIDTH
-                        };
-                        let x = stage_w / 2.0 + s.position - w_px / 2.0;
-                        let dist = (s.virtual_index - next as isize).abs() as i32;
-                        crate::SliceTileData {
-                            x,
-                            w: w_px,
-                            real_index: s.real_index as i32,
-                            is_expanded: s.is_expanded,
-                            fade: 1.0,
-                            dist,
-                        }
-                    })
-                    .collect();
-                use slint::{Model, ModelRc, VecModel};
-                let tiles_rc = w.get_gallery_slice_tiles();
-                if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
-                    while vm.row_count() < tiles.len() {
-                        vm.push(crate::SliceTileData {
-                            x: 0.0,
-                            w: 0.0,
-                            real_index: 0,
-                            is_expanded: false,
-                            fade: 1.0,
-                            dist: 0,
-                        });
-                    }
-                    while vm.row_count() > tiles.len() {
-                        vm.remove(vm.row_count() - 1);
-                    }
-                    for (i, t) in tiles.iter().enumerate() {
-                        vm.set_row_data(i, t.clone());
-                    }
-                } else {
-                    w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
-                }
-            }
-            let weak2 = weak.clone();
-            slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-                if let Some(w2) = weak2.upgrade() {
-                    w2.set_gallery_slice_rebasing(false);
-                    w2.set_gallery_slice_strip_offset(0.0);
-                }
-            });
-            // No additional rebase needed — tiles already centered, strip animates to 0
         })
     };
     fn schedule_thumbs(
@@ -748,7 +614,7 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
         window.set_gallery_empty(empty);
         refresh_mosaic_page();
-        refresh_slice_strip();
+        refresh_slice_ring();
         schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims, refresh_mosaic_page.clone());
         // Slint-driven stage geometry: recompute BOTH models whenever the
         // gallery stage resizes (shared plumbing, reused for mosaic + slice ring).
@@ -759,7 +625,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let win = window.as_weak();
             let dims = stage_dims.clone();
             let refresh_mosaic = refresh_mosaic_page.clone();
-            let refresh_slice = refresh_slice_strip.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_stage_geometry_changed(move |width: f32, height: f32| {
                 if !(width > 0.0) || !(height > 0.0) {
                     return; // degenerate dims: keep last-known-good state
@@ -776,13 +642,13 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
         window.set_gallery_style(0);
         window.set_gallery_focused(0);
-        refresh_slice_strip();
+        refresh_slice_ring();
         window.set_gallery_reduced_motion(gallery_slot.is_reduced_motion());
         {
             let win = window.as_weak();
             let slot = gallery_slot.clone();
             let tm = gallery_tm.clone();
-            let refresh_slice = refresh_slice_strip.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_style_selected(move |style| {
                 let idx = (style as usize).min(2);
                 if let Some(w) = win.upgrade() {
@@ -808,7 +674,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let tm = gallery_tm.clone();
             let stage_dims = stage_dims.clone();
             let refresh = refresh_mosaic_page.clone();
-            let refresh_slice = refresh_slice_strip.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             let gallery_themes_root = gallery_themes_root.clone();
             window.on_gallery_card_clicked(move |idx| {
                 let i = idx as usize;
@@ -836,7 +702,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         {
             let win = window.as_weak();
-            let refresh_slice = refresh_slice_strip.clone();
+            let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_card_right_clicked(move |idx| {
                 if let Some(w) = win.upgrade() {
                     w.set_gallery_focused(idx);
@@ -1015,8 +881,7 @@ fn main() -> Result<(), slint::PlatformError> {
         &shell,
         mosaic_pages,
         refresh_mosaic_page,
-        refresh_slice_strip.clone(),
-        animate_slice_step.clone(),
+        refresh_slice_ring.clone(),
     );
 
     // ── Nav modules (data-driven sidebar, translated) ──

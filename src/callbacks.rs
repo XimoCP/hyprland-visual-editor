@@ -63,8 +63,7 @@ pub fn setup_callbacks(
     shell: &Rc<RefCell<Shell>>,
     mosaic_pages: std::sync::Arc<std::sync::Mutex<MosaicPages>>,
     refresh_mosaic_page: std::sync::Arc<dyn Fn() + Send + Sync>,
-    _refresh_slice_strip: std::sync::Arc<dyn Fn() + Send + Sync>,
-    animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync>,
+    refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync>,
 ) {
     // Single AppState instance shared across all callbacks
     let state = state.clone();
@@ -119,7 +118,7 @@ pub fn setup_callbacks(
         // this closure) each own a reference without consuming the originals.
         let mosaic_pages = mosaic_pages.clone();
         let refresh_mosaic_page = refresh_mosaic_page.clone();
-        let animate_slice_step = animate_slice_step.clone();
+        let refresh_slice_ring = refresh_slice_ring.clone();
         window.on_nav_move(move |direction| {
             use crate::shell::nav::ExpansionState;
             use crate::shell::nav::Screen;
@@ -146,9 +145,17 @@ pub fn setup_callbacks(
                     }
                     return;
                 }
-                // Slice style 0: Left/Right wrap via ring_step (S1 infinite) — single-strip animate
+                // Slice style 0: Left/Right wrap via ring_step (S1 infinite)
                 if style == 0 {
-                    animate_slice_step(delta as isize);
+                    if let Some(w) = weak.upgrade() {
+                        let len = w.get_gallery_cards().row_count() as usize;
+                        if len > 0 {
+                            let cur = w.get_gallery_focused().max(0) as usize;
+                            let next = crate::shell::gallery::views::slice::ring_step(cur, delta as isize, len);
+                            w.set_gallery_focused(next as i32);
+                            refresh_slice_ring();
+                        }
+                    }
                     return;
                 }
                 if let Some(w) = weak.upgrade() {
@@ -167,12 +174,26 @@ pub fn setup_callbacks(
         });
     }
 
-    // ── Gallery wheel (V2 single-strip): debounce Timer fires once per idle gesture;
-    // animates strip ±139 (OutCubic) and rebases after 350ms.
+    // ── Gallery wheel (S2 ring): debounce Timer fires once per idle gesture;
+    // wheel_target wraps via ring_step; refresh the ring tiles after focus.
     {
-        let animate = animate_slice_step.clone();
+        let weak = window.as_weak();
+        let refresh_slice_ring = refresh_slice_ring.clone();
         window.on_gallery_wheel_step(move |dir| {
-            animate(dir as isize);
+            use slint::Model;
+            if let Some(w) = weak.upgrade() {
+                let len = w.get_gallery_cards().row_count();
+                if len > 0 {
+                    let cur = w.get_gallery_focused();
+                    let next = crate::shell::gallery::views::slice::wheel_target(
+                        len,
+                        cur.max(0) as usize,
+                        dir as isize,
+                    );
+                    w.set_gallery_focused(next as i32);
+                    refresh_slice_ring();
+                }
+            }
         });
     }
 

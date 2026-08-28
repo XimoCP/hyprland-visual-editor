@@ -74,11 +74,9 @@ export component ShellRoot inherits Rectangle {
     in property <int> gallery-style: 0;
     in property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
-    // V2 virtualized single-strip tiles (Rust strip_feed, window + spare)
-    // + Mosaic geometry, both piped like gallery-cards.
+    // S2 ring tiles (Rust ring_visible_slots) + Mosaic geometry, both piped
+    // like gallery-cards (edge-to-edge clones for slice).
     in property <[SliceTileData]> gallery-slice-tiles;
-    in property <length> gallery-slice-strip-offset: 0px;
-    in property <bool> gallery-slice-rebasing: false;
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> gallery-mosaic-current-page: 0;
@@ -194,8 +192,6 @@ export component ShellRoot inherits Rectangle {
                 focused-index: root.gallery-focused;
                 cards: root.gallery-cards;
                 slice-tiles: root.gallery-slice-tiles;
-                slice-strip-offset: root.gallery-slice-strip-offset;
-                slice-rebasing: root.gallery-slice-rebasing;
                 mosaic-tiles: root.gallery-mosaic-tiles;
                 mosaic-current-page: root.gallery-mosaic-current-page;
                 mosaic-total-pages: root.gallery-mosaic-total-pages;
