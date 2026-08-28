@@ -1,10 +1,14 @@
-// HVE 2 — Slice carousel (gallery-immersive-redesign PR2).
+// HVE 2 — Slice carousel (gallery-immersive-redesign PR2 + S1 ring).
 //
 // Parallelogram carousel with skwd-wall exact geometry: collapsed 135 ↔
-// expanded 924, height 520, spacing +4 (small gap), skew 35px X-shear,
-// radius 0, 350ms OutCubic. Manual x placement (design D2): cum_offset
-// sums per-card widths plus small positive gaps; snap_x pixel-centers the
-// focused card (design D5); wheel steps ±1 per gesture.
+// expanded 924, height 520, skew 35px X-shear, radius 0, 350ms OutCubic.
+// S1 infinite ring: focused slot centered at stage_width/2 (expanded 924),
+// collapsed slats 135 contiguous (zero gap) on both sides, filling
+// edge-to-edge and wrapping modulo count via clones. Parallelogram skew is
+// visual-only (mask); layout stacks with zero gap. SLICE_SPACING_PX retained
+// for edge-fade zone parity (skwd) but not used in ring layout.
+// Manual x placement (D2): cum_offset sums widths (gap-free); snap_x
+// pixel-centers focused. Wheel/key steps wrap rem_euclid.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -164,21 +168,21 @@ pub struct SliceView {
     has_video_for_current: bool,
 }
 
-/// Container x that pixel-centers the focused card (design D5):
-/// `viewport_center − expanded/2 − cum_offset(focused, focused)`.
+/// Container x that pixel-centers the focused card (design D5 / S1 ring):
+/// `viewport_center − expanded/2 − cum_offset(focused, focused)` with
+/// gap-free cum_offset; focused center lands at viewport_center.
 pub fn snap_x(viewport_center_x: f32, focused: usize) -> f32 {
     viewport_center_x - SLICE_EXPANDED_WIDTH / 2.0 - cum_offset(focused, focused)
 }
 
 /// Wheel gesture target index: advances `current` by **±1 max per gesture**
-/// regardless of the event's notch count (`dir` sign wins), clamped to
-/// 0..count−1, never wrapping (design D5).
+/// regardless of notch count (`dir` sign wins), wrapping modulo count (S1
+/// infinite ring). Empty model stays at 0.
 pub fn wheel_target(count: usize, current: usize, dir: isize) -> usize {
     if count == 0 {
         return 0;
     }
-    let next = current as isize + dir.signum();
-    next.clamp(0, count as isize - 1) as usize
+    ring_step(current, dir.signum(), count)
 }
 
 /// Width of card `j` (px) when `focused` is the expanded card (design D2).
@@ -192,10 +196,12 @@ pub fn card_width_at(j: usize, focused: usize) -> f32 {
 
 /// Cumulative x offset of card `i` (px) when `focused` is the expanded card.
 ///
-/// Design D2: `cum_offset(i, focused) = Σ_{j<i} width(j) + i·spacing` with
-/// `width(j) = 924 if j == focused else 135` and `spacing = +4` (small gap).
+/// S1 ring (gap-free): `cum_offset(i, focused) = Σ_{j<i} width(j)` with
+/// `width(j) = 924 if j == focused else 135`. Zero gap — collapsed slats are
+/// contiguous; skew is visual-only. SLICE_SPACING_PX retained for edge-fade
+/// parity but not used here.
 pub fn cum_offset(i: usize, focused: usize) -> f32 {
-    (0..i).map(|j| card_width_at(j, focused)).sum::<f32>() + i as f32 * SLICE_SPACING_PX
+    (0..i).map(|j| card_width_at(j, focused)).sum::<f32>()
 }
 
 /// ── Ring model S1 (infinite carousel, pure math) ─────────────────────
@@ -219,25 +225,32 @@ pub struct RingSlot {
 }
 
 /// Map a virtual (unwrapped) index to its real theme index.
+/// `((virtual % count) + count) % count` — handles negatives via rem_euclid.
 pub fn ring_real_index(virtual_index: isize, real_count: usize) -> usize {
-    // STUB for RED — intentionally wrong for negative values (uses truncating rem)
     if real_count == 0 {
         return 0;
     }
-    (virtual_index % real_count as isize).abs() as usize
+    virtual_index.rem_euclid(real_count as isize) as usize
 }
 
 /// X of the focused (expanded) slot's left edge when centered.
 pub fn ring_focused_x(stage_width: f32) -> f32 {
-    // STUB for RED — misses expanded/2 offset
-    stage_width / 2.0
+    stage_width / 2.0 - SLICE_EXPANDED_WIDTH / 2.0
 }
 
 /// Absolute x of slot at virtual_index when focused is centered.
+/// Deterministic from geometry, no accumulated float drift.
+/// Contiguous collapsed slats: zero gap on both sides.
 pub fn ring_slot_x(virtual_index: isize, focused: usize, stage_width: f32) -> f32 {
-    // STUB for RED — constant, breaks centering/contiguity
-    let _ = (virtual_index, focused);
-    stage_width / 2.0
+    let fx = ring_focused_x(stage_width);
+    let delta = virtual_index - focused as isize;
+    if delta == 0 {
+        fx
+    } else if delta > 0 {
+        fx + SLICE_EXPANDED_WIDTH + (delta - 1) as f32 * SLICE_COLLAPSED_WIDTH
+    } else {
+        fx + delta as f32 * SLICE_COLLAPSED_WIDTH
+    }
 }
 
 /// Width of slot at virtual_index (expanded iff virtual == focused).
@@ -250,31 +263,88 @@ pub fn ring_slot_width(virtual_index: isize, focused: usize) -> f32 {
 }
 
 /// Wrap step with modulo (both directions). Degenerate count 0 → 0.
+/// `focused = (focused + delta).rem_euclid(real_count)` — infinite in one direction.
 pub fn ring_step(focused: usize, delta: isize, real_count: usize) -> usize {
-    // STUB for RED — clamped, no wrap
     if real_count == 0 {
         return 0;
     }
-    let next = focused as isize + delta;
-    next.clamp(0, real_count as isize - 1) as usize
+    (focused as isize + delta).rem_euclid(real_count as isize) as usize
 }
 
 /// All visible slots intersecting [0, stage_width], extending cyclically
-/// outward from focused in both directions. Edge-to-edge fill.
+/// outward from focused in both directions. Edge-to-edge fill via clones.
+/// Deterministic: computed from focused + geometry, no running offsets.
 pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -> Vec<RingSlot> {
-    // STUB for RED — only the focused slot, never fills edge-to-edge nor clones beyond count
     if real_count == 0 || !(stage_width > 0.0) {
         return Vec::new();
     }
+    // Clamp focused to valid range (defensive; caller should ensure)
+    let focused = focused.min(real_count.saturating_sub(1));
     let fx = ring_focused_x(stage_width);
-    let w = if focused < real_count { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
-    vec![RingSlot {
+
+    let mut slots: Vec<RingSlot> = Vec::new();
+
+    // Focused slot
+    slots.push(RingSlot {
         virtual_index: focused as isize,
-        real_index: focused.min(real_count - 1),
+        real_index: ring_real_index(focused as isize, real_count),
         x: fx,
-        width: w,
+        width: SLICE_EXPANDED_WIDTH,
         is_expanded: true,
-    }]
+    });
+
+    // Expand left: contiguous collapsed slats until left edge covered
+    let mut left: Vec<RingSlot> = Vec::new();
+    let mut v = focused as isize - 1;
+    // Guard against huge stage (e.g., 10k) needing many clones
+    for _ in 0..10000 {
+        let x = ring_slot_x(v, focused, stage_width);
+        let w = SLICE_COLLAPSED_WIDTH;
+        // Slot intersects stage iff x < stage_width && x+w > 0
+        // For left side, once x+w <= 0 we have passed left edge; further left will be even more negative
+        if x + w <= 0.0 {
+            break;
+        }
+        if x < stage_width && x + w > 0.0 {
+            left.push(RingSlot {
+                virtual_index: v,
+                real_index: ring_real_index(v, real_count),
+                x,
+                width: w,
+                is_expanded: false,
+            });
+        }
+        v -= 1;
+    }
+    // Expand right
+    let mut right: Vec<RingSlot> = Vec::new();
+    let mut v = focused as isize + 1;
+    for _ in 0..10000 {
+        let x = ring_slot_x(v, focused, stage_width);
+        let w = SLICE_COLLAPSED_WIDTH;
+        if x >= stage_width {
+            break;
+        }
+        if x < stage_width && x + w > 0.0 {
+            right.push(RingSlot {
+                virtual_index: v,
+                real_index: ring_real_index(v, real_count),
+                x,
+                width: w,
+                is_expanded: false,
+            });
+        }
+        v += 1;
+    }
+
+    left.reverse();
+    let mut out = Vec::with_capacity(left.len() + 1 + right.len());
+    out.extend(left);
+    out.extend(slots);
+    out.extend(right);
+    // Sort by x to guarantee left-to-right order (also virtual order)
+    out.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+    out
 }
 
 impl SliceView {
@@ -351,7 +421,10 @@ impl SliceView {
         self.card_width(self.focused_index)
     }
 
-    /// Set focused index, clamped, resets flip + releases video on blur (S16/17).
+    /// Set focused index, wrapped modulo count for ring (S1) but clamped
+    /// for direct jumps, resets flip + releases video on blur (S16/17).
+    /// Wrapping is via `move_focus`/`ring_step`; direct `set` with out-of-range
+    /// indices clamps (defensive) — the ring step is the infinite path.
     pub fn set_focused_index(&mut self, idx: usize) -> usize {
         if self.count == 0 {
             self.focused_index = 0;
@@ -368,22 +441,43 @@ impl SliceView {
         self.focused_index
     }
 
-    /// Move focus by delta, clamped, no wrap (S13).
+    /// Move focus by delta, wrapping modulo count (S1 infinite ring).
+    /// Deterministic: computed from index + delta, no accumulated offset drift.
     pub fn move_focus(&mut self, delta: isize) -> usize {
         if self.count == 0 {
             return 0;
         }
-        let max = self.count as isize - 1;
-        let next = self.focused_index as isize + delta;
-        let clamped = next.clamp(0, max) as usize;
-        self.set_focused_index(clamped)
+        let next = ring_step(self.focused_index, delta, self.count);
+        if next != self.focused_index {
+            self.release_video();
+            self.flipped = false;
+            self.flip_angle = 0.0;
+        }
+        self.focused_index = next;
+        self.focused_index
     }
 
     /// Advance one step per wheel gesture toward `dir` (+1 next / −1 prev),
-    /// clamped, no wrap (design D5). A multi-notch burst still moves ±1.
+    /// wrapping (S1 ring). A multi-notch burst still moves ±1 (dir signum).
     pub fn wheel_step(&mut self, dir: isize) -> usize {
-        self.focused_index = wheel_target(self.count, self.focused_index, dir);
+        if self.count == 0 {
+            return 0;
+        }
+        let next = wheel_target(self.count, self.focused_index, dir);
+        if next != self.focused_index {
+            self.release_video();
+            self.flipped = false;
+            self.flip_angle = 0.0;
+        }
+        self.focused_index = next;
         self.focused_index
+    }
+
+    /// Ring slots for current focused index at given stage width — feeds Slint
+    /// carousel positions (real_index + x + expanded flag) with clones and
+    /// edge-to-edge fill.
+    pub fn ring_slots(&self, stage_width: f32) -> Vec<RingSlot> {
+        ring_visible_slots(self.count, self.focused_index, stage_width)
     }
 
     /// Handle a key press: Left/Right consumed and moves focus (S2),
@@ -523,46 +617,45 @@ mod tests {
 
     #[test]
     fn cum_offset_focused_first_exact_px() {
-        // focused = 0: the first card is expanded; later cards trail it by
-        // expanded + gap steps (928), collapsed ones add 139 net each.
+        // S1 ring gap-free: expanded 924, collapsed 135 contiguous (no gap).
         assert_eq!(cum_offset(0, 0), 0.0);
-        assert_eq!(cum_offset(1, 0), 928.0, "924 + 4");
-        assert_eq!(cum_offset(2, 0), 1067.0);
-        assert_eq!(cum_offset(3, 0), 1206.0, "924+2·135 + 3·4");
-        assert_eq!(cum_offset(4, 0), 1345.0);
+        assert_eq!(cum_offset(1, 0), 924.0, "924 contiguous");
+        assert_eq!(cum_offset(2, 0), 1059.0, "924+135");
+        assert_eq!(cum_offset(3, 0), 1194.0, "924+2·135");
+        assert_eq!(cum_offset(4, 0), 1329.0);
     }
 
     #[test]
     fn cum_offset_focused_mid_exact_px() {
-        // focused = 2 in a 5-card row: expanded card sits at index 2.
+        // focused = 2 in a 5-card row: expanded card sits at index 2, gap-free.
         assert_eq!(cum_offset(0, 2), 0.0);
-        assert_eq!(cum_offset(1, 2), 139.0);
-        assert_eq!(cum_offset(2, 2), 278.0, "focused lands at 278");
-        assert_eq!(cum_offset(3, 2), 1206.0, "135+135+924 + 3·4");
-        assert_eq!(cum_offset(4, 2), 1345.0);
-        // Crossing the focused edge advances by expanded+gap = 924+4.
-        assert_eq!(cum_offset(3, 2) - cum_offset(2, 2), 928.0);
+        assert_eq!(cum_offset(1, 2), 135.0);
+        assert_eq!(cum_offset(2, 2), 270.0, "focused lands at 270 (2·135)");
+        assert_eq!(cum_offset(3, 2), 1194.0, "135+135+924");
+        assert_eq!(cum_offset(4, 2), 1329.0);
+        // Crossing the focused edge advances by expanded = 924.
+        assert_eq!(cum_offset(3, 2) - cum_offset(2, 2), 924.0);
     }
 
     #[test]
     fn cum_offset_focused_last_exact_px() {
-        // focused = last of 5: everything before it is collapsed.
+        // focused = last of 5: everything before it is collapsed, gap-free.
         assert_eq!(cum_offset(0, 4), 0.0);
-        assert_eq!(cum_offset(1, 4), 139.0);
-        assert_eq!(cum_offset(3, 4), 417.0);
-        assert_eq!(cum_offset(4, 4), 556.0);
-        assert_eq!(cum_offset(5, 4), 1484.0, "4·135+924 + 5·4");
+        assert_eq!(cum_offset(1, 4), 135.0);
+        assert_eq!(cum_offset(3, 4), 405.0);
+        assert_eq!(cum_offset(4, 4), 540.0);
+        assert_eq!(cum_offset(5, 4), 1464.0, "4·135+924");
     }
 
     #[test]
     fn snap_x_exact_px_for_every_focused_index() {
-        // snap_x = viewport_center − 924/2 − cum_offset(focused) (design D5).
+        // S1 gap-free: snap_x = viewport_center − 462 − cum_offset(focused).
         let center = 500.0;
         assert_eq!(snap_x(center, 0), 38.0, "500 − 462 − 0");
-        assert_eq!(snap_x(center, 1), -101.0, "500 − 462 − 139");
-        assert_eq!(snap_x(center, 2), -240.0);
-        assert_eq!(snap_x(center, 3), -379.0);
-        assert_eq!(snap_x(center, 4), -518.0, "500 − 462 − 556");
+        assert_eq!(snap_x(center, 1), -97.0, "500 − 462 − 135");
+        assert_eq!(snap_x(center, 2), -232.0, "500 − 462 − 270");
+        assert_eq!(snap_x(center, 3), -367.0, "500 − 462 − 405");
+        assert_eq!(snap_x(center, 4), -502.0, "500 − 462 − 540");
     }
 
     #[test]
@@ -602,13 +695,18 @@ mod tests {
 
     #[test]
     fn wheel_step_clamped_no_wrap() {
+        // S1 ring: wheel wraps modulo count (infinite)
         let mut view = SliceView::new(3);
-        assert_eq!(view.wheel_step(-1), 0, "clamped at first, no wrap");
-        assert_eq!(view.wheel_step(-9), 0);
-        assert_eq!(view.wheel_step(1), 1);
-        assert_eq!(view.wheel_step(1), 2);
-        assert_eq!(view.wheel_step(1), 2, "clamped at last, no wrap");
-        assert_eq!(view.wheel_step(9), 2);
+        assert_eq!(view.wheel_step(-1), 2, "wrap backward 0→last");
+        let mut view2 = SliceView::new(3);
+        view2.set_focused_index(2);
+        assert_eq!(view2.wheel_step(1), 0, "wrap forward last→0");
+        // multi-step still one via wheel_target signum but wraps
+        let mut view3 = SliceView::new(3);
+        view3.set_focused_index(0);
+        assert_eq!(view3.wheel_step(1), 1);
+        assert_eq!(view3.wheel_step(1), 2);
+        assert_eq!(view3.wheel_step(1), 0, "wraps again");
     }
 
     #[test]
@@ -621,12 +719,14 @@ mod tests {
 
     #[test]
     fn wheel_target_free_fn_matches_method() {
-        // Same contract as SliceView::wheel_step for callback use.
+        // S1 ring wraps; matches SliceView::wheel_step signum+wrap.
         assert_eq!(wheel_target(5, 0, 1), 1);
-        assert_eq!(wheel_target(5, 4, 1), 4, "clamp at last");
-        assert_eq!(wheel_target(5, 0, -1), 0, "clamp at first");
-        assert_eq!(wheel_target(5, 2, -7), 1);
+        assert_eq!(wheel_target(5, 4, 1), 0, "wrap at last");
+        assert_eq!(wheel_target(5, 0, -1), 4, "wrap at first");
+        assert_eq!(wheel_target(5, 2, -7), 1, "burst signum wrap");
         assert_eq!(wheel_target(0, 0, 1), 0);
+        assert_eq!(wheel_target(6, 5, 1), 0);
+        assert_eq!(wheel_target(6, 0, -1), 5);
     }
 
     #[test]
@@ -654,23 +754,23 @@ mod tests {
 
     #[test]
     fn slice_key_left_right_consumed_and_clamped() {
+        // S1 ring wraps; keys move and wrap
         let mut view = SliceView::new(3);
         assert_eq!(view.focused_index(), 0);
-        // Right consumed, moves to 1
         assert!(view.handle_key(GalleryKey::Right), "Right must be consumed");
         assert_eq!(view.focused_index(), 1);
         assert!(view.handle_key(GalleryKey::Right));
         assert_eq!(view.focused_index(), 2);
-        // Clamped at end, still consumed
+        // Wraps at end
         assert!(view.handle_key(GalleryKey::Right));
-        assert_eq!(view.focused_index(), 2, "clamped at last, no wrap S13");
-        // Left consumed
+        assert_eq!(view.focused_index(), 0, "wrap last→0 S1 ring");
+        // Left wraps backward
+        assert!(view.handle_key(GalleryKey::Left));
+        assert_eq!(view.focused_index(), 2, "wrap 0→last");
         assert!(view.handle_key(GalleryKey::Left));
         assert_eq!(view.focused_index(), 1);
         assert!(view.handle_key(GalleryKey::Left));
         assert_eq!(view.focused_index(), 0);
-        assert!(view.handle_key(GalleryKey::Left));
-        assert_eq!(view.focused_index(), 0, "clamped at first");
     }
 
     #[test]
@@ -865,9 +965,10 @@ mod tests {
 
     #[test]
     fn card_center_x_collapsed_and_expanded() {
+        // S1 gap-free contiguous
         assert_eq!(card_center_x(0, 0), 462.0, "expanded card center");
-        assert_eq!(card_center_x(1, 0), 995.5, "928 + 135/2");
-        assert_eq!(card_center_x(2, 2), 740.0, "278 + 462");
+        assert_eq!(card_center_x(1, 0), 991.5, "924 + 135/2 gap-free");
+        assert_eq!(card_center_x(2, 2), 732.0, "270 + 462 gap-free");
     }
 
     // ── 3.1 depth cues: dim level + paint-layer rank (design D4) ────────
