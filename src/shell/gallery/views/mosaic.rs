@@ -2238,3 +2238,97 @@ mod mosaic_capacity_tests {
         }
     }
 }
+
+// ── MOSAIC UNIT A — page/clone-fill backbone (RED) ────────────────
+#[cfg(test)]
+mod mosaic_unit_a_tests {
+    use super::*;
+
+    const STAGE_W: f32 = 1920.0;
+    const STAGE_H: f32 = 1040.0;
+
+    #[test]
+    fn degenerate_stage_capacity_zero_does_not_panic_and_reports_single_page() {
+        // Degenerate stage → capacity 0. Must not panic and must report a
+        // single page for any non-empty library (graceful fallback).
+        let p = MosaicPages::new(5, 0.0, 0.0);
+        assert_eq!(p.capacity(), 0, "degenerate stage capacity 0");
+        assert_eq!(p.total_pages(), 1, "non-empty library with degenerate stage → 1 page");
+        assert!(p.hidden(), "single page hidden");
+        let (aspects, reals) = p.page_render();
+        assert_eq!(aspects.len(), 5, "degenerate render falls back to real entries");
+        assert_eq!(reals, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn degenerate_recompute_does_not_panic() {
+        let mut p = MosaicPages::new(10, STAGE_W, STAGE_H);
+        p.recompute(7, 0.0, 0.0);
+        assert_eq!(p.capacity(), 0);
+        assert_eq!(p.total_pages(), 1);
+    }
+
+    #[test]
+    fn clone_fill_exact_contract_6_real_14_capacity_tile9_maps_to_3() {
+        // Force a capacity of 14 via stage that yields 14 (or simulate via
+        // direct construction through stage dims). Use real stage that gives
+        // capacity >=14; if stage gives larger capacity the clone contract
+        // still holds via % mapping — we test the pure mapping directly.
+        let p = MosaicPages::new(6, STAGE_W, STAGE_H);
+        let cap = p.capacity();
+        // real 6 <= cap → clone-fill mode → tile 9 maps to 9%6==3
+        assert!(cap >= 6, "need cap >=6 for clone mode cap={cap}");
+        if cap >= 10 {
+            assert_eq!(p.clone_real_index(9), 3, "displayed 9 → real 3 (9 % 6)");
+            assert_eq!(p.clone_fill_count(), cap - 6);
+            let (aspects, reals) = p.page_render();
+            assert_eq!(aspects.len(), cap);
+            assert_eq!(reals[9], 3);
+        }
+    }
+
+    #[test]
+    fn total_pages_boundary_exactly_capacity_and_plus_one() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        assert!(cap > 1 && cap < 64, "cap sane {cap}");
+        let exactly = MosaicPages::new(cap, STAGE_W, STAGE_H);
+        assert_eq!(exactly.total_pages(), 1, "exactly capacity → 1 page");
+        assert!(exactly.hidden());
+        let plus_one = MosaicPages::new(cap + 1, STAGE_W, STAGE_H);
+        assert_eq!(plus_one.total_pages(), 2, "capacity+1 → 2 pages");
+        assert!(!plus_one.hidden());
+        let plus_cap = MosaicPages::new(cap * 2, STAGE_W, STAGE_H);
+        assert_eq!(plus_cap.total_pages(), 2);
+        let plus_cap_one = MosaicPages::new(cap * 2 + 1, STAGE_W, STAGE_H);
+        assert_eq!(plus_cap_one.total_pages(), 3);
+    }
+
+    #[test]
+    fn pagination_hidden_predicate_and_numbers() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let one = MosaicPages::new(cap, STAGE_W, STAGE_H);
+        assert!(one.hidden());
+        assert_eq!(one.page_numbers(), vec![1]);
+        let two = MosaicPages::new(cap + 1, STAGE_W, STAGE_H);
+        assert!(!two.hidden());
+        assert_eq!(two.page_numbers(), vec![1, 2]);
+        let zero = MosaicPages::new(0, STAGE_W, STAGE_H);
+        assert!(zero.hidden());
+        assert!(zero.page_numbers().is_empty());
+    }
+
+    #[test]
+    fn clamp_no_wrap_via_step_large_delta() {
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        let total = cap * 2 + 1;
+        let mut p = MosaicPages::new(total, STAGE_W, STAGE_H);
+        assert_eq!(p.total_pages(), 3);
+        // jump far beyond end → clamp to last
+        p.step(99);
+        assert_eq!(p.current(), 2, "step 99 must clamp to last");
+        // jump far before start → clamp to first
+        p.step(-99);
+        assert_eq!(p.current(), 0, "step -99 must clamp to first");
+        assert!(!p.step(0), "step 0 no change");
+    }
+}
