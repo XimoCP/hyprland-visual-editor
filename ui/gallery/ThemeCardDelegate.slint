@@ -33,7 +33,7 @@ export struct GalleryCardData {
     hero: image,
     // S4b baked parallelogram variants — tip-to-tip with NO internal padding.
     // Consumed by SliceDelegate's plain Image (alpha IS the mask). Collapsed
-    // bbox = SLICE_COLLAPSED_WIDTH(135)+SKEW(35)=170 × 520; expanded bbox =
+    // bbox = face(135−24)+SKEW(35)=146 × 520; expanded bbox =
     // 924+35=959 × 520. Baked ONCE per model build/refresh, not per wheel.
     slat-image: image,
     slat-expanded-image: image,
