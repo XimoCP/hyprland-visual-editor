@@ -568,8 +568,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let plan = crate::shell::gallery::views::slice::slide_plan(delta);
-            // Flip focused immediately so widths animate in place (is-current via focused-index)
+            // Flip focused immediately so widths animate in place (now per-SLOT via is-expanded)
             w.set_gallery_focused(next as i32);
+            // Per-slot flip (V3 ghost fix): mutate frozen rows in place so ONLY the
+            // adjacent slot expands during the slide; clones of the focused theme stay
+            // 135px collapsed. Done BEFORE strip animation so width tweens in place.
+            {
+                let tiles_rc = w.get_gallery_slice_tiles();
+                if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
+                    let count = vm.row_count();
+                    if count >= 2 {
+                        let mut rows: Vec<crate::SliceTileData> = (0..count).filter_map(|i| vm.row_data(i)).collect();
+                        let before = rows.clone();
+                        if crate::shell::gallery::views::slice::flip_expanded_slot(&mut rows, delta) {
+                            for idx in 0..count as usize {
+                                if rows[idx].is_expanded != before[idx].is_expanded {
+                                    vm.set_row_data(idx, rows[idx].clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Animate strip: 0 → offset (slide). Next card enters from right for next (+1 → -135).
             w.set_gallery_slice_rebasing(false);
             w.set_gallery_slice_strip_offset(plan.offset_px);

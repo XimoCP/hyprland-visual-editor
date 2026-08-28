@@ -483,6 +483,75 @@ pub fn relative_x_for_delta(delta: isize) -> f32 {
     center - w / 2.0
 }
 
+/// Per-slot expanded flip — V3 ghost fix.
+///
+/// Finds the single row with `is_expanded == true`, clears it and sets the
+/// adjacent slot toward `direction` (+1 = next right, -1 = previous). Returns
+/// true on success. Pure — operates by POSITION, never by `real_index`, so
+/// ring clones never expand as ghosts.
+pub trait SliceExpandable {
+    fn is_expanded(&self) -> bool;
+    fn set_expanded(&mut self, v: bool);
+}
+
+impl SliceExpandable for SliceUiTile {
+    fn is_expanded(&self) -> bool {
+        self.is_expanded
+    }
+    fn set_expanded(&mut self, v: bool) {
+        self.is_expanded = v;
+    }
+}
+
+// Slint-generated tile — same flag, same behaviour. Implemented here so
+// `main.rs:animate_slice_step` can call the pure helper directly on the
+// frozen VecModel buffer.
+impl SliceExpandable for crate::SliceTileData {
+    fn is_expanded(&self) -> bool {
+        self.is_expanded
+    }
+    fn set_expanded(&mut self, v: bool) {
+        self.is_expanded = v;
+    }
+}
+
+/// Flip expanded by one SLOT toward `direction`. Guards: exactly one expanded,
+/// rows.len() >= 2, direction != 0, adjacent exists. Returns false without
+/// mutating on any guard failure. Direction magnitude is normalized to signum
+/// so `+3` still means "one slot to the right" (adjacent).
+pub fn flip_expanded_slot<T: SliceExpandable>(rows: &mut [T], direction: isize) -> bool {
+    if direction == 0 {
+        return false;
+    }
+    if rows.len() < 2 {
+        return false;
+    }
+    let mut expanded_idx: Option<usize> = None;
+    let mut count = 0;
+    for (i, r) in rows.iter().enumerate() {
+        if r.is_expanded() {
+            expanded_idx = Some(i);
+            count += 1;
+            if count > 1 {
+                return false;
+            }
+        }
+    }
+    let cur = match expanded_idx {
+        Some(idx) => idx,
+        None => return false,
+    };
+    let step = direction.signum();
+    let next = cur as isize + step;
+    if next < 0 || next >= rows.len() as isize {
+        return false;
+    }
+    let next = next as usize;
+    rows[cur].set_expanded(false);
+    rows[next].set_expanded(true);
+    true
+}
+
 impl SliceView {
     /// Create a new carousel for `count` cards, focus 0.
     pub fn new(count: usize) -> Self {
@@ -1468,5 +1537,128 @@ mod tests {
     fn slice_strip_step_is_collapsed_pitch_135() {
         assert!((SLICE_STRIP_STEP - 135.0).abs() < 0.001, "strip step must be 135 (collapsed pitch = 111 face + 12+12 air), got {}", SLICE_STRIP_STEP);
         assert!((SLICE_STRIP_STEP - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
+    }
+
+    // ── V3 ghost fix — per-SLOT flip (RED) ───────────────────────────────
+
+    fn tile(expanded: bool) -> SliceUiTile {
+        SliceUiTile { x: 0.0, w: 0.0, real_index: 0, is_expanded: expanded, fade: 1.0, dist: 0 }
+    }
+
+    fn tiles_with_expanded_at(len: usize, expanded_idx: Option<usize>) -> Vec<SliceUiTile> {
+        (0..len).map(|i| tile(Some(i) == expanded_idx)).collect()
+    }
+
+    #[test]
+    fn flip_expanded_slot_normal_flip_right() {
+        let mut rows = tiles_with_expanded_at(5, Some(2));
+        assert!(flip_expanded_slot(&mut rows, 1));
+        assert!(!rows[2].is_expanded);
+        assert!(rows[3].is_expanded);
+        assert_eq!(rows.iter().filter(|r| r.is_expanded).count(), 1);
+    }
+
+    #[test]
+    fn flip_expanded_slot_flip_left() {
+        let mut rows = tiles_with_expanded_at(5, Some(2));
+        assert!(flip_expanded_slot(&mut rows, -1));
+        assert!(!rows[2].is_expanded);
+        assert!(rows[1].is_expanded);
+        assert_eq!(rows.iter().filter(|r| r.is_expanded).count(), 1);
+    }
+
+    #[test]
+    fn flip_expanded_slot_no_expanded_returns_false_no_mutation() {
+        let mut rows = tiles_with_expanded_at(4, None);
+        let before = rows.clone();
+        assert!(!flip_expanded_slot(&mut rows, 1));
+        assert_eq!(rows, before);
+    }
+
+    #[test]
+    fn flip_expanded_slot_two_expanded_returns_false_no_mutation() {
+        let mut rows = vec![tile(false), tile(true), tile(true), tile(false)];
+        let before = rows.clone();
+        assert!(!flip_expanded_slot(&mut rows, 1));
+        assert_eq!(rows, before);
+        assert!(!flip_expanded_slot(&mut rows, -1));
+        assert_eq!(rows, before);
+    }
+
+    #[test]
+    fn flip_expanded_slot_direction_zero_returns_false() {
+        let mut rows = tiles_with_expanded_at(4, Some(1));
+        let before = rows.clone();
+        assert!(!flip_expanded_slot(&mut rows, 0));
+        assert_eq!(rows, before);
+    }
+
+    #[test]
+    fn flip_expanded_slot_single_row_returns_false() {
+        let mut rows = vec![tile(true)];
+        let before = rows.clone();
+        assert!(!flip_expanded_slot(&mut rows, 1));
+        assert_eq!(rows, before);
+        assert!(!flip_expanded_slot(&mut rows, -1));
+        assert_eq!(rows, before);
+    }
+
+    #[test]
+    fn flip_expanded_slot_single_row_not_expanded_false() {
+        let mut rows = vec![tile(false)];
+        let before = rows.clone();
+        assert!(!flip_expanded_slot(&mut rows, 1));
+        assert_eq!(rows, before);
+    }
+
+    #[test]
+    fn flip_expanded_slot_adjacent_out_of_bounds_false() {
+        let mut left_edge = tiles_with_expanded_at(3, Some(0));
+        let before = left_edge.clone();
+        assert!(!flip_expanded_slot(&mut left_edge, -1));
+        assert_eq!(left_edge, before);
+        let mut right_edge = tiles_with_expanded_at(3, Some(2));
+        let before2 = right_edge.clone();
+        assert!(!flip_expanded_slot(&mut right_edge, 1));
+        assert_eq!(right_edge, before2);
+    }
+
+    #[test]
+    fn flip_expanded_slot_clone_scenario_all_real_index_equal_still_flips_by_position() {
+        // Ring clones: every tile maps to same theme (e.g. real_index 0) but only one SLOT expanded
+        let mut rows: Vec<SliceUiTile> = (0..5).map(|_| SliceUiTile { x: 0.0, w: 0.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 }).collect();
+        rows[2].is_expanded = true;
+        assert!(flip_expanded_slot(&mut rows, 1));
+        assert!(!rows[2].is_expanded);
+        assert!(rows[3].is_expanded);
+        assert_eq!(rows.iter().filter(|r| r.is_expanded).count(), 1);
+        // real_index equal never causes ghost expand — only position matters
+        for r in &rows {
+            assert_eq!(r.real_index, 0);
+        }
+    }
+
+    #[test]
+    fn flip_expanded_slot_exactly_one_true_after_every_successful_flip() {
+        let mut rows = tiles_with_expanded_at(5, Some(1));
+        assert!(flip_expanded_slot(&mut rows, 1));
+        assert_eq!(rows.iter().filter(|r| r.is_expanded).count(), 1);
+        assert!(flip_expanded_slot(&mut rows, 1));
+        assert_eq!(rows.iter().filter(|r| r.is_expanded).count(), 1);
+        assert!(flip_expanded_slot(&mut rows, -1));
+        assert_eq!(rows.iter().filter(|r| r.is_expanded).count(), 1);
+    }
+
+    #[test]
+    fn flip_expanded_slot_slint_type_also_flips_by_position() {
+        // Same logic must hold for the Slint-generated type used in main.rs
+        let mut rows = vec![
+            crate::SliceTileData { x: 0.0, w: 135.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 2 },
+            crate::SliceTileData { x: 135.0, w: 924.0, real_index: 1, is_expanded: true, fade: 1.0, dist: 0 },
+            crate::SliceTileData { x: 1059.0, w: 135.0, real_index: 2, is_expanded: false, fade: 1.0, dist: 1 },
+        ];
+        assert!(flip_expanded_slot(&mut rows, 1));
+        assert!(!rows[1].is_expanded);
+        assert!(rows[2].is_expanded);
     }
 }
