@@ -561,6 +561,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_show_fast_path_moves_before_focus_avoids_special_overlay_blur() {
+        // Unit 3.1: V5 fast path must dispatch move BEFORE focus.
+        // The move is explicitly targeted (window="title:...") so it works
+        // without focus; focusing after the move avoids focusing inside the
+        // special overlay, which emits blur on close and re-hides instantly.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::with_show_fast(true);
+        let mut controller = Controller::new(Box::new(fake));
+        controller.toggle_tray(&win);
+        assert!(controller.window_hidden());
+        calls.lock().unwrap().clear();
+        let _ = controller.toggle_tray(&win);
+        let recorded = calls.lock().unwrap().clone();
+        let move_pos = recorded.iter().position(|c| c == "move_to_workspace");
+        let focus_pos = recorded.iter().position(|c| c == "focus");
+        assert!(
+            move_pos.is_some() && focus_pos.is_some(),
+            "show fast path must emit both move and focus, got: {:?}",
+            recorded
+        );
+        assert!(
+            move_pos.unwrap() < focus_pos.unwrap(),
+            "show fast path must dispatch move BEFORE focus to avoid focusing inside special overlay (blur/re-hide loop), got order: {:?}",
+            recorded
+        );
+    }
+
+    #[test]
     fn test_fake_composer_hide_sequence() {
         // Verify Controller is built correctly and FakeComposer is accessible
         let (fake, calls) = FakeComposer::new();
