@@ -550,10 +550,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 let model = w.get_gallery_cards();
                 let img = slint::Image::load_from_path(&png).unwrap_or_default();
                 let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
+                // S4b: bake slat variants ONCE per card when source is available.
+                let slat = crate::shell::gallery::slat_image::baked_slat_image_from_path(&png, false);
+                let expanded_src = if hero_png.exists() { &hero_png } else { &png };
+                let slat_expanded = crate::shell::gallery::slat_image::baked_slat_image_from_path(expanded_src, true);
                 if let Some(mut row) = model.row_data(idx) {
                     if row.name.as_str() == &*name {
                         row.thumb = img;
                         row.hero = hero_img;
+                        row.slat_image = slat;
+                        row.slat_expanded_image = slat_expanded;
                         model.set_row_data(idx, row);
                         refresh_clone();
                     }
@@ -599,6 +605,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         thumb: slint::Image::default(),
                         // Aspect-true hero for the expanded card (HF5).
                         hero: slint::Image::default(),
+                        // S4b baked slat variants (tip-to-tip, no internal padding).
+                        slat_image: slint::Image::default(),
+                        slat_expanded_image: slint::Image::default(),
                     }
                 })
                 .collect()

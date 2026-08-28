@@ -15,6 +15,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 use image::{RgbaImage, imageops};
+use std::path::Path;
 
 /// Bake the parallelogram shape into the image alpha (pure, deterministic).
 ///
@@ -76,6 +77,49 @@ pub fn bake_parallelogram(
         }
     }
     out
+}
+
+/// Baked slat bbox helpers — use canonical slice constants (no magic numbers).
+fn collapsed_bbox() -> (u32, u32) {
+    use crate::shell::gallery::views::slice::{SLICE_COLLAPSED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
+    ((SLICE_COLLAPSED_WIDTH + SLICE_SKEW_PX) as u32, SLICE_HEIGHT as u32)
+}
+
+fn expanded_bbox() -> (u32, u32) {
+    use crate::shell::gallery::views::slice::{SLICE_EXPANDED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
+    ((SLICE_EXPANDED_WIDTH + SLICE_SKEW_PX) as u32, SLICE_HEIGHT as u32)
+}
+
+/// Pure helper: bake a slat Rgba to the collapsed/expanded bbox.
+pub fn baked_slat_rgba(src: RgbaImage, expanded: bool) -> RgbaImage {
+    use crate::shell::gallery::views::slice::SLICE_SKEW_PX;
+    let (tw, th) = if expanded { expanded_bbox() } else { collapsed_bbox() };
+    bake_parallelogram(src, tw, th, SLICE_SKEW_PX)
+}
+
+/// Pure helper: rgba in → baked Slint Image out (deterministic, no I/O).
+/// Size matches the baked bbox: 170×520 collapsed, 959×520 expanded.
+pub fn baked_slat_image(src: RgbaImage, expanded: bool) -> slint::Image {
+    let rgba = baked_slat_rgba(src, expanded);
+    if rgba.width() == 0 || rgba.height() == 0 {
+        return slint::Image::default();
+    }
+    let (w, h) = (rgba.width(), rgba.height());
+    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+    buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+    slint::Image::from_rgba8(buf)
+}
+
+/// Decode a file, bake to the slat bbox, return a Slint Image.
+/// File I/O is isolated here; pure baking stays via `baked_slat_image`.
+pub fn baked_slat_image_from_path(path: &Path, expanded: bool) -> slint::Image {
+    let Ok(reader) = image::ImageReader::open(path) else {
+        return slint::Image::default();
+    };
+    let Ok(decoded) = reader.decode() else {
+        return slint::Image::default();
+    };
+    baked_slat_image(decoded.to_rgba8(), expanded)
 }
 
 #[cfg(test)]
@@ -232,10 +276,10 @@ mod tests {
         let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
         let img = crate::shell::gallery::slat_image::baked_slat_image(src, false);
         let sz = img.size();
-        assert!(sz.width > 0.0 && sz.height > 0.0, "collapsed baked image must have non-zero dims");
+        assert!(sz.width > 0 && sz.height > 0, "collapsed baked image must have non-zero dims");
         // collapsed bbox = SLICE_COLLAPSED_WIDTH(135) + SKEW(35) = 170 × 520
-        assert_eq!(sz.width as u32, 170, "collapsed baked width must be 170 (135+35)");
-        assert_eq!(sz.height as u32, 520, "collapsed baked height must be 520");
+        assert_eq!(sz.width, 170, "collapsed baked width must be 170 (135+35)");
+        assert_eq!(sz.height, 520, "collapsed baked height must be 520");
     }
 
     #[test]
@@ -243,10 +287,10 @@ mod tests {
         let src = solid_rgba(80, 60, Rgba([200, 100, 50, 255]));
         let img = crate::shell::gallery::slat_image::baked_slat_image(src, true);
         let sz = img.size();
-        assert!(sz.width > 0.0 && sz.height > 0.0, "expanded baked image must have non-zero dims");
+        assert!(sz.width > 0 && sz.height > 0, "expanded baked image must have non-zero dims");
         // expanded bbox = 924 + 35 = 959 × 520
-        assert_eq!(sz.width as u32, 959, "expanded baked width must be 959 (924+35)");
-        assert_eq!(sz.height as u32, 520, "expanded baked height must be 520");
+        assert_eq!(sz.width, 959, "expanded baked width must be 959 (924+35)");
+        assert_eq!(sz.height, 520, "expanded baked height must be 520");
     }
 
     #[test]
@@ -254,12 +298,12 @@ mod tests {
         let src = solid_rgba(20, 20, Rgba([42, 42, 42, 180]));
         let a = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false);
         let b = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false);
-        assert_eq!(a.size().width as u32, b.size().width as u32);
-        assert_eq!(a.size().height as u32, b.size().height as u32);
+        assert_eq!(a.size().width, b.size().width);
+        assert_eq!(a.size().height, b.size().height);
         // Also expanded deterministic
         let c = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), true);
         let d = crate::shell::gallery::slat_image::baked_slat_image(src, true);
-        assert_eq!(c.size().width as u32, d.size().width as u32);
-        assert_eq!(c.size().height as u32, d.size().height as u32);
+        assert_eq!(c.size().width, d.size().width);
+        assert_eq!(c.size().height, d.size().height);
     }
 }

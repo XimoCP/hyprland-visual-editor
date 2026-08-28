@@ -31,6 +31,12 @@ export struct GalleryCardData {
     // EXPANDED (current) card; empty until marshaled so delegates fall
     // back to the portrait thumb without stretching it.
     hero: image,
+    // S4b baked parallelogram variants — tip-to-tip with NO internal padding.
+    // Consumed by SliceDelegate's plain Image (alpha IS the mask). Collapsed
+    // bbox = SLICE_COLLAPSED_WIDTH(135)+SKEW(35)=170 × 520; expanded bbox =
+    // 924+35=959 × 520. Baked ONCE per model build/refresh, not per wheel.
+    slat-image: image,
+    slat-expanded-image: image,
 }
 
 export component ThemeCardDelegate inherits Rectangle {
