@@ -79,6 +79,27 @@ pub fn bake_parallelogram(
     out
 }
 
+/// Gap between collapsed slats — MUST stay in sync with `SkwdTokens.gallery-slat-gap`
+/// (24px in `ui/tokens.slint`). S3 face inset: collapsed face = slot − gap.
+const SLAT_GAP_PX: f32 = 24.0;
+
+/// Baked slat bbox — MUST equal drawn bbox (face-width + skew) × height.
+/// Collapsed: (SLICE_COLLAPSED_WIDTH − SLAT_GAP_PX) + SLICE_SKEW_PX = 111+35 = 146
+/// Expanded:  SLICE_EXPANDED_WIDTH + SLICE_SKEW_PX = 924+35 = 959
+/// Height:    SLICE_HEIGHT = 520
+/// Token `gallery-slat-gap` (24px) and `SLAT_GAP_PX` must stay in sync.
+pub const SLAT_BBOX_COLLAPSED_W: u32 = 146; // (135 − 24 + 35) — keep in sync with SLAT_GAP_PX/token
+pub const SLAT_BBOX_EXPANDED_W: u32 = 959; // (924 + 35)
+pub const SLAT_BBOX_H: u32 = 520;
+// Compile-time guard that the literal matches the formula (gap + slice constants).
+const _: () = assert!(
+    SLAT_BBOX_COLLAPSED_W == (crate::shell::gallery::views::slice::SLICE_COLLAPSED_WIDTH - SLAT_GAP_PX + crate::shell::gallery::views::slice::SLICE_SKEW_PX) as u32
+);
+const _: () = assert!(
+    SLAT_BBOX_EXPANDED_W == (crate::shell::gallery::views::slice::SLICE_EXPANDED_WIDTH + crate::shell::gallery::views::slice::SLICE_SKEW_PX) as u32
+);
+const _: () = assert!(SLAT_BBOX_H == crate::shell::gallery::views::slice::SLICE_HEIGHT as u32);
+
 /// Baked slat bbox helpers — use canonical slice constants (no magic numbers).
 fn collapsed_bbox() -> (u32, u32) {
     use crate::shell::gallery::views::slice::{SLICE_COLLAPSED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
@@ -98,7 +119,7 @@ pub fn baked_slat_rgba(src: RgbaImage, expanded: bool) -> RgbaImage {
 }
 
 /// Pure helper: rgba in → baked Slint Image out (deterministic, no I/O).
-/// Size matches the baked bbox: 170×520 collapsed, 959×520 expanded.
+/// Size matches the baked bbox: 146×520 collapsed, 959×520 expanded.
 pub fn baked_slat_image(src: RgbaImage, expanded: bool) -> slint::Image {
     let rgba = baked_slat_rgba(src, expanded);
     if rgba.width() == 0 || rgba.height() == 0 {
@@ -270,6 +291,21 @@ mod tests {
     }
 
     // ── S4b RED: baked slat image feed contracts (collapsed/expanded bbox) ──
+    // Invariant: baked bbox width == drawn bbox width (face-width + skew).
+    // Collapsed drawn = (135 − 24 gap) + 35 = 146; expanded = 924 + 35 = 959.
+
+    #[test]
+    fn slat_bbox_constants_match_drawn_geometry() {
+        use crate::shell::gallery::slat_image::{SLAT_BBOX_COLLAPSED_W, SLAT_BBOX_EXPANDED_W, SLAT_BBOX_H};
+        use crate::shell::gallery::views::slice::{SLICE_COLLAPSED_WIDTH, SLICE_EXPANDED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
+        let gap = 24.0; // must stay in sync with SkwdTokens.gallery-slat-gap (24px) and SLAT_GAP_PX
+        assert_eq!(SLAT_BBOX_COLLAPSED_W, (SLICE_COLLAPSED_WIDTH - gap + SLICE_SKEW_PX) as u32, "collapsed bbox must be (135-24)+35=146 (face+skew)");
+        assert_eq!(SLAT_BBOX_EXPANDED_W, (SLICE_EXPANDED_WIDTH + SLICE_SKEW_PX) as u32, "expanded bbox must be 924+35=959");
+        assert_eq!(SLAT_BBOX_H, SLICE_HEIGHT as u32, "bbox height must be 520");
+        assert_eq!(SLAT_BBOX_COLLAPSED_W, 146);
+        assert_eq!(SLAT_BBOX_EXPANDED_W, 959);
+        assert_eq!(SLAT_BBOX_H, 520);
+    }
 
     #[test]
     fn baked_slat_image_collapsed_has_expected_bbox() {
@@ -277,9 +313,11 @@ mod tests {
         let img = crate::shell::gallery::slat_image::baked_slat_image(src, false);
         let sz = img.size();
         assert!(sz.width > 0 && sz.height > 0, "collapsed baked image must have non-zero dims");
-        // collapsed bbox = SLICE_COLLAPSED_WIDTH(135) + SKEW(35) = 170 × 520
-        assert_eq!(sz.width, 170, "collapsed baked width must be 170 (135+35)");
+        // collapsed bbox = (135 - 24 gap) + 35 = 146 × 520 (face-width + skew, matches SliceDelegate.slint)
+        assert_eq!(sz.width, 146, "collapsed baked width must be 146 ((135-24)+35) — baked == drawn");
         assert_eq!(sz.height, 520, "collapsed baked height must be 520");
+        assert_eq!(sz.width, crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W);
+        assert_eq!(sz.height, crate::shell::gallery::slat_image::SLAT_BBOX_H);
     }
 
     #[test]
@@ -288,9 +326,29 @@ mod tests {
         let img = crate::shell::gallery::slat_image::baked_slat_image(src, true);
         let sz = img.size();
         assert!(sz.width > 0 && sz.height > 0, "expanded baked image must have non-zero dims");
-        // expanded bbox = 924 + 35 = 959 × 520
+        // expanded bbox = 924 + 35 = 959 × 520 (no inset, matches delegate)
         assert_eq!(sz.width, 959, "expanded baked width must be 959 (924+35)");
         assert_eq!(sz.height, 520, "expanded baked height must be 520");
+        assert_eq!(sz.width, crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W);
+        assert_eq!(sz.height, crate::shell::gallery::slat_image::SLAT_BBOX_H);
+    }
+
+    #[test]
+    fn baked_slat_rgba_collapsed_matches_drawn_bbox() {
+        let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
+        let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, false);
+        assert_eq!(rgba.width(), 146, "baked_slat_rgba collapsed width must be 146");
+        assert_eq!(rgba.height(), 520);
+        assert_eq!(rgba.width(), crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W);
+    }
+
+    #[test]
+    fn baked_slat_rgba_expanded_matches_drawn_bbox() {
+        let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
+        let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
+        assert_eq!(rgba.width(), 959, "baked_slat_rgba expanded width must be 959");
+        assert_eq!(rgba.height(), 520);
+        assert_eq!(rgba.width(), crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W);
     }
 
     #[test]
