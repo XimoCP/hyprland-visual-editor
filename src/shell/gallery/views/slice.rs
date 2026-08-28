@@ -179,14 +179,6 @@ pub fn strip_window(real_count: usize, focused: usize, stage_width: f32) -> Vec<
     slots
 }
 
-/// Strip FEED for Slint — rows built from `strip_window` for the
-/// virtualized single-strip carousel. RED stub: always empty so the
-/// RED contract test fails until the GREEN implementation delegates to
-/// `strip_window`.
-pub fn strip_feed(_real_count: usize, _focused: usize, _stage_width: f32) -> Vec<StripSlot> {
-    Vec::new()
-}
-
 /// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
 /// Edge-fade end: card opacity reaches 0 at this normalized distance.
 pub const EDGE_FADE_END: f32 = 1.2;
@@ -1708,77 +1700,5 @@ mod tests {
         // also ring helpers still work
         assert_eq!(ring_step(5, 1, 6), 0);
         assert_eq!(ring_real_index(-1, 6), 5);
-    }
-
-    // ── V2 FEED contracts (RED) ─────────────────────────────────────
-
-    #[test]
-    fn strip_feed_rows_pin_known_stage() {
-        // Known stage 1920, 48 themes, focused 10 — the feed MUST be
-        // exactly the strip_window (row order = window order, real_index
-        // via ring_real_index, is_expanded exactly once, positions relative).
-        let stage_w = 1920.0;
-        let real_count = 48usize;
-        let focused = 10usize;
-        let rows = strip_feed(real_count, focused, stage_w);
-        // Must be non-empty and equal to the pure math window
-        let win = strip_window(real_count, focused, stage_w);
-        assert_eq!(rows.len(), win.len(), "feed row count must equal window len (virtualized ~9-13 for 1920)");
-        assert!(!rows.is_empty(), "feed must not be empty for 1920 stage");
-        // Row order = window order (sorted by position)
-        for (r, w) in rows.iter().zip(win.iter()) {
-            assert!((r.position - w.position).abs() < 0.001, "position mismatch {} vs {}", r.position, w.position);
-            assert_eq!(r.real_index, w.real_index, "real_index mismatch at virtual {}", w.virtual_index);
-            assert_eq!(r.virtual_index, w.virtual_index);
-            assert_eq!(r.is_expanded, w.is_expanded);
-            assert_eq!(r.real_index, ring_real_index(r.virtual_index, real_count));
-        }
-        // Exactly one expanded at position 0, real_index == focused
-        let expanded: Vec<_> = rows.iter().filter(|r| r.is_expanded).collect();
-        assert_eq!(expanded.len(), 1, "exactly one expanded");
-        assert!((expanded[0].position - 0.0).abs() < 0.001, "expanded must be at 0");
-        assert_eq!(expanded[0].real_index, focused);
-        assert_eq!(expanded[0].virtual_index, focused as isize);
-        // Positions sorted ascending
-        for w in rows.windows(2) {
-            assert!(w[0].position < w[1].position + 0.001, "rows must be sorted ascending");
-        }
-        // Virtual indices contiguous
-        let mut v_sorted: Vec<isize> = rows.iter().map(|r| r.virtual_index).collect();
-        v_sorted.sort_unstable();
-        for w in v_sorted.windows(2) {
-            assert_eq!(w[1] - w[0], 1, "virtual indices must be contiguous");
-        }
-        // Real indices via ring mapping, bounds
-        for r in &rows {
-            assert!(r.real_index < real_count);
-        }
-        // Wrap check: focused last → forward neighbour wraps to 0
-        let rows_last = strip_feed(6, 5, 1920.0);
-        let by_virt: std::collections::HashMap<isize, usize> = rows_last.iter().map(|r| (r.virtual_index, r.real_index)).collect();
-        assert_eq!(by_virt[&5], 5);
-        assert_eq!(by_virt[&6], 0, "forward wrap last→0 via feed");
-        assert_eq!(by_virt[&-1], 5 - 1); // will be 4, but check contiguous
-    }
-
-    #[test]
-    fn strip_feed_wrap_and_bounds() {
-        // focused 0 backward wraps to last
-        let rows = strip_feed(6, 0, 1920.0);
-        let by_virt: std::collections::HashMap<isize, usize> = rows.iter().map(|r| (r.virtual_index, r.real_index)).collect();
-        assert_eq!(by_virt[&0], 0);
-        assert_eq!(by_virt[&-1], 5, "backward wrap 0→last");
-        // degenerate stage → empty
-        assert!(strip_feed(0, 0, 1920.0).is_empty());
-        assert!(strip_feed(6, 0, 0.0).is_empty());
-        // tiny stage still yields ~5-7 (expanded + spares)
-        let tiny = strip_feed(48, 10, 50.0);
-        assert!(tiny.len() >= 5 && tiny.len() <= 7, "tiny stage feed should be 5-7, got {}", tiny.len());
-        // 1920 with 48 themes should be ~9-13 delegates (virtualized)
-        let win48 = strip_feed(48, 10, 1920.0);
-        assert!(win48.len() >= 9 && win48.len() <= 13, "48 themes at 1920 must be virtualized 9-13 slots, got {}", win48.len());
-        // same stage with 6 themes also ~9-13 (independent of real_count)
-        let win6 = strip_feed(6, 2, 1920.0);
-        assert_eq!(win48.len(), win6.len(), "window size independent of real_count");
     }
 }
