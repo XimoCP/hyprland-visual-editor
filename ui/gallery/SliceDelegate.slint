@@ -227,7 +227,7 @@ export component SliceDelegate inherits Rectangle {
         y: 0;
         width: root.face-width + root.skew;
         height: root.height;
-        // No clip — baked alpha masks.
+        clip: true;
 
         // Shimmer backdrop while waiting for baked image.
         shimmer-bg := Rectangle {

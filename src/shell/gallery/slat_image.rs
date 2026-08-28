@@ -100,15 +100,13 @@ const _: () = assert!(
 );
 const _: () = assert!(SLAT_BBOX_H == crate::shell::gallery::views::slice::SLICE_HEIGHT as u32);
 
-/// Baked slat bbox helpers — use canonical slice constants (no magic numbers).
+/// Baked slat bbox helpers — collapsed uses face-width (slot − gap) + skew = 146.
 fn collapsed_bbox() -> (u32, u32) {
-    use crate::shell::gallery::views::slice::{SLICE_COLLAPSED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
-    ((SLICE_COLLAPSED_WIDTH + SLICE_SKEW_PX) as u32, SLICE_HEIGHT as u32)
+    (SLAT_BBOX_COLLAPSED_W, SLAT_BBOX_H)
 }
 
 fn expanded_bbox() -> (u32, u32) {
-    use crate::shell::gallery::views::slice::{SLICE_EXPANDED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
-    ((SLICE_EXPANDED_WIDTH + SLICE_SKEW_PX) as u32, SLICE_HEIGHT as u32)
+    (SLAT_BBOX_EXPANDED_W, SLAT_BBOX_H)
 }
 
 /// Pure helper: bake a slat Rgba to the collapsed/expanded bbox.
