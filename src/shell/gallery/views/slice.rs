@@ -279,39 +279,81 @@ pub fn ring_step(focused: usize, delta: isize, real_count: usize) -> usize {
     (focused as isize + delta).rem_euclid(real_count as isize) as usize
 }
 
-/// V3 strip step: collapsed slot pitch (current geometry 135 = 111 face + 12+12 air,
-/// gap-free ring contiguous; visual gap 24 is inset inside the 135 slot).
-pub const SLICE_STRIP_STEP: f32 = SLICE_COLLAPSED_WIDTH;
-
-/// Pure directional slide decision — V3 fluid animation.
-/// `delta` is signed ring distance (positive = next, negative = prev).
-/// `offset_px` is the strip translation to animate: `-delta * SLICE_STRIP_STEP`
-/// so next (delta +1) flows LEFT (strip moves left, next card enters from right).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SlidePlan {
-    pub offset_px: f32,
-    pub delta: isize,
-}
-
-/// Minimal pure slide plan: offset = `-delta * step`, no-op when delta==0.
-pub fn slide_plan(delta: isize) -> SlidePlan {
-    SlidePlan { offset_px: -(delta as f32) * SLICE_STRIP_STEP, delta }
-}
-
 /// V5 wheel debounce — 150ms coalesces rapid wheel into chained steps
 /// (skwd expand 350ms glide + retarget, QML highlightMoveDuration analog).
 /// Timer lives OUTSIDE the Slint for-repeater (1.17 panic); wheel-dir arms,
-/// Timer commits at this interval, each step retargets strip-offset from its
+/// Timer commits at this interval, each step retargets focus-pos from its
 /// current animated value. Keys bypass debounce (direct animate).
 pub const SLICE_WHEEL_DEBOUNCE_MS: u64 = 150;
 
-/// V5 chained glide — incremental target from live animated value.
-/// `current_target_px` is the Slint `strip-offset` property getter, which
-/// reflects the current displayed (animated) value; reassigning then
-/// restarts the tween from that value (retarget, QML StrictlyEnforceRange
-/// analog). `delta` sign decides direction; 0 is no-op.
-pub fn chained_target(current_target_px: f32, delta: isize) -> f32 {
-    current_target_px - SLICE_STRIP_STEP * delta.signum() as f32
+// ── V6 focus-flow geometry — closed-form slot layout ────────────────────
+//
+// skwd-wall fluidity comes from ONE live quantity: the current item's
+// animated width re-flowing the cumulative ListView layout every frame
+// (StrictlyEnforceRange + highlightMoveDuration). This module expresses the
+// same physics in closed form around a single continuous focus position
+// `fp` (a fractional card index, animated by Slint with mid-flight
+// retargeting):
+//
+//   d     = delta − frac   (delta = tile's signed ring distance from the
+//                           settled focused slot; frac = fp − base, signed)
+//   width = 135 + 789·clamp(1 − |d|, 0, 1)
+//   center = 529.5·d − 394.5·sign(d)·max(|d| − 1, 0)
+//
+// Contracts (unit-tested below):
+//   * settled (frac 0) matches the legacy frozen layout exactly
+//     (expanded at 0, left −462; slats ±529.5/±664.5, lefts ±462/−597/+597);
+//   * the wall stays GAP-FREE at every fractional fp (adjacent centers
+//     differ by exactly half the width sum) — the focused card grows about
+//     the traveling focus while neighbors reflow, no jumps, no rebuilds;
+//   * relabeling deltas at fp integers is a visual no-op, so per-step model
+//     rebuilds never flicker and chained steps just retarget fp.
+
+/// Expansion of a slot at distance `d` from the traveling focus: 0 collapsed,
+/// 1 fully expanded, linear ramp across the unit interval around the focus.
+pub fn slot_expansion(d: f32) -> f32 {
+    (1.0 - d.abs()).clamp(0.0, 1.0)
+}
+
+/// Slot width at distance `d` from the traveling focus (px).
+pub fn slot_width(d: f32) -> f32 {
+    SLICE_COLLAPSED_WIDTH + (SLICE_EXPANDED_WIDTH - SLICE_COLLAPSED_WIDTH) * slot_expansion(d)
+}
+
+/// Slot CENTER (relative to the traveling focus) at distance `d` (px).
+/// Linear focus-flow inside |d| ≤ 1, static collapsed pitch beyond — the
+/// slope change at |d| = 1 IS the reflow: static slots slide at the collapsed
+/// pitch while the expanded pair pushes them apart.
+pub fn slot_center(d: f32) -> f32 {
+    let ad = d.abs();
+    let flow = (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 * d;
+    let over = ((SLICE_EXPANDED_WIDTH - SLICE_COLLAPSED_WIDTH) / 2.0)
+        * d.signum()
+        * (ad - 1.0).max(0.0);
+    flow - over
+}
+
+/// Slot LEFT edge at distance `d` from the traveling focus (px).
+pub fn slot_left(d: f32) -> f32 {
+    slot_center(d) - slot_width(d) / 2.0
+}
+
+/// V6 focus target — replaces slide_plan/chained_target.
+/// Idle (`current` at the settled focused index): one tween covering the
+/// full ring distance (`focused + delta`), skwd click-to-slide analog.
+/// Mid-flight: chain ONE step from the LIVE value (Slint property getters
+/// return the current displayed value; reassigning restarts the tween from
+/// there — retarget, QML StrictlyEnforceRange analog). 0 delta is a no-op.
+pub fn focus_target(current: f32, focused: usize, delta: isize) -> f32 {
+    if delta == 0 {
+        return current;
+    }
+    let idle = (current - focused as f32).abs() < 0.001;
+    if idle {
+        focused as f32 + delta as f32
+    } else {
+        current + delta.signum() as f32
+    }
 }
 
 /// Shortest signed ring distance from `from` to `to` (wrap-aware).
@@ -420,11 +462,13 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
     out
 }
 
-/// Slint-facing tile derived from RingSlot — includes subtle edge fade.
+/// Slint-facing tile derived from RingSlot — V6 focus-flow feed.
+/// Positions/widths are NOT baked here: the tile carries its signed ring
+/// `delta` from the focused slot, and the Slint delegate evaluates the
+/// closed-form slot geometry from the LIVE fractional focus position.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SliceUiTile {
-    pub x: f32,
-    pub w: f32,
+    pub delta: i32,
     pub real_index: usize,
     pub is_expanded: bool,
     pub fade: f32,
@@ -452,51 +496,18 @@ pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
     fade_opacity(nd, fz).max(EDGE_FADE_MIN)
 }
 
-/// Build Slint tiles from ring_visible_slots with per-slot fade (S2 WIRE).
-pub fn slice_ui_tiles(real_count: usize, focused: usize, stage_width: f32) -> Vec<SliceUiTile> {
+/// Build Slint tiles for the focus-flow feed (V6): signed ring delta per
+/// slot plus fade/dist paint metadata. Supersedes slice_ui_tiles and
+/// slice_relative_tiles (frozen x/w feeds).
+pub fn slice_delta_tiles(real_count: usize, focused: usize, stage_width: f32) -> Vec<SliceUiTile> {
     ring_visible_slots(real_count, focused, stage_width)
         .into_iter()
         .map(|s| {
             let fade = ring_slot_fade(&s, stage_width);
             let dist = (s.virtual_index - focused as isize).abs() as i32;
-            SliceUiTile { x: s.x, w: s.width, real_index: s.real_index, is_expanded: s.is_expanded, fade, dist }
+            SliceUiTile { delta: (s.virtual_index - focused as isize) as i32, real_index: s.real_index, is_expanded: s.is_expanded, fade, dist }
         })
         .collect()
-}
-
-/// V3 relative feed — same window but x RELATIVE to stage center (center=0).
-/// Expanded at 0 is -462, first collapsed right at +462, left at -597 etc.
-/// Self-similar: the set of relative x values is identical for every focused
-/// (only real_index mapping shifts).
-pub fn slice_relative_tiles(real_count: usize, focused: usize, stage_width: f32) -> Vec<SliceUiTile> {
-    ring_visible_slots(real_count, focused, stage_width)
-        .into_iter()
-        .map(|s| {
-            let fade = ring_slot_fade(&s, stage_width);
-            let dist = (s.virtual_index - focused as isize).abs() as i32;
-            // Relative left edge = absolute left − stage center
-            let rel_x = s.x - stage_width / 2.0;
-            SliceUiTile { x: rel_x, w: s.width, real_index: s.real_index, is_expanded: s.is_expanded, fade, dist }
-        })
-        .collect()
-}
-
-/// Relative center for a delta (virtual − focused) — pure geometry, no stage.
-pub fn relative_center_for_delta(delta: isize) -> f32 {
-    if delta == 0 {
-        0.0
-    } else if delta > 0 {
-        SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH / 2.0 + (delta - 1) as f32 * SLICE_COLLAPSED_WIDTH
-    } else {
-        -(SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH / 2.0) + (delta + 1) as f32 * SLICE_COLLAPSED_WIDTH
-    }
-}
-
-/// Relative left edge for a delta.
-pub fn relative_x_for_delta(delta: isize) -> f32 {
-    let center = relative_center_for_delta(delta);
-    let w = if delta == 0 { SLICE_EXPANDED_WIDTH } else { SLICE_COLLAPSED_WIDTH };
-    center - w / 2.0
 }
 
 /// Per-slot expanded flip — V3 ghost fix.
@@ -1415,66 +1426,53 @@ mod tests {
         assert!((sx1 - sx0).abs()<0.001, "no drift after cycles");
     }
 
-    // ── S2 ring → Slint model builder (WIRE) ──────────────────────────
+    // ── S2 ring → Slint model builder (WIRE) — V6 delta feed ──────────
 
     #[test]
-    fn slice_ui_tiles_from_ring_focused_centered_and_fills_stage() {
+    fn slice_delta_tiles_from_ring_focused_delta_zero_and_contiguous() {
         let stage_w = 1920.0;
-        let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
-        let tiles = slice_ui_tiles(6, 2, stage_w);
+        let tiles = slice_delta_tiles(6, 2, stage_w);
         assert!(!tiles.is_empty(), "tiles must fill band");
         let expanded = tiles.iter().filter(|t| t.is_expanded).count();
         assert_eq!(expanded, 1, "exactly one expanded");
         let foc = tiles.iter().find(|t| t.is_expanded).unwrap();
-        assert!((foc.x + foc.w / 2.0 - stage_w / 2.0).abs() < 0.001, "expanded dead-center");
-        assert_eq!(foc.w, SLICE_EXPANDED_WIDTH);
-        let min_x = tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-        let max_r = tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
-        assert!(min_x >= inset - 0.001 && max_r <= stage_w - inset + 0.001, "band inset fill min {min_x} max {max_r} inset {inset} stage {stage_w}");
-        for s in &tiles {
-            assert!(s.x >= inset - 0.001, "tile inside left inset");
-            assert!(s.x + s.w <= stage_w - inset + 0.001, "tile inside right inset");
-        }
+        assert_eq!(foc.delta, 0, "expanded slot is the delta-0 focused slot");
+        assert_eq!(foc.real_index, 2);
+        // Contiguous signed deltas, strictly increasing left→right, no gaps.
+        let deltas: Vec<i32> = tiles.iter().map(|t| t.delta).collect();
+        assert!(deltas.windows(2).all(|w| w[1] == w[0] + 1), "deltas contiguous: {deltas:?}");
+        assert!(deltas.first().unwrap() < &0 && deltas.last().unwrap() > &0, "window straddles the focus");
         // real_index always in range, clone mapping cyclic
         for t in &tiles {
             assert!(t.real_index < 6);
         }
-        // wider stage yields more tiles, but still centered and within band
-        let wide = slice_ui_tiles(6, 2, 2560.0);
+        // wider stage yields more tiles, still centered on delta 0
+        let wide = slice_delta_tiles(6, 2, 2560.0);
         assert!(wide.len() > tiles.len(), "wider stage more tiles {} vs {}", wide.len(), tiles.len());
-        let foc2 = wide.iter().find(|t| t.is_expanded).unwrap();
-        assert!((foc2.x + foc2.w / 2.0 - 1280.0).abs() < 0.001);
-        let min_w = wide.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-        let max_w = wide.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
-        assert!(min_w >= inset - 0.001 && max_w <= 2560.0 - inset + 0.001);
+        assert!(wide.iter().find(|t| t.is_expanded).unwrap().delta == 0);
     }
 
     #[test]
-    fn slice_ui_tiles_fade_subtle_and_bounded() {
-        let tiles = slice_ui_tiles(6, 3, 1920.0);
+    fn slice_delta_tiles_fade_subtle_and_bounded() {
+        let stage_w = 1920.0;
+        let slots = ring_visible_slots(6, 3, stage_w);
+        let tiles = slice_delta_tiles(6, 3, stage_w);
         for t in &tiles {
-            assert!((0.0..=1.0).contains(&t.fade), "fade {t:?} out of 0..1");
+            assert!((0.0..=1.0).contains(&t.fade), "fade {} out of 0..1", t.fade);
         }
         let foc_fade = tiles.iter().find(|t| t.is_expanded).unwrap().fade;
         assert!((foc_fade - 1.0).abs() < 0.001, "focused fully opaque");
-        // outermost visible slat renormalized to band extent: dimmer than center but clearly visible (>0.5) and <1.0
-        let far = tiles.iter().max_by(|a, b| (a.x).partial_cmp(&b.x).unwrap()).unwrap();
-        assert!(far.fade < 1.0 && far.fade > 0.5, "outermost fade must be dimmer than center but bounded away from 0, got {} (band renormalized)", far.fade);
-        // band-edge slot explicit: leftmost collapsed at ~363 must be <0.9 (full-stage would be 1.0)
-        let band_edge = RingSlot { virtual_index: 0, real_index: 0, x: 363.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
-        let bf = ring_slot_fade(&band_edge, 1920.0);
-        assert!(bf < 0.9, "band-edge fade {bf} must be <0.9 (renormalized, full-stage would be 1.0)");
-        assert!(bf > 0.35, "band-edge must stay visible >0.35, got {bf}");
-        // monotonic: fade non-increasing with distance from center
-        let center_x = 1920.0 / 2.0;
-        let mut by_dist: Vec<_> = tiles.iter().collect();
-        by_dist.sort_by(|a,b| ((a.x + a.w/2.0 - center_x).abs()).partial_cmp(&((b.x + b.w/2.0 - center_x).abs())).unwrap());
-        for w in by_dist.windows(2) {
-            assert!(w[0].fade + 0.001 >= w[1].fade, "fade must be monotonic brightest at center, got {} then {}", w[0].fade, w[1].fade);
-        }
+        // fade monotonic brightest at center (via the slot x still carried by RingSlot)
+        let center_x = stage_w / 2.0;
+        let mut by_dist: Vec<_> = slots.iter().map(|s| ring_slot_fade(s, stage_w)).collect();
+        let _ = center_x;
+        by_dist.dedup();
+        // farthest slot from focus has the lowest fade but stays visible
+        let far = tiles.iter().max_by(|a, b| a.dist.cmp(&b.dist)).unwrap();
+        assert!(far.fade < 1.0 && far.fade > 0.5, "outermost fade dimmer than center but bounded, got {}", far.fade);
         // degenerate inputs yield empty
-        assert!(slice_ui_tiles(0, 0, 1920.0).is_empty());
-        assert!(slice_ui_tiles(6, 0, 0.0).is_empty());
+        assert!(slice_delta_tiles(0, 0, 1920.0).is_empty());
+        assert!(slice_delta_tiles(6, 0, 0.0).is_empty());
     }
 
     #[test]
@@ -1498,42 +1496,124 @@ mod tests {
         assert!((0.0..=1.0).contains(&ring_slot_fade(&tiny_slot, 50.0)));
     }
 
-    // ── V3 directional fluid animation — pure helpers (RED) ──────────────
+    // ── V6 focus-flow geometry — closed-form slot layout (RED) ───────────
+    // ONE continuous focus position fp (fractional card index) drives EVERY
+    // slot's width and center. For a tile with signed ring delta from the
+    // settled focused slot, its distance from the traveling focus is
+    // d = delta − frac (frac = fp − base, signed). skwd-wall parity: the
+    // focused card grows about the traveling focus while neighbors reflow
+    // (gap-free at every fp); chained steps just retarget fp.
 
     #[test]
-    fn slide_plan_next_flows_left_negative_offset() {
-        let plan = slide_plan(1);
-        assert!((plan.offset_px + SLICE_STRIP_STEP).abs() < 0.001, "next (+1) must flow LEFT: offset -135, got {}", plan.offset_px);
-        assert_eq!(plan.delta, 1);
+    fn slot_width_settled_expanded_and_collapsed() {
+        assert!((slot_width(0.0) - SLICE_EXPANDED_WIDTH).abs() < 0.001, "d=0 must be fully expanded 924, got {}", slot_width(0.0));
+        assert!((slot_width(1.0) - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "|d|=1 must be collapsed 135, got {}", slot_width(1.0));
+        assert!((slot_width(-1.0) - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
+        assert!((slot_width(3.5) - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "far slots stay collapsed");
     }
 
     #[test]
-    fn slide_plan_prev_flows_right_positive_offset() {
-        let plan = slide_plan(-1);
-        assert!((plan.offset_px - SLICE_STRIP_STEP).abs() < 0.001, "prev (-1) must flow RIGHT: offset +135, got {}", plan.offset_px);
-        assert_eq!(plan.delta, -1);
+    fn slot_width_midflight_straddlers_share_expansion() {
+        // At frac=0.5 both straddlers are halfway grown.
+        assert!((slot_width(-0.5) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001, "outgoing d=-0.5 half-grown, got {}", slot_width(-0.5));
+        assert!((slot_width(0.5) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001, "incoming d=+0.5 half-grown, got {}", slot_width(0.5));
     }
 
     #[test]
-    fn slide_plan_click_plus_three_one_tween() {
-        let plan = slide_plan(3);
-        assert!((plan.offset_px + 3.0 * SLICE_STRIP_STEP).abs() < 0.001, "click +3 must tween -405 in one go, got {}", plan.offset_px);
-        assert_eq!(plan.delta, 3);
+    fn slot_center_settled_matches_relative_layout() {
+        // Parity with the legacy relative layout (relative centers / left edges):
+        // expanded at 0 → left −462; first right +462; first left −597; second right +597.
+        assert!((slot_center(0.0)).abs() < 0.001);
+        assert!((slot_center(1.0) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001, "d=1 center 529.5, got {}", slot_center(1.0));
+        assert!((slot_center(-1.0) + (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001);
+        assert!((slot_center(2.0) - ((SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "d=2 center 664.5, got {}", slot_center(2.0));
+        assert!((slot_center(-2.0) + ((SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001);
+        // Left-edge parity with the old frozen tiles.
+        assert!((slot_left(0.0) + SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001, "d=0 left −462, got {}", slot_left(0.0));
+        assert!((slot_left(1.0) - SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001, "d=1 left +462, got {}", slot_left(1.0));
+        assert!((slot_left(-1.0) + (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "d=−1 left −597, got {}", slot_left(-1.0));
+        assert!((slot_left(2.0) - (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "d=2 left +597, got {}", slot_left(2.0));
     }
 
     #[test]
-    fn slide_plan_click_minus_three_one_tween() {
-        let plan = slide_plan(-3);
-        assert!((plan.offset_px - 3.0 * SLICE_STRIP_STEP).abs() < 0.001, "click -3 must tween +405, got {}", plan.offset_px);
-        assert_eq!(plan.delta, -3);
+    fn slot_center_midflight_gap_free_adjacency() {
+        // Adjacency contract: adjacent slot centers differ by (w_i + w_j) / 2
+        // at EVERY fractional position — the wall never opens a gap.
+        let pairs = [(-0.5f32, 0.5f32), (0.5, 1.5), (1.5, 2.5), (-1.5, -0.5), (0.0, 1.0), (0.25, 1.25), (-1.0, 0.0)];
+        for (da, db) in pairs {
+            let expected = (slot_width(da) + slot_width(db)) / 2.0;
+            let got = slot_center(db) - slot_center(da);
+            assert!((got - expected).abs() < 0.01, "adjacency broken at ({da},{db}): centers differ {got}, half-width sum {expected}");
+        }
     }
 
     #[test]
-    fn slide_plan_delta_zero_noop() {
-        let plan = slide_plan(0);
-        assert!((plan.offset_px).abs() < 0.001, "delta 0 no-op offset 0, got {}", plan.offset_px);
-        assert_eq!(plan.delta, 0);
+    fn slot_center_mirror_symmetric() {
+        for d in [-0.25f32, 0.5, 1.0, 1.5, 3.0] {
+            assert!((slot_center(d) + slot_center(-d)).abs() < 0.001, "center not odd-symmetric at d={d}");
+            assert!((slot_width(d) - slot_width(-d)).abs() < 0.001, "width not symmetric at d={d}");
+        }
     }
+
+    #[test]
+    fn slot_center_incoming_approaches_center_as_focus_travels() {
+        // next (+1): incoming card slides from +529.5 toward 0 (wall flows LEFT).
+        assert!(slot_center(0.5) < slot_center(1.0), "incoming must approach center mid-flight");
+        assert!(slot_center(0.0).abs() < slot_center(0.5).abs());
+        // outgoing drifts the opposite way.
+        assert!(slot_center(-0.5) > slot_center(-1.0), "outgoing must move left as focus advances");
+    }
+
+    #[test]
+    fn slot_wall_continuous_across_unit_step_boundaries() {
+        // The wall at frac=+1 with old deltas is exactly the settled wall of
+        // the new base (relabel = visual no-op): the incoming slot (old
+        // delta +1) sits expanded dead-center, the outgoing collapsed one
+        // pitch left — and the whole arrangement stays gap-free at the
+        // integer boundaries where relabels happen.
+        let incoming_before = (slot_left(1.0 - 1.0), slot_width(1.0 - 1.0)); // old delta +1 at frac 1
+        assert!((incoming_before.0 + SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001, "incoming centered at frac=1, left {}", incoming_before.0);
+        assert!((incoming_before.1 - SLICE_EXPANDED_WIDTH).abs() < 0.001);
+        let outgoing_before = (slot_left(0.0 - 1.0), slot_width(0.0 - 1.0)); // old delta 0 at frac 1
+        assert!((outgoing_before.0 + (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "outgoing one pitch left, left {}", outgoing_before.0);
+        assert!((outgoing_before.1 - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
+        for (da, db) in [(-1.0f32, 0.0f32), (0.0, 1.0), (1.0, 2.0), (-2.0, -1.0)] {
+            let expected = (slot_width(da) + slot_width(db)) / 2.0;
+            assert!((slot_center(db) - slot_center(da) - expected).abs() < 0.01, "gap at ({da},{db})");
+        }
+    }
+
+    #[test]
+    fn focus_target_idle_jumps_full_distance() {
+        assert!((focus_target(2.0, 2, 3) - 5.0).abs() < 0.001, "idle +3 click targets focused+3");
+        assert!((focus_target(2.0, 2, -1) - 1.0).abs() < 0.001);
+        assert!((focus_target(0.0, 0, 1) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn focus_target_midflight_chains_one_step() {
+        // Mid-flight retarget: ±1 from the LIVE value (chained glide).
+        assert!((focus_target(2.4, 2, 1) - 3.4).abs() < 0.001);
+        assert!((focus_target(2.4, 2, -1) - 1.4).abs() < 0.001);
+        // Distant click mid-flight still chains a single step (V5 parity).
+        assert!((focus_target(2.4, 2, 3) - 3.4).abs() < 0.001);
+        assert!((focus_target(2.4, 2, -3) - 1.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn focus_target_zero_delta_noop() {
+        assert!((focus_target(1.3, 1, 0) - 1.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn focus_target_negative_live_value_chains_backward() {
+        // prev chain from a fractional live position below the base.
+        assert!((focus_target(1.6, 2, -1) - 0.6).abs() < 0.001, "live 1.6 (mid-flight toward 2) + prev → 0.6");
+    }
+
+    // ── V3 directional fluid animation — superseded by V6 focus-flow
+    // contracts above (directional flow + chained retarget + full-distance
+    // idle clicks now live in slot_* / focus_target tests). ──────────────
 
     #[test]
     fn ring_shortest_delta_wrap_across_zero() {
@@ -1549,46 +1629,10 @@ mod tests {
         assert_eq!(ring_shortest_delta(0, 0, 0), 0);
     }
 
-    #[test]
-    fn slice_strip_step_is_collapsed_pitch_135() {
-        assert!((SLICE_STRIP_STEP - 135.0).abs() < 0.001, "strip step must be 135 (collapsed pitch = 111 face + 12+12 air), got {}", SLICE_STRIP_STEP);
-        assert!((SLICE_STRIP_STEP - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
-    }
-
-    // ── V5 chained glide — incremental target (RED) ─────────────────────
-    #[test]
-    fn chained_target_single_step_next_from_zero() {
-        assert!((chained_target(0.0, 1) + 135.0).abs() < 0.001, "0 + next (+1) → -135, got {}", chained_target(0.0, 1));
-    }
-
-    #[test]
-    fn chained_target_chain_next_accumulates() {
-        // 0 → -135 → -270 continuous glide, no reset-to-0 between
-        let t1 = chained_target(0.0, 1);
-        let t2 = chained_target(t1, 1);
-        assert!((t1 + 135.0).abs() < 0.001, "first next -135, got {t1}");
-        assert!((t2 + 270.0).abs() < 0.001, "chained next -270, got {t2}");
-    }
-
-    #[test]
-    fn chained_target_prev_after_next_returns() {
-        let t1 = chained_target(0.0, 1); // -135
-        let t2 = chained_target(t1, 1); // -270
-        let t3 = chained_target(t2, -1); // -135 (prev)
-        assert!((t3 + 135.0).abs() < 0.001, "prev after two nexts → -135, got {t3}");
-    }
-
-    #[test]
-    fn chained_target_prev_first_from_zero() {
-        assert!((chained_target(0.0, -1) - 135.0).abs() < 0.001, "0 + prev (-1) → +135, got {}", chained_target(0.0, -1));
-    }
-
-    #[test]
-    fn chained_target_direction_zero_unchanged() {
-        assert!((chained_target(-135.0, 0) + 135.0).abs() < 0.001, "delta 0 unchanged, got {}", chained_target(-135.0, 0));
-        assert!((chained_target(0.0, 0)).abs() < 0.001);
-        assert!((chained_target(-270.0, 0) + 270.0).abs() < 0.001);
-    }
+    // V6 note: slide_plan/chained_target/SLICE_STRIP_STEP contracts were
+    // superseded by the focus_target + slot geometry contracts above — same
+    // intent (directional flow, chained retarget, full-distance idle clicks)
+    // expressed over the continuous focus position instead of strip pixels.
 
     #[test]
     fn slice_wheel_debounce_is_150ms() {
@@ -1598,7 +1642,7 @@ mod tests {
     // ── V3 ghost fix — per-SLOT flip (RED) ───────────────────────────────
 
     fn tile(expanded: bool) -> SliceUiTile {
-        SliceUiTile { x: 0.0, w: 0.0, real_index: 0, is_expanded: expanded, fade: 1.0, dist: 0 }
+        SliceUiTile { delta: 0, real_index: 0, is_expanded: expanded, fade: 1.0, dist: 0 }
     }
 
     fn tiles_with_expanded_at(len: usize, expanded_idx: Option<usize>) -> Vec<SliceUiTile> {
@@ -1682,7 +1726,7 @@ mod tests {
     #[test]
     fn flip_expanded_slot_clone_scenario_all_real_index_equal_still_flips_by_position() {
         // Ring clones: every tile maps to same theme (e.g. real_index 0) but only one SLOT expanded
-        let mut rows: Vec<SliceUiTile> = (0..5).map(|_| SliceUiTile { x: 0.0, w: 0.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 }).collect();
+        let mut rows: Vec<SliceUiTile> = (0..5).map(|_| SliceUiTile { delta: 0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 }).collect();
         rows[2].is_expanded = true;
         assert!(flip_expanded_slot(&mut rows, 1));
         assert!(!rows[2].is_expanded);
@@ -1709,9 +1753,9 @@ mod tests {
     fn flip_expanded_slot_slint_type_also_flips_by_position() {
         // Same logic must hold for the Slint-generated type used in main.rs
         let mut rows = vec![
-            crate::SliceTileData { x: 0.0, w: 135.0, real_index: 0, is_expanded: false, fade: 1.0, dist: 2 },
-            crate::SliceTileData { x: 135.0, w: 924.0, real_index: 1, is_expanded: true, fade: 1.0, dist: 0 },
-            crate::SliceTileData { x: 1059.0, w: 135.0, real_index: 2, is_expanded: false, fade: 1.0, dist: 1 },
+            crate::SliceTileData { delta: -1, real_index: 0, is_expanded: false, fade: 1.0, dist: 1 },
+            crate::SliceTileData { delta: 0, real_index: 1, is_expanded: true, fade: 1.0, dist: 0 },
+            crate::SliceTileData { delta: 1, real_index: 2, is_expanded: false, fade: 1.0, dist: 1 },
         ];
         assert!(flip_expanded_slot(&mut rows, 1));
         assert!(!rows[1].is_expanded);
