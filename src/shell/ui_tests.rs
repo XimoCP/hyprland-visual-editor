@@ -206,3 +206,134 @@ fn main_window_exposes_navigation_callbacks() {
     assert_eq!(*backs.borrow(), 1, "back-activated fires on back/collapse");
     assert_eq!(*moves.borrow(), vec!["down", "up"], "nav-move reports arrow direction");
 }
+
+// ── V6 focus-flow visual verification (headless render) ────────────────
+// Renders the Slice wall at a settled focus position and mid-glide
+// (frac 0.5) with real baked parallelogram images, and saves PNGs under
+// /tmp/opencode/ for human review. This is the headless visual-check tool:
+// geometry regressions (positions, widths, image layers) show up here
+// before they reach the screen. MIT credit: translated from skwd-wall
+// (MIT, © liixini).
+
+/// Deterministic 480×270 gradient wallpaper variant for theme `i`.
+fn slice_test_gradient(i: usize) -> image::RgbaImage {
+    let (w, h) = (480u32, 270u32);
+    let mut img = image::RgbaImage::new(w, h);
+    let hue = (i as f32 * 30.0).to_radians();
+    let (r0, g0, b0) = (
+        (hue.sin() * 0.5 + 0.5) * 235.0,
+        (hue.cos() * 0.5 + 0.5) * 235.0,
+        130.0 + (i as f32 * 29.0) % 120.0,
+    );
+    for (x, y, px) in img.enumerate_pixels_mut() {
+        let t = (x as f32 + y as f32) / (w + h) as f32;
+        *px = image::Rgba([
+            (r0 + (1.0 - t) * 60.0) as u8,
+            (g0 + t * 70.0) as u8,
+            (b0 + t * 50.0) as u8,
+            255,
+        ]);
+    }
+    img
+}
+
+fn save_slice_png(buf: slint::SharedPixelBuffer<slint::Rgba8Pixel>, path: &str) {
+    let w = buf.width();
+    let h = buf.height();
+    let img = image::RgbaImage::from_raw(w, h, Vec::from(buf.as_bytes())).expect("snapshot buffer");
+    img.save(path).expect("save png");
+}
+
+#[test]
+fn slice_focus_flow_renders_settled_and_midflight() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    // Software-rasterized headless backend (first init on this thread).
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(6);
+
+    let count = 12usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let src = slice_test_gradient(i);
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false),
+            slat_expanded_image: crate::shell::gallery::slat_image::baked_slat_image(src, true),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 6, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+
+    // Settled: focus position exactly at the focused index (frac 0).
+    win.set_gallery_slice_focus_pos(6.0);
+    let settled = win.window().take_snapshot().expect("settled snapshot");
+    save_slice_png(settled, "/tmp/opencode/slice_settled.png");
+
+    // Mid-glide (production state): one chained step commits → Rust relabels
+    // deltas for the new focused slot (Theme 7) and retargets focus-pos,
+    // which is still tweening (frac −0.5). Outgoing and incoming cards are
+    // both half-grown, neighbors reflowing, adjacency gap-free. Rebasing
+    // disables the tween so the snapshot captures the mid-flight GEOMETRY
+    // directly (no event loop to advance the animation).
+    let tiles_relabeled: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 7, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles_relabeled)));
+    win.set_gallery_focused(7);
+    win.set_gallery_slice_rebasing(true);
+    win.set_gallery_slice_focus_pos(6.5); // frac = −0.5
+    let mid = win.window().take_snapshot().expect("midflight snapshot");
+    save_slice_png(mid, "/tmp/opencode/slice_midflight.png");
+    win.set_gallery_slice_rebasing(false);
+}
