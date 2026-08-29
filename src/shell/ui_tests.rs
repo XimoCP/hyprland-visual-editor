@@ -463,17 +463,156 @@ fn mosaic_hero_centered_renders_with_pagination() {
 }
 
 fn bright_mosaic_thumb() -> slint::Image {
-    // Solid bright color distinct from the cover (surface-container 44,31,29)
-    // so the curtain's dark cover is detectable via pixel count.
+    // Striped image with high-frequency variance so the curtain cover's
+    // IMAGE CONTENT (zoomed + dimmed) is distinguishable from the flat dark
+    // color it replaced. Vertical stripes every 20px alternate warm/cool.
     let (w, h) = (320u32, 200u32);
     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-    for px in buf.make_mut_bytes().chunks_mut(4) {
-        px[0] = 240;
-        px[1] = 190;
-        px[2] = 90;
-        px[3] = 255;
+    let bytes = buf.make_mut_bytes();
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            let stripe = (x / 20) % 2 == 0;
+            if stripe {
+                bytes[idx] = 240;
+                bytes[idx + 1] = 190;
+                bytes[idx + 2] = 90;
+            } else {
+                bytes[idx] = 70;
+                bytes[idx + 1] = 140;
+                bytes[idx + 2] = 200;
+            }
+            bytes[idx + 3] = 255;
+        }
     }
     slint::Image::from_rgba8(buf)
+}
+
+fn count_buffer_diff(
+    a: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    b: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+) -> usize {
+    // Counts pixels in the mosaic band where two snapshots differ by >15
+    // in any channel — proves zoom+dim makes covered pixels differ from
+    // settled (fully revealed) pixels of the same tile.
+    let w = a.width() as usize;
+    let h = a.height() as usize;
+    assert_eq!(w, b.width() as usize);
+    assert_eq!(h, b.height() as usize);
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    let mut count = 0usize;
+    let y0 = 150usize.min(h);
+    let y1 = 800usize.min(h);
+    let x0 = 60usize.min(w);
+    let x1 = 1650usize.min(w);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let idx = (y * w + x) * 4;
+            if ab[idx + 3] < 10 || bb[idx + 3] < 10 {
+                continue;
+            }
+            let dr = (ab[idx] as i16 - bb[idx] as i16).abs();
+            let dg = (ab[idx + 1] as i16 - bb[idx + 1] as i16).abs();
+            let db = (ab[idx + 2] as i16 - bb[idx + 2] as i16).abs();
+            if dr > 15 || dg > 15 || db > 15 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn count_covered_non_uniform(
+    mid: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    settled: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+) -> usize {
+    // Pixels that are BOTH covered (mid vs settled diff >15 for the pixel
+    // AND its right neighbor) AND carry image content (mid neighbor variance
+    // >15). Flat dark cover yields ~0 interior (covered but uniform); striped
+    // image cover yields high interior variance. Requiring both pixels covered
+    // excludes the curtain seam (dark vs stripe edge) which would otherwise
+    // fake variance for the flat cover.
+    let w = mid.width() as usize;
+    let h = mid.height() as usize;
+    let mb = mid.as_bytes();
+    let sb = settled.as_bytes();
+    let mut count = 0usize;
+    let y0 = 150usize.min(h);
+    let y1 = 800usize.min(h);
+    let x0 = 60usize.min(w);
+    let x1 = 1650usize.min(w.saturating_sub(1));
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let idx = (y * w + x) * 4;
+            let nidx = (y * w + x + 1) * 4;
+            if mb[idx + 3] < 10 || sb[idx + 3] < 10 || mb[nidx + 3] < 10 || sb[nidx + 3] < 10 {
+                continue;
+            }
+            let dr = (mb[idx] as i16 - sb[idx] as i16).abs();
+            let dg = (mb[idx + 1] as i16 - sb[idx + 1] as i16).abs();
+            let db = (mb[idx + 2] as i16 - sb[idx + 2] as i16).abs();
+            let is_covered = dr > 15 || dg > 15 || db > 15;
+            if !is_covered {
+                continue;
+            }
+            let dr2 = (mb[nidx] as i16 - sb[nidx] as i16).abs();
+            let dg2 = (mb[nidx + 1] as i16 - sb[nidx + 1] as i16).abs();
+            let db2 = (mb[nidx + 2] as i16 - sb[nidx + 2] as i16).abs();
+            let neighbor_covered = dr2 > 15 || dg2 > 15 || db2 > 15;
+            if !neighbor_covered {
+                continue;
+            }
+            let vr = (mb[idx] as i16 - mb[nidx] as i16).abs();
+            let vg = (mb[idx + 1] as i16 - mb[nidx + 1] as i16).abs();
+            let vb = (mb[idx + 2] as i16 - mb[nidx + 2] as i16).abs();
+            if vr > 15 || vg > 15 || vb > 15 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn count_hue_flips_covered(
+    mid: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    settled: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+) -> usize {
+    // Counts covered pixels where the dominant hue (warm vs cool) flips
+    // between mid and settled. With flat cover (no zoom) the pattern phase
+    // is identical, so hues match (just dimmed). With zoomed 1.1 cover the
+    // stripe phase shifts, causing some flips. Used to prove zoom visibility.
+    let w = mid.width() as usize;
+    let h = mid.height() as usize;
+    let mb = mid.as_bytes();
+    let sb = settled.as_bytes();
+    let mut count = 0usize;
+    let y0 = 150usize.min(h);
+    let y1 = 800usize.min(h);
+    let x0 = 60usize.min(w);
+    let x1 = 1650usize.min(w);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let idx = (y * w + x) * 4;
+            if mb[idx + 3] < 10 || sb[idx + 3] < 10 {
+                continue;
+            }
+            let dr = (mb[idx] as i16 - sb[idx] as i16).abs();
+            let dg = (mb[idx + 1] as i16 - sb[idx + 1] as i16).abs();
+            let db = (mb[idx + 2] as i16 - sb[idx + 2] as i16).abs();
+            let is_covered = dr > 15 || dg > 15 || db > 15;
+            if !is_covered {
+                continue;
+            }
+            // Warm = R dominant, Cool = B dominant (stripe colors)
+            let mid_warm = mb[idx] > mb[idx + 2] + 20; // R > B
+            let settled_warm = sb[idx] > sb[idx + 2] + 20;
+            if mid_warm != settled_warm {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 fn count_cover_pixels(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> usize {
@@ -625,7 +764,6 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
     }
     let mid = win.window().take_snapshot().expect("mid curtain snapshot");
     save_slice_png(mid.clone(), "/tmp/opencode/mosaic_curtain_mid.png");
-    let mid_dark = count_cover_pixels(&mid);
 
     // Settled: advance past total curtain duration (600ms total → another 400ms)
     for _ in 0..25 {
@@ -634,19 +772,33 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
     let settled = win.window().take_snapshot().expect("settled snapshot");
     save_slice_png(settled.clone(), "/tmp/opencode/mosaic_curtain_settled.png");
     let settled_dark = count_cover_pixels(&settled);
+    let diff_mid_settled = count_buffer_diff(&mid, &settled);
+    let covered_non_uniform = count_covered_non_uniform(&mid, &settled);
+    let hue_flips = count_hue_flips_covered(&mid, &settled);
+    eprintln!("DEBUG mid vs settled: covered_non_uniform={covered_non_uniform} diff={diff_mid_settled} settled_dark={settled_dark} hue_flips={hue_flips}");
 
-    // Curtain contract: mid must show staggered covers (dark), settled must have none
+    // Tramo 8 contract: cover shows the incoming tile's OWN THEME IMAGE
+    // (sharp, zoomed ~1.1 + dimmed ~0.25) — not flat dark. At mid, the
+    // covered bands must contain IMAGE CONTENT (non-uniform stripes), so the
+    // wipe is perceptible even though it reuses the same texture. We isolate
+    // covered pixels (mid vs settled diff) and require they carry variance.
+    // Zoom must be visible: stripe phase shifts due to 1.1 scale, causing
+    // hue flips between mid (zoomed) and settled (1:1) at same coordinates.
     assert!(
-        mid_dark > 800,
-        "mid-curtain must show opaque covers (staggered wipe) — got {mid_dark} cover pixels, expected >800 (crossfade fallback would be ~0)"
+        covered_non_uniform > 500,
+        "mid-curtain cover must show image content (non-uniform) in covered regions — got {covered_non_uniform} variance-in-covered pixels, expected >500 (flat dark would be ~0)"
     );
     assert!(
         settled_dark < 300,
         "settled must have no covers — got {settled_dark} cover pixels, expected <300"
     );
     assert!(
-        mid_dark > settled_dark + 500,
-        "mid vs settled must differ visibly — mid {mid_dark} vs settled {settled_dark}"
+        diff_mid_settled > 500,
+        "curtain must differ visibly mid vs settled — diff {diff_mid_settled} expected >500"
+    );
+    assert!(
+        hue_flips > 300,
+        "zoom must be visible: covered (1.1×) vs revealed (1:1) stripe phase must shift — hue flips {hue_flips} expected >300 (no-zoom flat would be ~0)"
     );
 }
 

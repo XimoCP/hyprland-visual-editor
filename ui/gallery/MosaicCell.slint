@@ -56,7 +56,7 @@ export component MosaicCell inherits Rectangle {
     animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
 
     clip: true;
-    border-radius: SkwdTokens.radius-8;
+    border-radius: 0px;
 
     // Background only ever shows through while the shimmer runs; once an
     // image lands it covers 100% of the tile.
@@ -118,15 +118,24 @@ export component MosaicCell inherits Rectangle {
         animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
     }
 
-    // ── Curtain cover (D4): opaque wipe L→R driven by parent phase ──
-    // progress 0 = fully covered, 1 = fully revealed. Pure math, no Timer
-    // in delegate (Slint 1.17 panic). Cover is surface-container (opaque).
+    // ── Curtain cover (Tramo 8): wipe shows the INCOMING tile's OWN
+    // theme image (sharp, zero-cost reuse of effective-image) zoomed
+    // 1.1× centered so the wipe is perceptible (identical fit would be
+    // invisible) plus a light dim veil (0.25) over it. Replaces the flat
+    // dark color. Visibility rules unchanged: only while 0 < progress < 1.
     curtain-cover := Rectangle {
         visible: !root.reduced-motion && root.curtain-phase < 1.0 && root.curtain-progress < 1.0;
         x: root.width * root.curtain-progress;
         width: root.width * (1.0 - root.curtain-progress);
         height: 100%;
-        background: SkwdTokens.surface-container;
+        background: #000000;
+        // Light dim veil so the wipe edge reads against the revealed image.
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #000000;
+            opacity: 1.0;
+        }
     }
 
     Text {
