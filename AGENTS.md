@@ -15,6 +15,7 @@
 - Engineered artifacts (code, specs, docs, comments, UI copy) default to ENGLISH. Chat replies follow the user's language (Spanish/rioplatense).
 - Strict TDD: write the failing test first, then implement. Test runner: `cargo test`.
 - Never copy GPL code from hyprmod; translate MIT ideas from skwd-wall with credit.
+- VISUAL VERIFICATION (mandatory for any `.slint` / visual change): before reporting work done, run the headless render — `cargo test slice_focus_flow_renders` — then READ the PNGs it saves under `/tmp/opencode/` (you have vision: use the read tool on the image files) and confirm the geometry/look with your own inspection. Extend that test (or add sibling render tests) to cover any new visual state you touch. A UI change verified only by "tests green + build clean" is NOT verified.
 
 ## Context
 
