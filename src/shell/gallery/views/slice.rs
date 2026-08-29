@@ -298,6 +298,25 @@ pub fn slide_plan(delta: isize) -> SlidePlan {
     SlidePlan { offset_px: -(delta as f32) * SLICE_STRIP_STEP, delta }
 }
 
+/// V5 wheel debounce — 150ms coalesces rapid wheel into chained steps
+/// (skwd expand 350ms glide + retarget, QML highlightMoveDuration analog).
+/// Timer lives OUTSIDE the Slint for-repeater (1.17 panic); wheel-dir arms,
+/// Timer commits at this interval, each step retargets strip-offset from its
+/// current animated value. Keys bypass debounce (direct animate).
+pub const SLICE_WHEEL_DEBOUNCE_MS: u64 = 150;
+
+/// V5 chained glide — incremental target from live animated value.
+/// `current_target_px` is the Slint `strip-offset` property getter, which
+/// reflects the current displayed (animated) value; reassigning then
+/// restarts the tween from that value (retarget, QML StrictlyEnforceRange
+/// analog). `delta` sign decides direction; 0 is no-op.
+pub fn chained_target(current_target_px: f32, delta: isize) -> f32 {
+    // RED stub — tests must fail
+    let _ = current_target_px;
+    let _ = delta;
+    0.0
+}
+
 /// Shortest signed ring distance from `from` to `to` (wrap-aware).
 /// Returns the minimal delta; ties keep the raw direction (so 0→3=+3, 3→0=-3
 /// for count 6). Degenerate count 0 → 0, count 1 → 0.
@@ -1537,6 +1556,46 @@ mod tests {
     fn slice_strip_step_is_collapsed_pitch_135() {
         assert!((SLICE_STRIP_STEP - 135.0).abs() < 0.001, "strip step must be 135 (collapsed pitch = 111 face + 12+12 air), got {}", SLICE_STRIP_STEP);
         assert!((SLICE_STRIP_STEP - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
+    }
+
+    // ── V5 chained glide — incremental target (RED) ─────────────────────
+    #[test]
+    fn chained_target_single_step_next_from_zero() {
+        assert!((chained_target(0.0, 1) + 135.0).abs() < 0.001, "0 + next (+1) → -135, got {}", chained_target(0.0, 1));
+    }
+
+    #[test]
+    fn chained_target_chain_next_accumulates() {
+        // 0 → -135 → -270 continuous glide, no reset-to-0 between
+        let t1 = chained_target(0.0, 1);
+        let t2 = chained_target(t1, 1);
+        assert!((t1 + 135.0).abs() < 0.001, "first next -135, got {t1}");
+        assert!((t2 + 270.0).abs() < 0.001, "chained next -270, got {t2}");
+    }
+
+    #[test]
+    fn chained_target_prev_after_next_returns() {
+        let t1 = chained_target(0.0, 1); // -135
+        let t2 = chained_target(t1, 1); // -270
+        let t3 = chained_target(t2, -1); // -135 (prev)
+        assert!((t3 + 135.0).abs() < 0.001, "prev after two nexts → -135, got {t3}");
+    }
+
+    #[test]
+    fn chained_target_prev_first_from_zero() {
+        assert!((chained_target(0.0, -1) - 135.0).abs() < 0.001, "0 + prev (-1) → +135, got {}", chained_target(0.0, -1));
+    }
+
+    #[test]
+    fn chained_target_direction_zero_unchanged() {
+        assert!((chained_target(-135.0, 0) + 135.0).abs() < 0.001, "delta 0 unchanged, got {}", chained_target(-135.0, 0));
+        assert!((chained_target(0.0, 0)).abs() < 0.001);
+        assert!((chained_target(-270.0, 0) + 270.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn slice_wheel_debounce_is_150ms() {
+        assert_eq!(SLICE_WHEEL_DEBOUNCE_MS, 150, "V5 debounce 150ms (was 400ms) for chained wheel steps");
     }
 
     // ── V3 ghost fix — per-SLOT flip (RED) ───────────────────────────────
