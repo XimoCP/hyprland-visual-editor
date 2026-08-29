@@ -340,20 +340,37 @@ pub fn slot_left(d: f32) -> f32 {
 
 /// V6 focus target — replaces slide_plan/chained_target.
 /// Idle (`current` at the settled focused index): one tween covering the
-/// full ring distance (`focused + delta`), skwd click-to-slide analog.
+/// full ring distance (`base + delta`), skwd click-to-slide analog.
 /// Mid-flight: chain ONE step from the LIVE value (Slint property getters
 /// return the current displayed value; reassigning restarts the tween from
 /// there — retarget, QML StrictlyEnforceRange analog). 0 delta is a no-op.
-pub fn focus_target(current: f32, focused: usize, delta: isize) -> f32 {
+/// `base` is the VIRTUAL (unwrapped) focused index: the traveling focus
+/// lives on an infinite line so chaining across the ring seam keeps
+/// frac bounded (the infinite carousel never breaks).
+pub fn focus_target(current: f32, base: i32, delta: isize) -> f32 {
     if delta == 0 {
         return current;
     }
-    let idle = (current - focused as f32).abs() < 0.001;
+    let idle = (current - base as f32).abs() < 0.001;
     if idle {
-        focused as f32 + delta as f32
+        base as f32 + delta as f32
     } else {
         current + delta.signum() as f32
     }
+}
+
+/// One committed focus-flow step: the next VIRTUAL focus (unwrapped — the
+/// real focused index is its wrap modulo the theme count) and the tween
+/// target. `frac = target − virtual_next` stays within ±1 across ring
+/// wraps, so the wall flows continuously no matter how many cards pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FocusStep {
+    pub virtual_next: i32,
+    pub target: f32,
+}
+
+pub fn focus_step(virtual_cur: i32, pos: f32, delta: isize) -> FocusStep {
+    FocusStep { virtual_next: virtual_cur + delta as i32, target: focus_target(pos, virtual_cur, delta) }
 }
 
 /// Shortest signed ring distance from `from` to `to` (wrap-aware).
@@ -1609,6 +1626,33 @@ mod tests {
     fn focus_target_negative_live_value_chains_backward() {
         // prev chain from a fractional live position below the base.
         assert!((focus_target(1.6, 2, -1) - 0.6).abs() < 0.001, "live 1.6 (mid-flight toward 2) + prev → 0.6");
+    }
+
+    #[test]
+    fn focus_step_keeps_frac_bounded_across_ring_wrap() {
+        // 12-card ring chaining forward across the seam: real 11 → 0 while
+        // the virtual focus keeps counting (11 → 12). frac = target − base
+        // stays within ±1, so the wall never loses the centered card no
+        // matter how many cards pass.
+        let step = focus_step(11, 11.4, 1);
+        assert_eq!(step.virtual_next, 12, "virtual focus crosses the seam unwrapped");
+        assert!((step.target - 12.4).abs() < 0.001);
+        assert!((step.target - step.virtual_next as f32).abs() <= 1.0, "frac bounded after wrap");
+        // prev across zero: real 0 → 11, virtual 0 → −1.
+        let back = focus_step(0, -0.4, -1);
+        assert_eq!(back.virtual_next, -1);
+        assert!((back.target - (-1.4)).abs() < 0.001);
+        assert!((back.target - back.virtual_next as f32).abs() <= 1.0);
+        // long chains accumulate on the virtual line without breaking.
+        let mut v = 0i32;
+        let mut pos = 0.0f32;
+        for _ in 0..50 {
+            let s = focus_step(v, pos, 1);
+            v = s.virtual_next;
+            pos = s.target;
+            assert!((pos - v as f32).abs() <= 1.0, "frac drifted past ±1 at virtual {v}");
+        }
+        assert_eq!(v, 50);
     }
 
     // ── V3 directional fluid animation — superseded by V6 focus-flow

@@ -527,15 +527,25 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         })
     };
+    // V6 virtual focus line: the animated focus position is UNWRAPPED
+    // (…, −1, 0, 1, … 12, 13 …) and the real focused index is its wrap
+    // modulo the theme count. The Slint delta base mirrors the virtual
+    // value so frac = focus-pos − delta-base stays within ±1 across ring
+    // seams — the infinite carousel survives any number of chained cards.
+    let slice_virtual_focus = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
     // Geometry-driven refresh is a rebase: relabel deltas for the focused
-    // slot and snap the focus position to it (0ms, invisible).
+    // slot and snap the focus position to it (0ms, invisible). External
+    // focus changes (deletion, style switch) resync the virtual line.
     let refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync> = {
         let weak = window.as_weak();
         let rebuild = rebuild_slice_tiles.clone();
+        let virtual_focus = slice_virtual_focus.clone();
         std::sync::Arc::new(move || {
             let Some(w) = weak.upgrade() else { return; };
             let focused = w.get_gallery_focused().max(0) as usize;
+            virtual_focus.store(focused as i32, std::sync::atomic::Ordering::Relaxed);
             rebuild(focused);
+            w.set_gallery_slice_delta_base(focused as i32);
             w.set_gallery_slice_rebasing(true);
             w.set_gallery_slice_focus_pos(focused as f32);
             let weak2 = weak.clone();
@@ -556,6 +566,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync> = {
         let weak = window.as_weak();
         let rebuild = rebuild_slice_tiles.clone();
+        let slice_virtual_focus = slice_virtual_focus.clone();
         std::sync::Arc::new(move |delta: isize| {
             use slint::Model;
             let Some(w) = weak.upgrade() else { return; };
@@ -572,16 +583,24 @@ fn main() -> Result<(), slint::PlatformError> {
             if next == cur {
                 return;
             }
+            // The traveling focus lives on an UNWRAPPED virtual line — the
+            // real focused index is its wrap modulo the theme count. Without
+            // this, chaining across the seam (real 11 → 0) explodes frac and
+            // the infinite carousel breaks after a few full laps.
             let current_pos = w.get_gallery_slice_focus_pos();
-            let idle = (current_pos - cur as f32).abs() < 0.001;
+            let virtual_cur = slice_virtual_focus.load(std::sync::atomic::Ordering::Relaxed);
+            let step = crate::shell::gallery::views::slice::focus_step(virtual_cur, current_pos, delta);
+            slice_virtual_focus.store(step.virtual_next, std::sync::atomic::Ordering::Relaxed);
+            let idle = (current_pos - virtual_cur as f32).abs() < 0.001;
             // Advance the base and relabel deltas (visual no-op), then move
             // the focus. Expansion follows the focus — no per-card animation
             // state, retargets are exact.
             w.set_gallery_focused(next as i32);
             rebuild(next);
             if idle && delta.abs() > 1 {
+                w.set_gallery_slice_delta_base(step.virtual_next);
                 w.set_gallery_slice_rebasing(true);
-                w.set_gallery_slice_focus_pos(next as f32);
+                w.set_gallery_slice_focus_pos(step.virtual_next as f32);
                 let weak2 = weak.clone();
                 slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
                     if let Some(w2) = weak2.upgrade() {
@@ -589,9 +608,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 });
             } else {
-                let target = crate::shell::gallery::views::slice::focus_target(current_pos, cur, delta);
+                w.set_gallery_slice_delta_base(step.virtual_next);
                 w.set_gallery_slice_rebasing(false);
-                w.set_gallery_slice_focus_pos(target);
+                w.set_gallery_slice_focus_pos(step.target);
             }
         })
     };

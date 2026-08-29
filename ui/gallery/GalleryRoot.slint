@@ -28,6 +28,7 @@ export component GalleryRoot inherits Rectangle {
     // every slot's position/width.
     in property <[SliceTileData]> slice-tiles;
     in property <float> slice-focus-pos: 0.0;
+    in property <int> slice-delta-base: 0;
     in property <bool> slice-rebasing: false;
     // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
@@ -127,7 +128,7 @@ export component GalleryRoot inherits Rectangle {
             focus-pos: root.slice-focus-pos;
             rebasing: root.slice-rebasing;
             reduced-motion: root.reduced-motion;
-            focused-index: root.focused-index;
+            delta-base: root.slice-delta-base;
             card-clicked(i) => { root.card-clicked(i); }
             card-right-clicked(i) => { root.card-right-clicked(i); }
             wheel-step(dir) => { root.wheel-step(dir); }

@@ -331,9 +331,33 @@ fn slice_focus_flow_renders_settled_and_midflight() {
             .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles_relabeled)));
     win.set_gallery_focused(7);
+    win.set_gallery_slice_delta_base(7);
     win.set_gallery_slice_rebasing(true);
     win.set_gallery_slice_focus_pos(6.5); // frac = −0.5
     let mid = win.window().take_snapshot().expect("midflight snapshot");
     save_slice_png(mid, "/tmp/opencode/slice_midflight.png");
+
+    // Ring-seam crossing (infinite-carousel regression): 12 themes, chain
+    // forward from real 11 into real 0. The virtual focus keeps counting
+    // (base 12) while the relabeled model centers real 0 — frac = −0.5 puts
+    // real 0 half-grown at center and real 11 half-collapsed to its left.
+    let tiles_seam: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles_seam)));
+    win.set_gallery_focused(0);
+    win.set_gallery_slice_delta_base(12);
+    win.set_gallery_slice_focus_pos(11.7); // frac = −0.3: incoming 70% grown
+    let seam = win.window().take_snapshot().expect("seam snapshot");
+    save_slice_png(seam, "/tmp/opencode/slice_seam.png");
+    win.set_gallery_slice_delta_base(0);
     win.set_gallery_slice_rebasing(false);
 }

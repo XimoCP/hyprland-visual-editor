@@ -33,16 +33,16 @@ export struct SliceTileData {
 export component SliceCarousel inherits Rectangle {
     in property <[GalleryCardData]> cards;
     in property <[SliceTileData]> tiles;
-    // V6 focus-flow state — ONE animated scalar (fractional card index).
-    // `focused-index` is the delta base (the settled focused slot the model
-    // is labeled against); frac = focus-pos − focused-index stays in
-    // [−1, 1] because Rust relabels deltas on every committed step.
+    // V6 focus-flow state — ONE animated scalar (fractional card index,
+    // UNWRAPPED: …−1, 0, 1… 12, 13… — the real focused index is its wrap
+    // modulo the theme count). `delta-base` mirrors the virtual focused
+    // slot the model deltas are labeled against; frac = focus-pos −
+    // delta-base stays within ±1 across ring seams.
     in-out property <float> focus-pos: 0.0;
+    in property <int> delta-base: 0;
     in property <bool> rebasing: false;
     in property <bool> reduced-motion: false;
-    // Delta base — drives the signed fractional distance of every tile.
-    in property <int> focused-index: 0;
-    property <float> focus-frac: root.focus-pos - root.focused-index;
+    property <float> focus-frac: root.focus-pos - root.delta-base;
 
     animate focus-pos {
         duration: root.rebasing ? 0ms : (root.reduced-motion ? 0ms : SkwdTokens.anim-expand);
