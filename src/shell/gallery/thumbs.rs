@@ -1434,4 +1434,62 @@ mod tests {
         assert!(keep_txt.exists(), "non-artifact kept");
     }
 
+    // ── T5.1 REGRESSION GUARD: 42-source burst coalesces to exactly 1 refresh ──
+    #[test]
+    fn preheat_plan_for_42_sources_coalesces_to_single_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Build 42 synthetic sources (all Some) → plan_jobs must keep all 42
+        let sources: Vec<(usize, String, Option<PathBuf>)> = (0..42)
+            .map(|i| (i, format!("Theme-{i}"), Some(PathBuf::from(format!("/tmp/wall-{i}.png")))))
+            .collect();
+        let jobs = plan_jobs(sources);
+        assert_eq!(jobs.len(), 42, "plan_jobs must keep all 42 sourced cards");
+
+        // Counting-closure pattern over is_last_completion (same as preheat's UI callback)
+        let refresh_count = Arc::new(AtomicUsize::new(0));
+        let pending = Arc::new(AtomicUsize::new(jobs.len()));
+        let refresh = {
+            let c = refresh_count.clone();
+            move || { c.fetch_add(1, Ordering::SeqCst); }
+        };
+        let refresh = Arc::new(refresh);
+        for _ in &jobs {
+            let p = pending.clone();
+            let r = refresh.clone();
+            if is_last_completion(&p) {
+                r();
+            }
+        }
+        assert_eq!(
+            refresh_count.load(Ordering::SeqCst),
+            1,
+            "42 completions must coalesce to exactly ONE refresh (regression guard for R1.3)"
+        );
+
+        // Mixed burst with holes: 42 slots, 7 without source → 35 jobs → still 1
+        let mixed: Vec<(usize, String, Option<PathBuf>)> = (0..42)
+            .map(|i| {
+                let src = if i % 6 == 0 { None } else { Some(PathBuf::from(format!("/tmp/w-{i}.png"))) };
+                (i, format!("T{i}"), src)
+            })
+            .collect();
+        let jobs2 = plan_jobs(mixed);
+        assert_eq!(jobs2.len(), 35, "plan filters None sources");
+        let c2 = Arc::new(AtomicUsize::new(0));
+        let p2 = Arc::new(AtomicUsize::new(jobs2.len()));
+        let r2 = {
+            let c = c2.clone();
+            move || { c.fetch_add(1, Ordering::SeqCst); }
+        };
+        let r2 = Arc::new(r2);
+        for _ in &jobs2 {
+            let p = p2.clone();
+            let r = r2.clone();
+            if is_last_completion(&p) { r(); }
+        }
+        assert_eq!(c2.load(Ordering::SeqCst), 1, "filtered burst must still coalesce to 1");
+    }
+
 }

@@ -394,6 +394,32 @@ Traducciones completas en **inglés** y **español**, embebidas en el binario en
 
 El idioma se detecta de la variable `$LANG` y se puede cambiar desde la configuración (requiere reinicio).
 
+### Gallery image pipeline performance
+
+Single decode → four artifacts: the worker decodes the source once and
+derives thumb (≤400×720 cover), hero (≤1600×900 contain), and both
+parallelogram slats (collapsed/expanded). All decode/resize/bake work
+runs off the Slint thread; the UI callback only wraps `Image::from_rgba8`
+handles and updates row data.
+
+Content-keyed cache: artifacts are `<len>-<hash>-thumb.png`,
+`<len>-<hash>-hero.png`, `<len>-<hash>-slat.png`, and
+`<len>-<hash>-slat-exp.png` under `$XDG_CACHE_HOME/hve/thumbs`. Same
+bytes share one key regardless of path/mtime; warm hits load slats from
+small PNGs and skip the full-size decode. `prune_stale(cache_dir,
+live_keys)` removes unreferenced artifacts.
+
+In-place cards model: `sync_cards(&VecModel, new_rows)` diffs by name,
+removes stale rows descending, updates changed rows via `set_row_data`,
+and pushes additions—no `ModelRc` swap on theme apply, so delegates
+are preserved.
+
+Curtain: a single parent `curtain-phase` (0→1) driven by one 16 ms
+Timer is passed to mosaic cells; each cell computes its wipe from pure
+math `clamp((phase*600 - delay)/300)` and renders an opaque cover
+Rectangle. No Timer lives inside repeater delegates; reduced-motion
+falls back to the existing crossfade.
+
 ---
 
 ## Estructura del proyecto
