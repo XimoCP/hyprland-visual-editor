@@ -21,13 +21,17 @@ export component MosaicCell inherits Rectangle {
     in property <float> cloud-opacity: 1.0; // driven by Rust cloud 0.55/1.05 smoothstep
     in property <int> cell-key: 0;
     in property <duration> reveal-delay: 0ms;
-    // ── Curtain (Mosaic final scheme) ──
+    // ── Curtain (Mosaic final scheme) — phase-driven wipe (D4) ──
     // Bumped by the parent on every page flip; drives the wipe cover.
     in property <int> flip-token: 0;
     // When true, skip the curtain (plain crossfade instead).
     in property <bool> reduced-motion: false;
     // Column stagger for this tile's curtain (ms).
     in property <int> delay-ms: 0;
+    // Phase-driven curtain: parent animates 0→1, per-cell pure math cover.
+    in property <float> curtain-phase: 1.0;
+    in property <int> curtain-total-ms: 600;
+    property <float> curtain-progress: Math.max(0.0, Math.min(1.0, (root.curtain-phase * root.curtain-total-ms - root.delay-ms) / 300.0));
     // stagger alpha: 0 → 1 after reveal-delay
     in-out property <float> image-alpha: 1.0;
     animate image-alpha { duration: 250ms; easing: ease-in-out; delay: root.reveal-delay; }
@@ -114,6 +118,17 @@ export component MosaicCell inherits Rectangle {
         animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
     }
 
+    // ── Curtain cover (D4): opaque wipe L→R driven by parent phase ──
+    // progress 0 = fully covered, 1 = fully revealed. Pure math, no Timer
+    // in delegate (Slint 1.17 panic). Cover is surface-container (opaque).
+    curtain-cover := Rectangle {
+        visible: !root.reduced-motion && root.curtain-phase < 1.0 && root.curtain-progress < 1.0;
+        x: root.width * root.curtain-progress;
+        width: root.width * (1.0 - root.curtain-progress);
+        height: 100%;
+        background: SkwdTokens.surface-container;
+    }
+
     Text {
         text: root.card-name;
         color: SkwdTokens.primary;
@@ -124,12 +139,6 @@ export component MosaicCell inherits Rectangle {
         width: parent.width - 2 * SkwdTokens.spacing-8;
         height: 16px;
     }
-
-    // ── Curtain (Mosaic final scheme) — FALLBACK: per-tile wipe
-    // removed to avoid i-slint-compiler 1.17 panic (Timer in repeater).
-    // Page flip is handled by the parent page-alpha crossfade. The
-    // flip-token / delay-ms props are retained for API compat but not
-    // used for a Timer-driven curtain.
 
     touch := TouchArea {
         width: 100%;

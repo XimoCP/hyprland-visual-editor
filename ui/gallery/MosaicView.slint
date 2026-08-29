@@ -52,7 +52,23 @@ export component MosaicView inherits Rectangle {
     in-out property <int> flip-token: 0;
     changed current-page => { root.flip-token += 1; }
 
-    // Outgoing page crossfade (reduced-motion uses this instead of curtain).
+    // Curtain phase-driven wipe (D4): single parent phase 0→1 drives per-cell covers.
+    // reduced-motion keeps the legacy page-alpha crossfade instead.
+    in-out property <float> curtain-phase: 1.0;
+    property <int> curtain-total-ms: 600;
+    property <bool> curtain-running: false;
+    curtain-timer := Timer {
+        interval: 16ms;
+        running: root.curtain-running;
+        triggered => {
+            root.curtain-phase = Math.min(1.0, root.curtain-phase + 0.027);
+            if (root.curtain-phase >= 1.0) {
+                root.curtain-running = false;
+            }
+        }
+    }
+
+    // Outgoing page crossfade (reduced-motion only).
     in-out property <float> page-alpha: 1.0;
     property <duration> page-fade-duration: 0ms;
     animate page-alpha {
@@ -65,11 +81,17 @@ export component MosaicView inherits Rectangle {
         triggered => { root.page-alpha = 1.0; }
     }
     changed flip-token => {
-        // FALLBACK: per-tile curtain removed (compiler panic in repeater).
-        // Use page-level crossfade for both motion and reduced-motion.
-        root.page-fade-duration = SkwdTokens.mosaic-page-fade;
-        root.page-alpha = 0.35;
-        page-fade-timer.restart();
+        if (root.reduced-motion) {
+            root.curtain-running = false;
+            root.curtain-phase = 1.0;
+            root.page-fade-duration = SkwdTokens.mosaic-page-fade;
+            root.page-alpha = 0.35;
+            page-fade-timer.restart();
+        } else {
+            root.page-alpha = 1.0;
+            root.curtain-phase = 0.0;
+            root.curtain-running = true;
+        }
     }
 
     // ── Wheel (mirrors SliceCarousel): arm a debounce Timer, commit one
@@ -120,6 +142,8 @@ export component MosaicView inherits Rectangle {
             flip-token: root.flip-token;
             reduced-motion: root.reduced-motion;
             delay-ms: t.delay-ms;
+            curtain-phase: root.curtain-phase;
+            curtain-total-ms: root.curtain-total-ms;
             clicked => { root.cell-clicked(t.real-index); }
             flip-requested => { root.cell-flip(t.real-index); }
         }

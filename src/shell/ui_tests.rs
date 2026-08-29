@@ -449,3 +449,314 @@ fn mosaic_hero_centered_renders_with_pagination() {
     let snap = win.window().take_snapshot().expect("mosaic snapshot");
     save_slice_png(snap, "/tmp/opencode/mosaic_hero.png");
 }
+
+fn bright_mosaic_thumb() -> slint::Image {
+    // Solid bright color distinct from the cover (surface-container 44,31,29)
+    // so the curtain's dark cover is detectable via pixel count.
+    let (w, h) = (320u32, 200u32);
+    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+    for px in buf.make_mut_bytes().chunks_mut(4) {
+        px[0] = 240;
+        px[1] = 190;
+        px[2] = 90;
+        px[3] = 255;
+    }
+    slint::Image::from_rgba8(buf)
+}
+
+fn count_cover_pixels(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> usize {
+    // Curtain cover is an opaque dark rect inside the mosaic band.
+    // Exact token color is #2c1f1d but the software renderer composites the
+    // bright thumb underneath with a slight blend, so we count any opaque
+    // dark pixel inside the band (r<110,g<90,b<70) as a proxy for cover.
+    // This discriminates the staggered wipe (many dark cover pixels at mid)
+    // from the crossfade fallback or settled state (few).
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut count = 0usize;
+    // Region that covers the justified mosaic band at 1920×1080 while
+    // excluding the top chrome (y<90) and bottom bar.
+    let y0 = 150usize.min(h);
+    let y1 = 800usize.min(h);
+    let x0 = 60usize.min(w);
+    let x1 = 1650usize.min(w);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let idx = (y * w + x) * 4;
+            let r = bytes[idx];
+            let g = bytes[idx + 1];
+            let b = bytes[idx + 2];
+            let a = bytes[idx + 3];
+            if a < 10 {
+                continue; // transparent gutter / outside tiles
+            }
+            if r < 120 && g < 90 && b < 70 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
+    use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(2);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+
+    // 18 themes → 2 full pages (capacity 9 at 1920×1080) → meaningful stagger
+    let count = 18usize;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    let thumb = bright_mosaic_thumb();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: thumb.clone(),
+            hero: thumb.clone(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    let stage_w = 1920.0f32;
+    let stage_h = 1080.0f32;
+    let mut pg = MosaicPages::new(count, stage_w, stage_h);
+    assert!(pg.total_pages() >= 2, "18 themes must paginate (capacity {})", pg.capacity());
+
+    // Page 0 settled
+    let (aspects0, reals0) = pg.page_render();
+    let (layout0, tile_reals0) = justified_hero_layout(&aspects0, &reals0, stage_w, stage_h);
+    let delays0 = mosaic_curtain_delays(&layout0.tiles);
+    let tiles0: Vec<crate::MosaicTileData> = layout0
+        .tiles
+        .iter()
+        .zip(tile_reals0.iter())
+        .zip(delays0.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles0)));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+    win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+    win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
+        pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+    )));
+    // Flush initial layout (no curtain pending — phase 1 settled)
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    // Flip to page 1 — this bumps flip-token inside MosaicView and starts the curtain
+    assert!(pg.step(1), "must flip to page 1");
+    let (aspects1, reals1) = pg.page_render();
+    let (layout1, tile_reals1) = justified_hero_layout(&aspects1, &reals1, stage_w, stage_h);
+    let delays1 = mosaic_curtain_delays(&layout1.tiles);
+    let tiles1: Vec<crate::MosaicTileData> = layout1
+        .tiles
+        .iter()
+        .zip(tile_reals1.iter())
+        .zip(delays1.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles1)));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+
+    // Mid-curtain: advance ~300ms (~18 ticks) → phase ~0.5, column stagger visible
+    for _ in 0..18 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let mid = win.window().take_snapshot().expect("mid curtain snapshot");
+    save_slice_png(mid.clone(), "/tmp/opencode/mosaic_curtain_mid.png");
+    let mid_dark = count_cover_pixels(&mid);
+
+    // Settled: advance past total curtain duration (600ms total → another 400ms)
+    for _ in 0..25 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let settled = win.window().take_snapshot().expect("settled snapshot");
+    save_slice_png(settled.clone(), "/tmp/opencode/mosaic_curtain_settled.png");
+    let settled_dark = count_cover_pixels(&settled);
+
+    // Curtain contract: mid must show staggered covers (dark), settled must have none
+    assert!(
+        mid_dark > 800,
+        "mid-curtain must show opaque covers (staggered wipe) — got {mid_dark} cover pixels, expected >800 (crossfade fallback would be ~0)"
+    );
+    assert!(
+        settled_dark < 300,
+        "settled must have no covers — got {settled_dark} cover pixels, expected <300"
+    );
+    assert!(
+        mid_dark > settled_dark + 500,
+        "mid vs settled must differ visibly — mid {mid_dark} vs settled {settled_dark}"
+    );
+}
+
+#[test]
+fn mosaic_curtain_respects_reduced_motion() {
+    use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(2);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+
+    let count = 12usize;
+    let thumb = bright_mosaic_thumb();
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: thumb.clone(),
+            hero: thumb.clone(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    let stage_w = 1920.0f32;
+    let stage_h = 1080.0f32;
+    let mut pg = MosaicPages::new(count, stage_w, stage_h);
+    let (aspects0, reals0) = pg.page_render();
+    let (layout0, tile_reals0) = justified_hero_layout(&aspects0, &reals0, stage_w, stage_h);
+    let delays0 = mosaic_curtain_delays(&layout0.tiles);
+    let tiles0: Vec<crate::MosaicTileData> = layout0
+        .tiles
+        .iter()
+        .zip(tile_reals0.iter())
+        .zip(delays0.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles0)));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+    win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+    win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
+        pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+    )));
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    assert!(pg.step(1));
+    let (aspects1, reals1) = pg.page_render();
+    let (layout1, tile_reals1) = justified_hero_layout(&aspects1, &reals1, stage_w, stage_h);
+    let delays1 = mosaic_curtain_delays(&layout1.tiles);
+    let tiles1: Vec<crate::MosaicTileData> = layout1
+        .tiles
+        .iter()
+        .zip(tile_reals1.iter())
+        .zip(delays1.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles1)));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+
+    // Mid with reduced-motion: crossfade, NO curtain covers
+    for _ in 0..6 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let mid = win.window().take_snapshot().expect("reduced mid snapshot");
+    // Save for visual inspection but not required for contract — keep distinct name
+    save_slice_png(mid.clone(), "/tmp/opencode/mosaic_curtain_reduced_mid.png");
+    let mid_dark = count_cover_pixels(&mid);
+    assert!(
+        mid_dark < 300,
+        "reduced-motion must NOT show curtain covers — got {mid_dark} cover pixels, expected <300 (crossfade only)"
+    );
+    // Settled also no covers
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let settled = win.window().take_snapshot().expect("reduced settled");
+    save_slice_png(settled.clone(), "/tmp/opencode/mosaic_curtain_reduced_settled.png");
+    let settled_dark = count_cover_pixels(&settled);
+    assert!(settled_dark < 300, "reduced settled must have no covers — got {settled_dark}");
+}
