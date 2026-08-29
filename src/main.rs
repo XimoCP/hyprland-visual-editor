@@ -711,8 +711,17 @@ fn main() -> Result<(), slint::PlatformError> {
             Vec::<crate::SliceTileData>::new(),
         )));
         let cards = to_gallery_cards(&gallery_tm.lock().unwrap());
-        let empty = cards.is_empty();
-        window.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+        // S5 bake carry-over: if a previous card model exists (watcher
+        // refresh, style re-entry), reuse its baked images so the wall never
+        // blanks; schedule_thumbs' guard then skips already-painted rows.
+        let carried = {
+            let prev = window.get_gallery_cards();
+            use slint::Model as _;
+            let rows: Vec<crate::GalleryCardData> = (0..prev.row_count()).filter_map(|i| prev.row_data(i)).collect();
+            crate::shell::gallery::model::carry_over_bakes(&rows, cards)
+        };
+        let empty = carried.is_empty();
+        window.set_gallery_cards(ModelRc::new(VecModel::from(carried)));
         window.set_gallery_empty(empty);
         refresh_mosaic_page();
         refresh_slice_ring();
@@ -806,6 +815,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     if outcome == crate::shell::gallery::slot::ApplyOutcome::Applied {
                         let refreshed = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
+                            // S5 bake carry-over: reuse the previous model's
+                            // baked images so the wall never blanks while the
+                            // theme applies (schedule_thumbs then does zero
+                            // work — nothing to re-bake).
+                            let prev = w.get_gallery_cards();
+                            use slint::Model as _;
+                            let old_rows: Vec<crate::GalleryCardData> =
+                                (0..prev.row_count()).filter_map(|i| prev.row_data(i)).collect();
+                            let refreshed = crate::shell::gallery::model::carry_over_bakes(&old_rows, refreshed);
                             w.set_gallery_cards(ModelRc::new(VecModel::from(refreshed)));
                             refresh();
                             // keep strip position — theme apply does not re-trigger slide

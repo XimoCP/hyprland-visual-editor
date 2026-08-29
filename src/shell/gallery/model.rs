@@ -330,10 +330,103 @@ impl Default for ThumbnailCache {
     }
 }
 
+// ── Bake carry-over (S5 flicker fix) ────────────────────────────────────
+// Gallery rebuilds (theme applied, list refresh) construct fresh cards
+// with EMPTY images; the async thumb/slat pipeline refills them later, so
+// the Slice wall blanks to bare borders and pops back "all at once" when
+// the bakes land. Baked images are deterministic per theme, so they are
+// carried over BY NAME: rebuilt cards reuse the previous model's thumb,
+// hero and slat bakes; schedule_thumbs' already-marshaled guard then does
+// zero work and the wall never flickers. Non-image fields (accent, flags)
+// always come from the FRESH row.
+
+pub fn carry_over_bakes(old_rows: &[crate::GalleryCardData], fresh: Vec<crate::GalleryCardData>) -> Vec<crate::GalleryCardData> {
+    let mut out = fresh;
+    for card in out.iter_mut() {
+        if let Some(prev) = old_rows.iter().find(|o| o.name == card.name) {
+            card.thumb = prev.thumb.clone();
+            card.hero = prev.hero.clone();
+            card.slat_image = prev.slat_image.clone();
+            card.slat_expanded_image = prev.slat_expanded_image.clone();
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::theme_manager::ThemeInfo;
+
+    /// GalleryCardData fixture with defaults and one baked image slot set.
+    fn card(name: &str, baked: bool) -> crate::GalleryCardData {
+        let img = if baked {
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4))
+        } else {
+            slint::Image::default()
+        };
+        crate::GalleryCardData {
+            name: name.to_string().into(),
+            saved_at: "".into(),
+            is_active: false,
+            providers: slint::ModelRc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(1, 2, 3),
+            primary: slint::Color::from_rgb_u8(0, 0, 0),
+            secondary: slint::Color::from_rgb_u8(0, 0, 0),
+            tertiary: slint::Color::from_rgb_u8(0, 0, 0),
+            surface: slint::Color::from_rgb_u8(0, 0, 0),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: "".into(),
+            thumb_path: "".into(),
+            thumb: img.clone(),
+            hero: img.clone(),
+            slat_image: img.clone(),
+            slat_expanded_image: img,
+        }
+    }
+
+    fn has_bakes(c: &crate::GalleryCardData) -> bool {
+        c.thumb.size().width > 0 && c.slat_image.size().width > 0 && c.slat_expanded_image.size().width > 0
+    }
+
+    // ── S5 RED: bake carry-over across gallery rebuilds ────────────
+
+    #[test]
+    fn carry_over_bakes_preserves_images_by_name() {
+        let old = vec![card("Alpha", true), card("Beta", true)];
+        let fresh = vec![card("Alpha", false), card("Beta", false)];
+        let out = carry_over_bakes(&old, fresh);
+        assert!(out.iter().all(has_bakes), "matched cards must keep their bakes");
+        assert_eq!(out[0].name, "Alpha");
+        assert_eq!(out[1].name, "Beta");
+    }
+
+    #[test]
+    fn carry_over_bakes_new_theme_starts_blank_and_order_preserved() {
+        let old = vec![card("Alpha", true)];
+        let fresh = vec![card("Zulu", false), card("Alpha", false)];
+        let out = carry_over_bakes(&old, fresh);
+        assert_eq!(out.len(), 2, "count preserved");
+        assert_eq!(out[0].name, "Zulu", "fresh order preserved");
+        assert!(!has_bakes(&out[0]), "unmatched new theme starts blank (async bake fills it)");
+        assert!(has_bakes(&out[1]), "existing theme keeps its bakes");
+    }
+
+    #[test]
+    fn carry_over_bakes_fresh_fields_win_for_non_image_data() {
+        let mut old = card("Alpha", true);
+        old.is_active = false;
+        old.accent = slint::Color::from_rgb_u8(9, 9, 9);
+        let mut fresh = card("Alpha", false);
+        fresh.is_active = true; // theme was just applied — fresh flag must survive
+        fresh.accent = slint::Color::from_rgb_u8(1, 2, 3);
+        let out = carry_over_bakes(&[old], vec![fresh]);
+        assert!(out[0].is_active, "non-image fields come from the FRESH row");
+        assert_eq!(out[0].accent, slint::Color::from_rgb_u8(1, 2, 3));
+        assert!(has_bakes(&out[0]), "…while bakes come from the old row");
+    }
 
     fn info(name: &str, active: bool, providers: &[&str], saved_at: &str) -> ThemeInfo {
         ThemeInfo {
