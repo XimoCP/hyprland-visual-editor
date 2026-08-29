@@ -123,6 +123,26 @@ pub fn hero_path(source: &Path, out_dir: &Path) -> PathBuf {
     }
 }
 
+/// Slat PNG cache path (collapsed) — `<key>-slat.png` (T2b content-keyed).
+pub fn slat_path(source: &Path, out_dir: &Path) -> PathBuf {
+    if let Ok(key) = content_cache_key(source) {
+        out_dir.join(format!("{key}-slat.png"))
+    } else {
+        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
+        out_dir.join(format!("{}-slat.png", cache_key(source, mtime)))
+    }
+}
+
+/// Slat PNG cache path (expanded) — `<key>-slat-exp.png` (T2b content-keyed).
+pub fn slat_expanded_path(source: &Path, out_dir: &Path) -> PathBuf {
+    if let Ok(key) = content_cache_key(source) {
+        out_dir.join(format!("{key}-slat-exp.png"))
+    } else {
+        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
+        out_dir.join(format!("{}-slat-exp.png", cache_key(source, mtime)))
+    }
+}
+
 /// Pure CONTAIN fit math (HF5): scale the WHOLE source to fit ENTIRELY
 /// within (max_w × max_h) preserving aspect ratio — integer-exact in the
 /// same style as `cover_geometry`, NEVER upscaling. Returns `(out_w, out_h)`.
@@ -137,23 +157,27 @@ pub fn hero_geometry(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u3
 }
 
 /// Four artifacts derived from a single source decode (R1.2 / D1).
+/// `decoded` is true when the FULL-SIZE source was decoded (cold bake);
+/// false on warm hit where all four disk artifacts existed and slats were
+/// loaded via small PNG decodes (T2b R2.3).
 #[derive(Debug)]
 pub struct BakedSet {
     pub thumb_path: PathBuf,
     pub hero_path: PathBuf,
     pub slat_rgba: image::RgbaImage,
     pub slat_expanded_rgba: image::RgbaImage,
+    pub decoded: bool,
 }
 
 /// Decode ONCE, derive thumb + hero + both slat variants from the same buffer
-/// (R1.2). Content-keyed (R2.1/R2.3/D2): artifacts are `<key>-thumb.png` /
-/// `<key>-hero.png` where key = "{len}-{hash(bytes)}". Reads the source file
-/// ONCE into `bytes`, derives the key from those bytes, and decodes from the
-/// SAME buffer (zero extra IO when decode is needed). Disk hit
-/// (`<key>-thumb.png` + `<key>-hero.png` both exist) skips thumb/hero
-/// resize+save while still baking both slat RGBAs from the same buffer
-/// (slats are not cached to disk, so one decode is always needed for them;
-/// the hit saves the thumb/hero work and dedups identical themes).
+/// (R1.2). Content-keyed (R2.1/R2.3/D2/T2b): artifacts are `<key>-thumb.png` /
+/// `<key>-hero.png` / `<key>-slat.png` / `<key>-slat-exp.png` where key =
+/// "{len}-{hash(bytes)}". Reads the source file ONCE into `bytes`, derives
+/// the key from those bytes, and — on warm hit (all four exist) — SKIPS the
+/// FULL-SIZE decode entirely and loads slats via small PNG decodes (520px,
+/// ~146/959 wide). Cold path decodes once, derives thumb/hero if needed,
+/// bakes slats, and persists slat PNGs. `decoded` is true on cold bake,
+/// false on warm hit (R2.3).
 /// Returns all four artifacts in [`BakedSet`].
 pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     // Single read → key + decode share the same bytes (zero extra IO).
@@ -162,8 +186,37 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     let key = content_cache_key_from_bytes(&bytes);
     let thumb_out = out_dir.join(format!("{key}-thumb.png"));
     let hero_out = out_dir.join(format!("{key}-hero.png"));
+    let slat_out = out_dir.join(format!("{key}-slat.png"));
+    let slat_exp_out = out_dir.join(format!("{key}-slat-exp.png"));
+    // Warm hit: all four exist → skip FULL-SIZE source decode, load slats small
+    if thumb_out.exists() && hero_out.exists() && slat_out.exists() && slat_exp_out.exists() {
+        let slat_rgba = image::ImageReader::open(&slat_out)
+            .map_err(|e| format!("cannot open cached slat {}: {e}", slat_out.display()))?
+            .with_guessed_format()
+            .ok()
+            .and_then(|r| r.decode().ok())
+            .map(|d| d.to_rgba8())
+            .ok_or_else(|| format!("cannot decode cached slat {}", slat_out.display()))?;
+        let slat_expanded_rgba = image::ImageReader::open(&slat_exp_out)
+            .map_err(|e| format!("cannot open cached slat-exp {}: {e}", slat_exp_out.display()))?
+            .with_guessed_format()
+            .ok()
+            .and_then(|r| r.decode().ok())
+            .map(|d| d.to_rgba8())
+            .ok_or_else(|| format!("cannot decode cached slat-exp {}", slat_exp_out.display()))?;
+        tracing::trace!(source = %source.display(), decoded = false, "generate_set warm hit (four cached)");
+        return Ok(BakedSet {
+            thumb_path: thumb_out,
+            hero_path: hero_out,
+            slat_rgba,
+            slat_expanded_rgba,
+            decoded: false,
+        });
+    }
     let needs_thumb = !thumb_out.exists();
     let needs_hero = !hero_out.exists();
+    let needs_slat = !slat_out.exists();
+    let needs_slat_exp = !slat_exp_out.exists();
 
     // Decode from the same bytes — no second file open.
     let t_decode = std::time::Instant::now();
@@ -174,7 +227,7 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
         .map_err(|e| format!("cannot decode {}: {e}", source.display()))?;
     let decode_ms = t_decode.elapsed().as_millis() as u64;
 
-    if needs_thumb || needs_hero {
+    if needs_thumb || needs_hero || needs_slat || needs_slat_exp {
         std::fs::create_dir_all(out_dir)
             .map_err(|e| format!("cannot create thumb dir {}: {e}", out_dir.display()))?;
     }
@@ -201,11 +254,24 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     let bake_ms = t_bake.elapsed().as_millis() as u64;
     let total_ms = decode_ms + bake_ms;
 
+    // Persist slat artifacts content-keyed (T2b)
+    if needs_slat {
+        slat_rgba
+            .save(&slat_out)
+            .map_err(|e| format!("cannot write {}: {e}", slat_out.display()))?;
+    }
+    if needs_slat_exp {
+        slat_expanded_rgba
+            .save(&slat_exp_out)
+            .map_err(|e| format!("cannot write {}: {e}", slat_exp_out.display()))?;
+    }
+
     tracing::trace!(
         source = %source.display(),
         decode_ms,
         bake_ms,
         total_ms,
+        decoded = true,
         "generate_set job complete"
     );
 
@@ -214,6 +280,7 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
         hero_path: hero_out,
         slat_rgba,
         slat_expanded_rgba,
+        decoded: true,
     })
 }
 
@@ -270,10 +337,11 @@ pub fn cache_dir() -> PathBuf {
     base.join("hve").join("thumbs")
 }
 
-/// Best-effort prune of stale thumb/hero artifacts (R2.3/D2):
-/// removes only `*-thumb.png` / `*-hero.png` files whose content key
-/// (prefix before the suffix) is not in `live_keys`. Never touches theme
-/// dirs, non-artifact files, or subdirectories. Returns count removed.
+/// Best-effort prune of stale thumb/hero/slat artifacts (R2.3/D2/T2b):
+/// removes only `*-thumb.png` / `*-hero.png` / `*-slat.png` /
+/// `*-slat-exp.png` files whose content key (prefix before the suffix) is
+/// not in `live_keys`. Never touches theme dirs, non-artifact files, or
+/// subdirectories. Returns count removed.
 pub fn prune_stale(cache_dir: &Path, live_keys: &std::collections::HashSet<String>) -> usize {
     let entries = match std::fs::read_dir(cache_dir) {
         Ok(e) => e,
@@ -292,6 +360,10 @@ pub fn prune_stale(cache_dir: &Path, live_keys: &std::collections::HashSet<Strin
         let key = if let Some(k) = name.strip_suffix("-thumb.png") {
             k
         } else if let Some(k) = name.strip_suffix("-hero.png") {
+            k
+        } else if let Some(k) = name.strip_suffix("-slat-exp.png") {
+            k
+        } else if let Some(k) = name.strip_suffix("-slat.png") {
             k
         } else {
             continue;
@@ -1266,6 +1338,100 @@ mod tests {
         let missing = dir.join("missing_subdir");
         let empty_set = std::collections::HashSet::new();
         assert_eq!(prune_stale(&missing, &empty_set), 0, "missing cache_dir is best-effort 0");
+    }
+
+    // ── T2b RED: warm hit must skip FULL-SIZE source decode ──────────
+    #[test]
+    fn warm_start_disk_hit_performs_zero_full_size_decodes() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = dir.path().join("src.png");
+        // Small but valid image that would require full-size decode if not cached
+        let img = image::RgbaImage::from_pixel(320, 240, image::Rgba([9u8, 11, 13, 255]));
+        img.save(&src).expect("write source");
+        let out_dir = dir.path().join("thumbs");
+        // First bake — must decode (cold)
+        let first = generate_set(&src, &out_dir).expect("first generate_set");
+        assert!(first.decoded, "first bake must have performed a full-size decode");
+        // All four artifacts must exist after cold bake
+        let key = content_cache_key(&src).expect("content key");
+        let thumb = out_dir.join(format!("{key}-thumb.png"));
+        let hero = out_dir.join(format!("{key}-hero.png"));
+        let slat = out_dir.join(format!("{key}-slat.png"));
+        let slat_exp = out_dir.join(format!("{key}-slat-exp.png"));
+        assert!(thumb.exists(), "thumb cached after first bake");
+        assert!(hero.exists(), "hero cached after first bake");
+        assert!(slat.exists(), "slat cached after first bake (T2b)");
+        assert!(slat_exp.exists(), "slat-exp cached after first bake (T2b)");
+        // Capture slat bytes for parity
+        let first_slat = first.slat_rgba.clone();
+        let first_exp = first.slat_expanded_rgba.clone();
+        // Second bake — warm hit must NOT decode source (decoded == false)
+        let second = generate_set(&src, &out_dir).expect("second generate_set warm hit");
+        assert!(!second.decoded, "warm hit with all four artifacts present must skip full-size source decode");
+        assert_eq!(second.slat_rgba.as_raw(), first_slat.as_raw(), "warm slat must equal cold slat (cached bytes)");
+        assert_eq!(second.slat_expanded_rgba.as_raw(), first_exp.as_raw(), "warm expanded slat must equal cold expanded slat");
+        // Ensure warm path still returns valid thumb/hero paths
+        assert_eq!(second.thumb_path, thumb);
+        assert_eq!(second.hero_path, hero);
+    }
+
+    #[test]
+    fn cached_slat_bytes_equal_fresh_baked_png_roundtrip() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = dir.path().join("src.png");
+        let mut img = image::RgbaImage::new(200, 120);
+        for y in 0..120 {
+            for x in 0..200 {
+                img.put_pixel(x, y, image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255]));
+            }
+        }
+        img.save(&src).expect("write source");
+        let out_dir = dir.path().join("thumbs");
+        let set = generate_set(&src, &out_dir).expect("generate_set");
+        let key = content_cache_key(&src).expect("key");
+        let slat_png = out_dir.join(format!("{key}-slat.png"));
+        let slat_exp_png = out_dir.join(format!("{key}-slat-exp.png"));
+        assert!(slat_png.exists() && slat_exp_png.exists(), "slat PNGs must be persisted");
+        // Load PNGs back (small decodes) and compare bytes to BakedSet buffers
+        let loaded_slat = image::open(&slat_png).expect("open slat png").to_rgba8();
+        let loaded_exp = image::open(&slat_exp_png).expect("open slat-exp png").to_rgba8();
+        assert_eq!(loaded_slat.as_raw(), set.slat_rgba.as_raw(), "cached slat PNG bytes must equal fresh-baked slat bytes (PNG roundtrip)");
+        assert_eq!(loaded_exp.as_raw(), set.slat_expanded_rgba.as_raw(), "cached expanded slat PNG bytes must equal fresh-baked expanded slat bytes");
+        // Also compare to direct bake for parity
+        let decoded = image::ImageReader::open(&src).unwrap().decode().unwrap().to_rgba8();
+        let direct_collapsed = crate::shell::gallery::slat_image::baked_slat_rgba(decoded.clone(), false);
+        let direct_expanded = crate::shell::gallery::slat_image::baked_slat_rgba(decoded, true);
+        assert_eq!(loaded_slat.as_raw(), direct_collapsed.as_raw(), "cached slat must match direct bake (R1.4 parity)");
+        assert_eq!(loaded_exp.as_raw(), direct_expanded.as_raw(), "cached expanded slat must match direct bake");
+    }
+
+    #[test]
+    fn prune_stale_removes_orphaned_slat_artifacts() {
+        let cache = tempfile::tempdir().expect("tmp cache");
+        let dir = cache.path();
+        let live = "100-abcdef1234567890";
+        let stale = "999-ffffffffffffffff";
+        let live_thumb = dir.join(format!("{live}-thumb.png"));
+        let live_hero = dir.join(format!("{live}-hero.png"));
+        let live_slat = dir.join(format!("{live}-slat.png"));
+        let live_slat_exp = dir.join(format!("{live}-slat-exp.png"));
+        let stale_slat = dir.join(format!("{stale}-slat.png"));
+        let stale_slat_exp = dir.join(format!("{stale}-slat-exp.png"));
+        let stale_thumb = dir.join(format!("{stale}-thumb.png"));
+        let keep_txt = dir.join("keep.txt");
+        for p in [&live_thumb, &live_hero, &live_slat, &live_slat_exp, &stale_slat, &stale_slat_exp, &stale_thumb, &keep_txt] {
+            std::fs::write(p, b"x").expect("write fixture");
+        }
+        let mut live_set = std::collections::HashSet::new();
+        live_set.insert(live.to_string());
+        let removed = prune_stale(dir, &live_set);
+        // stale thumb + stale slat + stale slat-exp = 3 removed; live kept
+        assert_eq!(removed, 3, "should remove stale thumb + slat + slat-exp (3 files)");
+        assert!(live_thumb.exists() && live_hero.exists() && live_slat.exists() && live_slat_exp.exists(), "live artifacts kept");
+        assert!(!stale_slat.exists(), "stale slat pruned");
+        assert!(!stale_slat_exp.exists(), "stale slat-exp pruned");
+        assert!(!stale_thumb.exists(), "stale thumb pruned");
+        assert!(keep_txt.exists(), "non-artifact kept");
     }
 
 }
