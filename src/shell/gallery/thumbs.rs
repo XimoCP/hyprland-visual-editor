@@ -98,6 +98,77 @@ pub fn hero_geometry(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u3
     )
 }
 
+/// Four artifacts derived from a single source decode (R1.2 / D1).
+#[derive(Debug)]
+pub struct BakedSet {
+    pub thumb_path: PathBuf,
+    pub hero_path: PathBuf,
+    pub slat_rgba: image::RgbaImage,
+    pub slat_expanded_rgba: image::RgbaImage,
+}
+
+/// Decode ONCE, derive thumb + hero + both slat variants from the same buffer
+/// (R1.2). Writes thumb (≤400×720 Triangle cover) and hero (≤1600×900 Triangle
+/// contain) PNGs to `out_dir`; bakes both slat RGBAs in-memory via
+/// `baked_slat_rgba` reusing the decoded buffer without re-reading.
+/// Returns all four artifacts in [`BakedSet`].
+pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
+    let thumb_out = thumb_path(source, out_dir);
+    let hero_out = hero_path(source, out_dir);
+    let needs_thumb = !thumb_out.exists();
+    let needs_hero = !hero_out.exists();
+
+    // Single decode — reused for thumb, hero, and both slat bakes.
+    let t_decode = std::time::Instant::now();
+    let img = image::ImageReader::open(source)
+        .map_err(|e| format!("cannot open {}: {e}", source.display()))?
+        .decode()
+        .map_err(|e| format!("cannot decode {}: {e}", source.display()))?;
+    let decode_ms = t_decode.elapsed().as_millis() as u64;
+
+    if needs_thumb || needs_hero {
+        std::fs::create_dir_all(out_dir)
+            .map_err(|e| format!("cannot create thumb dir {}: {e}", out_dir.display()))?;
+    }
+    if needs_thumb {
+        let (cx, cy, cw, ch, ow, oh) =
+            cover_geometry(img.width(), img.height(), THUMB_MAX_W, THUMB_MAX_H);
+        img.crop_imm(cx, cy, cw, ch)
+            .resize_exact(ow, oh, image::imageops::FilterType::Triangle)
+            .save(&thumb_out)
+            .map_err(|e| format!("cannot write {}: {e}", thumb_out.display()))?;
+    }
+    if needs_hero {
+        let (hw, hh) = hero_geometry(img.width(), img.height(), HERO_MAX_W, HERO_MAX_H);
+        img.resize_exact(hw, hh, image::imageops::FilterType::Triangle)
+            .save(&hero_out)
+            .map_err(|e| format!("cannot write {}: {e}", hero_out.display()))?;
+    }
+
+    // Bake slats from the SAME decoded buffer (no re-decode, no file re-read).
+    let t_bake = std::time::Instant::now();
+    let rgba = img.to_rgba8();
+    let slat_rgba = crate::shell::gallery::slat_image::baked_slat_rgba(rgba.clone(), false);
+    let slat_expanded_rgba = crate::shell::gallery::slat_image::baked_slat_rgba(rgba, true);
+    let bake_ms = t_bake.elapsed().as_millis() as u64;
+    let total_ms = decode_ms + bake_ms;
+
+    tracing::trace!(
+        source = %source.display(),
+        decode_ms,
+        bake_ms,
+        total_ms,
+        "generate_set job complete"
+    );
+
+    Ok(BakedSet {
+        thumb_path: thumb_out,
+        hero_path: hero_out,
+        slat_rgba,
+        slat_expanded_rgba,
+    })
+}
+
 /// Decode ONCE, write BOTH cached PNGs (HF5): the 400×720 cover thumb AND
 /// the ≤1600×900 aspect-true hero. Existing cache files short-circuit the
 /// decode only when both are present. Returns `(thumb_path, hero_path)`.
@@ -346,34 +417,98 @@ pub fn plan_jobs(sources: Vec<(usize, String, Option<PathBuf>)>) -> Vec<PreheatJ
         .collect()
 }
 
-/// Generate thumbnails AND heroes OFF-THREAD and marshal each finished pair
+/// Coalescing helper: returns true only for the last completion in a batch.
+/// Deterministic, no timers — last-job semantics via atomic pending counter.
+pub fn is_last_completion(pending: &std::sync::atomic::AtomicUsize) -> bool {
+    pending.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1
+}
+
+/// Generate thumbnails AND heroes OFF-THREAD and marshal each finished set
 /// to the UI thread via `slint::invoke_from_event_loop`, invoking
-/// `ready(index, name, thumb_png_path, hero_png_path)` there (task 4.7 /
-/// design D8; HF5 adds the aspect-true hero). One thread per job — galleries
-/// are small; failures log a warning and never block the UI. Only Send data
-/// crosses the boundary (PNG PATHS, not decoded images): `slint::Image`
-/// wraps non-Send backend storage, so the UI side loads them from disk.
+/// `ready(index, name, thumb_png_path, hero_png_path, slat_rgba, slat_expanded_rgba)`
+/// there (R1.1/R1.2: single decode reused for all four artifacts; no pixel
+/// work on the UI thread). One thread per job — galleries are small; failures
+/// log a warning and never block the UI. Slint `Image` is not Send, so we ship
+/// `RgbaImage` buffers and the UI side wraps them via `Image::from_rgba8`.
 /// `ready` must be Send+Sync because it travels inside an Arc.
+/// Batch tracing: per-job span via `generate_set`, plus one batch summary log
+/// when the last job completes (last-job pending counter).
 pub fn preheat(
     jobs: Vec<PreheatJob>,
-    ready: impl Fn(usize, std::sync::Arc<str>, PathBuf, PathBuf) + Send + Sync + 'static,
+    ready: impl Fn(usize, std::sync::Arc<str>, PathBuf, PathBuf, image::RgbaImage, image::RgbaImage)
+        + Send
+        + Sync
+        + 'static,
 ) {
-    let ready = std::sync::Arc::new(ready);
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    if jobs.is_empty() {
+        return;
+    }
+    let total = jobs.len();
+    let pending: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(total));
+    let batch_start = Arc::new(Instant::now());
+    let ready = Arc::new(ready);
+    tracing::info!(jobs = total, "thumbs preheat batch start");
     for job in jobs {
         let ready = ready.clone();
+        let pending = pending.clone();
+        let batch_start = batch_start.clone();
         std::thread::spawn(move || {
-            match generate_pair(&job.source, &cache_dir()) {
-                Ok((png, hero)) => {
+            let t_total = Instant::now();
+            let span = tracing::info_span!("thumbs::preheat::job", source = %job.source.display());
+            let _guard = span.enter();
+            match generate_set(&job.source, &cache_dir()) {
+                Ok(set) => {
                     let idx = job.index;
-                    let name: std::sync::Arc<str> = std::sync::Arc::from(job.name.as_str());
-                    let _ = slint::invoke_from_event_loop(move || ready(idx, name, png, hero));
+                    let name: Arc<str> = Arc::from(job.name.as_str());
+                    let thumb_path = set.thumb_path;
+                    let hero_path = set.hero_path;
+                    let slat = set.slat_rgba;
+                    let slat_exp = set.slat_expanded_rgba;
+                    let elapsed = t_total.elapsed().as_millis() as u64;
+                    tracing::trace!(total_ms = elapsed, "job done");
+                    let pending2 = pending.clone();
+                    let batch_start2 = batch_start.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        ready(idx, name, thumb_path, hero_path, slat, slat_exp);
+                        if is_last_completion(&pending2) {
+                            let batch_ms = batch_start2.elapsed().as_millis() as u64;
+                            tracing::info!(jobs = total, total_ms = batch_ms, "thumbs preheat batch complete");
+                        }
+                    });
                 }
                 Err(e) => {
                     tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.source.display(), e);
+                    // Still count failed jobs toward batch completion so the batch summary fires
+                    let pending2 = pending.clone();
+                    let batch_start2 = batch_start.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if is_last_completion(&pending2) {
+                            let batch_ms = batch_start2.elapsed().as_millis() as u64;
+                            tracing::info!(jobs = total, total_ms = batch_ms, "thumbs preheat batch complete (with failures)");
+                        }
+                    });
                 }
             }
         });
     }
+}
+
+/// Legacy preheat shim for call-sites that still use the 4-arg callback (kept
+/// for transitional compatibility; new code should use the 6-arg `preheat`).
+/// Delegates to 6-arg version but discards the slat buffers.
+#[allow(dead_code)]
+pub fn preheat_legacy(
+    jobs: Vec<PreheatJob>,
+    ready: impl Fn(usize, std::sync::Arc<str>, PathBuf, PathBuf) + Send + Sync + 'static,
+) {
+    let ready = std::sync::Arc::new(ready);
+    preheat(jobs, move |idx, name, thumb, hero, _slat, _exp| {
+        ready(idx, name, thumb, hero);
+    });
 }
 
 // ── 4.5 RED tests ──────────────────────────────────────────────────────
@@ -824,6 +959,122 @@ mod tests {
             Some(stale),
             "failed frame extraction falls through instead of skeleton"
         );
+    }
+
+    // ── T1.1 RED: generate_set single-decode four artifacts ──────────
+
+    #[test]
+    fn generate_set_single_decode_four_artifacts() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = dir.path().join("src.png");
+        // 800×600 source → covers both thumb (400×720 cover) and hero (≤1600×900 contain)
+        let mut img = image::RgbaImage::new(800, 600);
+        for y in 0..600 {
+            for x in 0..800 {
+                img.put_pixel(x, y, image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255]));
+            }
+        }
+        img.save(&src).unwrap();
+        let out_dir = dir.path().join("thumbs");
+        let set = generate_set(&src, &out_dir).expect("generate_set should succeed");
+        assert_eq!(set.thumb_path, thumb_path(&src, &out_dir), "thumb path matches cache contract");
+        assert_eq!(set.hero_path, hero_path(&src, &out_dir), "hero path matches cache contract");
+        assert!(set.thumb_path.exists(), "thumb PNG written");
+        assert!(set.hero_path.exists(), "hero PNG written");
+        assert_eq!((set.slat_rgba.width(), set.slat_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H), "collapsed slat bbox");
+        assert_eq!((set.slat_expanded_rgba.width(), set.slat_expanded_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H), "expanded slat bbox");
+        // Thumb PNG dimensions must be cover-cropped to 400×720 aspect (no upscale needed for 800×600)
+        let thumb_img = image::ImageReader::open(&set.thumb_path).unwrap().decode().unwrap();
+        assert!(thumb_img.width() <= THUMB_MAX_W && thumb_img.height() <= THUMB_MAX_H, "thumb bounded");
+        let hero_img = image::ImageReader::open(&set.hero_path).unwrap().decode().unwrap();
+        assert!(hero_img.width() <= HERO_MAX_W && hero_img.height() <= HERO_MAX_H, "hero bounded");
+    }
+
+    #[test]
+    fn generate_set_parity_worker_bake_equals_direct_bake() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = dir.path().join("src.png");
+        let mut img = image::RgbaImage::new(200, 120);
+        for y in 0..120 {
+            for x in 0..200 {
+                img.put_pixel(x, y, image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255]));
+            }
+        }
+        img.save(&src).unwrap();
+        let out_dir = dir.path().join("thumbs");
+        let set = generate_set(&src, &out_dir).expect("generate_set");
+        // Direct bake from the SAME decoded buffer — byte-identical contract (R1.4/D1)
+        let decoded = image::ImageReader::open(&src).unwrap().decode().unwrap().to_rgba8();
+        let direct_collapsed = crate::shell::gallery::slat_image::baked_slat_rgba(decoded.clone(), false);
+        let direct_expanded = crate::shell::gallery::slat_image::baked_slat_rgba(decoded, true);
+        assert_eq!(set.slat_rgba.as_raw(), direct_collapsed.as_raw(), "worker collapsed slat must be byte-identical to direct bake");
+        assert_eq!(set.slat_expanded_rgba.as_raw(), direct_expanded.as_raw(), "worker expanded slat must be byte-identical to direct bake");
+    }
+
+    // ── T1.4: preheat ships RgbaImage buffers (no UI-thread bake) ─────
+
+    #[test]
+    fn preheat_ships_rgba_buffers_worker_side() {
+        // Direct verification that generate_set (the worker side of preheat)
+        // produces valid RgbaImage buffers with correct bbox — the buffers
+        // that preheat will ship through the channel instead of re-decoding
+        // on the UI thread.
+        let dir = tempfile::tempdir().expect("tmp");
+        let src = dir.path().join("src.png");
+        image::RgbaImage::from_pixel(320, 240, image::Rgba([10u8, 20, 30, 255]))
+            .save(&src)
+            .unwrap();
+        let out_dir = dir.path().join("thumbs");
+        let set = generate_set(&src, &out_dir).expect("generate_set for preheat");
+        // Buffers must be non-empty and match baked bbox — these are what
+        // preheat ships via the channel; UI thread must wrap via from_rgba8.
+        assert_eq!((set.slat_rgba.width(), set.slat_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H));
+        assert_eq!((set.slat_expanded_rgba.width(), set.slat_expanded_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H));
+        // Verify wrapping via from_rgba8 succeeds (UI side contract) without decode
+        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(set.slat_rgba.width(), set.slat_rgba.height());
+        buf.make_mut_bytes().copy_from_slice(set.slat_rgba.as_raw());
+        let img = slint::Image::from_rgba8(buf);
+        assert!(img.size().width > 0, "slint::Image::from_rgba8 wrapping must succeed for shipped buffer");
+    }
+
+    // ── T1.5 RED→GREEN: coalescing — 42 completions → exactly 1 refresh ──
+
+    #[test]
+    fn coalescing_42_completions_trigger_exactly_one_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let refresh_count = Arc::new(AtomicUsize::new(0));
+        let pending = Arc::new(AtomicUsize::new(42));
+        let refresh = {
+            let c = refresh_count.clone();
+            move || { c.fetch_add(1, Ordering::SeqCst); }
+        };
+        let refresh = Arc::new(refresh);
+        // Simulate 42 completions arriving (possibly out-of-order, but counter is atomic)
+        for _ in 0..42 {
+            let p = pending.clone();
+            let r = refresh.clone();
+            // Each completion checks is_last_completion and conditionally refreshes
+            if is_last_completion(&p) {
+                r();
+            }
+        }
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1, "42 completions must coalesce to exactly ONE refresh (last-job semantics)");
+        // Edge: single job also triggers exactly one
+        let c2 = Arc::new(AtomicUsize::new(0));
+        let p2 = Arc::new(AtomicUsize::new(1));
+        if is_last_completion(&p2) { c2.fetch_add(1, Ordering::SeqCst); }
+        assert_eq!(c2.load(Ordering::SeqCst), 1, "single completion must still refresh once");
+        // So we just verify normal flow doesn't double-trigger
+        let c3 = Arc::new(AtomicUsize::new(0));
+        // Simulate two separate batches each with 3 completions → each batch exactly 1
+        for batch in 0..2 {
+            let pend = Arc::new(AtomicUsize::new(3));
+            for _ in 0..3 {
+                if is_last_completion(&pend) { c3.fetch_add(1, Ordering::SeqCst); }
+            }
+            assert_eq!(c3.load(Ordering::SeqCst), batch+1);
+        }
     }
 
 }

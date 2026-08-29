@@ -640,15 +640,33 @@ fn main() -> Result<(), slint::PlatformError> {
         drop(w);
         let ready_weak = weak.clone();
         let refresh_clone = refresh.clone();
-        thumbs::preheat(thumbs::plan_jobs(sources), move |idx, name, png, hero_png| {
+        let jobs = thumbs::plan_jobs(sources);
+        if jobs.is_empty() {
+            return;
+        }
+        let pending = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(jobs.len()));
+        thumbs::preheat(jobs, move |idx, name, png, hero_png, slat_rgba, slat_expanded_rgba| {
             if let Some(w) = ready_weak.upgrade() {
                 let model = w.get_gallery_cards();
+                // Two file-handle loads remain (GPU handles) — all pixel bakes stay in worker
                 let img = slint::Image::load_from_path(&png).unwrap_or_default();
                 let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
-                // S4b: bake slat variants ONCE per card when source is available.
-                let slat = crate::shell::gallery::slat_image::baked_slat_image_from_path(&png, false);
-                let expanded_src = if hero_png.exists() { &hero_png } else { &png };
-                let slat_expanded = crate::shell::gallery::slat_image::baked_slat_image_from_path(expanded_src, true);
+                let slat = if slat_rgba.width() == 0 || slat_rgba.height() == 0 {
+                    slint::Image::default()
+                } else {
+                    let (w, h) = (slat_rgba.width(), slat_rgba.height());
+                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                    buf.make_mut_bytes().copy_from_slice(slat_rgba.as_raw());
+                    slint::Image::from_rgba8(buf)
+                };
+                let slat_expanded = if slat_expanded_rgba.width() == 0 || slat_expanded_rgba.height() == 0 {
+                    slint::Image::default()
+                } else {
+                    let (w, h) = (slat_expanded_rgba.width(), slat_expanded_rgba.height());
+                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                    buf.make_mut_bytes().copy_from_slice(slat_expanded_rgba.as_raw());
+                    slint::Image::from_rgba8(buf)
+                };
                 if let Some(mut row) = model.row_data(idx) {
                     if row.name.as_str() == &*name {
                         row.thumb = img;
@@ -656,9 +674,18 @@ fn main() -> Result<(), slint::PlatformError> {
                         row.slat_image = slat;
                         row.slat_expanded_image = slat_expanded;
                         model.set_row_data(idx, row);
+                        if thumbs::is_last_completion(&pending) {
+                            refresh_clone();
+                        }
+                    } else if thumbs::is_last_completion(&pending) {
+                        // Stale row still counts toward batch completion for coalescing
                         refresh_clone();
                     }
+                } else if thumbs::is_last_completion(&pending) {
+                    refresh_clone();
                 }
+            } else if thumbs::is_last_completion(&pending) {
+                refresh_clone();
             }
         });
     }
