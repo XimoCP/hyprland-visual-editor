@@ -1,10 +1,12 @@
 // HVE 2 — Real wallpaper thumbnail pipeline (gallery-immersive-redesign
-// PR4, design D8).
+// PR4, design D8; Tramo 2 content-keyed cache R2/D2).
 //
 // Decodes a theme's source image, cover-crops + scales it to ≤400×720 and
-// caches the result as a PNG under `$XDG_CACHE_HOME/hve/thumbs/<key>.png`,
-// keyed by hash(source path + mtime) with LRU 200 prune semantics (spec:
-// Real Wallpaper Thumbnails; model.rs R8 cache capacity reused).
+// caches the result as PNGs under `$XDG_CACHE_HOME/hve/thumbs/<key>-thumb.png`
+// and `<key>-hero.png`, keyed by source CONTENT (size + fast content hash)
+// with LRU 200 prune semantics (spec: Real Wallpaper Thumbnails; model.rs
+// R8 cache capacity reused). Legacy path+mtime `cache_key` kept as fallback
+// for missing/unreadable sources and migration orphan cleanup.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -24,6 +26,7 @@ pub const HERO_MAX_H: u32 = 900;
 /// MTIME so a changed wallpaper invalidates its stale thumbnail. Uses
 /// std's SipHash via DefaultHasher — no crypto dependency; collisions are
 /// irrelevant at LRU 200 scale.
+/// Kept for fallback/migration; new artifacts use content-keyed keys.
 pub fn cache_key(source: &Path, mtime: SystemTime) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -33,6 +36,31 @@ pub fn cache_key(source: &Path, mtime: SystemTime) -> String {
         d.subsec_nanos().hash(&mut h);
     }
     format!("{:016x}", h.finish())
+}
+
+/// Content-keyed cache (Tramo 2 / R2/D2): key = "{len}-{hash(file_bytes)}".
+/// Hasher choice: `xxhash-rust` (xxh3_64) is NOT in Cargo.lock/tree, so we
+/// use `std::collections::hash_map::DefaultHasher` (SipHash13) over the file
+/// bytes. Documented per D2: zero new dependencies, collisions negligible at
+/// gallery scale (200 artifacts); chunked hashing would be equivalent but
+/// whole-buffer hash is fine after the single read needed for decode.
+/// If xxhash-rust is added later, swap `fast_content_hash` to xxh3_64 —
+/// artifact names stay "{len}-{hash}" so migration orphans old entries
+/// (prune_stale cleans them).
+pub fn content_cache_key_from_bytes(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{}-{:016x}", bytes.len(), h.finish())
+}
+
+/// Content key for a source file on disk: reads the file once and hashes
+/// its bytes. One read when only keying is needed; when decode is also
+/// needed the caller should reuse the same bytes (zero extra IO — see
+/// generate_set/generate_pair).
+pub fn content_cache_key(source: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    Ok(content_cache_key_from_bytes(&bytes))
 }
 
 /// Modification time of a file, None when it cannot be read.
@@ -71,18 +99,28 @@ pub fn cover_geometry(
     )
 }
 
-/// Thumbnail PNG cache path for a source inside `out_dir` (no IO).
+/// Thumbnail PNG cache path for a source inside `out_dir`.
+/// Content-keyed (R2.1): reads the source file once to hash its bytes;
+/// falls back to path+mtime hash only when the source is missing/unreadable.
 pub fn thumb_path(source: &Path, out_dir: &Path) -> PathBuf {
-    let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
-    out_dir.join(format!("{}.png", cache_key(source, mtime)))
+    if let Ok(key) = content_cache_key(source) {
+        out_dir.join(format!("{key}-thumb.png"))
+    } else {
+        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
+        out_dir.join(format!("{}-thumb.png", cache_key(source, mtime)))
+    }
 }
 
-/// Hero PNG cache path for a source inside `out_dir` (no IO): dedicated
-/// `<cache-key>-hero.png` filename under the SAME cache key + mtime scheme
-/// and the SAME directory as the portrait thumb (HF5).
+/// Hero PNG cache path for a source inside `out_dir`: dedicated
+/// `<content-key>-hero.png` under the same content-key scheme and dir as
+/// the thumb (HF5/R2.1). Falls back to path+mtime when unreadable.
 pub fn hero_path(source: &Path, out_dir: &Path) -> PathBuf {
-    let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
-    out_dir.join(format!("{}-hero.png", cache_key(source, mtime)))
+    if let Ok(key) = content_cache_key(source) {
+        out_dir.join(format!("{key}-hero.png"))
+    } else {
+        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
+        out_dir.join(format!("{}-hero.png", cache_key(source, mtime)))
+    }
 }
 
 /// Pure CONTAIN fit math (HF5): scale the WHOLE source to fit ENTIRELY
@@ -108,20 +146,30 @@ pub struct BakedSet {
 }
 
 /// Decode ONCE, derive thumb + hero + both slat variants from the same buffer
-/// (R1.2). Writes thumb (≤400×720 Triangle cover) and hero (≤1600×900 Triangle
-/// contain) PNGs to `out_dir`; bakes both slat RGBAs in-memory via
-/// `baked_slat_rgba` reusing the decoded buffer without re-reading.
+/// (R1.2). Content-keyed (R2.1/R2.3/D2): artifacts are `<key>-thumb.png` /
+/// `<key>-hero.png` where key = "{len}-{hash(bytes)}". Reads the source file
+/// ONCE into `bytes`, derives the key from those bytes, and decodes from the
+/// SAME buffer (zero extra IO when decode is needed). Disk hit
+/// (`<key>-thumb.png` + `<key>-hero.png` both exist) skips thumb/hero
+/// resize+save while still baking both slat RGBAs from the same buffer
+/// (slats are not cached to disk, so one decode is always needed for them;
+/// the hit saves the thumb/hero work and dedups identical themes).
 /// Returns all four artifacts in [`BakedSet`].
 pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
-    let thumb_out = thumb_path(source, out_dir);
-    let hero_out = hero_path(source, out_dir);
+    // Single read → key + decode share the same bytes (zero extra IO).
+    let bytes = std::fs::read(source)
+        .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    let key = content_cache_key_from_bytes(&bytes);
+    let thumb_out = out_dir.join(format!("{key}-thumb.png"));
+    let hero_out = out_dir.join(format!("{key}-hero.png"));
     let needs_thumb = !thumb_out.exists();
     let needs_hero = !hero_out.exists();
 
-    // Single decode — reused for thumb, hero, and both slat bakes.
+    // Decode from the same bytes — no second file open.
     let t_decode = std::time::Instant::now();
-    let img = image::ImageReader::open(source)
-        .map_err(|e| format!("cannot open {}: {e}", source.display()))?
+    let img = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|e| format!("cannot guess format {}: {e}", source.display()))?
         .decode()
         .map_err(|e| format!("cannot decode {}: {e}", source.display()))?;
     let decode_ms = t_decode.elapsed().as_millis() as u64;
@@ -169,31 +217,44 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     })
 }
 
-/// Decode ONCE, write BOTH cached PNGs (HF5): the 400×720 cover thumb AND
-/// the ≤1600×900 aspect-true hero. Existing cache files short-circuit the
-/// decode only when both are present. Returns `(thumb_path, hero_path)`.
+/// Decode ONCE, write BOTH cached PNGs (HF5) content-keyed (R2.1): the
+/// 400×720 cover thumb AND the ≤1600×900 aspect-true hero under
+/// `<key>-thumb.png` / `<key>-hero.png`. Single read → key + decode share
+/// the same bytes (zero extra IO). Existing BOTH-files hit short-circuits
+/// thumb/hero generation (dedup); slat path (generate_set) still decodes
+/// for its in-memory bakes. Returns `(thumb_path, hero_path)`.
 pub fn generate_pair(source: &Path, out_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
-    let thumb_out = thumb_path(source, out_dir);
-    let hero_out = hero_path(source, out_dir);
+    let bytes = std::fs::read(source)
+        .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    let key = content_cache_key_from_bytes(&bytes);
+    let thumb_out = out_dir.join(format!("{key}-thumb.png"));
+    let hero_out = out_dir.join(format!("{key}-hero.png"));
     if thumb_out.exists() && hero_out.exists() {
         return Ok((thumb_out, hero_out));
     }
     std::fs::create_dir_all(out_dir)
         .map_err(|e| format!("cannot create thumb dir {}: {e}", out_dir.display()))?;
-    let img = image::ImageReader::open(source)
-        .map_err(|e| format!("cannot open {}: {e}", source.display()))?
+    let img = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|e| format!("cannot guess format {}: {e}", source.display()))?
         .decode()
         .map_err(|e| format!("cannot decode {}: {e}", source.display()))?;
-    let (cx, cy, cw, ch, ow, oh) =
-        cover_geometry(img.width(), img.height(), THUMB_MAX_W, THUMB_MAX_H);
-    img.crop_imm(cx, cy, cw, ch)
-        .resize_exact(ow, oh, image::imageops::FilterType::Triangle)
-        .save(&thumb_out)
-        .map_err(|e| format!("cannot write {}: {e}", thumb_out.display()))?;
-    let (hw, hh) = hero_geometry(img.width(), img.height(), HERO_MAX_W, HERO_MAX_H);
-    img.resize_exact(hw, hh, image::imageops::FilterType::Triangle)
-        .save(&hero_out)
-        .map_err(|e| format!("cannot write {}: {e}", hero_out.display()))?;
+    let needs_thumb = !thumb_out.exists();
+    let needs_hero = !hero_out.exists();
+    if needs_thumb {
+        let (cx, cy, cw, ch, ow, oh) =
+            cover_geometry(img.width(), img.height(), THUMB_MAX_W, THUMB_MAX_H);
+        img.crop_imm(cx, cy, cw, ch)
+            .resize_exact(ow, oh, image::imageops::FilterType::Triangle)
+            .save(&thumb_out)
+            .map_err(|e| format!("cannot write {}: {e}", thumb_out.display()))?;
+    }
+    if needs_hero {
+        let (hw, hh) = hero_geometry(img.width(), img.height(), HERO_MAX_W, HERO_MAX_H);
+        img.resize_exact(hw, hh, image::imageops::FilterType::Triangle)
+            .save(&hero_out)
+            .map_err(|e| format!("cannot write {}: {e}", hero_out.display()))?;
+    }
     Ok((thumb_out, hero_out))
 }
 
@@ -207,6 +268,39 @@ pub fn cache_dir() -> PathBuf {
         .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     base.join("hve").join("thumbs")
+}
+
+/// Best-effort prune of stale thumb/hero artifacts (R2.3/D2):
+/// removes only `*-thumb.png` / `*-hero.png` files whose content key
+/// (prefix before the suffix) is not in `live_keys`. Never touches theme
+/// dirs, non-artifact files, or subdirectories. Returns count removed.
+pub fn prune_stale(cache_dir: &Path, live_keys: &std::collections::HashSet<String>) -> usize {
+    let entries = match std::fs::read_dir(cache_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let key = if let Some(k) = name.strip_suffix("-thumb.png") {
+            k
+        } else if let Some(k) = name.strip_suffix("-hero.png") {
+            k
+        } else {
+            continue;
+        };
+        if !live_keys.contains(key) && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// File extensions eligible as thumbnail sources.
@@ -1075,6 +1169,103 @@ mod tests {
             }
             assert_eq!(c3.load(Ordering::SeqCst), batch+1);
         }
+    }
+
+    // ── T2.1 RED: same bytes different paths share cache key ─────────
+    #[test]
+    fn same_bytes_different_paths_share_cache_key() {
+        let dir_a = tempfile::tempdir().expect("tmp a");
+        let dir_b = tempfile::tempdir().expect("tmp b");
+        // Byte-identical wallpaper files, different names/mtimes
+        let bytes = b"identical wallpaper bytes for dedup test - same content";
+        let a = dir_a.path().join("wall-a.png");
+        let b = dir_b.path().join("wallpaper-final.png");
+        std::fs::write(&a, bytes).expect("write a");
+        // Ensure mtime differs (sleep 10ms) then write b
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&b, bytes).expect("write b");
+        // T2.3 contract: key = "{len}-{hash}" over file bytes
+        let ka = content_cache_key(&a).expect("content key a");
+        let kb = content_cache_key(&b).expect("content key b");
+        assert_eq!(ka, kb, "byte-identical files must share content key despite different paths/mtimes");
+        let cache = tempfile::tempdir().expect("tmp cache");
+        assert_eq!(
+            thumb_path(&a, cache.path()),
+            thumb_path(&b, cache.path()),
+            "same content → same thumb artifact path"
+        );
+        assert_eq!(
+            hero_path(&a, cache.path()),
+            hero_path(&b, cache.path()),
+            "same content → same hero artifact path"
+        );
+    }
+
+    // ── T2.2 RED: different bytes same size distinct keys ────────────
+    #[test]
+    fn different_bytes_same_size_distinct_keys() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let a = dir.path().join("a.png");
+        let b = dir.path().join("b.png");
+        let bytes_a = vec![0u8; 1024];
+        let mut bytes_b = vec![0u8; 1024];
+        bytes_b[512] = 1;
+        bytes_b[777] = 42;
+        std::fs::write(&a, &bytes_a).expect("write a");
+        std::fs::write(&b, &bytes_b).expect("write b");
+        assert_eq!(std::fs::metadata(&a).unwrap().len(), std::fs::metadata(&b).unwrap().len(), "fixture must be equal-size");
+        let ka = content_cache_key(&a).expect("key a");
+        let kb = content_cache_key(&b).expect("key b");
+        assert_ne!(ka, kb, "equal-size different bytes must have distinct keys");
+        assert_ne!(
+            thumb_path(&a, dir.path()),
+            thumb_path(&b, dir.path()),
+            "different content → distinct thumb paths"
+        );
+        assert_ne!(
+            hero_path(&a, dir.path()),
+            hero_path(&b, dir.path()),
+            "different content → distinct hero paths"
+        );
+    }
+
+    // ── T2.4 RED→GREEN: prune_stale (tmpdir, best-effort) ───────────
+    #[test]
+    fn prune_stale_removes_only_orphaned_thumb_hero_artifacts() {
+        let cache = tempfile::tempdir().expect("tmp cache");
+        let dir = cache.path();
+        // Live keys
+        let live = "100-abcdef1234567890";
+        let stale = "999-ffffffffffffffff";
+        // Create artifacts
+        let live_thumb = dir.join(format!("{live}-thumb.png"));
+        let live_hero = dir.join(format!("{live}-hero.png"));
+        let stale_thumb = dir.join(format!("{stale}-thumb.png"));
+        let stale_hero = dir.join(format!("{stale}-hero.png"));
+        let stale_thumb2 = dir.join(format!("{stale}-thumb.png")); // duplicate check not needed
+        // Old path-keyed orphan (should be kept because it lacks -thumb/-hero suffix? Actually old ".png" is not pruned per spec)
+        let old_style = dir.join("old123.png");
+        // Non-artifact file
+        let keep_txt = dir.join("keep.txt");
+        for p in [&live_thumb, &live_hero, &stale_thumb, &stale_hero, &old_style, &keep_txt] {
+            std::fs::write(p, b"x").expect("write fixture");
+        }
+        // Theme dir should never be touched, but prune only scans cache_dir
+        let mut live_set = std::collections::HashSet::new();
+        live_set.insert(live.to_string());
+        let removed = prune_stale(dir, &live_set);
+        assert_eq!(removed, 2, "should remove stale thumb+hero (2 files)");
+        assert!(live_thumb.exists(), "live thumb kept");
+        assert!(live_hero.exists(), "live hero kept");
+        assert!(!stale_thumb.exists(), "stale thumb pruned");
+        assert!(!stale_hero.exists(), "stale hero pruned");
+        assert!(old_style.exists(), "old .png orphan not matching *-thumb/-hero pattern kept (migration handles separately)");
+        assert!(keep_txt.exists(), "non-artifact kept");
+        assert!(!stale_thumb2.exists(), "stale thumb gone");
+        // Best-effort on missing dir
+        let missing = dir.join("missing_subdir");
+        let empty_set = std::collections::HashSet::new();
+        assert_eq!(prune_stale(&missing, &empty_set), 0, "missing cache_dir is best-effort 0");
     }
 
 }
