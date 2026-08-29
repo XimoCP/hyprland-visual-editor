@@ -406,8 +406,10 @@ Content-keyed cache: artifacts are `<len>-<hash>-thumb.png`,
 `<len>-<hash>-hero.png`, `<len>-<hash>-slat.png`, and
 `<len>-<hash>-slat-exp.png` under `$XDG_CACHE_HOME/hve/thumbs`. Same
 bytes share one key regardless of path/mtime; warm hits load slats from
-small PNGs and skip the full-size decode. `prune_stale(cache_dir,
-live_keys)` removes unreferenced artifacts.
+small PNGs and skip the full-size decode. `prune_stale(cache_dir, 512)`
+bounded sweep keeps the newest 512 artifacts by mtime and deletes the
+oldest beyond the cap (off UI thread, best-effort, once per gallery open)
+— prevents unbounded stale accumulation without reading every source.
 
 In-place cards model: `sync_cards(&VecModel, new_rows)` diffs by name,
 removes stale rows descending, updates changed rows via `set_row_data`,

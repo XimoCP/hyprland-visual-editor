@@ -15,7 +15,6 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 use image::{RgbaImage, imageops};
-use std::path::Path;
 
 /// Bake the parallelogram shape into the image alpha (pure, deterministic).
 ///
@@ -116,30 +115,9 @@ pub fn baked_slat_rgba(src: RgbaImage, expanded: bool) -> RgbaImage {
     bake_parallelogram(src, tw, th, SLICE_SKEW_PX)
 }
 
-/// Pure helper: rgba in → baked Slint Image out (deterministic, no I/O).
-/// Size matches the baked bbox: 146×520 collapsed, 959×520 expanded.
-pub fn baked_slat_image(src: RgbaImage, expanded: bool) -> slint::Image {
-    let rgba = baked_slat_rgba(src, expanded);
-    if rgba.width() == 0 || rgba.height() == 0 {
-        return slint::Image::default();
-    }
-    let (w, h) = (rgba.width(), rgba.height());
-    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-    buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
-    slint::Image::from_rgba8(buf)
-}
-
-/// Decode a file, bake to the slat bbox, return a Slint Image.
-/// File I/O is isolated here; pure baking stays via `baked_slat_image`.
-pub fn baked_slat_image_from_path(path: &Path, expanded: bool) -> slint::Image {
-    let Ok(reader) = image::ImageReader::open(path) else {
-        return slint::Image::default();
-    };
-    let Ok(decoded) = reader.decode() else {
-        return slint::Image::default();
-    };
-    baked_slat_image(decoded.to_rgba8(), expanded)
-}
+/// `baked_slat_image` / `baked_slat_image_from_path` removed in Tramo 7:
+/// UI wraps `baked_slat_rgba` buffers itself via `Image::from_rgba8` (no
+/// Slint image helper on the baking side). Use `baked_slat_rgba` directly.
 
 #[cfg(test)]
 mod tests {
@@ -305,31 +283,8 @@ mod tests {
         assert_eq!(SLAT_BBOX_H, 520);
     }
 
-    #[test]
-    fn baked_slat_image_collapsed_has_expected_bbox() {
-        let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
-        let img = crate::shell::gallery::slat_image::baked_slat_image(src, false);
-        let sz = img.size();
-        assert!(sz.width > 0 && sz.height > 0, "collapsed baked image must have non-zero dims");
-        // collapsed bbox = (135 - 24 gap) + 35 = 146 × 520 (face-width + skew, matches SliceDelegate.slint)
-        assert_eq!(sz.width, 146, "collapsed baked width must be 146 ((135-24)+35) — baked == drawn");
-        assert_eq!(sz.height, 520, "collapsed baked height must be 520");
-        assert_eq!(sz.width, crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W);
-        assert_eq!(sz.height, crate::shell::gallery::slat_image::SLAT_BBOX_H);
-    }
-
-    #[test]
-    fn baked_slat_image_expanded_has_expected_bbox() {
-        let src = solid_rgba(80, 60, Rgba([200, 100, 50, 255]));
-        let img = crate::shell::gallery::slat_image::baked_slat_image(src, true);
-        let sz = img.size();
-        assert!(sz.width > 0 && sz.height > 0, "expanded baked image must have non-zero dims");
-        // expanded bbox = 924 + 35 = 959 × 520 (no inset, matches delegate)
-        assert_eq!(sz.width, 959, "expanded baked width must be 959 (924+35)");
-        assert_eq!(sz.height, 520, "expanded baked height must be 520");
-        assert_eq!(sz.width, crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W);
-        assert_eq!(sz.height, crate::shell::gallery::slat_image::SLAT_BBOX_H);
-    }
+    // `baked_slat_image` removed — UI now wraps `baked_slat_rgba` buffers via `Image::from_rgba8`.
+    // Bbox contracts below are covered by `baked_slat_rgba_*` tests.
 
     #[test]
     fn baked_slat_rgba_collapsed_matches_drawn_bbox() {
@@ -351,15 +306,20 @@ mod tests {
 
     #[test]
     fn baked_slat_image_idempotent_pure() {
+        // Retargeted to `baked_slat_rgba` — UI wrapping is trivial `from_rgba8`;
+        // purity contract is about the baked rgba buffers being deterministic.
         let src = solid_rgba(20, 20, Rgba([42, 42, 42, 180]));
-        let a = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false);
-        let b = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false);
-        assert_eq!(a.size().width, b.size().width);
-        assert_eq!(a.size().height, b.size().height);
-        // Also expanded deterministic
-        let c = crate::shell::gallery::slat_image::baked_slat_image(src.clone(), true);
-        let d = crate::shell::gallery::slat_image::baked_slat_image(src, true);
-        assert_eq!(c.size().width, d.size().width);
-        assert_eq!(c.size().height, d.size().height);
+        let a = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+        let b = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+        assert_eq!(a.as_raw(), b.as_raw(), "collapsed pure deterministic");
+        let c = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), true);
+        let d = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
+        assert_eq!(c.as_raw(), d.as_raw(), "expanded pure deterministic");
+        // Also verify wrapping via from_rgba8 is lossless (what UI does)
+        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(a.width(), a.height());
+        buf.make_mut_bytes().copy_from_slice(a.as_raw());
+        let img = slint::Image::from_rgba8(buf);
+        assert_eq!(img.size().width, a.width());
+        assert_eq!(img.size().height, a.height());
     }
 }

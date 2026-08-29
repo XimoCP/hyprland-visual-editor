@@ -289,8 +289,20 @@ fn slice_focus_flow_renders_settled_and_midflight() {
             thumb_path: SharedString::from(""),
             thumb: slint::Image::default(),
             hero: slint::Image::default(),
-            slat_image: crate::shell::gallery::slat_image::baked_slat_image(src.clone(), false),
-            slat_expanded_image: crate::shell::gallery::slat_image::baked_slat_image(src, true),
+            slat_image: {
+                let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+                let (w, h) = (rgba.width(), rgba.height());
+                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                slint::Image::from_rgba8(buf)
+            },
+            slat_expanded_image: {
+                let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
+                let (w, h) = (rgba.width(), rgba.height());
+                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                slint::Image::from_rgba8(buf)
+            },
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
@@ -365,7 +377,7 @@ fn slice_focus_flow_renders_settled_and_midflight() {
 #[test]
 fn mosaic_hero_centered_renders_with_pagination() {
     use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
-    use slint::{ComponentHandle as _, Model, ModelRc, SharedString, VecModel};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(
         i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -54,14 +54,9 @@ pub fn content_cache_key_from_bytes(bytes: &[u8]) -> String {
     format!("{}-{:016x}", bytes.len(), h.finish())
 }
 
-/// Content key for a source file on disk: reads the file once and hashes
-/// its bytes. One read when only keying is needed; when decode is also
-/// needed the caller should reuse the same bytes (zero extra IO — see
-/// generate_set/generate_pair).
-pub fn content_cache_key(source: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
-    Ok(content_cache_key_from_bytes(&bytes))
-}
+/// Content key for a source file on disk — superseded by
+/// `content_cache_key_from_bytes` + single read in `generate_set`.
+/// Removed in Tramo 7; tests now compute keys via `*_from_bytes` directly.
 
 /// Modification time of a file, None when it cannot be read.
 pub fn source_mtime(source: &Path) -> Option<SystemTime> {
@@ -99,49 +94,9 @@ pub fn cover_geometry(
     )
 }
 
-/// Thumbnail PNG cache path for a source inside `out_dir`.
-/// Content-keyed (R2.1): reads the source file once to hash its bytes;
-/// falls back to path+mtime hash only when the source is missing/unreadable.
-pub fn thumb_path(source: &Path, out_dir: &Path) -> PathBuf {
-    if let Ok(key) = content_cache_key(source) {
-        out_dir.join(format!("{key}-thumb.png"))
-    } else {
-        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
-        out_dir.join(format!("{}-thumb.png", cache_key(source, mtime)))
-    }
-}
-
-/// Hero PNG cache path for a source inside `out_dir`: dedicated
-/// `<content-key>-hero.png` under the same content-key scheme and dir as
-/// the thumb (HF5/R2.1). Falls back to path+mtime when unreadable.
-pub fn hero_path(source: &Path, out_dir: &Path) -> PathBuf {
-    if let Ok(key) = content_cache_key(source) {
-        out_dir.join(format!("{key}-hero.png"))
-    } else {
-        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
-        out_dir.join(format!("{}-hero.png", cache_key(source, mtime)))
-    }
-}
-
-/// Slat PNG cache path (collapsed) — `<key>-slat.png` (T2b content-keyed).
-pub fn slat_path(source: &Path, out_dir: &Path) -> PathBuf {
-    if let Ok(key) = content_cache_key(source) {
-        out_dir.join(format!("{key}-slat.png"))
-    } else {
-        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
-        out_dir.join(format!("{}-slat.png", cache_key(source, mtime)))
-    }
-}
-
-/// Slat PNG cache path (expanded) — `<key>-slat-exp.png` (T2b content-keyed).
-pub fn slat_expanded_path(source: &Path, out_dir: &Path) -> PathBuf {
-    if let Ok(key) = content_cache_key(source) {
-        out_dir.join(format!("{key}-slat-exp.png"))
-    } else {
-        let mtime = source_mtime(source).unwrap_or(SystemTime::UNIX_EPOCH);
-        out_dir.join(format!("{}-slat-exp.png", cache_key(source, mtime)))
-    }
-}
+/// Artifact naming is inline in `generate_set` via
+/// `format!("{key}-thumb.png")` etc. (content-keyed `{len}-{hash}`).
+/// No separate path helpers — single source of truth is the key string.
 
 /// Pure CONTAIN fit math (HF5): scale the WHOLE source to fit ENTIRELY
 /// within (max_w × max_h) preserving aspect ratio — integer-exact in the
@@ -284,46 +239,8 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     })
 }
 
-/// Decode ONCE, write BOTH cached PNGs (HF5) content-keyed (R2.1): the
-/// 400×720 cover thumb AND the ≤1600×900 aspect-true hero under
-/// `<key>-thumb.png` / `<key>-hero.png`. Single read → key + decode share
-/// the same bytes (zero extra IO). Existing BOTH-files hit short-circuits
-/// thumb/hero generation (dedup); slat path (generate_set) still decodes
-/// for its in-memory bakes. Returns `(thumb_path, hero_path)`.
-pub fn generate_pair(source: &Path, out_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
-    let bytes = std::fs::read(source)
-        .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
-    let key = content_cache_key_from_bytes(&bytes);
-    let thumb_out = out_dir.join(format!("{key}-thumb.png"));
-    let hero_out = out_dir.join(format!("{key}-hero.png"));
-    if thumb_out.exists() && hero_out.exists() {
-        return Ok((thumb_out, hero_out));
-    }
-    std::fs::create_dir_all(out_dir)
-        .map_err(|e| format!("cannot create thumb dir {}: {e}", out_dir.display()))?;
-    let img = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .map_err(|e| format!("cannot guess format {}: {e}", source.display()))?
-        .decode()
-        .map_err(|e| format!("cannot decode {}: {e}", source.display()))?;
-    let needs_thumb = !thumb_out.exists();
-    let needs_hero = !hero_out.exists();
-    if needs_thumb {
-        let (cx, cy, cw, ch, ow, oh) =
-            cover_geometry(img.width(), img.height(), THUMB_MAX_W, THUMB_MAX_H);
-        img.crop_imm(cx, cy, cw, ch)
-            .resize_exact(ow, oh, image::imageops::FilterType::Triangle)
-            .save(&thumb_out)
-            .map_err(|e| format!("cannot write {}: {e}", thumb_out.display()))?;
-    }
-    if needs_hero {
-        let (hw, hh) = hero_geometry(img.width(), img.height(), HERO_MAX_W, HERO_MAX_H);
-        img.resize_exact(hw, hh, image::imageops::FilterType::Triangle)
-            .save(&hero_out)
-            .map_err(|e| format!("cannot write {}: {e}", hero_out.display()))?;
-    }
-    Ok((thumb_out, hero_out))
-}
+/// `generate_pair` was superseded by `generate_set` (single decode → four
+/// artifacts). Removed in Tramo 7 — use `generate_set`.
 
 /// `$XDG_CACHE_HOME/hve/thumbs`, falling back to `~/.cache/hve/thumbs`
 /// (design D8 cache location).
@@ -337,17 +254,24 @@ pub fn cache_dir() -> PathBuf {
     base.join("hve").join("thumbs")
 }
 
-/// Best-effort prune of stale thumb/hero/slat artifacts (R2.3/D2/T2b):
-/// removes only `*-thumb.png` / `*-hero.png` / `*-slat.png` /
-/// `*-slat-exp.png` files whose content key (prefix before the suffix) is
-/// not in `live_keys`. Never touches theme dirs, non-artifact files, or
-/// subdirectories. Returns count removed.
-pub fn prune_stale(cache_dir: &Path, live_keys: &std::collections::HashSet<String>) -> usize {
+/// Bounded cache pruning (Tramo 7): keeps newest `max_keep` artifacts by
+/// mtime, deletes oldest beyond the cap. Only `*-thumb.png` /
+/// `*-hero.png` / `*-slat.png` / `*-slat-exp.png` are considered; other
+/// files and subdirectories are untouched. Best-effort, bounded,
+/// off-UI-thread — errors ignored. Prevents unbounded stale accumulation
+/// without reading every wallpaper source (size/age sweep instead of
+/// expensive live-key set). Wired via `preheat` (one bounded sweep per
+/// gallery open, spawned off UI thread, best-effort). Call
+/// `prune_stale(&cache_dir(), 512)` in production.
+///
+/// Keeps newest 512 artifacts (cap). Oldest beyond cap are removed.
+/// Runs on the preheat worker path off the UI thread; errors ignored.
+pub fn prune_stale(cache_dir: &Path, max_keep: usize) -> usize {
     let entries = match std::fs::read_dir(cache_dir) {
         Ok(e) => e,
         Err(_) => return 0,
     };
-    let mut removed = 0;
+    let mut artifacts: Vec<(PathBuf, SystemTime)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -357,20 +281,34 @@ pub fn prune_stale(cache_dir: &Path, live_keys: &std::collections::HashSet<Strin
             Some(n) => n,
             None => continue,
         };
-        let key = if let Some(k) = name.strip_suffix("-thumb.png") {
-            k
-        } else if let Some(k) = name.strip_suffix("-hero.png") {
-            k
-        } else if let Some(k) = name.strip_suffix("-slat-exp.png") {
-            k
-        } else if let Some(k) = name.strip_suffix("-slat.png") {
-            k
-        } else {
+        let is_artifact = name.ends_with("-thumb.png")
+            || name.ends_with("-hero.png")
+            || name.ends_with("-slat-exp.png")
+            || name.ends_with("-slat.png");
+        if !is_artifact {
             continue;
-        };
-        if !live_keys.contains(key) && std::fs::remove_file(&path).is_ok() {
+        }
+        let mtime = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        artifacts.push((path, mtime));
+    }
+    if artifacts.len() <= max_keep {
+        return 0;
+    }
+    // Keep newest `max_keep` by mtime descending; delete oldest beyond cap.
+    artifacts.sort_by_key(|(_, t)| *t);
+    let to_remove = artifacts.len() - max_keep;
+    let mut removed = 0;
+    for (path, _) in artifacts.iter().take(to_remove) {
+        if std::fs::remove_file(path).is_ok() {
             removed += 1;
         }
+    }
+    if removed > 0 {
+        tracing::debug!(removed, max_keep, dir = %cache_dir.display(), "prune_stale bounded sweep");
     }
     removed
 }
@@ -655,6 +593,13 @@ pub fn preheat(
     let batch_start = Arc::new(Instant::now());
     let ready = Arc::new(ready);
     tracing::info!(jobs = total, workers = THUMBS_MAX_WORKERS, "thumbs preheat batch start (bounded pool)");
+    // Bounded pruning (Tramo 7): off UI thread, best-effort, keeps newest 512 artifacts.
+    {
+        let cache = cache_dir();
+        std::thread::spawn(move || {
+            let _ = prune_stale(&cache, 512);
+        });
+    }
 
     // Shared FIFO queue: Mutex<VecDeque> + Condvar (std only, no new deps).
     // Jobs are enqueued in caller order (already priority-sorted if caller used
@@ -683,10 +628,11 @@ pub fn preheat(
                     let name: Arc<str> = Arc::from(job.name.as_str());
                     let thumb_path = set.thumb_path;
                     let hero_path = set.hero_path;
+                    let decoded = set.decoded;
                     let slat = set.slat_rgba;
                     let slat_exp = set.slat_expanded_rgba;
                     let elapsed = t_total.elapsed().as_millis() as u64;
-                    tracing::trace!(total_ms = elapsed, "job done");
+                    tracing::trace!(decoded, total_ms = elapsed, "job done");
                     let ready2 = ready.clone();
                     let pending2 = pending.clone();
                     let batch_start2 = batch_start.clone();
@@ -804,40 +750,9 @@ mod tests {
         assert_eq!(hero_geometry(100, 100, HERO_MAX_W, HERO_MAX_H), (100, 100));
     }
 
-    #[test]
-    fn hero_path_uses_dedicated_hero_filename() {
-        let dir = Path::new("/cache/thumbs");
-        let src = Path::new("/imgs/wall.png");
-        // Same mtime resolution as thumb_path (missing file → UNIX_EPOCH).
-        let mtime = source_mtime(src).unwrap_or(SystemTime::UNIX_EPOCH);
-        let expected = format!("{}-hero.png", cache_key(src, mtime));
-        assert_eq!(
-            hero_path(src, dir),
-            dir.join(expected),
-            "hero shares the cache key + mtime scheme under a -hero suffix"
-        );
-    }
-
-    #[test]
-    fn generate_pair_writes_thumb_and_hero_and_hits_cache() {
-        let dir = tempfile::tempdir().expect("tmp");
-        let src = dir.path().join("src.png");
-        image::RgbaImage::from_pixel(40, 30, image::Rgba([255u8, 0, 0, 255]))
-            .save(&src)
-            .expect("write source png");
-        let out_dir = dir.path().join("thumbs");
-
-        let (thumb, hero) = generate_pair(&src, &out_dir).expect("generate pair");
-        assert_eq!(thumb, thumb_path(&src, &out_dir), "thumb keeps its path");
-        assert_eq!(hero, hero_path(&src, &out_dir), "hero uses its own path");
-        assert!(thumb.exists() && hero.exists(), "both PNGs written");
-        // 40×30 is smaller than the hero bound in both axes → no upscale.
-        let decoded = image::ImageReader::open(&hero).unwrap().decode().unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (40, 30));
-
-        let again = generate_pair(&src, &out_dir).expect("regenerate");
-        assert_eq!(again, (thumb, hero), "existing cache files short-circuit");
-    }
+    // `hero_path` / `thumb_path` helpers removed — naming is inline via `content_cache_key_from_bytes`.
+    // `generate_pair` superseded by `generate_set`; its cache-hit contract is now covered by
+    // `generate_set_single_decode_four_artifacts` and the warm-hit tests below.
 
     // ── 4.6 GREEN: cover-crop geometry + decode/scale/write roundtrip ──
 
@@ -862,24 +777,8 @@ mod tests {
         assert_eq!((ow, oh), (55, 100), "output keeps source pixels, no upscale");
     }
 
-    #[test]
-    fn generated_thumb_roundtrips_and_hits_cache() {
-        let dir = tempfile::tempdir().expect("tmp");
-        let src = dir.path().join("src.png");
-        image::RgbaImage::from_pixel(40, 30, image::Rgba([255u8, 0, 0, 255]))
-            .save(&src)
-            .expect("write source png");
-        let out_dir = dir.path().join("thumbs");
-
-        let (first, _) = generate_pair(&src, &out_dir).expect("generate");
-        assert!(first.exists(), "png written");
-        let decoded = image::ImageReader::open(&first).unwrap().decode().unwrap();
-        // 40×30 → aspect crop 16×30; small source must not upscale.
-        assert_eq!((decoded.width(), decoded.height()), (16, 30));
-
-        let (second, _) = generate_pair(&src, &out_dir).expect("regenerate");
-        assert_eq!(first, second, "same key short-circuits to the cached png");
-    }
+    // `generated_thumb_roundtrips_and_hits_cache` removed — superseded by `generate_set`
+    // warm-hit tests; thumb cover-crop geometry is still covered by `cover_geometry_*`.
 
     // ── 4.7 WIRE: source discovery + off-thread planner ──
 
@@ -1194,8 +1093,9 @@ mod tests {
         img.save(&src).unwrap();
         let out_dir = dir.path().join("thumbs");
         let set = generate_set(&src, &out_dir).expect("generate_set should succeed");
-        assert_eq!(set.thumb_path, thumb_path(&src, &out_dir), "thumb path matches cache contract");
-        assert_eq!(set.hero_path, hero_path(&src, &out_dir), "hero path matches cache contract");
+        let expected_key = content_cache_key_from_bytes(&std::fs::read(&src).expect("read src"));
+        assert_eq!(set.thumb_path, out_dir.join(format!("{expected_key}-thumb.png")), "thumb path matches content-keyed contract");
+        assert_eq!(set.hero_path, out_dir.join(format!("{expected_key}-hero.png")), "hero path matches content-keyed contract");
         assert!(set.thumb_path.exists(), "thumb PNG written");
         assert!(set.hero_path.exists(), "hero PNG written");
         assert_eq!((set.slat_rgba.width(), set.slat_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H), "collapsed slat bbox");
@@ -1308,18 +1208,19 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(15));
         std::fs::write(&b, bytes).expect("write b");
         // T2.3 contract: key = "{len}-{hash}" over file bytes
-        let ka = content_cache_key(&a).expect("content key a");
-        let kb = content_cache_key(&b).expect("content key b");
+        let ka = content_cache_key_from_bytes(&std::fs::read(&a).expect("read a"));
+        let kb = content_cache_key_from_bytes(&std::fs::read(&b).expect("read b"));
         assert_eq!(ka, kb, "byte-identical files must share content key despite different paths/mtimes");
         let cache = tempfile::tempdir().expect("tmp cache");
+        // Artifact naming is inline via key strings (no thumb_path helper)
         assert_eq!(
-            thumb_path(&a, cache.path()),
-            thumb_path(&b, cache.path()),
+            cache.path().join(format!("{ka}-thumb.png")),
+            cache.path().join(format!("{kb}-thumb.png")),
             "same content → same thumb artifact path"
         );
         assert_eq!(
-            hero_path(&a, cache.path()),
-            hero_path(&b, cache.path()),
+            cache.path().join(format!("{ka}-hero.png")),
+            cache.path().join(format!("{kb}-hero.png")),
             "same content → same hero artifact path"
         );
     }
@@ -1337,58 +1238,60 @@ mod tests {
         std::fs::write(&a, &bytes_a).expect("write a");
         std::fs::write(&b, &bytes_b).expect("write b");
         assert_eq!(std::fs::metadata(&a).unwrap().len(), std::fs::metadata(&b).unwrap().len(), "fixture must be equal-size");
-        let ka = content_cache_key(&a).expect("key a");
-        let kb = content_cache_key(&b).expect("key b");
+        let ka = content_cache_key_from_bytes(&std::fs::read(&a).expect("read a"));
+        let kb = content_cache_key_from_bytes(&std::fs::read(&b).expect("read b"));
         assert_ne!(ka, kb, "equal-size different bytes must have distinct keys");
         assert_ne!(
-            thumb_path(&a, dir.path()),
-            thumb_path(&b, dir.path()),
+            dir.path().join(format!("{ka}-thumb.png")),
+            dir.path().join(format!("{kb}-thumb.png")),
             "different content → distinct thumb paths"
         );
         assert_ne!(
-            hero_path(&a, dir.path()),
-            hero_path(&b, dir.path()),
+            dir.path().join(format!("{ka}-hero.png")),
+            dir.path().join(format!("{kb}-hero.png")),
             "different content → distinct hero paths"
         );
     }
 
-    // ── T2.4 RED→GREEN: prune_stale (tmpdir, best-effort) ───────────
+    // ── T2.4 RED→GREEN: prune_stale bounded sweep (tmpdir, best-effort) ───
     #[test]
     fn prune_stale_removes_only_orphaned_thumb_hero_artifacts() {
+        // Bounded sweep: keep newest `max_keep` artifacts by mtime.
         let cache = tempfile::tempdir().expect("tmp cache");
         let dir = cache.path();
-        // Live keys
-        let live = "100-abcdef1234567890";
-        let stale = "999-ffffffffffffffff";
-        // Create artifacts
-        let live_thumb = dir.join(format!("{live}-thumb.png"));
-        let live_hero = dir.join(format!("{live}-hero.png"));
-        let stale_thumb = dir.join(format!("{stale}-thumb.png"));
-        let stale_hero = dir.join(format!("{stale}-hero.png"));
-        let stale_thumb2 = dir.join(format!("{stale}-thumb.png")); // duplicate check not needed
-        // Old path-keyed orphan (should be kept because it lacks -thumb/-hero suffix? Actually old ".png" is not pruned per spec)
-        let old_style = dir.join("old123.png");
-        // Non-artifact file
-        let keep_txt = dir.join("keep.txt");
-        for p in [&live_thumb, &live_hero, &stale_thumb, &stale_hero, &old_style, &keep_txt] {
+        // Create 4 artifacts sequentially with distinct mtimes (sleep to order)
+        let a_thumb = dir.join("100-aaaa-thumb.png");
+        let a_hero = dir.join("100-aaaa-hero.png");
+        let b_thumb = dir.join("200-bbbb-thumb.png");
+        let b_hero = dir.join("200-bbbb-hero.png");
+        for p in [&a_thumb, &a_hero] {
             std::fs::write(p, b"x").expect("write fixture");
         }
-        // Theme dir should never be touched, but prune only scans cache_dir
-        let mut live_set = std::collections::HashSet::new();
-        live_set.insert(live.to_string());
-        let removed = prune_stale(dir, &live_set);
-        assert_eq!(removed, 2, "should remove stale thumb+hero (2 files)");
-        assert!(live_thumb.exists(), "live thumb kept");
-        assert!(live_hero.exists(), "live hero kept");
-        assert!(!stale_thumb.exists(), "stale thumb pruned");
-        assert!(!stale_hero.exists(), "stale hero pruned");
-        assert!(old_style.exists(), "old .png orphan not matching *-thumb/-hero pattern kept (migration handles separately)");
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        for p in [&b_thumb, &b_hero] {
+            std::fs::write(p, b"x").expect("write fixture");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        // Extra non-artifact that must be kept
+        let old_style = dir.join("old123.png");
+        let keep_txt = dir.join("keep.txt");
+        for p in [&old_style, &keep_txt] {
+            std::fs::write(p, b"x").expect("write fixture");
+        }
+        // Keep newest 2 → oldest 2 (a_*) pruned, newest 2 (b_*) kept
+        let removed = prune_stale(dir, 2);
+        assert_eq!(removed, 2, "bounded sweep: keep newest 2, oldest 2 pruned");
+        assert!(!a_thumb.exists(), "oldest thumb pruned");
+        assert!(!a_hero.exists(), "oldest hero pruned");
+        assert!(b_thumb.exists(), "newest thumb kept");
+        assert!(b_hero.exists(), "newest hero kept");
+        assert!(old_style.exists(), "non-artifact kept");
         assert!(keep_txt.exists(), "non-artifact kept");
-        assert!(!stale_thumb2.exists(), "stale thumb gone");
         // Best-effort on missing dir
         let missing = dir.join("missing_subdir");
-        let empty_set = std::collections::HashSet::new();
-        assert_eq!(prune_stale(&missing, &empty_set), 0, "missing cache_dir is best-effort 0");
+        assert_eq!(prune_stale(&missing, 2), 0, "missing cache_dir is best-effort 0");
+        // No pruning when under cap
+        assert_eq!(prune_stale(dir, 10), 0, "under cap → 0 removed");
     }
 
     // ── T2b RED: warm hit must skip FULL-SIZE source decode ──────────
@@ -1404,7 +1307,7 @@ mod tests {
         let first = generate_set(&src, &out_dir).expect("first generate_set");
         assert!(first.decoded, "first bake must have performed a full-size decode");
         // All four artifacts must exist after cold bake
-        let key = content_cache_key(&src).expect("content key");
+        let key = content_cache_key_from_bytes(&std::fs::read(&src).expect("read src"));
         let thumb = out_dir.join(format!("{key}-thumb.png"));
         let hero = out_dir.join(format!("{key}-hero.png"));
         let slat = out_dir.join(format!("{key}-slat.png"));
@@ -1439,7 +1342,7 @@ mod tests {
         img.save(&src).expect("write source");
         let out_dir = dir.path().join("thumbs");
         let set = generate_set(&src, &out_dir).expect("generate_set");
-        let key = content_cache_key(&src).expect("key");
+        let key = content_cache_key_from_bytes(&std::fs::read(&src).expect("read src"));
         let slat_png = out_dir.join(format!("{key}-slat.png"));
         let slat_exp_png = out_dir.join(format!("{key}-slat-exp.png"));
         assert!(slat_png.exists() && slat_exp_png.exists(), "slat PNGs must be persisted");
@@ -1460,28 +1363,30 @@ mod tests {
     fn prune_stale_removes_orphaned_slat_artifacts() {
         let cache = tempfile::tempdir().expect("tmp cache");
         let dir = cache.path();
-        let live = "100-abcdef1234567890";
-        let stale = "999-ffffffffffffffff";
-        let live_thumb = dir.join(format!("{live}-thumb.png"));
-        let live_hero = dir.join(format!("{live}-hero.png"));
-        let live_slat = dir.join(format!("{live}-slat.png"));
-        let live_slat_exp = dir.join(format!("{live}-slat-exp.png"));
-        let stale_slat = dir.join(format!("{stale}-slat.png"));
-        let stale_slat_exp = dir.join(format!("{stale}-slat-exp.png"));
-        let stale_thumb = dir.join(format!("{stale}-thumb.png"));
-        let keep_txt = dir.join("keep.txt");
-        for p in [&live_thumb, &live_hero, &live_slat, &live_slat_exp, &stale_slat, &stale_slat_exp, &stale_thumb, &keep_txt] {
+        // Oldest set (should be pruned when over cap)
+        let old_thumb = dir.join("100-aaaa-thumb.png");
+        let old_slat = dir.join("100-aaaa-slat.png");
+        let old_slat_exp = dir.join("100-aaaa-slat-exp.png");
+        // Newest set (should be kept)
+        let new_thumb = dir.join("200-bbbb-thumb.png");
+        let new_hero = dir.join("200-bbbb-hero.png");
+        let new_slat = dir.join("200-bbbb-slat.png");
+        let new_slat_exp = dir.join("200-bbbb-slat-exp.png");
+        for p in [&old_thumb, &old_slat, &old_slat_exp] {
             std::fs::write(p, b"x").expect("write fixture");
         }
-        let mut live_set = std::collections::HashSet::new();
-        live_set.insert(live.to_string());
-        let removed = prune_stale(dir, &live_set);
-        // stale thumb + stale slat + stale slat-exp = 3 removed; live kept
-        assert_eq!(removed, 3, "should remove stale thumb + slat + slat-exp (3 files)");
-        assert!(live_thumb.exists() && live_hero.exists() && live_slat.exists() && live_slat_exp.exists(), "live artifacts kept");
-        assert!(!stale_slat.exists(), "stale slat pruned");
-        assert!(!stale_slat_exp.exists(), "stale slat-exp pruned");
-        assert!(!stale_thumb.exists(), "stale thumb pruned");
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        for p in [&new_thumb, &new_hero, &new_slat, &new_slat_exp] {
+            std::fs::write(p, b"x").expect("write fixture");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        let keep_txt = dir.join("keep.txt");
+        std::fs::write(&keep_txt, b"x").unwrap();
+        // Keep newest 4 → oldest 3 pruned
+        let removed = prune_stale(dir, 4);
+        assert_eq!(removed, 3, "bounded: oldest 3 beyond cap 4 pruned");
+        assert!(!old_thumb.exists() && !old_slat.exists() && !old_slat_exp.exists(), "old slat artifacts pruned");
+        assert!(new_thumb.exists() && new_hero.exists() && new_slat.exists() && new_slat_exp.exists(), "newest artifacts kept");
         assert!(keep_txt.exists(), "non-artifact kept");
     }
 
