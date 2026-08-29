@@ -23,9 +23,11 @@ export component GalleryRoot inherits Rectangle {
     in property <int> current-style: 0; // 0 Slice, 1 Hexagon, 2 Mosaic
     in property <int> focused-index: 0;
     in property <[GalleryCardData]> cards;
-    // V3 relative strip: tiles x relative to stage center (center=0), strip-offset animates.
+    // V6 focus-flow: tiles carry signed ring deltas; ONE continuous focus
+    // position (fractional card index) animates in the carousel and drives
+    // every slot's position/width.
     in property <[SliceTileData]> slice-tiles;
-    in property <length> slice-strip-offset: 0px;
+    in property <float> slice-focus-pos: 0.0;
     in property <bool> slice-rebasing: false;
     // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
@@ -122,8 +124,9 @@ export component GalleryRoot inherits Rectangle {
             height: 100%;
             cards: root.cards;
             tiles: root.slice-tiles;
-            strip-offset: root.slice-strip-offset;
+            focus-pos: root.slice-focus-pos;
             rebasing: root.slice-rebasing;
+            reduced-motion: root.reduced-motion;
             focused-index: root.focused-index;
             card-clicked(i) => { root.card-clicked(i); }
             card-right-clicked(i) => { root.card-right-clicked(i); }

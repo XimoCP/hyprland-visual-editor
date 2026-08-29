@@ -76,7 +76,7 @@ export component ShellRoot inherits Rectangle {
     in property <[GalleryCardData]> gallery-cards;
     // V3 relative strip tiles (center=0) + strip-offset/rebasing for fluid slide.
     in property <[SliceTileData]> gallery-slice-tiles;
-    in property <length> gallery-slice-strip-offset: 0px;
+    in property <float> gallery-slice-focus-pos: 0.0;
     in property <bool> gallery-slice-rebasing: false;
     in property <[MosaicTileData]> gallery-mosaic-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
@@ -193,7 +193,7 @@ export component ShellRoot inherits Rectangle {
                 focused-index: root.gallery-focused;
                 cards: root.gallery-cards;
                 slice-tiles: root.gallery-slice-tiles;
-                slice-strip-offset: root.gallery-slice-strip-offset;
+                slice-focus-pos: root.gallery-slice-focus-pos;
                 slice-rebasing: root.gallery-slice-rebasing;
                 mosaic-tiles: root.gallery-mosaic-tiles;
                 mosaic-current-page: root.gallery-mosaic-current-page;

@@ -1,26 +1,20 @@
-// HVE 2 — SliceCarousel (V5 chained glide + S4b baked).
+// HVE 2 — SliceCarousel (V6 focus-flow + S4b baked).
 //
-// Single moving strip with silent rebase (valid in Slint 1.17 via
-// expression animation duration). Container carries ALL delegates at
-// RELATIVE positions (center=0, expanded at -462, collapsed step 135 =
-// 111 face + 12+12 air, zero-gap ring contiguous; visual gap 24 is
-// inset inside the 135 slot). Strip animates x by -delta*135 (350ms
-// OutCubic) retargeting from live displayed value when reassigned
-// mid-glide (Slint restarts tween from current displayed value — QML
-// StrictlyEnforceRange + highlightMoveDuration analog via
-// slice::chained_target). Is-current flips at slide start via
-// focused-index so widths animate in place; positions frozen during
-// slide; at true settle (350ms from LAST chained step, generation
-// bump in main.rs) Rust rebuilds model for final focus (identical
-// relative layout, self-similar) and snaps strip back with
-// rebasing=true (0ms, invisible). Wheel debounce Timer stays OUTSIDE
-// the for-repeater (Slint 1.17 panic) at 150ms (SkwdTokens.gallery-
-// slice-wheel-debounce, slice::SLICE_WHEEL_DEBOUNCE_MS) so rapid
-// wheel (4 steps) glides continuously without reset-to-0. Edge fade
-// via per-tile fade, border on top, dim/fade tokens, gaps, hover —
-// approved look. Click on distant card still slides full distance in
-// one tween via shortest ring delta when idle. Keys bypass debounce
-// (direct animate).
+// skwd-wall mechanics translated to Slint 1.17: ONE continuous focus
+// position `focus-pos` (a fractional card index, animated 350ms OutCubic
+// with mid-flight retargeting — Slint restarts the tween from the displayed
+// value, the QML StrictlyEnforceRange + highlightMoveDuration analog) drives
+// EVERY slot's position AND width through the closed-form focus-flow
+// geometry of src/shell/gallery/views/slice.rs (slot_width/slot_center,
+// token-driven here). The focused card grows about the traveling focus
+// while neighbors reflow gap-free; per-step model relabels are visual
+// no-ops (geometry depends only on d = delta − frac). The strip container
+// itself NEVER moves — cards flow around the fixed stage center. Wheel
+// debounce Timer stays OUTSIDE the for-repeater (Slint 1.17 panic) at
+// 150ms so rapid wheel chains unit glides; keys stay direct. Edge fade via
+// per-tile fade, border on top, dim/fade tokens, gaps, hover — approved
+// look. Distant idle clicks snap-focus (fluid multi-slot glide needs the
+// two-width cumulative layout — follow-up).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -29,8 +23,7 @@ import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceDelegate } from "SliceDelegate.slint";
 
 export struct SliceTileData {
-    x: length,
-    w: length,
+    delta: int,
     real-index: int,
     is-expanded: bool,
     fade: float,
@@ -40,14 +33,21 @@ export struct SliceTileData {
 export component SliceCarousel inherits Rectangle {
     in property <[GalleryCardData]> cards;
     in property <[SliceTileData]> tiles;
-    // V3 strip animation state — driven from Rust (strip-offset animates,
-    // rebasing disables animation for the snap-back). Tiles x are RELATIVE
-    // to stage center (center=0).
-    in property <length> strip-offset: 0px;
+    // V6 focus-flow state — ONE animated scalar (fractional card index).
+    // `focused-index` is the delta base (the settled focused slot the model
+    // is labeled against); frac = focus-pos − focused-index stays in
+    // [−1, 1] because Rust relabels deltas on every committed step.
+    in-out property <float> focus-pos: 0.0;
     in property <bool> rebasing: false;
-    // Focused index drives is-current (flips at slide start, widths animate
-    // in place while x positions stay frozen; at settle tiles rebuild).
+    in property <bool> reduced-motion: false;
+    // Delta base — drives the signed fractional distance of every tile.
     in property <int> focused-index: 0;
+    property <float> focus-frac: root.focus-pos - root.focused-index;
+
+    animate focus-pos {
+        duration: root.rebasing ? 0ms : (root.reduced-motion ? 0ms : SkwdTokens.anim-expand);
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
 
     callback card-clicked(int);
     callback card-right-clicked(int);
@@ -62,7 +62,7 @@ export component SliceCarousel inherits Rectangle {
     // ── Wheel (V5 chained): 150ms debounce (SkwdTokens.gallery-slice-
     // wheel-debounce) so rapid wheel retargets mid-glide; keys stay direct.
     // Timer lives OUTSIDE for-repeater (Slint 1.17 panic). Each trigger
-    // commits ONE ±1 step; mid-flight steps chain via chained_target.
+    // commits ONE ±1 step; mid-flight steps chain via focus-pos retarget.
     property <int> wheel-dir: 0;
     wheel-debounce := Timer {
         interval: SkwdTokens.gallery-slice-wheel-debounce;
@@ -85,33 +85,27 @@ export component SliceCarousel inherits Rectangle {
         }
     }
 
-    // ── Single animated strip: ONE x animates (350ms OutCubic), all
-    // delegates inside at fixed strip-local x = t.x (relative to stage
-    // center). Center of strip is at parent.width/2 + strip-offset.
+    // ── Static stage-center anchor: cards flow around this point; the
+    // container itself never animates (V6: positions live in the
+    // delegates). ──
     strip := Rectangle {
-        // Positioned at stage center + animated offset
-        x: (parent.width / 2) + root.strip-offset;
+        x: parent.width / 2;
         y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
         height: SkwdTokens.gallery-slice-h;
         width: 0px;
         clip: false;
-        animate x {
-            duration: root.rebasing ? 0ms : SkwdTokens.anim-expand;
-            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-        }
 
         // Paint order = declaration order (design D4): idle tiered by
         // distance from focused (skwd-wall z: 50 - |index - current|),
         // nearest idle on top, hovered, then current on top. 8 passes.
-        // Is-current comes from each row's is-expanded flag (Rust flips the
-        // two affected rows at slide start, width animates in place).
-        // Visibility is SLOT-based: dist tiers + !is-expanded; the top pass
-        // renders only the expanded slot. Never filter by real-index — with
-        // ring clones, theme identity != slot identity.
+        // Is-current comes from each row's is-expanded flag (styling only —
+        // geometry comes from the focus-flow formula, so pass swaps are
+        // seamless). Visibility is SLOT-based: dist tiers + !is-expanded;
+        // the top pass renders only the expanded slot. Never filter by
+        // real-index — with ring clones, theme identity != slot identity.
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist >= 5 && idx != root.hovered-tile;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -126,8 +120,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist == 4 && idx != root.hovered-tile;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -142,8 +135,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist == 3 && idx != root.hovered-tile;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -158,8 +150,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist == 2 && idx != root.hovered-tile;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -174,8 +165,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && (t.dist == 1 || t.dist == 0) && idx != root.hovered-tile;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -190,8 +180,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && idx == root.hovered-tile;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -206,8 +195,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: t.is-expanded;
-            x: t.x;
-            y: 0;
+            slot-d: t.delta - root.focus-frac;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: true;

@@ -209,7 +209,7 @@ export component MainWindow inherits Window {
     in property <[GalleryCardData]> gallery-cards;
     // V3 relative strip tiles (center=0) + strip-offset/rebasing for fluid directional slide.
     in property <[SliceTileData]> gallery-slice-tiles;
-    in-out property <length> gallery-slice-strip-offset: 0px;
+    in-out property <float> gallery-slice-focus-pos: 0.0;
     in-out property <bool> gallery-slice-rebasing: false;
     // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
@@ -508,7 +508,7 @@ export component MainWindow inherits Window {
         gallery-focused: root.gallery-focused;
         gallery-cards: root.gallery-cards;
         gallery-slice-tiles: root.gallery-slice-tiles;
-        gallery-slice-strip-offset: root.gallery-slice-strip-offset;
+        gallery-slice-focus-pos: root.gallery-slice-focus-pos;
         gallery-slice-rebasing: root.gallery-slice-rebasing;
         gallery-mosaic-tiles: root.gallery-mosaic-tiles;
         gallery-mosaic-current-page: root.gallery-mosaic-current-page;

@@ -66,6 +66,22 @@ export component SliceDelegate inherits Rectangle {
     // Depth-cue edge fade (design D4): computed by SliceCarousel from the
     // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
     in property <float> fade-opacity: 1.0;
+    // V6 focus-flow: signed fractional distance from the traveling focus
+    // (d = delta − frac). Drives position AND width through the closed-form
+    // slot geometry (parity with slice.rs slot_width/slot_center, unit
+    // tested) — the card grows about the traveling focus while neighbors
+    // reflow, no per-instance animation state, retargets are exact.
+    in property <float> slot-d: 0.0;
+
+    property <float> collapsed-wn: SkwdTokens.gallery-slice-w / 1px;               // 135
+    property <float> expanded-wn: SkwdTokens.gallery-slice-expanded-w / 1px;       // 924
+    property <float> ad: Math.abs(root.slot-d);
+    property <float> expand-p: Math.max(0.0, Math.min(1.0, 1.0 - root.ad));
+    property <float> width-wn: root.collapsed-wn + (root.expanded-wn - root.collapsed-wn) * root.expand-p;
+    property <float> center-wn: (root.expanded-wn + root.collapsed-wn) / 2.0 * root.slot-d
+        - (root.expanded-wn - root.collapsed-wn) / 2.0
+        * (root.slot-d < 0 ? -1.0 : 1.0) * Math.max(root.ad - 1.0, 0.0);
+    property <float> left-wn: root.center-wn - root.width-wn / 2.0;
 
     // Edge fade dissolves whole cards (image + shadow + dim) toward the
     // stage edges; 200ms matches the skwd depth-cue cadence.
@@ -91,23 +107,20 @@ export component SliceDelegate inherits Rectangle {
     callback right-clicked();
     callback flipped();
 
-    // ── Geometry (design D3): card spans width × 520; the drawn face is a
-    // parallelogram whose top edge shifts right by the 35px shear, so the
-    // Path bounding box is (width + skew) wide. S3 separated slats: each
-    // collapsed delegate draws its visible face INSET within its 135px slot
-    // (face = step − gap, centered) so the ring math stays untouched. The
-    // expanded card keeps full width (no inset). ──
+    // ── Geometry: width and x come from the focus-flow formula above (V6).
+    // The drawn face is a parallelogram whose top edge shifts right by the
+    // 35px shear, so the Path bounding box is (face-width + skew) wide. S3
+    // separated slats: the face is INSET within the slot by the air gap,
+    // interpolated continuously with the expansion so the inset melts away
+    // as the card grows (face = width − gap·(1−p), inset = gap/2·(1−p)). ──
     property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35px X-shear
-    width: is-current ? SkwdTokens.gallery-slice-expanded-w : SkwdTokens.gallery-slice-w;
+    width: root.width-wn * 1px;
     height: SkwdTokens.gallery-slice-h;
-    animate width {
-        duration: SkwdTokens.anim-expand;
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-    }
+    x: root.left-wn * 1px;
 
-    // S3 face inset: collapsed face is slot minus gap, centered.
-    property <length> face-width: root.is-current ? root.width : root.width - SkwdTokens.gallery-slat-gap;
-    property <length> face-inset: root.is-current ? 0px : SkwdTokens.gallery-slat-gap / 2;
+    // S3 face inset, continuous with expansion.
+    property <length> face-width: root.width - SkwdTokens.gallery-slat-gap * (1.0 - root.expand-p);
+    property <length> face-inset: SkwdTokens.gallery-slat-gap / 2.0 * (1.0 - root.expand-p);
     property <float> faceWn: root.face-width / 1px;
 
     // Viewbox numbers (unitless): face spans (width + skew) × height.
@@ -193,29 +206,39 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
 
-    // ── Baked image layer (S4b): plain Image consuming the parallelogram-alpha
-    // variants. Size = (face-width + skew) × height at face-inset, NO clip —
-    // alpha IS mask, true background shows through transparent corners and the
-    // 24px gap reads clean. Tip-to-tip with no internal padding.
-    // Effective image: collapsed → slat-image; expanded → slat-expanded-image
-    // (falls back to slat-image when hero not yet baked). Shimmer adapts to
-    // baked presence. ──
-    property <image> effective-slat: root.is-current
-        ? (root.slat-expanded-image.width > 0 ? root.slat-expanded-image : root.slat-image)
-        : root.slat-image;
-    property <bool> has-baked: root.effective-slat.width > 0;
+    // ── Baked image layers (V6 skwd window-reveal): skwd-wall renders ONE
+    // image per card and lets the animating box reveal more/less of it; the
+    // mask follows the box live. Slint 1.17 has no live mask, so the
+    // parallelogram is baked into the alpha — which used to force an
+    // instant source swap: the collapsed bake (146px) cover-fitted into the
+    // still-wide box zoomed ~6.6× ("giant image that squeezes down").
+    // Instead BOTH bakes render at natural 1:1 scale, horizontally centered
+    // in the animating face box (both are height-fit at 520 and center-
+    // cropped, so the collapsed bake IS the center strip of the expanded
+    // one — pixel-aligned content):
+    //   * expanded bake: world-pinned content window; the box grows/shrinks
+    //     around it WITHOUT any zoom (skwd expand/contract feel);
+    //   * collapsed bake on top: identical content, so it only matters at
+    //     box≈146 where its baked slant mask owns the corners (expanded
+    //     hidden there via the reveal driver);
+    //   * legacy cover fallback when the expanded bake is missing.
+    // Settled states are pixel-identical to the approved S4b look. ──
+    property <bool> has-expanded-baked: root.slat-expanded-image.width > 0;
+    property <bool> has-baked: root.slat-image.width > 0;
+    // Baked bboxes = drawn bbox (face-width + skew): collapsed 146, expanded 959.
+    property <float> collapsed-bbox-wn: (SkwdTokens.gallery-slice-w - SkwdTokens.gallery-slat-gap + SkwdTokens.gallery-slice-skew-offset) / 1px;
+    property <float> expanded-bbox-wn: (SkwdTokens.gallery-slice-expanded-w + SkwdTokens.gallery-slice-skew-offset) / 1px;
+    // Reveal driver: 0 while the box is at the collapsed bbox (collapsed
+    // mask owns the corners), 1 past ~14% of the bbox travel — rides the
+    // live width so both directions stay symmetric with no extra timing.
+    property <float> reveal-window: Math.max(1.0, (root.expanded-bbox-wn - root.collapsed-bbox-wn) * 0.14);
+    property <float> expanded-reveal: Math.max(0.0, Math.min(1.0,
+        ((root.face-width + root.skew) / 1px - root.collapsed-bbox-wn) / root.reveal-window));
 
-    // Shimmer / preheat (120ms) while baked image loads — adapted from thumb.
-    property <bool> preheat-done: false;
+    // Shimmer while a card has no baked image yet (bakes are produced fully
+    // decoded in memory, so there is no decode preheat delay — the image
+    // shows the moment it exists).
     property <bool> shimmer-high: false;
-    preheat-timer := Timer {
-        interval: 120ms;
-        running: !root.preheat-done;
-        triggered => {
-            root.preheat-done = true;
-            self.running = false;
-        }
-    }
     shimmer-timer := Timer {
         interval: 700ms;
         running: !root.has-baked;
@@ -250,17 +273,47 @@ export component SliceDelegate inherits Rectangle {
             }
         }
 
-        baked-img := Image {
+        // Legacy fallback (expanded bake missing): single cover image —
+        // transient path while a theme's expanded bake is still cooking.
+        if !root.has-expanded-baked : Image {
             width: 100%;
             height: 100%;
-            source: root.effective-slat;
+            source: root.slat-image;
             image-fit: cover;
-            visible: root.has-baked && root.preheat-done;
-            opacity: root.has-baked && root.preheat-done ? 1.0 : 0.0;
+            visible: root.has-baked;
+            opacity: root.has-baked ? 1.0 : 0.0;
             animate opacity {
                 duration: SkwdTokens.anim-200;
                 easing: cubic-bezier(0.215, 0.61, 0.355, 1);
             }
+            accessible-role: none;
+        }
+
+        // Expanded bake: natural 959×520, centered — world-pinned window.
+        if root.has-expanded-baked : Image {
+            width: root.expanded-bbox-wn * 1px;
+            height: SkwdTokens.gallery-slice-h;
+            x: (parent.width - self.width) / 2;
+            source: root.slat-expanded-image;
+            visible: root.has-baked && root.expanded-reveal > 0.0;
+            opacity: root.has-baked ? root.expanded-reveal : 0.0;
+            animate opacity { duration: 100ms; }
+            accessible-role: none;
+        }
+
+        // Collapsed bake: natural 146×520, centered on top — its slant mask
+        // owns the corners near the collapsed bbox; crossfades OUT as the
+        // box grows (16:9 sources bake the two variants at slightly
+        // different scales, so both layers must swap via fade, never stack
+        // at full opacity).
+        if root.has-expanded-baked : Image {
+            width: root.collapsed-bbox-wn * 1px;
+            height: SkwdTokens.gallery-slice-h;
+            x: (parent.width - self.width) / 2;
+            source: root.slat-image;
+            visible: root.has-baked && root.expanded-reveal < 1.0;
+            opacity: root.has-baked ? (1.0 - root.expanded-reveal) : 0.0;
+            animate opacity { duration: 100ms; }
             accessible-role: none;
         }
 
