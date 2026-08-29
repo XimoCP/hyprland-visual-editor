@@ -361,3 +361,91 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_delta_base(0);
     win.set_gallery_slice_rebasing(false);
 }
+
+#[test]
+fn mosaic_hero_centered_renders_with_pagination() {
+    use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
+    use slint::{ComponentHandle as _, Model, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // Gallery
+    win.set_gallery_empty(false);
+    win.set_gallery_style(2); // Mosaic
+    win.set_gallery_focused(0);
+
+    // Synthetic cards with PLAIN gradient thumbs (mosaic cells are
+    // rectangles — the parallelogram slat bakes are Slice-only).
+    let count = 12usize; // capacity 9 at this stage → page 2 exists
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let img = slint::Image::from_rgba8({
+            let grad = slice_test_gradient(i);
+            let (w, h) = grad.dimensions();
+            let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+            buf.make_mut_bytes().copy_from_slice(grad.as_raw());
+            buf
+        });
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: img.clone(),
+            hero: img,
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    // Real page pipeline: MosaicPages → page_render → hero layout.
+    let stage_w = 1920.0f32;
+    let stage_h = 1080.0f32;
+    let pg = MosaicPages::new(count, stage_w, stage_h);
+    assert!(pg.total_pages() >= 2, "12 themes must paginate (capacity {})", pg.capacity());
+    let (aspects, real_indices) = pg.page_render();
+    let (layout, tile_reals) = justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+    let delays = mosaic_curtain_delays(&layout.tiles);
+    let tiles: Vec<crate::MosaicTileData> = layout
+        .tiles
+        .iter()
+        .zip(tile_reals.iter())
+        .zip(delays.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x, y: t.y, w: t.w, h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+    win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+    win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
+        pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+    )));
+
+    let snap = win.window().take_snapshot().expect("mosaic snapshot");
+    save_slice_png(snap, "/tmp/opencode/mosaic_hero.png");
+}

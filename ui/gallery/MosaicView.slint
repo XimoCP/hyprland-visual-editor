@@ -72,6 +72,34 @@ export component MosaicView inherits Rectangle {
         page-fade-timer.restart();
     }
 
+    // ── Wheel (mirrors SliceCarousel): arm a debounce Timer, commit one
+    // ±1 step per idle gesture. down/right = next, up/left = previous. ──
+    // DECLARATION ORDER MATTERS: this TouchArea must be declared BEFORE the
+    // page tiles so the cells paint (and hit-test) ABOVE it — a full-stage
+    // TouchArea declared last steals has-hover from every cell and the
+    // hover lift/brighten never fires (SliceCarousel parity).
+    property <int> wheel-dir: 0;
+    wheel-debounce := Timer {
+        interval: 400ms;
+        running: root.wheel-dir != 0;
+        triggered => {
+            root.page-step(root.wheel-dir);
+            root.wheel-dir = 0;
+        }
+    }
+    wheel-zone := TouchArea {
+        width: 100%;
+        height: 100%;
+        scroll-event(event) => {
+            let d = event.delta-x + event.delta-y;
+            if (d != 0) {
+                root.wheel-dir = d < 0 ? 1 : -1;
+                wheel-debounce.restart();
+            }
+            accept
+        }
+    }
+
     // ── Current page tiles ──
     page := Rectangle {
         width: 100%;
@@ -109,35 +137,11 @@ export component MosaicView inherits Rectangle {
             alignment: center;
             spacing: 10px;
             for n[idx] in root.page-numbers : Text {
-                text: "{n}";
+                text: "\{n}";
                 color: (n - 1) == root.current-page ? SkwdTokens.primary : SkwdTokens.outline;
                 font-size: SkwdTokens.size-13;
                 font-weight: (n - 1) == root.current-page ? 700 : 400;
             }
-        }
-    }
-
-    // ── Wheel (mirrors SliceCarousel): arm a debounce Timer, commit one
-    // ±1 step per idle gesture. down/right = next, up/left = previous. ──
-    property <int> wheel-dir: 0;
-    wheel-debounce := Timer {
-        interval: 400ms;
-        running: root.wheel-dir != 0;
-        triggered => {
-            root.page-step(root.wheel-dir);
-            root.wheel-dir = 0;
-        }
-    }
-    wheel-zone := TouchArea {
-        width: 100%;
-        height: 100%;
-        scroll-event(event) => {
-            let d = event.delta-x + event.delta-y;
-            if (d != 0) {
-                root.wheel-dir = d < 0 ? 1 : -1;
-                wheel-debounce.restart();
-            }
-            accept
         }
     }
 }

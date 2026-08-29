@@ -443,7 +443,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 pg.recompute(real_count, stage_w, stage_h);
             }
             let (aspects, real_indices) = pg.page_render();
-            let layout = justified_hero_layout(&aspects, stage_w, stage_h, pg.current());
+            // Hero-centered layout: returns tiles PLUS the per-tile real
+            // mapping (row-fill clones carry cycled reals).
+            let (layout, tile_reals) =
+                justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
             let delays = mosaic_curtain_delays(&layout.tiles);
             w.set_gallery_mosaic_current_page(pg.current() as i32);
             w.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
@@ -464,7 +467,7 @@ fn main() -> Result<(), slint::PlatformError> {
             while tiles.row_count() > layout.tiles.len() {
                 tiles.remove(tiles.row_count() - 1);
             }
-            for (i, (t, r)) in layout.tiles.iter().zip(real_indices.iter()).enumerate() {
+            for (i, (t, r)) in layout.tiles.iter().zip(tile_reals.iter()).enumerate() {
                 tiles.set_row_data(
                     i,
                     crate::MosaicTileData {
