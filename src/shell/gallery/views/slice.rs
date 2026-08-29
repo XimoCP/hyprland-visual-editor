@@ -311,10 +311,7 @@ pub const SLICE_WHEEL_DEBOUNCE_MS: u64 = 150;
 /// restarts the tween from that value (retarget, QML StrictlyEnforceRange
 /// analog). `delta` sign decides direction; 0 is no-op.
 pub fn chained_target(current_target_px: f32, delta: isize) -> f32 {
-    // RED stub — tests must fail
-    let _ = current_target_px;
-    let _ = delta;
-    0.0
+    current_target_px - SLICE_STRIP_STEP * delta.signum() as f32
 }
 
 /// Shortest signed ring distance from `from` to `to` (wrap-aware).
