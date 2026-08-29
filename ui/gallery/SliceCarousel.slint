@@ -1,20 +1,26 @@
-// HVE 2 — SliceCarousel (V3 directional fluid + S4b baked).
+// HVE 2 — SliceCarousel (V5 chained glide + S4b baked).
 //
 // Single moving strip with silent rebase (valid in Slint 1.17 via
 // expression animation duration). Container carries ALL delegates at
 // RELATIVE positions (center=0, expanded at -462, collapsed step 135 =
 // 111 face + 12+12 air, zero-gap ring contiguous; visual gap 24 is
 // inset inside the 135 slot). Strip animates x by -delta*135 (350ms
-// OutCubic); is-current flips at slide start via focused-index so
-// widths animate in place; positions stay frozen during slide; at
-// settle (350ms Timer) Rust rebuilds the model for the new focus
-// (identical relative layout, self-similar) and snaps strip back
-// with rebasing=true (0ms, invisible). Wheel debounce Timer stays
-// OUTSIDE the for-repeater (Slint 1.17 panic). Edge fade via per-tile
-// fade, border on top, dim/fade tokens, gaps, hover — approved look.
-// Click on distant card slides the whole distance in one tween via
-// shortest ring delta. Rapid steps coalesced by existing 400ms wheel
-// debounce (simplest robust choice — documented in slice.rs).
+// OutCubic) retargeting from live displayed value when reassigned
+// mid-glide (Slint restarts tween from current displayed value — QML
+// StrictlyEnforceRange + highlightMoveDuration analog via
+// slice::chained_target). Is-current flips at slide start via
+// focused-index so widths animate in place; positions frozen during
+// slide; at true settle (350ms from LAST chained step, generation
+// bump in main.rs) Rust rebuilds model for final focus (identical
+// relative layout, self-similar) and snaps strip back with
+// rebasing=true (0ms, invisible). Wheel debounce Timer stays OUTSIDE
+// the for-repeater (Slint 1.17 panic) at 150ms (SkwdTokens.gallery-
+// slice-wheel-debounce, slice::SLICE_WHEEL_DEBOUNCE_MS) so rapid
+// wheel (4 steps) glides continuously without reset-to-0. Edge fade
+// via per-tile fade, border on top, dim/fade tokens, gaps, hover —
+// approved look. Click on distant card still slides full distance in
+// one tween via shortest ring delta when idle. Keys bypass debounce
+// (direct animate).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -53,10 +59,13 @@ export component SliceCarousel inherits Rectangle {
     clip: true;
     background: transparent;
 
-    // ── Wheel (design D5): same debounce as mosaic — arm then commit 1 step.
+    // ── Wheel (V5 chained): 150ms debounce (SkwdTokens.gallery-slice-
+    // wheel-debounce) so rapid wheel retargets mid-glide; keys stay direct.
+    // Timer lives OUTSIDE for-repeater (Slint 1.17 panic). Each trigger
+    // commits ONE ±1 step; mid-flight steps chain via chained_target.
     property <int> wheel-dir: 0;
     wheel-debounce := Timer {
-        interval: 400ms;
+        interval: SkwdTokens.gallery-slice-wheel-debounce;
         running: root.wheel-dir != 0;
         triggered => {
             root.wheel-step(root.wheel-dir);

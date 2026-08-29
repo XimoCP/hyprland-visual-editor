@@ -538,14 +538,21 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         })
     };
-    // V3 directional fluid step: immediate focused flip (width in place), animate
-    // strip by -delta*135 (350ms OutCubic), at settle rebuild relative tiles and
-    // snap strip back 0ms. Coalescing: existing 400ms wheel debounce coalesces
-    // rapid input — keep it; a second step during slide is ignored until settle.
+    // V5 chained glide: strip-offset retargets from live animated value.
+    // In Slint, reassigning an animating property restarts the tween from
+    // its current displayed value (QML StrictlyEnforceRange + highlightMoveDuration
+    // analog). Wheel debounce 150ms (SkwdTokens anim-150) coalesces rapid
+    // input into chained steps; each mid-flight step flips the adjacent slot,
+    // updates focused, and reassigns offset by -135*sign from the live value
+    // (chained_target). Settle Timer resets on every step (350ms from LAST)
+    // via generation bump; at true settle (generation still matches) rebuilds
+    // self-similar relative tiles and snaps 0ms invisible.
+    let slice_settle_gen = std::sync::Arc::new(std::sync::Mutex::new(0u64));
     let animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync> = {
         let weak = window.as_weak();
         let dims = stage_dims.clone();
         let refresh = refresh_slice_ring.clone();
+        let settle_gen = slice_settle_gen.clone();
         std::sync::Arc::new(move |delta: isize| {
             use slint::Model;
             let Some(w) = weak.upgrade() else { return; };
@@ -562,17 +569,16 @@ fn main() -> Result<(), slint::PlatformError> {
             if next == cur {
                 return;
             }
-            // If already animating (strip offset non-zero), coalesce — ignore until settle.
-            // Wheel debounce already coalesces; keys could chain but simplest robust is drop.
-            if w.get_gallery_slice_strip_offset() != 0.0 {
-                return;
-            }
-            let plan = crate::shell::gallery::views::slice::slide_plan(delta);
-            // Flip focused immediately so widths animate in place (now per-SLOT via is-expanded)
+            // V5 chain: read live animated offset, retarget by -135*sign
+            let current_offset = w.get_gallery_slice_strip_offset();
+            let new_target = if current_offset == 0.0 && delta.abs() > 1 {
+                // Idle click of distance >1: one tween full distance (skwd expand analog)
+                crate::shell::gallery::views::slice::slide_plan(delta).offset_px
+            } else {
+                crate::shell::gallery::views::slice::chained_target(current_offset, delta)
+            };
+            // Flip expanded slot, update focused
             w.set_gallery_focused(next as i32);
-            // Per-slot flip (V3 ghost fix): mutate frozen rows in place so ONLY the
-            // adjacent slot expands during the slide; clones of the focused theme stay
-            // 135px collapsed. Done BEFORE strip animation so width tweens in place.
             {
                 let tiles_rc = w.get_gallery_slice_tiles();
                 if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
@@ -590,16 +596,24 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 }
             }
-            // Animate strip: 0 → offset (slide). Next card enters from right for next (+1 → -135).
+            // Retarget strip — Slint restarts tween from current displayed value
             w.set_gallery_slice_rebasing(false);
-            w.set_gallery_slice_strip_offset(plan.offset_px);
-            // At settle (anim duration 350ms) rebuild tiles for new focus and snap strip to 0
+            w.set_gallery_slice_strip_offset(new_target);
+            // Reset settle Timer: 350ms from LAST step (generation bump)
+            let gen = {
+                let mut g = settle_gen.lock().unwrap();
+                *g += 1;
+                *g
+            };
             let weak2 = weak.clone();
             let dims2 = dims.clone();
             let refresh2 = refresh.clone();
+            let settle_gen2 = settle_gen.clone();
             slint::Timer::single_shot(std::time::Duration::from_millis(crate::shell::gallery::views::slice::SLICE_ANIM_DURATION_MS), move || {
+                if *settle_gen2.lock().unwrap() != gen {
+                    return; // superseded by newer chained step
+                }
                 let Some(w2) = weak2.upgrade() else { return; };
-                // Rebuild relative tiles for new focus (identical relative layout)
                 let cards2 = w2.get_gallery_cards();
                 let rc = cards2.row_count() as usize;
                 if rc == 0 {
@@ -619,7 +633,6 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 let focused2 = w2.get_gallery_focused().max(0) as usize;
                 let tiles = crate::shell::gallery::views::slice::slice_relative_tiles(rc, focused2.min(rc-1), stage_w);
-                // Update tiles in place (same relative x, new mapping) — invisible due to self-similar
                 use slint::{ModelRc, VecModel};
                 let tiles_rc = w2.get_gallery_slice_tiles();
                 if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
@@ -636,7 +649,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     let slint_tiles: Vec<crate::SliceTileData> = tiles.into_iter().map(|t| crate::SliceTileData { x: t.x, w: t.w, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist }).collect();
                     w2.set_gallery_slice_tiles(ModelRc::new(VecModel::from(slint_tiles)));
                 }
-                // Snap strip back with 0ms
                 w2.set_gallery_slice_rebasing(true);
                 w2.set_gallery_slice_strip_offset(0.0);
                 let weak3 = weak2.clone();
@@ -645,7 +657,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         w3.set_gallery_slice_rebasing(false);
                     }
                 });
-                let _ = refresh2; // keep alive
+                let _ = refresh2;
             });
         })
     };

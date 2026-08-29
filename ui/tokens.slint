@@ -91,6 +91,10 @@ export global SkwdTokens {
     in-out property <length> gallery-slice-skew-offset: 35px;
     in-out property <int> gallery-slice-visible: 12;
     in-out property <length> gallery-slice-radius: 0px;
+    // V5 chained glide: wheel debounce 150ms (was 400ms) so rapid wheel
+    // retargets mid-glide via chained_target (Slint animate restarts from
+    // current displayed value). Timer lives OUTSIDE for-repeater (1.17 panic).
+    in-out property <duration> gallery-slice-wheel-debounce: 150ms;
     // Hex columns: 140/3/7.
     in-out property <length> gallery-hex-h: 140px;
     in-out property <int> gallery-hex-cols: 3;
