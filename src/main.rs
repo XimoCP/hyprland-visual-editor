@@ -625,8 +625,10 @@ fn main() -> Result<(), slint::PlatformError> {
     ) {
         use crate::shell::gallery::thumbs;
         use slint::Model;
+        use std::collections::HashSet;
         let Some(w) = weak.upgrade() else { return };
         let model = w.get_gallery_cards();
+        let focused = w.get_gallery_focused().max(0) as usize;
         let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
         for i in 0..model.row_count() {
             if let Some(row) = model.row_data(i) {
@@ -637,10 +639,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 sources.push((i as usize, row.name.to_string(), src));
             }
         }
+        // Priority: visible focused card first (plus neighbors) so first paint is instant.
+        let mut priority = HashSet::new();
+        if !sources.is_empty() {
+            let count = model.row_count() as usize;
+            priority.insert(focused % count.max(1));
+            if focused > 0 { priority.insert((focused - 1) % count.max(1)); }
+            if count > 1 { priority.insert((focused + 1) % count); }
+        }
         drop(w);
         let ready_weak = weak.clone();
         let refresh_clone = refresh.clone();
-        let jobs = thumbs::plan_jobs(sources);
+        let jobs = thumbs::plan_jobs_with_priority(sources, &priority);
         if jobs.is_empty() {
             return;
         }

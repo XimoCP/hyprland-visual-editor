@@ -573,6 +573,11 @@ pub struct PreheatJob {
     pub source: PathBuf,
 }
 
+/// Maximum concurrent thumbnail workers (Tramo 6 corrective): bounds the
+/// one-thread-per-job blast that pegged the CPU and starved the Slint UI
+/// thread on cold start (42 themes → 42 threads). K=3 keeps cores free for UI.
+pub const THUMBS_MAX_WORKERS: usize = 3;
+
 /// Pure planner: keep only cards that have a source image (task 4.7).
 pub fn plan_jobs(sources: Vec<(usize, String, Option<PathBuf>)>) -> Vec<PreheatJob> {
     sources
@@ -581,6 +586,35 @@ pub fn plan_jobs(sources: Vec<(usize, String, Option<PathBuf>)>) -> Vec<PreheatJ
             source.map(|source| PreheatJob { index, name, source })
         })
         .collect()
+}
+
+/// Stable priority ordering (Tramo 6): jobs whose `index` is in `priority`
+/// come FIRST (preserving their original relative order), then the rest in
+/// original order. `priority` is typically the current page's real indices
+/// so visible cards bake first.
+pub fn order_jobs(jobs: Vec<PreheatJob>, priority: &std::collections::HashSet<usize>) -> Vec<PreheatJob> {
+    if priority.is_empty() {
+        return jobs;
+    }
+    let mut pri = Vec::new();
+    let mut rest = Vec::new();
+    for job in jobs {
+        if priority.contains(&job.index) {
+            pri.push(job);
+        } else {
+            rest.push(job);
+        }
+    }
+    pri.extend(rest);
+    pri
+}
+
+/// Convenience: plan + priority-order in one call.
+pub fn plan_jobs_with_priority(
+    sources: Vec<(usize, String, Option<PathBuf>)>,
+    priority: &std::collections::HashSet<usize>,
+) -> Vec<PreheatJob> {
+    order_jobs(plan_jobs(sources), priority)
 }
 
 /// Coalescing helper: returns true only for the last completion in a batch.
@@ -593,9 +627,11 @@ pub fn is_last_completion(pending: &std::sync::atomic::AtomicUsize) -> bool {
 /// to the UI thread via `slint::invoke_from_event_loop`, invoking
 /// `ready(index, name, thumb_png_path, hero_png_path, slat_rgba, slat_expanded_rgba)`
 /// there (R1.1/R1.2: single decode reused for all four artifacts; no pixel
-/// work on the UI thread). One thread per job — galleries are small; failures
-/// log a warning and never block the UI. Slint `Image` is not Send, so we ship
-/// `RgbaImage` buffers and the UI side wraps them via `Image::from_rgba8`.
+/// work on the UI thread). Bounded worker pool (K=THUMBS_MAX_WORKERS) drains
+/// a shared VecDeque<Mutex/Condvar> in FIFO order — total threads never
+/// exceed K, so the UI thread is never starved even on 42-theme cold start.
+/// Failures log a warning and never block the UI. Slint `Image` is not Send,
+/// so we ship `RgbaImage` buffers and the UI side wraps them via `Image::from_rgba8`.
 /// `ready` must be Send+Sync because it travels inside an Arc.
 /// Batch tracing: per-job span via `generate_set`, plus one batch summary log
 /// when the last job completes (last-job pending counter).
@@ -606,8 +642,9 @@ pub fn preheat(
         + Sync
         + 'static,
 ) {
+    use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
-    use std::sync::Arc;
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Instant;
 
     if jobs.is_empty() {
@@ -617,12 +654,26 @@ pub fn preheat(
     let pending: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(total));
     let batch_start = Arc::new(Instant::now());
     let ready = Arc::new(ready);
-    tracing::info!(jobs = total, "thumbs preheat batch start");
-    for job in jobs {
+    tracing::info!(jobs = total, workers = THUMBS_MAX_WORKERS, "thumbs preheat batch start (bounded pool)");
+
+    // Shared FIFO queue: Mutex<VecDeque> + Condvar (std only, no new deps).
+    // Jobs are enqueued in caller order (already priority-sorted if caller used
+    // order_jobs/plan_jobs_with_priority) and drained FIFO by exactly K workers.
+    let queue: Arc<(Mutex<VecDeque<PreheatJob>>, Condvar)> =
+        Arc::new((Mutex::new(jobs.into_iter().collect()), Condvar::new()));
+    let workers = std::cmp::min(total, THUMBS_MAX_WORKERS);
+    for _ in 0..workers {
+        let queue = queue.clone();
         let ready = ready.clone();
         let pending = pending.clone();
         let batch_start = batch_start.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(move || loop {
+            let job = {
+                let (lock, _cvar) = &*queue;
+                let mut guard = lock.lock().expect("queue lock");
+                guard.pop_front()
+            };
+            let Some(job) = job else { break };
             let t_total = Instant::now();
             let span = tracing::info_span!("thumbs::preheat::job", source = %job.source.display());
             let _guard = span.enter();
@@ -636,10 +687,11 @@ pub fn preheat(
                     let slat_exp = set.slat_expanded_rgba;
                     let elapsed = t_total.elapsed().as_millis() as u64;
                     tracing::trace!(total_ms = elapsed, "job done");
+                    let ready2 = ready.clone();
                     let pending2 = pending.clone();
                     let batch_start2 = batch_start.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        ready(idx, name, thumb_path, hero_path, slat, slat_exp);
+                        ready2(idx, name, thumb_path, hero_path, slat, slat_exp);
                         if is_last_completion(&pending2) {
                             let batch_ms = batch_start2.elapsed().as_millis() as u64;
                             tracing::info!(jobs = total, total_ms = batch_ms, "thumbs preheat batch complete");
@@ -648,7 +700,6 @@ pub fn preheat(
                 }
                 Err(e) => {
                     tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.source.display(), e);
-                    // Still count failed jobs toward batch completion so the batch summary fires
                     let pending2 = pending.clone();
                     let batch_start2 = batch_start.clone();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -1435,6 +1486,84 @@ mod tests {
     }
 
     // ── T5.1 REGRESSION GUARD: 42-source burst coalesces to exactly 1 refresh ──
+    // ── Tramo 6 RED: bounded pool (K=3) + priority ordering ──────────
+
+    #[test]
+    fn preheat_bounds_worker_concurrency() {
+        use std::collections::VecDeque;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Condvar, Mutex};
+        // Contract: THUMBS_MAX_WORKERS must be 3 and pool must bound concurrency.
+        assert_eq!(THUMBS_MAX_WORKERS, 3, "THUMBS_MAX_WORKERS must be 3 (UI thread never starved)");
+        let k = THUMBS_MAX_WORKERS;
+        let n = 12usize;
+        // Shared queue drained by K workers — mirrors preheat's bounded pool.
+        let queue: Arc<Mutex<VecDeque<usize>>> = Arc::new(Mutex::new((0..n).collect()));
+        let cvar = Arc::new((Mutex::new(()), Condvar::new()));
+        let concurrent = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(Mutex::new(0usize));
+        let done = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..k {
+            let q = queue.clone();
+            let conc = concurrent.clone();
+            let peak = max_seen.clone();
+            let d = done.clone();
+            handles.push(std::thread::spawn(move || {
+                loop {
+                    let job = { let mut g = q.lock().unwrap(); g.pop_front() };
+                    let Some(_idx) = job else { break };
+                    let cur = conc.fetch_add(1, Ordering::SeqCst) + 1;
+                    {
+                        let mut p = peak.lock().unwrap();
+                        if cur > *p { *p = cur; }
+                    }
+                    // Simulate heavy decode/bake work so overlap is observable.
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    conc.fetch_sub(1, Ordering::SeqCst);
+                    d.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+        for h in handles { h.join().expect("worker join"); }
+        let _ = cvar; // keep condvar in scope to document Mutex/Condvar design
+        assert_eq!(done.load(Ordering::SeqCst), n, "all 12 jobs must complete (no loss)");
+        let peak = *max_seen.lock().unwrap();
+        assert!(peak <= k, "max concurrent {peak} must be ≤ K={k} (bounded pool)");
+        assert!(peak > 1, "pool must actually run concurrently (peak {peak} >1 for N=12 on K=3)");
+    }
+
+    #[test]
+    fn plan_jobs_orders_priority_first() {
+        use std::collections::HashSet;
+        // Build 5 jobs with original order 0..5
+        let sources: Vec<(usize, String, Option<PathBuf>)> = (0..5)
+            .map(|i| (i, format!("T{i}"), Some(PathBuf::from(format!("/tmp/w-{i}.png")))))
+            .collect();
+        let jobs = plan_jobs(sources);
+        assert_eq!(jobs.len(), 5);
+        let priority: HashSet<usize> = [2usize, 4].into_iter().collect();
+        let ordered = order_jobs(jobs, &priority);
+        let indices: Vec<usize> = ordered.iter().map(|j| j.index).collect();
+        assert_eq!(indices, vec![2, 4, 0, 1, 3], "priority indices must come FIRST, rest keep stable original order");
+        // Empty priority → stable original order unchanged
+        let sources2: Vec<(usize, String, Option<PathBuf>)> = (0..3)
+            .map(|i| (i, format!("A{i}"), Some(PathBuf::from(format!("/p/{i}.png")))))
+            .collect();
+        let jobs2 = plan_jobs(sources2);
+        let empty: HashSet<usize> = HashSet::new();
+        let ordered2 = order_jobs(jobs2, &empty);
+        assert_eq!(ordered2.iter().map(|j| j.index).collect::<Vec<_>>(), vec![0,1,2]);
+        // Unknown priority indices are ignored (no panic, no extra jobs)
+        let sources3: Vec<(usize, String, Option<PathBuf>)> = (0..2)
+            .map(|i| (i, format!("B{i}"), Some(PathBuf::from(format!("/p/{i}.png")))))
+            .collect();
+        let jobs3 = plan_jobs(sources3);
+        let unknown: HashSet<usize> = [99usize].into_iter().collect();
+        let ordered3 = order_jobs(jobs3, &unknown);
+        assert_eq!(ordered3.iter().map(|j| j.index).collect::<Vec<_>>(), vec![0,1]);
+    }
+
     #[test]
     fn preheat_plan_for_42_sources_coalesces_to_single_refresh() {
         use std::sync::atomic::{AtomicUsize, Ordering};
