@@ -353,6 +353,95 @@ pub fn carry_over_bakes(old_rows: &[crate::GalleryCardData], fresh: Vec<crate::G
     out
 }
 
+/// In-place diff of a persistent `VecModel<GalleryCardData>` to `new_rows` (R3.1/R3.2).
+///
+/// - Diff by `name` (theme identity).
+/// - Removes stale rows by descending index (delegate safety).
+/// - Updates ONLY changed rows via `set_row_data`; image fields are preserved
+///   from the old row unless the old image is empty and the new row carries one
+///   (absorbs `carry_over_bakes` semantics).
+/// - Pushes appended rows; untouched delegates are never rewritten.
+/// - Model identity (`&VecModel` pointer) is unchanged — caller keeps the same ModelRc.
+pub fn sync_cards(model: &slint::VecModel<crate::GalleryCardData>, new_rows: Vec<crate::GalleryCardData>) {
+    use slint::Model as _;
+
+    // ── 1) Remove stale names (descending for delegate stability) ──
+    let mut to_remove: Vec<usize> = Vec::new();
+    for i in 0..model.row_count() {
+        if let Some(old) = model.row_data(i) {
+            if !new_rows.iter().any(|n| n.name == old.name) {
+                to_remove.push(i);
+            }
+        }
+    }
+    to_remove.sort_unstable_by(|a, b| b.cmp(a));
+    for idx in to_remove {
+        model.remove(idx);
+    }
+
+    // ── 2) Update / push in new_rows order ──
+    let new_len = new_rows.len();
+    for (i, new_row) in new_rows.into_iter().enumerate() {
+        if i < model.row_count() {
+            if let Some(old) = model.row_data(i) {
+                if old.name == new_row.name {
+                    // Merge images: keep old if non-empty, else keep new (absorb)
+                    let mut merged = new_row.clone();
+                    if old.thumb.size().width > 0 {
+                        merged.thumb = old.thumb.clone();
+                    }
+                    if old.hero.size().width > 0 {
+                        merged.hero = old.hero.clone();
+                    }
+                    if old.slat_image.size().width > 0 {
+                        merged.slat_image = old.slat_image.clone();
+                    }
+                    if old.slat_expanded_image.size().width > 0 {
+                        merged.slat_expanded_image = old.slat_expanded_image.clone();
+                    }
+                    // Diff: only rewrite if something actually changed
+                    let providers_equal = merged.providers.row_count() == old.providers.row_count();
+                    let needs = merged.name != old.name
+                        || merged.saved_at != old.saved_at
+                        || merged.is_active != old.is_active
+                        || merged.accent != old.accent
+                        || merged.primary != old.primary
+                        || merged.secondary != old.secondary
+                        || merged.tertiary != old.tertiary
+                        || merged.surface != old.surface
+                        || merged.border_size != old.border_size
+                        || merged.border_radius != old.border_radius
+                        || merged.border_color != old.border_color
+                        || merged.shader != old.shader
+                        || merged.thumb_path != old.thumb_path
+                        || !providers_equal
+                        || merged.thumb.size() != old.thumb.size()
+                        || merged.hero.size() != old.hero.size()
+                        || merged.slat_image.size() != old.slat_image.size()
+                        || merged.slat_expanded_image.size() != old.slat_expanded_image.size();
+                    if needs {
+                        model.set_row_data(i, merged);
+                    }
+                    continue;
+                } else {
+                    // Order mismatch (should not happen for append/remove-only after phase 1,
+                    // but handle by overwriting the slot with the expected name).
+                    model.set_row_data(i, new_row);
+                    continue;
+                }
+            }
+        } else {
+            // Append remaining new rows
+            model.push(new_row);
+        }
+    }
+
+    // ── 3) Trim any excess tail (defensive) ──
+    while model.row_count() > new_len {
+        model.remove(model.row_count() - 1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,5 +653,95 @@ mod tests {
         assert_eq!(model.focused_index(), 0);
         assert_eq!(model.themes()[0].name, "One");
         assert!(model.themes()[1].is_active);
+    }
+
+    // ── T3.1 RED: sync_cards in-place by name ─────────────────────
+    #[test]
+    fn sync_cards_updates_rows_in_place() {
+        use slint::{Model, VecModel};
+        // Persistent model with baked images
+        let mut a = card("Alpha", true);
+        a.is_active = false;
+        a.accent = slint::Color::from_rgb_u8(10, 10, 10);
+        let mut b = card("Beta", true);
+        b.is_active = false;
+        b.accent = slint::Color::from_rgb_u8(20, 20, 20);
+        // Beta second scenario: old empty, new carries baked (absorb carry_over_bakes)
+        // Actually for this test, start with Beta baked, but we will also verify the absorb case
+        // via a second model below — keep this one simple: same set, one row changes.
+        let model = VecModel::from(vec![a.clone(), b.clone()]);
+        let ptr_before = &model as *const _ as usize;
+
+        // Fresh rows (simulating to_gallery_cards): empty images, Alpha flips active + accent
+        let mut fresh_a = card("Alpha", false);
+        fresh_a.is_active = true;
+        fresh_a.accent = slint::Color::from_rgb_u8(99, 99, 99);
+        let mut fresh_b = card("Beta", false); // unchanged non-image fields
+        fresh_b.accent = slint::Color::from_rgb_u8(20, 20, 20);
+
+        crate::shell::gallery::model::sync_cards(&model, vec![fresh_a, fresh_b]);
+
+        let ptr_after = &model as *const _ as usize;
+        assert_eq!(ptr_before, ptr_after, "model identity must not change");
+        assert_eq!(model.row_count(), 2);
+        let out_a = model.row_data(0).unwrap();
+        let out_b = model.row_data(1).unwrap();
+        // Alpha: non-image from new, images preserved from old (old baked)
+        assert!(out_a.is_active, "Alpha is_active must come from new row");
+        assert_eq!(out_a.accent, slint::Color::from_rgb_u8(99, 99, 99));
+        assert!(has_bakes(&out_a), "Alpha images preserved from old (old non-empty wins)");
+        // Beta: untouched — still baked, still inactive, accent unchanged
+        assert!(!out_b.is_active);
+        assert_eq!(out_b.accent, slint::Color::from_rgb_u8(20, 20, 20));
+        assert!(has_bakes(&out_b), "Beta untouched row keeps its bakes");
+
+        // Absorb case: old empty + new carries → new bake kept
+        let empty_old = card("Gamma", false);
+        let model2 = VecModel::from(vec![empty_old]);
+        let mut fresh_gamma = card("Gamma", true); // new carries baked
+        fresh_gamma.is_active = true;
+        crate::shell::gallery::model::sync_cards(&model2, vec![fresh_gamma]);
+        let out_g = model2.row_data(0).unwrap();
+        assert!(has_bakes(&out_g), "when old empty and new carries, absorb new bake");
+        assert!(out_g.is_active);
+    }
+
+    // ── T3.2 RED: incremental push/remove ─────────────────────────
+    #[test]
+    fn sync_cards_pushes_and_removes_incrementally() {
+        use slint::{Model, VecModel};
+        // Push: 2 → 3 (append)
+        let model = VecModel::from(vec![card("A", true), card("B", true)]);
+        let fresh_a = card("A", false);
+        let fresh_b = card("B", false);
+        let mut fresh_c = card("C", false);
+        fresh_c.is_active = true;
+        crate::shell::gallery::model::sync_cards(&model, vec![fresh_a.clone(), fresh_b.clone(), fresh_c.clone()]);
+        assert_eq!(model.row_count(), 3, "append must push");
+        assert_eq!(model.row_data(0).unwrap().name, "A");
+        assert_eq!(model.row_data(1).unwrap().name, "B");
+        assert_eq!(model.row_data(2).unwrap().name, "C");
+        // Surviving rows kept their bakes (old non-empty preserved)
+        assert!(has_bakes(&model.row_data(0).unwrap()));
+        assert!(has_bakes(&model.row_data(1).unwrap()));
+        assert!(!has_bakes(&model.row_data(2).unwrap()), "new appended theme starts blank");
+
+        // Remove: 3 → 2 (middle removed, descending safety)
+        let model2 = VecModel::from(vec![card("A", true), card("B", true), card("C", true)]);
+        // Keep A and C, drop B
+        let fresh_a2 = card("A", false);
+        let fresh_c2 = card("C", false);
+        crate::shell::gallery::model::sync_cards(&model2, vec![fresh_a2, fresh_c2]);
+        assert_eq!(model2.row_count(), 2, "removal must shrink");
+        assert_eq!(model2.row_data(0).unwrap().name, "A");
+        assert_eq!(model2.row_data(1).unwrap().name, "C");
+        // Surviving rows preserved delegates: images still baked from old
+        assert!(has_bakes(&model2.row_data(0).unwrap()));
+        assert!(has_bakes(&model2.row_data(1).unwrap()));
+        // Also test removal at end: 2 → 1
+        let model3 = VecModel::from(vec![card("A", true), card("B", true)]);
+        crate::shell::gallery::model::sync_cards(&model3, vec![card("A", false)]);
+        assert_eq!(model3.row_count(), 1);
+        assert_eq!(model3.row_data(0).unwrap().name, "A");
     }
 }

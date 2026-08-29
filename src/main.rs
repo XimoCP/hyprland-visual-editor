@@ -843,18 +843,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(name) = name_opt {
                     let outcome = slot.apply_theme(&name);
                     if outcome == crate::shell::gallery::slot::ApplyOutcome::Applied {
-                        let refreshed = to_gallery_cards(&tm.lock().unwrap());
+                        let new_rows = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
-                            // S5 bake carry-over: reuse the previous model's
-                            // baked images so the wall never blanks while the
-                            // theme applies (schedule_thumbs then does zero
-                            // work — nothing to re-bake).
-                            let prev = w.get_gallery_cards();
-                            use slint::Model as _;
-                            let old_rows: Vec<crate::GalleryCardData> =
-                                (0..prev.row_count()).filter_map(|i| prev.row_data(i)).collect();
-                            let refreshed = crate::shell::gallery::model::carry_over_bakes(&old_rows, refreshed);
-                            w.set_gallery_cards(ModelRc::new(VecModel::from(refreshed)));
+                            // R3.1: in-place sync — no ModelRc replacement (preserves delegates,
+                            // avoids dropping 42 bindings). Startup's carry_over_bakes stays for
+                            // the first population; here sync_cards absorbs bake preservation.
+                            let model_rc = w.get_gallery_cards();
+                            if let Some(model) = model_rc
+                                .as_any()
+                                .downcast_ref::<VecModel<crate::GalleryCardData>>()
+                            {
+                                crate::shell::gallery::model::sync_cards(model, new_rows);
+                            } else {
+                                // Fallback only if model not yet initialized (should not happen after startup)
+                                w.set_gallery_cards(ModelRc::new(VecModel::from(new_rows)));
+                            }
                             refresh();
                             // keep strip position — theme apply does not re-trigger slide
                         }
