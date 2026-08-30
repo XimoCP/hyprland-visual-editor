@@ -31,7 +31,9 @@ export component MosaicCell inherits Rectangle {
     // Phase-driven curtain: parent animates 0→1, per-cell pure math cover.
     in property <float> curtain-phase: 1.0;
     in property <int> curtain-total-ms: 600;
-    property <float> curtain-progress: Math.max(0.0, Math.min(1.0, (root.curtain-phase * root.curtain-total-ms - root.delay-ms) / 300.0));
+    // Local progress: 0 → 1 as the sweep passes this tile.  Exposed so the
+    // parent can force 1.0 for frozen under-tiles (no curtain animation).
+    in-out property <float> curtain-progress: Math.max(0.0, Math.min(1.0, (root.curtain-phase * root.curtain-total-ms - root.delay-ms) / 300.0));
     // stagger alpha: 0 → 1 after reveal-delay
     in-out property <float> image-alpha: 1.0;
     animate image-alpha { duration: 250ms; easing: ease-in-out; delay: root.reveal-delay; }
@@ -60,7 +62,12 @@ export component MosaicCell inherits Rectangle {
 
     // Background only ever shows through while the shimmer runs; once an
     // image lands it covers 100% of the tile.
-    background: SkwdTokens.surface-container;
+    // Background hidden while this tile's sweep hasn't completed: the frozen
+    // outgoing page (under layer) must show through un-swept regions so the
+    // incoming wallpaper reads as a layer covering it (Tramo 9 effect).
+    background: root.curtain-active && root.curtain-progress < 1.0
+        ? Colors.transparent
+        : SkwdTokens.surface-container;
     opacity: root.cloud-opacity;
     animate opacity { duration: 200ms; easing: ease-out; }
 
@@ -82,15 +89,19 @@ export component MosaicCell inherits Rectangle {
 
     // Full-bleed effective image with staggered reveal — cover fit fills
     // each intentionally-varied tile edge-to-edge with a centered crop.
+    // Hidden during curtain sweep so the wipe over the under-layer is clean.
     Image {
         width: 100%;
         height: 100%;
         source: root.effective-image;
         image-fit: cover;
-        visible: root.has-image;
-        opacity: (root.has-image ? 1.0 : 0.0) * root.image-alpha;
+        visible: root.has-image && root.content-visible;
+        opacity: (root.has-image && root.content-visible ? 1.0 : 0.0) * root.image-alpha;
+        // NO fade during the curtain: the cover vanishes at progress 1.0 and
+        // the main image must take over INSTANTLY (same source + fit) or the
+        // tile dips dark mid-flip (the seamless hard cut of Tramo 9).
         animate opacity {
-            duration: SkwdTokens.anim-200;
+            duration: root.curtain-active ? 0ms : SkwdTokens.anim-200;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
         accessible-role: none;
@@ -98,8 +109,11 @@ export component MosaicCell inherits Rectangle {
 
     shimmer := Rectangle {
         background: #000000;
-        opacity: root.has-image ? 0.0
-            : (root.shimmer-high ? 0.06 : 0.16) * root.image-alpha;
+        // Shimmer visible only when no image AND not during curtain sweep
+        // (curtain cover replaces shimmer during the wipe).
+        opacity: root.curtain-active ? 0.0
+            : (root.has-image ? 0.0
+                : (root.shimmer-high ? 0.06 : 0.16) * root.image-alpha);
         animate opacity {
             duration: root.has-image ? SkwdTokens.anim-200 : 600ms;
             easing: ease-in-out;
@@ -118,27 +132,46 @@ export component MosaicCell inherits Rectangle {
         animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
     }
 
-    // ── Curtain cover (Tramo 8): wipe shows the INCOMING tile's OWN
-    // theme image (sharp, zero-cost reuse of effective-image) zoomed
-    // 1.1× centered so the wipe is perceptible (identical fit would be
-    // invisible) plus a light dim veil (0.25) over it. Replaces the flat
-    // dark color. Visibility rules unchanged: only while 0 < progress < 1.
+    // ── Curtain cover (Tramo 9): growing clip sweeps LEFT→RIGHT, revealing
+    // the incoming tile's hero over the outgoing under-layer.  The hero is
+    // full-bleed inside the clip so its crop is STABLE (no per-frame zoom).
+    // Content (image + name) stays hidden until progress reaches 1.0 so the
+    // sweep reads as a clean wipe over the under-layer.
+    property <bool> curtain-active: !root.reduced-motion && root.curtain-phase < 1.0;
+
+    // Growing clip that reveals the incoming image from left to right.
+    // The hero is sized to the full tile so its crop never changes during
+    // the sweep (no zoom, no dim, no re-crop).  The un-swept region stays
+    // transparent — the frozen under-layer (outgoing page) shows through.
     curtain-cover := Rectangle {
-        visible: !root.reduced-motion && root.curtain-phase < 1.0 && root.curtain-progress < 1.0;
-        x: root.width * root.curtain-progress;
-        width: root.width * (1.0 - root.curtain-progress);
+        visible: root.curtain-active && root.curtain-progress < 1.0;
+        x: 0;
+        width: root.width * root.curtain-progress;
         height: 100%;
-        background: #000000;
-        // Light dim veil so the wipe edge reads against the revealed image.
-        Rectangle {
-            width: 100%;
-            height: 100%;
-            background: #000000;
-            opacity: 1.0;
+        clip: true;
+        Image {
+            width: root.width;
+            height: root.height;
+            source: root.effective-image;
+            image-fit: cover;
+            accessible-role: none;
         }
     }
 
+    // ── Image pipeline (gallery-immersive-redesign 4.8 + HF5): prefer
+    // the hero (≤1600×900 CONTAIN, aspect-true) and fall back to the
+    // thumb until a hero lands — same gating pattern as SliceDelegate.
+    // Shimmer runs until an effective image arrives, then a 200ms
+    // OutCubic fade-in plays under the staggered reveal alpha. NO
+    // source-clip here: it crops in SOURCE coordinates and would cut a
+    // top-left sliver out of either artifact.
+    //
+    // Content stays hidden while the curtain sweep hasn't reached this tile
+    // (progress < 1.0) so the wipe over the under-layer is clean.
+    property <bool> content-visible: root.curtain-phase >= 1.0 || root.curtain-progress >= 1.0;
+
     Text {
+        visible: root.content-visible;
         text: root.card-name;
         color: SkwdTokens.primary;
         font-size: SkwdTokens.size-11;

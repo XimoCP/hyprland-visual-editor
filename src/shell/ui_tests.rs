@@ -725,7 +725,7 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
             delay_ms: *d as i32,
         })
         .collect();
-    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles0)));
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles0.clone())));
     win.set_gallery_mosaic_current_page(pg.current() as i32);
     win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
     win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
@@ -736,8 +736,10 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
 
-    // Flip to page 1 — this bumps flip-token inside MosaicView and starts the curtain
+    // Flip to page 1 — snapshot page 0 tiles as the under layer (Tramo 9)
+    // then set page 1 tiles and bump flip-token to start the curtain.
     assert!(pg.step(1), "must flip to page 1");
+    win.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(tiles0.clone())));
     let (aspects1, reals1) = pg.page_render();
     let (layout1, tile_reals1) = justified_hero_layout(&aspects1, &reals1, stage_w, stage_h);
     let delays1 = mosaic_curtain_delays(&layout1.tiles);
@@ -755,8 +757,16 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
             delay_ms: *d as i32,
         })
         .collect();
-    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles1)));
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles1.clone())));
     win.set_gallery_mosaic_current_page(pg.current() as i32);
+
+    // Tramo 9: verify under-layer was populated with page 0 tiles
+    use slint::Model as _;
+    let under = win.get_gallery_mosaic_under_tiles();
+    let under_rc = under.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
+        .expect("under-tiles should be a VecModel");
+    assert_eq!(under_rc.row_count(), tiles0.len(),
+        "under-tiles must snapshot the outgoing page ({} tiles)", tiles0.len());
 
     // Mid-curtain: advance ~300ms (~18 ticks) → phase ~0.5, column stagger visible
     for _ in 0..18 {
@@ -800,6 +810,44 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
         hue_flips > 300,
         "zoom must be visible: covered (1.1×) vs revealed (1:1) stripe phase must shift — hue flips {hue_flips} expected >300 (no-zoom flat would be ~0)"
     );
+
+    // Tramo 9 regression guard — Defect 1+2: at settled, all tiles MUST
+    // show the incoming bright stripe image (no dark under-layer leakage).
+    // The dark pixels (r<80 && g<50 && b<40) were the bug symptom — with
+    // curtain-phase >= 1.0 gating, content-visible is true for ALL tiles.
+    let snap_bytes = settled.as_bytes();
+    let sw = settled.width() as usize;
+    let sh = settled.height() as usize;
+    let band_y0 = 150usize.min(sh);
+    let band_y1 = 800usize.min(sh);
+    let band_x0 = 60usize.min(sw);
+    let band_x1 = 1650usize.min(sw);
+    let mut dark_settled = 0usize;
+    for y in band_y0..band_y1 {
+        for x in band_x0..band_x1 {
+            let idx = (y * sw + x) * 4;
+            if snap_bytes[idx + 3] < 200 {
+                continue;
+            }
+            let r = snap_bytes[idx];
+            let g = snap_bytes[idx + 1];
+            let b = snap_bytes[idx + 2];
+            if r < 80 && g < 50 && b < 40 {
+                dark_settled += 1;
+            }
+        }
+    }
+    assert!(
+        dark_settled < 10000,
+        "settled must NOT have dark under-layer pixels — got {dark_settled} \
+         (Defect 1+2 regression guard: late columns dark would have 100k+)"
+    );
+
+    // Tramo 9 Defect 4: at mid, the growing clip reveals incoming image
+    // left→right; behind the clip edge, the transparent un-swept region
+    // shows the frozen under-layer (outgoing page).  covered_non_uniform
+    // > 500 (above) proves the cover has image content.  The diff
+    // diff_mid_settled > 500 proves the sweep differs from settled.
 }
 
 #[test]
@@ -873,7 +921,7 @@ fn mosaic_curtain_respects_reduced_motion() {
             delay_ms: *d as i32,
         })
         .collect();
-    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles0)));
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles0.clone())));
     win.set_gallery_mosaic_current_page(pg.current() as i32);
     win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
     win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
@@ -882,7 +930,9 @@ fn mosaic_curtain_respects_reduced_motion() {
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
+    // Tramo 9: set under-layer on flip (reduced-motion still snapshots it).
     assert!(pg.step(1));
+    win.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(tiles0)));
     let (aspects1, reals1) = pg.page_render();
     let (layout1, tile_reals1) = justified_hero_layout(&aspects1, &reals1, stage_w, stage_h);
     let delays1 = mosaic_curtain_delays(&layout1.tiles);

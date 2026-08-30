@@ -62,7 +62,7 @@ pub fn setup_callbacks(
     restart_lock: &Arc<Mutex<Option<std::fs::File>>>,
     shell: &Rc<RefCell<Shell>>,
     mosaic_pages: std::sync::Arc<std::sync::Mutex<MosaicPages>>,
-    refresh_mosaic_page: std::sync::Arc<dyn Fn() + Send + Sync>,
+    refresh_mosaic_page: std::sync::Arc<dyn Fn(bool) + Send + Sync>,
     refresh_slice_ring: std::sync::Arc<dyn Fn() + Send + Sync>,
     animate_slice_step: std::sync::Arc<dyn Fn(isize) + Send + Sync>,
 ) {
@@ -147,7 +147,7 @@ pub fn setup_callbacks(
                 if style == 2 {
                     let changed = mosaic_pages.lock().unwrap().step(delta as isize);
                     if changed {
-                        refresh_mosaic_page();
+                        refresh_mosaic_page(true); // mosaic page step is a flip
                     }
                     return;
                 }
@@ -195,7 +195,7 @@ pub fn setup_callbacks(
         window.on_gallery_mosaic_page_step(move |dir| {
             let changed = pages.lock().unwrap().step(dir as isize);
             if changed {
-                refresh();
+                refresh(true); // page flip → snapshot under layer
             }
         });
     }

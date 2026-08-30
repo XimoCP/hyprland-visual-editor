@@ -413,11 +413,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let mosaic_pages = std::sync::Arc::new(std::sync::Mutex::new(
         crate::shell::gallery::views::mosaic::MosaicPages::new(0, 0.0, 0.0),
     ));
-    let refresh_mosaic_page: std::sync::Arc<dyn Fn() + Send + Sync> = {
+    let refresh_mosaic_page: std::sync::Arc<dyn Fn(bool) + Send + Sync> = {
         let pages = mosaic_pages.clone();
         let dims = stage_dims.clone();
         let weak = window.as_weak();
-        std::sync::Arc::new(move || {
+        std::sync::Arc::new(move |is_flip: bool| {
             use crate::shell::gallery::views::mosaic::{
                 justified_hero_layout, mosaic_curtain_delays,
             };
@@ -453,6 +453,23 @@ fn main() -> Result<(), slint::PlatformError> {
             w.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
                 pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
             )));
+            // Tramo 9: on page flips snapshot the outgoing tiles as the under layer
+            // so the curtain sweeps the incoming image over a frozen copy of the
+            // previous page.  On non-flip refreshes (startup / resize) clear the
+            // under layer.  Zero image copies — cells resolve images via
+            // cards[real_index] (same binding pattern as live tiles).
+            if is_flip {
+                let tiles_rc = w.get_gallery_mosaic_tiles();
+                if let Some(tiles) =
+                    tiles_rc.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
+                {
+                    let snapshot: Vec<crate::MosaicTileData> =
+                        (0..tiles.row_count()).filter_map(|i| tiles.row_data(i)).collect();
+                    w.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(snapshot)));
+                }
+            } else {
+                w.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(Vec::<crate::MosaicTileData>::new())));
+            }
             let tiles_rc = w.get_gallery_mosaic_tiles();
             let Some(tiles) =
                 tiles_rc.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
@@ -621,8 +638,9 @@ fn main() -> Result<(), slint::PlatformError> {
         weak: &slint::Weak<crate::MainWindow>,
         themes_root: &std::path::Path,
         _stage_dims: &std::sync::Arc<std::sync::Mutex<StageDims>>,
-        refresh: std::sync::Arc<dyn Fn() + Send + Sync>,
+        refresh: std::sync::Arc<dyn Fn(bool) + Send + Sync>,
     ) {
+        // Signature updated for Tramo 9: refresh now accepts is_flip boolean.
         use crate::shell::gallery::thumbs;
         use slint::Model;
         use std::collections::HashSet;
@@ -685,17 +703,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         row.slat_expanded_image = slat_expanded;
                         model.set_row_data(idx, row);
                         if thumbs::is_last_completion(&pending) {
-                            refresh_clone();
+                            refresh_clone(false); // thumb completion: not a flip
                         }
                     } else if thumbs::is_last_completion(&pending) {
                         // Stale row still counts toward batch completion for coalescing
-                        refresh_clone();
+                        refresh_clone(false);
                     }
                 } else if thumbs::is_last_completion(&pending) {
-                    refresh_clone();
+                    refresh_clone(false);
                 }
             } else if thumbs::is_last_completion(&pending) {
-                refresh_clone();
+                refresh_clone(false);
             }
         });
     }
@@ -763,7 +781,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let empty = carried.is_empty();
         window.set_gallery_cards(ModelRc::new(VecModel::from(carried)));
         window.set_gallery_empty(empty);
-        refresh_mosaic_page();
+        refresh_mosaic_page(false); // startup: no under layer
         refresh_slice_ring();
         schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims, refresh_mosaic_page.clone());
         // Slint-driven stage geometry: recompute BOTH models whenever the
@@ -782,38 +800,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 *dims.lock().unwrap() = Some((width, height));
                 if win.upgrade().is_some() {
-                    refresh_mosaic();
-                    refresh_slice();
-                }
-            });
-        }
-        window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
-        window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
-        window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
-        window.set_gallery_style(0);
-        window.set_gallery_focused(0);
-        refresh_slice_ring();
-        window.set_gallery_reduced_motion(gallery_slot.is_reduced_motion());
-        {
-            let win = window.as_weak();
-            let slot = gallery_slot.clone();
-            let tm = gallery_tm.clone();
-            let refresh_slice = refresh_slice_ring.clone();
-            window.on_gallery_style_selected(move |style| {
-                let idx = (style as usize).min(2);
-                if let Some(w) = win.upgrade() {
-                    let _style = match idx {
-                        0 => crate::shell::gallery::GalleryStyle::Slice,
-                        1 => crate::shell::gallery::GalleryStyle::Hexagon,
-                        _ => crate::shell::gallery::GalleryStyle::Mosaic,
-                    };
-                    w.set_gallery_style(style);
-                    let len = tm.lock().unwrap().list().unwrap_or_default().len() as i32;
-                    let cur = w.get_gallery_focused();
-                    if len > 0 && cur >= len {
-                        w.set_gallery_focused(len - 1);
-                    }
-                    let _ = slot.effective_anim_duration(crate::shell::gallery::views::CHROME_SWITCH_DURATION_MS);
+                    refresh_mosaic(false); // resize: no under layer
                     refresh_slice();
                 }
             });
@@ -868,11 +855,42 @@ fn main() -> Result<(), slint::PlatformError> {
                                 // Fallback only if model not yet initialized (should not happen after startup)
                                 w.set_gallery_cards(ModelRc::new(VecModel::from(new_rows)));
                             }
-                            refresh();
+                            refresh(false); // theme apply: not a page flip
                             // keep strip position — theme apply does not re-trigger slide
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
                     }
+                }
+            });
+        }
+        window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
+        window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
+        window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
+        window.set_gallery_style(0);
+        window.set_gallery_focused(0);
+        refresh_slice_ring();
+        window.set_gallery_reduced_motion(gallery_slot.is_reduced_motion());
+        {
+            let win = window.as_weak();
+            let slot = gallery_slot.clone();
+            let tm = gallery_tm.clone();
+            let refresh_slice = refresh_slice_ring.clone();
+            window.on_gallery_style_selected(move |style| {
+                let idx = (style as usize).min(2);
+                if let Some(w) = win.upgrade() {
+                    let _style = match idx {
+                        0 => crate::shell::gallery::GalleryStyle::Slice,
+                        1 => crate::shell::gallery::GalleryStyle::Hexagon,
+                        _ => crate::shell::gallery::GalleryStyle::Mosaic,
+                    };
+                    w.set_gallery_style(style);
+                    let len = tm.lock().unwrap().list().unwrap_or_default().len() as i32;
+                    let cur = w.get_gallery_focused();
+                    if len > 0 && cur >= len {
+                        w.set_gallery_focused(len - 1);
+                    }
+                    let _ = slot.effective_anim_duration(crate::shell::gallery::views::CHROME_SWITCH_DURATION_MS);
+                    refresh_slice();
                 }
             });
         }

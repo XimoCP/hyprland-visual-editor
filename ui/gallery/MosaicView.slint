@@ -30,6 +30,8 @@ export component MosaicView inherits Rectangle {
     in property <[GalleryCardData]> cards;
     // Current page's paint-ready geometry (Rust-computed justified_layout).
     in property <[MosaicTileData]> tiles;
+    // Tramo 9: frozen outgoing tiles (under layer for curtain sweep).
+    in property <[MosaicTileData]> under-tiles;
     // Pagination mirrors (Rust source of truth).
     in property <int> current-page: 0;
     in property <int> total-pages: 1;
@@ -119,6 +121,40 @@ export component MosaicView inherits Rectangle {
                 wheel-debounce.restart();
             }
             accept
+        }
+    }
+
+    // ── Under-layer (Tramo 9): frozen copy of the outgoing page.
+    // Painted below the page so the curtain sweep reveals the incoming
+    // image over a static copy of what was there before.  Zero image
+    // copies — each under-tile resolves its image via root.cards[real-index]
+    // (same binding pattern as live tiles).  Only visible when non-empty.
+    Rectangle {
+        visible: root.under-tiles.length > 0 && root.curtain-phase < 1.0 && !root.reduced-motion;
+        width: 100%;
+        height: 100%;
+        clip: true;
+        opacity: 1.0;
+        for t[idx] in root.under-tiles : MosaicCell {
+            x: t.x;
+            y: t.y;
+            width: t.w;
+            height: t.h;
+            cell-key: idx;
+            reveal-delay: 0ms;
+            image-alpha: 1.0;
+            cloud-opacity: 1.0;
+            thumb: root.cards[t.real-index].thumb;
+            hero: root.cards[t.real-index].hero;
+            flip-token: root.flip-token;
+            reduced-motion: root.reduced-motion;
+            delay-ms: t.delay-ms;
+            curtain-phase: root.curtain-phase;
+            curtain-total-ms: root.curtain-total-ms;
+            // Under-tiles are frozen — no curtain animation, always fully revealed.
+            curtain-progress: 1.0;
+            clicked => { root.cell-clicked(t.real-index); }
+            flip-requested => { root.cell-flip(t.real-index); }
         }
     }
 

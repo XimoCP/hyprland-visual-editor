@@ -214,6 +214,8 @@ export component MainWindow inherits Window {
     in-out property <bool> gallery-slice-rebasing: false;
     // Justified-rows Mosaic geometry (Rust-computed), piped like cards.
     in property <[MosaicTileData]> gallery-mosaic-tiles;
+    // Tramo 9: frozen copy of the outgoing page tiles (under layer for curtain).
+    in property <[MosaicTileData]> gallery-mosaic-under-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> gallery-mosaic-current-page: 0;
     in property <int> gallery-mosaic-total-pages: 1;
@@ -513,6 +515,7 @@ export component MainWindow inherits Window {
         gallery-slice-delta-base: root.gallery-slice-delta-base;
         gallery-slice-rebasing: root.gallery-slice-rebasing;
         gallery-mosaic-tiles: root.gallery-mosaic-tiles;
+        gallery-mosaic-under-tiles: root.gallery-mosaic-under-tiles;
         gallery-mosaic-current-page: root.gallery-mosaic-current-page;
         gallery-mosaic-total-pages: root.gallery-mosaic-total-pages;
         gallery-mosaic-page-numbers: root.gallery-mosaic-page-numbers;

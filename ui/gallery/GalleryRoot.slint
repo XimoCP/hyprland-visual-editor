@@ -32,6 +32,8 @@ export component GalleryRoot inherits Rectangle {
     in property <bool> slice-rebasing: false;
     // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
+    // Tramo 9: frozen outgoing page tiles (under layer for curtain sweep).
+    in property <[MosaicTileData]> mosaic-under-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> mosaic-current-page: 0;
     in property <int> mosaic-total-pages: 1;
@@ -145,6 +147,7 @@ export component GalleryRoot inherits Rectangle {
             viewport-w: self.width;
             cards: root.cards;
             tiles: root.mosaic-tiles;
+            under-tiles: root.mosaic-under-tiles;
             current-page: root.mosaic-current-page;
             total-pages: root.mosaic-total-pages;
             page-numbers: root.mosaic-page-numbers;

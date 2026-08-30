@@ -80,6 +80,8 @@ export component ShellRoot inherits Rectangle {
     in property <int> gallery-slice-delta-base: 0;
     in property <bool> gallery-slice-rebasing: false;
     in property <[MosaicTileData]> gallery-mosaic-tiles;
+    // Tramo 9: frozen outgoing tiles (under layer for curtain sweep).
+    in property <[MosaicTileData]> gallery-mosaic-under-tiles;
     // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> gallery-mosaic-current-page: 0;
     in property <int> gallery-mosaic-total-pages: 1;
@@ -198,6 +200,7 @@ export component ShellRoot inherits Rectangle {
                 slice-delta-base: root.gallery-slice-delta-base;
                 slice-rebasing: root.gallery-slice-rebasing;
                 mosaic-tiles: root.gallery-mosaic-tiles;
+                mosaic-under-tiles: root.gallery-mosaic-under-tiles;
                 mosaic-current-page: root.gallery-mosaic-current-page;
                 mosaic-total-pages: root.gallery-mosaic-total-pages;
                 mosaic-page-numbers: root.gallery-mosaic-page-numbers;

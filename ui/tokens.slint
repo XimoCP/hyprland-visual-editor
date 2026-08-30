@@ -114,12 +114,9 @@ export global SkwdTokens {
     in-out property <duration> mosaic-curtain-tile: 300ms;
     in-out property <duration> mosaic-curtain-col-stagger: 50ms;
     in-out property <duration> mosaic-page-fade: 200ms;
-    // Mosaic curtain cover (Tramo 8): the wipe shows the INCOMING tile's
-    // own theme image (sharp, zero-cost reuse of effective-image) zoomed
-    // slightly so the wipe is perceptible (identical fit would be invisible).
-    // Zoom 1.1 = 10% larger, centered; dim 0.25 = black veil at 25%.
-    in-out property <float> mosaic-curtain-cover-zoom: 1.1;
-    in-out property <float> mosaic-curtain-cover-dim: 0.25;
+    // Mosaic curtain cover (Tramo 9): left-to-right sweep using the
+    // INCOMING tile's hero image at cover fit — no zoom, no dim, just
+    // a clean opaque wipe over the under-layer.
 
     // ── Card hover focus feedback (approved design, Slice + Mosaic):
     // subtle expansion (center scale ~1.03) PLUS a slight brightness lift,
