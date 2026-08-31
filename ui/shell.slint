@@ -320,7 +320,7 @@ export component ShellRoot inherits Rectangle {
                     stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
                 }
 
-                panel-layer := PanelRoot {
+                if root.is-panel-open || root.is-mutating : PanelRoot {
                     width: 100%;
                     height: 100%;
                     opacity: root.is-panel-open ? 1.0 : (root.is-mutating ? 0.55 : 0.0);

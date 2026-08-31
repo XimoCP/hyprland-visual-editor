@@ -1990,3 +1990,30 @@ fn test_modules_removed() {
         "SettingsButton must be removed from ui/components.slint — orphan after overlay removal"
     );
 }
+
+#[test]
+fn test_panel_layer_gated() {
+    let content = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
+    // PanelRoot must be instantiated ONLY inside a conditional gated on is-panel-open || is-mutating
+    // so that when closed it does not exist and cannot intercept pointer/keyboard input.
+    assert!(
+        content.contains("if root.is-panel-open || root.is-mutating"),
+        "PanelRoot must be gated by `if root.is-panel-open || root.is-mutating` — found no such gate"
+    );
+    // Ensure the gate actually wraps PanelRoot (not a stray unrelated if)
+    let gated_pos = content
+        .find("if root.is-panel-open || root.is-mutating")
+        .expect("gate must exist");
+    let panel_pos = content[gated_pos..]
+        .find("PanelRoot")
+        .expect("PanelRoot must follow the gate");
+    assert!(
+        panel_pos < 200,
+        "PanelRoot must appear shortly after the gate (within 200 chars) — got offset {panel_pos}"
+    );
+    // Unconditional instantiation would keep an invisible but input-capturing layer over the gallery
+    assert!(
+        !content.contains("panel-layer := PanelRoot"),
+        "unconditional `panel-layer := PanelRoot {{` must NOT exist — panel must be conditional, otherwise opacity 0 still captures input"
+    );
+}
