@@ -235,7 +235,7 @@ export component MainWindow inherits Window {
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
 
-    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10 + slice 3 Borders pick) ──
+    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10 + slice 3 Borders pick + slice 4 tune color-gated) ──
     in-out property <int> panel-section: 0;
     in-out property <bool> is-mutating: false;
     in-out property <bool> is-panel-open: false;
@@ -247,6 +247,7 @@ export component MainWindow inherits Window {
     callback panel-section-selected(int);
     callback panel-save-theme(string);
     callback panel-apply-border(int, string);
+    callback panel-apply-geometry(int, int, int, int);
 
 
     // ── Settings ──
@@ -549,6 +550,10 @@ export component MainWindow inherits Window {
         panel-border-tags: root.border-tags;
         panel-border-files: root.border-files;
         panel-border-active-index: root.active-border-index;
+        panel-border-size <=> root.border-size;
+        panel-corner-radius <=> root.corner-radius;
+        panel-gap-in <=> root.gap-in;
+        panel-gap-out <=> root.gap-out;
         gallery-style-selected(style) => { root.gallery-style-selected(style); }
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
@@ -559,7 +564,8 @@ export component MainWindow inherits Window {
         panel-back => { root.panel-back(); }
         panel-section-selected(section) => { root.panel-section-selected(section); }
         panel-save-theme(name) => { root.panel-save-theme(name); }
-        panel-apply-border(idx, file) => { root.apply-border(idx, file); }
+        panel-apply-border(idx, file) => { root.panel-apply-border(idx, file); }
+        panel-apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──

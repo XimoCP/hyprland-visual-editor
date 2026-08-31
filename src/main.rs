@@ -1334,6 +1334,74 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_panel_save_error("".into());
     }
 
+    // ── Panel Borders tune: debounced geometry + snap-on-pick (slice 4, COLOR GATED) ──
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        window.on_panel_apply_geometry(move |size, radius, gap_in, gap_out| {
+            let result = {
+                let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                if size == st.cfg().border_size && radius == st.cfg().border_radius && gap_in == st.cfg().gaps_in && gap_out == st.cfg().gaps_out {
+                    return;
+                }
+                st.cfg_mut().border_size = size;
+                st.cfg_mut().border_radius = radius;
+                st.cfg_mut().gaps_in = gap_in;
+                st.cfg_mut().gaps_out = gap_out;
+                st.apply_geometry()
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Geometry error: {}", e);
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_border_size(size);
+                w.set_corner_radius(radius);
+                w.set_gap_in(gap_in);
+                w.set_gap_out(gap_out);
+            }
+        });
+    }
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        window.on_panel_apply_border(move |idx, file| {
+            use crate::callbacks::{preset_geometry_for, BorderGeometry};
+            let file_str = file.to_string();
+            let (is_deact, result, snap) = {
+                let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                let is_deact = st.cfg().active_border_file == file_str;
+                let new = if is_deact { String::new() } else { file_str.clone() };
+                st.cfg_mut().active_border_file = new.clone();
+                let _ = st.cfg().save();
+                let arg = if is_deact { "none" } else { &new };
+                let res = st.engine().apply_border(arg);
+                let snap = if is_deact { BorderGeometry::default() } else { preset_geometry_for(&file_str) };
+                if !is_deact {
+                    let geom_changed = snap.size != st.cfg().border_size || snap.radius != st.cfg().border_radius || snap.gap_in != st.cfg().gaps_in || snap.gap_out != st.cfg().gaps_out;
+                    if geom_changed {
+                        st.cfg_mut().border_size = snap.size;
+                        st.cfg_mut().border_radius = snap.radius;
+                        st.cfg_mut().gaps_in = snap.gap_in;
+                        st.cfg_mut().gaps_out = snap.gap_out;
+                        let _ = st.apply_geometry();
+                    }
+                }
+                (is_deact, res, snap)
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Border error: {}", e);
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_active_border_index(if is_deact { -1 } else { idx });
+                // snap sliders one-way (preset→tune, no reverse)
+                w.set_border_size(snap.size);
+                w.set_corner_radius(snap.radius);
+                w.set_gap_in(snap.gap_in);
+                w.set_gap_out(snap.gap_out);
+            }
+        });
+    }
+
     // ── Nav modules (data-driven sidebar, translated) ──
     let nav_modules = Vec::from([
         crate::NavModule {
@@ -1597,6 +1665,47 @@ mod tests {
 
         // Verify the composer reference works
         let _composer = controller.composer();
+    }
+
+    // ── Borders tune geometry — strict TDD slice 4 (debounce, skip-init, snap) ──
+    #[test]
+    fn test_geometry_debounce_last_wins() {
+        use crate::callbacks::{BorderGeometry, GeometryDebouncer, should_apply_geometry};
+        let initial = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let mut d = GeometryDebouncer::new(initial);
+        d.push(initial); // prime init skip
+        let seq = [
+            BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 20, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 30, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 40, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 80, gap_in: 5, gap_out: 5 },
+        ];
+        for g in seq { assert!(d.push(g)); }
+        let flushed = d.flush().expect("last-wins flush");
+        assert_eq!(flushed.radius, 80);
+        assert!(should_apply_geometry(&initial, &flushed));
+    }
+
+    #[test]
+    fn test_skip_init_event() {
+        use crate::callbacks::{BorderGeometry, GeometryDebouncer};
+        let mut d = GeometryDebouncer::new(BorderGeometry::default());
+        assert!(!d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }), "first event ignored");
+        assert!(!d.has_pending());
+        assert_eq!(d.flush(), None);
+        assert!(d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }));
+        assert!(d.has_pending());
+    }
+
+    #[test]
+    fn test_pick_snaps_sliders() {
+        use crate::callbacks::{preset_geometry_for, BorderGeometry};
+        let snapped = preset_geometry_for("thin-rounded.ron");
+        assert_eq!(snapped, BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 });
+        assert_eq!(preset_geometry_for("sharp.ron"), BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 });
+        assert_eq!(preset_geometry_for("thick.ron"), BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 });
+        assert_eq!(preset_geometry_for("unknown.ron"), BorderGeometry::default());
     }
 
 }

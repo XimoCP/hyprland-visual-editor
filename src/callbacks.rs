@@ -913,6 +913,87 @@ pub fn handle_borders_apply(engine: &crate::engine::Engine, file: &str) -> Resul
     engine.apply_border(arg)
 }
 
+/// Borders tune geometry — 4 sliders + 80ms debounce + skip-init + snap (R3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BorderGeometry {
+    pub size: i32,
+    pub radius: i32,
+    pub gap_in: i32,
+    pub gap_out: i32,
+}
+
+impl Default for BorderGeometry {
+    fn default() -> Self {
+        Self { size: 2, radius: 32, gap_in: 5, gap_out: 5 }
+    }
+}
+
+/// Preset → slider snap (one-way, no reverse write). Returns geometry that
+/// sliders should snap to when a border preset is picked. Hard-coded for
+/// the tune demo; real preset files do not store geometry, so we use a
+/// deterministic mapping and fall back to defaults.
+#[allow(dead_code)]
+pub fn preset_geometry_for(file: &str) -> BorderGeometry {
+    match file {
+        "thin-rounded.ron" => BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 },
+        "sharp.ron" => BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 },
+        "thick.ron" => BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 },
+        "01_cascade.conf" => BorderGeometry { size: 3, radius: 12, gap_in: 4, gap_out: 6 },
+        _ => BorderGeometry::default(),
+    }
+}
+
+/// Debouncer for 4 geometry sliders: 80ms last-wins, compare-then-apply,
+/// skip first init event (legacy BordersModule pattern).
+#[allow(dead_code)]
+pub struct GeometryDebouncer {
+    last_applied: BorderGeometry,
+    pending: Option<BorderGeometry>,
+    init_done: bool,
+}
+
+#[allow(dead_code)]
+impl GeometryDebouncer {
+    pub fn new(initial: BorderGeometry) -> Self {
+        Self { last_applied: initial, pending: None, init_done: false }
+    }
+    /// Push a new slider value. Returns true if a debounce should be scheduled.
+    /// First call is skipped (Slider init), compare-then-apply skips no-ops.
+    pub fn push(&mut self, geo: BorderGeometry) -> bool {
+        if !self.init_done {
+            self.init_done = true;
+            return false;
+        }
+        if geo == self.last_applied {
+            return false;
+        }
+        self.pending = Some(geo);
+        true
+    }
+    /// Flush after 80ms idle — last-wins. Returns Some if something to apply.
+    /// Compare-then-apply prevents redundant engine calls.
+    pub fn flush(&mut self) -> Option<BorderGeometry> {
+        let p = self.pending.take()?;
+        if p == self.last_applied {
+            return None;
+        }
+        self.last_applied = p;
+        Some(p)
+    }
+    pub fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+    pub fn last_applied(&self) -> BorderGeometry {
+        self.last_applied
+    }
+}
+
+/// Pure helper: should we call apply_geometry? (compare-then-apply)
+#[allow(dead_code)]
+pub fn should_apply_geometry(current: &BorderGeometry, pending: &BorderGeometry) -> bool {
+    current != pending
+}
+
 #[cfg(test)]
 mod panel_save_tests {
     use super::handle_panel_save;
@@ -1076,6 +1157,73 @@ exit 0
         let res = handle_borders_apply(&engine, "thin-rounded.ron");
         assert!(res.is_ok(), "apply_border should succeed, got {:?}", res.err());
         assert!(res.unwrap().contains("thin-rounded.ron"));
+    }
+}
+
+#[cfg(test)]
+mod geometry_tune_tests {
+    use super::{preset_geometry_for, BorderGeometry, GeometryDebouncer, should_apply_geometry};
+
+    #[test]
+    fn test_geometry_debounce_last_wins() {
+        let initial = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let mut d = GeometryDebouncer::new(initial);
+        // first event is init and must be skipped — prime the debouncer
+        d.push(initial);
+        assert!(!d.has_pending(), "init event must not schedule");
+        // rapid 60Hz drag: 5 quick pushes, last-wins after 80ms idle
+        let seq = [
+            BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 20, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 30, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 40, gap_in: 5, gap_out: 5 },
+            BorderGeometry { size: 2, radius: 80, gap_in: 5, gap_out: 5 },
+        ];
+        for g in seq {
+            assert!(d.push(g), "each distinct change should schedule debounce");
+        }
+        // only one flush after 80ms idle, last-wins
+        let flushed = d.flush().expect("must flush pending after debounce");
+        assert_eq!(flushed.radius, 80, "debounce last-wins: only last radius survives");
+        assert!(!d.has_pending(), "no pending after flush");
+        assert_eq!(d.flush(), None, "second flush without new push is None (no stall)");
+        assert!(should_apply_geometry(&initial, &flushed), "flushed differs from initial so should apply");
+        // same value again → compare-then-apply skips
+        assert!(!d.push(flushed), "pushing same as last_applied must not schedule");
+    }
+
+    #[test]
+    fn test_skip_init_event() {
+        let initial = BorderGeometry::default();
+        let mut d = GeometryDebouncer::new(initial);
+        // very first push is the Slider init event — must be skipped
+        assert!(!d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }), "first event ignored");
+        assert!(!d.has_pending(), "init skip must leave no pending");
+        assert_eq!(d.flush(), None, "flush after only init is None");
+        // second push is real user interaction — must schedule
+        assert!(d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }));
+        assert!(d.has_pending());
+    }
+
+    #[test]
+    fn test_pick_snaps_sliders() {
+        // GIVEN sliders 2/10/5/5
+        let before = BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 };
+        // WHEN pick thin-rounded
+        let snapped = preset_geometry_for("thin-rounded.ron");
+        assert_eq!(snapped, BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 }, "thin-rounded preset → 2/10/5/5");
+        // sharp preset
+        let sharp = preset_geometry_for("sharp.ron");
+        assert_eq!(sharp, BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 });
+        // sliders snap one-way: preset→slider, not reverse
+        assert_ne!(before, sharp, "snap changes sliders to preset values");
+        // thick preset also
+        let thick = preset_geometry_for("thick.ron");
+        assert_eq!(thick.size, 5);
+        assert_eq!(thick.radius, 20);
+        // fallback unknown → defaults, no panic
+        let fallback = preset_geometry_for("unknown.ron");
+        assert_eq!(fallback, BorderGeometry::default());
     }
 }
 

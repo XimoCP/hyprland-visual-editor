@@ -115,10 +115,15 @@ export component ShellRoot inherits Rectangle {
     in property <[string]> panel-border-tags;
     in property <[string]> panel-border-files;
     in property <int> panel-border-active-index: -1;
+    in-out property <int> panel-border-size: 2;
+    in-out property <int> panel-corner-radius: 32;
+    in-out property <int> panel-gap-in: 5;
+    in-out property <int> panel-gap-out: 5;
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-save-theme(string);
     callback panel-apply-border(int, string);
+    callback panel-apply-geometry(int, int, int, int);
 
     // Gallery mounts over the LIVE DESKTOP (gallery-immersive-redesign 1.8):
     // while Gallery holds the screen the shell root must not paint either —
@@ -269,10 +274,15 @@ export component ShellRoot inherits Rectangle {
                     border-tags: root.panel-border-tags;
                     border-files: root.panel-border-files;
                     border-active-index: root.panel-border-active-index;
+                    border-size <=> root.panel-border-size;
+                    corner-radius <=> root.panel-corner-radius;
+                    gap-in <=> root.panel-gap-in;
+                    gap-out <=> root.panel-gap-out;
                     back => { root.panel-back(); }
                     section-selected(section) => { root.panel-section-selected(section); }
                     save-theme(name) => { root.panel-save-theme(name); }
                     apply-border(idx, file) => { root.panel-apply-border(idx, file); }
+                    apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
                 }
 
                 // Input guard during Mutating (R9): absorbs wheel/click

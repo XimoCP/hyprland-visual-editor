@@ -1,15 +1,19 @@
-// HVE 2 — BordersSection (mutating-window R3, pick layer only).
+// HVE 2 — BordersSection (mutating-window R3 pick + R3 tune debounced).
 //
 // Pick layer: PresetCards from scan("borders") → apply_border, active
-// indicator. Above a divider (R3). Tune layer (sliders) is slice 4 —
-// NOT built here. No color. Keyboard R11: arrows navigate cards,
-// Enter/Space activates, focus visible icy-cyan #8fd8ff, Tab pick→tune.
+// indicator + snap-on-pick (preset→4 sliders one-way). Tune layer below
+// divider (R3 stacked): 4 GeometrySliders (size1-5, radius0-100, gap_in/out0-30)
+// → 80ms Timer last-wins → apply_geometry compare-then-apply, skip init.
+// COLOR GATED: inert color-slot placeholder only.
+//
+// Keyboard R11: arrows navigate cards/sliders, Enter/Space activates,
+// sliders ±1, Tab pick→tune→next never traps, icy-cyan #8fd8ff focus.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
-import { PresetCard } from "../../components.slint";
+import { PresetCard, GeometrySlider } from "../../components.slint";
 
 export component BordersSection inherits Rectangle {
     in property <[string]> border-titles;
@@ -19,18 +23,58 @@ export component BordersSection inherits Rectangle {
     in property <int> active-index: -1;
     callback apply-border(int, string);
 
+    // Tune layer — 4 geometry values (in-out so Rust snap can write them)
+    in-out property <int> geom-size: 2;
+    in-out property <int> geom-radius: 32;
+    in-out property <int> geom-gap-in: 5;
+    in-out property <int> geom-gap-out: 5;
+    callback apply-geometry(int, int, int, int);
+
     background: transparent;
     clip: true;
 
-    // Internal keyboard focus index for arrow navigation (R11)
+    // Internal keyboard focus index for arrow navigation (R11) — pick layer
     property <int> focused-index: 0;
 
-    // Focus scope for the whole section — arrows navigate cards, Enter/Space activates,
-    // Tab is rejected so it bubbles to next focusable (pick→tune order, no trap).
+    // Tune debounce + skip-init + last-wins (R3)
+    property <bool> size-init: false;
+    property <bool> radius-init: false;
+    property <bool> gap-in-init: false;
+    property <bool> gap-out-init: false;
+    property <int> pending-size: root.geom-size;
+    property <int> pending-radius: root.geom-radius;
+    property <int> pending-gap-in: root.geom-gap-in;
+    property <int> pending-gap-out: root.geom-gap-out;
+    property <int> last-size: root.geom-size;
+    property <int> last-radius: root.geom-radius;
+    property <int> last-gap-in: root.geom-gap-in;
+    property <int> last-gap-out: root.geom-gap-out;
+    property <bool> geom-dirty: false;
+
+    geom-timer := Timer {
+        interval: 80ms;
+        running: root.geom-dirty;
+        triggered => {
+            if (root.pending-size != root.last-size || root.pending-radius != root.last-radius || root.pending-gap-in != root.last-gap-in || root.pending-gap-out != root.last-gap-out) {
+                root.apply-geometry(root.pending-size, root.pending-radius, root.pending-gap-in, root.pending-gap-out);
+                root.last-size = root.pending-size;
+                root.last-radius = root.pending-radius;
+                root.last-gap-in = root.pending-gap-in;
+                root.last-gap-out = root.pending-gap-out;
+            }
+            root.geom-dirty = false;
+        }
+    }
+
+    // Focus scope for pick — arrows navigate cards, Enter/Space activates,
+    // Tab rejected so it bubbles (pick→tune, no trap).
     fs := FocusScope {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
+            if (event.text == Key.Tab) {
+                return reject;
+            }
             if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
                 if (root.border-files.length > 0) {
                     root.focused-index = min(root.focused-index + 1, root.border-files.length - 1);
@@ -60,10 +104,36 @@ export component BordersSection inherits Rectangle {
 
     init => { fs.focus(); }
 
+    // Keep pending/last in sync when Rust snaps sliders (pick→tune one-way)
+    changed geom-size => {
+        if (!root.geom-dirty) {
+            root.pending-size = root.geom-size;
+            root.last-size = root.geom-size;
+        }
+    }
+    changed geom-radius => {
+        if (!root.geom-dirty) {
+            root.pending-radius = root.geom-radius;
+            root.last-radius = root.geom-radius;
+        }
+    }
+    changed geom-gap-in => {
+        if (!root.geom-dirty) {
+            root.pending-gap-in = root.geom-gap-in;
+            root.last-gap-in = root.geom-gap-in;
+        }
+    }
+    changed geom-gap-out => {
+        if (!root.geom-dirty) {
+            root.pending-gap-out = root.geom-gap-out;
+            root.last-gap-out = root.geom-gap-out;
+        }
+    }
+
     VerticalLayout {
         spacing: 0px;
 
-        // Header
+        // Header fixed
         VerticalLayout {
             padding: 16px;
             spacing: 4px;
@@ -75,7 +145,7 @@ export component BordersSection inherits Rectangle {
                 color: SkwdTokens.primary;
             }
             Text {
-                text: "Pick a border style — instantly applied. Tune (size/radius/gaps) lands next slice.";
+                text: "Pick a border style — instantly applied. Tune below.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: SkwdTokens.outline;
@@ -83,7 +153,7 @@ export component BordersSection inherits Rectangle {
             }
         }
 
-        // Pick layer: scrollable PresetCards
+        // Scrollable stacked pick+tune (visible together, scroll if overflow)
         ScrollView {
             vertical-stretch: 1;
             VerticalLayout {
@@ -92,6 +162,7 @@ export component BordersSection inherits Rectangle {
                 padding-bottom: 12px;
                 spacing: 8px;
 
+                // Pick cards
                 for i in root.border-files.length : PresetCard {
                     title: root.border-titles[i];
                     desc: root.border-descs[i];
@@ -111,36 +182,247 @@ export component BordersSection inherits Rectangle {
                     color: SkwdTokens.outline;
                     horizontal-alignment: center;
                 }
+
+                // Divider between pick and tune (R3 stacked layout)
+                Rectangle {
+                    height: 1px;
+                    background: SkwdTokens.outline.transparentize(0.6);
+                }
+
+                // COLOR_GATE: inert placeholder (must stay inert, no color behavior)
+                // COLOR_GATE: needs Engine::apply_border_color + config field — USER DECISION REQUIRED
+                Rectangle {
+                    height: 28px;
+                    background: transparent;
+                    border-width: 1px;
+                    border-color: #8fd8ff.transparentize(0.7);
+                    border-radius: SkwdTokens.radius-8;
+                    Text {
+                        text: "color — gated (next slice)";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        color: SkwdTokens.outline.transparentize(0.3);
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Size 1-5
+                size-wrap := Rectangle {
+                    border-width: size-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    size-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.geom-size + 1, 5);
+                                if (next != root.geom-size) {
+                                    root.geom-size = next;
+                                    if (!root.size-init) { root.size-init = true; return accept; }
+                                    root.pending-size = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.geom-size - 1, 1);
+                                if (next != root.geom-size) {
+                                    root.geom-size = next;
+                                    if (!root.size-init) { root.size-init = true; return accept; }
+                                    root.pending-size = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    GeometrySlider {
+                        label: "Border Thickness";
+                        value: root.geom-size;
+                        min: 1;
+                        max: 5;
+                        changed(v) => {
+                            if (!root.size-init) { root.size-init = true; return; }
+                            if (v == root.last-size) { return; }
+                            root.geom-size = v;
+                            root.pending-size = v;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                }
+
+                // Radius 0-100
+                radius-wrap := Rectangle {
+                    border-width: radius-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    radius-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.geom-radius + 1, 100);
+                                if (next != root.geom-radius) {
+                                    root.geom-radius = next;
+                                    if (!root.radius-init) { root.radius-init = true; return accept; }
+                                    root.pending-radius = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.geom-radius - 1, 0);
+                                if (next != root.geom-radius) {
+                                    root.geom-radius = next;
+                                    if (!root.radius-init) { root.radius-init = true; return accept; }
+                                    root.pending-radius = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    GeometrySlider {
+                        label: "Corner Radius";
+                        value: root.geom-radius;
+                        min: 0;
+                        max: 100;
+                        changed(v) => {
+                            if (!root.radius-init) { root.radius-init = true; return; }
+                            if (v == root.last-radius) { return; }
+                            root.geom-radius = v;
+                            root.pending-radius = v;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                }
+
+                // Gap In 0-30
+                gap-in-wrap := Rectangle {
+                    border-width: gap-in-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    gap-in-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.geom-gap-in + 1, 30);
+                                if (next != root.geom-gap-in) {
+                                    root.geom-gap-in = next;
+                                    if (!root.gap-in-init) { root.gap-in-init = true; return accept; }
+                                    root.pending-gap-in = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.geom-gap-in - 1, 0);
+                                if (next != root.geom-gap-in) {
+                                    root.geom-gap-in = next;
+                                    if (!root.gap-in-init) { root.gap-in-init = true; return accept; }
+                                    root.pending-gap-in = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    GeometrySlider {
+                        label: "Inner Gap";
+                        value: root.geom-gap-in;
+                        min: 0;
+                        max: 30;
+                        changed(v) => {
+                            if (!root.gap-in-init) { root.gap-in-init = true; return; }
+                            if (v == root.last-gap-in) { return; }
+                            root.geom-gap-in = v;
+                            root.pending-gap-in = v;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                }
+
+                // Gap Out 0-30
+                gap-out-wrap := Rectangle {
+                    border-width: gap-out-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    gap-out-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.geom-gap-out + 1, 30);
+                                if (next != root.geom-gap-out) {
+                                    root.geom-gap-out = next;
+                                    if (!root.gap-out-init) { root.gap-out-init = true; return accept; }
+                                    root.pending-gap-out = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.geom-gap-out - 1, 0);
+                                if (next != root.geom-gap-out) {
+                                    root.geom-gap-out = next;
+                                    if (!root.gap-out-init) { root.gap-out-init = true; return accept; }
+                                    root.pending-gap-out = next;
+                                    root.geom-dirty = false;
+                                    root.geom-dirty = true;
+                                    geom-timer.restart();
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    GeometrySlider {
+                        label: "Outer Gap";
+                        value: root.geom-gap-out;
+                        min: 0;
+                        max: 30;
+                        changed(v) => {
+                            if (!root.gap-out-init) { root.gap-out-init = true; return; }
+                            if (v == root.last-gap-out) { return; }
+                            root.geom-gap-out = v;
+                            root.pending-gap-out = v;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                }
+
+                Text {
+                    text: "↑↓ navigate • Enter/Space apply • arrows ±1 • Tab pick→tune→next • Esc back";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline.transparentize(0.4);
+                    horizontal-alignment: center;
+                }
             }
-        }
-
-        // Divider between pick and tune (R3 stacked layout)
-        Rectangle {
-            height: 1px;
-            background: SkwdTokens.outline.transparentize(0.6);
-        }
-
-        // Tune placeholder — visible together, not behind tabs (slice 4 owns it)
-        Rectangle {
-            height: 48px;
-            background: transparent;
-            Text {
-                text: "Tune — sliders for size, radius, gaps (next slice)";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-12;
-                color: SkwdTokens.outline.transparentize(0.3);
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-
-        Text {
-            text: "↑↓ navigate • Enter/Space apply • Tab pick→tune • Esc back";
-            font-family: SkwdTokens.font-body;
-            font-size: SkwdTokens.size-12;
-            color: SkwdTokens.outline.transparentize(0.4);
-            horizontal-alignment: center;
-            // use padding via parent
         }
     }
 }

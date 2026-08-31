@@ -29,16 +29,23 @@ export component PanelRoot inherits Rectangle {
     in property <[string]> border-tags;
     in property <[string]> border-files;
     in property <int> border-active-index: -1;
+    in-out property <int> border-size: 2;
+    in-out property <int> corner-radius: 32;
+    in-out property <int> gap-in: 5;
+    in-out property <int> gap-out: 5;
     callback back();
     callback section-selected(int);
     callback save-theme(string);
     callback apply-border(int, string);
+    callback apply-geometry(int, int, int, int);
 
     background: SkwdTokens.surface;
     border-radius: SkwdTokens.radius-12;
     clip: true;
 
     VerticalLayout {
+        width: 100%;
+        height: 100%;
         spacing: 0px;
 
         // Header
@@ -71,6 +78,8 @@ export component PanelRoot inherits Rectangle {
         Rectangle { height: SkwdTokens.border-1; background: SkwdTokens.outline; }
 
         HorizontalLayout {
+            width: 100%;
+            height: 100%;
             vertical-stretch: 1;
             spacing: 0px;
 
@@ -87,6 +96,7 @@ export component PanelRoot inherits Rectangle {
             // Content area — SaveSection for section 0, BordersSection for 1, placeholders for others (later slices)
             Rectangle {
                 horizontal-stretch: 1;
+                vertical-stretch: 1;
                 background: SkwdTokens.surface;
                 clip: true;
                 if root.section == 0 : SaveSection {
@@ -107,7 +117,12 @@ export component PanelRoot inherits Rectangle {
                     border-tags: root.border-tags;
                     border-files: root.border-files;
                     active-index: root.border-active-index;
+                    geom-size <=> root.border-size;
+                    geom-radius <=> root.corner-radius;
+                    geom-gap-in <=> root.gap-in;
+                    geom-gap-out <=> root.gap-out;
                     apply-border(idx, file) => { root.apply-border(idx, file); }
+                    apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
                 }
                 if root.section != 0 && root.section != 1 : VerticalLayout {
                     alignment: center;
