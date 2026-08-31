@@ -79,6 +79,9 @@ export component FilterBar inherits Rectangle {
     in property <bool> open: false;
     in property <bool> reduced-motion: false;
     callback style-selected(int);
+    // Mutating-window dropdown (R9): 6 section pills
+    in property <int> panel-section: 0;
+    callback panel-section-selected(int);
 
     // Overlay chrome paints nothing itself.
     background: transparent;
@@ -86,12 +89,13 @@ export component FilterBar inherits Rectangle {
     // ── Bar body: parks hidden behind the top edge when closed (clip-safe
     // slide), slides to y42 — just below the 36px toggle arrow — over
     // 250ms OutCubic. Horizontally centered, max width parent − 20; the
-    // width hugs the pill row through its preferred-width constraint. ──
+    // width hugs the pill row through its preferred-width constraint.
+    // Mutating-window extends height to two rows + divider (pick before tune).
     bar := Rectangle {
         x: (parent.width - self.width) / 2;
         y: root.open ? 42px : -self.height;
-        width: min(parent.width - 20px, pills.preferred-width);
-        height: 32px;
+        width: min(parent.width - 20px, pills-wrapper.preferred-width);
+        height: pills-wrapper.preferred-height + 16px;
         border-radius: SkwdTokens.radius-8;
         background: SkwdTokens.surface-container.transparentize(0.15);
         clip: true;
@@ -103,27 +107,92 @@ export component FilterBar inherits Rectangle {
         // Horizontal padding around the pills.
         property <length> pill-pad: 16px;
 
-        // ── Pills (HF5): SIDE BY SIDE in a HorizontalLayout — the diagonal
-        // cascade with its −10px overlap is gone. Exactly Slice + Mosaic —
-        // Hex removed per decision #632; style indices keep the legacy
-        // numbering (0 Slice / 2 Mosaic). ~6px gap between pills. ──
-        pills := HorizontalLayout {
-            padding-left: parent.pill-pad;
-            padding-right: parent.pill-pad;
-            spacing: 6px;
+        pills-wrapper := VerticalLayout {
+            padding: 8px;
+            spacing: 8px;
+            alignment: start;
 
-            slice-pill := SkewPill {
-                label: "Slice";
-                active: root.current-style == 0;
-                reduced-motion: root.reduced-motion;
-                selected => { root.style-selected(0); }
+            // ── Top row: gallery style pills (pick layer) ──
+            pills := HorizontalLayout {
+                padding-left: bar.pill-pad;
+                padding-right: bar.pill-pad;
+                spacing: 6px;
+
+                slice-pill := SkewPill {
+                    label: "Slice";
+                    active: root.current-style == 0;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.style-selected(0); }
+                }
+                mosaic-pill := SkewPill {
+                    label: "Mosaic";
+                    active: root.current-style == 2;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.style-selected(2); }
+                }
             }
-            mosaic-pill := SkewPill {
-                label: "Mosaic";
-                active: root.current-style == 2;
-                reduced-motion: root.reduced-motion;
-                selected => { root.style-selected(2); }
+
+            // Divider between gallery style and panel sections
+            Rectangle {
+                height: 1px;
+                background: SkwdTokens.outline.transparentize(0.6);
+            }
+
+            // ── Bottom row: 6 panel section pills + divider semantics (R9) ──
+            // Keyboard FocusScope (icy-cyan #8fd8ff focus border) — Tab order pick-before-tune (R11)
+            panel-pills := HorizontalLayout {
+                padding-left: bar.pill-pad;
+                padding-right: bar.pill-pad;
+                spacing: 6px;
+
+                // Wrapping FocusScope for keyboard navigation (R9 keyboard-reachable)
+                save-pill := SkewPill {
+                    label: "Save";
+                    active: root.panel-section == 0;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.panel-section-selected(0); }
+                }
+                borders-pill := SkewPill {
+                    label: "Borders";
+                    active: root.panel-section == 1;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.panel-section-selected(1); }
+                }
+                motion-pill := SkewPill {
+                    label: "Motion";
+                    active: root.panel-section == 2;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.panel-section-selected(2); }
+                }
+                filters-pill := SkewPill {
+                    label: "Filters";
+                    active: root.panel-section == 3;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.panel-section-selected(3); }
+                }
+                wallpaper-pill := SkewPill {
+                    label: "Wallpaper";
+                    active: root.panel-section == 4;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.panel-section-selected(4); }
+                }
+                system-pill := SkewPill {
+                    label: "System";
+                    active: root.panel-section == 5;
+                    reduced-motion: root.reduced-motion;
+                    selected => { root.panel-section-selected(5); }
+                }
             }
         }
+
+        // Icy-cyan focus border when any pill has keyboard focus (R11)
+        // Outer FocusScope to capture Tab navigation
+        focus-scope := FocusScope {
+            width: 100%;
+            height: 100%;
+        }
+        // Visual focus indicator: #8fd8ff 1px outline when focused (merged with above radius)
+        border-width: focus-scope.has-focus ? 1px : 0px;
+        border-color: #8fd8ff;
     }
 }

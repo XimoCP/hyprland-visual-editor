@@ -813,7 +813,11 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh = refresh_mosaic_page.clone();
             let animate = animate_slice_step.clone();
             let gallery_themes_root = gallery_themes_root.clone();
+            let shell_c = shell.clone();
             window.on_gallery_card_clicked(move |idx| {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
                 let i = idx as usize;
                 // V3 directional fluid: compute shortest ring delta and animate strip
                 let do_animate = {
@@ -897,7 +901,11 @@ fn main() -> Result<(), slint::PlatformError> {
         {
             let win = window.as_weak();
             let animate = animate_slice_step.clone();
+            let shell_c = shell.clone();
             window.on_gallery_card_right_clicked(move |idx| {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
                 if let Some(w) = win.upgrade() {
                     let len = w.get_gallery_cards().row_count() as usize;
                     if len > 0 {
@@ -911,6 +919,48 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
                     let _ = w.get_gallery_style();
+                }
+            });
+        }
+        // ── Mutating panel wiring (slice 1, R1, R2, R8, R9) ──
+        // 350ms Timer → complete_mutation, Esc reverses, wheel/click gated, fullscreen held (no resize).
+        {
+            let shell_c = shell.clone();
+            let win = window.as_weak();
+            window.on_panel_section_selected(move |section| {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
+                let idx = section.max(0) as usize;
+                let target = crate::shell::nav::PanelSection::from_index(idx).unwrap_or(crate::shell::nav::PanelSection::Save);
+                let is_closed = crate::shell::Shell::with_nav(&shell_c, |n| n.panel_state() == crate::shell::nav::PanelState::Closed);
+                let is_open = crate::shell::Shell::with_nav(&shell_c, |n| matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)));
+                if is_closed {
+                    let _ = crate::shell::Shell::enter_panel(&shell_c, target);
+                } else if is_open {
+                    crate::shell::Shell::set_panel_section(&shell_c, target);
+                }
+                let _ = &win;
+            });
+        }
+        {
+            let shell_c = shell.clone();
+            let win = window.as_weak();
+            window.on_panel_back(move || {
+                let is_mutating = crate::shell::Shell::is_mutating(&shell_c);
+                let is_open = crate::shell::Shell::with_nav(&shell_c, |n| matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)));
+                if is_mutating || is_open {
+                    let _ = crate::shell::Shell::leave_panel(&shell_c);
+                } else {
+                    // Fallback: hide/minimize via composer (same as back-activated when not in panel)
+                    if let Some(w) = win.upgrade() {
+                        if let Some(mut ctrl) = crate::composer::global_controller() {
+                            if !ctrl.window_hidden() {
+                                ctrl.toggle_tray(&w);
+                                crate::tray::refresh_global_menu();
+                            }
+                        }
+                    }
                 }
             });
         }

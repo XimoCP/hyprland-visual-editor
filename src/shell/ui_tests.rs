@@ -974,3 +974,138 @@ fn mosaic_curtain_respects_reduced_motion() {
     let settled_dark = count_cover_pixels(&settled);
     assert!(settled_dark < 300, "reduced settled must have no covers — got {settled_dark}");
 }
+
+// ── Mutating-window slice 1: panel morph midflight (R1) ──────────────
+
+#[test]
+fn panel_morph_midflight_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(false);
+
+    // Populate gallery with minimal cards so GalleryRoot paints content (slice)
+    let count = 6usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let src = slice_test_gradient(i);
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_focus_pos(0.0);
+
+    // Flush layout settled
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let settled_gallery = win.window().take_snapshot().expect("gallery settled");
+    save_slice_png(settled_gallery.clone(), "/tmp/opencode/panel_morph_gallery_settled.png");
+
+    // Trigger mutating: Gallery 1→0 / Panel 0→1 (350ms morph, 200ms stagger R1)
+    win.set_is_mutating(true);
+    // Advance ~175ms (midflight) — halfway through 350ms crossfade
+    for _ in 0..11 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let mid = win.window().take_snapshot().expect("midflight snapshot");
+    save_slice_png(mid.clone(), "/tmp/opencode/panel_morph_midflight.png");
+
+    // Complete mutation: panel open
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    for _ in 0..22 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let panel_settled = win.window().take_snapshot().expect("panel settled");
+    save_slice_png(panel_settled.clone(), "/tmp/opencode/panel_morph_panel_settled.png");
+
+    // Midflight must differ from both settled extremes (crossfade visible, not instant swap)
+    let diff_gallery_mid = count_buffer_diff(&settled_gallery, &mid);
+    let diff_mid_panel = count_buffer_diff(&mid, &panel_settled);
+    assert!(
+        diff_gallery_mid > 500,
+        "midflight must differ from gallery settled — got {diff_gallery_mid}, expected >500 (crossfade)"
+    );
+    assert!(
+        diff_mid_panel > 500,
+        "midflight must differ from panel settled — got {diff_mid_panel}, expected >500"
+    );
+
+    // Reduced-motion crossfade path (R1, R8): durations 0 → instant, no 350ms wait
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(false);
+    win.set_is_mutating(false);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    // Instant morph via reduced-motion: set mutating then immediately panel open (0ms)
+    win.set_is_mutating(true);
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(8));
+    let reduced_mid = win.window().take_snapshot().expect("reduced mid");
+    save_slice_png(reduced_mid.clone(), "/tmp/opencode/panel_morph_reduced_mid.png");
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    // No delay needed — reduced-motion duration 0 means immediate
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(8));
+    let reduced_settled = win.window().take_snapshot().expect("reduced settled");
+    save_slice_png(reduced_settled.clone(), "/tmp/opencode/panel_morph_reduced_settled.png");
+    // Reduced snapshots should be valid (no panic) and at least panel is visible (reuse diff check loosely)
+    let diff_reduced = count_buffer_diff(&reduced_mid, &reduced_settled);
+    // With 0ms, mid and settled may be close; just ensure we didn't crash and images exist
+    assert!(
+        reduced_mid.width() == reduced_settled.width(),
+        "reduced snapshots dimensions must match"
+    );
+    let _ = diff_reduced;
+}

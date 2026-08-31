@@ -71,8 +71,10 @@ impl Shell {
     /// `set_size` updates back to the Slint surface.
     pub fn new(window: slint::Weak<crate::MainWindow>) -> Rc<RefCell<Self>> {
         let base = SizePolicy::new().target(false);
+        let mut nav = NavState::new();
+        nav.set_reduced_motion(crate::shell::gallery::model::prefers_reduced_motion());
         let shell = Rc::new(RefCell::new(Self {
-            nav: NavState::new(),
+            nav,
             slots: SlotRegistry::new(),
             size: SizePolicy::new(),
             window,
@@ -85,6 +87,8 @@ impl Shell {
         // Apply the base size immediately so the window opens at 900×680
         // (base-window spec R6 startup scenario).
         shell.borrow().push_size_to_window();
+        // Mirror initial panel state (closed)
+        Shell::mirror_panel(&shell);
         shell
     }
 
@@ -215,6 +219,117 @@ impl Shell {
         shell.borrow().current_size
     }
 
+    /// Whether the panel is mutating (input guard R9).
+    pub fn is_mutating(shell: &Rc<RefCell<Self>>) -> bool {
+        shell.borrow().nav.is_mutating()
+    }
+
+    /// Enter panel from Gallery (R1). Holds fullscreen, no resize, starts 350ms Timer → complete.
+    pub fn enter_panel(shell: &Rc<RefCell<Self>>, section: crate::shell::nav::PanelSection) -> bool {
+        let entered = {
+            let mut s = shell.borrow_mut();
+            s.nav.enter_panel(section)
+        };
+        if !entered {
+            return false;
+        }
+        Self::mirror_panel(shell);
+        // Hold fullscreen (R1) — no window resize anywhere in the flow
+        if let Some(mut ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
+            let _ = ctrl.composer().set_fullscreen(true);
+            // Ensure gallery logical session is marked active if gallery is expanded
+            if !ctrl.gallery_session_active() {
+                let _ = ctrl.enter_gallery_session();
+            }
+        } else {
+            // Headless fallback: no controller, still considered held
+        }
+        let delay = {
+            let s = shell.borrow();
+            s.nav.effective_duration(350)
+        };
+        if delay == 0 {
+            Shell::complete_morph(shell);
+        } else {
+            let weak = Rc::downgrade(shell);
+            slint::Timer::single_shot(Duration::from_millis(delay), move || {
+                if let Some(rc) = weak.upgrade() {
+                    Shell::complete_morph(&rc);
+                }
+            });
+        }
+        true
+    }
+
+    /// Complete the pending morph (Timer callback R1).
+    fn complete_morph(shell: &Rc<RefCell<Self>>) {
+        {
+            let mut s = shell.borrow_mut();
+            s.nav.complete_mutation();
+        }
+        Self::mirror_panel(shell);
+        // Re-assert fullscreen hold (no resize)
+        if let Some(ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
+            let _ = ctrl.composer().set_fullscreen(true);
+        }
+    }
+
+    /// Leave panel (Esc reverses, R1). Starts 350ms Timer → Closed, or immediate when reduced-motion.
+    pub fn leave_panel(shell: &Rc<RefCell<Self>>) -> bool {
+        let started = {
+            let mut s = shell.borrow_mut();
+            s.nav.leave_panel()
+        };
+        if !started {
+            return false;
+        }
+        Self::mirror_panel(shell);
+        let delay = {
+            let s = shell.borrow();
+            s.nav.effective_duration(350)
+        };
+        if delay == 0 {
+            Shell::complete_morph(shell);
+        } else {
+            let weak = Rc::downgrade(shell);
+            slint::Timer::single_shot(Duration::from_millis(delay), move || {
+                if let Some(rc) = weak.upgrade() {
+                    Shell::complete_morph(&rc);
+                }
+            });
+        }
+        true
+    }
+
+    /// Switch section without Gallery remount when Open (R2). No timer.
+    pub fn set_panel_section(shell: &Rc<RefCell<Self>>, section: crate::shell::nav::PanelSection) {
+        {
+            let mut s = shell.borrow_mut();
+            s.nav.set_section(section);
+        }
+        Self::mirror_panel(shell);
+    }
+
+    /// Push panel state to the Slint mirrors.
+    fn mirror_panel(shell: &Rc<RefCell<Self>>) {
+        let Some(window) = shell.borrow().window.upgrade() else { return };
+        let (section, is_mutating, is_open) = {
+            let s = shell.borrow();
+            let state = s.nav.panel_state();
+            let is_mut = s.nav.is_mutating();
+            let open = matches!(state, crate::shell::nav::PanelState::Open(_));
+            let sec = s.nav.panel_section().map(|p| p.index() as i32).unwrap_or(0);
+            (sec, is_mut, open)
+        };
+        window.set_panel_section(section);
+        window.set_is_mutating(is_mutating);
+        window.set_is_panel_open(is_open);
+        // Also forward panel-section to gallery for FilterBar mirror (pills active)
+        // The FilterBar reads panel-section via ShellRoot.panel-section, mirrored above via MainWindow already?
+        // ShellRoot.panel-section is now set via MainWindow.panel-section above; need to ensure gallery also sees it.
+        // No extra step — ShellRoot.panel-section is driven by MainWindow.panel-section.
+    }
+
     // ── Internals ─────────────────────────────────────────────────────
 
     /// Process every queued command in order. Each transition mounts /
@@ -273,10 +388,16 @@ impl Shell {
         let screen = s.nav.screen();
         let expanded = s.nav.expansion() != ExpansionState::Collapsed;
         let focused = s.nav.focused_card();
+        let panel_section = s.nav.panel_section().map(|p| p.index() as i32).unwrap_or(0);
+        let is_mutating = s.nav.is_mutating();
+        let is_open = matches!(s.nav.panel_state(), crate::shell::nav::PanelState::Open(_));
         drop(s);
         window.set_mounted_screen(screen.mounted_index() as i32);
         window.set_expanded(expanded);
         window.set_focused_card(focused as i32);
+        window.set_panel_section(panel_section);
+        window.set_is_mutating(is_mutating);
+        window.set_is_panel_open(is_open);
     }
 
     /// Start (or retarget) the stepped size animator toward the target

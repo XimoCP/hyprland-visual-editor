@@ -42,12 +42,15 @@ export component GalleryRoot inherits Rectangle {
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> reduced-motion: false;
+    // Mutating-window dropdown (R9)
+    in property <int> panel-section: 0;
     // Backdrop scrim level (skwd selectorBackdropOpacity/100; default 0
     // keeps the live desktop fully visible behind the cards).
     in property <float> backdrop-alpha: 0.0;
 
     // ── Events reported to Rust ──
     callback style-selected(int);
+    callback panel-section-selected(int);
     callback card-clicked(int);
     callback card-right-clicked(int);
     callback wheel-step(int); // debounced ±1 gesture from SliceCarousel
@@ -174,16 +177,22 @@ export component GalleryRoot inherits Rectangle {
     }
 
     // ── FilterBar (gallery-immersive-redesign 4.1, HF5): top-center style
-    // menu, shown only while style-menu-open; a pick closes it. ──
+    // menu, shown only while style-menu-open; a pick closes it.
+    // Mutating-window extends it with 6 panel pills (R9). ──
     FilterBar {
         width: 100%;
         height: 100%;
         current-style: root.current-style;
+        panel-section: root.panel-section;
         open: root.style-menu-open;
         reduced-motion: root.reduced-motion;
         style-selected(style) => {
             root.style-menu-open = false;
             root.style-selected(style);
+        }
+        panel-section-selected(section) => {
+            root.style-menu-open = false;
+            root.panel-section-selected(section);
         }
     }
 

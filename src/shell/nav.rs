@@ -62,6 +62,89 @@ pub enum ExpansionState {
     Expanded(Screen),
 }
 
+/// Panel sections inside the mutating window (mutating-window R1-R7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelSection {
+    Save,
+    Borders,
+    Motion,
+    Filters,
+    Wallpaper,
+    System,
+}
+
+impl PanelSection {
+    /// Ordered list of all sections for iteration/Tab order (pick-before-tune).
+    #[allow(dead_code)]
+    pub const ALL: [PanelSection; 6] = [
+        PanelSection::Save,
+        PanelSection::Borders,
+        PanelSection::Motion,
+        PanelSection::Filters,
+        PanelSection::Wallpaper,
+        PanelSection::System,
+    ];
+
+    /// Integer index for Slint `panel-section` property (0..5).
+    pub fn index(self) -> usize {
+        match self {
+            PanelSection::Save => 0,
+            PanelSection::Borders => 1,
+            PanelSection::Motion => 2,
+            PanelSection::Filters => 3,
+            PanelSection::Wallpaper => 4,
+            PanelSection::System => 5,
+        }
+    }
+
+    /// Reverse mapping from index (0..5), or None out of range.
+    pub fn from_index(idx: usize) -> Option<Self> {
+        match idx {
+            0 => Some(PanelSection::Save),
+            1 => Some(PanelSection::Borders),
+            2 => Some(PanelSection::Motion),
+            3 => Some(PanelSection::Filters),
+            4 => Some(PanelSection::Wallpaper),
+            5 => Some(PanelSection::System),
+            _ => None,
+        }
+    }
+
+    /// Keyboard shortcut mapping (R9, R11). Alt+A/B/M/F/W/Y are the canonical
+    /// shortcuts for the 6 dropdown pills. Case-insensitive and accepts both
+    /// `Alt+A` and bare `a`.
+    #[allow(dead_code)]
+    pub fn from_shortcut(s: &str) -> Option<Self> {
+        let key = s.trim().to_ascii_lowercase();
+        let bare = if key.starts_with("alt+") { &key[4..] } else { &key };
+        match bare {
+            "a" | "s" | "save" => Some(PanelSection::Save),
+            "b" | "borders" => Some(PanelSection::Borders),
+            "m" | "motion" => Some(PanelSection::Motion),
+            "f" | "filters" => Some(PanelSection::Filters),
+            "w" | "wallpaper" => Some(PanelSection::Wallpaper),
+            "y" | "system" => Some(PanelSection::System),
+            _ => None,
+        }
+    }
+}
+
+/// Direction of the panel mutation morph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutDir {
+    Enter,
+    Leave,
+}
+
+/// Panel mutation state machine (mutating-window R1).
+/// `Closed` is HEAD behavior; `Mutating` holds the 350ms morph; `Open` holds the active section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelState {
+    Closed,
+    Mutating { direction: MutDir, target: PanelSection },
+    Open(PanelSection),
+}
+
 /// A navigation command queued by the shell. Keyboard and mouse both emit
 /// these — activation is identical regardless of input source (spec R4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +182,9 @@ pub struct NavState {
     expansion: ExpansionState,
     queue: VecDeque<NavCommand>,
     focused_card: usize,
+    panel: PanelState,
+    /// Reduced-motion flag mirrored from system (R8). When true all durations gate to 0.
+    reduced_motion: bool,
 }
 
 impl NavState {
@@ -110,6 +196,8 @@ impl NavState {
             expansion: ExpansionState::Collapsed,
             queue: VecDeque::new(),
             focused_card: 0,
+            panel: PanelState::Closed,
+            reduced_motion: false,
         }
     }
 
@@ -195,6 +283,101 @@ impl NavState {
         self.screen = Screen::Home;
         self.expansion = ExpansionState::Collapsed;
         Some(transition)
+    }
+
+    // ── Panel mutation (mutating-window R1, R2, R8, R9) ────────────────
+
+    /// Enter the panel from Gallery only. Returns true on success and sets
+    /// `Mutating{Enter,target}`; false when not Gallery or already mutating/open.
+    pub fn enter_panel(&mut self, target: PanelSection) -> bool {
+        if self.screen != Screen::Gallery {
+            return false;
+        }
+        if self.panel != PanelState::Closed {
+            return false;
+        }
+        self.panel = PanelState::Mutating { direction: MutDir::Enter, target };
+        true
+    }
+
+    /// Complete the pending mutation after the 350ms Timer.
+    /// `Mutating{Enter,target}` → `Open(target)`, `Mutating{Leave,_}` → `Closed`.
+    pub fn complete_mutation(&mut self) {
+        match self.panel {
+            PanelState::Mutating { direction: MutDir::Enter, target } => {
+                self.panel = PanelState::Open(target);
+            }
+            PanelState::Mutating { direction: MutDir::Leave, .. } => {
+                self.panel = PanelState::Closed;
+            }
+            _ => {}
+        }
+    }
+
+    /// Leave the panel (Esc reverses). From `Open(section)` or mid-enter `Mutating{Enter}`
+    /// transitions to `Mutating{Leave}`; from `Mutating{Leave}` or `Closed` is no-op.
+    pub fn leave_panel(&mut self) -> bool {
+        match self.panel {
+            PanelState::Open(section) => {
+                self.panel = PanelState::Mutating { direction: MutDir::Leave, target: section };
+                true
+            }
+            PanelState::Mutating { direction: MutDir::Enter, target } => {
+                // Reverse mid-flight (R1 Esc reverses)
+                self.panel = PanelState::Mutating { direction: MutDir::Leave, target };
+                true
+            }
+            PanelState::Closed => false,
+            PanelState::Mutating { direction: MutDir::Leave, .. } => false,
+        }
+    }
+
+    /// Switch section without Gallery remount when `Open` (R2 internal nav). No-op otherwise.
+    pub fn set_section(&mut self, section: PanelSection) {
+        if let PanelState::Open(_) = self.panel {
+            self.panel = PanelState::Open(section);
+        }
+    }
+
+    /// Whether the window is currently mutating (input guard R9).
+    pub fn is_mutating(&self) -> bool {
+        matches!(self.panel, PanelState::Mutating { .. })
+    }
+
+    /// Current panel state (read-only).
+    pub fn panel_state(&self) -> PanelState {
+        self.panel
+    }
+
+    /// Current panel section if open/mutating, else None.
+    pub fn panel_section(&self) -> Option<PanelSection> {
+        match self.panel {
+            PanelState::Open(s) => Some(s),
+            PanelState::Mutating { target, .. } => Some(target),
+            PanelState::Closed => None,
+        }
+    }
+
+    /// Reduced-motion flag mutator (R8). Test harness sets it from env.
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion = reduced;
+    }
+
+    /// Whether reduced-motion is active.
+    #[allow(dead_code)]
+    pub fn is_reduced_motion(&self) -> bool {
+        self.reduced_motion
+    }
+
+    /// Gate a duration to 0 when reduced-motion is active (R8).
+    pub fn effective_duration(&self, original_ms: u64) -> u64 {
+        if self.reduced_motion { 0 } else { original_ms }
+    }
+
+    /// Stateless helper also gates an arbitrary duration (convenience for timers).
+    #[allow(dead_code)]
+    pub fn effective_duration_static(original_ms: u64, reduced: bool) -> u64 {
+        if reduced { 0 } else { original_ms }
     }
 }
 
@@ -414,5 +597,37 @@ mod tests {
             // The mounted_index of a card target is card+1.
             assert_eq!(screen.mounted_index(), card + 1);
         }
+    }
+
+    // ── PanelState mutation (mutating-window R1, R9) ─────────────────
+
+    #[test]
+    fn test_enter_panel_only_from_gallery_sets_mutating() {
+        let mut ns = NavState::new();
+        // Not Gallery -> must refuse
+        assert!(!ns.enter_panel(PanelSection::Save), "enter_panel must fail when not Gallery");
+        assert!(!ns.is_mutating(), "not mutating after failed enter");
+        // Expand Gallery
+        ns.push(NavCommand::Expand(Screen::Gallery));
+        assert!(ns.process_next().is_some());
+        // Now Gallery -> enter_panel succeeds and sets mutating
+        assert!(ns.enter_panel(PanelSection::Save), "enter_panel must succeed from Gallery");
+        assert!(ns.is_mutating(), "is_mutating true while Mutating");
+        // Complete mutation -> open, no longer mutating
+        ns.complete_mutation();
+        assert!(!ns.is_mutating(), "complete_mutation clears mutating");
+        assert_eq!(ns.panel_state(), PanelState::Open(PanelSection::Save));
+    }
+
+    #[test]
+    fn test_alt_a_enter_panel_maps() {
+        // Alt-A shortcut maps to Save section (R9 keyboard-reachable)
+        let target = PanelSection::from_shortcut("Alt+A").expect("Alt+A must map to a section");
+        assert_eq!(target, PanelSection::Save);
+        let mut ns = NavState::new();
+        ns.push(NavCommand::Expand(Screen::Gallery));
+        assert!(ns.process_next().is_some());
+        assert!(ns.enter_panel(target), "Alt+A target must be enterable from Gallery");
+        assert!(ns.is_mutating());
     }
 }

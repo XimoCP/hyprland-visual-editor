@@ -124,6 +124,14 @@ impl Slot for StubSlot {
     }
 }
 
+/// Input guard for mutating window (R9). Returns true while `NavState` is in `Mutating`.
+/// Stub for slots layer — real guard lives in NavState; kept here so UI layers can
+/// import `slots::is_mutating` without coupling to nav internals directly.
+#[allow(dead_code)]
+pub fn is_mutating(nav: &super::nav::NavState) -> bool {
+    nav.is_mutating()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

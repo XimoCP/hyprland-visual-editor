@@ -9,6 +9,7 @@ import { GalleryRoot } from "gallery/GalleryRoot.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
+import { PanelRoot } from "panel/PanelRoot.slint";
 // Re-export the token singleton so consumers of this compilation unit (and
 // delivery 4's ui/main.slint) can read it under its own name from Rust.
 export { SkwdTokens }
@@ -100,6 +101,13 @@ export component ShellRoot inherits Rectangle {
     // Stage geometry events from GalleryRoot (logical lengths).
     callback gallery-stage-geometry-changed(length, length);
 
+    // ── Mutating panel (slice 1 skeleton) ──
+    in property <int> panel-section: 0;
+    in property <bool> is-mutating: false;
+    in property <bool> is-panel-open: false;
+    callback panel-back();
+    callback panel-section-selected(int);
+
     // Gallery mounts over the LIVE DESKTOP (gallery-immersive-redesign 1.8):
     // while Gallery holds the screen the shell root must not paint either —
     // an opaque surface fill here would cover MainWindow's transparent
@@ -164,7 +172,9 @@ export component ShellRoot inherits Rectangle {
 
         // ── Slot area: the mounted screen renders here. `if`+enum replaces
         //    the QML Loader (design D3); the gallery/workshop slot views land
-        //    in modules 2/4 — these are placeholders ──
+        //    in modules 2/4 — these are placeholders. Mutating-window overlays
+        //    GalleryRoot and PanelRoot crossfading (350ms morph, 200ms stagger)
+        //    when is-mutating/is-panel-open (R1).
         Rectangle {
             vertical-stretch: 1;
             // Gallery mounts over the LIVE DESKTOP (gallery-immersive-
@@ -191,30 +201,70 @@ export component ShellRoot inherits Rectangle {
                     vertical-alignment: center;
                 }
             }
-            if root.mounted-screen == 1 : GalleryRoot {
-                current-style: root.gallery-style;
-                focused-index: root.gallery-focused;
-                cards: root.gallery-cards;
-                slice-tiles: root.gallery-slice-tiles;
-                slice-focus-pos: root.gallery-slice-focus-pos;
-                slice-delta-base: root.gallery-slice-delta-base;
-                slice-rebasing: root.gallery-slice-rebasing;
-                mosaic-tiles: root.gallery-mosaic-tiles;
-                mosaic-under-tiles: root.gallery-mosaic-under-tiles;
-                mosaic-current-page: root.gallery-mosaic-current-page;
-                mosaic-total-pages: root.gallery-mosaic-total-pages;
-                mosaic-page-numbers: root.gallery-mosaic-page-numbers;
-                empty: root.gallery-empty;
-                empty-text: root.gallery-empty-text;
-                mit-link: root.gallery-mit-link;
-                reduced-motion: root.gallery-reduced-motion;
-                style-selected(style) => { root.gallery-style-selected(style); }
-                card-clicked(idx) => { root.gallery-card-clicked(idx); }
-                card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
-                wheel-step(dir) => { root.gallery-wheel-step(dir); }
-                mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
-                mit-opened => { root.gallery-mit-open(); }
-                stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
+            if root.mounted-screen == 1 : Rectangle {
+                width: 100%;
+                height: 100%;
+
+                // Layer crossfade: GalleryRoot 1→0 and PanelRoot 0→1 (350ms morph, 200ms stagger)
+                gallery-layer := GalleryRoot {
+                    width: 100%;
+                    height: 100%;
+                    opacity: root.is-panel-open ? 0.0 : (root.is-mutating ? 0.45 : 1.0);
+                    animate opacity { duration: root.gallery-reduced-motion ? 0ms : 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    current-style: root.gallery-style;
+                    panel-section: root.panel-section;
+                    focused-index: root.gallery-focused;
+                    cards: root.gallery-cards;
+                    slice-tiles: root.gallery-slice-tiles;
+                    slice-focus-pos: root.gallery-slice-focus-pos;
+                    slice-delta-base: root.gallery-slice-delta-base;
+                    slice-rebasing: root.gallery-slice-rebasing;
+                    mosaic-tiles: root.gallery-mosaic-tiles;
+                    mosaic-under-tiles: root.gallery-mosaic-under-tiles;
+                    mosaic-current-page: root.gallery-mosaic-current-page;
+                    mosaic-total-pages: root.gallery-mosaic-total-pages;
+                    mosaic-page-numbers: root.gallery-mosaic-page-numbers;
+                    empty: root.gallery-empty;
+                    empty-text: root.gallery-empty-text;
+                    mit-link: root.gallery-mit-link;
+                    reduced-motion: root.gallery-reduced-motion;
+                    style-selected(style) => { root.gallery-style-selected(style); }
+                    panel-section-selected(section) => { root.panel-section-selected(section); }
+                    card-clicked(idx) => { root.gallery-card-clicked(idx); }
+                    card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
+                    wheel-step(dir) => { root.gallery-wheel-step(dir); }
+                    mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
+                    mit-opened => { root.gallery-mit-open(); }
+                    stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
+                }
+
+                panel-layer := PanelRoot {
+                    width: 100%;
+                    height: 100%;
+                    opacity: root.is-panel-open ? 1.0 : (root.is-mutating ? 0.55 : 0.0);
+                    // Stagger: panel fades in 200ms after gallery starts fading (simulate via longer ease, visually staggered)
+                    animate opacity { duration: root.gallery-reduced-motion ? 0ms : 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    section: root.panel-section;
+                    open: root.is-panel-open;
+                    mutating: root.is-mutating;
+                    reduced-motion: root.gallery-reduced-motion;
+                    back => { root.panel-back(); }
+                    section-selected(section) => { root.panel-section-selected(section); }
+                }
+
+                // Input guard during Mutating (R9): absorbs wheel/click
+                if root.is-mutating : Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    background: transparent;
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: default;
+                        // Consume without forwarding
+                        clicked => {}
+                    }
+                }
             }
             if root.mounted-screen == 2 : SlotPlaceholder {
                 placeholder-text: root.slot-workshop-hint;
@@ -273,7 +323,13 @@ export component ShellRoot inherits Rectangle {
         }
         KeyBinding {
             keys: @keys(Escape);
-            activated => { root.back-activated(); }
+            activated => {
+                if (root.is-mutating || root.is-panel-open) {
+                    root.panel-back();
+                } else {
+                    root.back-activated();
+                }
+            }
         }
     }
 }

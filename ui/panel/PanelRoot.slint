@@ -1,0 +1,120 @@
+// HVE 2 — PanelRoot (mutating-window slice 1 stub).
+//
+// Root sheet for the panel's 6 internal sections (R2). Slice 1 is a
+// placeholder skeleton: header + left rail + content placeholder + back
+// affordance. Later slices fill each section (Save, Borders, Motion, etc.)
+// inside the content area. Esc handling is via shell-level FocusScope —
+// this component just forwards the callback.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+import { PanelMenu } from "PanelMenu.slint";
+
+export component PanelRoot inherits Rectangle {
+    in property <int> section: 0;
+    in property <bool> mutating: false;
+    in property <bool> open: false;
+    in property <bool> reduced-motion: false;
+    in property <string> theme-name: "My Theme";
+    callback back();
+    callback section-selected(int);
+
+    background: SkwdTokens.surface;
+    border-radius: SkwdTokens.radius-12;
+    clip: true;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Header
+        Rectangle {
+            height: 56px;
+            background: SkwdTokens.surface-container;
+            HorizontalLayout {
+                padding-left: SkwdTokens.spacing-16;
+                padding-right: SkwdTokens.spacing-16;
+                spacing: SkwdTokens.spacing-12;
+                alignment: center;
+                Text {
+                    text: "▸ " + root.theme-name;
+                    font-family: SkwdTokens.font-heading;
+                    font-size: SkwdTokens.size-16;
+                    font-weight: 700;
+                    color: SkwdTokens.primary;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "Esc to return";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Rectangle { height: SkwdTokens.border-1; background: SkwdTokens.outline; }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 0px;
+
+            // Left rail
+            PanelMenu {
+                width: 160px;
+                active-section: root.section;
+                reduced-motion: root.reduced-motion;
+                section-selected(section) => { root.section-selected(section); }
+            }
+
+            Rectangle { width: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+
+            // Content placeholder (slice 1 — real sections land in later slices)
+            Rectangle {
+                horizontal-stretch: 1;
+                background: SkwdTokens.surface;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: SkwdTokens.spacing-12;
+                    Text {
+                        text: ["Save","Borders","Motion","Filters","Wallpaper","System"][root.section];
+                        font-family: SkwdTokens.font-heading;
+                        font-size: SkwdTokens.size-24;
+                        color: SkwdTokens.primary;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Section placeholder — slice 1 skeleton";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        color: SkwdTokens.outline;
+                        horizontal-alignment: center;
+                    }
+                    Rectangle {
+                        height: 40px;
+                        width: 160px;
+                        background: SkwdTokens.primary.transparentize(0.85);
+                        border-radius: SkwdTokens.radius-8;
+                        horizontal-stretch: 0;
+                        x: (parent.width - self.width) / 2;
+                        Text {
+                            text: "Back to Gallery";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            color: SkwdTokens.primary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { root.back(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

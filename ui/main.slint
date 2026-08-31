@@ -235,6 +235,13 @@ export component MainWindow inherits Window {
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
 
+    // ── Mutating panel (slice 1 skeleton, R1) ──
+    in-out property <int> panel-section: 0;
+    in-out property <bool> is-mutating: false;
+    in-out property <bool> is-panel-open: false;
+    callback panel-back();
+    callback panel-section-selected(int);
+
 
     // ── Settings ──
     in-out property <bool> settings-open: false;
@@ -524,6 +531,9 @@ export component MainWindow inherits Window {
         gallery-mit-footer: root.gallery-mit-footer;
         gallery-mit-link: root.gallery-mit-link;
         gallery-reduced-motion: root.gallery-reduced-motion;
+        panel-section: root.panel-section;
+        is-mutating: root.is-mutating;
+        is-panel-open: root.is-panel-open;
         gallery-style-selected(style) => { root.gallery-style-selected(style); }
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
@@ -531,6 +541,8 @@ export component MainWindow inherits Window {
         gallery-mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
         gallery-mit-open => { root.gallery-mit-open(); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
+        panel-back => { root.panel-back(); }
+        panel-section-selected(section) => { root.panel-section-selected(section); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──

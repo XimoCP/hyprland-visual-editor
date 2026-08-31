@@ -126,6 +126,10 @@ pub fn setup_callbacks(
         let refresh_slice_ring_nav = refresh_slice_ring.clone();
         let _ = &refresh_slice_ring_nav; // keep for non-slice fallback if needed
         window.on_nav_move(move |direction| {
+            // R9 input guard: ignore arrows while mutating
+            if crate::shell::Shell::is_mutating(&shell) {
+                return;
+            }
             use crate::shell::nav::ExpansionState;
             use crate::shell::nav::Screen;
             use slint::Model;
@@ -173,13 +177,17 @@ pub fn setup_callbacks(
     }
 
     // ── Gallery wheel (S2 ring): debounce Timer fires once per idle gesture;
-    // V3 directional fluid — animate strip, not instant.
+    // V3 directional fluid — animate strip, not instant. Gated while mutating (R9).
     {
         let weak = window.as_weak();
         let animate = animate_slice_step.clone();
+        let shell_c = shell.clone();
         let _refresh = refresh_slice_ring.clone();
         let _ = &_refresh;
         window.on_gallery_wheel_step(move |dir| {
+            if crate::shell::Shell::is_mutating(&shell_c) {
+                return;
+            }
             let _ = &weak;
             animate(dir as isize);
         });
@@ -188,11 +196,15 @@ pub fn setup_callbacks(
     // ── Mosaic page flip (Mosaic final scheme): the MosaicView wheel debounce
     // fires ±1; we step the Rust page model and re-render the current page.
     // Geometry is NOT rebuilt on a flip (MosaicPages::step is pure). Clamped,
-    // no wrap. ──
+    // no wrap. Gated while mutating (R9).
     {
         let pages = mosaic_pages.clone();
         let refresh = refresh_mosaic_page.clone();
+        let shell_c = shell.clone();
         window.on_gallery_mosaic_page_step(move |dir| {
+            if crate::shell::Shell::is_mutating(&shell_c) {
+                return;
+            }
             let changed = pages.lock().unwrap().step(dir as isize);
             if changed {
                 refresh(true); // page flip → snapshot under layer
