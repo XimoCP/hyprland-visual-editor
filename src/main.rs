@@ -1401,6 +1401,32 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
+    // ── Panel Motion pick (slice 5, R4) — 19 cards scan("animations") → apply_animation toggle-off → none
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        window.on_panel_apply_animation(move |idx, file| {
+            let file_str = file.to_string();
+            let (is_deact, result) = {
+                let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                let is_deact = st.cfg().active_anim_file == file_str;
+                let new = if is_deact { String::new() } else { file_str.clone() };
+                st.cfg_mut().active_anim_file = new.clone();
+                let _ = st.cfg().save();
+                let arg = if is_deact { "none" } else { &new };
+                let res = st.engine().apply_animation(arg);
+                (is_deact, res)
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Animation error: {}", e);
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_active_anim_index(if is_deact { -1 } else { idx });
+                // bezier persists with active animation per design — keep current bezier values
+                // (no snap; tuning applies to active). Future: per-animation bezier map.
+            }
+        });
+    }
 
     // ── Nav modules (data-driven sidebar, translated) ──
     let nav_modules = Vec::from([

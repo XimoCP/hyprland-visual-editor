@@ -913,6 +913,60 @@ pub fn handle_borders_apply(engine: &crate::engine::Engine, file: &str) -> Resul
     engine.apply_border(arg)
 }
 
+/// Motion pick layer helpers (mutating-window R4, slice 5).
+/// Scan is engine.scan("animations") → PresetInfo list; apply wraps
+/// engine.apply_animation with the file string from the card (empty→"none").
+#[allow(dead_code)]
+pub fn handle_motion_scan(engine: &crate::engine::Engine) -> Vec<crate::engine::PresetInfo> {
+    engine.scan("animations").unwrap_or_default()
+}
+#[allow(dead_code)]
+pub fn handle_motion_apply(engine: &crate::engine::Engine, file: &str) -> Result<String, crate::engine::EngineError> {
+    let arg = if file.is_empty() || file == "none" { "none" } else { file };
+    engine.apply_animation(arg)
+}
+
+/// Motion bezier — 4 float sliders a,b,c,d (R4 tune).
+/// x1=a and x2=c in [0,1], y1=b and y2=d may extend beyond per CSS cubic-bezier.
+/// Defaults a=0.25,b=0.1,c=0.25,d=1.0 match the spec.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionBezier {
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub d: f32,
+}
+
+impl Default for MotionBezier {
+    fn default() -> Self {
+        Self { a: 0.25, b: 0.1, c: 0.25, d: 1.0 }
+    }
+}
+
+#[allow(dead_code)]
+impl MotionBezier {
+    pub fn clamped(self) -> Self {
+        Self {
+            a: self.a.clamp(0.0, 1.0),
+            b: self.b.clamp(-1.0, 2.0),
+            c: self.c.clamp(0.0, 1.0),
+            d: self.d.clamp(-1.0, 2.0),
+        }
+    }
+    pub fn step_a(self, delta: f32) -> Self {
+        Self { a: (self.a + delta).clamp(0.0, 1.0), ..self }.clamped()
+    }
+    pub fn step_b(self, delta: f32) -> Self {
+        Self { b: (self.b + delta).clamp(-1.0, 2.0), ..self }.clamped()
+    }
+    pub fn step_c(self, delta: f32) -> Self {
+        Self { c: (self.c + delta).clamp(0.0, 1.0), ..self }.clamped()
+    }
+    pub fn step_d(self, delta: f32) -> Self {
+        Self { d: (self.d + delta).clamp(-1.0, 2.0), ..self }.clamped()
+    }
+}
+
 /// Borders tune geometry — 4 sliders + 80ms debounce + skip-init + snap (R3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BorderGeometry {
@@ -1224,6 +1278,87 @@ mod geometry_tune_tests {
         // fallback unknown → defaults, no panic
         let fallback = preset_geometry_for("unknown.ron");
         assert_eq!(fallback, BorderGeometry::default());
+    }
+}
+
+#[cfg(test)]
+mod motion_pick_tests {
+    use super::{handle_motion_apply, handle_motion_scan};
+    use crate::engine::Engine;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn temp_engine_with_motions() -> (Engine, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let scripts = dir.path().join("assets").join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        // scan.sh: if $1 == animations echo 19 presets else []
+        let mut json = String::from("[");
+        for i in 1..=19 {
+            if i > 1 {
+                json.push(',');
+            }
+            json.push_str(&format!(
+                r#"{{"file":"anim{:02}.conf","rawTitle":"Anim {:02}","tag":"SYSTEM"}}"#,
+                i, i
+            ));
+        }
+        json.push(']');
+        let scan_content = format!(
+            r#"#!/bin/bash
+if [ "$1" = "animations" ]; then
+  echo '{}'
+else
+  echo '[]'
+fi
+"#,
+            json
+        );
+        fs::write(scripts.join("scan.sh"), scan_content).unwrap();
+        fs::write(
+            scripts.join("apply_animation.sh"),
+            r#"#!/bin/bash
+echo "applied $1"
+exit 0
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for name in ["scan.sh", "apply_animation.sh"] {
+                let p = scripts.join(name);
+                let mut perm = fs::metadata(&p).unwrap().permissions();
+                perm.set_mode(0o755);
+                fs::set_permissions(&p, perm).unwrap();
+            }
+        }
+        let engine = Engine::new(dir.path());
+        (engine, dir)
+    }
+
+    #[test]
+    fn test_motion_19_cards() {
+        let (engine, _dir) = temp_engine_with_motions();
+        let cards = handle_motion_scan(&engine);
+        assert_eq!(cards.len(), 19, "scan(animations) must return 19 cards");
+    }
+
+    #[test]
+    fn test_apply_animation_off_is_none() {
+        let (engine, _dir) = temp_engine_with_motions();
+        // active off → none: empty file maps to "none"
+        let res = handle_motion_apply(&engine, "");
+        assert!(res.is_ok(), "apply_animation off (none) should succeed, got {:?}", res.err());
+        assert!(res.unwrap().contains("none"), "empty file must map to none");
+        // also explicit "none"
+        let res2 = handle_motion_apply(&engine, "none");
+        assert!(res2.is_ok());
+        assert!(res2.unwrap().contains("none"));
+        // normal file
+        let res3 = handle_motion_apply(&engine, "anim01.conf");
+        assert!(res3.is_ok());
+        assert!(res3.unwrap().contains("anim01.conf"));
     }
 }
 

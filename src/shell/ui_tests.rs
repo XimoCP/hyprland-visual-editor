@@ -1442,3 +1442,117 @@ fn panel_borders_tune_renders() {
     // Tune baseline must differ from pick baseline (sliders visible)
     // Re-mount pick baseline comparison via previous PNG is not needed; we just ensure tune renders without panic and diff >200 suffices for visual gate.
 }
+
+// ── Mutating-window slice 5: Motion pick + bezier + CurvePreview (R4) ──
+
+#[test]
+fn panel_curve_preview_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+    win.set_panel_section(2);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+
+    // Animation presets (R4) — scan("animations") → cards
+    // Use 3 entries for preview visibility (19-card unit test covers full 19 in callbacks);
+    // preview sits below cards, so with 19 it would be scrolled off-screen and diff would be 0.
+    let titles: Vec<SharedString> = (1..=3).map(|i| SharedString::from(format!("Anim {i:02}"))).collect();
+    let descs: Vec<SharedString> = (1..=3).map(|i| SharedString::from(format!("Animation {i:02} desc"))).collect();
+    let tags: Vec<SharedString> = (1..=3).map(|_| SharedString::from("SYSTEM")).collect();
+    let files: Vec<SharedString> = (1..=3).map(|i| SharedString::from(format!("anim{:02}.conf", i))).collect();
+    win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_anim_descs(ModelRc::new(VecModel::from(descs)));
+    win.set_anim_tags(ModelRc::new(VecModel::from(tags)));
+    win.set_anim_files(ModelRc::new(VecModel::from(files)));
+    win.set_active_anim_index(0);
+    // Bezier defaults a=0.25 b=0.1 c=0.25 d=1.0 (CSS cubic-bezier)
+    win.set_bezier_a(0.25);
+    win.set_bezier_b(0.1);
+    win.set_bezier_c(0.25);
+    win.set_bezier_d(1.0);
+
+    let count = 6usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_focus_pos(0.0);
+
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap = win.window().take_snapshot().expect("panel curve preview snapshot");
+    save_slice_png(snap.clone(), "/tmp/opencode/panel_curve_preview.png");
+    assert!(snap.width() == 1920, "snapshot width 1920");
+
+    // WHEN b→0.8 THEN preview redraws bezier (control point moves, curve shape changes)
+    win.set_bezier_b(0.8);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap2 = win.window().take_snapshot().expect("panel curve preview b08 snapshot");
+    save_slice_png(snap2.clone(), "/tmp/opencode/panel_curve_preview_b08.png");
+    let diff = count_buffer_diff(&snap, &snap2);
+    assert!(diff > 200, "curve preview must redraw on b change — got {diff} expected >200 (bezier 0.1→0.8)");
+
+    // Active indicator check: picking different animation still shows 19 cards, no crash
+    win.set_active_anim_index(1);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap3 = win.window().take_snapshot().expect("panel curve preview active2");
+    save_slice_png(snap3.clone(), "/tmp/opencode/panel_curve_preview_active2.png");
+    let diff2 = count_buffer_diff(&snap, &snap3);
+    assert!(diff2 > 200, "active indicator must change pixels — got {diff2} expected >200");
+}

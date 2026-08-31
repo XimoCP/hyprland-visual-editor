@@ -1,0 +1,305 @@
+// HVE 2 — MotionSection (mutating-window R4 pick + tune + CurvePreview).
+//
+// Pick layer: PresetCards from scan("animations") → apply_animation, active
+// indicator + toggle-off → none. Tune layer below divider: 4 bezier sliders
+// a,b,c,d (x1,y1,x2,y2) + mini CurvePreview Path 120×48 redraws on slider
+// changed. Ranges: a,c in [0,1], b,d in [-1,2] per CSS bezier convention;
+// defaults 0.25/0.1/0.25/1. Arrow steps ±0.05 clamped.
+//
+// Keyboard R11: arrows navigate cards/sliders, Enter/Space activates,
+// sliders ±0.05, Tab pick→tune→next never traps, icy-cyan #8fd8ff focus.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { Slider, ScrollView } from "std-widgets.slint";
+import { SkwdTokens } from "../../tokens.slint";
+import { PresetCard } from "../../components.slint";
+import { CurvePreview } from "../CurvePreview.slint";
+
+component BezierSlider inherits Rectangle {
+    in property <float> value: 0.25;
+    in property <float> min: 0.0;
+    in property <float> max: 1.0;
+    in property <string> label: "";
+    callback changed(float);
+    height: 72px;
+    border-radius: 8px;
+    background: #2c1f1d;
+    border-width: 1px;
+    border-color: #a98986.transparentize(0.7);
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        HorizontalLayout {
+            Text {
+                text: root.label;
+                color: #ffb4ab;
+                font-size: 12px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: Math.round(root.value * 100) / 100;
+                color: #8fd8ff;
+                font-size: 12px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+        Slider {
+            minimum: root.min;
+            maximum: root.max;
+            value: root.value;
+            changed(v) => { root.changed(v); }
+        }
+    }
+}
+
+export component MotionSection inherits Rectangle {
+    in property <[string]> anim-titles;
+    in property <[string]> anim-descs;
+    in property <[string]> anim-tags;
+    in property <[string]> anim-files;
+    in property <int> active-index: -1;
+    callback apply-animation(int, string);
+
+    // Tune layer — 4 bezier values (in-out so Rust snap can write them if needed)
+    in-out property <float> bezier-a: 0.25;
+    in-out property <float> bezier-b: 0.1;
+    in-out property <float> bezier-c: 0.25;
+    in-out property <float> bezier-d: 1.0;
+
+    background: transparent;
+    clip: true;
+
+    property <int> focused-index: 0;
+
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        key-pressed(event) => {
+            if (event.text == Key.Tab) {
+                return reject;
+            }
+            if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
+                if (root.anim-files.length > 0) {
+                    root.focused-index = min(root.focused-index + 1, root.anim-files.length - 1);
+                }
+                return accept;
+            }
+            if (event.text == Key.UpArrow || event.text == Key.LeftArrow) {
+                if (root.anim-files.length > 0) {
+                    root.focused-index = max(root.focused-index - 1, 0);
+                }
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == Key.Space) {
+                if (root.focused-index >= 0 && root.focused-index < root.anim-files.length) {
+                    root.apply-animation(root.focused-index, root.anim-files[root.focused-index]);
+                }
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    border-width: fs.has-focus ? 1px : 0px;
+    border-color: #8fd8ff;
+    border-radius: SkwdTokens.radius-8;
+
+    init => { fs.focus(); }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 4px;
+            Text {
+                text: "Motion";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-16;
+                font-weight: 700;
+                color: SkwdTokens.primary;
+            }
+            Text {
+                text: "Pick an animation — instantly applied. Tune curve below.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: SkwdTokens.outline;
+                wrap: word-wrap;
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-bottom: 12px;
+                spacing: 8px;
+
+                for i in root.anim-files.length : PresetCard {
+                    title: root.anim-titles[i];
+                    desc: root.anim-descs[i];
+                    tag: root.anim-tags[i];
+                    accent: #8fd8ff;
+                    active: i == root.active-index;
+                    keyboard-focused: i == root.focused-index && fs.has-focus;
+                    index: i;
+                    toggled => { root.apply-animation(i, root.anim-files[i]); }
+                    focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
+                }
+
+                if root.anim-files.length == 0 : Text {
+                    text: "No animation presets found.";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline;
+                    horizontal-alignment: center;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: SkwdTokens.outline.transparentize(0.6);
+                }
+
+                // Curve preview 120×48 — redraws on slider changed via binding
+                HorizontalLayout {
+                    alignment: center;
+                    CurvePreview {
+                        a: root.bezier-a;
+                        b: root.bezier-b;
+                        c: root.bezier-c;
+                        d: root.bezier-d;
+                        width: 120px;
+                        height: 48px;
+                    }
+                }
+
+                // Bezier sliders a,b,c,d — arrow steps ±0.05 clamped, Tab no trap
+                a-wrap := Rectangle {
+                    border-width: a-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    a-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.bezier-a + 0.05, 1.0);
+                                if (next != root.bezier-a) { root.bezier-a = next; }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.bezier-a - 0.05, 0.0);
+                                if (next != root.bezier-a) { root.bezier-a = next; }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    BezierSlider {
+                        label: "X1 — a";
+                        value: root.bezier-a;
+                        min: 0.0;
+                        max: 1.0;
+                        changed(v) => { root.bezier-a = v; }
+                    }
+                }
+                b-wrap := Rectangle {
+                    border-width: b-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    b-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.bezier-b + 0.05, 2.0);
+                                if (next != root.bezier-b) { root.bezier-b = next; }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.bezier-b - 0.05, -1.0);
+                                if (next != root.bezier-b) { root.bezier-b = next; }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    BezierSlider {
+                        label: "Y1 — b";
+                        value: root.bezier-b;
+                        min: -1.0;
+                        max: 2.0;
+                        changed(v) => { root.bezier-b = v; }
+                    }
+                }
+                c-wrap := Rectangle {
+                    border-width: c-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    c-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.bezier-c + 0.05, 1.0);
+                                if (next != root.bezier-c) { root.bezier-c = next; }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.bezier-c - 0.05, 0.0);
+                                if (next != root.bezier-c) { root.bezier-c = next; }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    BezierSlider {
+                        label: "X2 — c";
+                        value: root.bezier-c;
+                        min: 0.0;
+                        max: 1.0;
+                        changed(v) => { root.bezier-c = v; }
+                    }
+                }
+                d-wrap := Rectangle {
+                    border-width: d-fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    d-fs := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                                let next = min(root.bezier-d + 0.05, 2.0);
+                                if (next != root.bezier-d) { root.bezier-d = next; }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                                let next = max(root.bezier-d - 0.05, -1.0);
+                                if (next != root.bezier-d) { root.bezier-d = next; }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                    BezierSlider {
+                        label: "Y2 — d";
+                        value: root.bezier-d;
+                        min: -1.0;
+                        max: 2.0;
+                        changed(v) => { root.bezier-d = v; }
+                    }
+                }
+
+                Text {
+                    text: "↑↓ navigate • Enter/Space apply • arrows ±0.05 • Tab pick→tune→next • Esc back";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline.transparentize(0.4);
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}
