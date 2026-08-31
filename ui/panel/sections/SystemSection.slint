@@ -1,0 +1,401 @@
+// HVE 2 — SystemSection (mutating-window R7 + R11).
+//
+// Reuses SettingsPanel row patterns and their existing callbacks
+// (auto-minimize + timer 3/5/10s, language EN/ES, keyboard shortcuts,
+// autostart, theme preference, reset presets, restart — all wired in
+// callbacks.rs via on_toggle_system etc.), plus system ON/OFF status block
+// + About HVE content from hidden HomeModule (status, About accordion via
+// existing tr.rs keys — REUSE, do not rewrite). Tiling toggle stays
+// EXACTLY as-is (deferred window-rules/fullscreen-redesign).
+//
+// Keyboard R11: rows navigable by arrows/Tab (no trap), toggles Enter/Space,
+// icy-cyan #8fd8ff focus.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { ScrollView } from "std-widgets.slint";
+import { SkwdTokens } from "../../tokens.slint";
+import { HveColors } from "../../theme.slint";
+import { ActivationCard, AccordionCard, AboutItem } from "../../components.slint";
+
+export component SystemSection inherits Rectangle {
+    // System state
+    in property <bool> system-active: false;
+    in property <bool> auto-minimize: true;
+    in property <int> minimize-seconds: 5;
+    in property <string> language: "en";
+    in property <bool> tiling-mode: false;
+    in property <bool> keybinds-mode: false;
+    in property <bool> autostart: false;
+    in property <string> theme: "system";
+    in property <bool> restart-required: false;
+    // Labels (reuse SettingsPanel i18n)
+    in property <string> settings-title: "System";
+    in property <string> auto-minimize-label: "Auto-minimize";
+    in property <string> timer-label: "Timer:";
+    in property <string> language-label: "Language";
+    in property <string> tiling-label: "Tiling mode";
+    in property <string> autostart-label: "Autostart";
+    in property <string> theme-label: "Theme";
+    in property <string> reset-label: "Reset presets";
+    in property <string> keybinds-label: "Keyboard shortcuts";
+    in property <string> restart-banner-text: "⚠ Restart required";
+    in property <string> restart-button-text: "Restart";
+    // About (from HomeModule via tr.rs)
+    in property <string> about-title: "About HVE";
+    in property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
+    in property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in property <[AboutItem]> about-items;
+    in property <string> tree-label: "Project structure";
+    in property <[string]> tree-paths;
+    in property <[string]> tree-descs;
+    in property <string> tree-path-max: "";
+    in property <string> docs-label: "View documentation";
+
+    callback toggle-system(bool);
+    callback toggle-auto-minimize(bool);
+    callback change-minimize-seconds(int);
+    callback change-language(string);
+    callback toggle-tiling-mode(bool);
+    callback toggle-keybinds(bool);
+    callback toggle-autostart(bool);
+    callback change-theme(string);
+    callback reset-presets();
+    callback restart-app();
+    callback open-docs();
+
+    property <int> focused-row: 0;
+    property <int> row-count: 11;
+    property <bool> about-expanded: false;
+
+    background: transparent;
+    clip: true;
+    border-width: fs.has-focus ? 1px : 0px;
+    border-color: #8fd8ff;
+    border-radius: SkwdTokens.radius-8;
+
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        key-pressed(event) => {
+            if (event.text == Key.Tab) { return reject; }
+            if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
+                root.focused-row = min(root.focused-row + 1, root.row-count - 1);
+                return accept;
+            }
+            if (event.text == Key.UpArrow || event.text == Key.LeftArrow) {
+                root.focused-row = max(root.focused-row - 1, 0);
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == Key.Space) {
+                if (root.focused-row == 0) { root.toggle-system(!root.system-active); }
+                else if (root.focused-row == 1) { root.toggle-auto-minimize(!root.auto-minimize); }
+                else if (root.focused-row == 2) {
+                    if (root.minimize-seconds == 3) { root.change-minimize-seconds(5); }
+                    else if (root.minimize-seconds == 5) { root.change-minimize-seconds(10); }
+                    else { root.change-minimize-seconds(3); }
+                }
+                else if (root.focused-row == 3) {
+                    if (root.language == "en") { root.change-language("es"); } else { root.change-language("en"); }
+                }
+                else if (root.focused-row == 4) { root.toggle-tiling-mode(!root.tiling-mode); }
+                else if (root.focused-row == 5) { root.toggle-keybinds(!root.keybinds-mode); }
+                else if (root.focused-row == 6) { root.toggle-autostart(!root.autostart); }
+                else if (root.focused-row == 7) {
+                    if (root.theme == "system") { root.change-theme("light"); }
+                    else if (root.theme == "light") { root.change-theme("dark"); }
+                    else { root.change-theme("system"); }
+                }
+                else if (root.focused-row == 8) { root.reset-presets(); }
+                else if (root.focused-row == 9) { root.restart-app(); }
+                else if (root.focused-row == 10) { root.about-expanded = !root.about-expanded; }
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    init => { fs.focus(); }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Header
+        VerticalLayout {
+            padding: 16px;
+            spacing: 4px;
+            Text {
+                text: "System";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-16;
+                font-weight: 700;
+                color: SkwdTokens.primary;
+            }
+            Text {
+                text: "System rows — ON/OFF, settings, and About. Tiling stays as-is.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: SkwdTokens.outline;
+                wrap: word-wrap;
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-bottom: 12px;
+                spacing: 10px;
+
+                // 0 — System ON/OFF status block (reuse ActivationCard pattern, icy focus)
+                Rectangle {
+                    border-width: root.focused-row == 0 && fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    ActivationCard {
+                        active: root.system-active;
+                        card-title: "System Activation";
+                        active-text: "Visual Editor Enabled";
+                        inactive-text: "Visual Editor Disabled";
+                        toggled(v) => { root.toggle-system(v); }
+                    }
+                }
+                // Also show ON/OFF text explicitly for visual verification
+                Text {
+                    text: root.system-active ? "ON" : "OFF";
+                    font-family: SkwdTokens.font-heading;
+                    font-size: SkwdTokens.size-14;
+                    font-weight: 700;
+                    color: root.system-active ? HveColors.accent-green : HveColors.accent-red;
+                    horizontal-alignment: center;
+                }
+
+                Rectangle { height: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+
+                // Restart banner when required
+                if root.restart-required : Rectangle {
+                    height: 32px;
+                    border-radius: 8px;
+                    background: HveColors.accent-amber.transparentize(0.85);
+                    border-width: 1px;
+                    border-color: HveColors.accent-amber.transparentize(0.4);
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Text {
+                            text: root.restart-banner-text;
+                            color: HveColors.accent-amber;
+                            font-size: 12px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Rectangle {
+                            width: 60px; height: 24px; border-radius: 6px;
+                            background: HveColors.bg-card;
+                            Text { text: root.restart-button-text; color: HveColors.accent-amber; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
+                        }
+                    }
+                }
+
+                // 1 — Auto-minimize
+                Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 1 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 1 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.auto-minimize-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        Rectangle {
+                            width: 40px; height: 22px; border-radius: 11px;
+                            background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
+                            Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.auto-minimize ? parent.width - self.width - 3px : 3px; y: 3px; }
+                            TouchArea { width: 100%; height: 100%; clicked => { root.toggle-auto-minimize(!root.auto-minimize); } }
+                        }
+                    }
+                }
+
+                // 2 — Timer 3/5/10s
+                if root.auto-minimize : Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 2 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 2 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.timer-label; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
+                        for sec in [3, 5, 10] : Rectangle {
+                            width: 36px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == sec ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: sec; color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { width: 100%; height: 100%; clicked => { root.change-minimize-seconds(sec); } }
+                        }
+                        Text { text: "s"; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
+                    }
+                }
+
+                // 3 — Language EN/ES
+                Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 3 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 3 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.language-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        Rectangle {
+                            width: 60px; height: 28px; border-radius: 6px; background: HveColors.bg-card; border-width: 1px; border-color: HveColors.border;
+                            HorizontalLayout {
+                                spacing: 0px;
+                                Rectangle {
+                                    width: 50%; height: 100%; border-radius: root.language == "en" ? 5px : 0px; background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
+                                    Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea { width: 100%; height: 100%; clicked => { root.change-language("en"); } }
+                                }
+                                Rectangle {
+                                    width: 50%; height: 100%; border-radius: root.language == "es" ? 5px : 0px; background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
+                                    Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea { width: 100%; height: 100%; clicked => { root.change-language("es"); } }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4 — Tiling mode (stays EXACTLY as-is, deferred window-rules/fullscreen-redesign)
+                Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 4 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 4 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.tiling-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        Rectangle {
+                            width: 40px; height: 22px; border-radius: 11px; background: root.tiling-mode ? HveColors.accent-cyan : HveColors.border;
+                            Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.tiling-mode ? parent.width - self.width - 3px : 3px; y: 3px; }
+                            TouchArea { width: 100%; height: 100%; clicked => { root.toggle-tiling-mode(!root.tiling-mode); } }
+                        }
+                    }
+                }
+
+                // 5 — Keyboard shortcuts
+                Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 5 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 5 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.keybinds-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        Rectangle {
+                            width: 40px; height: 22px; border-radius: 11px; background: root.keybinds-mode ? HveColors.accent-cyan : HveColors.border;
+                            Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.keybinds-mode ? parent.width - self.width - 3px : 3px; y: 3px; }
+                            TouchArea { width: 100%; height: 100%; clicked => { root.toggle-keybinds(!root.keybinds-mode); } }
+                        }
+                    }
+                }
+
+                // 6 — Autostart
+                Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 6 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 6 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.autostart-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        Rectangle {
+                            width: 40px; height: 22px; border-radius: 11px; background: root.autostart ? HveColors.accent-cyan : HveColors.border;
+                            Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.autostart ? parent.width - self.width - 3px : 3px; y: 3px; }
+                            TouchArea { width: 100%; height: 100%; clicked => { root.toggle-autostart(!root.autostart); } }
+                        }
+                    }
+                }
+
+                // 7 — Theme preference
+                Rectangle {
+                    height: 40px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 7 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 7 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text { text: root.theme-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            for t in ["dark", "light", "system"] : Rectangle {
+                                width: 56px; height: 28px; border-radius: 6px;
+                                background: root.theme == t ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.theme == t ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: t; color: root.theme == t ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { width: 100%; height: 100%; clicked => { root.change-theme(t); } }
+                            }
+                        }
+                    }
+                }
+
+                // 8 — Reset presets
+                Rectangle {
+                    height: 36px; border-radius: 8px;
+                    background: HveColors.bg-card;
+                    border-width: root.focused-row == 8 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 8 && fs.has-focus ? #8fd8ff : HveColors.border;
+                    Text { text: root.reset-label; color: HveColors.text-muted; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { width: 100%; height: 100%; clicked => { root.reset-presets(); } }
+                }
+
+                // 9 — Restart
+                Rectangle {
+                    height: 36px; border-radius: 8px;
+                    background: HveColors.accent-amber.transparentize(0.85);
+                    border-width: root.focused-row == 9 && fs.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 9 && fs.has-focus ? #8fd8ff : HveColors.accent-amber.transparentize(0.4);
+                    Text { text: "Restart"; color: HveColors.accent-amber; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
+                }
+
+                Rectangle { height: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+
+                // 10 — About HVE (reused AccordionCard via existing tr.rs keys)
+                Rectangle {
+                    border-width: root.focused-row == 10 && fs.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    border-radius: SkwdTokens.radius-8;
+                    AccordionCard {
+                        card-title: root.about-title;
+                        icon-text: "💡";
+                        accent: HveColors.accent-cyan;
+                        border: HveColors.border;
+                        short-desc: root.about-short;
+                        full-desc: root.about-full;
+                        about-items: root.about-items;
+                        tree-label: root.tree-label;
+                        tree-paths: root.tree-paths;
+                        tree-descs: root.tree-descs;
+                        tree-path-max: root.tree-path-max;
+                        docs-label: root.docs-label;
+                        expanded: root.about-expanded;
+                        toggled => { root.about-expanded = !root.about-expanded; }
+                        open-docs => { root.open-docs(); }
+                    }
+                }
+
+                Text {
+                    text: "↑↓ navigate • Enter/Space toggle • Tab next • Esc back";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline.transparentize(0.4);
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}

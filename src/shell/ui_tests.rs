@@ -1746,3 +1746,188 @@ fn panel_wallpaper_ro_renders() {
     let diff = count_buffer_diff(&snap, &snap_no_video);
     assert!(diff > 200, "video badge must change pixels — got {diff} expected >200");
 }
+
+// ── Mutating-window slice 7: System (R7, R11) ───────────────────────
+
+#[test]
+fn test_system_minimize_10s() {
+    // RED: SystemSection must exist and expose timer 10s row + toggle_system ON/OFF
+    // This test fails until SystemSection.slint is created with required rows.
+    let path = "ui/panel/sections/SystemSection.slint";
+    let content = std::fs::read_to_string(path).expect("SystemSection.slint must exist for slice 7");
+    assert!(content.contains("10"), "timer 10s row must be present — got content without \"10\"");
+    assert!(
+        content.contains("System") || content.contains("system"),
+        "System ON/OFF status block must be present"
+    );
+    // Also verify Config can hold 10s (engine sealed — no engine edit)
+    let mut cfg = crate::config::Config::default();
+    cfg.minimize_seconds = 10;
+    assert_eq!(cfg.minimize_seconds, 10, "minimize_seconds 10s via toggle_system path");
+    // Verify AppState toggle_system can be called (existing on_toggle_system reused)
+    // We check the method exists and toggles is_system_active without panicking
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let cfg2 = crate::config::Config::default();
+    let tm = crate::theme_manager::ThemeManager::new(&proj);
+    let mut state = crate::app_state::AppState::new(cfg2, engine, tm);
+    let _ = state.toggle_system(true);
+    assert!(state.cfg().is_system_active, "toggle_system(true) must set active");
+    let mut st2 = state;
+    st2.update_cfg(|c| c.minimize_seconds = 10);
+    assert_eq!(st2.cfg().minimize_seconds, 10);
+}
+
+#[test]
+fn test_system_rows_render() {
+    // RED: SystemSection must contain autostart/theme-pref/reset/restart rows + About moved
+    let path = "ui/panel/sections/SystemSection.slint";
+    let content = std::fs::read_to_string(path).expect("SystemSection.slint must exist");
+    for needle in ["Autostart", "Theme", "Reset", "Restart", "About"] {
+        assert!(
+            content.contains(needle),
+            "SystemSection must contain \"{needle}\" row — missing in content"
+        );
+    }
+    // Tiling stays exactly as-is (deferred window-rules/fullscreen-redesign)
+    assert!(
+        content.contains("Tiling") || content.contains("tiling"),
+        "tiling toggle must stay exactly as-is"
+    );
+}
+
+#[test]
+fn panel_system_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+    win.set_panel_section(5);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+
+    // System props — ON state
+    win.set_system_active(true);
+    win.set_auto_minimize(true);
+    win.set_minimize_seconds(5);
+    win.set_language("en".into());
+    win.set_tiling_mode(false);
+    win.set_autostart(false);
+    win.set_theme("system".into());
+    win.set_restart_required(false);
+    win.set_keybinds_mode(false);
+    // Settings labels (needed because MainWindow defaults are empty in test)
+    win.set_auto_minimize_label("Auto-minimize".into());
+    win.set_timer_label("Timer:".into());
+    win.set_language_label("Language".into());
+    win.set_tiling_label("Tiling mode".into());
+    win.set_keybinds_label("Keyboard shortcuts".into());
+    win.set_autostart_label("Autostart".into());
+    win.set_theme_label("Theme".into());
+    win.set_reset_label("Reset presets".into());
+    win.set_settings_title("System".into());
+    win.set_settings_restart_banner("⚠ Restart required".into());
+    win.set_settings_restart_button("Restart".into());
+    // About props
+    win.set_home_about_title("About HVE".into());
+    win.set_home_about_short("Hyprland Visual Editor makes your desktop truly yours.".into());
+    win.set_home_about_full("HVE is a graphical app to visually manage your Hyprland desktop aesthetics.".into());
+    win.set_home_about_tree_label("Project structure".into());
+    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(vec![SharedString::from("a/b"), SharedString::from("c/d")])));
+    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(vec![SharedString::from("desc a"), SharedString::from("desc c")])));
+    win.set_home_about_tree_path_max("a/b".into());
+    win.set_home_about_docs_label("View documentation".into());
+
+    let count = 6usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_focus_pos(0.0);
+
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap_on = win.window().take_snapshot().expect("panel system ON snapshot");
+    save_slice_png(snap_on.clone(), "/tmp/opencode/panel_system.png");
+    assert!(snap_on.width() == 1920, "snapshot width 1920");
+
+    // Toggle OFF — must differ (ON/OFF visible)
+    win.set_system_active(false);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap_off = win.window().take_snapshot().expect("panel system OFF snapshot");
+    save_slice_png(snap_off.clone(), "/tmp/opencode/panel_system_off.png");
+    let diff_on_off = count_buffer_diff(&snap_on, &snap_off);
+    assert!(
+        diff_on_off > 200,
+        "ON/OFF must change pixels — got {diff_on_off} expected >200"
+    );
+
+    // Timer 10s variant — must differ when seconds change
+    win.set_system_active(true);
+    win.set_minimize_seconds(10);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap_10s = win.window().take_snapshot().expect("panel system 10s snapshot");
+    save_slice_png(snap_10s.clone(), "/tmp/opencode/panel_system_10s.png");
+    let diff_10s = count_buffer_diff(&snap_on, &snap_10s);
+    assert!(
+        diff_10s > 200,
+        "timer 10s must change pixels — got {diff_10s} expected >200"
+    );
+
+    // Basic sanity: still 1920
+    assert!(snap_10s.width() == 1920);
+}

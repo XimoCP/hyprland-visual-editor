@@ -10,6 +10,7 @@ import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { PanelRoot } from "panel/PanelRoot.slint";
+import { AboutItem } from "components.slint";
 // Re-export the token singleton so consumers of this compilation unit (and
 // delivery 4's ui/main.slint) can read it under its own name from Rust.
 export { SkwdTokens }
@@ -140,6 +141,36 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-wallpaper-thumb-path;
     in property <bool> panel-wallpaper-has-video: false;
     in property <string> panel-wallpaper-video-file;
+    // System (R7) — reuses SettingsPanel rows + toggle_system + About
+    in property <bool> panel-system-active: false;
+    in property <bool> panel-auto-minimize: true;
+    in property <int> panel-minimize-seconds: 5;
+    in property <string> panel-language: "en";
+    in property <bool> panel-tiling-mode: false;
+    in property <bool> panel-keybinds-mode: false;
+    in property <bool> panel-autostart: false;
+    in property <string> panel-theme: "system";
+    in property <bool> panel-restart-required: false;
+    in property <string> panel-settings-title: "System";
+    in property <string> panel-restart-banner-text: "⚠ Restart required";
+    in property <string> panel-restart-button-text: "Restart";
+    in property <string> panel-auto-minimize-label: "Auto-minimize";
+    in property <string> panel-timer-label: "Timer:";
+    in property <string> panel-language-label: "Language";
+    in property <string> panel-tiling-label: "Tiling mode";
+    in property <string> panel-autostart-label: "Autostart";
+    in property <string> panel-theme-label: "Theme";
+    in property <string> panel-reset-label: "Reset presets";
+    in property <string> panel-keybinds-label: "Keyboard shortcuts";
+    in property <string> panel-about-title: "About HVE";
+    in property <string> panel-about-short: "Hyprland Visual Editor makes your desktop truly yours.";
+    in property <string> panel-about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in property <[AboutItem]> panel-about-items;
+    in property <string> panel-tree-label: "Project structure";
+    in property <[string]> panel-tree-paths;
+    in property <[string]> panel-tree-descs;
+    in property <string> panel-tree-path-max: "";
+    in property <string> panel-docs-label: "View documentation";
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-save-theme(string);
@@ -147,6 +178,17 @@ export component ShellRoot inherits Rectangle {
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
     callback panel-apply-shader(int, string);
+    callback panel-toggle-system(bool);
+    callback panel-toggle-auto-minimize(bool);
+    callback panel-change-minimize-seconds(int);
+    callback panel-change-language(string);
+    callback panel-toggle-tiling-mode(bool);
+    callback panel-toggle-keybinds(bool);
+    callback panel-toggle-autostart(bool);
+    callback panel-change-theme(string);
+    callback panel-reset-presets();
+    callback panel-restart-app();
+    callback panel-open-docs();
 
     // Gallery mounts over the LIVE DESKTOP (gallery-immersive-redesign 1.8):
     // while Gallery holds the screen the shell root must not paint either —
@@ -319,6 +361,35 @@ export component ShellRoot inherits Rectangle {
                     wallpaper-thumb-path: root.panel-wallpaper-thumb-path;
                     wallpaper-has-video: root.panel-wallpaper-has-video;
                     wallpaper-video-file: root.panel-wallpaper-video-file;
+                    system-active: root.panel-system-active;
+                    auto-minimize: root.panel-auto-minimize;
+                    minimize-seconds: root.panel-minimize-seconds;
+                    language: root.panel-language;
+                    tiling-mode: root.panel-tiling-mode;
+                    keybinds-mode: root.panel-keybinds-mode;
+                    autostart: root.panel-autostart;
+                    theme: root.panel-theme;
+                    restart-required: root.panel-restart-required;
+                    settings-title: root.panel-settings-title;
+                    restart-banner-text: root.panel-restart-banner-text;
+                    restart-button-text: root.panel-restart-button-text;
+                    auto-minimize-label: root.panel-auto-minimize-label;
+                    timer-label: root.panel-timer-label;
+                    language-label: root.panel-language-label;
+                    tiling-label: root.panel-tiling-label;
+                    autostart-label: root.panel-autostart-label;
+                    theme-label: root.panel-theme-label;
+                    reset-label: root.panel-reset-label;
+                    keybinds-label: root.panel-keybinds-label;
+                    about-title: root.panel-about-title;
+                    about-short: root.panel-about-short;
+                    about-full: root.panel-about-full;
+                    about-items: root.panel-about-items;
+                    tree-label: root.panel-tree-label;
+                    tree-paths: root.panel-tree-paths;
+                    tree-descs: root.panel-tree-descs;
+                    tree-path-max: root.panel-tree-path-max;
+                    docs-label: root.panel-docs-label;
                     back => { root.panel-back(); }
                     section-selected(section) => { root.panel-section-selected(section); }
                     save-theme(name) => { root.panel-save-theme(name); }
@@ -326,6 +397,17 @@ export component ShellRoot inherits Rectangle {
                     apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
                     apply-animation(idx, file) => { root.panel-apply-animation(idx, file); }
                     apply-shader(idx, file) => { root.panel-apply-shader(idx, file); }
+                    toggle-system(v) => { root.panel-toggle-system(v); }
+                    toggle-auto-minimize(v) => { root.panel-toggle-auto-minimize(v); }
+                    change-minimize-seconds(v) => { root.panel-change-minimize-seconds(v); }
+                    change-language(v) => { root.panel-change-language(v); }
+                    toggle-tiling-mode(v) => { root.panel-toggle-tiling-mode(v); }
+                    toggle-keybinds(v) => { root.panel-toggle-keybinds(v); }
+                    toggle-autostart(v) => { root.panel-toggle-autostart(v); }
+                    change-theme(v) => { root.panel-change-theme(v); }
+                    reset-presets => { root.panel-reset-presets(); }
+                    restart-app => { root.panel-restart-app(); }
+                    open-docs => { root.panel-open-docs(); }
                 }
 
                 // Input guard during Mutating (R9): absorbs wheel/click

@@ -10,11 +10,13 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { PanelMenu } from "PanelMenu.slint";
+import { AboutItem } from "../components.slint";
 import { SaveSection } from "sections/SaveSection.slint";
 import { BordersSection } from "sections/BordersSection.slint";
 import { MotionSection } from "sections/MotionSection.slint";
 import { FiltersSection } from "sections/FiltersSection.slint";
 import { WallpaperSection } from "sections/WallpaperSection.slint";
+import { SystemSection } from "sections/SystemSection.slint";
 
 export component PanelRoot inherits Rectangle {
     in property <int> section: 0;
@@ -57,6 +59,36 @@ export component PanelRoot inherits Rectangle {
     in property <string> wallpaper-thumb-path;
     in property <bool> wallpaper-has-video: false;
     in property <string> wallpaper-video-file;
+    // System (R7) — reuses SettingsPanel rows + toggle_system + About
+    in property <bool> system-active: false;
+    in property <bool> auto-minimize: true;
+    in property <int> minimize-seconds: 5;
+    in property <string> language: "en";
+    in property <bool> tiling-mode: false;
+    in property <bool> keybinds-mode: false;
+    in property <bool> autostart: false;
+    in property <string> theme: "system";
+    in property <bool> restart-required: false;
+    in property <string> settings-title: "System";
+    in property <string> restart-banner-text: "⚠ Restart required";
+    in property <string> restart-button-text: "Restart";
+    in property <string> auto-minimize-label: "Auto-minimize";
+    in property <string> timer-label: "Timer:";
+    in property <string> language-label: "Language";
+    in property <string> tiling-label: "Tiling mode";
+    in property <string> autostart-label: "Autostart";
+    in property <string> theme-label: "Theme";
+    in property <string> reset-label: "Reset presets";
+    in property <string> keybinds-label: "Keyboard shortcuts";
+    in property <string> about-title: "About HVE";
+    in property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
+    in property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in property <[AboutItem]> about-items;
+    in property <string> tree-label: "Project structure";
+    in property <[string]> tree-paths;
+    in property <[string]> tree-descs;
+    in property <string> tree-path-max: "";
+    in property <string> docs-label: "View documentation";
     callback back();
     callback section-selected(int);
     callback save-theme(string);
@@ -64,6 +96,17 @@ export component PanelRoot inherits Rectangle {
     callback apply-geometry(int, int, int, int);
     callback apply-animation(int, string);
     callback apply-shader(int, string);
+    callback toggle-system(bool);
+    callback toggle-auto-minimize(bool);
+    callback change-minimize-seconds(int);
+    callback change-language(string);
+    callback toggle-tiling-mode(bool);
+    callback toggle-keybinds(bool);
+    callback toggle-autostart(bool);
+    callback change-theme(string);
+    callback reset-presets();
+    callback restart-app();
+    callback open-docs();
 
     background: SkwdTokens.surface;
     border-radius: SkwdTokens.radius-12;
@@ -182,7 +225,51 @@ export component PanelRoot inherits Rectangle {
                     has-video: root.wallpaper-has-video;
                     video-file: root.wallpaper-video-file;
                 }
-                if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 : VerticalLayout {
+                if root.section == 5 : SystemSection {
+                    width: 100%;
+                    height: 100%;
+                    system-active: root.system-active;
+                    auto-minimize: root.auto-minimize;
+                    minimize-seconds: root.minimize-seconds;
+                    language: root.language;
+                    tiling-mode: root.tiling-mode;
+                    keybinds-mode: root.keybinds-mode;
+                    autostart: root.autostart;
+                    theme: root.theme;
+                    restart-required: root.restart-required;
+                    settings-title: root.settings-title;
+                    restart-banner-text: root.restart-banner-text;
+                    restart-button-text: root.restart-button-text;
+                    auto-minimize-label: root.auto-minimize-label;
+                    timer-label: root.timer-label;
+                    language-label: root.language-label;
+                    tiling-label: root.tiling-label;
+                    autostart-label: root.autostart-label;
+                    theme-label: root.theme-label;
+                    reset-label: root.reset-label;
+                    keybinds-label: root.keybinds-label;
+                    about-title: root.about-title;
+                    about-short: root.about-short;
+                    about-full: root.about-full;
+                    about-items: root.about-items;
+                    tree-label: root.tree-label;
+                    tree-paths: root.tree-paths;
+                    tree-descs: root.tree-descs;
+                    tree-path-max: root.tree-path-max;
+                    docs-label: root.docs-label;
+                    toggle-system(v) => { root.toggle-system(v); }
+                    toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+                    change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+                    change-language(v) => { root.change-language(v); }
+                    toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
+                    toggle-keybinds(v) => { root.toggle-keybinds(v); }
+                    toggle-autostart(v) => { root.toggle-autostart(v); }
+                    change-theme(v) => { root.change-theme(v); }
+                    reset-presets => { root.reset-presets(); }
+                    restart-app => { root.restart-app(); }
+                    open-docs => { root.open-docs(); }
+                }
+                if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 && root.section != 5 : VerticalLayout {
                     alignment: center;
                     spacing: SkwdTokens.spacing-12;
                     Text {

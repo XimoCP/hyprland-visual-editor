@@ -582,6 +582,35 @@ export component MainWindow inherits Window {
         panel-wallpaper-thumb-path: root.panel-wallpaper-thumb-path;
         panel-wallpaper-has-video: root.panel-wallpaper-has-video;
         panel-wallpaper-video-file: root.panel-wallpaper-video-file;
+        panel-system-active: root.system-active;
+        panel-auto-minimize: root.auto-minimize;
+        panel-minimize-seconds: root.minimize-seconds;
+        panel-language: root.language;
+        panel-tiling-mode: root.tiling-mode;
+        panel-keybinds-mode: root.keybinds-mode;
+        panel-autostart: root.autostart;
+        panel-theme: root.theme;
+        panel-restart-required: root.restart-required;
+        panel-settings-title: root.settings-title;
+        panel-restart-banner-text: root.settings-restart-banner;
+        panel-restart-button-text: root.settings-restart-button;
+        panel-auto-minimize-label: root.auto-minimize-label;
+        panel-timer-label: root.timer-label;
+        panel-language-label: root.language-label;
+        panel-tiling-label: root.tiling-label;
+        panel-autostart-label: root.autostart-label;
+        panel-theme-label: root.theme-label;
+        panel-reset-label: root.reset-label;
+        panel-keybinds-label: root.keybinds-label;
+        panel-about-title: root.home-about-title;
+        panel-about-short: root.home-about-short;
+        panel-about-full: root.home-about-full;
+        panel-about-items: root.home-about-items;
+        panel-tree-label: root.home-about-tree-label;
+        panel-tree-paths: root.home-about-tree-paths;
+        panel-tree-descs: root.home-about-tree-descs;
+        panel-tree-path-max: root.home-about-tree-path-max;
+        panel-docs-label: root.home-about-docs-label;
         gallery-style-selected(style) => { root.gallery-style-selected(style); }
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
@@ -596,6 +625,17 @@ export component MainWindow inherits Window {
         panel-apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
         panel-apply-animation(idx, file) => { root.panel-apply-animation(idx, file); }
         panel-apply-shader(idx, file) => { root.panel-apply-shader(idx, file); }
+        panel-toggle-system(v) => { root.toggle-system(v); }
+        panel-toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+        panel-change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+        panel-change-language(v) => { root.change-language(v); }
+        panel-toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
+        panel-toggle-keybinds(v) => { root.toggle-keybinds(v); }
+        panel-toggle-autostart(v) => { root.toggle-autostart(v); }
+        panel-change-theme(v) => { root.change-theme(v); }
+        panel-reset-presets => { root.reset-presets(); }
+        panel-restart-app => { root.restart-app(); }
+        panel-open-docs => { root.open-docs(); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──
