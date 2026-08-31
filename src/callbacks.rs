@@ -900,6 +900,19 @@ where
     true
 }
 
+/// Borders pick layer helpers (mutating-window R3, slice 3 slice).
+/// Scan is engine.scan("borders") → PresetInfo list; apply wraps
+/// engine.apply_border with the file string from the card.
+#[allow(dead_code)]
+pub fn handle_borders_scan(engine: &crate::engine::Engine) -> Vec<crate::engine::PresetInfo> {
+    engine.scan("borders").unwrap_or_default()
+}
+#[allow(dead_code)]
+pub fn handle_borders_apply(engine: &crate::engine::Engine, file: &str) -> Result<String, crate::engine::EngineError> {
+    let arg = if file.is_empty() { "none" } else { file };
+    engine.apply_border(arg)
+}
+
 #[cfg(test)]
 mod panel_save_tests {
     use super::handle_panel_save;
@@ -1000,6 +1013,69 @@ mod panel_save_tests {
         assert_eq!(refresh.load(Ordering::SeqCst), 1, "refresh on overwrite");
         assert!(tm1.list().unwrap().iter().any(|t| t.name == "MyMix"));
         assert!(tm2.list().unwrap().iter().any(|t| t.name == "MyMix"));
+    }
+}
+
+#[cfg(test)]
+mod borders_pick_tests {
+    use super::{handle_borders_apply, handle_borders_scan};
+    use crate::engine::Engine;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn temp_engine_with_borders() -> (Engine, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let scripts = dir.path().join("assets").join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        // scan.sh: if $1 == borders echo 2 presets else []
+        fs::write(
+            scripts.join("scan.sh"),
+            r#"#!/bin/bash
+if [ "$1" = "borders" ]; then
+  echo '[{"file":"thin-rounded.ron","rawTitle":"Thin Rounded","tag":"SYSTEM"},{"file":"sharp.ron","rawTitle":"Sharp","tag":"SYSTEM"}]'
+else
+  echo '[]'
+fi
+"#,
+        )
+        .unwrap();
+        fs::write(
+            scripts.join("border.sh"),
+            r#"#!/bin/bash
+echo "applied $1"
+exit 0
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for name in ["scan.sh", "border.sh"] {
+                let p = scripts.join(name);
+                let mut perm = fs::metadata(&p).unwrap().permissions();
+                perm.set_mode(0o755);
+                fs::set_permissions(&p, perm).unwrap();
+            }
+        }
+        let engine = Engine::new(dir.path());
+        (engine, dir)
+    }
+
+    #[test]
+    fn test_borders_scan_returns_cards() {
+        let (engine, _dir) = temp_engine_with_borders();
+        let cards = handle_borders_scan(&engine);
+        assert_eq!(cards.len(), 2, "scan(borders) must return 2 cards");
+        assert_eq!(cards[0].file, "thin-rounded.ron");
+        assert_eq!(cards[1].file, "sharp.ron");
+    }
+
+    #[test]
+    fn test_apply_border_calls_engine() {
+        let (engine, _dir) = temp_engine_with_borders();
+        let res = handle_borders_apply(&engine, "thin-rounded.ron");
+        assert!(res.is_ok(), "apply_border should succeed, got {:?}", res.err());
+        assert!(res.unwrap().contains("thin-rounded.ron"));
     }
 }
 

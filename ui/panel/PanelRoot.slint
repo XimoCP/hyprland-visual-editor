@@ -11,6 +11,7 @@
 import { SkwdTokens } from "../tokens.slint";
 import { PanelMenu } from "PanelMenu.slint";
 import { SaveSection } from "sections/SaveSection.slint";
+import { BordersSection } from "sections/BordersSection.slint";
 
 export component PanelRoot inherits Rectangle {
     in property <int> section: 0;
@@ -22,9 +23,16 @@ export component PanelRoot inherits Rectangle {
     in property <string> save-error: "";
     in property <string> save-placeholder: "Theme name…";
     in property <string> save-button-text: "Save";
+    // Borders pick layer (R3) — PresetCards from scan("borders")
+    in property <[string]> border-titles;
+    in property <[string]> border-descs;
+    in property <[string]> border-tags;
+    in property <[string]> border-files;
+    in property <int> border-active-index: -1;
     callback back();
     callback section-selected(int);
     callback save-theme(string);
+    callback apply-border(int, string);
 
     background: SkwdTokens.surface;
     border-radius: SkwdTokens.radius-12;
@@ -76,7 +84,7 @@ export component PanelRoot inherits Rectangle {
 
             Rectangle { width: 1px; background: SkwdTokens.outline.transparentize(0.6); }
 
-            // Content area — SaveSection for section 0, placeholders for other sections (later slices)
+            // Content area — SaveSection for section 0, BordersSection for 1, placeholders for others (later slices)
             Rectangle {
                 horizontal-stretch: 1;
                 background: SkwdTokens.surface;
@@ -91,7 +99,17 @@ export component PanelRoot inherits Rectangle {
                     save-theme(name) => { root.save-theme(name); }
                     back => { root.back(); }
                 }
-                if root.section != 0 : VerticalLayout {
+                if root.section == 1 : BordersSection {
+                    width: 100%;
+                    height: 100%;
+                    border-titles: root.border-titles;
+                    border-descs: root.border-descs;
+                    border-tags: root.border-tags;
+                    border-files: root.border-files;
+                    active-index: root.border-active-index;
+                    apply-border(idx, file) => { root.apply-border(idx, file); }
+                }
+                if root.section != 0 && root.section != 1 : VerticalLayout {
                     alignment: center;
                     spacing: SkwdTokens.spacing-12;
                     Text {

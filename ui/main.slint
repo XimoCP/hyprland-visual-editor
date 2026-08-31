@@ -235,7 +235,7 @@ export component MainWindow inherits Window {
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
 
-    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10) ──
+    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10 + slice 3 Borders pick) ──
     in-out property <int> panel-section: 0;
     in-out property <bool> is-mutating: false;
     in-out property <bool> is-panel-open: false;
@@ -246,6 +246,7 @@ export component MainWindow inherits Window {
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-save-theme(string);
+    callback panel-apply-border(int, string);
 
 
     // ── Settings ──
@@ -543,6 +544,11 @@ export component MainWindow inherits Window {
         panel-save-error: root.panel-save-error;
         panel-save-placeholder: root.panel-save-placeholder;
         panel-save-button-text: root.panel-save-button-text;
+        panel-border-titles: root.border-titles;
+        panel-border-descs: root.border-descs;
+        panel-border-tags: root.border-tags;
+        panel-border-files: root.border-files;
+        panel-border-active-index: root.active-border-index;
         gallery-style-selected(style) => { root.gallery-style-selected(style); }
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
@@ -553,6 +559,7 @@ export component MainWindow inherits Window {
         panel-back => { root.panel-back(); }
         panel-section-selected(section) => { root.panel-section-selected(section); }
         panel-save-theme(name) => { root.panel-save-theme(name); }
+        panel-apply-border(idx, file) => { root.apply-border(idx, file); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──
