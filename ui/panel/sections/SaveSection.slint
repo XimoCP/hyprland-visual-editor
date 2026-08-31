@@ -1,0 +1,139 @@
+// HVE 2 — SaveSection (mutating-window slice 2, R10).
+//
+// LineEdit + Save (Enter submits, Esc leaves panel unchanged — Esc is
+// handled by ShellRoot/shell-kbd not this component), error label,
+// keyboard-focusable via arrows/Tab (R11). Dual-sync save writes BOTH
+// ThemeManagers then sync_cards + refresh_mosaic_page so Gallery shows
+// the new card instantly, no restart.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { LineEdit, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { SkwdTokens } from "../../tokens.slint";
+
+export component SaveSection inherits Rectangle {
+    in property <string> placeholder: "Theme name…";
+    in property <string> save-label: "Save";
+    in property <string> error-text: "";
+    in-out property <string> theme-name: "";
+    callback save-theme(string);
+    callback back();
+
+    background: transparent;
+
+    // Auto-focus the LineEdit so keyboard is ready and icy-cyan border is visible
+    init => { save-input.focus(); }
+
+    VerticalLayout {
+        spacing: SkwdTokens.spacing-12;
+        padding: SkwdTokens.spacing-16;
+        alignment: start;
+
+        Text {
+            text: "Save Current Look";
+            font-family: SkwdTokens.font-heading;
+            font-size: SkwdTokens.size-16;
+            font-weight: 700;
+            color: SkwdTokens.primary;
+        }
+        Text {
+            text: "Save your current setup as a theme. It appears instantly in the Gallery — no restart.";
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-12;
+            color: SkwdTokens.outline;
+            wrap: word-wrap;
+        }
+
+        // Input row: LineEdit + Save button (keyboard-focusable via Tab, icy-cyan when focused)
+        HorizontalLayout {
+            spacing: SkwdTokens.spacing-8;
+            height: 36px;
+
+            // LineEdit wrapper with icy-cyan focus border (R11 focus always visible)
+            save-line-wrap := Rectangle {
+                horizontal-stretch: 1;
+                height: 36px;
+                background: SkwdTokens.surface-container;
+                border-radius: SkwdTokens.radius-8;
+                border-width: save-input.has-focus ? 1px : 0px;
+                border-color: #8fd8ff;
+
+                save-input := LineEdit {
+                    x: 4px;
+                    y: 4px;
+                    width: parent.width - 8px;
+                    height: parent.height - 8px;
+                    placeholder-text: root.placeholder;
+                    text <=> root.theme-name;
+                    font-size: SkwdTokens.size-13;
+                    // Enter submits — same as Save button
+                    accepted(text) => {
+                        if (text != "") {
+                            root.save-theme(text);
+                        }
+                    }
+                }
+            }
+
+            // Save button (mouse + keyboard: Tab focus, icy-cyan border, Enter/Space activates)
+            save-btn-scope := FocusScope {
+                width: 84px;
+                height: 36px;
+                save-btn := Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    background: save-ta.has-hover ? SkwdTokens.primary.transparentize(0.2) : SkwdTokens.primary;
+                    border-radius: SkwdTokens.radius-8;
+                    border-width: save-btn-scope.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+                    animate background { duration: 120ms; }
+
+                    Text {
+                        text: root.save-label;
+                        color: SkwdTokens.surface;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-13;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    save-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (root.theme-name != "") {
+                                root.save-theme(root.theme-name);
+                            }
+                        }
+                    }
+                }
+                key-pressed(event) => {
+                    if (event.text == Key.Return || event.text == Key.Space) {
+                        if (root.theme-name != "") {
+                            root.save-theme(root.theme-name);
+                        }
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+        }
+
+        if root.error-text != "" : Text {
+            text: root.error-text;
+            color: #ff6b6b;
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-12;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Tip: Enter saves • Esc returns to Gallery • Tab navigates";
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-12;
+            color: SkwdTokens.outline.transparentize(0.4);
+        }
+    }
+}

@@ -235,12 +235,17 @@ export component MainWindow inherits Window {
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
 
-    // ── Mutating panel (slice 1 skeleton, R1) ──
+    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10) ──
     in-out property <int> panel-section: 0;
     in-out property <bool> is-mutating: false;
     in-out property <bool> is-panel-open: false;
+    in-out property <string> panel-save-input: "";
+    in-out property <string> panel-save-error: "";
+    in property <string> panel-save-placeholder: "Theme name…";
+    in property <string> panel-save-button-text: "Save";
     callback panel-back();
     callback panel-section-selected(int);
+    callback panel-save-theme(string);
 
 
     // ── Settings ──
@@ -534,6 +539,10 @@ export component MainWindow inherits Window {
         panel-section: root.panel-section;
         is-mutating: root.is-mutating;
         is-panel-open: root.is-panel-open;
+        panel-save-input <=> root.panel-save-input;
+        panel-save-error: root.panel-save-error;
+        panel-save-placeholder: root.panel-save-placeholder;
+        panel-save-button-text: root.panel-save-button-text;
         gallery-style-selected(style) => { root.gallery-style-selected(style); }
         gallery-card-clicked(idx) => { root.gallery-card-clicked(idx); }
         gallery-card-right-clicked(idx) => { root.gallery-card-right-clicked(idx); }
@@ -543,6 +552,7 @@ export component MainWindow inherits Window {
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
         panel-back => { root.panel-back(); }
         panel-section-selected(section) => { root.panel-section-selected(section); }
+        panel-save-theme(name) => { root.panel-save-theme(name); }
     }
 
     // ── Close button floating at top-left (absolute, overlays shell) ──

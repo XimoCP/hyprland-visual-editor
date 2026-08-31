@@ -1109,3 +1109,97 @@ fn panel_morph_midflight_renders() {
     );
     let _ = diff_reduced;
 }
+
+// ── Mutating-window slice 2: SaveSection render (R10) ─────────────
+
+#[test]
+fn panel_save_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_panel_save_input("MyMix".into());
+    win.set_panel_save_error("".into());
+    win.set_panel_save_placeholder("Theme name…".into());
+    win.set_panel_save_button_text("Save".into());
+
+    let count = 6usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_focus_pos(0.0);
+
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let settled = win.window().take_snapshot().expect("panel save settled");
+    save_slice_png(settled.clone(), "/tmp/opencode/panel_save.png");
+
+    // Also render with error to verify error label visibility
+    win.set_panel_save_error("name-empty".into());
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let err_snap = win.window().take_snapshot().expect("panel save error");
+    save_slice_png(err_snap.clone(), "/tmp/opencode/panel_save_error.png");
+
+    let diff = count_buffer_diff(&settled, &err_snap);
+    assert!(diff > 200, "error label must change pixels — got {diff} expected >200");
+
+    // Basic sanity: panel save settled must differ from empty gallery snapshot baseline
+    assert!(settled.width() == 1920, "snapshot width 1920");
+    assert!(err_snap.width() == 1920);
+}

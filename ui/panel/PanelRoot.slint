@@ -10,6 +10,7 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { PanelMenu } from "PanelMenu.slint";
+import { SaveSection } from "sections/SaveSection.slint";
 
 export component PanelRoot inherits Rectangle {
     in property <int> section: 0;
@@ -17,8 +18,13 @@ export component PanelRoot inherits Rectangle {
     in property <bool> open: false;
     in property <bool> reduced-motion: false;
     in property <string> theme-name: "My Theme";
+    in-out property <string> save-input: "";
+    in property <string> save-error: "";
+    in property <string> save-placeholder: "Theme name…";
+    in property <string> save-button-text: "Save";
     callback back();
     callback section-selected(int);
+    callback save-theme(string);
 
     background: SkwdTokens.surface;
     border-radius: SkwdTokens.radius-12;
@@ -70,11 +76,22 @@ export component PanelRoot inherits Rectangle {
 
             Rectangle { width: 1px; background: SkwdTokens.outline.transparentize(0.6); }
 
-            // Content placeholder (slice 1 — real sections land in later slices)
+            // Content area — SaveSection for section 0, placeholders for other sections (later slices)
             Rectangle {
                 horizontal-stretch: 1;
                 background: SkwdTokens.surface;
-                VerticalLayout {
+                clip: true;
+                if root.section == 0 : SaveSection {
+                    width: 100%;
+                    height: 100%;
+                    theme-name <=> root.save-input;
+                    error-text: root.save-error;
+                    placeholder: root.save-placeholder;
+                    save-label: root.save-button-text;
+                    save-theme(name) => { root.save-theme(name); }
+                    back => { root.back(); }
+                }
+                if root.section != 0 : VerticalLayout {
                     alignment: center;
                     spacing: SkwdTokens.spacing-12;
                     Text {

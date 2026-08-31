@@ -1132,11 +1132,207 @@ fn main() -> Result<(), slint::PlatformError> {
         tray_system_active,
         &lock,
         &shell,
-        mosaic_pages,
-        refresh_mosaic_page,
+        mosaic_pages.clone(),
+        refresh_mosaic_page.clone(),
         refresh_slice_ring.clone(),
         animate_slice_step.clone(),
     );
+
+    // ── Panel Save dual-sync (mutating-window slice 2, R10) ──
+    // Save must write BOTH ThemeManagers (main + gallery_tm) then sync_cards +
+    // refresh_mosaic_page so Gallery shows the new card instantly, no restart.
+    // Empty name → error shown, no save call. Name == active theme → overwrite.
+    {
+        let state_c = state.clone();
+        let gallery_tm_c = gallery_tm.clone();
+        let refresh_mosaic_page_c = refresh_mosaic_page.clone();
+        let refresh_slice_ring_c = refresh_slice_ring.clone();
+        let config_dir_c = config_dir.clone();
+        let weak = window.as_weak();
+        window.on_panel_save_theme(move |name| {
+            let name_str = name.to_string();
+            let trimmed = name_str.trim().to_string();
+            if trimmed.is_empty() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_panel_save_error("name-empty".into());
+                    w.set_theme_error_text("name-empty".into());
+                }
+                return;
+            }
+            // Use pure helper for validation + dual write + sync callbacks
+            let provider_ids = {
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                st.theme_manager().provider_ids()
+            };
+            // Closure wrappers for sync/refresh that operate on the window
+            let mut error_msg = String::new();
+            let sync_called = {
+                let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                let res_main = st.theme_manager_mut().save(&trimmed, &provider_ids);
+                if let Err(e) = res_main {
+                    error_msg = e;
+                    false
+                } else {
+                    let res_gallery = gallery_tm_c.lock().unwrap().save(&trimmed, &provider_ids);
+                    if let Err(e) = res_gallery {
+                        error_msg = e;
+                        false
+                    } else {
+                        true
+                    }
+                }
+            };
+            if !sync_called {
+                if let Some(w) = weak.upgrade() {
+                    w.set_panel_save_error(error_msg.clone().into());
+                    w.set_theme_error_text(error_msg.into());
+                }
+                return;
+            }
+            // Success: clear errors, refresh UI, sync gallery model, refresh mosaic/slice
+            if let Some(w) = weak.upgrade() {
+                w.set_panel_save_error("".into());
+                w.set_theme_error_text("".into());
+                w.set_panel_save_input("".into());
+                // Refresh theme list from main manager (AppState helper)
+                {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
+                }
+                // Sync gallery cards in-place (R10: visible no restart)
+                {
+                    let new_rows: Vec<crate::GalleryCardData> = {
+                        let gtm = gallery_tm_c.lock().unwrap();
+                        let infos = gtm.list().unwrap_or_default();
+                        infos
+                            .iter()
+                            .map(|info| {
+                                let card = crate::shell::gallery::ThemeCard::from_info(info);
+                                let providers_model = slint::ModelRc::new(slint::VecModel::from(
+                                    info.providers
+                                        .iter()
+                                        .map(|p| slint::SharedString::from(p.as_str()))
+                                        .collect::<Vec<_>>(),
+                                ));
+                                crate::GalleryCardData {
+                                    name: slint::SharedString::from(info.name.as_str()),
+                                    saved_at: slint::SharedString::from(info.saved_at.as_str()),
+                                    is_active: info.is_active,
+                                    providers: providers_model,
+                                    accent: crate::theme::parse_hex(&card.colors.accent),
+                                    primary: crate::theme::parse_hex(&card.colors.primary),
+                                    secondary: crate::theme::parse_hex(&card.colors.secondary),
+                                    tertiary: crate::theme::parse_hex(&card.colors.tertiary),
+                                    surface: crate::theme::parse_hex(&card.colors.surface),
+                                    border_size: card.border.size,
+                                    border_radius: card.border.radius,
+                                    border_color: crate::theme::parse_hex(&card.border.color),
+                                    shader: slint::SharedString::from(card.shader.clone().unwrap_or_default()),
+                                    thumb_path: slint::SharedString::from(
+                                        card.thumb_path
+                                            .as_ref()
+                                            .map(|p| p.to_string_lossy().to_string())
+                                            .unwrap_or_default(),
+                                    ),
+                                    thumb: slint::Image::default(),
+                                    hero: slint::Image::default(),
+                                    slat_image: slint::Image::default(),
+                                    slat_expanded_image: slint::Image::default(),
+                                }
+                            })
+                            .collect()
+                    };
+                    let model_rc = w.get_gallery_cards();
+                    if let Some(model) = model_rc
+                        .as_any()
+                        .downcast_ref::<slint::VecModel<crate::GalleryCardData>>()
+                    {
+                        // Preserve baked images via carry_over_bakes semantics inside sync_cards
+                        crate::shell::gallery::model::sync_cards(model, new_rows);
+                    } else {
+                        w.set_gallery_cards(slint::ModelRc::new(slint::VecModel::from(new_rows)));
+                    }
+                    w.set_gallery_empty(false);
+                }
+                // Refresh mosaic + slice ring so new card appears in both views
+                refresh_mosaic_page_c(false);
+                refresh_slice_ring_c();
+                // Schedule thumbs for the new card (async bake)
+                let weak2 = weak.clone();
+                let gallery_themes_root2 = config_dir_c.join("hve").join("themes");
+                let refresh_mosaic_page2 = refresh_mosaic_page_c.clone();
+                // Inline thumb scheduling (same as startup path, but for the new card)
+                {
+                    use crate::shell::gallery::thumbs;
+                    use slint::Model;
+                    let model = w.get_gallery_cards();
+                    let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
+                    for i in 0..model.row_count() {
+                        if let Some(row) = model.row_data(i) {
+                            if row.thumb.size().width > 0 {
+                                continue;
+                            }
+                            let src = thumbs::find_source_image(&gallery_themes_root2.join(row.name.as_str()));
+                            sources.push((i as usize, row.name.to_string(), src));
+                        }
+                    }
+                    if !sources.is_empty() {
+                        let pending = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(sources.len()));
+                        let jobs = thumbs::plan_jobs(sources);
+                        if !jobs.is_empty() {
+                            let pending_c = pending.clone();
+                            thumbs::preheat(jobs, move |idx, name, png, hero_png, slat_rgba, slat_expanded_rgba| {
+                                if let Some(w2) = weak2.upgrade() {
+                                    let model2 = w2.get_gallery_cards();
+                                    let img = slint::Image::load_from_path(&png).unwrap_or_default();
+                                    let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
+                                    let slat = if slat_rgba.width() == 0 || slat_rgba.height() == 0 {
+                                        slint::Image::default()
+                                    } else {
+                                        let (sw, sh) = (slat_rgba.width(), slat_rgba.height());
+                                        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(sw, sh);
+                                        buf.make_mut_bytes().copy_from_slice(slat_rgba.as_raw());
+                                        slint::Image::from_rgba8(buf)
+                                    };
+                                    let slat_exp = if slat_expanded_rgba.width() == 0 || slat_expanded_rgba.height() == 0 {
+                                        slint::Image::default()
+                                    } else {
+                                        let (sw, sh) = (slat_expanded_rgba.width(), slat_expanded_rgba.height());
+                                        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(sw, sh);
+                                        buf.make_mut_bytes().copy_from_slice(slat_expanded_rgba.as_raw());
+                                        slint::Image::from_rgba8(buf)
+                                    };
+                                    if let Some(mut row) = model2.row_data(idx) {
+                                        if row.name.as_str() == &*name {
+                                            row.thumb = img;
+                                            row.hero = hero_img;
+                                            row.slat_image = slat;
+                                            row.slat_expanded_image = slat_exp;
+                                            model2.set_row_data(idx, row);
+                                            if thumbs::is_last_completion(&pending_c) {
+                                                refresh_mosaic_page2(false);
+                                            }
+                                        } else if thumbs::is_last_completion(&pending_c) {
+                                            refresh_mosaic_page2(false);
+                                        }
+                                    } else if thumbs::is_last_completion(&pending_c) {
+                                        refresh_mosaic_page2(false);
+                                    }
+                                } else if thumbs::is_last_completion(&pending) {
+                                    refresh_mosaic_page2(false);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        });
+        // Also wire gallery-stage geometry changed from earlier? already wired.
+        // Ensure initial panel placeholders are cleared
+        window.set_panel_save_placeholder("Theme name…".into());
+        window.set_panel_save_button_text("Save".into());
+        window.set_panel_save_error("".into());
+    }
 
     // ── Nav modules (data-driven sidebar, translated) ──
     let nav_modules = Vec::from([

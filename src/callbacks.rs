@@ -858,6 +858,151 @@ fn sync_preset_indices(
     window.set_gap_out(cfg.gaps_out);
 }
 
+/// Panel Save dual-sync (mutating-window R10, slice 2).
+/// Validates `name` trimmed: empty → error message, no save call.
+/// Otherwise writes BOTH theme_managers via `save(name, provider_ids)` then
+/// invokes `sync_cards` and `refresh_mosaic_page` callbacks so the Gallery
+/// shows the new card instantly without restart.
+#[allow(dead_code)]
+pub fn handle_panel_save<F, G>(
+    name: &str,
+    tm_main: &mut crate::theme_manager::ThemeManager,
+    tm_gallery: &mut crate::theme_manager::ThemeManager,
+    sync_cards: F,
+    refresh_mosaic_page: G,
+    error_out: &mut String,
+) -> bool
+where
+    F: FnOnce(),
+    G: FnOnce(),
+{
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        *error_out = "name-empty".to_string();
+        return false;
+    }
+    let provider_ids = tm_main.provider_ids();
+    let res_main = tm_main.save(trimmed, &provider_ids);
+    if let Err(e) = res_main {
+        *error_out = e;
+        return false;
+    }
+    // Gallery TM must stay in sync — use same provider_ids slice (ids are same set)
+    // If gallery save fails, we still report error but main already saved (design: both writes)
+    let res_gallery = tm_gallery.save(trimmed, &provider_ids);
+    if let Err(e) = res_gallery {
+        *error_out = e;
+        return false;
+    }
+    error_out.clear();
+    sync_cards();
+    refresh_mosaic_page();
+    true
+}
+
+#[cfg(test)]
+mod panel_save_tests {
+    use super::handle_panel_save;
+    use crate::theme_manager::{ProviderCapabilities, ThemeManager, ThemeProvider};
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
+
+    struct DummyProvider;
+    impl ThemeProvider for DummyProvider {
+        fn id(&self) -> &str { "dummy" }
+        fn display_name_key(&self) -> &str { "dummy" }
+        fn icon(&self) -> &str { "dummy" }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+    }
+
+    fn two_managers() -> (ThemeManager, ThemeManager, TempDir, TempDir) {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let mut tm1 = ThemeManager::new(dir1.path());
+        let mut tm2 = ThemeManager::new(dir2.path());
+        tm1.register_provider(Box::new(DummyProvider));
+        tm2.register_provider(Box::new(DummyProvider));
+        (tm1, tm2, dir1, dir2)
+    }
+
+    #[test]
+    fn test_save_writes_both_managers() {
+        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
+        let sync = AtomicUsize::new(0);
+        let refresh = AtomicUsize::new(0);
+        let mut err = String::new();
+        let ok = handle_panel_save(
+            "MyMix",
+            &mut tm1,
+            &mut tm2,
+            || { sync.fetch_add(1, Ordering::SeqCst); },
+            || { refresh.fetch_add(1, Ordering::SeqCst); },
+            &mut err,
+        );
+        assert!(ok, "save should succeed");
+        assert!(err.is_empty(), "no error on success, got {err}");
+        assert_eq!(sync.load(Ordering::SeqCst), 1, "sync_cards must be called once");
+        assert_eq!(refresh.load(Ordering::SeqCst), 1, "refresh_mosaic_page must be called once");
+        let list1 = tm1.list().unwrap();
+        assert!(list1.iter().any(|t| t.name == "MyMix"), "tm_main must contain MyMix");
+        let list2 = tm2.list().unwrap();
+        assert!(list2.iter().any(|t| t.name == "MyMix"), "gallery_tm must contain MyMix — dual-sync");
+    }
+
+    #[test]
+    fn test_save_empty_shows_error() {
+        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
+        let sync = AtomicUsize::new(0);
+        let refresh = AtomicUsize::new(0);
+        let mut err = String::new();
+        let ok = handle_panel_save(
+            "   ",
+            &mut tm1,
+            &mut tm2,
+            || { sync.fetch_add(1, Ordering::SeqCst); },
+            || { refresh.fetch_add(1, Ordering::SeqCst); },
+            &mut err,
+        );
+        assert!(!ok, "empty name must not save");
+        assert_eq!(err, "name-empty");
+        assert_eq!(sync.load(Ordering::SeqCst), 0, "no sync on empty");
+        assert_eq!(refresh.load(Ordering::SeqCst), 0, "no refresh on empty");
+        assert!(tm1.list().unwrap().is_empty(), "no theme in tm_main");
+        assert!(tm2.list().unwrap().is_empty(), "no theme in gallery_tm");
+    }
+
+    #[test]
+    fn test_save_overwrite_confirms() {
+        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
+        // pre-seed MyMix as last_applied
+        tm1.save("MyMix", &["dummy".to_string()]).unwrap();
+        tm1.last_applied = "MyMix".to_string();
+        tm2.save("MyMix", &["dummy".to_string()]).unwrap();
+        tm2.last_applied = "MyMix".to_string();
+        let sync = AtomicUsize::new(0);
+        let refresh = AtomicUsize::new(0);
+        let mut err = String::new();
+        // overwrite same name — should succeed and still sync+refresh
+        let ok = handle_panel_save(
+            "MyMix",
+            &mut tm1,
+            &mut tm2,
+            || { sync.fetch_add(1, Ordering::SeqCst); },
+            || { refresh.fetch_add(1, Ordering::SeqCst); },
+            &mut err,
+        );
+        assert!(ok, "overwrite should succeed");
+        assert!(err.is_empty());
+        assert_eq!(sync.load(Ordering::SeqCst), 1, "sync_cards on overwrite");
+        assert_eq!(refresh.load(Ordering::SeqCst), 1, "refresh on overwrite");
+        assert!(tm1.list().unwrap().iter().any(|t| t.name == "MyMix"));
+        assert!(tm2.list().unwrap().iter().any(|t| t.name == "MyMix"));
+    }
+}
+
 /// Resolve the current executable path for the restart action.
 fn resolve_exe() -> PathBuf {
     if let Ok(path) = std::env::current_exe() {
