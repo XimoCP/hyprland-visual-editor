@@ -162,7 +162,7 @@ fn cmd_next_anim(window: &slint::Weak<crate::MainWindow>) -> String {
         let next = get_next_index(current, count);
         match files.row_data(next as usize) {
             Some(file) => {
-                win.invoke_apply_animation(next, file);
+                win.invoke_panel_apply_animation(next, file);
                 "ok".to_string()
             }
             None => "error: invalid animation index".to_string(),
@@ -182,7 +182,7 @@ fn cmd_next_border(window: &slint::Weak<crate::MainWindow>) -> String {
         let next = get_next_index(current, count);
         match files.row_data(next as usize) {
             Some(file) => {
-                win.invoke_apply_border(next, file);
+                win.invoke_panel_apply_border(next, file);
                 "ok".to_string()
             }
             None => "error: invalid border index".to_string(),
@@ -202,7 +202,7 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
         let next = get_next_index(current, count);
         match files.row_data(next as usize) {
             Some(file) => {
-                win.invoke_apply_shader(next, file);
+                win.invoke_panel_apply_shader(next, file);
                 "ok".to_string()
             }
             None => "error: invalid shader index".to_string(),
@@ -242,16 +242,12 @@ fn cmd_status(window: &slint::Weak<crate::MainWindow>) -> String {
         let anim_idx = win.get_active_anim_index();
         let border_idx = win.get_active_border_index();
         let shader_idx = win.get_active_shader_index();
-        let active_tab = win.get_active_tab();
-        let nav_ready = win.get_nav_ready();
-        let a_foc = win.get_anim_focused_index();
-        let b_foc = win.get_border_focused_index();
-        let s_foc = win.get_shader_focused_index();
-        let t_foc = win.get_theme_focused_index();
+        let panel_section = win.get_panel_section();
+        let is_mutating = win.get_is_mutating();
+        let is_panel_open = win.get_is_panel_open();
         format!(
-            r#"{{"system_active":{},"active_anim_index":{},"active_border_index":{},"active_shader_index":{},"active_tab":{},"nav_ready":{},"anim_foc":{},"border_foc":{},"shader_foc":{},"theme_foc":{}}}"#,
-            active, anim_idx, border_idx, shader_idx, active_tab, nav_ready,
-            a_foc, b_foc, s_foc, t_foc
+            r#"{{"system_active":{},"active_anim_index":{},"active_border_index":{},"active_shader_index":{},"panel_section":{},"is_mutating":{},"is_panel_open":{}}}"#,
+            active, anim_idx, border_idx, shader_idx, panel_section, is_mutating, is_panel_open
         )
     }))
 }

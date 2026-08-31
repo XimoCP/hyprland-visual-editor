@@ -1931,3 +1931,62 @@ fn panel_system_renders() {
     // Basic sanity: still 1920
     assert!(snap_10s.width() == 1920);
 }
+
+// ── Mutating-window slice 8: Legacy cleanup (R8) ───────────────────────
+
+#[test]
+fn test_no_active_tab_orphans() {
+    use std::path::Path;
+    let needle = ["active", "tab"].join("-");
+    fn walk(dir: &Path, needle: &str, hits: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, needle, hits);
+            } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                if matches!(ext, "slint" | "rs" | "json") {
+                    // Skip self-test file to avoid false positive on needle literal
+                    if path.ends_with("src/shell/ui_tests.rs") {
+                        continue;
+                    }
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if content.contains(needle) {
+                            hits.push(format!("{} contains {}", path.display(), needle));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut hits = Vec::new();
+    walk(Path::new("ui"), &needle, &mut hits);
+    walk(Path::new("src"), &needle, &mut hits);
+    assert!(
+        hits.is_empty(),
+        "orphans must be 0 — grep -rn legacy_tab ui/ src/ →0 but found: {hits:?}"
+    );
+}
+
+#[test]
+fn test_modules_removed() {
+    let content = std::fs::read_to_string("ui/modules.slint")
+        .unwrap_or_else(|_| panic!("ui/modules.slint must exist (may be empty)"));
+    for needle in ["HomeModule", "AnimationsModule", "BordersModule", "ShadersModule", "ThemesModule"] {
+        assert!(
+            !content.contains(needle),
+            "legacy module {needle} must be gone from ui/modules.slint"
+        );
+    }
+    // SettingsPanel overlay component must be gone from ui/components.slint
+    let comp = std::fs::read_to_string("ui/components.slint").expect("ui/components.slint must exist");
+    assert!(
+        !comp.contains("export component SettingsPanel"),
+        "SettingsPanel overlay component must be removed from ui/components.slint"
+    );
+    // SettingsButton is also legacy (only used by old overlay)
+    assert!(
+        !comp.contains("export component SettingsButton"),
+        "SettingsButton must be removed from ui/components.slint — orphan after overlay removal"
+    );
+}

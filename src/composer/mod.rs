@@ -248,11 +248,8 @@ impl Controller {
             // For the pure slow path (window not in special), we keep the
             // existing prewarm/warmup extras and stay in Entering.
             if !fast {
-                // Slow path extras — keep as-is (prewarm/warmup).
-                // Note: HyprlandComposer already performed show_and_sync for
-                // the slow path; this just warms layouts.
-                crate::prewarm_tabs(win_weak.clone(), 1);
-                crate::warmup_navigation(win);
+                // Slow path extras — legacy prewarm/warmup removed slice 8 (R8).
+                // Panel navigation warms per-section focus via SystemSection/BordersSection FocusScope.
             }
             self.window_hidden = false;
             // Defer fullscreen to settle (focus confirm or timeout). Keep

@@ -1,12 +1,5 @@
-import { NavModule, HveColors } from "./theme.slint";
-import { NavButton, CloseButton, SettingsButton, SettingsPanel, AboutItem } from "./components.slint";
-import {
-    HomeModule,
-    AnimationsModule,
-    BordersModule,
-    ShadersModule,
-    ThemesModule,
-} from "./modules.slint";
+import { HveColors } from "./theme.slint";
+import { CloseButton, AboutItem } from "./components.slint";
 import { ShellRoot, SkwdTokens } from "./shell.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
@@ -45,61 +38,13 @@ export component MainWindow inherits Window {
     // screen keeps the opaque dark base.
     background: root.mounted-screen == 1 ? transparent : HveColors.bg-dark;
 
-    // ── State ──
-    in-out property <int> active-tab: 0;
-    in-out property <bool> nav-ready: true;
-    in-out property <int> anim-focused-index: -1;
-    in-out property <int> border-focused-index: -1;
-    in-out property <int> shader-focused-index: -1;
-    in-out property <int> theme-focused-index: -1;
-    property <bool> sidebar-mode: anim-focused-index == -1 && border-focused-index == -1 && shader-focused-index == -1 && theme-focused-index == -1;
-
-    // ── Held-key navigation state ──
-    property <bool> _nav-down-held: false;
-    property <bool> _nav-up-held: false;
-    property <int> _nav-repeat-interval: 150;  // ms between repeats once the OS confirms the hold
-    property <bool> _nav-repeat-active: false; // true once OS auto-repeat confirms the hold
-    property <bool> _nav-rapid: false;         // true during OS-confirmed repeat (fast expand)
-
-    in property <[NavModule]> nav-modules;
+    // ── Legacy legacy_tab state — REMOVED in slice 8 (R8) ──
+    // Replaced by panel-section + is-mutating / is-panel-open (PanelState).
     in-out property <bool> system-active: false;
     in property <image> logo-image;
 
-    // ── i18n strings ──
-    in property <string> sidebar-subtitle;
-    in property <string> home-header-title;
-    in property <string> home-header-subtitle;
-    in property <string> activation-title;
-    in property <string> activation-active-text;
-    in property <string> activation-inactive-text;
-    in property <string> feature-title;
-    in property <string> feature-desc;
-    in property <string> how-title;
-    in property <string> how-desc;
-    in property <string> anim-header-title;
-    in property <string> anim-header-subtitle;
-    in property <string> border-header-title;
-    in property <string> border-header-subtitle;
-    in property <string> border-geometry-label;
-    in property <string> shader-header-title;
-    in property <string> shader-header-subtitle;
-    // ── i18n: Home strings ──
-    in property <string> home-status-active;
-    in property <string> home-status-inactive;
-    in property <string> home-nav-animations;
-    in property <string> home-nav-borders;
-    in property <string> home-nav-shaders;
-    in property <string> home-count-styles;
-    in property <string> home-count-filters;
-    in property <string> home-active-config-title;
-    in property <string> home-active-anim-label;
-    in property <string> home-active-border-label;
-    in property <string> home-active-shader-label;
-    in property <string> home-active-theme-label;
-    in property <string> home-none-theme;
-    in property <string> home-none-anim;
-    in property <string> home-none-border;
-    in property <string> home-none-shader;
+    // ── i18n strings (legacy Home/Tab headers — REMOVED in slice 8) ──
+    // WelcomeCards / Active Config moved to panel System About (home-about-* kept below).
     in property <string> home-about-title;
     in property <string> home-about-short;
     in property <string> home-about-full;
@@ -156,24 +101,8 @@ export component MainWindow inherits Window {
     in-out property <[bool]> theme-is-actives;
     in-out property <int> active-theme-index: -1;
     in-out property <bool> theme-busy: false;
-    in property <string> theme-header-title;
-    in property <string> theme-header-subtitle;
-    in property <string> theme-save-placeholder;
-    in property <string> theme-save-button;
-    in property <string> theme-search-placeholder;
-    in property <string> theme-empty-text;
-    in property <string> theme-apply-text;
-    in property <string> theme-rename-text;
-    in property <string> theme-delete-text;
-    in property <string> theme-cancel-text;
-    in property <string> theme-confirm-delete;
-    in property <string> theme-confirm-delete-msg;
-    in property <string> theme-confirm-refresh;
-    in property <string> theme-confirm-refresh-msg;
-    in property <string> theme-refresh-text;
-    in property <string> theme-rename-title;
-    in property <string> theme-save-section-text;
-    in property <string> theme-list-section-text;
+    // ── Legacy ThemesModule i18n — REMOVED slice 8 (R8) ──
+    // Save/apply handled via panel SaveSection + Gallery cards; list/search/rename/delete UI removed.
     in property <string> app-version-label;
     in-out property <string> theme-error-text: "";
     in-out property <string> home-active-theme-name: "";
@@ -260,8 +189,8 @@ export component MainWindow inherits Window {
     callback panel-apply-shader(int, string);
 
 
-    // ── Settings ──
-    in-out property <bool> settings-open: false;
+    // ── Settings (panel System reuses these rows) ──
+    // settings-open / toggle-settings removed — overlay deleted, rows live in SystemSection
     in-out property <bool> auto-minimize: true;
     in-out property <int> minimize-seconds: 5;
     in property <string> language: "en";
@@ -273,15 +202,7 @@ export component MainWindow inherits Window {
 
     // ── Callbacks ──
     callback toggle-system(bool);
-    callback apply-animation(int, string);
-    callback apply-border(int, string);
-    callback apply-shader(int, string);
-    callback apply-geometry(int);
-    callback apply-geometry-radius(int);
-    callback apply-geometry-gaps-in(int);
-    callback apply-geometry-gaps-out(int);
     callback close-button-clicked();
-    callback toggle-settings();
     callback toggle-auto-minimize(bool);
     callback change-minimize-seconds(int);
     callback change-language(string);
@@ -291,228 +212,10 @@ export component MainWindow inherits Window {
     callback change-theme(string);
     callback reset-presets();
     callback restart-app();
-    callback save-theme(string);
-    callback apply-theme(string);
-    callback delete-theme(string);
-    callback rename-theme(string, string);
-    callback overwrite-theme(string);
-    callback refresh-themes();
-    callback search-query-changed(string);
     callback open-docs();
 
-    // ── Keyboard step helpers (called once per press, then on 120ms timer while held) ──
-    function step-down() {
-        if (root.active-tab == 1 && root.anim-focused-index >= 0) {
-            if (root.anim-focused-index >= root.anim-titles.length - 1) {
-                root.anim-focused-index = 0;
-            } else {
-                root.anim-focused-index += 1;
-            }
-        } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
-            if (root.border-focused-index >= root.border-titles.length - 1) {
-                root.border-focused-index = 0;
-            } else {
-                root.border-focused-index += 1;
-            }
-        } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
-            if (root.shader-focused-index >= root.shader-titles.length - 1) {
-                root.shader-focused-index = 0;
-            } else {
-                root.shader-focused-index += 1;
-            }
-        } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
-            if (root.theme-focused-index >= root.theme-names.length - 1) {
-                root.theme-focused-index = 0;
-            } else {
-                root.theme-focused-index += 1;
-            }
-        } else {
-            if (root.active-tab >= 4) {
-                root.active-tab = 0;
-            } else {
-                root.active-tab += 1;
-            }
-        }
-    }
-    function step-up() {
-        if (root.active-tab == 1 && root.anim-focused-index >= 0) {
-            if (root.anim-focused-index <= 0) {
-                root.anim-focused-index = root.anim-titles.length - 1;
-            } else {
-                root.anim-focused-index -= 1;
-            }
-        } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
-            if (root.border-focused-index <= 0) {
-                root.border-focused-index = root.border-titles.length - 1;
-            } else {
-                root.border-focused-index -= 1;
-            }
-        } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
-            if (root.shader-focused-index <= 0) {
-                root.shader-focused-index = root.shader-titles.length - 1;
-            } else {
-                root.shader-focused-index -= 1;
-            }
-        } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
-            if (root.theme-focused-index <= 0) {
-                root.theme-focused-index = root.theme-names.length - 1;
-            } else {
-                root.theme-focused-index -= 1;
-            }
-        } else {
-            if (root.active-tab <= 0) {
-                root.active-tab = 4;
-            } else {
-                root.active-tab -= 1;
-            }
-        }
-    }
-
-    // ── Root FocusScope — centralized keyboard handler ──
-    forward-focus: root-kbd;
-
-    root-kbd := FocusScope {
-        // ── Down/Up: navigate presets (or cycle tabs in sidebar mode).
-        // A first press steps immediately. The OS auto-repeat (event.repeat)
-        // confirms a hold; only then does this Timer take over the repeat
-        // cadence (150ms inside a module, 300ms between tabs). Starting the
-        // Timer on the first press caused a premature second step at 400ms —
-        // the "jumps two tabs" bug. ──
-        Timer {
-            interval: root._nav-repeat-interval * 1ms;
-            running: root._nav-repeat-active;
-            triggered => {
-                if (root._nav-down-held) {
-                    root.step-down();
-                }
-                if (root._nav-up-held) {
-                    root.step-up();
-                }
-            }
-        }
-
-        key-pressed(event) => {
-            if (event.text == Key.DownArrow) {
-                if (root.nav-ready && !root._nav-down-held) {
-                    root._nav-down-held = true;
-                    root.step-down();
-                } else if (root.nav-ready && event.repeat && root._nav-down-held && !root._nav-repeat-active) {
-                    // OS confirmed the hold → take over repeat cadence
-                    root._nav-repeat-active = true;
-                    root._nav-rapid = true;
-                    root._nav-repeat-interval = root.sidebar-mode ? 300 : 150;
-                }
-                accept
-            } else if (event.text == Key.UpArrow) {
-                if (root.nav-ready && !root._nav-up-held) {
-                    root._nav-up-held = true;
-                    root.step-up();
-                } else if (root.nav-ready && event.repeat && root._nav-up-held && !root._nav-repeat-active) {
-                    root._nav-repeat-active = true;
-                    root._nav-rapid = true;
-                    root._nav-repeat-interval = root.sidebar-mode ? 300 : 150;
-                }
-                accept
-            } else {
-                reject
-            }
-        }
-
-        key-released(event) => {
-            if (event.text == Key.DownArrow) {
-                root._nav-down-held = false;
-                root._nav-repeat-active = false;
-                root._nav-rapid = false;
-                accept
-            } else if (event.text == Key.UpArrow) {
-                root._nav-up-held = false;
-                root._nav-repeat-active = false;
-                root._nav-rapid = false;
-                accept
-            } else {
-                reject
-            }
-        }
-
-        // Reset nav state when focus leaves or returns (e.g. tray menu steals
-        // keyboard focus on Wayland — a held arrow key's release never reaches
-        // us and would wedge the repeat timer otherwise).
-        focus-lost => {
-            root._nav-down-held = false;
-            root._nav-up-held = false;
-            root._nav-repeat-active = false;
-            root._nav-rapid = false;
-        }
-
-        focus-gained => {
-            root._nav-down-held = false;
-            root._nav-up-held = false;
-            root._nav-repeat-active = false;
-            root._nav-rapid = false;
-        }
-
-        // Right: enter module (select active preset, fallback first)
-        KeyBinding {
-            keys: @keys(RightArrow);
-            enabled: root.nav-ready && root.active-tab != 0 && root.active-tab <= 4;
-            activated => {
-                if (root.active-tab == 1) {
-                    root.anim-focused-index = root.active-anim-index >= 0 ? root.active-anim-index : 0;
-                } else if (root.active-tab == 2) {
-                    root.border-focused-index = root.active-border-index >= 0 ? root.active-border-index : 0;
-                } else if (root.active-tab == 3) {
-                    root.shader-focused-index = root.active-shader-index >= 0 ? root.active-shader-index : 0;
-                } else if (root.active-tab == 4) {
-                    root.theme-focused-index = root.active-theme-index >= 0 ? root.active-theme-index : 0;
-                }
-            }
-        }
-
-        // Left: exit module (back to tab nav)
-        KeyBinding {
-            enabled: root.nav-ready;
-            keys: @keys(LeftArrow);
-            activated => {
-                root.anim-focused-index = -1;
-                root.border-focused-index = -1;
-                root.shader-focused-index = -1;
-                root.theme-focused-index = -1;
-            }
-        }
-
-        // Enter: toggle preset if inside module
-        KeyBinding {
-            enabled: root.nav-ready;
-            keys: @keys(Return);
-            activated => {
-                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
-                    root.apply-animation(root.anim-focused-index, root.anim-files[root.anim-focused-index]);
-                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
-                    root.apply-border(root.border-focused-index, root.border-files[root.border-focused-index]);
-                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
-                    root.apply-shader(root.shader-focused-index, root.shader-files[root.shader-focused-index]);
-                } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
-                    root.apply-theme(root.theme-names[root.theme-focused-index]);
-                }
-            }
-        }
-
-        // Space: toggle preset if inside module
-        KeyBinding {
-            keys: @keys(Space);
-            activated => {
-                if (root.active-tab == 1 && root.anim-focused-index >= 0) {
-                    root.apply-animation(root.anim-focused-index, root.anim-files[root.anim-focused-index]);
-                } else if (root.active-tab == 2 && root.border-focused-index >= 0) {
-                    root.apply-border(root.border-focused-index, root.border-files[root.border-focused-index]);
-                } else if (root.active-tab == 3 && root.shader-focused-index >= 0) {
-                    root.apply-shader(root.shader-focused-index, root.shader-files[root.shader-focused-index]);
-                } else if (root.active-tab == 4 && root.theme-focused-index >= 0) {
-                    root.apply-theme(root.theme-names[root.theme-focused-index]);
-                }
-            }
-        }
-    }
+    // ── Legacy held-key nav (legacy_tab) — REMOVED slice 8 (R8) ──
+    // Panel sections handle their own FocusScope keyboard nav (R11).
 
     // ── HVE 2 shell mount (delivery 4/5 + PR4.5 gallery wiring) ──
     shell := ShellRoot {
@@ -648,38 +351,7 @@ export component MainWindow inherits Window {
         clicked => { root.close-button-clicked(); }
     }
 
-    // ── Settings Panel overlay ──
-    if root.settings-open : SettingsPanel {
-        is-open: root.settings-open;
-        auto-minimize: root.auto-minimize;
-        minimize-seconds: root.minimize-seconds;
-        language: root.language;
-        tiling-mode: root.tiling-mode;
-        keybinds-mode: root.keybinds-mode;
-        autostart: root.autostart;
-        theme: root.theme;
-        restart-banner-text: root.settings-restart-banner;
-        restart-button-text: root.settings-restart-button;
-        settings-title: root.settings-title;
-        auto-minimize-label: root.auto-minimize-label;
-        timer-label: root.timer-label;
-        language-label: root.language-label;
-        tiling-label: root.tiling-label;
-        autostart-label: root.autostart-label;
-        theme-label: root.theme-label;
-        reset-label: root.reset-label;
-        keybinds-label: root.keybinds-label;
+    // ── Legacy SettingsPanel overlay — REMOVED slice 8 (R8) ──
+    // Rows relocated into panel System section; close wiring deleted.
 
-        restart-required: root.restart-required;
-        close-panel => { root.toggle-settings(); }
-        toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
-        change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
-        change-language(v) => { root.change-language(v); }
-        toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
-        toggle-keybinds(v) => { root.toggle-keybinds(v); }
-        toggle-autostart(v) => { root.toggle-autostart(v); }
-        change-theme(v) => { root.change-theme(v); }
-        reset-presets => { root.reset-presets(); }
-        restart-app => { root.restart-app(); }
-    }
 }

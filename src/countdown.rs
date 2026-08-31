@@ -20,6 +20,7 @@ static SUPPRESS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Suprime el auto-minimize durante `duration` (p. ej. mientras se aplica un
 /// tema). Safe to call desde cualquier thread.
+#[allow(dead_code)]
 pub fn suppress_auto_minimize(duration: Duration) {
     let until = Instant::now() + duration;
     *SUPPRESS_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) = Some(until);

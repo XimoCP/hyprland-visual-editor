@@ -23,6 +23,7 @@ fn lock_state(state: &SharedState) -> MutexGuard<'_, AppState> {
 /// name, the Engine method, and the UI setter differ. All callbacks run on
 /// the Slint event-loop thread, so holding the single `AppState` lock across
 /// the engine subprocess call is safe (no other thread contends on it).
+#[allow(unused_macros)]
 macro_rules! make_toggle_callback {
     ($state:expr, $weak:expr, $active_field:ident, $apply_method:ident, $set_ui:ident, $err_label:expr) => {
         move |idx, file| {
@@ -231,159 +232,15 @@ pub fn setup_callbacks(
         });
     }
 
-    // Animation toggle
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_apply_animation(make_toggle_callback!(
-            state,
-            weak,
-            active_anim_file,
-            apply_animation,
-            set_active_anim_index,
-            "Animation"
-        ));
-    }
+    // ── Legacy toggle/geometry/settings handlers — REMOVED slice 8 (R8) ──
+    // Panel sections handle via panel-apply-* in src/main.rs; overlay handlers deleted.
+    let _ = &state;
+    let _ = &window; // keep bindings used
 
-    // Border toggle
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_apply_border(make_toggle_callback!(
-            state,
-            weak,
-            active_border_file,
-            apply_border,
-            set_active_border_index,
-            "Border"
-        ));
-    }
-
-    // Shader toggle
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_apply_shader(make_toggle_callback!(
-            state,
-            weak,
-            active_shader_file,
-            apply_shader,
-            set_active_shader_index,
-            "Shader"
-        ));
-    }
-
-    // Geometry change — skip first call (Slider fires on init)
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        let mut geo_init = true;
-        window.on_apply_geometry(move |size| {
-            if geo_init {
-                geo_init = false;
-                return;
-            }
-            let result = {
-                let mut state = lock_state(&state);
-                if size == state.cfg().border_size {
-                    return;
-                }
-                state.cfg_mut().border_size = size;
-                state.apply_geometry()
-            };
-            if let Err(e) = result {
-                tracing::error!("[HVE] Geometry error: {}", e);
-            }
-            // Update UI slider value
-            if let Some(w) = weak.upgrade() {
-                w.set_border_size(size);
-            }
-        });
-    }
-
-    // Corner radius change — skip first call (Slider fires on init)
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        let mut radius_init = true;
-        window.on_apply_geometry_radius(move |radius| {
-            if radius_init {
-                radius_init = false;
-                return;
-            }
-            let result = {
-                let mut state = lock_state(&state);
-                if radius == state.cfg().border_radius {
-                    return;
-                }
-                state.cfg_mut().border_radius = radius;
-                state.apply_geometry()
-            };
-            if let Err(e) = result {
-                tracing::error!("[HVE] Radius error: {}", e);
-            }
-            // Update UI slider value
-            if let Some(w) = weak.upgrade() {
-                w.set_corner_radius(radius);
-            }
-        });
-    }
-
-    // Gaps-in change (between windows) — skip first call (Slider fires on init)
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        let mut gaps_init = true;
-        window.on_apply_geometry_gaps_in(move |gap| {
-            if gaps_init {
-                gaps_init = false;
-                return;
-            }
-            let result = {
-                let mut state = lock_state(&state);
-                if gap == state.cfg().gaps_in {
-                    return;
-                }
-                state.cfg_mut().gaps_in = gap;
-                state.apply_geometry()
-            };
-            if let Err(e) = result {
-                tracing::error!("[HVE] Gaps-in error: {}", e);
-            }
-            // Update UI slider value
-            if let Some(w) = weak.upgrade() {
-                w.set_gap_in(gap);
-            }
-        });
-    }
-
-    // Gaps-out change (windows ↔ monitor edges) — skip first call
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        let mut gaps_init = true;
-        window.on_apply_geometry_gaps_out(move |gap| {
-            if gaps_init {
-                gaps_init = false;
-                return;
-            }
-            let result = {
-                let mut state = lock_state(&state);
-                if gap == state.cfg().gaps_out {
-                    return;
-                }
-                state.cfg_mut().gaps_out = gap;
-                state.apply_geometry()
-            };
-            if let Err(e) = result {
-                tracing::error!("[HVE] Gaps-out error: {}", e);
-            }
-            // Update UI slider value
-            if let Some(w) = weak.upgrade() {
-                w.set_gap_out(gap);
-            }
-        });
-    }
+    // ── Legacy toggle/geometry/settings handlers — REMOVED slice 8 (R8) ──
+    // Panel sections handle via panel-apply-* in src/main.rs; overlay handlers deleted.
+    let _ = &state;
+    let _ = &window; // keep bindings used
 
     // Open project documentation (WIKI.md / README.md) in the default viewer
     {
@@ -407,15 +264,10 @@ pub fn setup_callbacks(
         });
     }
 
-    // ── Settings callbacks ──
-    // We use clone-then-save since all Slint callbacks run on the same thread
-    {
-        let window_weak = window.as_weak();
-        window.on_toggle_settings(move || {
-            let w = window_weak.upgrade().unwrap();
-            w.set_settings_open(!w.get_settings_open());
-        });
-    }
+    // ── Legacy toggle/geometry/settings handlers — REMOVED slice 8 (R8) ──
+    // Panel sections handle via panel-apply-* in src/main.rs; overlay handlers deleted.
+    let _ = &state;
+    let _ = &window; // keep bindings used
 
     {
         let state = state.clone();
@@ -578,215 +430,9 @@ pub fn setup_callbacks(
         });
     }
 
-    // ── Theme callbacks ──
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_save_theme(move |name| {
-            let name_str = name.to_string();
-            let result = {
-                let mut state = lock_state(&state);
-                let provider_ids = state.theme_manager().provider_ids();
-                state.theme_manager_mut().save(&name_str, &provider_ids)
-            };
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Saved theme: {}", name_str);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_busy(true);
-                        lock_state(&state).refresh_theme_list(&w);
-                        w.set_theme_busy(false);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Save failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_apply_theme(move |name| {
-            let name_str = name.to_string();
-            // Suprime el auto-minimize mientras se aplica: hyprctl reload y la
-            // regeneración de window rules hacen que la ventana pierda foco
-            // varias veces, y eso no debe disparar un countdown espurio.
-            crate::countdown::suppress_auto_minimize(std::time::Duration::from_secs(4));
-            let result = {
-                let mut state = lock_state(&state);
-                state.theme_manager_mut().apply(&name_str, || {
-                    // Reload Hyprland AFTER all providers' apply() + post_apply() are done.
-                    // This includes wallpaper IPC which runs inside NoctaliaV4Provider::post_apply().
-                    tracing::info!("[themes] Reloading Hyprland after theme apply...");
-                    std::process::Command::new("hyprctl")
-                        .arg("reload")
-                        .output()
-                        .map(|_| ())
-                        .map_err(|e| format!("hyprctl reload failed: {e}"))
-                })
-            };
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Applied theme: {}", name_str);
-                    // Reload config from disk — the provider may have updated it
-                    let updated_cfg = {
-                        let mut state = lock_state(&state);
-                        state.reload_config_after_theme(&name_str)
-                    };
-                    if let Some(w) = weak.upgrade() {
-                        sync_preset_indices(&w, &updated_cfg);
-                        let state = lock_state(&state);
-                        // Re-read colors from the restored files and update the UI
-                        state.refresh_visual_state(&w, &w.get_theme().to_string());
-                        state.refresh_theme_list(&w);
-                        w.set_home_active_theme_name(name_str.clone().into());
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Apply failed: {}", e);
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_delete_theme(move |name| {
-            let name_str = name.to_string();
-            let result = {
-                let mut state = lock_state(&state);
-                state.theme_manager_mut().delete(&name_str)
-            };
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Deleted theme: {}", name_str);
-                    if let Some(w) = weak.upgrade() {
-                        lock_state(&state).refresh_theme_list(&w);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Delete failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_rename_theme(move |old, new| {
-            let old_str = old.to_string();
-            let new_str = new.to_string();
-            let result = {
-                let mut state = lock_state(&state);
-                state.theme_manager_mut().rename(&old_str, &new_str)
-            };
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Renamed: {} -> {}", old_str, new_str);
-                    if let Some(w) = weak.upgrade() {
-                        let state = lock_state(&state);
-                        state.refresh_theme_list(&w);
-                        w.set_home_active_theme_name(state.theme_manager().last_applied.clone().into());
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Rename failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_overwrite_theme(move |name| {
-            let name_str = name.to_string();
-            let result = {
-                let mut state = lock_state(&state);
-                let provider_ids = state.theme_manager().provider_ids();
-                state.theme_manager_mut().save(&name_str, &provider_ids)
-            };
-            match result {
-                Ok(_) => {
-                    tracing::info!("[themes] Overwritten theme: {}", name_str);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_busy(true);
-                        lock_state(&state).refresh_theme_list(&w);
-                        w.set_theme_busy(false);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[themes] Overwrite failed: {}", e);
-                    if let Some(w) = weak.upgrade() {
-                        w.set_theme_error_text(e.into());
-                    }
-                }
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_refresh_themes(move || {
-            if let Some(w) = weak.upgrade() {
-                let mut state = lock_state(&state);
-                // 1. Re-read colors from the current system state and update the UI
-                state.refresh_visual_state(&w, &w.get_theme().to_string());
-
-                // 2. If there's a last applied theme, overwrite it with the current state
-                //    so the ↻ acts as "save current changes to active theme"
-                let provider_ids = state.theme_manager().provider_ids();
-                let last = state.theme_manager().last_applied.clone();
-                if !last.is_empty() {
-                    let _ = state.theme_manager_mut().save(&last, &provider_ids);
-                }
-
-                // 3. Refresh the theme list
-                state.refresh_theme_list(&w);
-                let last_applied = state.theme_manager().last_applied.clone();
-                drop(state);
-                w.set_home_active_theme_name(last_applied.into());
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_search_query_changed(move |query| {
-            if let Some(w) = weak.upgrade() {
-                let state = lock_state(&state);
-                let all = state.theme_manager().list().unwrap_or_default();
-                let q = query.to_lowercase();
-                let filtered: Vec<_> = all.iter()
-                    .filter(|t| t.name.to_lowercase().contains(&q))
-                    .collect();
-
-                use slint::{ModelRc, SharedString};
-                let names: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.name)).collect();
-                let saved_ats: Vec<SharedString> = filtered.iter().map(|t| SharedString::from(&t.saved_at)).collect();
-                let is_actives: Vec<bool> = filtered.iter().map(|t| t.is_active).collect();
-
-                w.set_theme_names(ModelRc::from(names.as_slice()));
-                w.set_theme_saved_ats(ModelRc::from(saved_ats.as_slice()));
-                w.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
-            }
-        });
-    }
+    // ── Legacy ThemesModule callbacks — REMOVED slice 8 (R8) ──
+    // Gallery cards + panel SaveSection replace list/search/delete/rename UI.
+    // Theme apply now via GallerySlot + panel_save_theme dual-sync in main.rs.
 
     // ── Intercept close events — always hide instead of destroying
     //     the window so the global event loop keeps running. ──
@@ -831,6 +477,7 @@ pub fn setup_callbacks(
 
 /// After applying a theme, sync the GUI preset indices (anim, border, shader, border-size)
 /// so they reflect what the theme restored, not the stale values from before apply.
+#[allow(dead_code)]
 fn sync_preset_indices(
     window: &crate::MainWindow,
     cfg: &Config,

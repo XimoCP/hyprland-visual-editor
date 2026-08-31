@@ -90,43 +90,8 @@ pub(crate) fn refresh_theme_list(
     window.set_active_theme_index(active_idx);
 }
 
-/// Pre-warm tab layouts so the first user interaction after a show()
-/// does not hit cold (unmeasured) layouts.
-///
-/// Slint does not compute the layout of inactive tabs (width: 0%) until
-/// they are rendered. This briefly cycles through tabs during startup /
-/// after each show() so Slint caches the layouts, avoiding first-keypress
-/// lag and skipped animations. In tray mode this must be called again
-/// after every show() because hide() discards the rendered state.
-pub(crate) fn prewarm_tabs(weak: slint::Weak<crate::MainWindow>, step: u8) {
-    if step > 3 {
-        if let Some(win) = weak.upgrade() {
-            win.set_active_tab(0);
-        }
-        return;
-    }
-    if let Some(win) = weak.upgrade() {
-        win.set_active_tab(step as i32);
-    }
-    slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-        prewarm_tabs(weak, step + 1);
-    });
-}
-
-/// Block keyboard navigation for a short warmup window after the window is
-/// shown, so Slint's animation clock starts ticking before the first key
-/// press. Without this, the very first navigation step after show() skips
-/// its animation (Slint issue #1255) and the auto-repeat timer makes it
-/// look like a double tab-skip.
-pub(crate) fn warmup_navigation(win: &crate::MainWindow) {
-    win.set_nav_ready(false);
-    let weak = win.as_weak();
-    slint::Timer::single_shot(std::time::Duration::from_millis(250), move || {
-        if let Some(w) = weak.upgrade() {
-            w.set_nav_ready(true);
-        }
-    });
-}
+// ── Legacy prewarm/warmup — REMOVED slice 8 (R8) ──
+// Panel navigation no longer uses legacy_tab / nav-ready; held-key repeat handled per-section.
 
 /// Re-read the current palette from the system and refresh every window
 /// visual that depends on it: resolve the color scheme, apply it to the
@@ -1066,45 +1031,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // floating. It now fires from the post-show startup timer, after the
     // composer focus() pass (see "Startup order" below).
 
-    // ── i18n: static UI strings ──
-    window.set_sidebar_subtitle(tr.tr_shared("panel.header_title", "Hyprland Visual Editor"));
-    window.set_home_header_title(tr.tr_shared("panel.tabs.home", "Home"));
-    window.set_home_header_subtitle(tr.tr_shared("panel.header_subtitle", "Aesthetic Control Center"));
-    window.set_activation_title(tr.tr_shared("welcome.activation_title", "System Activation"));
-    window.set_activation_active_text(tr.tr_shared("welcome.toast.enabled", "Visual Editor Enabled"));
-    window.set_activation_inactive_text(tr.tr_shared("welcome.toast.disabled", "Visual Editor Disabled"));
-    window.set_feature_title(tr.tr_shared("welcome.features.title", "Features & Benefits"));
-    window.set_feature_desc(tr.tr_shared("welcome.features.description", "Fluid animations • Smart borders • Real-time shaders • Non-destructive"));
-    window.set_how_title(tr.tr_shared("welcome.docs.title", "Architecture & Documentation"));
-    window.set_how_desc(tr.tr_shared("welcome.docs.summary", "HVE uses a Fragments & Assembly system..."));
-    window.set_anim_header_title(tr.tr_shared("animations.header_title", "Motion Library"));
-    window.set_anim_header_subtitle(tr.tr_shared("animations.header_subtitle", "Select the animation style for your desktop"));
-    window.set_border_header_title(tr.tr_shared("borders.header_title", "Visual Styles"));
-    window.set_border_header_subtitle(tr.tr_shared("borders.header_subtitle", "Define your windows' personality"));
-    window.set_border_geometry_label(tr.tr_shared("borders.geometry.title", "Border Thickness"));
-    window.set_border_radius_label(tr.tr_shared("borders.radius.title", "Corner Radius"));
-    window.set_gap_in_label(tr.tr_shared("borders.gaps.in.title", "Inner Gap"));
-    window.set_gap_out_label(tr.tr_shared("borders.gaps.out.title", "Outer Gap"));
-    window.set_shader_header_title(tr.tr_shared("shaders.header_title", "Screen Filters"));
-    window.set_shader_header_subtitle(tr.tr_shared("shaders.header_subtitle", "Real-time image post-processing"));
+    // ── Legacy Welcome/Home header i18n — REMOVED slice 8 (R8) ──
+    // Panel headers are hardcoded per section; WelcomeCards removed with HomeModule.
 
-    // ── i18n: Home module strings ──
-    window.set_home_status_active(tr.tr_shared("home.status_active", "System Active"));
-    window.set_home_status_inactive(tr.tr_shared("home.status_inactive", "System Stopped"));
-    window.set_home_nav_animations(tr.tr_shared("home.nav_animations", "Animations"));
-    window.set_home_nav_borders(tr.tr_shared("home.nav_borders", "Borders"));
-    window.set_home_nav_shaders(tr.tr_shared("home.nav_shaders", "Shaders"));
-    window.set_home_count_styles(tr.tr_shared("home.count_styles", " styles"));
-    window.set_home_count_filters(tr.tr_shared("home.count_filters", " filters"));
-    window.set_home_active_config_title(tr.tr_shared("home.active_config", "Active Configuration"));
-    window.set_home_active_anim_label(tr.tr_shared("home.active_anim", "Animation:"));
-    window.set_home_active_border_label(tr.tr_shared("home.active_border", "Border:"));
-    window.set_home_active_shader_label(tr.tr_shared("home.active_shader", "Shader:"));
-    window.set_home_none_anim(tr.tr_shared("home.none_anim", "None"));
-    window.set_home_none_border(tr.tr_shared("home.none_border", "None"));
-    window.set_home_none_shader(tr.tr_shared("home.none_shader", "None"));
-    window.set_home_active_theme_label(tr.tr_shared("home.active_theme", "Theme:"));
-    window.set_home_none_theme(tr.tr_shared("home.none_theme", "None"));
+    // ── Legacy Home status/nav i18n — REMOVED slice 8 (R8) ──
+    // home-none-* removed — Active config display moved
     window.set_home_active_theme_name(cfg.last_applied_theme.clone().into());
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
@@ -1160,25 +1091,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_keybinds_label(tr.tr_shared("settings.keybinds", "Keyboard shortcuts"));
     window.set_keybinds_mode(cfg.keybinds_enabled);
 
-    // ── i18n: Theme strings ──
-    window.set_theme_header_title(tr.tr_shared("themes.header_title", "Theme Manager"));
-    window.set_theme_header_subtitle(tr.tr_shared("themes.header_subtitle", "Save and apply full desktop themes"));
-    window.set_theme_save_placeholder(tr.tr_shared("themes.save_placeholder", "Theme name..."));
-    window.set_theme_save_button(tr.tr_shared("themes.save_button", "Save"));
-    window.set_theme_search_placeholder(tr.tr_shared("themes.search_placeholder", "Search themes..."));
-    window.set_theme_empty_text(tr.tr_shared("themes.empty", "No themes yet. Save your current setup as a theme."));
-    window.set_theme_apply_text(tr.tr_shared("themes.apply", "Apply"));
-    window.set_theme_rename_text(tr.tr_shared("themes.rename", "Rename"));
-    window.set_theme_delete_text(tr.tr_shared("themes.delete", "Delete"));
-    window.set_theme_cancel_text(tr.tr_shared("common.cancel", "Cancel"));
-    window.set_theme_confirm_delete(tr.tr_shared("themes.confirm_delete", "Delete theme"));
-    window.set_theme_confirm_delete_msg(tr.tr_shared("themes.confirm_delete_msg", "Are you sure you want to delete"));
-    window.set_theme_confirm_refresh(tr.tr_shared("themes.confirm_refresh", "Refresh theme"));
-    window.set_theme_confirm_refresh_msg(tr.tr_shared("themes.confirm_refresh_msg", "This will reload the theme with the current configuration. Continue?"));
-    window.set_theme_refresh_text(tr.tr_shared("themes.refresh", "Refresh"));
-    window.set_theme_rename_title(tr.tr_shared("themes.rename_title", "Rename theme"));
-    window.set_theme_save_section_text(tr.tr_shared("themes.save_section", "Save Current State"));
-    window.set_theme_list_section_text(tr.tr_shared("themes.list_section", "My Themes"));
+    // ── Legacy ThemesModule i18n — REMOVED slice 8 (R8) ──
+    // Theme list UI replaced by Gallery cards + panel SaveSection.
     window.set_app_version_label(slint::SharedString::from(format!(
         "v{} — Standalone",
         env!("CARGO_PKG_VERSION")
@@ -1543,40 +1457,7 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_panel_wallpaper_video_file("".into());
     }
 
-    // ── Nav modules (data-driven sidebar, translated) ──
-    let nav_modules = Vec::from([
-        crate::NavModule {
-            label: SharedString::from(tr.tr_or("panel.tabs.home", "Home")),
-            icon: SharedString::from("⌂"),
-            accent: theme::parse_hex("#38bdf8"),
-            tab_index: 0,
-        },
-        crate::NavModule {
-            label: SharedString::from(tr.tr_or("panel.tabs.animations", "Animations")),
-            icon: SharedString::from("▶"),
-            accent: theme::parse_hex("#fbbf24"),
-            tab_index: 1,
-        },
-        crate::NavModule {
-            label: SharedString::from(tr.tr_or("panel.tabs.borders", "Borders")),
-            icon: SharedString::from("◻"),
-            accent: theme::parse_hex("#10b981"),
-            tab_index: 2,
-        },
-        crate::NavModule {
-            label: SharedString::from(tr.tr_or("panel.tabs.effects", "Effects")),
-            icon: SharedString::from("◆"),
-            accent: theme::parse_hex("#c084fc"),
-            tab_index: 3,
-        },
-        crate::NavModule {
-            label: SharedString::from(tr.tr_or("panel.tabs.themes", "Themes")),
-            icon: SharedString::from("✦"),
-            accent: theme::parse_hex("#f472b6"),
-            tab_index: 4,
-        },
-    ]);
-    window.set_nav_modules(ModelRc::new(VecModel::from(nav_modules)));
+    // ── Legacy nav_modules (legacy_tab sidebar) — REMOVED slice 8 (R8) ──
 
     // ── Start Hyprland IPC listener (handle kept alive so threads
     //     don't outlive the app on quit/restart) ──
@@ -1637,17 +1518,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ctrl.set_tray_mode(false);
         }
 
-        // ── Pre-warm tab layouts ──
-        // Slint no calcula el layout de tabs inactivos (width: 0%)
-        // hasta que se renderizan por primera vez. Esto causa un delay
-        // en el primer click. Solución: mostrar cada tab brevemente
-        // durante el startup para que Slint cachem los layouts.
-        prewarm_tabs(window.as_weak(), 1);
-
-        // ── Warm up keyboard navigation ──
-        // Block nav for 250ms after show so the animation clock ticks
-        // before the first key press.
-        warmup_navigation(&window);
+        // ── Legacy prewarm/warmup removed — panel handles its own focus (R11) ──
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via Composer para evitar el doble-click inicial.
@@ -1725,67 +1596,9 @@ mod tests {
         assert!(win.get_expanded(), "Gallery mounts expanded");
     }
 
-    // ── Keyboard navigation logic (backend-testing) ──────────────────
-    // Ignored by default: initializes the Slint testing backend which can
-    // only run once per process. Run with:
-    //   cargo test -- --ignored nav_logic --test-threads=1
-    //
-    // Regression test: a plain hold of the arrow key (<600ms, no OS
-    // auto-repeat yet) must NOT jump two tabs. The repeat Timer only starts
-    // after the OS confirms the hold with its first repeat (event.repeat).
-    #[test]
-    #[ignore]
-    fn nav_logic_single_keypress_single_step() {
-        i_slint_backend_testing::init_integration_test_with_mock_time();
-        let win = MainWindow::new().unwrap();
-        win.show().unwrap();
-        let w = win.window();
-
-        // 1. Tap: un KeyPressed Down desde Inicio (tab 0) → exactamente UNA tab
-        w.dispatch_event(slint::platform::WindowEvent::KeyPressed {
-            text: slint::platform::Key::DownArrow.into(),
-        });
-        assert_eq!(win.get_active_tab(), 1, "un key-pressed (tap) debe mover exactamente una tab");
-
-        // 2. Hold de 500ms SIN repeat del OS: el Timer NO está activo
-        //    (arranca solo tras event.repeat) → NO debe saltar otra tab.
-        //    ESTO era el bug: el Timer viejo disparaba a los 400ms.
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(500));
-        assert_eq!(win.get_active_tab(), 1, "hold de 500ms sin repeat del OS no debe saltar dos tabs");
-
-        // 3. El OS confirma el hold con su primer repeat → activa el Timer, sin step
-        w.dispatch_event(slint::platform::WindowEvent::KeyPressRepeated {
-            text: slint::platform::Key::DownArrow.into(),
-        });
-        assert_eq!(win.get_active_tab(), 1, "el repeat del OS activa el Timer pero no hace step");
-
-        // 4. El Timer toma el relevo del repeat. Nota: en el backend de
-        //    testing, el Timer se registra recién en el siguiente tick (el
-        //    dispatch del evento no avanza el reloj). En la app real el event
-        //    loop de winit actualiza los timers continuamente.
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
-
-        // 5. Primer step del Timer (intervalo 150ms dentro de un módulo)
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
-        assert_eq!(win.get_active_tab(), 2, "Timer activo tras repeat del OS: step cada 150ms");
-
-        // 6. El Timer se re-registra en el tick siguiente y luego dispara el
-        //    2º step (mismo patrón de registro diferido del backend testing)
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
-        assert_eq!(win.get_active_tab(), 3, "segundo intervalo del Timer: otro step");
-
-        // 7. Release → todo se resetea
-        w.dispatch_event(slint::platform::WindowEvent::KeyReleased {
-            text: slint::platform::Key::DownArrow.into(),
-        });
-
-        // 8. Nuevo tap tras release → exactamente una tab más
-        w.dispatch_event(slint::platform::WindowEvent::KeyPressed {
-            text: slint::platform::Key::DownArrow.into(),
-        });
-        assert_eq!(win.get_active_tab(), 4, "nuevo press tras release mueve una tab");
-    }
+    // ── Keyboard navigation logic (legacy_tab) — REMOVED slice 8 (R8) ──
+    // Legacy held-key nav (legacy_tab + nav-ready) removed; panel sections handle
+    // arrows locally via per-section FocusScope (R11). This ignored test is retired.
 
     // ── Composer wiring verification ─────────────────────────────────
 

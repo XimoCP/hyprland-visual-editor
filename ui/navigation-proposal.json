@@ -4,7 +4,7 @@
   "goal": "Arrow-key navigation to replace pure Tab-based keyboard navigation",
   "current_state": {
     "navigation_mechanism": "Tab key cycles forward through all focusable elements in order. No Shift+Tab or Up/Down support. Home/Settings are mouse-only.",
-    "tab_switching": "active-tab property (int: 0=Home, 1=Animations, 2=Borders, 3=Shaders). Each tab is a Rectangle with `width: root.active-tab == N ? 100% : 0%` (triggers Slint layout recomputation). Sidebar NavButtons set active-tab via `clicked => { root.active-tab = nav-module.tab-index; }`.",
+    "tab_switching": "panel-section property (int: 0=Save, 1=Borders, 2=Motion, 3=Filters). Each section is rendered via PanelRoot branching (no hidden width toggling). PanelMenu items set panel-section via `clicked => { root.panel-section = index; }`.",
     "focus_management": "Each NavButton and PresetCard has a FocusScope with `focus-on-click: false; focus-on-tab-navigation: true;`. Tab navigation works but is forward-only. Enter/Space activate the item. FocusScopes reject unknown keys (propagating to parent)."
   },
   "desired_behavior": {
@@ -22,7 +22,7 @@
   },
   "architecture": {
     "file_layout": {
-      "ui/main.slint": "MainWindow: contains sidebar + content area with 4 tab Rectangles. Owns active-tab property, nav-modules data, and all i18n/callbacks.",
+      "ui/main.slint": "MainWindow: shell mount + panel mutation. Owns panel-section + is-mutating props, gallery/panel bridge props, and i18n/callbacks.",
       "ui/components.slint": "NavButton (sidebar), PresetCard (preset list items), SectionHeader, GeometrySlider, etc.",
       "ui/modules.slint": "AnimationsModule (line 326), BordersModule (line 359), ShadersModule (line 401). Each has a ScrollView with for-loop rendering PresetCards.",
       "src/main.rs": "Rust entry point, sets up Slint window and connects callbacks.",
@@ -58,9 +58,9 @@
     {
       "name": "Minimal — Left/Right via MainWindow FocusScope",
       "complexity": "trivial (15 lines)",
-      "description": "Add a FocusScope at MainWindow level that handles Left/Right arrow keys to change active-tab. Up/Down are not touched — Tab continues to be the only way through presets. Shift+Tab assumed to work natively.",
+      "description": "Add a FocusScope at MainWindow level that handles Left/Right arrow keys to change panel-section. Up/Down are not touched — Tab continues to be the only way through presets. Shift+Tab assumed to work natively.",
       "limitations": "Does not solve the unidirectional Tab problem. User still has to Tab through everything to go back up.",
-      "slint_code_snippet": "// In MainWindow, before the main HorizontalLayout or after it\nfs := FocusScope {\n    key-pressed(event) => {\n        if (event.text == Key.Left) {\n            if (root.active-tab > 0) { root.active-tab -= 1; }\n            accept\n        } else if (event.text == Key.Right) {\n            if (root.active-tab < 3) { root.active-tab += 1; }\n            accept\n        } else {\n            reject\n        }\n    }\n}"
+      "slint_code_snippet": "// In MainWindow, panel sections are selected via PanelMenu callbacks, not via direct key handling here."
     },
     {
       "name": "Focused-index approach",

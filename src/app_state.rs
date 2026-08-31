@@ -91,6 +91,7 @@ impl AppState {
     /// Reload the config from disk after a theme apply and mark the theme
     /// as last applied. Returns the freshly loaded config so callers can
     /// sync the UI preset indices against it.
+    #[allow(dead_code)]
     pub fn reload_config_after_theme(&mut self, name: &str) -> Config {
         let updated = Config::load();
         self.cfg = updated.clone();

@@ -171,7 +171,7 @@ impl ksni::Tray for HveTray {
                             let current = win.get_active_anim_index();
                             let next = crate::ipc::get_next_index(current, count);
                             if let Some(file) = files.row_data(next as usize) {
-                                win.invoke_apply_animation(next, file);
+                                win.invoke_panel_apply_animation(next, file);
                             }
                         }
                     });
@@ -195,7 +195,7 @@ impl ksni::Tray for HveTray {
                             let current = win.get_active_border_index();
                             let next = crate::ipc::get_next_index(current, count);
                             if let Some(file) = files.row_data(next as usize) {
-                                win.invoke_apply_border(next, file);
+                                win.invoke_panel_apply_border(next, file);
                             }
                         }
                     });
@@ -219,7 +219,7 @@ impl ksni::Tray for HveTray {
                             let current = win.get_active_shader_index();
                             let next = crate::ipc::get_next_index(current, count);
                             if let Some(file) = files.row_data(next as usize) {
-                                win.invoke_apply_shader(next, file);
+                                win.invoke_panel_apply_shader(next, file);
                             }
                         }
                     });
