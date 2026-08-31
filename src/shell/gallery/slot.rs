@@ -56,6 +56,9 @@ pub struct GallerySlot {
     // shader flicker S21
     shader_overlay: AtomicBool,
     shader_gen: AtomicU64,
+    // shader suppression: while PanelState != Closed OR for 3s after Mutating (R5)
+    panel_closed: AtomicBool,
+    shader_suppress_until: Mutex<Option<Instant>>,
     // hyprmod yield S22
     #[cfg_attr(not(test), allow(dead_code))] // test assertion counter
     hyprmod_yield: AtomicBool,
@@ -91,6 +94,8 @@ impl GallerySlot {
             pulse_count: AtomicUsize::new(0),
             shader_overlay: AtomicBool::new(false),
             shader_gen: AtomicU64::new(0),
+            panel_closed: AtomicBool::new(true),
+            shader_suppress_until: Mutex::new(None),
             hyprmod_yield: AtomicBool::new(false),
             reduced_motion: AtomicBool::new(false),
             settings_open: AtomicBool::new(false),
@@ -117,6 +122,8 @@ impl GallerySlot {
             pulse_count: AtomicUsize::new(0),
             shader_overlay: AtomicBool::new(false),
             shader_gen: AtomicU64::new(0),
+            panel_closed: AtomicBool::new(true),
+            shader_suppress_until: Mutex::new(None),
             hyprmod_yield: AtomicBool::new(false),
             reduced_motion: AtomicBool::new(false),
             settings_open: AtomicBool::new(false),
@@ -348,8 +355,24 @@ impl GallerySlot {
         self.rename_calls.load(Ordering::SeqCst)
     }
 
-    // ── Shader flicker overlay S21 (5.2) ────────────────────────────────
+    // ── Shader flicker overlay S21 (5.2) + Panel suppression R5 ────────
+    // While PanelState != Closed the overlay is SUPPRESSED (not triggered).
+    // For 3s after any Mutating completes it remains suppressed (matches S21 duration).
     pub fn trigger_shader_overlay(&self) {
+        // Local suppression: PanelState != Closed
+        if !self.panel_closed.load(Ordering::SeqCst) {
+            return;
+        }
+        // Local 3s post-mutation window
+        if let Some(deadline) = *self.shader_suppress_until.lock().unwrap() {
+            if Instant::now() < deadline {
+                return;
+            }
+        }
+        // Global suppression via Shell (covers production Shell panel state + deadline)
+        if Self::is_global_shader_suppressed() {
+            return;
+        }
         let gen = self.shader_gen.fetch_add(1, Ordering::SeqCst) + 1;
         self.shader_overlay.store(true, Ordering::SeqCst);
         // In production a Timer hides after 3000ms; for tests we expose gen
@@ -365,6 +388,19 @@ impl GallerySlot {
     }
     pub fn shader_flicker_duration_ms(&self) -> u64 {
         SHADER_FLICKER_MS
+    }
+    // ── Panel suppression helpers (R5, slice 6) ─────────────────────────
+    #[allow(dead_code)]
+    pub fn set_panel_closed(&self, closed: bool) {
+        self.panel_closed.store(closed, Ordering::SeqCst);
+    }
+    #[allow(dead_code)]
+    pub fn notify_panel_mutation_finished(&self) {
+        let deadline = Instant::now() + std::time::Duration::from_millis(SHADER_FLICKER_MS);
+        *self.shader_suppress_until.lock().unwrap() = Some(deadline);
+    }
+    fn is_global_shader_suppressed() -> bool {
+        crate::shell::Shell::is_shader_suppressed_global()
     }
 
     // ── hyprmod yield S22 (5.2) ───────────────────────────────────────

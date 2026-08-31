@@ -1556,3 +1556,193 @@ fn panel_curve_preview_renders() {
     let diff2 = count_buffer_diff(&snap, &snap3);
     assert!(diff2 > 200, "active indicator must change pixels — got {diff2} expected >200");
 }
+
+// ── Mutating-window slice 6: Filters pick + Wallpaper RO (R5, R6) ──
+
+#[test]
+fn panel_filters_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+    win.set_panel_section(3);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+
+    // Shader presets (R5) — scan("shaders") → cards
+    let titles: Vec<SharedString> = vec![SharedString::from("Blue Light"), SharedString::from("Cyberpunk")];
+    let descs: Vec<SharedString> = vec![SharedString::from("Blue light filter"), SharedString::from("Cyberpunk neon")];
+    let tags: Vec<SharedString> = vec![SharedString::from("SYSTEM"), SharedString::from("SYSTEM")];
+    let files: Vec<SharedString> = vec![SharedString::from("blue-light.ron"), SharedString::from("cyberpunk.ron")];
+    win.set_shader_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_shader_descs(ModelRc::new(VecModel::from(descs)));
+    win.set_shader_tags(ModelRc::new(VecModel::from(tags)));
+    win.set_shader_files(ModelRc::new(VecModel::from(files)));
+    win.set_active_shader_index(0);
+
+    let count = 6usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_focus_pos(0.0);
+
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap = win.window().take_snapshot().expect("panel filters snapshot");
+    save_slice_png(snap.clone(), "/tmp/opencode/panel_filters.png");
+    assert!(snap.width() == 1920, "snapshot width 1920");
+
+    // Active indicator toggles
+    win.set_active_shader_index(1);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap2 = win.window().take_snapshot().expect("panel filters active2");
+    save_slice_png(snap2.clone(), "/tmp/opencode/panel_filters_active2.png");
+    let diff = count_buffer_diff(&snap, &snap2);
+    assert!(diff > 200, "active shader indicator must change pixels — got {diff} expected >200");
+}
+
+#[test]
+fn panel_wallpaper_ro_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(false);
+    win.set_panel_section(4);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+
+    // Wallpaper RO — static thumb + video badge via thumbs pipeline
+    // Use bright thumb so the video badge overlay is distinguishable
+    let thumb = bright_mosaic_thumb();
+    win.set_panel_wallpaper_thumb(thumb);
+    win.set_panel_wallpaper_thumb_path("/tmp/wallpaper.png".into());
+    win.set_panel_wallpaper_has_video(true);
+    win.set_panel_wallpaper_video_file("movie.mp4".into());
+
+    let count = 6usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_focus_pos(0.0);
+
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap = win.window().take_snapshot().expect("panel wallpaper ro snapshot");
+    save_slice_png(snap.clone(), "/tmp/opencode/panel_wallpaper_ro.png");
+    assert!(snap.width() == 1920, "snapshot width 1920");
+
+    // Also render without video badge to verify badge appears only when has-video
+    win.set_panel_wallpaper_has_video(false);
+    win.set_panel_wallpaper_video_file("".into());
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap_no_video = win.window().take_snapshot().expect("panel wallpaper no video");
+    save_slice_png(snap_no_video.clone(), "/tmp/opencode/panel_wallpaper_ro_no_video.png");
+    let diff = count_buffer_diff(&snap, &snap_no_video);
+    assert!(diff > 200, "video badge must change pixels — got {diff} expected >200");
+}

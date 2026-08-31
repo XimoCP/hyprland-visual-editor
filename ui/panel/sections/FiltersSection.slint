@@ -1,0 +1,135 @@
+// HVE 2 — FiltersSection (mutating-window R5).
+//
+// Pick layer: PresetCards from scan("shaders") → apply_shader, active
+// indicator + repick active → none (apply "none"). No tune layer.
+// 3s shader_overlay suppressed while PanelState != Closed and 3s after
+// Mutating (guard in GallerySlot::trigger_shader_overlay, hidden Rect below).
+//
+// Keyboard R11: arrows navigate cards, Enter/Space activates,
+// Tab pick→next never traps, icy-cyan #8fd8ff focus.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { ScrollView } from "std-widgets.slint";
+import { SkwdTokens } from "../../tokens.slint";
+import { PresetCard } from "../../components.slint";
+
+export component FiltersSection inherits Rectangle {
+    in property <[string]> shader-titles;
+    in property <[string]> shader-descs;
+    in property <[string]> shader-tags;
+    in property <[string]> shader-files;
+    in property <int> active-index: -1;
+    callback apply-shader(int, string);
+
+    background: transparent;
+    clip: true;
+
+    property <int> focused-index: 0;
+
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        key-pressed(event) => {
+            if (event.text == Key.Tab) {
+                return reject;
+            }
+            if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
+                if (root.shader-files.length > 0) {
+                    root.focused-index = min(root.focused-index + 1, root.shader-files.length - 1);
+                }
+                return accept;
+            }
+            if (event.text == Key.UpArrow || event.text == Key.LeftArrow) {
+                if (root.shader-files.length > 0) {
+                    root.focused-index = max(root.focused-index - 1, 0);
+                }
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == Key.Space) {
+                if (root.focused-index >= 0 && root.focused-index < root.shader-files.length) {
+                    root.apply-shader(root.focused-index, root.shader-files[root.focused-index]);
+                }
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    border-width: fs.has-focus ? 1px : 0px;
+    border-color: #8fd8ff;
+    border-radius: SkwdTokens.radius-8;
+
+    init => { fs.focus(); }
+
+    // hidden Rect for shader_overlay suppression documentation (R5)
+    // While PanelState != Closed the overlay is SUPPRESSED via GallerySlot guard;
+    // this Rect stays hidden and documents the mitigation point.
+    Rectangle {
+        width: 0px;
+        height: 0px;
+        visible: false;
+        background: transparent;
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 4px;
+            Text {
+                text: "Filters";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-16;
+                font-weight: 700;
+                color: SkwdTokens.primary;
+            }
+            Text {
+                text: "Pick a shader — instantly applied. Repick active to turn off.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: SkwdTokens.outline;
+                wrap: word-wrap;
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-bottom: 12px;
+                spacing: 8px;
+
+                for i in root.shader-files.length : PresetCard {
+                    title: root.shader-titles[i];
+                    desc: root.shader-descs[i];
+                    tag: root.shader-tags[i];
+                    accent: #8fd8ff;
+                    active: i == root.active-index;
+                    keyboard-focused: i == root.focused-index && fs.has-focus;
+                    index: i;
+                    toggled => { root.apply-shader(i, root.shader-files[i]); }
+                    focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
+                }
+
+                if root.shader-files.length == 0 : Text {
+                    text: "No shader presets found.";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: SkwdTokens.outline.transparentize(0.4);
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}

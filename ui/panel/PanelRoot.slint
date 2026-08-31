@@ -13,6 +13,8 @@ import { PanelMenu } from "PanelMenu.slint";
 import { SaveSection } from "sections/SaveSection.slint";
 import { BordersSection } from "sections/BordersSection.slint";
 import { MotionSection } from "sections/MotionSection.slint";
+import { FiltersSection } from "sections/FiltersSection.slint";
+import { WallpaperSection } from "sections/WallpaperSection.slint";
 
 export component PanelRoot inherits Rectangle {
     in property <int> section: 0;
@@ -44,12 +46,24 @@ export component PanelRoot inherits Rectangle {
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
+    // Filters pick layer (R5) — shader cards from scan("shaders")
+    in property <[string]> shader-titles;
+    in property <[string]> shader-descs;
+    in property <[string]> shader-tags;
+    in property <[string]> shader-files;
+    in property <int> shader-active-index: -1;
+    // Wallpaper RO (R6) — static thumb + video badge
+    in property <image> wallpaper-thumb;
+    in property <string> wallpaper-thumb-path;
+    in property <bool> wallpaper-has-video: false;
+    in property <string> wallpaper-video-file;
     callback back();
     callback section-selected(int);
     callback save-theme(string);
     callback apply-border(int, string);
     callback apply-geometry(int, int, int, int);
     callback apply-animation(int, string);
+    callback apply-shader(int, string);
 
     background: SkwdTokens.surface;
     border-radius: SkwdTokens.radius-12;
@@ -150,7 +164,25 @@ export component PanelRoot inherits Rectangle {
                     bezier-d <=> root.bezier-d;
                     apply-animation(idx, file) => { root.apply-animation(idx, file); }
                 }
-                if root.section != 0 && root.section != 1 && root.section != 2 : VerticalLayout {
+                if root.section == 3 : FiltersSection {
+                    width: 100%;
+                    height: 100%;
+                    shader-titles: root.shader-titles;
+                    shader-descs: root.shader-descs;
+                    shader-tags: root.shader-tags;
+                    shader-files: root.shader-files;
+                    active-index: root.shader-active-index;
+                    apply-shader(idx, file) => { root.apply-shader(idx, file); }
+                }
+                if root.section == 4 : WallpaperSection {
+                    width: 100%;
+                    height: 100%;
+                    wallpaper-thumb: root.wallpaper-thumb;
+                    wallpaper-thumb-path: root.wallpaper-thumb-path;
+                    has-video: root.wallpaper-has-video;
+                    video-file: root.wallpaper-video-file;
+                }
+                if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 : VerticalLayout {
                     alignment: center;
                     spacing: SkwdTokens.spacing-12;
                     Text {

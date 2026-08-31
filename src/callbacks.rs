@@ -926,6 +926,19 @@ pub fn handle_motion_apply(engine: &crate::engine::Engine, file: &str) -> Result
     engine.apply_animation(arg)
 }
 
+/// Filters pick layer helpers (mutating-window R5, slice 6).
+/// Scan is engine.scan("shaders") → PresetInfo list; apply wraps
+/// engine.apply_shader with the file string from the card (empty→"none").
+#[allow(dead_code)]
+pub fn handle_filters_scan(engine: &crate::engine::Engine) -> Vec<crate::engine::PresetInfo> {
+    engine.scan("shaders").unwrap_or_default()
+}
+#[allow(dead_code)]
+pub fn handle_filters_apply(engine: &crate::engine::Engine, file: &str) -> Result<String, crate::engine::EngineError> {
+    let arg = if file.is_empty() || file == "none" { "none" } else { file };
+    engine.apply_shader(arg)
+}
+
 /// Motion bezier — 4 float sliders a,b,c,d (R4 tune).
 /// x1=a and x2=c in [0,1], y1=b and y2=d may extend beyond per CSS cubic-bezier.
 /// Defaults a=0.25,b=0.1,c=0.25,d=1.0 match the spec.
@@ -1359,6 +1372,122 @@ exit 0
         let res3 = handle_motion_apply(&engine, "anim01.conf");
         assert!(res3.is_ok());
         assert!(res3.unwrap().contains("anim01.conf"));
+    }
+}
+
+#[cfg(test)]
+mod filters_tests {
+    use super::{handle_filters_apply, handle_filters_scan};
+    use crate::engine::Engine;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn temp_engine_with_shaders() -> (Engine, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let scripts = dir.path().join("assets").join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("scan.sh"),
+            r#"#!/bin/bash
+if [ "$1" = "shaders" ]; then
+  echo '[{"file":"blue-light.ron","rawTitle":"Blue Light","tag":"SYSTEM"},{"file":"cyberpunk.ron","rawTitle":"Cyberpunk","tag":"SYSTEM"}]'
+else
+  echo '[]'
+fi
+"#,
+        )
+        .unwrap();
+        fs::write(
+            scripts.join("shader.sh"),
+            r#"#!/bin/bash
+echo "applied $1"
+exit 0
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for name in ["scan.sh", "shader.sh"] {
+                let p = scripts.join(name);
+                let mut perm = fs::metadata(&p).unwrap().permissions();
+                perm.set_mode(0o755);
+                fs::set_permissions(&p, perm).unwrap();
+            }
+        }
+        let engine = Engine::new(dir.path());
+        (engine, dir)
+    }
+
+    #[test]
+    fn test_filters_shader_cards() {
+        let (engine, _dir) = temp_engine_with_shaders();
+        let cards = handle_filters_scan(&engine);
+        assert_eq!(cards.len(), 2, "scan(shaders) must return 2 cards");
+        assert_eq!(cards[0].file, "blue-light.ron");
+        assert_eq!(cards[1].file, "cyberpunk.ron");
+    }
+
+    #[test]
+    fn test_repick_active_applies_none() {
+        let (engine, _dir) = temp_engine_with_shaders();
+        // active off → none: empty file maps to "none"
+        let res = handle_filters_apply(&engine, "");
+        assert!(res.is_ok(), "apply_shader off (none) should succeed, got {:?}", res.err());
+        assert!(res.unwrap().contains("none"), "empty file must map to none");
+        // also explicit "none"
+        let res2 = handle_filters_apply(&engine, "none");
+        assert!(res2.is_ok());
+        assert!(res2.unwrap().contains("none"));
+        // normal file
+        let res3 = handle_filters_apply(&engine, "blue-light.ron");
+        assert!(res3.is_ok());
+        assert!(res3.unwrap().contains("blue-light.ron"));
+    }
+
+    #[test]
+    fn test_shader_overlay_suppressed_3s() {
+        use crate::shell::gallery::slot::{GallerySlot, SHADER_FLICKER_MS};
+        use crate::theme_manager::{ThemeManager, ThemeProvider, ProviderCapabilities};
+        use std::path::Path;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+        struct DummyProvider;
+        impl ThemeProvider for DummyProvider {
+            fn id(&self) -> &str { "dummy" }
+            fn display_name_key(&self) -> &str { "dummy" }
+            fn icon(&self) -> &str { "dummy" }
+            fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+            fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+            fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+        }
+        let dir = TempDir::new().unwrap();
+        let mut tm = ThemeManager::new(dir.path());
+        tm.register_provider(Box::new(DummyProvider));
+        let tm_arc = Arc::new(Mutex::new(tm));
+        let slot = GallerySlot::new(tm_arc);
+        // Not suppressed when panel Closed and no recent mutation
+        slot.dismiss_shader_overlay();
+        assert!(!slot.is_shader_overlay_visible());
+        // Simulate PanelState != Closed → suppressed
+        slot.set_panel_closed(false);
+        slot.trigger_shader_overlay();
+        assert!(!slot.is_shader_overlay_visible(), "overlay must be SUPPRESSED while PanelState != Closed");
+        // Simulate PanelState == Closed but within 3s after Mutating
+        slot.set_panel_closed(true);
+        slot.notify_panel_mutation_finished();
+        slot.trigger_shader_overlay();
+        assert!(!slot.is_shader_overlay_visible(), "overlay must be suppressed for 3s after Mutating");
+        // After 3s + 100ms, should trigger normally
+        std::thread::sleep(Duration::from_millis(SHADER_FLICKER_MS + 100));
+        slot.trigger_shader_overlay();
+        assert!(slot.is_shader_overlay_visible(), "overlay should appear after 3s window");
+        // Dismiss and verify not 300ms (the old wrong duration) — ensure 300ms is not enough
+        slot.dismiss_shader_overlay();
+        slot.notify_panel_mutation_finished();
+        std::thread::sleep(Duration::from_millis(400));
+        slot.trigger_shader_overlay();
+        assert!(!slot.is_shader_overlay_visible(), "300ms must NOT be enough — requires 3000ms");
     }
 }
 

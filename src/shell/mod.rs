@@ -24,7 +24,7 @@ use self::slots::SlotRegistry;
 use slint::{ComponentHandle, LogicalSize, WindowSize};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 thread_local! {
     static GLOBAL_SHELL: RefCell<Option<Rc<RefCell<Shell>>>> = const { RefCell::new(None) };
@@ -60,6 +60,8 @@ pub struct Shell {
     remaining_steps: u32,
     /// Per-step delta applied to `current_size` on each tick.
     step_delta: (f32, f32),
+    /// Suppress shader overlay for 3s after any Mutating completes (R5).
+    suppress_until: Option<Instant>,
     /// The stepped animator timer. Kept here so it dies with the shell.
     _anim_timer: slint::Timer,
 }
@@ -82,6 +84,7 @@ impl Shell {
             target_size: base,
             remaining_steps: 0,
             step_delta: (0.0, 0.0),
+            suppress_until: None,
             _anim_timer: slint::Timer::default(),
         }));
         // Apply the base size immediately so the window opens at 900×680
@@ -266,6 +269,8 @@ impl Shell {
         {
             let mut s = shell.borrow_mut();
             s.nav.complete_mutation();
+            // R5: suppress shader overlay for 3s after any Mutating completes
+            s.suppress_until = Some(Instant::now() + Duration::from_millis(crate::shell::gallery::slot::SHADER_FLICKER_MS));
         }
         Self::mirror_panel(shell);
         // Re-assert fullscreen hold (no resize)
@@ -308,6 +313,25 @@ impl Shell {
             s.nav.set_section(section);
         }
         Self::mirror_panel(shell);
+    }
+
+    /// Global shader-overlay suppression check for GallerySlot (R5).
+    /// Returns true while PanelState != Closed OR for 3s after Mutating.
+    pub fn is_shader_suppressed_global() -> bool {
+        GLOBAL_SHELL.with(|g| {
+            if let Some(rc) = g.borrow().as_ref() {
+                let s = rc.borrow();
+                if s.nav.panel_state() != crate::shell::nav::PanelState::Closed {
+                    return true;
+                }
+                if let Some(deadline) = s.suppress_until {
+                    if Instant::now() < deadline {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
     }
 
     /// Push panel state to the Slint mirrors.
