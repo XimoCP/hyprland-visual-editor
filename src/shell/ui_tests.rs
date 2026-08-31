@@ -2017,3 +2017,43 @@ fn test_panel_layer_gated() {
         "unconditional `panel-layer := PanelRoot {{` must NOT exist — panel must be conditional, otherwise opacity 0 still captures input"
     );
 }
+
+#[test]
+fn test_filterbar_focus_scope_behind_pills() {
+    let content = std::fs::read_to_string("ui/gallery/FilterBar.slint").expect("ui/gallery/FilterBar.slint must exist");
+    let focus_pos = content
+        .find("focus-scope := FocusScope")
+        .expect("focus-scope := FocusScope must exist in FilterBar.slint");
+    let pills_pos = content
+        .find("pills-wrapper := VerticalLayout")
+        .expect("pills-wrapper := VerticalLayout must exist");
+    assert!(
+        focus_pos < pills_pos,
+        "focus-scope must be declared BEFORE pills-wrapper so pills TouchAreas sit on top — got focus-scope at {focus_pos} pills-wrapper at {pills_pos} (FocusScope on top consumes clicks)"
+    );
+    // FocusScope body must contain real key handling (arrow navigation + Return/Enter)
+    let body_end = std::cmp::min(content.len(), focus_pos + 3500);
+    let body = &content[focus_pos..body_end];
+    assert!(
+        body.contains("ArrowLeft") || body.contains("ArrowRight") || body.contains("LeftArrow") || body.contains("RightArrow"),
+        "FocusScope must handle arrow keys (ArrowLeft/ArrowRight) — no arrow handling found in FocusScope body"
+    );
+    assert!(
+        body.contains("Return"),
+        "FocusScope must handle Return (Enter) to activate pill — no Return handling found in FocusScope body"
+    );
+    // No FocusScope with width 100% may appear AFTER pills-wrapper (would sit on top again)
+    let tail = &content[pills_pos..];
+    assert!(
+        !tail.contains("focus-scope := FocusScope"),
+        "no FocusScope should appear AFTER pills-wrapper — found FocusScope after pills-wrapper (still on top, pills never receive clicks)"
+    );
+    // Tail must not contain a width:100% FocusScope declaration (the overlay trick).
+    // Comments mentioning FocusScope are allowed; only declarations count.
+    if tail.contains("FocusScope") {
+        assert!(
+            !tail.contains(":= FocusScope"),
+            "no width:100% FocusScope may appear after pills-wrapper — tail still contains FocusScope declaration"
+        );
+    }
+}
