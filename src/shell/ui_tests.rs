@@ -375,6 +375,142 @@ fn slice_focus_flow_renders_settled_and_midflight() {
 }
 
 #[test]
+fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
+    use crate::shell::gallery::views::slice::{scaled_metrics, slice_delta_tiles};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    // Prove fluid clamp A+B visually: 1092 (≈14") must not clip, 1920 (≈24") stays capped.
+    // Also unit-assert the 58% rule before taking snapshots.
+    let m1092 = scaled_metrics(1092.0);
+    let m1920 = scaled_metrics(1920.0);
+    assert!((m1092.expanded - 633.36).abs() < 1.0, "1092 expanded {} expected ~633", m1092.expanded);
+    assert!((m1920.expanded - 924.0).abs() < 0.01, "1920 expanded {}", m1920.expanded);
+    assert!(m1092.expanded < 1092.0 * 0.59, "small expanded must be ≤58%");
+    // Small-screen: 2 per side (total 5) with fixed 32px inset; large 1920 stays 3.
+    let small_tiles = slice_delta_tiles(12, 6, 1092.0);
+    let mid_tiles = slice_delta_tiles(12, 6, 1280.0);
+    let large_tiles = slice_delta_tiles(12, 6, 1920.0);
+    assert_eq!(
+        small_tiles.len(),
+        5,
+        "1092 must show exactly 5 (2 left + focused + 2 right), got {}",
+        small_tiles.len()
+    );
+    assert_eq!(
+        small_tiles.iter().filter(|t| !t.is_expanded).count(),
+        4,
+        "1092 must have 4 collapsed peeks"
+    );
+    assert_eq!(
+        mid_tiles.len(),
+        5,
+        "1280 must also show 5, got {}",
+        mid_tiles.len()
+    );
+    assert_eq!(
+        large_tiles.len(),
+        3,
+        "1920 must stay exactly 3 tiles (expanded +1 left +1 right), got {}",
+        large_tiles.len()
+    );
+    assert!((m1920.collapsed - 135.0).abs() < 0.01, "1920 collapsed must stay 135");
+    assert!((m1920.height - 520.0).abs() < 0.01);
+    assert!((m1920.skew - 35.0).abs() < 0.01);
+    assert!((m1920.gap - 24.0).abs() < 0.01);
+    // No overflow at small: leftmost ≥0, rightmost ≤stage
+    for w in [1092.0f32, 1280.0] {
+        let slots = crate::shell::gallery::views::slice::ring_visible_slots(12, 6, w);
+        let min_x = slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
+        let max_r = slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+        assert!(min_x >= -0.5, "small stage {w} leftmost {min_x} must be ≥0");
+        assert!(max_r <= w + 0.5, "small stage {w} rightmost {max_r} must be ≤{w}");
+    }
+    // Render small stage.
+    let render_at = |stage_w: f32, stage_h: f32, png: &str| {
+        i_slint_core::platform::set_platform(Box::new(
+            i_slint_backend_testing::TestingBackend::new(
+                i_slint_backend_testing::TestingBackendOptions {
+                    mock_time: true,
+                    threading: false,
+                    renderer_name: Some(slint::SharedString::from("software")),
+                    ..Default::default()
+                },
+            ),
+        ))
+        .ok(); // allow already-initialized when tests run in same thread
+        let win = crate::MainWindow::new().unwrap();
+        win.window().set_size(slint::PhysicalSize::new(stage_w as u32, stage_h as u32));
+        win.set_mounted_screen(1);
+        win.set_gallery_empty(false);
+        win.set_gallery_style(0);
+        win.set_gallery_focused(6);
+        let count = 12usize;
+        let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+        for i in 0..count {
+            let src = slice_test_gradient(i);
+            cards.push(crate::GalleryCardData {
+                name: SharedString::from(format!("Theme {i}")),
+                saved_at: SharedString::from(""),
+                is_active: false,
+                providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+                accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+                primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+                secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+                tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+                surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+                border_size: 0,
+                border_radius: 0,
+                border_color: slint::Color::from_rgb_u8(0, 0, 0),
+                shader: SharedString::from(""),
+                thumb_path: SharedString::from(""),
+                thumb: slint::Image::default(),
+                hero: slint::Image::default(),
+                slat_image: {
+                    let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+                    let (w, h) = (rgba.width(), rgba.height());
+                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                    buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                    slint::Image::from_rgba8(buf)
+                },
+                slat_expanded_image: {
+                    let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
+                    let (w, h) = (rgba.width(), rgba.height());
+                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                    buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                    slint::Image::from_rgba8(buf)
+                },
+            });
+        }
+        win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+        let tiles: Vec<crate::SliceTileData> = slice_delta_tiles(count, 6, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
+        win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+        win.set_gallery_slice_focus_pos(6.0);
+        win.set_gallery_slice_delta_base(6);
+        // Give Slint a tick to propagate stage.width → delegates' stage-width (scaled geometry)
+        for _ in 0..2 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        let snap = win.window().take_snapshot().expect("snapshot");
+        // No overflow: the focused slot (scaled expanded) must be fully inside stage.
+        let m = scaled_metrics(stage_w);
+        let fx = stage_w / 2.0 - m.expanded / 2.0;
+        assert!(fx >= 0.0 - 0.5, "focused slot left {fx} must be ≥0 at stage {stage_w}");
+        assert!(fx + m.expanded <= stage_w + 0.5, "focused slot right must fit at stage {stage_w}");
+        save_slice_png(snap, png);
+    };
+    render_at(1092.0, 1080.0, "/tmp/opencode/slice_fluid_1092.png");
+    render_at(1920.0, 1080.0, "/tmp/opencode/slice_fluid_1920.png");
+}
+
+#[test]
 fn mosaic_hero_centered_renders_with_pagination() {
     use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -1557,7 +1693,7 @@ fn panel_curve_preview_renders() {
     assert!(diff2 > 200, "active indicator must change pixels — got {diff2} expected >200");
 }
 
-// ── Mutating-window slice 6: Filters pick + Wallpaper RO (R5, R6) ──
+// ── Mutating-window slice 6: Filters pick (R5) ──
 
 #[test]
 fn panel_filters_renders() {
@@ -1654,99 +1790,6 @@ fn panel_filters_renders() {
     assert!(diff > 200, "active shader indicator must change pixels — got {diff} expected >200");
 }
 
-#[test]
-fn panel_wallpaper_ro_renders() {
-    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
-    .expect("platform already initialized");
-
-    let win = crate::MainWindow::new().unwrap();
-    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
-    win.set_mounted_screen(1);
-    win.set_expanded(true);
-    win.set_gallery_empty(false);
-    win.set_gallery_style(0);
-    win.set_gallery_focused(0);
-    win.set_gallery_reduced_motion(false);
-    win.set_panel_section(4);
-    win.set_is_mutating(false);
-    win.set_is_panel_open(true);
-
-    // Wallpaper RO — static thumb + video badge via thumbs pipeline
-    // Use bright thumb so the video badge overlay is distinguishable
-    let thumb = bright_mosaic_thumb();
-    win.set_panel_wallpaper_thumb(thumb);
-    win.set_panel_wallpaper_thumb_path("/tmp/wallpaper.png".into());
-    win.set_panel_wallpaper_has_video(true);
-    win.set_panel_wallpaper_video_file("movie.mp4".into());
-
-    let count = 6usize;
-    let stage_w = 1920.0f32;
-    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
-    for i in 0..count {
-        cards.push(crate::GalleryCardData {
-            name: SharedString::from(format!("Theme {i}")),
-            saved_at: SharedString::from(""),
-            is_active: false,
-            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
-            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
-            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
-            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
-            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
-            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
-            border_size: 0,
-            border_radius: 0,
-            border_color: slint::Color::from_rgb_u8(0, 0, 0),
-            shader: SharedString::from(""),
-            thumb_path: SharedString::from(""),
-            thumb: slint::Image::default(),
-            hero: slint::Image::default(),
-            slat_image: slint::Image::default(),
-            slat_expanded_image: slint::Image::default(),
-        });
-    }
-    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
-    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
-    win.set_gallery_slice_focus_pos(0.0);
-
-    for _ in 0..2 {
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
-    }
-    let snap = win.window().take_snapshot().expect("panel wallpaper ro snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_wallpaper_ro.png");
-    assert!(snap.width() == 1920, "snapshot width 1920");
-
-    // Also render without video badge to verify badge appears only when has-video
-    win.set_panel_wallpaper_has_video(false);
-    win.set_panel_wallpaper_video_file("".into());
-    for _ in 0..2 {
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
-    }
-    let snap_no_video = win.window().take_snapshot().expect("panel wallpaper no video");
-    save_slice_png(snap_no_video.clone(), "/tmp/opencode/panel_wallpaper_ro_no_video.png");
-    let diff = count_buffer_diff(&snap, &snap_no_video);
-    assert!(diff > 200, "video badge must change pixels — got {diff} expected >200");
-}
-
 // ── Mutating-window slice 7: System (R7, R11) ───────────────────────
 
 #[test]
@@ -1819,7 +1862,7 @@ fn panel_system_renders() {
     win.set_gallery_style(0);
     win.set_gallery_focused(0);
     win.set_gallery_reduced_motion(false);
-    win.set_panel_section(5);
+    win.set_panel_section(4);
     win.set_is_mutating(false);
     win.set_is_panel_open(true);
 

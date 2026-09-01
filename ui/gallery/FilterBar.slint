@@ -80,7 +80,7 @@ export component FilterBar inherits Rectangle {
     in property <bool> open: false;
     in property <bool> reduced-motion: false;
     callback style-selected(int);
-    // Mutating-window dropdown (R9): 6 section pills
+    // Mutating-window dropdown (R9): 5 section pills
     in property <int> panel-section: 0;
     callback panel-section-selected(int);
 
@@ -130,9 +130,9 @@ export component FilterBar inherits Rectangle {
                     if (self.key-focused-pill == -1) {
                         self.key-focused-pill = 0;
                     } else if (event.text == Key.LeftArrow || event.text == Key.UpArrow) {
-                        self.key-focused-pill = self.key-focused-pill == 0 ? 7 : self.key-focused-pill - 1;
+                        self.key-focused-pill = self.key-focused-pill == 0 ? 6 : self.key-focused-pill - 1;
                     } else {
-                        self.key-focused-pill = self.key-focused-pill == 7 ? 0 : self.key-focused-pill + 1;
+                        self.key-focused-pill = self.key-focused-pill == 6 ? 0 : self.key-focused-pill + 1;
                     }
                     return accept;
                 }
@@ -141,7 +141,7 @@ export component FilterBar inherits Rectangle {
                         root.style-selected(0);
                     } else if (self.key-focused-pill == 1) {
                         root.style-selected(2);
-                    } else if (self.key-focused-pill >= 2 && self.key-focused-pill <= 7) {
+                    } else if (self.key-focused-pill >= 2 && self.key-focused-pill <= 6) {
                         root.panel-section-selected(self.key-focused-pill - 2);
                     }
                     self.key-focused-pill = -1;
@@ -184,7 +184,7 @@ export component FilterBar inherits Rectangle {
                 background: SkwdTokens.outline.transparentize(0.6);
             }
 
-            // ── Bottom row: 6 panel section pills + divider semantics (R9) ──
+            // ── Bottom row: 5 panel section pills + divider semantics (R9) ──
             // Keyboard FocusScope (icy-cyan #8fd8ff focus border) — Tab order pick-before-tune (R11)
             panel-pills := HorizontalLayout {
                 padding-left: bar.pill-pad;
@@ -220,19 +220,12 @@ export component FilterBar inherits Rectangle {
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 5;
                     selected => { root.panel-section-selected(3); }
                 }
-                wallpaper-pill := SkewPill {
-                    label: "Wallpaper";
+                system-pill := SkewPill {
+                    label: "System";
                     active: root.panel-section == 4;
                     reduced-motion: root.reduced-motion;
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 6;
                     selected => { root.panel-section-selected(4); }
-                }
-                system-pill := SkewPill {
-                    label: "System";
-                    active: root.panel-section == 5;
-                    reduced-motion: root.reduced-motion;
-                    key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 7;
-                    selected => { root.panel-section-selected(5); }
                 }
             }
         }

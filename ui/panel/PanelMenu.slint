@@ -1,6 +1,6 @@
 // HVE 2 — PanelMenu (mutating-window slice 1 stub).
 //
-// Left rail for the panel's internal navigation (R2). 6 sections, active
+// Left rail for the panel's internal navigation (R2). 5 sections, active
 // indicator, keyboard arrows, section-selected callback. Skeleton only —
 // visual refinement and focus detail land in later slices.
 //
@@ -85,16 +85,10 @@ export component PanelMenu inherits Rectangle {
             selected => { root.section-selected(3); }
         }
         MenuItem {
-            label: "Wallpaper";
+            label: "System";
             active: root.active-section == 4;
             reduced-motion: root.reduced-motion;
             selected => { root.section-selected(4); }
-        }
-        MenuItem {
-            label: "System";
-            active: root.active-section == 5;
-            reduced-motion: root.reduced-motion;
-            selected => { root.section-selected(5); }
         }
     }
 }

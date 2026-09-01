@@ -136,11 +136,6 @@ export component ShellRoot inherits Rectangle {
     in property <[string]> panel-shader-tags;
     in property <[string]> panel-shader-files;
     in property <int> panel-shader-active-index: -1;
-    // Wallpaper RO (R6) — static thumb + video badge
-    in property <image> panel-wallpaper-thumb;
-    in property <string> panel-wallpaper-thumb-path;
-    in property <bool> panel-wallpaper-has-video: false;
-    in property <string> panel-wallpaper-video-file;
     // System (R7) — reuses SettingsPanel rows + toggle_system + About
     in property <bool> panel-system-active: false;
     in property <bool> panel-auto-minimize: true;
@@ -357,10 +352,6 @@ export component ShellRoot inherits Rectangle {
                     shader-tags: root.panel-shader-tags;
                     shader-files: root.panel-shader-files;
                     shader-active-index: root.panel-shader-active-index;
-                    wallpaper-thumb: root.panel-wallpaper-thumb;
-                    wallpaper-thumb-path: root.panel-wallpaper-thumb-path;
-                    wallpaper-has-video: root.panel-wallpaper-has-video;
-                    wallpaper-video-file: root.panel-wallpaper-video-file;
                     system-active: root.panel-system-active;
                     auto-minimize: root.panel-auto-minimize;
                     minimize-seconds: root.panel-minimize-seconds;

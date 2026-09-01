@@ -1,6 +1,6 @@
 // HVE 2 — PanelRoot (mutating-window slice 1 stub).
 //
-// Root sheet for the panel's 6 internal sections (R2). Slice 1 is a
+// Root sheet for the panel's 5 internal sections (R2). Slice 1 is a
 // placeholder skeleton: header + left rail + content placeholder + back
 // affordance. Later slices fill each section (Save, Borders, Motion, etc.)
 // inside the content area. Esc handling is via shell-level FocusScope —
@@ -15,7 +15,6 @@ import { SaveSection } from "sections/SaveSection.slint";
 import { BordersSection } from "sections/BordersSection.slint";
 import { MotionSection } from "sections/MotionSection.slint";
 import { FiltersSection } from "sections/FiltersSection.slint";
-import { WallpaperSection } from "sections/WallpaperSection.slint";
 import { SystemSection } from "sections/SystemSection.slint";
 
 export component PanelRoot inherits Rectangle {
@@ -54,11 +53,6 @@ export component PanelRoot inherits Rectangle {
     in property <[string]> shader-tags;
     in property <[string]> shader-files;
     in property <int> shader-active-index: -1;
-    // Wallpaper RO (R6) — static thumb + video badge
-    in property <image> wallpaper-thumb;
-    in property <string> wallpaper-thumb-path;
-    in property <bool> wallpaper-has-video: false;
-    in property <string> wallpaper-video-file;
     // System (R7) — reuses SettingsPanel rows + toggle_system + About
     in property <bool> system-active: false;
     in property <bool> auto-minimize: true;
@@ -217,15 +211,7 @@ export component PanelRoot inherits Rectangle {
                     active-index: root.shader-active-index;
                     apply-shader(idx, file) => { root.apply-shader(idx, file); }
                 }
-                if root.section == 4 : WallpaperSection {
-                    width: 100%;
-                    height: 100%;
-                    wallpaper-thumb: root.wallpaper-thumb;
-                    wallpaper-thumb-path: root.wallpaper-thumb-path;
-                    has-video: root.wallpaper-has-video;
-                    video-file: root.wallpaper-video-file;
-                }
-                if root.section == 5 : SystemSection {
+                if root.section == 4 : SystemSection {
                     width: 100%;
                     height: 100%;
                     system-active: root.system-active;
@@ -269,11 +255,11 @@ export component PanelRoot inherits Rectangle {
                     restart-app => { root.restart-app(); }
                     open-docs => { root.open-docs(); }
                 }
-                if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 && root.section != 5 : VerticalLayout {
+                if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 : VerticalLayout {
                     alignment: center;
                     spacing: SkwdTokens.spacing-12;
                     Text {
-                        text: ["Save","Borders","Motion","Filters","Wallpaper","System"][root.section];
+                        text: ["Save","Borders","Motion","Filters","System"][root.section];
                         font-family: SkwdTokens.font-heading;
                         font-size: SkwdTokens.size-24;
                         color: SkwdTokens.primary;

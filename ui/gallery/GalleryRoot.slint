@@ -128,6 +128,7 @@ export component GalleryRoot inherits Rectangle {
         if root.shown-style == 0 : SliceCarousel {
             width: 100%;
             height: 100%;
+            stage-width: stage.width;
             cards: root.cards;
             tiles: root.slice-tiles;
             focus-pos: root.slice-focus-pos;

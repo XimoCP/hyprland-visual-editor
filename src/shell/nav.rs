@@ -69,49 +69,45 @@ pub enum PanelSection {
     Borders,
     Motion,
     Filters,
-    Wallpaper,
     System,
 }
 
 impl PanelSection {
     /// Ordered list of all sections for iteration/Tab order (pick-before-tune).
     #[allow(dead_code)]
-    pub const ALL: [PanelSection; 6] = [
+    pub const ALL: [PanelSection; 5] = [
         PanelSection::Save,
         PanelSection::Borders,
         PanelSection::Motion,
         PanelSection::Filters,
-        PanelSection::Wallpaper,
         PanelSection::System,
     ];
 
-    /// Integer index for Slint `panel-section` property (0..5).
+    /// Integer index for Slint `panel-section` property (0..4).
     pub fn index(self) -> usize {
         match self {
             PanelSection::Save => 0,
             PanelSection::Borders => 1,
             PanelSection::Motion => 2,
             PanelSection::Filters => 3,
-            PanelSection::Wallpaper => 4,
-            PanelSection::System => 5,
+            PanelSection::System => 4,
         }
     }
 
-    /// Reverse mapping from index (0..5), or None out of range.
+    /// Reverse mapping from index (0..4), or None out of range.
     pub fn from_index(idx: usize) -> Option<Self> {
         match idx {
             0 => Some(PanelSection::Save),
             1 => Some(PanelSection::Borders),
             2 => Some(PanelSection::Motion),
             3 => Some(PanelSection::Filters),
-            4 => Some(PanelSection::Wallpaper),
-            5 => Some(PanelSection::System),
+            4 => Some(PanelSection::System),
             _ => None,
         }
     }
 
-    /// Keyboard shortcut mapping (R9, R11). Alt+A/B/M/F/W/Y are the canonical
-    /// shortcuts for the 6 dropdown pills. Case-insensitive and accepts both
+    /// Keyboard shortcut mapping (R9, R11). Alt+A/B/M/F/Y are the canonical
+    /// shortcuts for the 5 dropdown pills. Case-insensitive and accepts both
     /// `Alt+A` and bare `a`.
     #[allow(dead_code)]
     pub fn from_shortcut(s: &str) -> Option<Self> {
@@ -122,7 +118,6 @@ impl PanelSection {
             "b" | "borders" => Some(PanelSection::Borders),
             "m" | "motion" => Some(PanelSection::Motion),
             "f" | "filters" => Some(PanelSection::Filters),
-            "w" | "wallpaper" => Some(PanelSection::Wallpaper),
             "y" | "system" => Some(PanelSection::System),
             _ => None,
         }

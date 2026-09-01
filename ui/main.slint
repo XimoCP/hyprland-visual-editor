@@ -164,7 +164,7 @@ export component MainWindow inherits Window {
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
 
-    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10 + slice 3 Borders pick + slice 4 tune color-gated + slice 5 Motion + slice 6 Filters/Wallpaper) ──
+    // ── Mutating panel (slice 1 skeleton + slice 2 Save R10 + slice 3 Borders pick + slice 4 tune color-gated + slice 5 Motion + slice 6 Filters) ──
     in-out property <int> panel-section: 0;
     in-out property <bool> is-mutating: false;
     in-out property <bool> is-panel-open: false;
@@ -176,10 +176,6 @@ export component MainWindow inherits Window {
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
-    in property <image> panel-wallpaper-thumb;
-    in property <string> panel-wallpaper-thumb-path;
-    in property <bool> panel-wallpaper-has-video: false;
-    in property <string> panel-wallpaper-video-file;
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-save-theme(string);
@@ -281,10 +277,6 @@ export component MainWindow inherits Window {
         panel-shader-tags: root.shader-tags;
         panel-shader-files: root.shader-files;
         panel-shader-active-index: root.active-shader-index;
-        panel-wallpaper-thumb: root.panel-wallpaper-thumb;
-        panel-wallpaper-thumb-path: root.panel-wallpaper-thumb-path;
-        panel-wallpaper-has-video: root.panel-wallpaper-has-video;
-        panel-wallpaper-video-file: root.panel-wallpaper-video-file;
         panel-system-active: root.system-active;
         panel-auto-minimize: root.auto-minimize;
         panel-minimize-seconds: root.minimize-seconds;

@@ -20,6 +20,86 @@ pub const SLICE_EXPANDED_WIDTH: f32 = 924.0;
 pub const SLICE_HEIGHT: f32 = 520.0;
 /// Small gap between cards — thin hairline separation (design D2).
 pub const SLICE_SPACING_PX: f32 = 4.0;
+
+/// ── Fluid scaling (14"–24" clamp A+B) ─────────────────────────────────
+///
+/// Small logical widths (~1092 @ 14" scale 1.5) must not hold the fixed 924:
+/// 924 / 1092 ≈ 85% and clips. Keep skwd-wall ratios (collapsed/expanded,
+/// height/expanded, skew/collapsed) and cap at the skwd exact values for
+/// large stages. Single source of truth for both Rust layout math and Slint
+/// delegates: `expanded = min(924, stage * 0.58)` (58% of stage, caps at 924
+/// ≥ ~1593 logical). Scale = expanded / 924 preserves every ratio.
+///
+/// Large stages (≥ ~1593 / 1920) return the exact old values; small stages
+/// shrink proportionally (1092 → ~633, 1280 → ~742). Heights, skews, gaps and
+/// shadows all derive from the same scale so the parallelogram never skews.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SliceMetrics {
+    pub expanded: f32,
+    pub collapsed: f32,
+    pub height: f32,
+    pub skew: f32,
+    pub spacing: f32,
+    pub gap: f32,
+    pub scale: f32,
+}
+
+/// Scale factor in (0,1] for a logical stage width.
+pub fn slice_scale(stage_width: f32) -> f32 {
+    if !(stage_width > 0.0) {
+        return 1.0;
+    }
+    let expanded = (stage_width * 0.58).min(SLICE_EXPANDED_WIDTH);
+    (expanded / SLICE_EXPANDED_WIDTH).clamp(0.1, 1.0)
+}
+
+pub fn scaled_metrics(stage_width: f32) -> SliceMetrics {
+    let expanded = (stage_width * 0.58).min(SLICE_EXPANDED_WIDTH);
+    // Preserve caller intent for degenerate widths: return exact constants.
+    let expanded = if !(stage_width > 0.0) { SLICE_EXPANDED_WIDTH } else { expanded };
+    let scale = expanded / SLICE_EXPANDED_WIDTH;
+    SliceMetrics {
+        expanded,
+        collapsed: SLICE_COLLAPSED_WIDTH * scale,
+        height: SLICE_HEIGHT * scale,
+        skew: SLICE_SKEW_PX * scale,
+        spacing: SLICE_SPACING_PX * scale,
+        gap: 24.0 * scale,
+        scale,
+    }
+}
+
+pub fn scaled_expanded_width(stage_width: f32) -> f32 {
+    scaled_metrics(stage_width).expanded
+}
+pub fn scaled_collapsed_width(stage_width: f32) -> f32 {
+    scaled_metrics(stage_width).collapsed
+}
+pub fn scaled_height(stage_width: f32) -> f32 {
+    scaled_metrics(stage_width).height
+}
+pub fn scaled_skew(stage_width: f32) -> f32 {
+    scaled_metrics(stage_width).skew
+}
+pub fn scaled_gap(stage_width: f32) -> f32 {
+    scaled_metrics(stage_width).gap
+}
+
+/// Stage-aware slot width / center / left (V6 focus-flow, scaled).
+pub fn slot_width_scaled(d: f32, stage_width: f32) -> f32 {
+    let m = scaled_metrics(stage_width);
+    m.collapsed + (m.expanded - m.collapsed) * slot_expansion(d)
+}
+pub fn slot_center_scaled(d: f32, stage_width: f32) -> f32 {
+    let m = scaled_metrics(stage_width);
+    let ad = d.abs();
+    let flow = (m.expanded + m.collapsed) / 2.0 * d;
+    let over = ((m.expanded - m.collapsed) / 2.0) * d.signum() * (ad - 1.0).max(0.0);
+    flow - over
+}
+pub fn slot_left_scaled(d: f32, stage_width: f32) -> f32 {
+    slot_center_scaled(d, stage_width) - slot_width_scaled(d, stage_width) / 2.0
+}
 pub const SLICE_ANIM_DURATION_MS: u64 = 350;
 /// OutCubic cubic-bezier(0.215, 0.61, 0.355, 1.0) — skwd default Behavior.
 pub const SLICE_ANIM_EASING: (f32, f32, f32, f32) = (0.215, 0.61, 0.355, 1.0);
@@ -40,6 +120,27 @@ pub const SLICE_SOURCE_H: u32 = 720;
 
 /// Ring band inset: two collapsed slots per side (~270px background margin).
 pub const RING_EDGE_INSET_SLOTS: usize = 2;
+
+/// Stage-aware ring inset (px): large stages (≥1594 logical, where 924 caps)
+/// keep the classic 2·collapsed background margin (270px); small stages
+/// (<1594, 14"/15" e.g. 1092, 1280) shrink to a fixed 32px so TWO peeks per
+/// side fit. 1092: expanded 633, collapsed 92.5, gap 16.4, fx 229 →
+/// total 5 width 633+4·92.5=1003, leftmost -2 x≈44, rightmost ~1048,
+/// band [32,1060] leaves ~44px side margins and shows 2 slivers per side
+/// without clipping or shadow bleed. 1280 similarly 2+2 (51px margins).
+/// Large 1920 stays 270 margin untouched (3 visible).
+pub fn ring_edge_inset(stage_width: f32) -> f32 {
+    let m = scaled_metrics(stage_width);
+    if stage_width >= 1594.0 {
+        RING_EDGE_INSET_SLOTS as f32 * m.collapsed
+    } else {
+        // Fixed 32px margin — smallest change that makes 2 per side fit
+        // at 1092 (needs ≤44) and 1280 (needs ≤51) while keeping ~20-30px
+        // breathing room and never touching chrome; shadow pad (≈2.7 at
+        // 1092) stays inside stage (44-2.7 >0).
+        32.0
+    }
+}
 
 /// ── Depth cues (design D4, skwd-wall exact) ────────────────────────────
 /// Edge-fade end: card opacity reaches 0 at this normalized distance.
@@ -242,31 +343,37 @@ pub fn ring_real_index(virtual_index: isize, real_count: usize) -> usize {
 }
 
 /// X of the focused (expanded) slot's left edge when centered.
+/// Fluid: uses scaled expanded for the current stage width.
 pub fn ring_focused_x(stage_width: f32) -> f32 {
-    stage_width / 2.0 - SLICE_EXPANDED_WIDTH / 2.0
+    stage_width / 2.0 - scaled_expanded_width(stage_width) / 2.0
 }
 
 /// Absolute x of slot at virtual_index when focused is centered.
 /// Deterministic from geometry, no accumulated float drift.
-/// Contiguous collapsed slats: zero gap on both sides.
+/// Contiguous collapsed slats: zero gap on both sides, scaled.
 pub fn ring_slot_x(virtual_index: isize, focused: usize, stage_width: f32) -> f32 {
+    let m = scaled_metrics(stage_width);
     let fx = ring_focused_x(stage_width);
     let delta = virtual_index - focused as isize;
     if delta == 0 {
         fx
     } else if delta > 0 {
-        fx + SLICE_EXPANDED_WIDTH + (delta - 1) as f32 * SLICE_COLLAPSED_WIDTH
+        fx + m.expanded + (delta - 1) as f32 * m.collapsed
     } else {
-        fx + delta as f32 * SLICE_COLLAPSED_WIDTH
+        fx + delta as f32 * m.collapsed
     }
 }
 
-/// Width of slot at virtual_index (expanded iff virtual == focused).
+/// Width of slot at virtual_index (expanded iff virtual == focused), scaled.
 pub fn ring_slot_width(virtual_index: isize, focused: usize) -> f32 {
+    ring_slot_width_scaled(virtual_index, focused, 1920.0)
+}
+pub fn ring_slot_width_scaled(virtual_index: isize, focused: usize, stage_width: f32) -> f32 {
+    let m = scaled_metrics(stage_width);
     if virtual_index == focused as isize {
-        SLICE_EXPANDED_WIDTH
+        m.expanded
     } else {
-        SLICE_COLLAPSED_WIDTH
+        m.collapsed
     }
 }
 
@@ -413,16 +520,17 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
 
     let mut slots: Vec<RingSlot> = Vec::new();
 
+    let m = scaled_metrics(stage_width);
     // Focused slot (always visible, even if band degenerate - keeps centering contract)
     slots.push(RingSlot {
         virtual_index: focused as isize,
         real_index: ring_real_index(focused as isize, real_count),
         x: fx,
-        width: SLICE_EXPANDED_WIDTH,
+        width: m.expanded,
         is_expanded: true,
     });
 
-    let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
+    let inset = ring_edge_inset(stage_width);
     let band_left = inset;
     let band_right = stage_width - inset;
 
@@ -432,7 +540,7 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
     // Guard against huge stage (e.g., 10k) needing many clones
     for _ in 0..10000 {
         let x = ring_slot_x(v, focused, stage_width);
-        let w = SLICE_COLLAPSED_WIDTH;
+        let w = m.collapsed;
         // Once x+w <= band_left we have passed left inset; further left will be even more negative
         if x + w <= band_left {
             break;
@@ -453,7 +561,7 @@ pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -
     let mut v = focused as isize + 1;
     for _ in 0..10000 {
         let x = ring_slot_x(v, focused, stage_width);
-        let w = SLICE_COLLAPSED_WIDTH;
+        let w = m.collapsed;
         if x >= band_right {
             break;
         }
@@ -497,17 +605,26 @@ pub struct SliceUiTile {
 /// outermost VISIBLE slats remain clearly visible (lowest visible fade at
 /// band ends, never ~0 while on screen). S4b softened: clamp to EDGE_FADE_MIN
 /// (token gallery-slice-fade-min 0.55) so outermost never goes near-black.
+/// Scaled variant for small stages: numerator also scales.
+pub fn edge_fade_full_zone_scaled(half_view: f32, stage_width: f32) -> f32 {
+    if half_view <= 0.0 {
+        return EDGE_FADE_FULL_ZONE_CAP;
+    }
+    let m = scaled_metrics(stage_width);
+    let numerator = m.expanded / 2.0 + 2.0 * (m.collapsed + m.spacing);
+    (numerator / half_view).min(EDGE_FADE_FULL_ZONE_CAP)
+}
 pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
     if !(stage_width > 0.0) {
         return 1.0;
     }
-    let inset = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
+    let inset = ring_edge_inset(stage_width);
     let band_width = stage_width - 2.0 * inset;
     let half = if band_width > 0.0 { band_width / 2.0 } else { stage_width / 2.0 };
     if half <= 0.0 {
         return 1.0;
     }
-    let fz = edge_fade_full_zone(half);
+    let fz = edge_fade_full_zone_scaled(half, stage_width);
     let center = slot.x + slot.width / 2.0;
     let nd = edge_norm_dist(center, stage_width / 2.0, half);
     fade_opacity(nd, fz).max(EDGE_FADE_MIN)
@@ -1255,11 +1372,11 @@ mod tests {
                 assert!((center - stage_w / 2.0).abs() < 0.001, "focused center {center} != stage center {} (stage {stage_w} focused {focused})", stage_w/2.0);
             }
         }
-        // also direct ring_slot_x centering invariant
+        // also direct ring_slot_x centering invariant (fluid)
         for stage_w in [1200.0, 1920.0] {
             for focused in 0..6usize {
                 let x = ring_slot_x(focused as isize, focused, stage_w);
-                let center = x + SLICE_EXPANDED_WIDTH / 2.0;
+                let center = x + scaled_expanded_width(stage_w) / 2.0;
                 assert!((center - stage_w/2.0).abs() < 0.001, "ring_slot_x centering failed stage {stage_w} focused {focused}");
             }
         }
@@ -1283,16 +1400,16 @@ mod tests {
                 continue;
             }
             let delta = b.x - a.x;
-            assert!((delta - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "collapsed contiguity gap {} != {} between virt {} and {}", delta, SLICE_COLLAPSED_WIDTH, a.virtual_index, b.virtual_index);
+            assert!((delta - scaled_collapsed_width(stage_w)).abs() < 0.001, "collapsed contiguity gap {} != {} between virt {} and {}", delta, scaled_collapsed_width(stage_w), a.virtual_index, b.virtual_index);
         }
         // direct ring_slot_x contiguity both sides
         let fx = ring_focused_x(stage_w);
         let right1 = ring_slot_x(focused as isize + 1, focused, stage_w);
         let right2 = ring_slot_x(focused as isize + 2, focused, stage_w);
-        assert!((right2 - right1 - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "right side contiguity");
+        assert!((right2 - right1 - scaled_collapsed_width(stage_w)).abs() < 0.001, "right side contiguity");
         let left1 = ring_slot_x(focused as isize - 1, focused, stage_w);
         let left2 = ring_slot_x(focused as isize - 2, focused, stage_w);
-        assert!((left1 - left2 - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "left side contiguity");
+        assert!((left1 - left2 - scaled_collapsed_width(stage_w)).abs() < 0.001, "left side contiguity");
         let _ = fx;
     }
 
@@ -1804,5 +1921,170 @@ mod tests {
         assert!(flip_expanded_slot(&mut rows, 1));
         assert!(!rows[1].is_expanded);
         assert!(rows[2].is_expanded);
+    }
+
+    // ── Fluid scaling (14"–24" clamp A+B) ────────────────────────────
+
+    #[test]
+    fn fluid_scaled_metrics_capped_at_large_and_shrinks_at_small() {
+        // Large stages (≥ ~1594) → capped at exact skwd values.
+        for w in [1920.0, 2560.0, 1600.0, 1594.0] {
+            let m = scaled_metrics(w);
+            assert!((m.expanded - 924.0).abs() < 0.01, "large {w} expanded {}", m.expanded);
+            assert!((m.collapsed - 135.0).abs() < 0.01, "large {w} collapsed {}", m.collapsed);
+            assert!((m.height - 520.0).abs() < 0.01);
+            assert!((m.skew - 35.0).abs() < 0.01);
+            assert!((m.gap - 24.0).abs() < 0.01);
+            assert!((m.scale - 1.0).abs() < 0.001);
+        }
+        // Small logical widths: 58% clamp.
+        let m1092 = scaled_metrics(1092.0);
+        assert!((m1092.expanded - 633.36).abs() < 0.5, "1092 expanded {} expected ~633", m1092.expanded);
+        assert!((m1092.collapsed - 135.0 * m1092.scale).abs() < 0.01);
+        assert!((m1092.height - 520.0 * m1092.scale).abs() < 0.01);
+        assert!((m1092.skew - 35.0 * m1092.scale).abs() < 0.01);
+        // ratio collapsed/expanded preserved
+        assert!((m1092.collapsed / m1092.expanded - 135.0 / 924.0).abs() < 0.001);
+        assert!((m1092.height / m1092.expanded - 520.0 / 924.0).abs() < 0.001);
+
+        let m1280 = scaled_metrics(1280.0);
+        assert!((m1280.expanded - 742.4).abs() < 0.5, "1280 expanded {} expected ~742", m1280.expanded);
+
+        // Zero / negative degenerate returns exact constants (no panic, no zero).
+        let m0 = scaled_metrics(0.0);
+        assert_eq!(m0.expanded, 924.0);
+        let mn = scaled_metrics(-100.0);
+        assert_eq!(mn.expanded, 924.0);
+    }
+
+    #[test]
+    fn fluid_scale_preserves_gap_and_no_overflow_at_small() {
+        // At 1092 the expanded must fit with ~58% and still leave room for at
+        // least the inset band on both sides without clipping.
+        let stage_small = 1092.0;
+        let m = scaled_metrics(stage_small);
+        assert!(m.expanded < stage_small * 0.59, "expanded {} must be ≤58% of stage {}", m.expanded, stage_small);
+        assert!(m.expanded < stage_small, "expanded must never exceed stage");
+
+        // ring slots at small stage must: centered, contiguity scaled, no slot
+        // body inside either stage-aware inset (1·collapsed for small).
+        let slots = ring_visible_slots(6, 2, stage_small);
+        let inset = ring_edge_inset(stage_small);
+        for s in &slots {
+            assert!(s.x >= inset - 0.01, "slot x {} inside left inset {} scale", s.x, inset);
+            assert!(s.x + s.width <= stage_small - inset + 0.01, "slot right inside right inset");
+        }
+        // Contiguity between collapsed neighbors uses scaled collapsed.
+        let mut sorted = slots.clone();
+        sorted.sort_by(|a, b| a.virtual_index.cmp(&b.virtual_index));
+        for w in sorted.windows(2) {
+            let a = w[0]; let b = w[1];
+            if a.is_expanded || b.is_expanded { continue; }
+            assert!((b.x - a.x - m.collapsed).abs() < 0.01, "small collapsed contiguity {} vs {}", b.x - a.x, m.collapsed);
+        }
+    }
+
+    #[test]
+    fn small_screen_shows_prev_next_peek_large_unchanged() {
+        // TDD guard: small screens (<1594) show 2 per side (total 5:
+        // 2 left + focused + 2 right); large ≥1594 stays 1 per side (3).
+        // 1092: expanded 633, collapsed 92.5, fx 229, 2·coll band [32,1060]
+        // fits 4 collapsed slivers (total 1003) with ~44px side margins.
+        let small_slots = ring_visible_slots(12, 6, 1092.0);
+        let small_collapsed = small_slots.iter().filter(|s| !s.is_expanded).count();
+        assert_eq!(
+            small_slots.len(),
+            5,
+            "1092 must show exactly 5 (2 left + focused + 2 right), got {} slots {:?}",
+            small_slots.len(),
+            small_slots
+        );
+        assert_eq!(
+            small_collapsed, 4,
+            "1092 must have exactly 4 collapsed peeks (2 per side), got {small_collapsed}"
+        );
+        // No overflow: leftmost x >=0, rightmost x+width <= stage (shadow pad stays inside).
+        let min_x = small_slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
+        let max_r = small_slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+        assert!(min_x >= -0.5, "leftmost x {min_x} must be ≥0 at 1092");
+        assert!(max_r <= 1092.0 + 0.5, "rightmost edge {max_r} must be ≤1092");
+        // Also verify at 1280 (second small breakpoint) still 5.
+        let mid_slots = ring_visible_slots(12, 6, 1280.0);
+        assert_eq!(
+            mid_slots.len(),
+            5,
+            "1280 must also show 5 (2 per side), got {} {:?}",
+            mid_slots.len(),
+            mid_slots
+        );
+        let mid_min = mid_slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
+        let mid_max = mid_slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+        assert!(mid_min >= -0.5, "1280 leftmost {mid_min} ≥0");
+        assert!(mid_max <= 1280.0 + 0.5, "1280 rightmost {mid_max} ≤1280");
+
+        // Large screen untouched: exact old constants and old inset.
+        let large_slots = ring_visible_slots(12, 6, 1920.0);
+        let m_large = scaled_metrics(1920.0);
+        assert!((m_large.expanded - 924.0).abs() < 0.01);
+        assert!((m_large.collapsed - 135.0).abs() < 0.01);
+        assert!((m_large.height - 520.0).abs() < 0.01);
+        assert!((m_large.skew - 35.0).abs() < 0.01);
+        assert!((m_large.gap - 24.0).abs() < 0.01);
+        let inset_large = ring_edge_inset(1920.0);
+        assert!((inset_large - 270.0).abs() < 0.01, "large inset must stay 2*135=270, got {inset_large}");
+        // 1920 previously had 3 visible (expanded +1 left +1 right).
+        assert!(
+            large_slots.len() >= 3,
+            "1920 must keep at least 3 visible (expanded + peeks), got {}",
+            large_slots.len()
+        );
+        assert_eq!(
+            large_slots.len(),
+            3,
+            "1920 visible count must stay exactly 3 (no regression from small fix), got {}",
+            large_slots.len()
+        );
+
+        // Threshold: 1593 is still small (32px), 1594 flips to large (2·coll =270).
+        let inset_1593 = ring_edge_inset(1593.0);
+        let inset_1594 = ring_edge_inset(1594.0);
+        let m1594 = scaled_metrics(1594.0);
+        assert!((inset_1593 - 32.0).abs() < 0.01, "1593 small inset must be 32, got {inset_1593}");
+        assert!((inset_1594 - 2.0 * m1594.collapsed).abs() < 0.01, "1594 large inset 2*coll");
+    }
+
+    #[test]
+    fn fluid_slot_geometry_scaled_matches_fixed_at_large() {
+        // V6 focus-flow scaled geometry must equal fixed geometry at large stage.
+        for d in [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0] {
+            assert!((slot_width_scaled(d, 1920.0) - slot_width(d)).abs() < 0.01, "d {d} width scaled vs fixed");
+            assert!((slot_center_scaled(d, 1920.0) - slot_center(d)).abs() < 0.01, "d {d} center scaled vs fixed");
+            assert!((slot_left_scaled(d, 1920.0) - slot_left(d)).abs() < 0.01);
+        }
+        // At small stage, width scales proportionally.
+        let s1092 = scaled_metrics(1092.0).scale;
+        for d in [0.0, 0.5, 1.0] {
+            assert!((slot_width_scaled(d, 1092.0) - slot_width(d) * s1092).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn fluid_slice_scale_monotonic_and_ratio_preserved() {
+        // Scale must be monotonic increasing with stage, clamped at 1, and never distort aspect.
+        let widths = [800.0, 1092.0, 1280.0, 1440.0, 1593.0, 1920.0, 2560.0];
+        let mut prev = 0.0;
+        for w in widths {
+            let s = slice_scale(w);
+            assert!(s > prev - 0.001, "scale {s} not monotonic at {w}");
+            assert!(s <= 1.0 + 1e-6);
+            assert!(s >= 0.1 - 1e-6);
+            prev = s;
+        }
+        // Height ratio preserved across all widths.
+        for w in widths {
+            let m = scaled_metrics(w);
+            assert!((m.height / m.expanded - 520.0 / 924.0).abs() < 0.001, "height ratio drift at {w}");
+            assert!((m.skew / m.collapsed - 35.0 / 135.0).abs() < 0.001, "skew/collapsed drift at {w}");
+        }
     }
 }

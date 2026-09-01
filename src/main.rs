@@ -887,14 +887,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             });
         }
-        // ── Mutating panel wiring (slice 1, R1, R2, R8, R9 + slice 6 Wallpaper RO) ──
+        // ── Mutating panel wiring (slice 1, R1, R2, R8, R9) ──
         // 350ms Timer → complete_mutation, Esc reverses, wheel/click gated, fullscreen held (no resize).
-        // Wallpaper RO: when section 4 is selected, refresh thumb + video badge from current theme's bundle.
         {
             let shell_c = shell.clone();
-            let win = window.as_weak();
-            let gallery_tm_c = gallery_tm.clone();
-            let config_dir_c = config_dir.clone();
             window.on_panel_section_selected(move |section| {
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     return;
@@ -907,84 +903,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = crate::shell::Shell::enter_panel(&shell_c, target);
                 } else if is_open {
                     crate::shell::Shell::set_panel_section(&shell_c, target);
-                }
-                // R6 Wallpaper RO: refresh when Wallpaper section (4) is entered/selected
-                if target == crate::shell::nav::PanelSection::Wallpaper {
-                    if let Some(w) = win.upgrade() {
-                        // Try to use current active theme's gallery card thumb (thumbs pipeline)
-                        let active_thumb: Option<slint::Image> = {
-                            let cards = w.get_gallery_cards();
-                            use slint::Model;
-                            let mut found = None;
-                            for i in 0..cards.row_count() {
-                                if let Some(row) = cards.row_data(i) {
-                                    if row.is_active && row.thumb.size().width > 0 {
-                                        found = Some(row.thumb.clone());
-                                        break;
-                                    }
-                                }
-                            }
-                            // fallback: first card's thumb
-                            if found.is_none() && cards.row_count() > 0 {
-                                if let Some(row) = cards.row_data(0) {
-                                    if row.thumb.size().width > 0 {
-                                        found = Some(row.thumb.clone());
-                                    }
-                                }
-                            }
-                            found
-                        };
-                        if let Some(img) = active_thumb {
-                            w.set_panel_wallpaper_thumb(img);
-                            w.set_panel_wallpaper_thumb_path("via thumbs pipeline".into());
-                        } else {
-                            w.set_panel_wallpaper_thumb(slint::Image::default());
-                            w.set_panel_wallpaper_thumb_path("".into());
-                        }
-                        // Check for mpvpaper video via provider read path (no engine edit)
-                        // Look for mpvpaper manifest in current theme dir
-                        let has_video = {
-                            let gtm = gallery_tm_c.lock().unwrap();
-                            let active_name = gtm.list().unwrap_or_default().into_iter().find(|t| t.is_active).map(|t| t.name).unwrap_or_default();
-                            if active_name.is_empty() {
-                                false
-                            } else {
-                                let theme_dir = config_dir_c.join("hve").join("themes").join(&active_name);
-                                let mpv_path = theme_dir.join("providers").join("noctalia-v5").join("mpvpaper-assignments.json");
-                                let alt_path = theme_dir.join("providers").join("mpvpaper").join("mpvpaper-assignments.json");
-                                mpv_path.exists() || alt_path.exists()
-                            }
-                        };
-                        w.set_panel_wallpaper_has_video(has_video);
-                        if has_video {
-                            // Try to read video filename from manifest for badge
-                            let video_file = {
-                                let gtm = gallery_tm_c.lock().unwrap();
-                                let active_name = gtm.list().unwrap_or_default().into_iter().find(|t| t.is_active).map(|t| t.name).unwrap_or_default();
-                                if active_name.is_empty() {
-                                    String::new()
-                                } else {
-                                    let theme_dir = config_dir_c.join("hve").join("themes").join(&active_name);
-                                    let mpv_path = theme_dir.join("providers").join("noctalia-v5").join("mpvpaper-assignments.json");
-                                    let alt_path = theme_dir.join("providers").join("mpvpaper").join("mpvpaper-assignments.json");
-                                    let path = if mpv_path.exists() { mpv_path } else { alt_path };
-                                    if path.exists() {
-                                        std::fs::read_to_string(&path).ok().and_then(|raw| {
-                                            serde_json::from_str::<serde_json::Value>(&raw).ok().and_then(|v| {
-                                                v.get("assignments")
-                                                    .and_then(|a| a.as_object())
-                                                    .and_then(|obj| obj.values().next())
-                                                    .and_then(|val| val.get("filename").and_then(|f| f.as_str()).map(|s| s.to_string()))
-                                            })
-                                        }).unwrap_or_default()
-                                    } else { String::new() }
-                                }
-                            };
-                            w.set_panel_wallpaper_video_file(video_file.into());
-                        } else {
-                            w.set_panel_wallpaper_video_file("".into());
-                        }
-                    }
                 }
             });
         }
@@ -1445,18 +1363,6 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
-    // ── Wallpaper RO init (slice 6, R6) — static thumb + video badge via thumbs pipeline
-    // Populated on demand when Wallpaper section (4) is entered; initial empty is fine.
-    // Real thumb comes from gallery card's thumb (thumbs pipeline) or wallpaper provider path.
-    // No picker, no write path — read-only.
-    {
-        // Set initial empty state; real value will be refreshed when panel section 4 is selected
-        window.set_panel_wallpaper_thumb(slint::Image::default());
-        window.set_panel_wallpaper_thumb_path("".into());
-        window.set_panel_wallpaper_has_video(false);
-        window.set_panel_wallpaper_video_file("".into());
-    }
-
     // ── Legacy nav_modules (legacy_tab sidebar) — REMOVED slice 8 (R8) ──
 
     // ── Start Hyprland IPC listener (handle kept alive so threads

@@ -33,6 +33,10 @@ export struct SliceTileData {
 export component SliceCarousel inherits Rectangle {
     in property <[GalleryCardData]> cards;
     in property <[SliceTileData]> tiles;
+    in property <length> stage-width: 1920px;
+    // Fluid scale: stage-width drives delegates; strip centers vertically
+    // via scaled height (520·scale at stage 1092 ≈ 358 vs 520 at 1920).
+    property <float> scaled-h: (root.stage-width / 1px < 100.0 ? 924.0 : Math.min(924.0, root.stage-width / 1px * 0.58)) * 520.0 / 924.0;
     // V6 focus-flow state — ONE animated scalar (fractional card index,
     // UNWRAPPED: …−1, 0, 1… 12, 13… — the real focused index is its wrap
     // modulo the theme count). `delta-base` mirrors the virtual focused
@@ -90,8 +94,8 @@ export component SliceCarousel inherits Rectangle {
     // delegates). ──
     strip := Rectangle {
         x: parent.width / 2;
-        y: (parent.height - SkwdTokens.gallery-slice-h) / 2;
-        height: SkwdTokens.gallery-slice-h;
+        y: (parent.height - root.scaled-h * 1px) / 2;
+        height: root.scaled-h * 1px;
         width: 0px;
         clip: false;
 
@@ -106,6 +110,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist >= 5 && idx != root.hovered-tile;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -121,6 +126,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist == 4 && idx != root.hovered-tile;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -136,6 +142,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist == 3 && idx != root.hovered-tile;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -151,6 +158,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && t.dist == 2 && idx != root.hovered-tile;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -166,6 +174,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && (t.dist == 1 || t.dist == 0) && idx != root.hovered-tile;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -181,6 +190,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: !t.is-expanded && idx == root.hovered-tile;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
@@ -196,6 +206,7 @@ export component SliceCarousel inherits Rectangle {
         for t[idx] in root.tiles : SliceDelegate {
             visible: t.is-expanded;
             slot-d: t.delta - root.focus-frac;
+            stage-width: root.stage-width;
             fade-opacity: t.fade;
             card-name: root.cards[t.real-index].name;
             is-current: true;

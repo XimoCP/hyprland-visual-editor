@@ -66,6 +66,8 @@ export component SliceDelegate inherits Rectangle {
     // Depth-cue edge fade (design D4): computed by SliceCarousel from the
     // slice.rs-mirrored normDist curve; 1.0 = fully opaque.
     in property <float> fade-opacity: 1.0;
+    // Fluid stage width propagated from GalleryRoot → SliceCarousel.
+    in property <length> stage-width: 1920px;
     // V6 focus-flow: signed fractional distance from the traveling focus
     // (d = delta − frac). Drives position AND width through the closed-form
     // slot geometry (parity with slice.rs slot_width/slot_center, unit
@@ -73,8 +75,16 @@ export component SliceDelegate inherits Rectangle {
     // reflow, no per-instance animation state, retargets are exact.
     in property <float> slot-d: 0.0;
 
-    property <float> collapsed-wn: SkwdTokens.gallery-slice-w / 1px;               // 135
-    property <float> expanded-wn: SkwdTokens.gallery-slice-expanded-w / 1px;       // 924
+    // Fluid scaled geometry: expanded = min(924, stage * 0.58) preserves the
+    // skwd-wall ratios at every size (collapsed 0.146·expanded, height
+    // 0.562·expanded, skew 0.0378·expanded, gap 24·scale). Large stages
+    // (≥ ~1593) return the exact skwd values.
+    property <float> stage-wn: root.stage-width / 1px;
+    property <float> expanded-wn: root.stage-wn < 100.0 ? 924.0 : Math.min(924.0, root.stage-wn * 0.58);
+    property <float> collapsed-wn: root.expanded-wn * 135.0 / 924.0;
+    property <float> height-wn: root.expanded-wn * 520.0 / 924.0;
+    property <float> skew-wn: root.expanded-wn * 35.0 / 924.0;
+    property <float> gap-wn: root.expanded-wn * 24.0 / 924.0;
     property <float> ad: Math.abs(root.slot-d);
     property <float> expand-p: Math.max(0.0, Math.min(1.0, 1.0 - root.ad));
     property <float> width-wn: root.collapsed-wn + (root.expanded-wn - root.collapsed-wn) * root.expand-p;
@@ -113,22 +123,23 @@ export component SliceDelegate inherits Rectangle {
     // separated slats: the face is INSET within the slot by the air gap,
     // interpolated continuously with the expansion so the inset melts away
     // as the card grows (face = width − gap·(1−p), inset = gap/2·(1−p)). ──
-    property <length> skew: SkwdTokens.gallery-slice-skew-offset; // 35px X-shear
+    property <length> skew: root.skew-wn * 1px; // scaled 35·scale
     width: root.width-wn * 1px;
-    height: SkwdTokens.gallery-slice-h;
+    height: root.height-wn * 1px;
     x: root.left-wn * 1px;
 
-    // S3 face inset, continuous with expansion.
-    property <length> face-width: root.width - SkwdTokens.gallery-slat-gap * (1.0 - root.expand-p);
-    property <length> face-inset: SkwdTokens.gallery-slat-gap / 2.0 * (1.0 - root.expand-p);
+    // S3 face inset, continuous with expansion (scaled gap).
+    property <length> face-width: root.width - root.gap-wn * 1px * (1.0 - root.expand-p);
+    property <length> face-inset: root.gap-wn * 1px / 2.0 * (1.0 - root.expand-p);
     property <float> faceWn: root.face-width / 1px;
 
     // Viewbox numbers (unitless): face spans (width + skew) × height.
     // wn retained for hit-test parity; shape geometry uses faceWn.
     property <float> wn: root.width / 1px;
-    property <float> hn: root.height / 1px;               // 520
-    property <float> sn: root.skew / 1px;                 // 35
-    property <float> slant: Math.sqrt(sn * sn + hn * hn); // ≈ 521.18
+    property <float> hn: root.height-wn;               // scaled 520·scale
+    property <float> sn: root.skew-wn;                 // scaled 35·scale
+    property <float> slant: Math.sqrt(sn * sn + hn * hn); // ≈ 521.18 at scale 1
+    property <float> scale: root.expanded-wn / 924.0;
     // Corner radius clamped to half of the shortest adjacent edge minus 1
     // (skwd roundCorners clamp). Token default 0px → sharp parallelogram.
     // S3: clamp against the visible face width (faceWn) so the inset slat
@@ -146,7 +157,7 @@ export component SliceDelegate inherits Rectangle {
     // by a uniform stroke-room pad per side; the origin moves to -pad and the
     // viewbox shifts to -p so every vertex maps back to its exact original
     // position (scale stays 1:1) — same card, same place, full border.
-    property <length> pad: 4px; // > focused stroke half-width (1.5px)
+    property <length> pad: 4px * root.scale; // scaled stroke-room (> 1.5px at any scale)
     property <float> pn: root.pad / 1px;
 
     // ── Projected shadow (design D4 / S4b trim): identical shapes
@@ -156,10 +167,11 @@ export component SliceDelegate inherits Rectangle {
     // diffuse halos simulate Gaussian falloff — each step further and
     // fainter, so the hard Path edge reads as soft blur. All layers 200ms
     // and fade together via root fade-opacity. Order: faintest → strongest
-    // → face. ──
+    // → face. Scaled: offsets ride root.scale so shadows shrink with cards
+    // and never clip the 24·scale gap. ──
     shadow-soft3 := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 12px : SkwdTokens.gallery-slice-shadow-c4-x);
-        y: -root.pad + (root.is-current ? 24px : SkwdTokens.gallery-slice-shadow-c4-y);
+        x: -root.pad + root.face-inset + (root.is-current ? 12px * root.scale : SkwdTokens.gallery-slice-shadow-c4-x * root.scale);
+        y: -root.pad + (root.is-current ? 24px * root.scale : SkwdTokens.gallery-slice-shadow-c4-y * root.scale);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -170,8 +182,8 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow-soft2 := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 9px : SkwdTokens.gallery-slice-shadow-c3-x);
-        y: -root.pad + (root.is-current ? 19px : SkwdTokens.gallery-slice-shadow-c3-y);
+        x: -root.pad + root.face-inset + (root.is-current ? 9px * root.scale : SkwdTokens.gallery-slice-shadow-c3-x * root.scale);
+        y: -root.pad + (root.is-current ? 19px * root.scale : SkwdTokens.gallery-slice-shadow-c3-y * root.scale);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -182,8 +194,8 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow-soft := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 6px : SkwdTokens.gallery-slice-shadow-c2-x);
-        y: -root.pad + (root.is-current ? 14px : SkwdTokens.gallery-slice-shadow-c2-y);
+        x: -root.pad + root.face-inset + (root.is-current ? 6px * root.scale : SkwdTokens.gallery-slice-shadow-c2-x * root.scale);
+        y: -root.pad + (root.is-current ? 14px * root.scale : SkwdTokens.gallery-slice-shadow-c2-y * root.scale);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -194,8 +206,8 @@ export component SliceDelegate inherits Rectangle {
         animate y { duration: SkwdTokens.anim-200; }
     }
     shadow := SliceShape {
-        x: -root.pad + root.face-inset + (root.is-current ? 4px : SkwdTokens.gallery-slice-shadow-c1-x);
-        y: -root.pad + (root.is-current ? 10px : SkwdTokens.gallery-slice-shadow-c1-y);
+        x: -root.pad + root.face-inset + (root.is-current ? 4px * root.scale : SkwdTokens.gallery-slice-shadow-c1-x * root.scale);
+        y: -root.pad + (root.is-current ? 10px * root.scale : SkwdTokens.gallery-slice-shadow-c1-y * root.scale);
         width: root.face-width + root.skew + 2 * root.pad;
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
@@ -225,9 +237,9 @@ export component SliceDelegate inherits Rectangle {
     // Settled states are pixel-identical to the approved S4b look. ──
     property <bool> has-expanded-baked: root.slat-expanded-image.width > 0;
     property <bool> has-baked: root.slat-image.width > 0;
-    // Baked bboxes = drawn bbox (face-width + skew): collapsed 146, expanded 959.
-    property <float> collapsed-bbox-wn: (SkwdTokens.gallery-slice-w - SkwdTokens.gallery-slat-gap + SkwdTokens.gallery-slice-skew-offset) / 1px;
-    property <float> expanded-bbox-wn: (SkwdTokens.gallery-slice-expanded-w + SkwdTokens.gallery-slice-skew-offset) / 1px;
+    // Baked bboxes = drawn bbox (face-width + skew): collapsed 146, expanded 959 at scale 1, scaled thereafter.
+    property <float> collapsed-bbox-wn: root.collapsed-wn - root.gap-wn + root.skew-wn;
+    property <float> expanded-bbox-wn: root.expanded-wn + root.skew-wn;
     // Reveal driver: 0 while the box is at the collapsed bbox (collapsed
     // mask owns the corners), 1 past ~14% of the bbox travel — rides the
     // live width so both directions stay symmetric with no extra timing.
