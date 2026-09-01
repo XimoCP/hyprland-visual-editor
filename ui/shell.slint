@@ -282,12 +282,14 @@ export component ShellRoot inherits Rectangle {
                 width: 100%;
                 height: 100%;
 
-                // Layer crossfade: GalleryRoot 1→0 and PanelRoot 0→1 (350ms morph, 200ms stagger)
+                // Choreographed dock: tuck 500ms → tiny pause → stretch grow to 80%
                 gallery-layer := GalleryRoot {
                     width: 100%;
                     height: 100%;
-                    opacity: root.is-panel-open ? 0.0 : (root.is-mutating ? 0.45 : 1.0);
-                    animate opacity { duration: root.gallery-reduced-motion ? 0ms : 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    // Keep visible during tuck; fade background after tuck+pause so central stretch is clean
+                    opacity: root.is-panel-open ? 0.0 : 1.0;
+                    animate opacity { duration: root.gallery-reduced-motion ? 0ms : 320ms; delay: root.gallery-reduced-motion ? 0ms : (root.is-panel-open ? 620ms : 0ms); easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    docking: root.is-panel-open || root.is-mutating;
                     current-style: root.gallery-style;
                     panel-section: root.panel-section;
                     focused-index: root.gallery-focused;
@@ -315,12 +317,30 @@ export component ShellRoot inherits Rectangle {
                     stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
                 }
 
-                if root.is-panel-open || root.is-mutating : PanelRoot {
+                if root.is-panel-open || root.is-mutating : Rectangle {
+                    // Central window expand: same Slider window expands from center with bounce — after tuck+pause
+                    // Tuck 500ms + pause 140ms = 640ms delay, then natural expand
+                    width: 80%;
+                    height: 80%;
+                    x: parent.width * 0.10;
+                    y: parent.height * 0.10;
+                    border-radius: 16px;
+                    clip: true;
+                    drop-shadow-blur: 32px;
+                    drop-shadow-color: #000000a0;
+                    drop-shadow-offset-y: 20px;
+                    opacity: root.is-panel-open ? 1.0 : 0.0;
+                    animate opacity { duration: root.gallery-reduced-motion ? 0ms : 300ms; delay: root.gallery-reduced-motion ? 0ms : 640ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    // Natural expand: start at central size (~0.62) → 1.0 with soft overshoot, centered
+                    property <float> wow-scale: root.is-panel-open ? 1.0 : 0.62;
+                    transform-scale: self.wow-scale;
+                    transform-origin: { x: self.width / 2, y: self.height / 2 };
+                    animate wow-scale { duration: root.gallery-reduced-motion ? 0ms : 560ms; delay: root.gallery-reduced-motion ? 0ms : 640ms; easing: cubic-bezier(0.22, 1.08, 0.36, 1); }
+
+                    panel-morph := PanelRoot {
                     width: 100%;
                     height: 100%;
-                    opacity: root.is-panel-open ? 1.0 : (root.is-mutating ? 0.55 : 0.0);
-                    // Stagger: panel fades in 200ms after gallery starts fading (simulate via longer ease, visually staggered)
-                    animate opacity { duration: root.gallery-reduced-motion ? 0ms : 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+                    opacity: 1.0;
                     section: root.panel-section;
                     open: root.is-panel-open;
                     mutating: root.is-mutating;
@@ -399,6 +419,7 @@ export component ShellRoot inherits Rectangle {
                     reset-presets => { root.panel-reset-presets(); }
                     restart-app => { root.panel-restart-app(); }
                     open-docs => { root.panel-open-docs(); }
+                    }
                 }
 
                 // Input guard during Mutating (R9): absorbs wheel/click

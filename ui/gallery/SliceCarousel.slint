@@ -46,6 +46,10 @@ export component SliceCarousel inherits Rectangle {
     in property <int> delta-base: 0;
     in property <bool> rebasing: false;
     in property <bool> reduced-motion: false;
+    // Docking: when true, side tabs tuck behind center (outer → inner) before central morph
+    in property <bool> docking: false;
+    property <float> tuck-progress: root.docking ? 1.0 : 0.0;
+    animate tuck-progress { duration: root.reduced-motion ? 0ms : 500ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
     property <float> focus-frac: root.focus-pos - root.delta-base;
 
     animate focus-pos {
@@ -112,6 +116,7 @@ export component SliceCarousel inherits Rectangle {
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;
+            tuck: t.is-expanded ? 0.0 : Math.max(0.0, Math.min(1.0, (root.tuck-progress - (5 - Math.min(t.dist, 5)) * 0.10) / 0.30));
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
             accent: root.cards[t.real-index].accent;
@@ -128,6 +133,7 @@ export component SliceCarousel inherits Rectangle {
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;
+            tuck: t.is-expanded ? 0.0 : Math.max(0.0, Math.min(1.0, (root.tuck-progress - (5 - Math.min(t.dist, 5)) * 0.10) / 0.30));
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
             accent: root.cards[t.real-index].accent;
@@ -144,6 +150,7 @@ export component SliceCarousel inherits Rectangle {
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;
+            tuck: t.is-expanded ? 0.0 : Math.max(0.0, Math.min(1.0, (root.tuck-progress - (5 - Math.min(t.dist, 5)) * 0.10) / 0.30));
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
             accent: root.cards[t.real-index].accent;
@@ -160,6 +167,7 @@ export component SliceCarousel inherits Rectangle {
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;
+            tuck: t.is-expanded ? 0.0 : Math.max(0.0, Math.min(1.0, (root.tuck-progress - (5 - Math.min(t.dist, 5)) * 0.10) / 0.30));
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
             accent: root.cards[t.real-index].accent;
@@ -176,6 +184,7 @@ export component SliceCarousel inherits Rectangle {
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;
+            tuck: t.is-expanded ? 0.0 : Math.max(0.0, Math.min(1.0, (root.tuck-progress - (5 - Math.min(t.dist, 5)) * 0.10) / 0.30));
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
             accent: root.cards[t.real-index].accent;
@@ -192,6 +201,7 @@ export component SliceCarousel inherits Rectangle {
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;
+            tuck: t.is-expanded ? 0.0 : Math.max(0.0, Math.min(1.0, (root.tuck-progress - (5 - Math.min(t.dist, 5)) * 0.10) / 0.30));
             card-name: root.cards[t.real-index].name;
             is-current: t.is-expanded;
             accent: root.cards[t.real-index].accent;
@@ -205,6 +215,7 @@ export component SliceCarousel inherits Rectangle {
         }
         for t[idx] in root.tiles : SliceDelegate {
             visible: t.is-expanded;
+            tuck: 0.0;
             slot-d: t.delta - root.focus-frac;
             stage-width: root.stage-width;
             fade-opacity: t.fade;

@@ -42,6 +42,8 @@ export component GalleryRoot inherits Rectangle {
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> reduced-motion: false;
+    // Docking: true while mutating / panel open → side tabs tuck behind center
+    in property <bool> docking: false;
     // Mutating-window dropdown (R9)
     in property <int> panel-section: 0;
     // Backdrop scrim level (skwd selectorBackdropOpacity/100; default 0
@@ -134,6 +136,7 @@ export component GalleryRoot inherits Rectangle {
             focus-pos: root.slice-focus-pos;
             rebasing: root.slice-rebasing;
             reduced-motion: root.reduced-motion;
+            docking: root.docking;
             delta-base: root.slice-delta-base;
             card-clicked(i) => { root.card-clicked(i); }
             card-right-clicked(i) => { root.card-right-clicked(i); }

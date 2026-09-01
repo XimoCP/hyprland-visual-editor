@@ -55,6 +55,8 @@ export component SliceDelegate inherits Rectangle {
     in property <bool> is-flipped: false;
     in property <color> accent: SkwdTokens.fallback-accent;
     in property <image> thumb;
+    // Tuck animation: 0 = normal gallery, 1 = hidden behind center (driven by SliceCarousel staggered tuck)
+    in property <float> tuck: 0.0;
     // Aspect-true hero decode (HF5): large CONTAIN fit ≤1600×900 shown on
     // the expanded card instead of the stretched portrait thumb.
     in property <image> hero;
@@ -95,7 +97,10 @@ export component SliceDelegate inherits Rectangle {
 
     // Edge fade dissolves whole cards (image + shadow + dim) toward the
     // stage edges; 200ms matches the skwd depth-cue cadence.
-    opacity: root.fade-opacity;
+    // When tucking (settings dock), side cards slide behind the central window (strip center).
+    property <float> tucked-center-wn: -root.width-wn / 2.0;
+    property <float> tuck-opacity: root.is-current ? 1.0 : (1.0 - root.tuck);
+    opacity: root.fade-opacity * root.tuck-opacity;
     animate opacity { duration: SkwdTokens.anim-200; }
 
     // ── Hover focus feedback (approved design): hovered cards grow ~3%
@@ -126,7 +131,10 @@ export component SliceDelegate inherits Rectangle {
     property <length> skew: root.skew-wn * 1px; // scaled 35·scale
     width: root.width-wn * 1px;
     height: root.height-wn * 1px;
-    x: root.left-wn * 1px;
+    // When tucked, non-current cards slide behind center (x → center)
+    property <float> tucked-x-wn: root.tucked-center-wn;
+    x: root.is-current ? root.left-wn * 1px : (root.left-wn * (1.0 - root.tuck) + root.tucked-x-wn * root.tuck) * 1px;
+    animate x { duration: 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
 
     // S3 face inset, continuous with expansion (scaled gap).
     property <length> face-width: root.width - root.gap-wn * 1px * (1.0 - root.expand-p);

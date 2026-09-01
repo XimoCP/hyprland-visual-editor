@@ -1197,25 +1197,25 @@ fn panel_morph_midflight_renders() {
     let mid = win.window().take_snapshot().expect("midflight snapshot");
     save_slice_png(mid.clone(), "/tmp/opencode/panel_morph_midflight.png");
 
-    // Complete mutation: panel open
+    // Complete mutation: panel open — wait for tuck 500ms + pause 140ms + stretch 560ms
     win.set_is_mutating(false);
     win.set_is_panel_open(true);
-    for _ in 0..22 {
+    for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let panel_settled = win.window().take_snapshot().expect("panel settled");
     save_slice_png(panel_settled.clone(), "/tmp/opencode/panel_morph_panel_settled.png");
 
-    // Midflight must differ from both settled extremes (crossfade visible, not instant swap)
+    // Midflight must differ from both settled extremes (dock tuck + 80% wow visible, not instant swap)
     let diff_gallery_mid = count_buffer_diff(&settled_gallery, &mid);
     let diff_mid_panel = count_buffer_diff(&mid, &panel_settled);
     assert!(
-        diff_gallery_mid > 500,
-        "midflight must differ from gallery settled — got {diff_gallery_mid}, expected >500 (crossfade)"
+        diff_gallery_mid > 300,
+        "midflight must differ from gallery settled — got {diff_gallery_mid}, expected >300 (tuck+dock)"
     );
     assert!(
-        diff_mid_panel > 500,
-        "midflight must differ from panel settled — got {diff_mid_panel}, expected >500"
+        diff_mid_panel > 300,
+        "midflight must differ from panel settled — got {diff_mid_panel}, expected >300"
     );
 
     // Reduced-motion crossfade path (R1, R8): durations 0 → instant, no 350ms wait
@@ -2044,6 +2044,7 @@ fn test_panel_layer_gated() {
         "PanelRoot must be gated by `if root.is-panel-open || root.is-mutating` — found no such gate"
     );
     // Ensure the gate actually wraps PanelRoot (not a stray unrelated if)
+    // Dock choreography: tuck + pause + stretch wrapper (~2k chars), so offset is ~2100
     let gated_pos = content
         .find("if root.is-panel-open || root.is-mutating")
         .expect("gate must exist");
@@ -2051,8 +2052,8 @@ fn test_panel_layer_gated() {
         .find("PanelRoot")
         .expect("PanelRoot must follow the gate");
     assert!(
-        panel_pos < 200,
-        "PanelRoot must appear shortly after the gate (within 200 chars) — got offset {panel_pos}"
+        panel_pos < 2500,
+        "PanelRoot must appear shortly after the gate (within 2500 chars, accounts for 80% morph wrapper) — got offset {panel_pos}"
     );
     // Unconditional instantiation would keep an invisible but input-capturing layer over the gallery
     assert!(
