@@ -22,6 +22,7 @@ export component BordersSection inherits Rectangle {
     in property <[string]> border-files;
     in property <int> active-index: -1;
     callback apply-border(int, string);
+    callback back();
 
     // Tune layer — 4 geometry values (in-out so Rust snap can write them)
     in-out property <int> geom-size: 2;
@@ -67,11 +68,12 @@ export component BordersSection inherits Rectangle {
     }
 
     // Focus scope for pick — arrows navigate cards, Enter/Space activates,
-    // Tab rejected so it bubbles (pick→tune, no trap).
+    // Tab rejected so it bubbles (pick→tune, no trap). Esc always closes panel.
     fs := FocusScope {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
+            if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Tab) {
                 return reject;
             }
@@ -214,6 +216,7 @@ export component BordersSection inherits Rectangle {
                     border-radius: SkwdTokens.radius-8;
                     size-fs := FocusScope {
                         key-pressed(event) => {
+                            if (event.text == Key.Escape) { root.back(); return accept; }
                             if (event.text == Key.Tab) { return reject; }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-size + 1, 5);
@@ -266,6 +269,7 @@ export component BordersSection inherits Rectangle {
                     border-radius: SkwdTokens.radius-8;
                     radius-fs := FocusScope {
                         key-pressed(event) => {
+                            if (event.text == Key.Escape) { root.back(); return accept; }
                             if (event.text == Key.Tab) { return reject; }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-radius + 1, 100);
@@ -318,6 +322,7 @@ export component BordersSection inherits Rectangle {
                     border-radius: SkwdTokens.radius-8;
                     gap-in-fs := FocusScope {
                         key-pressed(event) => {
+                            if (event.text == Key.Escape) { root.back(); return accept; }
                             if (event.text == Key.Tab) { return reject; }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-gap-in + 1, 30);
@@ -370,6 +375,7 @@ export component BordersSection inherits Rectangle {
                     border-radius: SkwdTokens.radius-8;
                     gap-out-fs := FocusScope {
                         key-pressed(event) => {
+                            if (event.text == Key.Escape) { root.back(); return accept; }
                             if (event.text == Key.Tab) { return reject; }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-gap-out + 1, 30);

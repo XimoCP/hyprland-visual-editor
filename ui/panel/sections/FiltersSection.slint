@@ -21,6 +21,7 @@ export component FiltersSection inherits Rectangle {
     in property <[string]> shader-files;
     in property <int> active-index: -1;
     callback apply-shader(int, string);
+    callback back();
 
     background: transparent;
     clip: true;
@@ -31,6 +32,7 @@ export component FiltersSection inherits Rectangle {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
+            if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Tab) {
                 return reject;
             }

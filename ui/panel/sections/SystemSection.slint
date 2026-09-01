@@ -63,6 +63,7 @@ export component SystemSection inherits Rectangle {
     callback reset-presets();
     callback restart-app();
     callback open-docs();
+    callback back();
 
     property <int> focused-row: 0;
     property <int> row-count: 11;
@@ -78,6 +79,7 @@ export component SystemSection inherits Rectangle {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
+            if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Tab) { return reject; }
             if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
                 root.focused-row = min(root.focused-row + 1, root.row-count - 1);
