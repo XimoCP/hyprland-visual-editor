@@ -76,6 +76,10 @@ export component SliceDelegate inherits Rectangle {
     // tested) — the card grows about the traveling focus while neighbors
     // reflow, no per-instance animation state, retargets are exact.
     in property <float> slot-d: 0.0;
+    // Coherent motion driver: live travel (focus-frac) from SliceCarousel.
+    // ±1 during a step, 0 when settled — lets every card lean INTO the
+    // movement direction and gives ALL tabs visible motion.
+    in property <float> travel: 0.0;
 
     // Fluid scaled geometry: expanded = min(924, stage * 0.58) preserves the
     // skwd-wall ratios at every size (collapsed 0.146·expanded, height
@@ -94,6 +98,16 @@ export component SliceDelegate inherits Rectangle {
         - (root.expanded-wn - root.collapsed-wn) / 2.0
         * (root.slot-d < 0 ? -1.0 : 1.0) * Math.max(root.ad - 1.0, 0.0);
     property <float> left-wn: root.center-wn - root.width-wn / 2.0;
+    // Directional nudge: every card shifts a few px WITH the global travel,
+    // strongest for collapsed slats (1−p → 1) and zero at the expanded center.
+    // Makes motion coherent: sliding right pushes the whole strip left, sliding
+    // left pushes right — the carousel visibly "breathes" in the travel direction.
+    property <float> dir-nudge-wn: root.travel * 8.0 * (1.0 - root.expand-p);
+    // Directional skew lean: collapsed cards tilt 4px into the wind, center stays straight.
+    property <float> dir-skew-wn: root.travel * 4.0 * (1.0 - root.expand-p);
+    // Continuous scale: collapsed 0.97 → expanded 1.0, so EVERY tab visibly
+    // pulses as it approaches/leaves the center (not only the focused pair).
+    property <float> motion-scale: 0.97 + 0.03 * root.expand-p;
 
     // Edge fade dissolves whole cards (image + shadow + dim) toward the
     // stage edges; 200ms matches the skwd depth-cue cadence.
@@ -103,19 +117,14 @@ export component SliceDelegate inherits Rectangle {
     opacity: root.fade-opacity * root.tuck-opacity;
     animate opacity { duration: SkwdTokens.anim-200; }
 
-    // ── Hover focus feedback (approved design): hovered cards grow ~3%
-    // from their visual center and brighten slightly — combined
-    // lift+brighten reads as premium where a border alone feels rigid and
-    // illumination alone is lost on dark images. Reuses the EXISTING touch
-    // area's has-hover (declared below) so clicks, right-click flip and
-    // the non-rect hit gate stay untouched. transform-scale affects
-    // RENDERING only: layout box and hit regions never move. Exit snaps
-    // back instantly like the stroke/dim cues because the carousel swaps
-    // hover visibility between paint-pass copies. Stage clips stay required
-    // (cards travel beyond both edges); only cards within a few px of a
-    // window edge lose that sliver of growth behind screen bounds. ──
+    // ── Motion scale (all tabs) + hover lift (approved design) ──
+    // Every card now has continuous motion: collapsed 0.97 → expanded 1.0
+    // driven by expand-p (visible on ALL visible slats), PLUS the hover 1.03
+    // lift on top. Combined scale keeps the carousel alive even on distant
+    // tabs, while the center still pops. transform-scale is render-only.
     transform-origin: { x: self.width / 2, y: self.height / 2 };
-    transform-scale: root.has-hover ? SkwdTokens.gallery-card-hover-scale : 1.0;
+    property <float> hover-lift: root.has-hover ? SkwdTokens.gallery-card-hover-scale : 1.0;
+    transform-scale: root.motion-scale * self.hover-lift;
     animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
 
     callback clicked();
@@ -127,14 +136,17 @@ export component SliceDelegate inherits Rectangle {
     // 35px shear, so the Path bounding box is (face-width + skew) wide. S3
     // separated slats: the face is INSET within the slot by the air gap,
     // interpolated continuously with the expansion so the inset melts away
-    // as the card grows (face = width − gap·(1−p), inset = gap/2·(1−p)). ──
-    property <length> skew: root.skew-wn * 1px; // scaled 35·scale
+    // as the card grows (face = width − gap·(1−p), inset = gap/2·(1−p)).
+    // V6.1: x is NOT independently animated — it tracks the single source
+    // of truth `focus-pos` (already 350ms OutCubic) so every tab moves in
+    // perfect lockstep. `dir-nudge` adds the coherent wind offset.
+    // Skew also leans into travel direction for directional coherence.
+    property <length> skew: (root.skew-wn + root.dir-skew-wn) * 1px;
     width: root.width-wn * 1px;
     height: root.height-wn * 1px;
     // When tucked, non-current cards slide behind center (x → center)
     property <float> tucked-x-wn: root.tucked-center-wn;
-    x: root.is-current ? root.left-wn * 1px : (root.left-wn * (1.0 - root.tuck) + root.tucked-x-wn * root.tuck) * 1px;
-    animate x { duration: 350ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
+    x: root.is-current ? (root.left-wn + root.dir-nudge-wn) * 1px : (root.left-wn * (1.0 - root.tuck) + root.tucked-x-wn * root.tuck + root.dir-nudge-wn) * 1px;
 
     // S3 face inset, continuous with expansion (scaled gap).
     property <length> face-width: root.width - root.gap-wn * 1px * (1.0 - root.expand-p);
@@ -145,7 +157,7 @@ export component SliceDelegate inherits Rectangle {
     // wn retained for hit-test parity; shape geometry uses faceWn.
     property <float> wn: root.width / 1px;
     property <float> hn: root.height-wn;               // scaled 520·scale
-    property <float> sn: root.skew-wn;                 // scaled 35·scale
+    property <float> sn: root.skew-wn + root.dir-skew-wn; // leans into travel
     property <float> slant: Math.sqrt(sn * sn + hn * hn); // ≈ 521.18 at scale 1
     property <float> scale: root.expanded-wn / 924.0;
     // Corner radius clamped to half of the shortest adjacent edge minus 1
