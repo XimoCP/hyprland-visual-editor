@@ -58,6 +58,7 @@ export component GalleryRoot inherits Rectangle {
     callback wheel-step(int); // debounced ±1 gesture from SliceCarousel
     callback mosaic-page-step(int); // debounced ±1 gesture from MosaicView wheel
     callback mit-opened();    // D10 pill → Rust opens mit-link (xdg-open)
+    callback escape-pressed();
     // Stage geometry events (logical lengths): Rust recomputes the mosaic
     // tiles model from these instead of reading the startup window size.
     callback stage-geometry-changed(length, length);
@@ -197,6 +198,13 @@ export component GalleryRoot inherits Rectangle {
         panel-section-selected(section) => {
             root.style-menu-open = false;
             root.panel-section-selected(section);
+        }
+        escape-pressed => {
+            if (root.style-menu-open) {
+                root.style-menu-open = false;
+            } else {
+                root.escape-pressed();
+            }
         }
     }
 

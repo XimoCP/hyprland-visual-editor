@@ -315,6 +315,13 @@ export component ShellRoot inherits Rectangle {
                     mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
                     mit-opened => { root.gallery-mit-open(); }
                     stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
+                    escape-pressed => {
+                        if (root.is-mutating || root.is-panel-open) {
+                            root.panel-back();
+                        } else {
+                            root.back-activated();
+                        }
+                    }
                 }
 
                 if root.is-panel-open || root.is-mutating : Rectangle {

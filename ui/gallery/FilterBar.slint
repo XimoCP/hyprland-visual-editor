@@ -83,6 +83,7 @@ export component FilterBar inherits Rectangle {
     // Mutating-window dropdown (R9): 5 section pills
     in property <int> panel-section: 0;
     callback panel-section-selected(int);
+    callback escape-pressed();
 
     // Overlay chrome paints nothing itself.
     background: transparent;
@@ -123,7 +124,18 @@ export component FilterBar inherits Rectangle {
                     return reject;
                 }
                 if (event.text == Key.Escape) {
-                    self.key-focused-pill = -1;
+                    // First Esc clears pill focus, second Esc (or no pill focused) must close menu/gallery — forward to shell
+                    if (self.key-focused-pill != -1) {
+                        self.key-focused-pill = -1;
+                        return accept;
+                    }
+                    if (root.open) {
+                        // Menu open: request close, don't swallow the next Esc
+                        root.escape-pressed();
+                        return accept;
+                    }
+                    // Menu already closed or never opened: let Shell handle hide/close
+                    root.escape-pressed();
                     return accept;
                 }
                 if (event.text == Key.LeftArrow || event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.DownArrow) {
