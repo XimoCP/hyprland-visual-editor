@@ -111,9 +111,12 @@ export component MosaicView inherits Rectangle {
             root.wheel-dir = 0;
         }
     }
+    // Dejamos 60px arriba/abajo libres para que los cajones detrás
+    // sigan siendo clicables cuando están desplegados.
     wheel-zone := TouchArea {
+        y: 60px;
+        height: parent.height - 120px;
         width: 100%;
-        height: 100%;
         scroll-event(event) => {
             let d = event.delta-x + event.delta-y;
             if (d != 0) {

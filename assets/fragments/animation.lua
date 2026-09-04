@@ -1,23 +1,27 @@
--- @Title: Rebound
--- @Icon: trending-up
--- @Color: #fbbf24
--- @Tag: BOUNCY
--- @Desc: Real spring physics. Windows fall, bounce and settle with proper physics.
+-- @Title: Stylized 2.5D
+-- @Icon: palette
+-- @Color: #fde047
+-- @Tag: ARTISTIC
+-- @Desc: Animación tradicional 2.5D. Efecto "Squash & Stretch" con anticipación al entrar y cortes rápidos al salir.
 
-hl.curve("spring", { type = "bezier", points = { { 0.05, 0.9 }, { 0.1, 1.1 } } })
-hl.curve("crouch", { type = "bezier", points = { { 0.1, -0.1 }, { 0.1, 1.0 } } })
+hl.animation({ leaf = "global", enabled = true, speed = 1, bezier = "default" })
 
-hl.animation({ leaf = "windowsIn", enabled = true, speed = 3, bezier = "spring", style = "popin 80%" })
-hl.animation({ leaf = "windowsOut", enabled = true, speed = 3, bezier = "crouch", style = "popin 80%" })
-hl.animation({ leaf = "windowsMove", enabled = true, speed = 3, bezier = "spring", style = "slide" })
-hl.animation({ leaf = "fade", enabled = true, speed = 2, bezier = "default" })
-hl.animation({ leaf = "fadePopupsIn", enabled = true, speed = 2, bezier = "default" })
-hl.animation({ leaf = "fadePopupsOut", enabled = true, speed = 2, bezier = "default" })
-hl.animation({ leaf = "fadeLayersIn", enabled = true, speed = 2, bezier = "default" })
-hl.animation({ leaf = "fadeLayersOut", enabled = true, speed = 2, bezier = "default" })
-hl.animation({ leaf = "fadeDim", enabled = true, speed = 3, bezier = "default" })
-hl.animation({ leaf = "layers", enabled = true, speed = 3, bezier = "spring", style = "popin" })
-hl.animation({ leaf = "workspaces", enabled = true, speed = 4, bezier = "spring", style = "slidevert" })
-hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, bezier = "spring", style = "slidevert" })
-hl.animation({ leaf = "zoomFactor", enabled = true, speed = 3, bezier = "default" })
-hl.animation({ leaf = "monitorAdded", enabled = true, speed = 3, bezier = "default" })
+-- 1. Curvas de físicas tradicionales
+hl.curve("anticipation", { type = "bezier", points = { { 0.4, -0.3 }, { 0.2, 1.15 } } })
+hl.curve("keyframe_out", { type = "bezier", points = { { 1.0, 0.0 }, { 1.0, 1.0 } } })
+hl.curve("squash", { type = "bezier", points = { { 0.2, 1.2 }, { 0.3, 1.0 } } })
+
+-- 2. Gestión de Ventanas
+hl.animation({ leaf = "windowsIn", enabled = true, speed = 4.5, bezier = "anticipation", style = "popin 70%" })
+hl.animation({ leaf = "windowsOut", enabled = true, speed = 1.5, bezier = "keyframe_out", style = "popin 95%" })
+hl.animation({ leaf = "windowsMove", enabled = true, speed = 4.0, bezier = "squash", style = "slide" })
+
+-- 3. Transiciones de Entorno y Capas (Layers)
+hl.animation({ leaf = "fade", enabled = true, speed = 3, bezier = "squash" })
+hl.animation({ leaf = "fadeDim", enabled = true, speed = 3, bezier = "squash" })
+hl.animation({ leaf = "layersIn", enabled = true, speed = 4, bezier = "anticipation", style = "slide right" })
+hl.animation({ leaf = "layersOut", enabled = true, speed = 2, bezier = "keyframe_out", style = "slide right" })
+
+-- 4. Espacios de trabajo y Scratchpads
+hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "anticipation", style = "slidefade 15%" })
+hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4.5, bezier = "anticipation", style = "slidefadevert 20%" })

@@ -84,9 +84,12 @@ export component SliceCarousel inherits Rectangle {
             root.wheel-dir = 0;
         }
     }
+    // Solo la banda central captura rueda — así los cajones arriba/abajo
+    // (detrás del stage pero fuera de la banda) siguen siendo clicables.
     wheel-zone := TouchArea {
+        y: (parent.height - root.scaled-h * 1px) / 2;
+        height: root.scaled-h * 1px;
         width: 100%;
-        height: 100%;
         scroll-event(event) => {
             let d = event.delta-x + event.delta-y;
             if (d != 0) {

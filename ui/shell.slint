@@ -76,6 +76,9 @@ export component ShellRoot inherits Rectangle {
     in property <int> gallery-style: 0;
     in property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
+    // Two behind-drawers: top (Settings) slides from behind upward, bottom (Slider/Mosaic) downward
+    in-out property <bool> gallery-top-open: false;
+    in-out property <bool> gallery-bottom-open: false;
     // V3 relative strip tiles (center=0) + strip-offset/rebasing for fluid slide.
     in property <[SliceTileData]> gallery-slice-tiles;
     in property <float> gallery-slice-focus-pos: 0.0;
@@ -201,6 +204,8 @@ export component ShellRoot inherits Rectangle {
     // the newly mounted subtree settled.
     init => { shell-kbd.focus(); }
     changed mounted-screen => { shell-kbd.focus(); }
+    changed gallery-top-open => { if (!root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    changed gallery-bottom-open => { if (!root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
 
     VerticalLayout {
         // ── Chrome top bar: branding + status placeholders ──
@@ -307,6 +312,8 @@ export component ShellRoot inherits Rectangle {
                     empty-text: root.gallery-empty-text;
                     mit-link: root.gallery-mit-link;
                     reduced-motion: root.gallery-reduced-motion;
+                    top-menu-open <=> root.gallery-top-open;
+                    bottom-menu-open <=> root.gallery-bottom-open;
                     style-selected(style) => { root.gallery-style-selected(style); }
                     panel-section-selected(section) => { root.panel-section-selected(section); }
                     card-clicked(idx) => { root.gallery-card-clicked(idx); }

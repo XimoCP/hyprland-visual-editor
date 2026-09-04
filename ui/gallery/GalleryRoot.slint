@@ -1,40 +1,91 @@
-// HVE 2 — GalleryRoot (theme-gallery PR4.5 visible wiring).
+// HVE 2 — GalleryRoot (theme-gallery PR4.5 + behind-drawers).
 //
-// Swaps the active presentation view: Slice (parallelogram carousel) or
-// Mosaic (Voronoi stripes) — Hexagon removed per decision #632. Chrome
-// (empty banner + MIT pill) and FilterBar float as overlays on top; the
-// backdrop scrim sits below everything. Pure UI assembly — navigation
-// state stays in Rust (nav-shell D8): clicks and keys are reported
-// upward through callbacks and Rust mirrors style/focus back through
-// the in-properties below.
+// Dos cajones que nacen DETRÁS del Slider/Mosaic y se despliegan
+// verticalmente: arriba para Settings, abajo para Slider/Mosaic.
+// La tira (Slice/Mosaic) pinta POR ENCIMA de los cajones (declaración
+// antes que stage), así que al estar cerrados quedan escondidos detrás
+// del carrusel y al abrirse se deslizan fuera del borde de la banda
+// central (scaled-h). Dos ChromeButton arriba/abajo los disparan; arriba
+// ya no mueve el carrusel, abajo tampoco — left/right siguen moviendo.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
-import { FilterBar } from "FilterBar.slint";
 import { ChromeButton } from "ChromeButton.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel, SliceTileData } from "SliceCarousel.slint";
 import { MosaicView, MosaicTileData } from "MosaicView.slint";
 
+// Reused pill — mismo look que FilterBar (paralelogramo 10px sesgo).
+component SkewPill inherits Rectangle {
+    in property <string> label: "";
+    in property <bool> active: false;
+    in property <bool> reduced-motion: false;
+    in property <bool> key-focused: false;
+    callback selected();
+
+    width: pill-label.preferred-width + 2 * pad + 10px;
+    height: 32px;
+    background: transparent;
+
+    property <length> pad: 16px;
+    property <float> wn: self.width / 1px;
+    property <float> hn: self.height / 1px;
+    property <float> sn: 10px / 1px;
+
+    // Hover lift — mismo lenguaje que Slice/Mosaic (1.03 + brillo)
+    property <bool> has-hover: touch.has-hover;
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: parent.wn;
+        viewbox-height: parent.hn;
+        // Todos mismo color en reposo; al hover o con foco se rellena con primary
+        fill: (root.active || root.has-hover || root.key-focused) ? SkwdTokens.primary : SkwdTokens.surface-container.transparentize(0.35);
+        stroke: root.key-focused ? #8fd8ff : ((root.active || root.has-hover || root.key-focused) ? SkwdTokens.primary : SkwdTokens.outline.transparentize(0.4));
+        stroke-width: root.key-focused ? 1.5px : 1px;
+        animate fill { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150; }
+        animate stroke { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150; }
+        MoveTo { x: sn; y: 0; }
+        LineTo { x: wn; y: 0; }
+        LineTo { x: wn - sn; y: hn; }
+        LineTo { x: 0; y: hn; }
+        Close { }
+    }
+
+    pill-label := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        color: (root.active || root.has-hover || root.key-focused) ? SkwdTokens.surface : SkwdTokens.primary;
+        font-size: SkwdTokens.size-13;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150; }
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.selected(); }
+    }
+}
+
 export component GalleryRoot inherits Rectangle {
-    // ── State mirrors (written by Rust, read-only here) ──
-    in property <int> current-style: 0; // 0 Slice, 1 Hexagon, 2 Mosaic
+    in property <int> current-style: 0;
     in property <int> focused-index: 0;
     in property <[GalleryCardData]> cards;
-    // V6 focus-flow: tiles carry signed ring deltas; ONE continuous focus
-    // position (fractional card index) animates in the carousel and drives
-    // every slot's position/width.
     in property <[SliceTileData]> slice-tiles;
     in property <float> slice-focus-pos: 0.0;
     in property <int> slice-delta-base: 0;
     in property <bool> slice-rebasing: false;
-    // Justified-rows Mosaic tile geometry (Rust-computed model).
     in property <[MosaicTileData]> mosaic-tiles;
-    // Tramo 9: frozen outgoing page tiles (under layer for curtain sweep).
     in property <[MosaicTileData]> mosaic-under-tiles;
-    // Mosaic pagination mirrors (Rust page model is the source of truth).
     in property <int> mosaic-current-page: 0;
     in property <int> mosaic-total-pages: 1;
     in property <[int]> mosaic-page-numbers;
@@ -42,50 +93,56 @@ export component GalleryRoot inherits Rectangle {
     in property <string> empty-text: "No themes yet. Save your current setup as a theme.";
     in property <string> mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> reduced-motion: false;
-    // Docking: true while mutating / panel open → side tabs tuck behind center
     in property <bool> docking: false;
-    // Mutating-window dropdown (R9)
     in property <int> panel-section: 0;
-    // Backdrop scrim level (skwd selectorBackdropOpacity/100; default 0
-    // keeps the live desktop fully visible behind the cards).
     in property <float> backdrop-alpha: 0.0;
 
-    // ── Events reported to Rust ──
     callback style-selected(int);
     callback panel-section-selected(int);
     callback card-clicked(int);
     callback card-right-clicked(int);
-    callback wheel-step(int); // debounced ±1 gesture from SliceCarousel
-    callback mosaic-page-step(int); // debounced ±1 gesture from MosaicView wheel
-    callback mit-opened();    // D10 pill → Rust opens mit-link (xdg-open)
+    callback wheel-step(int);
+    callback mosaic-page-step(int);
+    callback mit-opened();
     callback escape-pressed();
-    // Stage geometry events (logical lengths): Rust recomputes the mosaic
-    // tiles model from these instead of reading the startup window size.
     callback stage-geometry-changed(length, length);
 
-    // Immersive presentation (gallery-immersive-redesign 1.8): the root
-    // stops painting an opaque surface — HVE runs fullscreen over the live
-    // desktop during a gallery session (skwd transparent layer-shell).
     background: transparent;
 
-    // ── Backdrop scrim: fullscreen black Rect fading in on open ──
-    // skwd: alpha = selectorBackdropOpacity/100 (default 0 → NO dim),
-    // fade 300ms (animMedium). Flipped after mount so the fade always
-    // plays from 0 on open.
     property <bool> opened: false;
     init => { self.opened = true; }
 
-    // ── Style menu state (HF5): UI-side toggle for the FilterBar chrome.
-    // The arrow button flips it; picking a style closes it. Pure UI
-    // concern — Rust stays the source of truth for WHICH style is active. ──
-    property <bool> style-menu-open: false;
+    // ── Dos cajones detrás del carrusel ──
+    // Local UI state — no necesita Rust para abrir/cerrar, pero se
+    // expone como in-out por si el teclado (Up/Down) lo quiere togglear
+    // desde callbacks.rs. Por defecto cerrados (escondidos detrás).
+    in-out property <bool> top-menu-open: false;
+    in-out property <bool> bottom-menu-open: false;
+    // Compat: FilterBar viejo usaba style-menu-open — lo mantenemos como
+    // alias a bottom para no romper bindings externos si quedara alguno.
+    property <bool> style-menu-open: root.bottom-menu-open;
 
-    // ── Stage cross-fade (task 4.3 / spec S6): the presentation views are
-    // keyed to a UI-side display mirror (`shown-style`) that lags the
-    // Rust-owned style by one 200ms fade-out, then commits and fades the
-    // new view back in. The mirror always converges to the Rust truth, so
-    // state ownership never desyncs (PR2 parity convention); switching
-    // preserves the focused card (Rust clamps, never resets). ──
+    // Foco de teclado dentro de cada cajón — loop y primer pill resaltado
+    property <int> top-focused: 0;
+    property <int> bottom-focused: 0;
+
+    // Scaled band height (misma fórmula que SliceCarousel) para calcular
+    // el borde superior/inferior de la banda central donde se esconde.
+    property <float> scaled-h: (root.width / 1px < 100.0 ? 924.0 : Math.min(924.0, root.width / 1px * 0.58)) * 520.0 / 924.0;
+
+    changed top-menu-open => {
+        if (root.top-menu-open) {
+            root.top-focused = 0;
+            gallery-keys.focus();
+        }
+    }
+    changed bottom-menu-open => {
+        if (root.bottom-menu-open) {
+            root.bottom-focused = 0;
+            gallery-keys.focus();
+        }
+    }
+
     property <int> shown-style: root.current-style;
     switch-timer := Timer {
         interval: 200ms;
@@ -107,16 +164,165 @@ export component GalleryRoot inherits Rectangle {
         animate opacity { duration: SkwdTokens.anim-300; }
     }
 
-    // ── Stage: exactly one presentation view mounted at a time. Fills the
-    // whole window; chrome/filterbar float above it (paint = declaration
-    // order). Opacity follows the shown-style convergence described above. ──
+    // ── Cajón superior: Settings (Sale DETRÁS en Slider, delante en Mosaic) ──
+    // Slider (style 0): este cajón de atrás crea el efecto "sale de detrás" (stage lo tapa).
+    // Mosaic (style 2): este cajón queda tapado por la grilla, por eso se usa el duplicado de frente.
+    top-drawer := Rectangle {
+        visible: root.current-style == 0;
+        x: (parent.width - self.width) / 2;
+        y: root.top-menu-open ? (parent.height / 2 - root.scaled-h * 1px / 2 - self.height - 12px) : -self.height;
+        width: Math.min(parent.width - 32px, top-pills-wrapper.preferred-width);
+        height: top-pills-wrapper.preferred-height;
+        background: SkwdTokens.surface-container.transparentize(0.15);
+        border-radius: SkwdTokens.radius-8;
+        clip: true;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+        drop-shadow-offset-y: 8px;
+        animate y {
+            duration: root.reduced-motion ? 0ms : 250ms;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        top-pills-wrapper := HorizontalLayout {
+            padding: 12px;
+            spacing: 8px;
+            alignment: center;
+
+            SkewPill {
+                label: "Save";
+                active: false;
+                key-focused: root.top-focused == 0 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(0); }
+            }
+            SkewPill {
+                label: "Borders";
+                active: false;
+                key-focused: root.top-focused == 1 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(1); }
+            }
+            SkewPill {
+                label: "Motion";
+                active: false;
+                key-focused: root.top-focused == 2 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(2); }
+            }
+            SkewPill {
+                label: "Filters";
+                active: false;
+                key-focused: root.top-focused == 3 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(3); }
+            }
+            SkewPill {
+                label: "System";
+                active: false;
+                key-focused: root.top-focused == 4 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(4); }
+            }
+        }
+    }
+
+    // ── Cajón inferior: Slider / Mosaic ──
+    bottom-drawer := Rectangle {
+        visible: root.current-style == 0;
+        x: (parent.width - self.width) / 2;
+        y: root.bottom-menu-open ? (parent.height / 2 + root.scaled-h * 1px / 2 + 12px) : parent.height;
+        width: Math.min(parent.width - 32px, bottom-pills-wrapper.preferred-width);
+        height: bottom-pills-wrapper.preferred-height;
+        background: SkwdTokens.surface-container.transparentize(0.15);
+        border-radius: SkwdTokens.radius-8;
+        clip: true;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+        drop-shadow-offset-y: 8px;
+        animate y {
+            duration: root.reduced-motion ? 0ms : 250ms;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        bottom-pills-wrapper := HorizontalLayout {
+            padding: 12px;
+            spacing: 8px;
+            alignment: center;
+
+            SkewPill {
+                label: "Slider";
+                active: false;
+                key-focused: root.bottom-focused == 0 && root.bottom-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.bottom-menu-open = false; root.style-selected(0); }
+            }
+            SkewPill {
+                label: "Mosaic";
+                active: false;
+                key-focused: root.bottom-focused == 1 && root.bottom-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.bottom-menu-open = false; root.style-selected(2); }
+            }
+        }
+    }
+
+    // ── Teclado cuando un cajón está abierto: Left/Right navega con loop, Enter activa y cierra ──
+    gallery-keys := FocusScope {
+        width: 0px;
+        height: 0px;
+        enabled: root.top-menu-open || root.bottom-menu-open;
+        key-pressed(event) => {
+            if (!root.top-menu-open && !root.bottom-menu-open) {
+                return reject;
+            }
+            if (event.text == Key.Escape) {
+                if (root.top-menu-open) { root.top-menu-open = false; return accept; }
+                if (root.bottom-menu-open) { root.bottom-menu-open = false; return accept; }
+                return reject;
+            }
+            if (event.text == Key.LeftArrow || event.text == Key.RightArrow) {
+                if (root.top-menu-open) {
+                    if (event.text == Key.LeftArrow) {
+                        root.top-focused = root.top-focused == 0 ? 4 : root.top-focused - 1;
+                    } else {
+                        root.top-focused = root.top-focused == 4 ? 0 : root.top-focused + 1;
+                    }
+                    return accept;
+                }
+                if (root.bottom-menu-open) {
+                    if (event.text == Key.LeftArrow) {
+                        root.bottom-focused = root.bottom-focused == 0 ? 1 : 0;
+                    } else {
+                        root.bottom-focused = root.bottom-focused == 1 ? 0 : 1;
+                    }
+                    return accept;
+                }
+            }
+            if (event.text == Key.Return || event.text == Key.Space) {
+                if (root.top-menu-open) {
+                    if (root.top-focused == 0) { root.top-menu-open = false; root.panel-section-selected(0); }
+                    else if (root.top-focused == 1) { root.top-menu-open = false; root.panel-section-selected(1); }
+                    else if (root.top-focused == 2) { root.top-menu-open = false; root.panel-section-selected(2); }
+                    else if (root.top-focused == 3) { root.top-menu-open = false; root.panel-section-selected(3); }
+                    else if (root.top-focused == 4) { root.top-menu-open = false; root.panel-section-selected(4); }
+                    return accept;
+                }
+                if (root.bottom-menu-open) {
+                    if (root.bottom-focused == 0) { root.bottom-menu-open = false; root.style-selected(0); }
+                    else { root.bottom-menu-open = false; root.style-selected(2); }
+                    return accept;
+                }
+            }
+            return reject;
+        }
+    }
+
+    // ── Stage: pinta POR ENCIMA de los cajones (declarado después) ──
     stage := Rectangle {
         width: 100%;
         height: 100%;
         clip: true;
-        // Slint-driven stage dims (Slint 1.17 `changed` callbacks): any
-        // layout/resize re-reports the CURRENT logical size. Recomputing
-        // the tiles model never writes back to width/height → no loop.
         changed width => { root.stage-geometry-changed(self.width, self.height); }
         changed height => { root.stage-geometry-changed(self.width, self.height); }
         opacity: root.shown-style == root.current-style ? 1.0 : 0.0;
@@ -125,9 +331,6 @@ export component GalleryRoot inherits Rectangle {
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
 
-        // Style 0 — Slice: infinite wall (S2). Focused dead-center expanded,
-        // collapsed slats zero-gap both sides edge-to-edge via clones; stage
-        // width changes re-render via stage-geometry-changed (shared).
         if root.shown-style == 0 : SliceCarousel {
             width: 100%;
             height: 100%;
@@ -144,11 +347,6 @@ export component GalleryRoot inherits Rectangle {
             wheel-step(dir) => { root.wheel-step(dir); }
         }
 
-        // Style 2 — Mosaic: paginated Pinterest band (Mosaic final scheme).
-        // Renders only the current page; Rust owns the page model and the
-        // curtain + pagination are driven by the mirrors below. Clicks map
-        // onto real themes via the tile's real-index (clone-fill safe).
-        // Style 1 (Hexagon) removed per decision #632.
         if root.shown-style == 2 : MosaicView {
             width: 100%;
             height: 100%;
@@ -170,9 +368,106 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Chrome overlay (task 4.4): empty banner + bottom-right MIT pill.
-    // Transparent — paints nothing itself. Declared AFTER the stage so
-    // it paints above it; FilterBar stays topmost. ──
+    // ── Duplicados al FRENTE solo para Mosaic — pintan por encima de la grilla y no se tapan ──
+    top-drawer-front := Rectangle {
+        visible: root.current-style == 2;
+        x: (parent.width - self.width) / 2;
+        y: root.top-menu-open ? (parent.height / 2 - root.scaled-h * 1px / 2 - self.height - 12px) : -self.height;
+        width: Math.min(parent.width - 32px, top-pills-wrapper-front.preferred-width);
+        height: top-pills-wrapper-front.preferred-height;
+        background: SkwdTokens.surface-container.transparentize(0.15);
+        border-radius: SkwdTokens.radius-8;
+        clip: true;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+        drop-shadow-offset-y: 8px;
+        animate y {
+            duration: root.reduced-motion ? 0ms : 250ms;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        top-pills-wrapper-front := HorizontalLayout {
+            padding: 12px;
+            spacing: 8px;
+            alignment: center;
+
+            SkewPill {
+                label: "Save";
+                active: false;
+                key-focused: root.top-focused == 0 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(0); }
+            }
+            SkewPill {
+                label: "Borders";
+                active: false;
+                key-focused: root.top-focused == 1 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(1); }
+            }
+            SkewPill {
+                label: "Motion";
+                active: false;
+                key-focused: root.top-focused == 2 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(2); }
+            }
+            SkewPill {
+                label: "Filters";
+                active: false;
+                key-focused: root.top-focused == 3 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(3); }
+            }
+            SkewPill {
+                label: "System";
+                active: false;
+                key-focused: root.top-focused == 4 && root.top-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.top-menu-open = false; root.panel-section-selected(4); }
+            }
+        }
+    }
+
+    bottom-drawer-front := Rectangle {
+        visible: root.current-style == 2;
+        x: (parent.width - self.width) / 2;
+        y: root.bottom-menu-open ? (parent.height / 2 + root.scaled-h * 1px / 2 + 12px) : parent.height;
+        width: Math.min(parent.width - 32px, bottom-pills-wrapper-front.preferred-width);
+        height: bottom-pills-wrapper-front.preferred-height;
+        background: SkwdTokens.surface-container.transparentize(0.15);
+        border-radius: SkwdTokens.radius-8;
+        clip: true;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+        drop-shadow-offset-y: 8px;
+        animate y {
+            duration: root.reduced-motion ? 0ms : 250ms;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+
+        bottom-pills-wrapper-front := HorizontalLayout {
+            padding: 12px;
+            spacing: 8px;
+            alignment: center;
+
+            SkewPill {
+                label: "Slider";
+                active: false;
+                key-focused: root.bottom-focused == 0 && root.bottom-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.bottom-menu-open = false; root.style-selected(0); }
+            }
+            SkewPill {
+                label: "Mosaic";
+                active: false;
+                key-focused: root.bottom-focused == 1 && root.bottom-menu-open;
+                reduced-motion: root.reduced-motion;
+                selected => { root.bottom-menu-open = false; root.style-selected(2); }
+            }
+        }
+    }
+
     GalleryChrome {
         width: 100%;
         height: 100%;
@@ -181,41 +476,38 @@ export component GalleryRoot inherits Rectangle {
         mit-opened => { root.mit-opened(); }
     }
 
-    // ── FilterBar (gallery-immersive-redesign 4.1, HF5): top-center style
-    // menu, shown only while style-menu-open; a pick closes it.
-    // Mutating-window extends it with 6 panel pills (R9). ──
-    FilterBar {
-        width: 100%;
-        height: 100%;
-        current-style: root.current-style;
-        panel-section: root.panel-section;
-        open: root.style-menu-open;
+    // ── Flecha superior: despliega Settings hacia ARRIBA ──
+    top-arrow := ChromeButton {
+        x: (parent.width - self.width) / 2;
+        y: 2px;
+        open: root.top-menu-open;
+        closed-glyph: "▴";
+        open-glyph: "▾";
         reduced-motion: root.reduced-motion;
-        style-selected(style) => {
-            root.style-menu-open = false;
-            root.style-selected(style);
-        }
-        panel-section-selected(section) => {
-            root.style-menu-open = false;
-            root.panel-section-selected(section);
-        }
-        escape-pressed => {
-            if (root.style-menu-open) {
-                root.style-menu-open = false;
-            } else {
-                root.escape-pressed();
-            }
+        toggled => {
+            root.top-menu-open = !root.top-menu-open;
+            if (root.top-menu-open) { root.bottom-menu-open = false; }
         }
     }
 
-    // ── Chrome arrow (HF5): click-toggles the style menu; the chevron
-    // flips with the state. Top-center, above the carousel, clear of the
-    // bar's open position (y42) so neither steals clicks from the other. ──
-    ChromeButton {
+    // ── Flecha inferior: despliega Slider/Mosaic hacia ABAJO ──
+    bottom-arrow := ChromeButton {
         x: (parent.width - self.width) / 2;
-        y: 2px;
-        open: root.style-menu-open;
+        y: parent.height - self.height - 2px;
+        open: root.bottom-menu-open;
+        closed-glyph: "▾";
+        open-glyph: "▴";
         reduced-motion: root.reduced-motion;
-        toggled => { root.style-menu-open = !root.style-menu-open; }
+        toggled => {
+            root.bottom-menu-open = !root.bottom-menu-open;
+            if (root.bottom-menu-open) { root.top-menu-open = false; }
+        }
     }
+
+    // Esc cierra cajones primero, luego delega al shell
+    // (GalleryChrome ya maneja Escape del panel, esto es para los drawers).
+    // Se expone vía FilterBar compat pero aquí lo hacemos directo:
+    // si alguno está abierto, Escape lo cierra y no propaga hide.
+    // El shell ya tiene su handler de Escape global, así que este es
+    // solo para no perder el cajón sin cerrar.
 }

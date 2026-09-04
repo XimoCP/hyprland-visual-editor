@@ -137,26 +137,54 @@ pub fn setup_callbacks(
             let is_gallery = Shell::with_nav(&shell, |n| {
                 n.screen() == Screen::Gallery && n.expansion() != ExpansionState::Collapsed
             });
+            // V6.1: Up/Down ya no mueven el carrusel — despliegan los cajones
+            // (arriba Settings, abajo Slider/Mosaic). Solo Left/Right mueven.
+            // En Gallery, Up togglea cajón superior, Down cajón inferior.
+            if is_gallery {
+                let dir = direction.as_str();
+                if dir == "up" {
+                    if let Some(w) = weak.upgrade() {
+                        let cur = w.get_gallery_top_open();
+                        w.set_gallery_top_open(!cur);
+                        if !cur { w.set_gallery_bottom_open(false); }
+                    }
+                    return;
+                }
+                if dir == "down" {
+                    if let Some(w) = weak.upgrade() {
+                        let cur = w.get_gallery_bottom_open();
+                        w.set_gallery_bottom_open(!cur);
+                        if !cur { w.set_gallery_top_open(false); }
+                    }
+                    return;
+                }
+            }
             let delta: i32 = match direction.as_str() {
-                "down" | "right" => 1,
-                "up" | "left" => -1,
+                "right" => 1,
+                "left" => -1,
+                "down" | "up" if !is_gallery => {
+                    // En Home, Up/Down siguen moviendo el foco vertical
+                    if direction.as_str() == "down" { 1 } else { -1 }
+                },
                 _ => 0,
             };
             if delta == 0 {
                 return;
             }
             if is_gallery {
-                // Mosaic style: Left/Up = previous page, Right/Down = next.
-                // Reuses the page model; geometry is not rebuilt on a flip.
+                // Si un cajón está abierto, Left/Right lo navega — no mover carrusel
+                let drawer_open = weak.upgrade().map(|w| w.get_gallery_top_open() || w.get_gallery_bottom_open()).unwrap_or(false);
+                if drawer_open {
+                    return;
+                }
                 let style = weak.upgrade().map(|w| w.get_gallery_style()).unwrap_or(0);
                 if style == 2 {
                     let changed = mosaic_pages.lock().unwrap().step(delta as isize);
                     if changed {
-                        refresh_mosaic_page(true); // mosaic page step is a flip
+                        refresh_mosaic_page(true);
                     }
                     return;
                 }
-                // Slice style 0: fluid directional strip (V3)
                 if style == 0 {
                     animate_nav(delta as isize);
                     return;
