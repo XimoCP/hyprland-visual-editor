@@ -159,29 +159,38 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
 }
 
 /// Re-assert immersive fullscreen after Gallery expand or after a Noctalia
-/// theme apply. Noctalia v5 restarts its shell on theme change and its layer
-/// bar can pop over HVE even though Shell still thinks gallery is expanded.
-/// Force a fullscreen dispatch even if the session flag is already true.
+/// theme apply.
+///
+/// Root cause note: a bare `set` on a window Hyprland already believes is
+/// fullscreen is a compositor NO-OP — it answers ok but fires no state
+/// transition, so the shell bar (Noctalia/Waybar) never receives the
+/// fullscreen event and stays visible. Manual SUPER+F works because it is a
+/// `toggle` (real transition) and SUPER+H remaps the window (fresh state).
+/// Fix: cycle unset -> set with a short gap to force a real transition.
 pub(crate) fn reassert_gallery_fullscreen() {
     if !crate::shell::Shell::is_gallery_expanded() {
         return;
     }
     if let Some(mut ctrl) = crate::composer::global_controller() {
-        // Try direct fullscreen first (covers the case where compositor lost
-        // fullscreen but session flag is still true).
-        let ok = ctrl.composer().set_fullscreen(true);
-        if !ok {
-            // If dispatch failed (window not focused, etc.), cycle the session
-            // to force a fresh fullscreen enter.
-            let _ = ctrl.exit_gallery_session();
-            let _ = ctrl.enter_gallery_session();
-            tracing::warn!("[reassert] fullscreen dispatch failed, cycled session");
-        } else if !ctrl.gallery_session_active() {
-            // Session flag drifted — mark it active
+        // Step 1 of the cycle: drop fullscreen (fires a real state change).
+        let _ = ctrl.composer().set_fullscreen(false);
+        if !ctrl.gallery_session_active() {
             let _ = ctrl.enter_gallery_session();
         }
-        tracing::info!("[reassert] gallery fullscreen re-asserted ok={} session={}", ok, ctrl.gallery_session_active());
     }
+    // Step 2: re-enter fullscreen after the compositor settles the unset.
+    slint::Timer::single_shot(std::time::Duration::from_millis(150), || {
+        if !crate::shell::Shell::is_gallery_expanded() {
+            return;
+        }
+        if let Some(mut ctrl) = crate::composer::global_controller() {
+            let ok = ctrl.composer().set_fullscreen(true);
+            if !ctrl.gallery_session_active() {
+                let _ = ctrl.enter_gallery_session();
+            }
+            tracing::info!("[reassert] cycled unset->set fullscreen ok={}", ok);
+        }
+    });
 }
 
 /// Schedule the Noctalia-cover re-assert after a theme apply: retry
