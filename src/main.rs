@@ -162,7 +162,7 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
 /// theme apply. Noctalia v5 restarts its shell on theme change and its layer
 /// bar can pop over HVE even though Shell still thinks gallery is expanded.
 /// Force a fullscreen dispatch even if the session flag is already true.
-fn reassert_gallery_fullscreen() {
+pub(crate) fn reassert_gallery_fullscreen() {
     if !crate::shell::Shell::is_gallery_expanded() {
         return;
     }
@@ -187,7 +187,7 @@ fn reassert_gallery_fullscreen() {
 /// Schedule the Noctalia-cover re-assert after a theme apply: retry
 /// across 1.5s-5.5s to cover fast and slow Noctalia restarts (hyprctl can
 /// fail transiently while Noctalia reloads).
-fn schedule_noctalia_reassert() {
+pub(crate) fn schedule_noctalia_reassert() {
     for ms in [1500, 2200, 3000, 4000, 5500] {
         slint::Timer::single_shot(std::time::Duration::from_millis(ms), || {
             reassert_gallery_fullscreen();
@@ -223,6 +223,10 @@ fn move_hve_to_workspace(ws: &str) {
         .args(["dispatch", "workspace", ws])
         .output();
 }
+
+// Holds the original workspace for the theme swap so hypr_ipc can
+// return there when config reloaded fires (event-driven, not timed).
+pub(crate) static THEME_ORIG_WS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
@@ -881,6 +885,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         // confirmed covers the bar. Uses a different special
                         // (hve-theme) from the normal minimize (minimized).
                         let orig_ws = get_active_workspace_name();
+                        // Remember orig ws for event-driven return in hypr_ipc
+                        *THEME_ORIG_WS.lock().unwrap() = Some(orig_ws.clone());
+                        // Disable blur on the clean special so it shows
+                        // wallpaper without blur (noblur layerrule).
+                        let _ = std::process::Command::new("hyprctl")
+                            .args(["keyword", "layerrule", "noblur, special:hve-theme"])
+                            .output();
                         if let Some(w) = win.upgrade() {
                             w.set_theme_transitioning(true);
                         }
@@ -898,31 +909,32 @@ fn main() -> Result<(), slint::PlatformError> {
                             tracing::info!("[theme] step1 moved to special:hve-theme");
                             let _ = weak_step1.upgrade().map(|w| w.set_theme_transitioning(true));
                         });
-                        // Step 2: from that special, fade + send to original ws
-                        // (SUPER+H with fade) so you see wallpaper+bar clean.
+                        // Step 2: from that special, keep transparent and send
+                        // to original ws so you see wallpaper+bar clean.
                         let weak_step2 = win.clone();
                         let orig_for_step2 = orig_ws.clone();
                         slint::Timer::single_shot(std::time::Duration::from_millis(620), move || {
-                            // Keep transparent while wallpaper swaps
                             let _ = weak_step2.upgrade().map(|w| w.set_theme_transitioning(true));
                             move_hve_to_workspace(&orig_for_step2);
                             tracing::info!("[theme] step2 sent to ws {} from special", orig_for_step2);
                         });
                         // Also schedule agnostic fullscreen retries for safety
                         schedule_noctalia_reassert();
-                        // Steps 3+4: restore in that same desktop + return
+                        // Fallback return if config reloaded never fires
                         let weak_back = win.clone();
                         let orig_clone = orig_ws.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(3800), move || {
-                            // Ensure we are back on original ws (if step2 already did, this is no-op)
+                        slint::Timer::single_shot(std::time::Duration::from_millis(4800), move || {
+                            let still = weak_back.upgrade().is_some_and(|w| w.get_theme_transitioning());
+                            if !still {
+                                return;
+                            }
                             move_hve_to_workspace(&orig_clone);
-                            // Close the clean special if still open
                             let _ = std::process::Command::new("hyprctl")
                                 .args(["dispatch", "togglespecialworkspace", "hve-theme"])
                                 .output();
                             if let Some(w) = weak_back.upgrade() {
                                 w.set_theme_transitioning(false);
-                                tracing::info!("[theme] steps 3+4 fade-in + return to ws {}", orig_clone);
+                                tracing::info!("[theme] fallback fade-in + return to ws {}", orig_clone);
                             }
                             let weak_re = weak_back.clone();
                             slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
@@ -930,6 +942,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 if let Some(w2) = weak_re.upgrade() {
                                     w2.set_theme_transitioning(false);
                                 }
+                                *THEME_ORIG_WS.lock().unwrap() = None;
                             });
                         });
                     }

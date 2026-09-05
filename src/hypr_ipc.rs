@@ -167,6 +167,43 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
                     }
                 });
             }
+
+            // 3. Event-driven return for clean-special theme swap (agnostic).
+            // If we are in the middle of a theme fade and have an orig ws
+            // saved, Hyprland just finished reloading — move HVE back from
+            // special:hve-theme to the original workspace and fade in.
+            let weak2 = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                let is_fading = weak2.upgrade().is_some_and(|w| w.get_theme_transitioning());
+                let orig_opt = crate::THEME_ORIG_WS.lock().unwrap().clone();
+                if is_fading {
+                    if let Some(orig) = orig_opt {
+                        // Return from clean special to original ws
+                        let _ = std::process::Command::new("hyprctl")
+                            .args(["dispatch", "movetoworkspace", &format!("{},title:Hyprland Visual Editor", orig)])
+                            .output();
+                        let _ = std::process::Command::new("hyprctl")
+                            .args(["dispatch", "togglespecialworkspace", "hve-theme"])
+                            .output();
+                        tracing::info!("[theme] event-driven return to ws {} from special:hve-theme", orig);
+                        let w3 = weak2.clone();
+                        let orig_clone = orig.clone();
+                        slint::Timer::single_shot(std::time::Duration::from_millis(700), move || {
+                            if let Some(w) = w3.upgrade() {
+                                if w.get_theme_transitioning() {
+                                    w.set_theme_transitioning(false);
+                                    tracing::info!("[theme] event-driven fade-in to ws {}", orig_clone);
+                                }
+                            }
+                            crate::reassert_gallery_fullscreen();
+                            *crate::THEME_ORIG_WS.lock().unwrap() = None;
+                        });
+                    }
+                }
+                if crate::shell::Shell::is_gallery_expanded() {
+                    crate::schedule_noctalia_reassert();
+                }
+            });
         });
         tracing::info!("[HVE] Hyprland IPC listener started");
         handle
