@@ -171,7 +171,9 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
             // 3. Event-driven return for clean-special theme swap (agnostic).
             // If we are in the middle of a theme fade and have an orig ws
             // saved, Hyprland just finished reloading — move HVE back from
-            // special:hve-theme to the original workspace and fade in.
+            // special:hve-theme to the original workspace, run the single
+            // fullscreen cycle WHILE still transparent (invisible), then
+            // fade in to an already fullscreen window with the bar hidden.
             let weak2 = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 let is_fading = weak2.upgrade().is_some_and(|w| w.get_theme_transitioning());
@@ -186,22 +188,21 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
                             .args(["dispatch", "togglespecialworkspace", "hve-theme"])
                             .output();
                         tracing::info!("[theme] event-driven return to ws {} from special:hve-theme", orig);
+                        // Single fullscreen cycle while opacity is 0
+                        crate::reassert_gallery_fullscreen();
+                        // Fade-in after the cycle settled (150ms unset + set)
                         let w3 = weak2.clone();
                         let orig_clone = orig.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(700), move || {
+                        slint::Timer::single_shot(std::time::Duration::from_millis(500), move || {
                             if let Some(w) = w3.upgrade() {
                                 if w.get_theme_transitioning() {
                                     w.set_theme_transitioning(false);
                                     tracing::info!("[theme] event-driven fade-in to ws {}", orig_clone);
                                 }
                             }
-                            crate::reassert_gallery_fullscreen();
                             *crate::THEME_ORIG_WS.lock().unwrap() = None;
                         });
                     }
-                }
-                if crate::shell::Shell::is_gallery_expanded() {
-                    crate::schedule_noctalia_reassert();
                 }
             });
         });

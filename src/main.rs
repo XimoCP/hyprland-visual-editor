@@ -212,17 +212,10 @@ pub(crate) fn reassert_gallery_fullscreen() {
     });
 }
 
-/// Timed safety net after a theme apply: two shots only — one early (2.2s,
-/// fast Noctalia reloads) and one late fallback (4.8s). The event-driven
-/// configreloaded path covers the normal case; the old 5-shot shotgun made
-/// each visible cycle flash five minimizes.
-pub(crate) fn schedule_noctalia_reassert() {
-    for ms in [2200, 4800] {
-        slint::Timer::single_shot(std::time::Duration::from_millis(ms), || {
-            reassert_gallery_fullscreen();
-        });
-    }
-}
+/// Timed safety net after a theme apply: REMOVED — the single unset->set
+/// cycle now runs inside the transparent fade window (event-driven path in
+/// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
+/// visible flashes after fade-in.
 
 /// Agnostic helpers for clean-workspace fade: move HVE to an empty workspace
 /// (no windows) so the desktop behind the transparent fade shows only
@@ -947,29 +940,29 @@ fn main() -> Result<(), slint::PlatformError> {
                             move_hve_to_workspace(&orig_for_step2);
                             tracing::info!("[theme] step2 sent to ws {} from special", orig_for_step2);
                         });
-                        // Also schedule agnostic fullscreen retries for safety
-                        schedule_noctalia_reassert();
-                        // Fallback return if config reloaded never fires
+                        // Fallback return if config reloaded never fires. The
+                        // single unset->set cycle runs WHILE transparent
+                        // (invisible), then fade-in reveals an already
+                        // fullscreen window with the bar hidden.
                         let weak_back = win.clone();
                         let orig_clone = orig_ws.clone();
                         slint::Timer::single_shot(std::time::Duration::from_millis(4800), move || {
                             let still = weak_back.upgrade().is_some_and(|w| w.get_theme_transitioning());
                             if !still {
-                                return;
+                                return; // event-driven path already handled it
                             }
                             move_hve_to_workspace(&orig_clone);
                             let _ = std::process::Command::new("hyprctl")
                                 .args(["dispatch", "togglespecialworkspace", "hve-theme"])
                                 .output();
-                            if let Some(w) = weak_back.upgrade() {
-                                w.set_theme_transitioning(false);
-                                tracing::info!("[theme] fallback fade-in + return to ws {}", orig_clone);
-                            }
+                            // One fullscreen cycle while opacity is 0
+                            reassert_gallery_fullscreen();
+                            // Fade-in after the cycle settled
                             let weak_re = weak_back.clone();
-                            slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
-                                reassert_gallery_fullscreen();
-                                if let Some(w2) = weak_re.upgrade() {
-                                    w2.set_theme_transitioning(false);
+                            slint::Timer::single_shot(std::time::Duration::from_millis(500), move || {
+                                if let Some(w) = weak_re.upgrade() {
+                                    w.set_theme_transitioning(false);
+                                    tracing::info!("[theme] fallback fade-in to ws {}", orig_clone);
                                 }
                                 *THEME_ORIG_WS.lock().unwrap() = None;
                             });
