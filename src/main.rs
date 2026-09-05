@@ -195,6 +195,35 @@ fn schedule_noctalia_reassert() {
     }
 }
 
+/// Agnostic helpers for clean-workspace fade: move HVE to an empty workspace
+/// (no windows) so the desktop behind the transparent fade shows only
+/// wallpaper + bar, not the user's windows.
+fn get_active_workspace_name() -> String {
+    std::process::Command::new("hyprctl")
+        .args(["activeworkspace", "-j"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+        .unwrap_or_else(|| "2".to_string())
+}
+
+fn move_hve_to_workspace(ws: &str) {
+    // Focus HVE first, then move it. Use title targeting to be agnostic.
+    let _ = std::process::Command::new("hyprctl")
+        .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
+        .output();
+    let target = format!("{},title:Hyprland Visual Editor", ws);
+    let _ = std::process::Command::new("hyprctl")
+        .args(["dispatch", "movetoworkspace", &target])
+        .output();
+    // Also ensure workspace is focused so the bar/wallpaper are visible
+    let _ = std::process::Command::new("hyprctl")
+        .args(["dispatch", "workspace", ws])
+        .output();
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
@@ -848,10 +877,38 @@ fn main() -> Result<(), slint::PlatformError> {
                             // keep strip position — theme apply does not re-trigger slide
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
-                        // Noctalia v5: after apply_theme, Noctalia restarts and its top bar
-                        // pops over HVE fullscreen. Re-assert fullscreen twice to cover
-                        // both fast (~1.5s) and slow (~3s) restarts.
+                        // Agnostic clean-workspace fade: Slint-only fade to
+                        // transparent (520ms) then move HVE to empty workspace 99
+                        // so you see only wallpaper+bar, no windows underneath.
+                        let orig_ws = get_active_workspace_name();
+                        if let Some(w) = win.upgrade() {
+                            w.set_theme_transitioning(true);
+                        }
+                        let weak_mv = win.clone();
+                        slint::Timer::single_shot(std::time::Duration::from_millis(560), move || {
+                            move_hve_to_workspace("99");
+                            // Keep fade transparent while wallpaper swaps
+                            let _ = weak_mv.upgrade().map(|w| w.set_theme_transitioning(true));
+                        });
+                        // Also schedule agnostic fullscreen retries for safety
                         schedule_noctalia_reassert();
+                        // Return to original workspace + fade-in + fullscreen
+                        let weak_back = win.clone();
+                        let orig_clone = orig_ws.clone();
+                        slint::Timer::single_shot(std::time::Duration::from_millis(3800), move || {
+                            move_hve_to_workspace(&orig_clone);
+                            if let Some(w) = weak_back.upgrade() {
+                                w.set_theme_transitioning(false);
+                                tracing::info!("[theme] fade-in + return to ws {}", orig_clone);
+                            }
+                            let weak_re = weak_back.clone();
+                            slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
+                                reassert_gallery_fullscreen();
+                                if let Some(w2) = weak_re.upgrade() {
+                                    w2.set_theme_transitioning(false);
+                                }
+                            });
+                        });
                     }
                 }
             });

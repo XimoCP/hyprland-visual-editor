@@ -38,6 +38,11 @@ export component MainWindow inherits Window {
     // screen keeps the opaque dark base.
     background: root.mounted-screen == 1 ? transparent : HveColors.bg-dark;
 
+    // ── Theme transition fade (Slint-only, independent of system animations) ──
+    in-out property <bool> theme-transitioning: false;
+    property <float> theme-fade: theme-transitioning ? 0.0 : 1.0;
+    animate theme-fade { duration: 520ms; easing: ease-in-out; }
+
     // ── Legacy legacy_tab state — REMOVED in slice 8 (R8) ──
     // Replaced by panel-section + is-mutating / is-panel-open (PanelState).
     in-out property <bool> system-active: false;
@@ -220,6 +225,7 @@ export component MainWindow inherits Window {
     shell := ShellRoot {
         width: 100%;
         height: 100%;
+        opacity: root.theme-fade;
         mounted-screen: root.mounted-screen;
         expanded: root.expanded;
         focused-card: root.focused-card;
@@ -343,6 +349,7 @@ export component MainWindow inherits Window {
     CloseButton {
         x: 12px;
         y: 12px;
+        opacity: root.theme-fade;
         countdown-active: root.countdown-active;
         countdown-seconds: root.countdown-seconds;
         countdown-progress: root.countdown-progress;

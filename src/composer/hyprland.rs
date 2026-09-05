@@ -363,15 +363,34 @@ impl Composer for HyprlandComposer {
                 let s_focus = v5_focus();
                 let did_focus = self.hypr_dispatch_v5(&s_focus);
                 let s_fs = v5_set_fullscreen(on);
-                did_focus && self.hypr_dispatch_v5(&s_fs)
+                if did_focus && self.hypr_dispatch_v5(&s_fs) {
+                    return true;
+                }
+                // Fallback to legacy real fullscreen (2, covers layer-shell)
+                if did_focus {
+                    let mode = if on { "2" } else { "0" };
+                    if self.hypr_dispatch_v4(&["fullscreen", mode]) {
+                        return true;
+                    }
+                    let fb = if on { "1" } else { "0" };
+                    return self.hypr_dispatch_v4(&["fullscreen", fb]);
+                }
+                false
             }
             // V4/conf fallback: no window targeting — must focus-by-title
             // first; this focus-then-act pattern is required and forbidden
-            // to remove.
+            // to remove. Try real fullscreen (2) first.
             HyprMode::V4 => {
                 let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-                let mode = if on { "1" } else { "0" };
-                did_focus && self.hypr_dispatch_v4(&["fullscreen", mode])
+                if !did_focus {
+                    return false;
+                }
+                let mode = if on { "2" } else { "0" };
+                if self.hypr_dispatch_v4(&["fullscreen", mode]) {
+                    return true;
+                }
+                let fb = if on { "1" } else { "0" };
+                self.hypr_dispatch_v4(&["fullscreen", fb])
             }
             HyprMode::None => false,
         }
