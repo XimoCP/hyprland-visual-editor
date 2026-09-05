@@ -877,29 +877,52 @@ fn main() -> Result<(), slint::PlatformError> {
                             // keep strip position — theme apply does not re-trigger slide
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
-                        // Agnostic clean-workspace fade: Slint-only fade to
-                        // transparent (520ms) then move HVE to empty workspace 99
-                        // so you see only wallpaper+bar, no windows underneath.
+                        // 4-step clean special: like SUPER+H / SUPER+F which you
+                        // confirmed covers the bar. Uses a different special
+                        // (hve-theme) from the normal minimize (minimized).
                         let orig_ws = get_active_workspace_name();
                         if let Some(w) = win.upgrade() {
                             w.set_theme_transitioning(true);
                         }
-                        let weak_mv = win.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(560), move || {
-                            move_hve_to_workspace("99");
-                            // Keep fade transparent while wallpaper swaps
-                            let _ = weak_mv.upgrade().map(|w| w.set_theme_transitioning(true));
+                        // Step 1: behind the scenes, move to clean special
+                        // before fade so the fade starts from there.
+                        let weak_step1 = win.clone();
+                        slint::Timer::single_shot(std::time::Duration::from_millis(80), move || {
+                            // Move HVE to special:hve-theme (clean, no windows)
+                            let _ = std::process::Command::new("hyprctl")
+                                .args(["dispatch", "movetoworkspacesilent", "special:hve-theme,title:Hyprland Visual Editor"])
+                                .output();
+                            let _ = std::process::Command::new("hyprctl")
+                                .args(["dispatch", "togglespecialworkspace", "hve-theme"])
+                                .output();
+                            tracing::info!("[theme] step1 moved to special:hve-theme");
+                            let _ = weak_step1.upgrade().map(|w| w.set_theme_transitioning(true));
+                        });
+                        // Step 2: from that special, fade + send to original ws
+                        // (SUPER+H with fade) so you see wallpaper+bar clean.
+                        let weak_step2 = win.clone();
+                        let orig_for_step2 = orig_ws.clone();
+                        slint::Timer::single_shot(std::time::Duration::from_millis(620), move || {
+                            // Keep transparent while wallpaper swaps
+                            let _ = weak_step2.upgrade().map(|w| w.set_theme_transitioning(true));
+                            move_hve_to_workspace(&orig_for_step2);
+                            tracing::info!("[theme] step2 sent to ws {} from special", orig_for_step2);
                         });
                         // Also schedule agnostic fullscreen retries for safety
                         schedule_noctalia_reassert();
-                        // Return to original workspace + fade-in + fullscreen
+                        // Steps 3+4: restore in that same desktop + return
                         let weak_back = win.clone();
                         let orig_clone = orig_ws.clone();
                         slint::Timer::single_shot(std::time::Duration::from_millis(3800), move || {
+                            // Ensure we are back on original ws (if step2 already did, this is no-op)
                             move_hve_to_workspace(&orig_clone);
+                            // Close the clean special if still open
+                            let _ = std::process::Command::new("hyprctl")
+                                .args(["dispatch", "togglespecialworkspace", "hve-theme"])
+                                .output();
                             if let Some(w) = weak_back.upgrade() {
                                 w.set_theme_transitioning(false);
-                                tracing::info!("[theme] fade-in + return to ws {}", orig_clone);
+                                tracing::info!("[theme] steps 3+4 fade-in + return to ws {}", orig_clone);
                             }
                             let weak_re = weak_back.clone();
                             slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
