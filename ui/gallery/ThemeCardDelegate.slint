@@ -7,6 +7,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export struct GalleryCardData {
     name: string,
@@ -51,9 +52,9 @@ export component ThemeCardDelegate inherits Rectangle {
     width: 320px;
     height: 180px;
     border-radius: SkwdTokens.radius-12;
-    background: SkwdTokens.surface-container;
+    background: HveColors.bg-card;
     border-width: is-current ? SkwdTokens.border-3 : (is-hovered ? SkwdTokens.border-2 : SkwdTokens.border-1);
-    border-color: is-current ? card.accent : (is-hovered ? card.accent.transparentize(0.5) : SkwdTokens.outline.transparentize(0.7));
+    border-color: is-current ? card.accent : (is-hovered ? card.accent.transparentize(0.5) : HveColors.border.transparentize(0.7));
     clip: true;
 
     // Glow when current / hover
@@ -71,7 +72,7 @@ export component ThemeCardDelegate inherits Rectangle {
         Rectangle {
             height: 110px;
             border-radius: SkwdTokens.radius-8;
-            background: SkwdTokens.surface;
+            background: HveColors.bg-dark;
             clip: true;
 
             // Thumbnail — real image preheat with sourceSize 400x720 lands in PR2;
@@ -94,11 +95,11 @@ export component ThemeCardDelegate inherits Rectangle {
                 x: parent.width - self.width - SkwdTokens.spacing-8;
                 y: SkwdTokens.spacing-8;
                 border-radius: SkwdTokens.radius-20;
-                background: SkwdTokens.fallback-accent;
+                background: HveColors.accent-cyan;
 
                 Text {
                     text: "✓";
-                    color: SkwdTokens.surface;
+                    color: HveColors.bg-dark;
                     font-size: 14px;
                     font-weight: 700;
                     horizontal-alignment: center;
@@ -113,13 +114,13 @@ export component ThemeCardDelegate inherits Rectangle {
                 x: SkwdTokens.spacing-8;
                 y: parent.height - self.height - SkwdTokens.spacing-4;
                 border-radius: SkwdTokens.radius-4;
-                background: SkwdTokens.surface.transparentize(0.2);
+                background: HveColors.bg-dark.transparentize(0.2);
                 border-width: SkwdTokens.border-1;
-                border-color: SkwdTokens.outline;
+                border-color: HveColors.border;
 
                 shader-text := Text {
                     text: card.shader;
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     font-size: 10px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -137,7 +138,7 @@ export component ThemeCardDelegate inherits Rectangle {
                 border-radius: SkwdTokens.radius-20;
                 background: col;
                 border-width: SkwdTokens.border-1;
-                border-color: SkwdTokens.outline.transparentize(0.5);
+                border-color: HveColors.border.transparentize(0.5);
             }
 
             Rectangle { horizontal-stretch: 1; }
@@ -153,7 +154,7 @@ export component ThemeCardDelegate inherits Rectangle {
 
                 Text {
                     text: card.border-size + "px";
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     font-size: 10px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -163,7 +164,7 @@ export component ThemeCardDelegate inherits Rectangle {
 
         Text {
             text: card.name;
-            color: SkwdTokens.primary;
+            color: HveColors.accent-cyan;
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-14;
             font-weight: 600;

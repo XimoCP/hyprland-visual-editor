@@ -12,6 +12,7 @@
 import { MosaicCell } from "MosaicCell.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export struct MosaicTileData {
     x: length,
@@ -201,7 +202,7 @@ export component MosaicView inherits Rectangle {
             spacing: 10px;
             for n[idx] in root.page-numbers : Text {
                 text: "\{n}";
-                color: (n - 1) == root.current-page ? SkwdTokens.primary : SkwdTokens.outline;
+                color: (n - 1) == root.current-page ? HveColors.accent-cyan : HveColors.text-muted;
                 font-size: SkwdTokens.size-13;
                 font-weight: (n - 1) == root.current-page ? 700 : 400;
             }

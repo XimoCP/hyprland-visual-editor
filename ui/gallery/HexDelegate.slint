@@ -5,12 +5,13 @@
 // preheat 120ms sourceSize 400. Translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export component HexDelegate inherits Rectangle {
     in property <string> card-name: "Theme";
     in property <bool> is-selected: false;
     in property <bool> is-hovered: false;
-    in property <color> accent: SkwdTokens.fallback-accent;
+    in property <color> accent: HveColors.accent-cyan;
     in property <image> thumb;
     in property <bool> has-video: false;
     in property <length> hex-radius: 140px;
@@ -33,7 +34,7 @@ export component HexDelegate inherits Rectangle {
     // dashed border visible when selected (pull-out)
     property <bool> dash-visible: is-selected;
     border-width: dash-visible ? 2px : (is-hovered ? 2px : 1px);
-    border-color: is-selected ? accent : (is-hovered ? accent.transparentize(0.5) : SkwdTokens.outline.transparentize(0.7));
+    border-color: is-selected ? accent : (is-hovered ? accent.transparentize(0.5) : HveColors.border.transparentize(0.7));
     border-radius: 0px;
     animate border-color { duration: SkwdTokens.anim-200; easing: ease-in-out; }
 
@@ -45,7 +46,7 @@ export component HexDelegate inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: 280;
         viewbox-height: 242;
-        fill: SkwdTokens.surface;
+        fill: HveColors.bg-dark;
         stroke: dash-visible ? accent : transparent;
         stroke-width: dash-visible ? 2px : 0px;
         // hexagon vertices for r=140 at center (140,121): angles 30+60*k
@@ -103,7 +104,7 @@ export component HexDelegate inherits Rectangle {
         y: parent.height - 28px;
         width: 100%;
         height: 28px;
-        color: SkwdTokens.primary;
+        color: HveColors.accent-cyan;
         font-family: SkwdTokens.font-body;
         font-size: SkwdTokens.size-14;
         font-weight: 600;

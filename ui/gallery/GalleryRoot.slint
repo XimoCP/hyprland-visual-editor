@@ -11,6 +11,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 import { ChromeButton } from "ChromeButton.slint";
 import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
@@ -45,8 +46,8 @@ component SkewPill inherits Rectangle {
         viewbox-width: parent.wn;
         viewbox-height: parent.hn;
         // Todos mismo color en reposo; al hover o con foco se rellena con primary
-        fill: (root.active || root.has-hover || root.key-focused) ? SkwdTokens.primary : SkwdTokens.surface-container.transparentize(0.35);
-        stroke: root.key-focused ? #8fd8ff : ((root.active || root.has-hover || root.key-focused) ? SkwdTokens.primary : SkwdTokens.outline.transparentize(0.4));
+        fill: (root.active || root.has-hover || root.key-focused) ? HveColors.accent-cyan : HveColors.bg-card.transparentize(0.35);
+        stroke: root.key-focused ? #8fd8ff : ((root.active || root.has-hover || root.key-focused) ? HveColors.accent-cyan : HveColors.border.transparentize(0.4));
         stroke-width: root.key-focused ? 1.5px : 1px;
         animate fill { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150; }
         animate stroke { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150; }
@@ -61,7 +62,7 @@ component SkewPill inherits Rectangle {
         width: parent.width;
         height: parent.height;
         text: root.label;
-        color: (root.active || root.has-hover || root.key-focused) ? SkwdTokens.surface : SkwdTokens.primary;
+        color: (root.active || root.has-hover || root.key-focused) ? HveColors.bg-dark : HveColors.accent-cyan;
         font-size: SkwdTokens.size-13;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -173,15 +174,18 @@ export component GalleryRoot inherits Rectangle {
         y: root.top-menu-open ? (parent.height / 2 - root.scaled-h * 1px / 2 - self.height - 12px) : -self.height;
         width: Math.min(parent.width - 32px, top-pills-wrapper.preferred-width);
         height: top-pills-wrapper.preferred-height;
-        background: SkwdTokens.surface-container.transparentize(0.15);
+        background: HveColors.bg-card.transparentize(0.15);
         border-radius: SkwdTokens.radius-8;
         clip: true;
-        drop-shadow-blur: 16px;
+        drop-shadow-blur: root.top-menu-open ? 16px : 0px;
         drop-shadow-color: #00000080;
         drop-shadow-offset-y: 8px;
         animate y {
             duration: root.reduced-motion ? 0ms : 250ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+        animate drop-shadow-blur {
+            duration: root.reduced-motion ? 0ms : 250ms;
         }
 
         top-pills-wrapper := HorizontalLayout {
@@ -234,15 +238,18 @@ export component GalleryRoot inherits Rectangle {
         y: root.bottom-menu-open ? (parent.height / 2 + root.scaled-h * 1px / 2 + 12px) : parent.height;
         width: Math.min(parent.width - 32px, bottom-pills-wrapper.preferred-width);
         height: bottom-pills-wrapper.preferred-height;
-        background: SkwdTokens.surface-container.transparentize(0.15);
+        background: HveColors.bg-card.transparentize(0.15);
         border-radius: SkwdTokens.radius-8;
         clip: true;
-        drop-shadow-blur: 16px;
+        drop-shadow-blur: root.bottom-menu-open ? 16px : 0px;
         drop-shadow-color: #00000080;
         drop-shadow-offset-y: 8px;
         animate y {
             duration: root.reduced-motion ? 0ms : 250ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+        animate drop-shadow-blur {
+            duration: root.reduced-motion ? 0ms : 250ms;
         }
 
         bottom-pills-wrapper := HorizontalLayout {
@@ -280,6 +287,15 @@ export component GalleryRoot inherits Rectangle {
                 if (root.top-menu-open) { root.top-menu-open = false; return accept; }
                 if (root.bottom-menu-open) { root.bottom-menu-open = false; return accept; }
                 return reject;
+            }
+            // ↑/↓ cierran el cajón abierto (sin necesitar Esc) y permiten toggle cruzado
+            if (event.text == Key.UpArrow) {
+                if (root.top-menu-open) { root.top-menu-open = false; return accept; }
+                if (root.bottom-menu-open) { root.bottom-menu-open = false; root.top-menu-open = true; return accept; }
+            }
+            if (event.text == Key.DownArrow) {
+                if (root.bottom-menu-open) { root.bottom-menu-open = false; return accept; }
+                if (root.top-menu-open) { root.top-menu-open = false; root.bottom-menu-open = true; return accept; }
             }
             if (event.text == Key.LeftArrow || event.text == Key.RightArrow) {
                 if (root.top-menu-open) {
@@ -375,15 +391,18 @@ export component GalleryRoot inherits Rectangle {
         y: root.top-menu-open ? (parent.height / 2 - root.scaled-h * 1px / 2 - self.height - 12px) : -self.height;
         width: Math.min(parent.width - 32px, top-pills-wrapper-front.preferred-width);
         height: top-pills-wrapper-front.preferred-height;
-        background: SkwdTokens.surface-container.transparentize(0.15);
+        background: HveColors.bg-card.transparentize(0.15);
         border-radius: SkwdTokens.radius-8;
         clip: true;
-        drop-shadow-blur: 16px;
+        drop-shadow-blur: root.top-menu-open ? 16px : 0px;
         drop-shadow-color: #00000080;
         drop-shadow-offset-y: 8px;
         animate y {
             duration: root.reduced-motion ? 0ms : 250ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+        animate drop-shadow-blur {
+            duration: root.reduced-motion ? 0ms : 250ms;
         }
 
         top-pills-wrapper-front := HorizontalLayout {
@@ -435,15 +454,18 @@ export component GalleryRoot inherits Rectangle {
         y: root.bottom-menu-open ? (parent.height / 2 + root.scaled-h * 1px / 2 + 12px) : parent.height;
         width: Math.min(parent.width - 32px, bottom-pills-wrapper-front.preferred-width);
         height: bottom-pills-wrapper-front.preferred-height;
-        background: SkwdTokens.surface-container.transparentize(0.15);
+        background: HveColors.bg-card.transparentize(0.15);
         border-radius: SkwdTokens.radius-8;
         clip: true;
-        drop-shadow-blur: 16px;
+        drop-shadow-blur: root.bottom-menu-open ? 16px : 0px;
         drop-shadow-color: #00000080;
         drop-shadow-offset-y: 8px;
         animate y {
             duration: root.reduced-motion ? 0ms : 250ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
+        animate drop-shadow-blur {
+            duration: root.reduced-motion ? 0ms : 250ms;
         }
 
         bottom-pills-wrapper-front := HorizontalLayout {

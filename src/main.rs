@@ -158,20 +158,40 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
     );
 }
 
-/// Re-assert immersive fullscreen after the initial Gallery expand. The
-/// first `enter_gallery_session → set_fullscreen(true)` can fail when the
-/// window is not yet mapped/focused (200ms post-show race); the later
-/// show-path reassert succeeds, so this delayed retry mirrors that path
-/// without touching the hide/show logic.
+/// Re-assert immersive fullscreen after Gallery expand or after a Noctalia
+/// theme apply. Noctalia v5 restarts its shell on theme change and its layer
+/// bar can pop over HVE even though Shell still thinks gallery is expanded.
+/// Force a fullscreen dispatch even if the session flag is already true.
 fn reassert_gallery_fullscreen() {
-    if crate::shell::Shell::is_gallery_expanded() {
-        if let Some(mut ctrl) = crate::composer::global_controller() {
-            if ctrl.gallery_session_active() {
-                let _ = ctrl.composer().set_fullscreen(true);
-            } else {
-                let _ = ctrl.enter_gallery_session();
-            }
+    if !crate::shell::Shell::is_gallery_expanded() {
+        return;
+    }
+    if let Some(mut ctrl) = crate::composer::global_controller() {
+        // Try direct fullscreen first (covers the case where compositor lost
+        // fullscreen but session flag is still true).
+        let ok = ctrl.composer().set_fullscreen(true);
+        if !ok {
+            // If dispatch failed (window not focused, etc.), cycle the session
+            // to force a fresh fullscreen enter.
+            let _ = ctrl.exit_gallery_session();
+            let _ = ctrl.enter_gallery_session();
+            tracing::warn!("[reassert] fullscreen dispatch failed, cycled session");
+        } else if !ctrl.gallery_session_active() {
+            // Session flag drifted — mark it active
+            let _ = ctrl.enter_gallery_session();
         }
+        tracing::info!("[reassert] gallery fullscreen re-asserted ok={} session={}", ok, ctrl.gallery_session_active());
+    }
+}
+
+/// Schedule the Noctalia-cover re-assert after a theme apply: retry
+/// across 1.5s-5.5s to cover fast and slow Noctalia restarts (hyprctl can
+/// fail transiently while Noctalia reloads).
+fn schedule_noctalia_reassert() {
+    for ms in [1500, 2200, 3000, 4000, 5500] {
+        slint::Timer::single_shot(std::time::Duration::from_millis(ms), || {
+            reassert_gallery_fullscreen();
+        });
     }
 }
 
@@ -828,6 +848,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             // keep strip position — theme apply does not re-trigger slide
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
+                        // Noctalia v5: after apply_theme, Noctalia restarts and its top bar
+                        // pops over HVE fullscreen. Re-assert fullscreen twice to cover
+                        // both fast (~1.5s) and slow (~3s) restarts.
+                        schedule_noctalia_reassert();
                     }
                 }
             });

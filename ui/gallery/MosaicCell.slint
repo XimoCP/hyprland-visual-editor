@@ -10,6 +10,7 @@
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export component MosaicCell inherits Rectangle {
     in property <string> card-name: "";
@@ -67,7 +68,7 @@ export component MosaicCell inherits Rectangle {
     // incoming wallpaper reads as a layer covering it (Tramo 9 effect).
     background: root.curtain-active && root.curtain-progress < 1.0
         ? Colors.transparent
-        : SkwdTokens.surface-container;
+        : HveColors.bg-card;
     opacity: root.cloud-opacity;
     animate opacity { duration: 200ms; easing: ease-out; }
 
@@ -173,7 +174,7 @@ export component MosaicCell inherits Rectangle {
     Text {
         visible: root.content-visible;
         text: root.card-name;
-        color: SkwdTokens.primary;
+        color: HveColors.accent-cyan;
         font-size: SkwdTokens.size-11;
         overflow: elide;
         x: SkwdTokens.spacing-8;

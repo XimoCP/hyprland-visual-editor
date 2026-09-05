@@ -12,6 +12,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
+import { HveColors } from "../../theme.slint";
 import { PresetCard } from "../../components.slint";
 
 export component FiltersSection inherits Rectangle {
@@ -85,13 +86,13 @@ export component FiltersSection inherits Rectangle {
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
-                color: SkwdTokens.primary;
+                color: HveColors.accent-cyan;
             }
             Text {
                 text: "Pick a shader — instantly applied. Repick active to turn off.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
-                color: SkwdTokens.outline;
+                color: HveColors.text-muted;
                 wrap: word-wrap;
             }
         }
@@ -120,7 +121,7 @@ export component FiltersSection inherits Rectangle {
                     text: "No shader presets found.";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     horizontal-alignment: center;
                 }
 
@@ -128,7 +129,7 @@ export component FiltersSection inherits Rectangle {
                     text: "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline.transparentize(0.4);
+                    color: HveColors.text-muted.transparentize(0.4);
                     horizontal-alignment: center;
                 }
             }

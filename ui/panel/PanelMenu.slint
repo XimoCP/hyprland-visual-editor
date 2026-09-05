@@ -7,6 +7,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -16,7 +17,7 @@ component MenuItem inherits Rectangle {
     callback selected();
 
     height: 36px;
-    background: root.active ? SkwdTokens.primary : (root.has-focus ? SkwdTokens.surface-container.transparentize(0.2) : transparent);
+    background: root.active ? HveColors.accent-cyan : (root.has-focus ? HveColors.bg-card.transparentize(0.2) : transparent);
     border-width: root.has-focus ? 1px : 0px;
     border-color: #8fd8ff;
     border-radius: SkwdTokens.radius-8;
@@ -24,7 +25,7 @@ component MenuItem inherits Rectangle {
 
     Text {
         text: root.label;
-        color: root.active ? SkwdTokens.surface : (root.has-focus ? SkwdTokens.primary : SkwdTokens.outline);
+        color: root.active ? HveColors.bg-dark : (root.has-focus ? HveColors.accent-cyan : HveColors.text-muted);
         font-family: SkwdTokens.font-body;
         font-size: SkwdTokens.size-13;
         vertical-alignment: center;
@@ -37,7 +38,7 @@ component MenuItem inherits Rectangle {
         height: 20px;
         y: (parent.height - self.height) / 2;
         x: 0px;
-        background: SkwdTokens.primary;
+        background: HveColors.accent-cyan;
         border-radius: 2px;
     }
 

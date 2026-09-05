@@ -131,13 +131,13 @@ export component SystemSection inherits Rectangle {
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
-                color: SkwdTokens.primary;
+                color: HveColors.accent-cyan;
             }
             Text {
                 text: "System rows — ON/OFF, settings, and About. Tiling stays as-is.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
-                color: SkwdTokens.outline;
+                color: HveColors.text-muted;
                 wrap: word-wrap;
             }
         }
@@ -173,7 +173,7 @@ export component SystemSection inherits Rectangle {
                     horizontal-alignment: center;
                 }
 
-                Rectangle { height: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+                Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
 
                 // Restart banner when required
                 if root.restart-required : Rectangle {
@@ -364,7 +364,7 @@ export component SystemSection inherits Rectangle {
                     TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
                 }
 
-                Rectangle { height: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+                Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
 
                 // 10 — About HVE (reused AccordionCard via existing tr.rs keys)
                 Rectangle {
@@ -394,7 +394,7 @@ export component SystemSection inherits Rectangle {
                     text: "↑↓ navigate • Enter/Space toggle • Tab next • Esc back";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline.transparentize(0.4);
+                    color: HveColors.text-muted.transparentize(0.4);
                     horizontal-alignment: center;
                 }
             }

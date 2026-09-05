@@ -5,6 +5,7 @@
 // No GPL code (hyprmod) is used.
 
 import { SkwdTokens } from "tokens.slint";
+import { HveColors } from "theme.slint";
 import { GalleryRoot } from "gallery/GalleryRoot.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
@@ -22,7 +23,7 @@ component SlotPlaceholder inherits Rectangle {
     in property <string> placeholder-text;
     in property <color> accent;
 
-    background: SkwdTokens.surface-container;
+    background: HveColors.bg-card;
     border-radius: SkwdTokens.radius-12;
 
     Text {
@@ -56,6 +57,7 @@ export component ShellRoot inherits Rectangle {
     // from tr.rs at startup.
     in property <string> brand-text: "HVE";
     in property <string> brand-subtitle: "Hyprland Visual Editor";
+    in property <image> logo-image;
     in property <string> status-text: "Ready";
     in property <string> back-hint: "Esc hides";
 
@@ -192,7 +194,7 @@ export component ShellRoot inherits Rectangle {
     // while Gallery holds the screen the shell root must not paint either —
     // an opaque surface fill here would cover MainWindow's transparent
     // window backdrop and the alpha-0 GalleryRoot backdrop (hotfix PR1.2).
-    background: root.mounted-screen == 1 ? transparent : SkwdTokens.surface;
+    background: root.mounted-screen == 1 ? transparent : HveColors.bg-dark;
     forward-focus: shell-kbd;
 
     // Keep keyboard focus across window mutations (hotfix PR1.2):
@@ -204,35 +206,78 @@ export component ShellRoot inherits Rectangle {
     // the newly mounted subtree settled.
     init => { shell-kbd.focus(); }
     changed mounted-screen => { shell-kbd.focus(); }
-    changed gallery-top-open => { if (!root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
-    changed gallery-bottom-open => { if (!root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    changed gallery-top-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
+    changed gallery-bottom-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
+    changed is-panel-open => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    changed is-mutating => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
 
     VerticalLayout {
         // ── Chrome top bar: branding + status placeholders ──
         Rectangle {
             height: 56px;
-            background: SkwdTokens.surface-container;
+            background: HveColors.bg-card;
 
             HorizontalLayout {
                 padding-left: SkwdTokens.spacing-16;
                 padding-right: SkwdTokens.spacing-16;
                 spacing: SkwdTokens.spacing-8;
 
-                // Branding placeholder
+                // Branding: SVG entrelazado (cambia con tema) + subtitle con mayúsculas coloreadas
                 VerticalLayout {
                     alignment: center;
-                    Text {
-                        text: root.brand-text;
-                        font-family: SkwdTokens.font-heading;
-                        font-size: SkwdTokens.size-18;
-                        font-weight: 700;
-                        color: SkwdTokens.primary;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Image {
+                            source: root.logo-image;
+                            width: 72px;
+                            height: 28px;
+                            image-fit: contain;
+                            horizontal-alignment: center;
+                        }
                     }
-                    Text {
-                        text: root.brand-subtitle;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        color: SkwdTokens.outline;
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 0;
+                        Text {
+                            text: "H";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 700;
+                            color: HveColors.accent-amber;
+                        }
+                        Text {
+                            text: "yprland ";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text-muted;
+                        }
+                        Text {
+                            text: "V";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 700;
+                            color: HveColors.accent-purple;
+                        }
+                        Text {
+                            text: "isual ";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text-muted;
+                        }
+                        Text {
+                            text: "E";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 700;
+                            color: HveColors.accent-green;
+                        }
+                        Text {
+                            text: "ditor";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text-muted;
+                        }
                     }
                 }
 
@@ -243,14 +288,14 @@ export component ShellRoot inherits Rectangle {
                     text: root.status-text;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     vertical-alignment: center;
                 }
             }
         }
 
         // Separator between chrome and the slot area
-        Rectangle { height: SkwdTokens.border-1; background: SkwdTokens.outline; }
+        Rectangle { height: SkwdTokens.border-1; background: HveColors.border; }
 
         // ── Slot area: the mounted screen renders here. `if`+enum replaces
         //    the QML Loader (design D3); the gallery/workshop slot views land
@@ -259,9 +304,8 @@ export component ShellRoot inherits Rectangle {
         //    when is-mutating/is-panel-open (R1).
         Rectangle {
             vertical-stretch: 1;
-            // Gallery mounts over the LIVE DESKTOP (gallery-immersive-
-            // redesign 1.8): the slot area must not paint under it.
-            background: root.mounted-screen == 1 ? transparent : SkwdTokens.surface;
+            // Gallery mounts over the LIVE DESKTOP (gallery-immersive-redesign 1.8): the slot area must not paint under it.
+            background: root.mounted-screen == 1 ? transparent : HveColors.bg-dark;
             opacity: root.expanded ? 1.0 : 0.6;
             // OutCubic (skwd default `Behavior` curve, design D4): not a
             // SkwdTokens property — Slint 1.17 cannot expose `easing` through
@@ -276,13 +320,13 @@ export component ShellRoot inherits Rectangle {
                 height: 100%;
                 Text {
                     text: root.slot-home-hint;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-14;
-                    color: SkwdTokens.outline;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-14;
+                        color: HveColors.text-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
-            }
             if root.mounted-screen == 1 : Rectangle {
                 width: 100%;
                 height: 100%;
@@ -452,14 +496,14 @@ export component ShellRoot inherits Rectangle {
             }
             if root.mounted-screen == 2 : SlotPlaceholder {
                 placeholder-text: root.slot-workshop-hint;
-                accent: SkwdTokens.fallback-accent;
+                accent: HveColors.accent-cyan;
             }
         }
 
         // ── Chrome bottom bar: back affordance hint ──
         Rectangle {
             height: 32px;
-            background: SkwdTokens.surface-container;
+            background: HveColors.bg-card;
 
             HorizontalLayout {
                 padding-left: SkwdTokens.spacing-16;
@@ -468,7 +512,7 @@ export component ShellRoot inherits Rectangle {
                     text: root.back-hint;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     vertical-alignment: center;
                 }
             }

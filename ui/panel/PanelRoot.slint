@@ -9,6 +9,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 import { PanelMenu } from "PanelMenu.slint";
 import { AboutItem } from "../components.slint";
 import { SaveSection } from "sections/SaveSection.slint";
@@ -102,7 +103,7 @@ export component PanelRoot inherits Rectangle {
     callback restart-app();
     callback open-docs();
 
-    background: SkwdTokens.surface;
+    background: HveColors.bg-dark;
     border-radius: SkwdTokens.radius-12;
     clip: true;
 
@@ -114,7 +115,7 @@ export component PanelRoot inherits Rectangle {
         // Header
         Rectangle {
             height: 56px;
-            background: SkwdTokens.surface-container;
+            background: HveColors.bg-card;
             HorizontalLayout {
                 padding-left: SkwdTokens.spacing-16;
                 padding-right: SkwdTokens.spacing-16;
@@ -125,7 +126,7 @@ export component PanelRoot inherits Rectangle {
                     font-family: SkwdTokens.font-heading;
                     font-size: SkwdTokens.size-16;
                     font-weight: 700;
-                    color: SkwdTokens.primary;
+                    color: HveColors.accent-cyan;
                     vertical-alignment: center;
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -133,12 +134,12 @@ export component PanelRoot inherits Rectangle {
                     text: "Esc to return";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     vertical-alignment: center;
                 }
             }
         }
-        Rectangle { height: SkwdTokens.border-1; background: SkwdTokens.outline; }
+        Rectangle { height: SkwdTokens.border-1; background: HveColors.border; }
 
         HorizontalLayout {
             width: 100%;
@@ -154,13 +155,13 @@ export component PanelRoot inherits Rectangle {
                 section-selected(section) => { root.section-selected(section); }
             }
 
-            Rectangle { width: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
 
             // Content area — SaveSection for section 0, BordersSection for 1, placeholders for others (later slices)
             Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
-                background: SkwdTokens.surface;
+                background: HveColors.bg-dark;
                 clip: true;
                 if root.section == 0 : SaveSection {
                     width: 100%;
@@ -266,20 +267,20 @@ export component PanelRoot inherits Rectangle {
                         text: ["Save","Borders","Motion","Filters","System"][root.section];
                         font-family: SkwdTokens.font-heading;
                         font-size: SkwdTokens.size-24;
-                        color: SkwdTokens.primary;
+                        color: HveColors.accent-cyan;
                         horizontal-alignment: center;
                     }
                     Text {
                         text: "Section placeholder — slice 1 skeleton";
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-12;
-                        color: SkwdTokens.outline;
+                        color: HveColors.text-muted;
                         horizontal-alignment: center;
                     }
                     Rectangle {
                         height: 40px;
                         width: 160px;
-                        background: SkwdTokens.primary.transparentize(0.85);
+                        background: HveColors.accent-cyan.transparentize(0.85);
                         border-radius: SkwdTokens.radius-8;
                         horizontal-stretch: 0;
                         x: (parent.width - self.width) / 2;
@@ -287,7 +288,7 @@ export component PanelRoot inherits Rectangle {
                             text: "Back to Gallery";
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-13;
-                            color: SkwdTokens.primary;
+                            color: HveColors.accent-cyan;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }

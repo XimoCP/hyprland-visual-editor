@@ -9,6 +9,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export component ChromeButton inherits Rectangle {
     // Menu state mirrored by the parent so the chevron flips direction.
@@ -33,8 +34,8 @@ export component ChromeButton inherits Rectangle {
         width: 100%;
         height: 100%;
         text: root.open ? root.open-glyph : root.closed-glyph;
-        color: touch.has-hover ? SkwdTokens.primary
-            : SkwdTokens.outline.transparentize(0.5);
+        color: touch.has-hover ? HveColors.accent-cyan
+            : HveColors.text-muted.transparentize(0.5);
         font-size: SkwdTokens.size-18;
         horizontal-alignment: center;
         vertical-alignment: center;

@@ -13,6 +13,7 @@
 
 import { Slider, ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
+import { HveColors } from "../../theme.slint";
 import { PresetCard } from "../../components.slint";
 import { CurvePreview } from "../CurvePreview.slint";
 
@@ -24,16 +25,16 @@ component BezierSlider inherits Rectangle {
     callback changed(float);
     height: 72px;
     border-radius: 8px;
-    background: #2c1f1d;
+    background: HveColors.bg-card;
     border-width: 1px;
-    border-color: #a98986.transparentize(0.7);
+    border-color: HveColors.border.transparentize(0.7);
     VerticalLayout {
         padding: 12px;
         spacing: 6px;
         HorizontalLayout {
             Text {
                 text: root.label;
-                color: #ffb4ab;
+                color: HveColors.accent-cyan;
                 font-size: 12px;
                 font-weight: 600;
                 vertical-alignment: center;
@@ -123,13 +124,13 @@ export component MotionSection inherits Rectangle {
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
-                color: SkwdTokens.primary;
+                color: HveColors.accent-cyan;
             }
             Text {
                 text: "Pick an animation — instantly applied. Tune curve below.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
-                color: SkwdTokens.outline;
+                color: HveColors.text-muted;
                 wrap: word-wrap;
             }
         }
@@ -158,13 +159,13 @@ export component MotionSection inherits Rectangle {
                     text: "No animation presets found.";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline;
+                    color: HveColors.text-muted;
                     horizontal-alignment: center;
                 }
 
                 Rectangle {
                     height: 1px;
-                    background: SkwdTokens.outline.transparentize(0.6);
+                    background: HveColors.border.transparentize(0.6);
                 }
 
                 // Curve preview 120×48 — redraws on slider changed via binding
@@ -302,7 +303,7 @@ export component MotionSection inherits Rectangle {
                     text: "↑↓ navigate • Enter/Space apply • arrows ±0.05 • Tab pick→tune→next • Esc back";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
-                    color: SkwdTokens.outline.transparentize(0.4);
+                    color: HveColors.text-muted.transparentize(0.4);
                     horizontal-alignment: center;
                 }
             }

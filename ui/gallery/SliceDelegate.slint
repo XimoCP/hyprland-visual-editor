@@ -12,6 +12,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 // Shared rounded-parallelogram geometry (design D3/D4): ONE command list
 // reused by the projected shadow and the face so both shapes can never
@@ -53,7 +54,7 @@ export component SliceDelegate inherits Rectangle {
     in property <bool> is-current: false;
     in property <bool> is-hovered: false;
     in property <bool> is-flipped: false;
-    in property <color> accent: SkwdTokens.fallback-accent;
+    in property <color> accent: HveColors.accent-cyan;
     in property <image> thumb;
     // Tuck animation: 0 = normal gallery, 1 = hidden behind center (driven by SliceCarousel staggered tuck)
     in property <float> tuck: 0.0;
@@ -410,13 +411,13 @@ export component SliceDelegate inherits Rectangle {
 
             Text {
                 text: root.card-name + " — details";
-                color: SkwdTokens.primary;
+                color: HveColors.accent-cyan;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
             }
             Text {
                 text: "VIEW  RETAG  DELETE  STEAM";
-                color: SkwdTokens.outline;
+                color: HveColors.text-muted;
                 font-size: SkwdTokens.size-11;
             }
         }
@@ -484,7 +485,7 @@ export component SliceDelegate inherits Rectangle {
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: transparent;
         stroke: root.is-current ? SkwdTokens.gallery-slice-focus-border-color
-            : root.has-hover ? SkwdTokens.primary.transparentize(0.6)
+            : root.has-hover ? HveColors.accent-cyan.transparentize(0.6)
             : #000000.transparentize(0.4);
         stroke-width: root.is-current ? SkwdTokens.border-2 : 1px;
         animate stroke { duration: SkwdTokens.anim-200; }

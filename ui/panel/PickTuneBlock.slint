@@ -8,6 +8,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export component PickTuneBlock inherits Rectangle {
     background: transparent;
@@ -30,5 +31,5 @@ export component PickTuneBlock inherits Rectangle {
     }
 
     // Divider style reference (used by BordersSection):
-    // Rectangle { height: 1px; background: SkwdTokens.outline.transparentize(0.6); }
+    // Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
 }

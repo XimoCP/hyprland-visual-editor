@@ -11,6 +11,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 // One skewed style pill (task 4.2 / spec Floating FilterBar Chrome):
 // parallelogram Path skewed 10px like the slice shear; active filled
@@ -40,8 +41,8 @@ component SkewPill inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: parent.wn;
         viewbox-height: parent.hn;
-        fill: root.active ? SkwdTokens.primary : SkwdTokens.surface-container.transparentize(0.35);
-        stroke: root.key-focused ? #8fd8ff : (root.active ? SkwdTokens.primary : SkwdTokens.outline.transparentize(0.4));
+        fill: root.active ? HveColors.accent-cyan : HveColors.bg-card.transparentize(0.35);
+        stroke: root.key-focused ? #8fd8ff : (root.active ? HveColors.accent-cyan : HveColors.border.transparentize(0.4));
         stroke-width: root.key-focused ? 1.5px : 1px;
         animate fill { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
         animate stroke { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
@@ -56,7 +57,7 @@ component SkewPill inherits Rectangle {
         width: parent.width;
         height: parent.height;
         text: root.label;
-        color: root.active ? SkwdTokens.surface : SkwdTokens.primary;
+        color: root.active ? HveColors.bg-dark : HveColors.accent-cyan;
         font-size: SkwdTokens.size-13;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -99,7 +100,7 @@ export component FilterBar inherits Rectangle {
         width: min(parent.width - 20px, pills-wrapper.preferred-width);
         height: pills-wrapper.preferred-height + 16px;
         border-radius: SkwdTokens.radius-8;
-        background: SkwdTokens.surface-container.transparentize(0.15);
+        background: HveColors.bg-card.transparentize(0.15);
         clip: true;
         animate y {
             duration: root.reduced-motion ? 0ms : SkwdTokens.anim-250;
@@ -193,7 +194,7 @@ export component FilterBar inherits Rectangle {
             // Divider between gallery style and panel sections
             Rectangle {
                 height: 1px;
-                background: SkwdTokens.outline.transparentize(0.6);
+                background: HveColors.border.transparentize(0.6);
             }
 
             // ── Bottom row: 5 panel section pills + divider semantics (R9) ──

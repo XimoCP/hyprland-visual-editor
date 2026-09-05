@@ -10,6 +10,7 @@
 
 import { LineEdit, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
+import { HveColors } from "../../theme.slint";
 
 export component SaveSection inherits Rectangle {
     in property <string> placeholder: "Theme name…";
@@ -40,13 +41,13 @@ export component SaveSection inherits Rectangle {
             font-family: SkwdTokens.font-heading;
             font-size: SkwdTokens.size-16;
             font-weight: 700;
-            color: SkwdTokens.primary;
+            color: HveColors.accent-cyan;
         }
         Text {
             text: "Save your current setup as a theme. It appears instantly in the Gallery — no restart.";
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-12;
-            color: SkwdTokens.outline;
+            color: HveColors.text-muted;
             wrap: word-wrap;
         }
 
@@ -59,7 +60,7 @@ export component SaveSection inherits Rectangle {
             save-line-wrap := Rectangle {
                 horizontal-stretch: 1;
                 height: 36px;
-                background: SkwdTokens.surface-container;
+                background: HveColors.bg-card;
                 border-radius: SkwdTokens.radius-8;
                 border-width: save-input.has-focus ? 1px : 0px;
                 border-color: #8fd8ff;
@@ -88,7 +89,7 @@ export component SaveSection inherits Rectangle {
                 save-btn := Rectangle {
                     width: 100%;
                     height: 100%;
-                    background: save-ta.has-hover ? SkwdTokens.primary.transparentize(0.2) : SkwdTokens.primary;
+                    background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
                     border-radius: SkwdTokens.radius-8;
                     border-width: save-btn-scope.has-focus ? 1px : 0px;
                     border-color: #8fd8ff;
@@ -96,7 +97,7 @@ export component SaveSection inherits Rectangle {
 
                     Text {
                         text: root.save-label;
-                        color: SkwdTokens.surface;
+                        color: HveColors.bg-dark;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-13;
                         font-weight: 700;
@@ -130,7 +131,7 @@ export component SaveSection inherits Rectangle {
 
         if root.error-text != "" : Text {
             text: root.error-text;
-            color: #ff6b6b;
+            color: HveColors.accent-red;
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-12;
             wrap: word-wrap;
@@ -140,7 +141,7 @@ export component SaveSection inherits Rectangle {
             text: "Tip: Enter saves • Esc returns to Gallery • Tab navigates";
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-12;
-            color: SkwdTokens.outline.transparentize(0.4);
+            color: HveColors.text-muted.transparentize(0.4);
         }
         }
     }

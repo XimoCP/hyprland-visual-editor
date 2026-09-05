@@ -9,6 +9,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export component GalleryChrome inherits Rectangle {
     // S18 empty state
@@ -29,11 +30,11 @@ export component GalleryChrome inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: parent.width - 80px;
         height: 28px;
-        background: SkwdTokens.surface.transparentize(0.5);
+        background: HveColors.bg-dark.transparentize(0.5);
         border-radius: SkwdTokens.radius-8;
         Text {
             text: root.empty-text;
-            color: SkwdTokens.outline;
+            color: HveColors.text-muted;
             font-size: SkwdTokens.size-11;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -56,7 +57,7 @@ export component GalleryChrome inherits Rectangle {
             width: parent.width;
             height: parent.height;
             text: "skwd-wall (MIT, © liixini)";
-            color: SkwdTokens.outline.transparentize(0.6);
+            color: HveColors.text-muted.transparentize(0.6);
             font-size: 9px;
             font-family: SkwdTokens.font-body;
             horizontal-alignment: center;

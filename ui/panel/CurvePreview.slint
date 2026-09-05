@@ -5,6 +5,7 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
 
 export component CurvePreview inherits Rectangle {
     in property <float> a: 0.25;
@@ -14,10 +15,10 @@ export component CurvePreview inherits Rectangle {
 
     width: 120px;
     height: 48px;
-    background: SkwdTokens.surface-container;
+    background: HveColors.bg-card;
     border-radius: SkwdTokens.radius-8;
     border-width: 1px;
-    border-color: SkwdTokens.outline.transparentize(0.6);
+    border-color: HveColors.border.transparentize(0.6);
     clip: true;
 
     // faint diagonal guide
@@ -28,7 +29,7 @@ export component CurvePreview inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: 120;
         viewbox-height: 48;
-        stroke: SkwdTokens.outline.transparentize(0.7);
+        stroke: HveColors.text-muted.transparentize(0.7);
         stroke-width: 1px;
         fill: transparent;
         MoveTo { x: 0; y: 48; }
@@ -43,7 +44,7 @@ export component CurvePreview inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: 120;
         viewbox-height: 48;
-        stroke: SkwdTokens.primary;
+        stroke: HveColors.accent-cyan;
         stroke-width: 2px;
         fill: transparent;
         MoveTo { x: 0; y: 48; }
