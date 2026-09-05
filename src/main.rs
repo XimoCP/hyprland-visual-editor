@@ -158,6 +158,21 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
     );
 }
 
+/// Debounce guard: overlapping reasserts (timed fallbacks + event-driven)
+/// must not stack multiple unset->set cycles — each cycle is a visible
+/// fullscreen drop, and five stacked retries meant five visible minimizes.
+static LAST_REASSERT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+fn reassert_debounce_ok() -> bool {
+    let mut last = LAST_REASSERT.lock().unwrap();
+    let now = std::time::Instant::now();
+    if last.is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(1500)) {
+        return false; // a cycle ran (or is running) very recently — skip
+    }
+    *last = Some(now);
+    true
+}
+
 /// Re-assert immersive fullscreen after Gallery expand or after a Noctalia
 /// theme apply.
 ///
@@ -167,8 +182,12 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
 /// fullscreen event and stays visible. Manual SUPER+F works because it is a
 /// `toggle` (real transition) and SUPER+H remaps the window (fresh state).
 /// Fix: cycle unset -> set with a short gap to force a real transition.
+/// Debounced: one visible cycle max per 1.5s window.
 pub(crate) fn reassert_gallery_fullscreen() {
     if !crate::shell::Shell::is_gallery_expanded() {
+        return;
+    }
+    if !reassert_debounce_ok() {
         return;
     }
     if let Some(mut ctrl) = crate::composer::global_controller() {
@@ -193,11 +212,12 @@ pub(crate) fn reassert_gallery_fullscreen() {
     });
 }
 
-/// Schedule the Noctalia-cover re-assert after a theme apply: retry
-/// across 1.5s-5.5s to cover fast and slow Noctalia restarts (hyprctl can
-/// fail transiently while Noctalia reloads).
+/// Timed safety net after a theme apply: two shots only — one early (2.2s,
+/// fast Noctalia reloads) and one late fallback (4.8s). The event-driven
+/// configreloaded path covers the normal case; the old 5-shot shotgun made
+/// each visible cycle flash five minimizes.
 pub(crate) fn schedule_noctalia_reassert() {
-    for ms in [1500, 2200, 3000, 4000, 5500] {
+    for ms in [2200, 4800] {
         slint::Timer::single_shot(std::time::Duration::from_millis(ms), || {
             reassert_gallery_fullscreen();
         });
