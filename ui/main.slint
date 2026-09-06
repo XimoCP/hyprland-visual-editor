@@ -39,9 +39,27 @@ export component MainWindow inherits Window {
     background: root.mounted-screen == 1 ? transparent : HveColors.bg-dark;
 
     // ── Theme transition fade (Slint-only, independent of system animations) ──
+    // Two-directional dissolve driven by states: exit accelerates away
+    // (ease-in, 420ms — matches the Rust stage timer at 560ms), entrance
+    // settles gently (ease-out, 520ms — Rust restores compositor masks at
+    // +570ms after the return flip). Keep the Rust timers in sync with
+    // these durations (src/main.rs theme transition block).
     in-out property <bool> theme-transitioning: false;
-    property <float> theme-fade: theme-transitioning ? 0.0 : 1.0;
-    animate theme-fade { duration: 520ms; easing: ease-in-out; }
+    property <float> theme-fade: 1.0;
+    states [
+        theme-hidden when root.theme-transitioning: {
+            theme-fade: 0.0;
+            in {
+                animate theme-fade { duration: 420ms; easing: ease-in; }
+            }
+        }
+        theme-shown when !root.theme-transitioning: {
+            theme-fade: 1.0;
+            in {
+                animate theme-fade { duration: 520ms; easing: ease-out; }
+            }
+        }
+    ]
 
     // ── Legacy legacy_tab state — REMOVED in slice 8 (R8) ──
     // Replaced by panel-section + is-mutating / is-panel-open (PanelState).

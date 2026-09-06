@@ -162,6 +162,12 @@ impl Controller {
             win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
             win.window().request_redraw();
         }
+        // Theme fade owns the single invisible cycle — skip settle's
+        // fullscreen dispatch during that window to avoid a second floating->fullscreen.
+        if crate::is_theme_transitioning_flag() {
+            tracing::info!("[run_settle] skip fullscreen during theme fade");
+            return;
+        }
         if crate::shell::Shell::is_gallery_expanded() {
             if self.gallery_session_active() {
                 let _ = self.composer.set_fullscreen(true);
@@ -305,7 +311,9 @@ impl Controller {
 
 // ── Hyprland composer ─────────────────────────────────────────────────
 
-mod hyprland;
+// pub(crate): main.rs reuses the verified v5_set_fullscreen builder for the
+// theme-interlude targeted re-assert (window-targeted, no focus step).
+pub(crate) mod hyprland;
 pub use hyprland::HyprlandComposer;
 
 /// Startup sanity check (gallery-immersive-redesign 1.5): detect an HVE

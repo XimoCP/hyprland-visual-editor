@@ -162,6 +162,138 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
 /// must not stack multiple unset->set cycles — each cycle is a visible
 /// fullscreen drop, and five stacked retries meant five visible minimizes.
 static LAST_REASSERT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+/// Theme cycle generation: exactly one invisible unset->set per theme apply.
+/// The first path to fire (event-driven configreloaded OR 4.8s fallback)
+/// wins; the other becomes a no-op for that generation.
+pub(crate) static THEME_GEN: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+pub(crate) static THEME_CYCLE_FIRED_GEN: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
+pub(crate) static THEME_TRANSITIONING_FLAG: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static THEME_ORIG_ANIM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static THEME_ORIG_BLUR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static THEME_ORIG_BORDER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static THEME_ORIG_SHADOW: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Interlude view state: the workspace the view must RETURN to and whether
+/// the view was actually staged away. See `InterludeState` for the rules.
+static THEME_INTERLUDE: std::sync::Mutex<InterludeState> =
+    std::sync::Mutex::new(InterludeState::new());
+
+// Display pump for the slice reel spring (slice_reel owns the physics;
+// this timer owns the wall-clock cadence). Lives on the UI thread only —
+// `slint::Timer` is not Send, hence the thread-local.
+thread_local! {
+    static REEL_TIMER: std::cell::RefCell<Option<slint::Timer>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Chained-glide duration for the slice carousel — matches
+/// `SkwdTokens.anim-expand` (ui/tokens.slint).
+const SLICE_GLIDE_MS: f32 = 350.0;
+
+/// Ensure the reel display pump is running. Each tick advances the spring
+/// and writes the position; when the spring reports idle the timer stops
+/// itself (stopping from inside the callback is supported).
+fn ensure_reel_timer(weak: slint::Weak<crate::MainWindow>) {
+    REEL_TIMER.with_borrow_mut(|slot| {
+        if slot.is_some() {
+            return; // already pumping
+        }
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(16),
+            move || {
+                let Some(w) = weak.upgrade() else {
+                    stop_reel_timer();
+                    return;
+                };
+                match crate::shell::gallery::views::slice_reel::step(0.016) {
+                    Some(v) => w.set_gallery_slice_focus_pos(v),
+                    None => stop_reel_timer(), // settled — stop the pump
+                }
+            },
+        );
+        *slot = Some(timer);
+    });
+}
+
+fn stop_reel_timer() {
+    REEL_TIMER.with_borrow_mut(|slot| {
+        if let Some(timer) = slot.as_ref() {
+            timer.stop();
+        }
+        *slot = None;
+    });
+}
+
+pub(crate) fn is_theme_transitioning_flag() -> bool {
+    THEME_TRANSITIONING_FLAG.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn hypr_getoption_int(option: &str, fallback: &str) -> String {
+    let text = std::process::Command::new("hyprctl")
+        .args(["getoption", option, "-j"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok());
+    if let Some(t) = text {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+            // Hyprland is inconsistent: some options expose "int", booleans set
+            // from config may only expose "str" ("true"/"1"/"[EMPTY]").
+            if let Some(i) = v.get("int").and_then(|n| n.as_i64()) {
+                return i.to_string();
+            }
+            if let Some(s) = v.get("str").and_then(|s| s.as_str()) {
+                let s = s.trim();
+                if s.parse::<i64>().is_ok() || s == "true" || s == "false" {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    fallback.to_string()
+}
+
+fn hypr_set(option: &str, value: &str) {
+    let _ = std::process::Command::new("hyprctl")
+        .args(["keyword", option, value])
+        .output();
+}
+
+pub(crate) fn restore_theme_masks() {
+    if let Some(orig) = THEME_ORIG_ANIM.lock().unwrap().take() {
+        hypr_set("animations:enabled", &orig);
+        tracing::info!("[theme] animations restored to {}", orig);
+    }
+    if let Some(orig) = THEME_ORIG_BLUR.lock().unwrap().take() {
+        hypr_set("decoration:blur:enabled", &orig);
+        tracing::info!("[theme] blur restored to {}", orig);
+    }
+    if let Some(orig) = THEME_ORIG_BORDER.lock().unwrap().take() {
+        hypr_set("general:border_size", &orig);
+        tracing::info!("[theme] border_size restored to {}", orig);
+    }
+    if let Some(orig) = THEME_ORIG_SHADOW.lock().unwrap().take() {
+        hypr_set("decoration:shadow:enabled", &orig);
+        tracing::info!("[theme] shadow restored to {}", orig);
+    }
+}
+
+/// Re-apply the transition masks after a config reload. Every `hyprctl
+/// reload` resets runtime keyword overrides to the config values (animations
+/// and blur back ON), which un-masks the transition mid-flight and re-floats
+/// HVE visibly. Called on EVERY configreloaded line during a theme
+/// transition — bypasses the 3s throttle (cheap, idempotent).
+pub(crate) fn reapply_theme_masks() {
+    if !is_theme_transitioning_flag() {
+        return;
+    }
+    hypr_set("animations:enabled", "0");
+    hypr_set("decoration:blur:enabled", "0");
+    hypr_set("general:border_size", "0");
+    hypr_set("decoration:shadow:enabled", "0");
+    tracing::info!("[theme] masks re-applied after reload wipe");
+}
 
 fn reassert_debounce_ok() -> bool {
     let mut last = LAST_REASSERT.lock().unwrap();
@@ -187,7 +319,21 @@ pub(crate) fn reassert_gallery_fullscreen() {
     if !crate::shell::Shell::is_gallery_expanded() {
         return;
     }
-    if !reassert_debounce_ok() {
+    // Theme transition: exactly one cycle per generation, no debounce window.
+    // The first caller (event-driven OR fallback) claims the generation and
+    // the second becomes a no-op — guarantees one visible floating->fullscreen.
+    if is_theme_transitioning_flag() {
+        let gen = *THEME_GEN.lock().unwrap();
+        {
+            let mut fired = THEME_CYCLE_FIRED_GEN.lock().unwrap();
+            if fired.is_some_and(|g| g == gen) {
+                tracing::info!("[reassert] skip — generation {} already fired", gen);
+                return;
+            }
+            *fired = Some(gen);
+        }
+        tracing::info!("[reassert] theme generation {} claims cycle (single-fire)", gen);
+    } else if !reassert_debounce_ok() {
         return;
     }
     if let Some(mut ctrl) = crate::composer::global_controller() {
@@ -217,9 +363,6 @@ pub(crate) fn reassert_gallery_fullscreen() {
 /// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
 /// visible flashes after fade-in.
 
-/// Agnostic helpers for clean-workspace fade: move HVE to an empty workspace
-/// (no windows) so the desktop behind the transparent fade shows only
-/// wallpaper + bar, not the user's windows.
 fn get_active_workspace_name() -> String {
     std::process::Command::new("hyprctl")
         .args(["activeworkspace", "-j"])
@@ -231,24 +374,200 @@ fn get_active_workspace_name() -> String {
         .unwrap_or_else(|| "2".to_string())
 }
 
-fn move_hve_to_workspace(ws: &str) {
-    // Focus HVE first, then move it. Use title targeting to be agnostic.
-    let _ = std::process::Command::new("hyprctl")
-        .args(["dispatch", "focuswindow", "title:Hyprland Visual Editor"])
-        .output();
-    let target = format!("{},title:Hyprland Visual Editor", ws);
-    let _ = std::process::Command::new("hyprctl")
-        .args(["dispatch", "movetoworkspace", &target])
-        .output();
-    // Also ensure workspace is focused so the bar/wallpaper are visible
-    let _ = std::process::Command::new("hyprctl")
-        .args(["dispatch", "workspace", ws])
-        .output();
+fn find_empty_workspace(exclude: &str) -> String {
+    // Find a normal workspace with no windows, not special, not the current one.
+    // Falls back to "10" (Hyprland creates it on demand).
+    let out = std::process::Command::new("hyprctl")
+        .args(["workspaces", "-j"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    if let Some(arr) = out.as_ref().and_then(|v| v.as_array()) {
+        for ws in arr {
+            let name = ws.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let wins = ws.get("windows").and_then(|n| n.as_u64()).unwrap_or(1);
+            if wins == 0 && !name.starts_with("special") && name != exclude && !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    if exclude != "10" { "10".to_string() } else { "11".to_string() }
 }
 
-// Holds the original workspace for the theme swap so hypr_ipc can
-// return there when config reloaded fires (event-driven, not timed).
-pub(crate) static THEME_ORIG_WS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+// ── Theme interlude (empty-workspace stage for the wallpaper/bar swap) ──
+
+/// Lua payload that switches the active VIEW to `ws` without moving any
+/// window. This Hyprland build (0.56.2, Lua-config runtime) routes every
+/// `dispatch` through its Lua shim, so the payload must be valid Lua:
+/// numeric `workspace 10` errors with "')' expected near '10'", while
+/// `hl.dsp.focus({ workspace = "10" })` maps to the changeWorkspace
+/// dispatcher (LuaBindingsDispatchers.cpp, `hl.focus` workspace branch).
+/// Verified live: both directions answer ok and the view flips.
+/// Returns None for names that could escape the Lua string — allowlist is
+/// the same policy as composer::hyprland::safe_workspace_target. Normal
+/// workspace names are alphanumeric, so "special:x" (colon) is rejected
+/// here by design: the interlude stage must be a NORMAL workspace.
+fn interlude_view_script(ws: &str) -> Option<String> {
+    if !is_safe_workspace_name(ws) {
+        return None;
+    }
+    Some(format!("hl.dsp.focus({{ workspace = \"{ws}\" }})"))
+}
+
+fn is_safe_workspace_name(ws: &str) -> bool {
+    !ws.is_empty()
+        && ws.len() <= 128
+        && ws.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' '))
+}
+
+/// Switch the compositor view (never any window) to `ws`. Best-effort:
+/// a failure keeps the old stay-fullscreen contract (no staging, no return).
+fn hypr_switch_view(ws: &str) -> bool {
+    let Some(script) = interlude_view_script(ws) else {
+        tracing::warn!("[theme] interlude view switch rejected unsafe name {:?}", ws);
+        return false;
+    };
+    std::process::Command::new("hyprctl")
+        .args(["dispatch", &script])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+        .unwrap_or(false)
+}
+
+/// Re-set fullscreen on HVE via the WINDOW-TARGETED v5 dispatcher (reuses
+/// composer's verified builder). Crucially it carries NO focus step: the
+/// focus-by-title inside `reassert_gallery_fullscreen` targets HVE on
+/// orig_ws and focusing a window on another workspace drags the VIEW back
+/// with it — the early ventanita+windows flash. Idempotent when HVE is
+/// already fullscreen (no-op), a real transition when a reload re-floated it.
+fn reassert_hve_fullscreen_targeted() -> bool {
+    let script = crate::composer::hyprland::v5_set_fullscreen(true);
+    std::process::Command::new("hyprctl")
+        .args(["dispatch", &script])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+        .unwrap_or(false)
+}
+
+// ── Notification silence during the theme swap ──────────────────────────
+// The theme apply fires a burst of notify-send toasts (wallpaper set,
+// palette applied, reloads) — previously swallowed because HVE covered the
+// screen; the interlude stage now exposes them. The swap runs under
+// Do-Not-Disturb: the pre-swap state is captured first-writer-wins and
+// restored exactly once after the view is home (the watchdog is the safety
+// net — `take()` makes a second restore a no-op).
+static THEME_DND_ORIG: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// "on"→"true", "off"→"false" — noctalia's DND boolean spelling.
+fn dnd_bool_arg(status: &str) -> Option<&'static str> {
+    match status {
+        "on" => Some("true"),
+        "off" => Some("false"),
+        _ => None,
+    }
+}
+
+/// Verified live: `noctalia msg notification-dnd-status` prints on/off;
+/// `notification-dnd-set true|false` answers ok. Best-effort everywhere.
+fn noctalia_dnd_set(state: &str) -> bool {
+    std::process::Command::new("noctalia")
+        .args(["msg", "notification-dnd-set", state])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+        .unwrap_or(false)
+}
+
+fn noctalia_dnd_status() -> Option<String> {
+    let out = std::process::Command::new("noctalia")
+        .args(["msg", "notification-dnd-status"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8(out.stdout).ok()?;
+    let s = s.trim().to_string();
+    if s == "on" || s == "off" { Some(s) } else { None }
+}
+
+/// Engage DND for the swap. First writer wins: while a swap is already in
+/// flight (rapid successive applies) a newer generation must NOT overwrite
+/// the captured original with its own silenced "on".
+fn theme_dnd_engage() {
+    let orig = {
+        let mut slot = THEME_DND_ORIG.lock().unwrap();
+        if slot.is_some() {
+            return; // already engaged by an earlier generation
+        }
+        match noctalia_dnd_status() {
+            Some(s) => {
+                *slot = Some(s);
+                slot.clone().unwrap()
+            }
+            None => {
+                tracing::warn!("[theme] noctalia DND status unavailable — notifications not silenced");
+                return;
+            }
+        }
+    };
+    let ok = noctalia_dnd_set("true");
+    tracing::info!("[theme] DND engaged (was {}) ok={}", orig, ok);
+}
+
+/// Restore the pre-swap DND state, exactly once (take()).
+fn theme_dnd_release() {
+    if let Some(orig) = THEME_DND_ORIG.lock().unwrap().take() {
+        if let Some(arg) = dnd_bool_arg(&orig) {
+            let ok = noctalia_dnd_set(arg);
+            tracing::info!("[theme] DND restored to {} ok={}", orig, ok);
+        }
+    }
+}
+
+/// Interlude view state, pure — `THEME_INTERLUDE` holds the shared static.
+struct InterludeState {
+    orig: Option<String>,
+    moved: bool,
+}
+
+impl InterludeState {
+    const fn new() -> Self {
+        Self { orig: None, moved: false }
+    }
+    /// First writer wins: while an interlude is in flight, a newer theme
+    /// generation must keep returning to the user's ORIGINAL workspace, not
+    /// to the interlude stage the view currently sits on.
+    fn capture(&mut self, orig: &str) -> bool {
+        if self.orig.is_some() {
+            return false;
+        }
+        self.orig = Some(orig.to_string());
+        true
+    }
+    fn orig(&self) -> Option<&str> {
+        self.orig.as_deref()
+    }
+    fn should_move(&self) -> bool {
+        !self.moved
+    }
+    fn mark_moved(&mut self) {
+        self.moved = true;
+    }
+    /// Whether the view is (still) staged away — the finale must NOT run the
+    /// focusing fullscreen cycle then: `v5_focus` targets HVE on orig_ws and
+    /// focusing a window on another workspace drags the VIEW back with it.
+    fn staged(&self) -> bool {
+        self.moved
+    }
+    /// Consume the return trip: exactly once, and only if the view moved.
+    /// If a generation never stages the view, nothing is restored — the
+    /// old stay-fullscreen contract never leaves the user's workspace.
+    fn take_restore(&mut self) -> Option<String> {
+        if !self.moved {
+            return None;
+        }
+        self.moved = false;
+        self.orig.take()
+    }
+}
 
 fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
@@ -607,6 +926,8 @@ fn main() -> Result<(), slint::PlatformError> {
             rebuild(focused);
             w.set_gallery_slice_delta_base(focused as i32);
             w.set_gallery_slice_rebasing(true);
+            // Programmatic snap — disarm the reel so the next glide starts here.
+            crate::shell::gallery::views::slice_reel::snap();
             w.set_gallery_slice_focus_pos(focused as f32);
             let weak2 = weak.clone();
             slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
@@ -658,6 +979,8 @@ fn main() -> Result<(), slint::PlatformError> {
             w.set_gallery_focused(next as i32);
             rebuild(next);
             if idle && delta.abs() > 1 {
+                // Distant jump: instant rebase — no glide through the ring.
+                crate::shell::gallery::views::slice_reel::snap();
                 w.set_gallery_slice_delta_base(step.virtual_next);
                 w.set_gallery_slice_rebasing(true);
                 w.set_gallery_slice_focus_pos(step.virtual_next as f32);
@@ -670,7 +993,20 @@ fn main() -> Result<(), slint::PlatformError> {
             } else {
                 w.set_gallery_slice_delta_base(step.virtual_next);
                 w.set_gallery_slice_rebasing(false);
-                w.set_gallery_slice_focus_pos(step.target);
+                // Spring glide (skwd-wall port): retargetable mid-flight with
+                // momentum — chained steps blend instead of restarting a curve.
+                let reduced = w.get_gallery_reduced_motion();
+                let duration = if reduced { 0.0 } else { SLICE_GLIDE_MS };
+                crate::shell::gallery::views::slice_reel::glide_to(
+                    current_pos,
+                    step.target,
+                    duration,
+                );
+                if duration > 0.0 {
+                    ensure_reel_timer(weak.clone());
+                } else {
+                    w.set_gallery_slice_focus_pos(step.target);
+                }
             }
         })
     };
@@ -903,69 +1239,217 @@ fn main() -> Result<(), slint::PlatformError> {
                             // keep strip position — theme apply does not re-trigger slide
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
-                        // 4-step clean special: like SUPER+H / SUPER+F which you
-                        // confirmed covers the bar. Uses a different special
-                        // (hve-theme) from the normal minimize (minimized).
+                        // ── Theme transition: empty-workspace interlude ──
+                        // While the theme reloads, the VIEW visits an empty
+                        // workspace so the user watches only the new wallpaper
+                        // + crystal bar — never their active windows (the
+                        // stage has zero windows by construction). HVE stays
+                        // fullscreen on orig_ws the whole time, faded to 0;
+                        // the view returns AFTER fade-in, so the flip reveals
+                        // the finished state, never mid-swap pixels.
+                        // Dispatch note: this Hyprland build (0.56.2 Lua
+                        // config) routes every dispatch through its Lua shim
+                        // — numeric `workspace 10` errors "')' expected";
+                        // verified live: `hl.dsp.focus({ workspace = "10" })`
+                        // → ok. See interlude_view_script().
+                        //   T=0     suppress auto-hide, capture orig, DND on,
+                        //           mask anim+blur+border+shadow, fade-out
+                        //           420ms (Slint states, ease-in)
+                        //   T=560   stage: view → empty ws (first gen only;
+                        //           after the exit fade completes)
+                        //   T=1500  finale: no focusing cycle while staged
+                        //           (see below)
+                        //   T=1900  targeted fullscreen (no focus), view →
+                        //           orig_ws, fade-in 520ms (ease-out)
+                        //   T=2470  masks back, DND off (after the entrance
+                        //           fade completes)
+                        //   T=3500  watchdog (also returns the view)
+                        // configreloaded only re-applies masks (hypr_ipc).
+                        // Keep these offsets in sync with the theme-fade
+                        // durations in ui/main.slint (states block).
                         let orig_ws = get_active_workspace_name();
-                        // Remember orig ws for event-driven return in hypr_ipc
-                        *THEME_ORIG_WS.lock().unwrap() = Some(orig_ws.clone());
-                        // Disable blur on the clean special so it shows
-                        // wallpaper without blur (noblur layerrule).
-                        let _ = std::process::Command::new("hyprctl")
-                            .args(["keyword", "layerrule", "noblur, special:hve-theme"])
-                            .output();
+                        {
+                            let mut g = THEME_GEN.lock().unwrap();
+                            *g += 1;
+                            tracing::info!("[theme] new generation {} for ws {}", *g, orig_ws);
+                        }
+                        *THEME_CYCLE_FIRED_GEN.lock().unwrap() = None;
+                        THEME_TRANSITIONING_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+                        // Interlude bookkeeping BEFORE the view moves: first
+                        // writer wins, so a rapid successive theme apply keeps
+                        // returning to the user's REAL workspace.
+                        if is_safe_workspace_name(&orig_ws) {
+                            THEME_INTERLUDE.lock().unwrap().capture(&orig_ws);
+                        }
+                        // Silence the notify-send machine-gun while the stage
+                        // is exposed (first-writer-wins, see theme_dnd_engage).
+                        theme_dnd_engage();
+                        // CRITICAL: suppress the focus-lost auto-hide for the whole
+                        // transition. The theme reload makes HVE lose focus for an
+                        // instant; the gallery contract ("focus lost → immediate
+                        // hide") parked HVE in special:minimized — the floating
+                        // window + blurred bar-less special the user saw.
+                        crate::countdown::suppress_auto_minimize(std::time::Duration::from_millis(6000));
+                        // Mask outer Hyprland animations + blur + border + shadow
+                        // for the whole transition, so the drop/re-assert fullscreen
+                        // flips are instant and frameless. Reloads wipe runtime
+                        // keywords — hypr_ipc re-applies them on every
+                        // configreloaded line.
+                        {
+                            let anim_orig = hypr_getoption_int("animations:enabled", "1");
+                            *THEME_ORIG_ANIM.lock().unwrap() = Some(anim_orig.clone());
+                            hypr_set("animations:enabled", "0");
+                            let blur_orig = hypr_getoption_int("decoration:blur:enabled", "1");
+                            *THEME_ORIG_BLUR.lock().unwrap() = Some(blur_orig.clone());
+                            hypr_set("decoration:blur:enabled", "0");
+                            let border_orig = hypr_getoption_int("general:border_size", "2");
+                            *THEME_ORIG_BORDER.lock().unwrap() = Some(border_orig.clone());
+                            hypr_set("general:border_size", "0");
+                            let shadow_orig = hypr_getoption_int("decoration:shadow:enabled", "1");
+                            *THEME_ORIG_SHADOW.lock().unwrap() = Some(shadow_orig.clone());
+                            hypr_set("decoration:shadow:enabled", "0");
+                            tracing::info!(
+                                "[theme] masked animations ({}), blur ({}), border ({}), shadow ({})",
+                                anim_orig, blur_orig, border_orig, shadow_orig
+                            );
+                        }
                         if let Some(w) = win.upgrade() {
                             w.set_theme_transitioning(true);
                         }
-                        // Step 1: behind the scenes, move to clean special
-                        // before fade so the fade starts from there.
-                        let weak_step1 = win.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(80), move || {
-                            // Move HVE to special:hve-theme (clean, no windows)
-                            let _ = std::process::Command::new("hyprctl")
-                                .args(["dispatch", "movetoworkspacesilent", "special:hve-theme,title:Hyprland Visual Editor"])
-                                .output();
-                            let _ = std::process::Command::new("hyprctl")
-                                .args(["dispatch", "togglespecialworkspace", "hve-theme"])
-                                .output();
-                            tracing::info!("[theme] step1 moved to special:hve-theme");
-                            let _ = weak_step1.upgrade().map(|w| w.set_theme_transitioning(true));
-                        });
-                        // Step 2: from that special, keep transparent and send
-                        // to original ws so you see wallpaper+bar clean.
-                        let weak_step2 = win.clone();
-                        let orig_for_step2 = orig_ws.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(620), move || {
-                            let _ = weak_step2.upgrade().map(|w| w.set_theme_transitioning(true));
-                            move_hve_to_workspace(&orig_for_step2);
-                            tracing::info!("[theme] step2 sent to ws {} from special", orig_for_step2);
-                        });
-                        // Fallback return if config reloaded never fires. The
-                        // single unset->set cycle runs WHILE transparent
-                        // (invisible), then fade-in reveals an already
-                        // fullscreen window with the bar hidden.
                         let weak_back = win.clone();
-                        let orig_clone = orig_ws.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(4800), move || {
+                        let fallback_gen = *THEME_GEN.lock().unwrap();
+                        // T+560ms: stage the interlude — flip the VIEW (never
+                        // a window) to an empty workspace. Runs AFTER the
+                        // exit fade completes (420ms ease-in in main.slint)
+                        // so the user watches the shell dissolve before the
+                        // instant cut (masks on → no compositor animation).
+                        // First generation only; a newer generation inherits
+                        // the staged view.
+                        {
+                            let stage_gen = fallback_gen;
+                            slint::Timer::single_shot(std::time::Duration::from_millis(560), move || {
+                                let cur = *THEME_GEN.lock().unwrap();
+                                if cur != stage_gen {
+                                    return; // superseded — the newer gen owns staging
+                                }
+                                let target = {
+                                    let st = THEME_INTERLUDE.lock().unwrap();
+                                    if !st.should_move() {
+                                        return; // view already on the stage
+                                    }
+                                    st.orig().map(|o| find_empty_workspace(o))
+                                };
+                                let Some(target) = target else { return; };
+                                if hypr_switch_view(&target) {
+                                    THEME_INTERLUDE.lock().unwrap().mark_moved();
+                                    tracing::info!(
+                                        "[theme] interlude: view staged on empty ws {} (gen {})",
+                                        target, stage_gen
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        "[theme] interlude staging failed — stay-fullscreen fallback (gen {})",
+                                        stage_gen
+                                    );
+                                }
+                            });
+                        }
+                        slint::Timer::single_shot(std::time::Duration::from_millis(1500), move || {
+                            let cur_gen = *THEME_GEN.lock().unwrap();
+                            if cur_gen != fallback_gen {
+                                tracing::info!(
+                                    "[theme] finale skip — stale generation {} (current {})",
+                                    fallback_gen, cur_gen
+                                );
+                                return; // the newer generation owns staging + return
+                            }
                             let still = weak_back.upgrade().is_some_and(|w| w.get_theme_transitioning());
                             if !still {
-                                return; // event-driven path already handled it
+                                return;
                             }
-                            move_hve_to_workspace(&orig_clone);
-                            let _ = std::process::Command::new("hyprctl")
-                                .args(["dispatch", "togglespecialworkspace", "hve-theme"])
-                                .output();
-                            // One fullscreen cycle while opacity is 0
-                            reassert_gallery_fullscreen();
-                            // Fade-in after the cycle settled
+                            if THEME_INTERLUDE.lock().unwrap().staged() {
+                                // View is on the stage: SKIP the focusing
+                                // cycle. reassert_gallery_fullscreen focuses
+                                // HVE by title first, and focusing a window on
+                                // another workspace drags the VIEW back with
+                                // it — the user then sees floating HVE (the
+                                // ventanita) + their windows mid-cycle, 400ms
+                                // before the intended return. Fullscreen is
+                                // re-ensured with the window-targeted
+                                // dispatcher (no focus) at return time.
+                                tracing::info!("[theme] finale: view staged — focusing cycle skipped");
+                            } else {
+                                // One masked unset→set cycle while opacity is
+                                // 0 (stay-fullscreen fallback — the view never
+                                // left). Forces a real fullscreen transition so
+                                // the bar reliably hides.
+                                reassert_gallery_fullscreen();
+                            }
+                            // Fade-in after the cycle settled (150ms unset→set).
                             let weak_re = weak_back.clone();
-                            slint::Timer::single_shot(std::time::Duration::from_millis(500), move || {
+                            slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
                                 if let Some(w) = weak_re.upgrade() {
                                     w.set_theme_transitioning(false);
-                                    tracing::info!("[theme] fallback fade-in to ws {}", orig_clone);
+                                    tracing::info!("[theme] finale fade-in");
                                 }
-                                *THEME_ORIG_WS.lock().unwrap() = None;
+                                THEME_TRANSITIONING_FLAG.store(false, std::sync::atomic::Ordering::Relaxed);
+                                // Return the view FIRST — compositor masks are
+                                // still ON, so the flip is an instant cut (no
+                                // elastic bounce), and the entrance fade then
+                                // plays over the real desktop.
+                                if let Some(orig) = THEME_INTERLUDE.lock().unwrap().take_restore() {
+                                    // Reload chains may have re-floated HVE after
+                                    // the finale — re-set fullscreen with the
+                                    // window-targeted dispatcher BEFORE the flip
+                                    // (no focus step, so the view is never dragged
+                                    // back; idempotent when already fullscreen).
+                                    let fs_ok = reassert_hve_fullscreen_targeted();
+                                    let back_ok = hypr_switch_view(&orig);
+                                    tracing::info!(
+                                        "[theme] interlude: view returned to {} ok={} (targeted fullscreen {})",
+                                        orig, back_ok, fs_ok
+                                    );
+                                }
+                                // Compositor masks + DND release AFTER the
+                                // entrance fade completes (520ms ease-out in
+                                // main.slint): animations must stay OFF through
+                                // the flip, and toasts stay swallowed during
+                                // the entrance.
+                                slint::Timer::single_shot(std::time::Duration::from_millis(570), move || {
+                                    restore_theme_masks();
+                                    theme_dnd_release();
+                                    tracing::info!("[theme] masks restored, DND released after entrance fade");
+                                });
                             });
+                        });
+                        // Hard watchdog: never stay transparent forever — force fade-in at 3.5s,
+                        // and never strand the view on the interlude stage.
+                        let weak_watch = win.clone();
+                        let watch_gen = fallback_gen;
+                        slint::Timer::single_shot(std::time::Duration::from_millis(3500), move || {
+                            let cur = *THEME_GEN.lock().unwrap();
+                            if cur != watch_gen {
+                                return; // superseded by newer theme
+                            }
+                            if let Some(w) = weak_watch.upgrade() {
+                                if w.get_theme_transitioning() {
+                                    w.set_theme_transitioning(false);
+                                    tracing::warn!("[theme] watchdog forced fade-in gen {}", watch_gen);
+                                }
+                            }
+                            THEME_TRANSITIONING_FLAG.store(false, std::sync::atomic::Ordering::Relaxed);
+                            restore_theme_masks();
+                            if let Some(orig) = THEME_INTERLUDE.lock().unwrap().take_restore() {
+                                let fs_ok = reassert_hve_fullscreen_targeted();
+                                let ok = hypr_switch_view(&orig);
+                                tracing::warn!(
+                                    "[theme] watchdog returned view to {} ok={} (targeted fullscreen {})",
+                                    orig, ok, fs_ok
+                                );
+                            }
+                            // Safety net: never leave DND engaged (no-op if
+                            // the return path already released it).
+                            theme_dnd_release();
                         });
                     }
                 }
@@ -1598,12 +2082,20 @@ fn main() -> Result<(), slint::PlatformError> {
                     tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
                     dispatch_initial_gallery_expand(&shell_for_expand);
                     slint::Timer::single_shot(std::time::Duration::from_millis(400), || {
+                        if is_theme_transitioning_flag() {
+                            tracing::info!("[startup] skip reassert during theme fade");
+                            return;
+                        }
                         reassert_gallery_fullscreen();
                     });
                 });
             } else {
                 dispatch_initial_gallery_expand(&shell_for_expand);
                 slint::Timer::single_shot(std::time::Duration::from_millis(400), || {
+                    if is_theme_transitioning_flag() {
+                        tracing::info!("[startup] skip reassert during theme fade");
+                        return;
+                    }
                     reassert_gallery_fullscreen();
                 });
             }
@@ -1705,6 +2197,75 @@ mod tests {
         assert_eq!(preset_geometry_for("sharp.ron"), BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 });
         assert_eq!(preset_geometry_for("thick.ron"), BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 });
         assert_eq!(preset_geometry_for("unknown.ron"), BorderGeometry::default());
+    }
+
+    // ── Theme interlude view switch (strict TDD) ─────────────────────────
+
+    #[test]
+    fn interlude_script_matches_verified_lua_payload() {
+        // Verified live on Hyprland 0.56.2: `hyprctl dispatch
+        // 'hl.dsp.focus({ workspace = "10" })'` → ok (view on ws 10, zero
+        // windows). Numeric `workspace 10` instead errors with
+        // "')' expected near '10'" — the dispatch IPC routes through the
+        // Lua shim, so the payload must be a valid Lua expression.
+        assert_eq!(
+            interlude_view_script("10").as_deref(),
+            Some("hl.dsp.focus({ workspace = \"10\" })")
+        );
+    }
+
+    #[test]
+    fn interlude_script_rejects_unsafe_names() {
+        assert_eq!(interlude_view_script(""), None);
+        // Colons never appear in a normal workspace name we may return to;
+        // they would also terminate the Lua string ("special:x").
+        assert_eq!(interlude_view_script("special:minimized"), None);
+        assert_eq!(interlude_view_script("a\"quote"), None);
+        assert_eq!(interlude_view_script("semi;colon"), None);
+        assert_eq!(interlude_view_script(&"x".repeat(129)), None);
+    }
+
+    #[test]
+    fn interlude_capture_first_writer_wins() {
+        let mut s = InterludeState::new();
+        assert!(s.capture("2"), "first generation captures the origin");
+        assert!(!s.capture("10"), "a newer generation must NOT re-capture");
+        assert_eq!(s.orig(), Some("2"), "origin stays the user's workspace");
+    }
+
+    #[test]
+    fn interlude_restore_is_moved_gated_and_consumed_once() {
+        let mut s = InterludeState::new();
+        s.capture("2");
+        assert_eq!(s.take_restore(), None, "no restore before mark_moved");
+        s.mark_moved();
+        assert!(s.staged(), "mark_moved must be observable for the finale skip");
+        assert_eq!(s.take_restore(), Some("2".to_string()));
+        assert_eq!(s.take_restore(), None, "restore is consumed exactly once");
+    }
+
+    #[test]
+    fn dnd_bool_maps_noctalia_status_words() {
+        // Verified live: `noctalia msg notification-dnd-status` prints
+        // on/off and `notification-dnd-set true|false` toggles it.
+        assert_eq!(dnd_bool_arg("on"), Some("true"));
+        assert_eq!(dnd_bool_arg("off"), Some("false"));
+        assert_eq!(dnd_bool_arg(""), None);
+        assert_eq!(dnd_bool_arg("garbage"), None);
+    }
+
+    #[test]
+    fn interlude_move_only_while_view_is_home() {
+        let mut s = InterludeState::new();
+        s.capture("2");
+        assert!(s.should_move());
+        s.mark_moved();
+        assert!(!s.should_move(), "a newer generation must not re-stage");
+        s.take_restore();
+        // After the return trip the state resets: the NEXT theme apply must
+        // be able to capture a fresh origin and stage the view again.
+        assert!(s.capture("5"), "next interlude can capture a new origin");
+        assert!(s.should_move(), "state resets for the next generation");
     }
 
 }

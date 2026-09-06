@@ -51,15 +51,11 @@ export component SliceCarousel inherits Rectangle {
     property <float> tuck-progress: root.docking ? 1.0 : 0.0;
     animate tuck-progress { duration: root.reduced-motion ? 0ms : 500ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
     property <float> focus-frac: root.focus-pos - root.delta-base;
-    // Directional driver: raw frac (±1 during a step, 0 settled). It already
-    // interpolates via the focus-pos tween, so delegates inherit a smooth
-    // directional signal without a second animate.
+    // Directional driver: raw frac (±1 during a step, 0 settled). The
+    // position is driven per-frame by the Rust reel spring (slice_reel.rs —
+    // ported from skwd-wall), so no Slint animate here: an attached tween
+    // would fight the per-frame writes and restart on every retarget.
     property <float> travel: root.focus-frac;
-
-    animate focus-pos {
-        duration: root.rebasing ? 0ms : (root.reduced-motion ? 0ms : SkwdTokens.anim-expand);
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-    }
 
     callback card-clicked(int);
     callback card-right-clicked(int);

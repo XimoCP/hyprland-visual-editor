@@ -470,6 +470,13 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
                     tracing::debug!("[countdown] Suprimido (apply en curso), ignorando focus lost");
                     return;
                 }
+                // Theme transition owns focus: the reload-induced focus flaps
+                // must NEVER trigger the gallery immediate-hide (that parked
+                // HVE in special:minimized mid-fade — blurred, bar-less special).
+                if crate::is_theme_transitioning_flag() {
+                    tracing::debug!("[countdown] Theme transitioning — ignoring focus lost");
+                    return;
+                }
                 let Some(win) = w.upgrade() else { return };
                 let machine_allows = crate::composer::try_global_controller()
                     .map(|c| c.on_focus_lost_machine())

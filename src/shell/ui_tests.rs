@@ -319,7 +319,11 @@ fn slice_focus_flow_renders_settled_and_midflight() {
         .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
 
-    // Settled: focus position exactly at the focused index (frac 0).
+    // Settled: focus position exactly at the focused index (frac 0). The
+    // delta-base must match focus-pos — the Rust reel spring now drives
+    // focus-pos per frame (no Slint animate freezes values anymore), so the
+    // property applies instantly and the base has to be explicit.
+    win.set_gallery_slice_delta_base(6);
     win.set_gallery_slice_focus_pos(6.0);
     let settled = win.window().take_snapshot().expect("settled snapshot");
     save_slice_png(settled, "/tmp/opencode/slice_settled.png");
@@ -372,6 +376,102 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     save_slice_png(seam, "/tmp/opencode/slice_seam.png");
     win.set_gallery_slice_delta_base(0);
     win.set_gallery_slice_rebasing(false);
+}
+
+#[test]
+fn slice_twenty_chained_steps_settle_without_drift() {
+    use crate::shell::gallery::views::slice::{focus_step, scaled_metrics, slice_delta_tiles};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .ok(); // allow already-initialized when tests share the thread
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(6);
+    let count = 12usize;
+    let stage_w = 1920.0f32;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let src = slice_test_gradient(i);
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: {
+                let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+                let (w, h) = (rgba.width(), rgba.height());
+                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                slint::Image::from_rgba8(buf)
+            },
+            slat_expanded_image: {
+                let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
+                let (w, h) = (rgba.width(), rgba.height());
+                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                slint::Image::from_rgba8(buf)
+            },
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    // 20 chained +1 production steps through the REAL pipeline: each step
+    // relabels deltas for the new focused slot, advances the virtual base,
+    // and the reel settles focus-pos EXACTLY on the virtual next (frac 0 —
+    // the drift fix). The final render must show a full 924 center with
+    // 135 laterals, not the thinned wall the residue used to leave.
+    let mut v = 6i32;
+    let mut pos = 6.0f32;
+    let mut focused = 6usize;
+    for _ in 0..20 {
+        let s = focus_step(v, pos, 1);
+        v = s.virtual_next;
+        pos = s.target; // exact settle (reel value() contract)
+        focused = (focused + 1) % count;
+        let tiles: Vec<crate::SliceTileData> = slice_delta_tiles(count, focused, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
+        win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+        win.set_gallery_focused(focused as i32);
+        win.set_gallery_slice_delta_base(v);
+        win.set_gallery_slice_focus_pos(pos);
+    }
+    assert!((pos - v as f32).abs() < 0.001, "20 steps must settle frac 0, got {}", pos - v as f32);
+    let m = scaled_metrics(stage_w);
+    assert!((m.expanded - 924.0).abs() < 0.01, "settled center must be 924");
+    assert!((m.collapsed - 135.0).abs() < 0.01, "settled laterals must be 135");
+    let snap = win.window().take_snapshot().expect("20-step snapshot");
+    save_slice_png(snap, "/tmp/opencode/slice_20steps.png");
 }
 
 #[test]
@@ -2100,4 +2200,86 @@ fn test_filterbar_focus_scope_behind_pills() {
             "no width:100% FocusScope may appear after pills-wrapper — tail still contains FocusScope declaration"
         );
     }
+}
+
+// ── Theme interlude fade — headless visual verification ────────────────
+// The swap choreography relies on a REAL opacity dissolve (fade-out on
+// exit, fade-in on entrance) instead of the compositor's elastic workspace
+// slide. This renders the three states headless and saves PNGs under
+// /tmp/opencode/ for human review, plus a deterministic pixel assertion:
+// with the shell at opacity 0 the top-left region must be perfectly
+// uniform (window background only), and content must return after the
+// entrance fade completes.
+
+/// Share of the most common pixel color in the top-left 100×100 region.
+fn theme_fade_region_modal_fraction(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> f32 {
+    let bytes = buf.as_bytes();
+    let stride = buf.width() as usize * 4;
+    let mut counts: std::collections::HashMap<[u8; 4], usize> = std::collections::HashMap::new();
+    let mut total = 0usize;
+    for y in 0..100usize {
+        for x in 0..100usize {
+            let o = y * stride + x * 4;
+            *counts.entry([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]).or_default() += 1;
+            total += 1;
+        }
+    }
+    let max = counts.values().copied().max().unwrap_or(0);
+    max as f32 / total.max(1) as f32
+}
+
+#[test]
+fn theme_fade_renders_settled_dissolved_and_reappeared() {
+    use slint::ComponentHandle as _;
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(0); // Home: opaque bg → uniform region is meaningful
+
+    // Flush any initial state animations.
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let settled = win.window().take_snapshot().expect("settled snapshot");
+    save_slice_png(settled.clone(), "/tmp/opencode/theme_fade_settled.png");
+    let settled_frac = theme_fade_region_modal_fraction(&settled);
+
+    // Dissolve-out (exit fade, ease-in): advancing past the duration must
+    // leave the whole shell at opacity 0 — top-left region fully uniform.
+    win.set_theme_transitioning(true);
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(500));
+    let dissolved = win.window().take_snapshot().expect("dissolved snapshot");
+    save_slice_png(dissolved.clone(), "/tmp/opencode/theme_fade_dissolved.png");
+    let dissolved_frac = theme_fade_region_modal_fraction(&dissolved);
+
+    // Dissolve-in (entrance fade, ease-out): content must come back.
+    win.set_theme_transitioning(false);
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
+    let reappeared = win.window().take_snapshot().expect("reappeared snapshot");
+    save_slice_png(reappeared.clone(), "/tmp/opencode/theme_fade_reappeared.png");
+    let reappeared_frac = theme_fade_region_modal_fraction(&reappeared);
+
+    assert!(
+        dissolved_frac > 0.995,
+        "exit fade must dissolve the shell to pure background (modal fraction {dissolved_frac:.3}, settled {settled_frac:.3})"
+    );
+    assert!(
+        settled_frac < 0.995,
+        "settled home must have visible content in the top-left region (modal fraction {settled_frac:.3})"
+    );
+    assert!(
+        reappeared_frac < 0.995,
+        "entrance fade must bring the content back (modal fraction {reappeared_frac:.3})"
+    );
 }

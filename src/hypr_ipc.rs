@@ -110,6 +110,10 @@ impl HyprIpc {
                 Ok(line) => {
                     // Events come as: "eventname>>data"
                     if line.starts_with("configreloaded") {
+                        // Re-apply transition masks BEFORE the throttle: every
+                        // reload (assemble, noctalia, watcher) wipes the runtime
+                        // animations/blur overrides mid-fade. Cheap + idempotent.
+                        crate::reapply_theme_masks();
                         let mut last = last_reload.lock().unwrap_or_else(|e| e.into_inner());
                         let now = Instant::now();
                         if last.is_none_or(|t| now.duration_since(t) > Duration::from_secs(3)) {
@@ -168,43 +172,14 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
                 });
             }
 
-            // 3. Event-driven return for clean-special theme swap (agnostic).
-            // If we are in the middle of a theme fade and have an orig ws
-            // saved, Hyprland just finished reloading — move HVE back from
-            // special:hve-theme to the original workspace, run the single
-            // fullscreen cycle WHILE still transparent (invisible), then
-            // fade in to an already fullscreen window with the bar hidden.
-            let weak2 = weak.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                let is_fading = weak2.upgrade().is_some_and(|w| w.get_theme_transitioning());
-                let orig_opt = crate::THEME_ORIG_WS.lock().unwrap().clone();
-                if is_fading {
-                    if let Some(orig) = orig_opt {
-                        // Return from clean special to original ws
-                        let _ = std::process::Command::new("hyprctl")
-                            .args(["dispatch", "movetoworkspace", &format!("{},title:Hyprland Visual Editor", orig)])
-                            .output();
-                        let _ = std::process::Command::new("hyprctl")
-                            .args(["dispatch", "togglespecialworkspace", "hve-theme"])
-                            .output();
-                        tracing::info!("[theme] event-driven return to ws {} from special:hve-theme", orig);
-                        // Single fullscreen cycle while opacity is 0
-                        crate::reassert_gallery_fullscreen();
-                        // Fade-in after the cycle settled (150ms unset + set)
-                        let w3 = weak2.clone();
-                        let orig_clone = orig.clone();
-                        slint::Timer::single_shot(std::time::Duration::from_millis(500), move || {
-                            if let Some(w) = w3.upgrade() {
-                                if w.get_theme_transitioning() {
-                                    w.set_theme_transitioning(false);
-                                    tracing::info!("[theme] event-driven fade-in to ws {}", orig_clone);
-                                }
-                            }
-                            *crate::THEME_ORIG_WS.lock().unwrap() = None;
-                        });
-                    }
-                }
-            });
+            // 3. Theme transition masks only. The reload-emitted configreloaded
+            //    events no longer move HVE or run the fullscreen cycle — that
+            //    caused a 4-actor race (event return vs step1/step2 timers,
+            //    incl. an animated move AFTER fade-in). The single-owner finale
+            //    lives in main.rs (1500ms timer); this path only re-applies the
+            //    animation/blur masks that each reload wipes. Line-level
+            //    re-masking happens in connect_and_listen (bypasses throttle).
+            let _ = ();
         });
         tracing::info!("[HVE] Hyprland IPC listener started");
         handle

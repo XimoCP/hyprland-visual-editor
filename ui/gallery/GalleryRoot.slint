@@ -179,12 +179,15 @@ export component GalleryRoot inherits Rectangle {
         clip: true;
         drop-shadow-blur: root.top-menu-open ? 16px : 0px;
         drop-shadow-color: #00000080;
-        drop-shadow-offset-y: 8px;
+        drop-shadow-offset-y: root.top-menu-open ? 8px : 0px;
         animate y {
             duration: root.reduced-motion ? 0ms : 250ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
         animate drop-shadow-blur {
+            duration: root.reduced-motion ? 0ms : 250ms;
+        }
+        animate drop-shadow-offset-y {
             duration: root.reduced-motion ? 0ms : 250ms;
         }
 
@@ -396,12 +399,15 @@ export component GalleryRoot inherits Rectangle {
         clip: true;
         drop-shadow-blur: root.top-menu-open ? 16px : 0px;
         drop-shadow-color: #00000080;
-        drop-shadow-offset-y: 8px;
+        drop-shadow-offset-y: root.top-menu-open ? 8px : 0px;
         animate y {
             duration: root.reduced-motion ? 0ms : 250ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
         animate drop-shadow-blur {
+            duration: root.reduced-motion ? 0ms : 250ms;
+        }
+        animate drop-shadow-offset-y {
             duration: root.reduced-motion ? 0ms : 250ms;
         }
 

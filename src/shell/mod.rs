@@ -169,9 +169,11 @@ impl Shell {
             s.push_size_to_window();
         }
         if is_gallery && expanded {
-            // Use try_lock to avoid deadlock when sync is called from inside
-            // Controller::toggle_tray (which already holds the controller lock).
-            if let Some(mut ctrl) = crate::composer::try_global_controller() {
+            // Theme transition owns the single invisible fullscreen cycle —
+            // skip the extra re-dispatch here to keep it to one floating->fullscreen.
+            if crate::is_theme_transitioning_flag() {
+                tracing::info!("[sync_after_show] skip fullscreen reassert during theme fade");
+            } else if let Some(mut ctrl) = crate::composer::try_global_controller() {
                 if ctrl.gallery_session_active() {
                     // Logical session alive but compositor lost fullscreen on
                     // the hide→show round-trip — re-dispatch without flipping
@@ -237,8 +239,11 @@ impl Shell {
             return false;
         }
         Self::mirror_panel(shell);
-        // Hold fullscreen (R1) — no window resize anywhere in the flow
-        if let Some(mut ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
+        // Hold fullscreen (R1) — no window resize anywhere in the flow.
+        // Skip during theme fade so the single invisible cycle isn't duplicated.
+        if crate::is_theme_transitioning_flag() {
+            tracing::info!("[enter_panel] skip fullscreen hold during theme fade");
+        } else if let Some(mut ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
             let _ = ctrl.composer().set_fullscreen(true);
             // Ensure gallery logical session is marked active if gallery is expanded
             if !ctrl.gallery_session_active() {
@@ -273,8 +278,10 @@ impl Shell {
             s.suppress_until = Some(Instant::now() + Duration::from_millis(crate::shell::gallery::slot::SHADER_FLICKER_MS));
         }
         Self::mirror_panel(shell);
-        // Re-assert fullscreen hold (no resize)
-        if let Some(ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
+        // Re-assert fullscreen hold (no resize) — skip during theme fade
+        if crate::is_theme_transitioning_flag() {
+            tracing::info!("[complete_morph] skip fullscreen reassert during theme fade");
+        } else if let Some(ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
             let _ = ctrl.composer().set_fullscreen(true);
         }
     }

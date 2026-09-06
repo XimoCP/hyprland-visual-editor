@@ -16,6 +16,7 @@ pub mod hexagon;
 pub mod mosaic;
 #[allow(dead_code)]
 pub mod slice;
+pub mod slice_reel;
 
 pub use hexagon::HexagonView;
 pub use mosaic::MosaicView;

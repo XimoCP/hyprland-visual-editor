@@ -445,12 +445,12 @@ pub fn slot_left(d: f32) -> f32 {
     slot_center(d) - slot_width(d) / 2.0
 }
 
-/// V6 focus target — replaces slide_plan/chained_target.
-/// Idle (`current` at the settled focused index): one tween covering the
-/// full ring distance (`base + delta`), skwd click-to-slide analog.
-/// Mid-flight: chain ONE step from the LIVE value (Slint property getters
-/// return the current displayed value; reassigning restarts the tween from
-/// there — retarget, QML StrictlyEnforceRange analog). 0 delta is a no-op.
+/// V6 focus target — the VIRTUAL next (base + delta), idle or mid-flight.
+/// The reel spring (slice_reel) keeps position and momentum on retarget,
+/// so chained steps blend instead of restarting a curve — and the settle
+/// lands frac 0 EXACTLY (focus-pos == delta-base). Targeting live+signum
+/// mid-flight used to leave a permanent fractional residue that grew with
+/// every chained step (fractional widths, thin laterals, nonzero travel).
 /// `base` is the VIRTUAL (unwrapped) focused index: the traveling focus
 /// lives on an infinite line so chaining across the ring seam keeps
 /// frac bounded (the infinite carousel never breaks).
@@ -458,12 +458,7 @@ pub fn focus_target(current: f32, base: i32, delta: isize) -> f32 {
     if delta == 0 {
         return current;
     }
-    let idle = (current - base as f32).abs() < 0.001;
-    if idle {
-        base as f32 + delta as f32
-    } else {
-        current + delta.signum() as f32
-    }
+    base as f32 + delta as f32
 }
 
 /// One committed focus-flow step: the next VIRTUAL focus (unwrapped — the
@@ -1725,13 +1720,16 @@ mod tests {
     }
 
     #[test]
-    fn focus_target_midflight_chains_one_step() {
-        // Mid-flight retarget: ±1 from the LIVE value (chained glide).
-        assert!((focus_target(2.4, 2, 1) - 3.4).abs() < 0.001);
-        assert!((focus_target(2.4, 2, -1) - 1.4).abs() < 0.001);
-        // Distant click mid-flight still chains a single step (V5 parity).
-        assert!((focus_target(2.4, 2, 3) - 3.4).abs() < 0.001);
-        assert!((focus_target(2.4, 2, -3) - 1.4).abs() < 0.001);
+    fn focus_target_midflight_retargets_virtual_next_exact() {
+        // Mid-flight retarget: the VIRTUAL next (base + delta), never
+        // live+signum — the spring keeps momentum, and the settle lands
+        // frac 0 exactly instead of banking a permanent residue.
+        assert!((focus_target(2.4, 2, 1) - 3.0).abs() < 0.001);
+        assert!((focus_target(2.4, 2, -1) - 1.0).abs() < 0.001);
+        // Distant click mid-flight glides the full distance (V6: the
+        // spring blends it; no step is dropped, no residue is kept).
+        assert!((focus_target(2.4, 2, 3) - 5.0).abs() < 0.001);
+        assert!((focus_target(2.4, 2, -3) - (-1.0)).abs() < 0.001);
     }
 
     #[test]
@@ -1742,7 +1740,7 @@ mod tests {
     #[test]
     fn focus_target_negative_live_value_chains_backward() {
         // prev chain from a fractional live position below the base.
-        assert!((focus_target(1.6, 2, -1) - 0.6).abs() < 0.001, "live 1.6 (mid-flight toward 2) + prev → 0.6");
+        assert!((focus_target(1.6, 2, -1) - 1.0).abs() < 0.001, "live 1.6 mid-flight + prev → virtual next 1.0");
     }
 
     #[test]
@@ -1753,12 +1751,12 @@ mod tests {
         // matter how many cards pass.
         let step = focus_step(11, 11.4, 1);
         assert_eq!(step.virtual_next, 12, "virtual focus crosses the seam unwrapped");
-        assert!((step.target - 12.4).abs() < 0.001);
+        assert!((step.target - 12.0).abs() < 0.001, "mid-flight retarget is the virtual next, frac 0 at settle");
         assert!((step.target - step.virtual_next as f32).abs() <= 1.0, "frac bounded after wrap");
         // prev across zero: real 0 → 11, virtual 0 → −1.
         let back = focus_step(0, -0.4, -1);
         assert_eq!(back.virtual_next, -1);
-        assert!((back.target - (-1.4)).abs() < 0.001);
+        assert!((back.target - (-1.0)).abs() < 0.001);
         assert!((back.target - back.virtual_next as f32).abs() <= 1.0);
         // long chains accumulate on the virtual line without breaking.
         let mut v = 0i32;
@@ -1767,9 +1765,57 @@ mod tests {
             let s = focus_step(v, pos, 1);
             v = s.virtual_next;
             pos = s.target;
-            assert!((pos - v as f32).abs() <= 1.0, "frac drifted past ±1 at virtual {v}");
+            assert!((pos - v as f32).abs() < 0.001, "frac must stay exactly 0 at virtual {v}");
         }
         assert_eq!(v, 50);
+    }
+
+    #[test]
+    fn chained_midflight_steps_settle_with_zero_frac_no_drift() {
+        // Carousel drift repro: 20 rapid +1 steps where every new step
+        // lands mid-flight (the displayed position only covered 40% of
+        // the glide when the next input commits — production wheel/key
+        // chaining). The settled wall must be EXACT (frac 0, focus-pos ==
+        // delta-base): otherwise widths (135/924) stay fractional and the
+        // travel-driven nudge/skew never zero — laterals go thin forever.
+        let mut v = 0i32;
+        let mut pos = 0.0f32;
+        let mut target = 0.0f32;
+        for _ in 0..20 {
+            let s = focus_step(v, pos, 1);
+            v = s.virtual_next;
+            target = s.target;
+            pos += (target - pos) * 0.4; // input arrives mid-glide
+        }
+        pos = target; // reel settles exactly on target (slice_reel::value)
+        let frac = pos - v as f32;
+        assert!(frac.abs() < 0.001, "20 chained +1 must settle frac 0, got {frac} (virtual {v})");
+        assert!((slot_width(-frac) - SLICE_EXPANDED_WIDTH).abs() < 0.01, "focused must be 924 settled");
+        assert!((slot_width(1.0 - frac) - SLICE_COLLAPSED_WIDTH).abs() < 0.01, "neighbor must be 135 settled");
+        // Same contract backward: 20 chained −1 return to the origin exact.
+        for _ in 0..20 {
+            let s = focus_step(v, pos, -1);
+            v = s.virtual_next;
+            target = s.target;
+            pos += (target - pos) * 0.4;
+        }
+        pos = target;
+        let frac = pos - v as f32;
+        assert!(frac.abs() < 0.001, "20 chained −1 must settle frac 0, got {frac} (virtual {v})");
+        assert_eq!(v, 0);
+    }
+
+    #[test]
+    fn tile_count_stable_under_one_px_stage_rounding() {
+        // Slint stage.width (logical length) vs Rust physical/scale can
+        // differ ~1px — the visible tile count must not flip on that.
+        for w in [1092.0f32, 1280.0, 1920.0] {
+            let base = slice_delta_tiles(12, 6, w).len();
+            for dw in [-1.0f32, -0.5, 0.5, 1.0] {
+                let n = slice_delta_tiles(12, 6, w + dw).len();
+                assert_eq!(n, base, "tile count must survive ±1px rounding at stage {w}");
+            }
+        }
     }
 
     // ── V3 directional fluid animation — superseded by V6 focus-flow

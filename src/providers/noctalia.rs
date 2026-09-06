@@ -150,6 +150,47 @@ fn is_dark_hex(hex: &str) -> bool {
     (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) < 128.0
 }
 
+// ── Wallpaper module policy (skwd-paper owns the fondo) ─────────────────
+// This setup renders the desktop background with skwd-wall (skwd-paper
+// layer). Noctalia's own wallpaper module renders a translucent layer OVER
+// it, and the compositor blurs what's behind translucent surfaces — the
+// "blurred fondo" seen during the theme interlude. Themes are snapshots of
+// whatever wallpaper state was live when they were saved, so apply() forces
+// the module off in the copied settings.json instead of trusting the
+// snapshot, and post_apply() skips the wallpaper IPC when the module is off.
+
+/// Force `wallpaper.enabled = false` in a Noctalia settings.json payload.
+/// Everything else is preserved byte-for-key; malformed JSON is returned
+/// unchanged (never corrupt the live config).
+fn force_noctalia_wallpaper_off(raw: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return raw.to_string();
+    };
+    let Some(obj) = v.as_object_mut() else {
+        return raw.to_string();
+    };
+    let wp = obj
+        .entry("wallpaper")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(wp_obj) = wp.as_object_mut() {
+        wp_obj.insert("enabled".into(), serde_json::Value::Bool(false));
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| raw.to_string())
+}
+
+/// Whether Noctalia's wallpaper module is enabled in the live settings.json
+/// under `config_dir`. Unreadable or malformed file → `true` (conservative:
+/// keeps the legacy IPC behavior instead of guessing off).
+fn noctalia_wallpaper_module_enabled(config_dir: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(config_dir.join("settings.json")) else {
+        return true;
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("wallpaper")?.get("enabled")?.as_bool())
+        .unwrap_or(true)
+}
+
 /// Generate a `terminal` section for a Noctalia predefined scheme from M3 core colors.
 ///
 /// Returns a `serde_json::Value::Object` with keys:
@@ -334,8 +375,18 @@ impl ThemeProvider for NoctaliaV4Provider {
             if src_path.exists() {
                 let dst_path = dst.join(file);
                 let tmp = dst_path.with_extension("json.noctalia-tmp");
-                fs::copy(&src_path, &tmp)
-                    .map_err(|e| format!("Cannot copy {}: {}", file, e))?;
+                if file == "settings.json" {
+                    // skwd-paper owns the fondo — force the Noctalia wallpaper
+                    // module off no matter what the theme snapshot carried
+                    // (see the wallpaper module policy note above).
+                    let raw = fs::read_to_string(&src_path)
+                        .map_err(|e| format!("Cannot read {}: {}", file, e))?;
+                    fs::write(&tmp, force_noctalia_wallpaper_off(&raw))
+                        .map_err(|e| format!("Cannot write {}: {}", file, e))?;
+                } else {
+                    fs::copy(&src_path, &tmp)
+                        .map_err(|e| format!("Cannot copy {}: {}", file, e))?;
+                }
                 fs::rename(&tmp, &dst_path)
                     .map_err(|e| format!("Cannot rename {}: {}", file, e))?;
             }
@@ -379,18 +430,33 @@ impl ThemeProvider for NoctaliaV4Provider {
         //   - Set named screens individually
         //   - Only use the empty-string entry if there are NO named screens
         let entries = self.wallpaper_pending.lock().unwrap().clone();
+        let wallpaper_module_on = self
+            .shell
+            .config_dir()
+            .map(|d| noctalia_wallpaper_module_enabled(&d))
+            .unwrap_or(true);
         if !entries.is_empty() {
-            tracing::info!("[noctalia] Applying wallpapers via IPC...");
-            let has_named = entries.iter().any(|(s, _)| !s.is_empty());
-            for (screen, path) in &entries {
-                if has_named && screen.is_empty() {
-                    tracing::debug!("[noctalia] Skipping empty-screen entry (named screens present)");
-                    continue;
+            if wallpaper_module_on {
+                tracing::info!("[noctalia] Applying wallpapers via IPC...");
+                let has_named = entries.iter().any(|(s, _)| !s.is_empty());
+                for (screen, path) in &entries {
+                    if has_named && screen.is_empty() {
+                        tracing::debug!("[noctalia] Skipping empty-screen entry (named screens present)");
+                        continue;
+                    }
+                    tracing::debug!("[noctalia] IPC apply: screen='{}' path='{}'", screen, path);
+                    if let Err(e) = self.shell.apply_wallpaper(Path::new(path), screen) {
+                        tracing::warn!("[noctalia] Wallpaper IPC for '{}': {}", screen, e);
+                    }
                 }
-                tracing::debug!("[noctalia] IPC apply: screen='{}' path='{}'", screen, path);
-                if let Err(e) = self.shell.apply_wallpaper(Path::new(path), screen) {
-                    tracing::warn!("[noctalia] Wallpaper IPC for '{}': {}", screen, e);
-                }
+            } else {
+                // skwd-paper owns the fondo — the wallpaper IPC would persist
+                // a path into Noctalia's settings and re-summon its wallpaper
+                // layer over skwd-paper (the blurred-fondo regression).
+                tracing::info!(
+                    "[noctalia] wallpaper module disabled — skipping {} IPC wallpaper applies",
+                    entries.len()
+                );
             }
         }
 
@@ -928,6 +994,45 @@ mod tests {
         let path = path.unwrap();
         assert!(path.ends_with("JokerTheme.json"));
         assert!(path.to_string_lossy().contains("palettes"));
+    }
+
+    // ── Wallpaper module policy (skwd-paper owns the fondo) ─────────────
+
+    #[test]
+    fn settings_patch_forces_wallpaper_module_off_and_keeps_the_rest() {
+        let raw = r#"{"bar":{"position":"top"},"wallpaper":{"enabled":true,"directory":"/x","favorites":[1,2]}}"#;
+        let v: serde_json::Value = serde_json::from_str(&force_noctalia_wallpaper_off(raw)).unwrap();
+        assert_eq!(v["wallpaper"]["enabled"], false, "module must be forced off");
+        assert_eq!(v["wallpaper"]["directory"], "/x", "sibling keys preserved");
+        assert_eq!(v["wallpaper"]["favorites"], serde_json::json!([1, 2]));
+        assert_eq!(v["bar"]["position"], "top", "other sections preserved");
+    }
+
+    #[test]
+    fn settings_patch_creates_wallpaper_object_when_missing() {
+        let v: serde_json::Value =
+            serde_json::from_str(&force_noctalia_wallpaper_off(r#"{"a":1}"#)).unwrap();
+        assert_eq!(v["wallpaper"]["enabled"], false, "missing object is created off");
+        assert_eq!(v["a"], 1);
+    }
+
+    #[test]
+    fn settings_patch_never_corrupts_malformed_json() {
+        assert_eq!(force_noctalia_wallpaper_off("not json"), "not json");
+        assert_eq!(force_noctalia_wallpaper_off(""), "");
+    }
+
+    #[test]
+    fn wallpaper_module_enabled_reads_live_settings_conservatively() {
+        let dir = TempDir::new().unwrap();
+        // No settings.json → unreadable → true (legacy IPC behavior kept).
+        assert!(noctalia_wallpaper_module_enabled(dir.path()), "missing file must default to enabled");
+        std::fs::write(dir.path().join("settings.json"), r#"{"wallpaper":{"enabled":false}}"#).unwrap();
+        assert!(!noctalia_wallpaper_module_enabled(dir.path()), "explicit false must be honored");
+        std::fs::write(dir.path().join("settings.json"), r#"{"wallpaper":{"enabled":true}}"#).unwrap();
+        assert!(noctalia_wallpaper_module_enabled(dir.path()));
+        std::fs::write(dir.path().join("settings.json"), "garbage").unwrap();
+        assert!(noctalia_wallpaper_module_enabled(dir.path()), "malformed file must default to enabled");
     }
 
     #[test]
