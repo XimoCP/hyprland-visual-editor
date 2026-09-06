@@ -1825,6 +1825,59 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         }
         {
+            // Keyboard R11 v2 (Settings): save-list arrows own ONE focused
+            // index (Rust-side, so search filters and delete focus shifts
+            // stay consistent) and Tab/Shift+Tab cycle panel sections.
+            let win = window.as_weak();
+            window.on_panel_save_nav(move |delta| {
+                let Some(w) = win.upgrade() else { return; };
+                use slint::Model as _;
+                // PanelRoot reads root.theme-names (panel-save-theme-names is
+                // a shell binding), so the list length comes from there.
+                let len = w.get_theme_names().row_count();
+                w.set_panel_save_focused_index(callbacks::save_nav_step(
+                    w.get_panel_save_focused_index(),
+                    delta,
+                    len,
+                ));
+            });
+        }
+        {
+            // Click a theme card → the row takes keyboard focus, so arrows
+            // continue from where the mouse left off (keyboard == mouse, D8).
+            let win = window.as_weak();
+            window.on_panel_save_focus_requested(move |idx| {
+                let Some(w) = win.upgrade() else { return; };
+                w.set_panel_save_focused_index(idx);
+            });
+        }
+        {
+            // Tab at the last group of a section → next section; Shift+Tab
+            // at the first group → previous section. Reuses the exact
+            // section-switch path (mutating guard included) via invoke.
+            let win = window.as_weak();
+            window.on_panel_tab_next(move || {
+                let Some(w) = win.upgrade() else { return; };
+                // 5 sections today: Save, Borders, Motion, Filters, System.
+                w.invoke_panel_section_selected(callbacks::panel_next_section(
+                    w.get_panel_section(),
+                    1,
+                    5,
+                ));
+            });
+        }
+        {
+            let win = window.as_weak();
+            window.on_panel_tab_prev(move || {
+                let Some(w) = win.upgrade() else { return; };
+                w.invoke_panel_section_selected(callbacks::panel_next_section(
+                    w.get_panel_section(),
+                    -1,
+                    5,
+                ));
+            });
+        }
+        {
             let shell_c = shell.clone();
             let win = window.as_weak();
             window.on_panel_back(move || {

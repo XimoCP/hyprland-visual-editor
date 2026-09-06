@@ -23,6 +23,8 @@ export component FiltersSection inherits Rectangle {
     in property <int> active-index: -1;
     callback apply-shader(int, string);
     callback back();
+    callback tab-next();
+    callback tab-prev();
 
     background: transparent;
     clip: true;
@@ -35,7 +37,9 @@ export component FiltersSection inherits Rectangle {
         key-pressed(event) => {
             if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Tab) {
-                return reject;
+                // R11 v2: single group — Tab/Shift+Tab move between sections.
+                if (event.modifiers.shift) { root.tab-prev(); } else { root.tab-next(); }
+                return accept;
             }
             if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
                 if (root.shader-files.length > 0) {

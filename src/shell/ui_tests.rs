@@ -207,6 +207,46 @@ fn main_window_exposes_navigation_callbacks() {
     assert_eq!(*moves.borrow(), vec!["down", "up"], "nav-move reports arrow direction");
 }
 
+#[test]
+fn panel_keyboard_nav_callbacks_exposed() {
+    // Keyboard R11 v2 (Settings): save-list arrows + click-focus converge on
+    // one Rust-owned focused index, and Tab/Shift+Tab cycle panel sections.
+    // The window must expose the whole callback surface.
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+
+    let navs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let focuses = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let tabs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+
+    win.on_panel_save_nav({
+        let navs = navs.clone();
+        move |delta| navs.borrow_mut().push(delta)
+    });
+    win.on_panel_save_focus_requested({
+        let focuses = focuses.clone();
+        move |idx| focuses.borrow_mut().push(idx)
+    });
+    win.on_panel_tab_next({
+        let tabs = tabs.clone();
+        move || tabs.borrow_mut().push(1)
+    });
+    win.on_panel_tab_prev({
+        let tabs = tabs.clone();
+        move || tabs.borrow_mut().push(-1)
+    });
+
+    win.invoke_panel_save_nav(1);
+    win.invoke_panel_save_nav(-1);
+    win.invoke_panel_save_focus_requested(2);
+    win.invoke_panel_tab_next();
+    win.invoke_panel_tab_prev();
+
+    assert_eq!(*navs.borrow(), vec![1, -1], "save-nav reports arrow deltas");
+    assert_eq!(*focuses.borrow(), vec![2], "click focus converges on the row index");
+    assert_eq!(*tabs.borrow(), vec![1, -1], "Tab next / Shift+Tab prev both fire");
+}
+
 // ── V6 focus-flow visual verification (headless render) ────────────────
 // Renders the Slice wall at a settled focus position and mid-glide
 // (frac 0.5) with real baked parallelogram images, and saves PNGs under
@@ -826,6 +866,119 @@ fn save_dialogs_render_list_delete_and_rename() {
     let diff_list_rename = count_buffer_diff(&list, &rename);
     assert!(diff_list_delete > 300, "delete dialog must overlay the list — got {diff_list_delete}");
     assert!(diff_list_rename > 300, "rename dialog must overlay the list — got {diff_list_rename}");
+}
+
+// ── Keyboard R11 v2 (Settings) visual + wiring verification ────────────
+// The Save list is the section's primary keyboard group: arrows move ONE
+// Rust-owned focused index, Enter applies it, Tab/Shift+Tab cycle sections,
+// Esc closes. This drives the REAL production step logic (save_nav_step)
+// through the window callbacks and renders the focused row for review.
+#[test]
+fn save_list_keyboard_focus_navs_and_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+        SharedString::from("Gamma"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-01-01"),
+        SharedString::from("2026-02-02"),
+        SharedString::from("2026-03-03"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false, false, true])));
+
+    // Production-equivalent wiring (same logic main() registers).
+    let w = win.as_weak();
+    win.on_panel_save_nav(move |delta| {
+        let Some(w) = w.upgrade() else { return; };
+        use slint::Model as _;
+        let len = w.get_theme_names().row_count();
+        w.set_panel_save_focused_index(crate::callbacks::save_nav_step(
+            w.get_panel_save_focused_index(),
+            delta,
+            len,
+        ));
+    });
+    let sections = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    win.on_panel_section_selected({
+        let sections = sections.clone();
+        let w = win.as_weak();
+        move |s| {
+            sections.borrow_mut().push(s);
+            // Production keeps root.panel-section in sync (Shell::set_panel_section);
+            // mirror that so the Tab cycle reads the current section.
+            if let Some(w) = w.upgrade() {
+                w.set_panel_section(s);
+            }
+        }
+    });
+    let w = win.as_weak();
+    win.on_panel_tab_next(move || {
+        let Some(w) = w.upgrade() else { return; };
+        w.invoke_panel_section_selected(crate::callbacks::panel_next_section(
+            w.get_panel_section(),
+            1,
+            5,
+        ));
+    });
+    let w = win.as_weak();
+    win.on_panel_tab_prev(move || {
+        let Some(w) = w.upgrade() else { return; };
+        w.invoke_panel_section_selected(crate::callbacks::panel_next_section(
+            w.get_panel_section(),
+            -1,
+            5,
+        ));
+    });
+
+    // Arrow walk: -1 (start) → 1 → 2 → clamp at 2 (Gamma is last).
+    win.invoke_panel_save_nav(1);
+    assert_eq!(win.get_panel_save_focused_index(), 0, "first step lands on row 0");
+    win.invoke_panel_save_nav(1);
+    assert_eq!(win.get_panel_save_focused_index(), 1, "second step reaches Beta");
+    win.invoke_panel_save_nav(1);
+    win.invoke_panel_save_nav(1);
+    assert_eq!(win.get_panel_save_focused_index(), 2, "clamped at last row");
+    win.invoke_panel_save_nav(-1);
+    assert_eq!(win.get_panel_save_focused_index(), 1, "backward step returns to Beta");
+
+    // Focused row renders with its keyboard highlight for human review.
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let shot = win.window().take_snapshot().expect("save focus snapshot");
+    save_slice_png(shot, "/tmp/opencode/save_focus_row.png");
+
+    // Tab cycles sections through the same path PanelMenu uses.
+    win.invoke_panel_tab_next();
+    assert_eq!(*sections.borrow(), vec![1], "Tab → next section (Borders)");
+    win.invoke_panel_tab_next();
+    win.invoke_panel_tab_next();
+    win.invoke_panel_tab_next();
+    win.invoke_panel_tab_next();
+    assert_eq!(*sections.borrow(), vec![1, 2, 3, 4, 0], "Tab wraps back to Save");
+    win.invoke_panel_tab_prev();
+    assert_eq!(*sections.borrow(), vec![1, 2, 3, 4, 0, 4], "Shift+Tab wraps to System");
 }
 
 #[test]

@@ -38,7 +38,9 @@ export component SavedThemeCard inherits Rectangle {
     border-radius: 10px;
     background: is-active ? HveColors.bg-hover : (is-hovered || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
     border-width: is-active ? 3px : (keyboard-focused ? 1.5px : 1px);
-    border-color: (is-active && keyboard-focused) ? HveColors.text : (is-active ? accent : ((is-hovered || keyboard-focused) ? (keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border));
+    // Keyboard focus uses the R11 icy-cyan so it never blends with the
+    // pink active-theme mark; hover keeps the soft accent tint.
+    border-color: (is-active && keyboard-focused) ? HveColors.text : (is-active ? accent : (keyboard-focused ? #8fd8ff : (is-hovered ? accent.transparentize(0.6) : HveColors.border)));
     visible: true;
 
     // 1. Background layer for the card TouchArea (hover events)

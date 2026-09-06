@@ -24,6 +24,8 @@ export component BordersSection inherits Rectangle {
     in property <int> active-index: -1;
     callback apply-border(int, string);
     callback back();
+    callback tab-next();
+    callback tab-prev();
 
     // Tune layer — 4 geometry values (in-out so Rust snap can write them)
     in-out property <int> geom-size: 2;
@@ -68,15 +70,18 @@ export component BordersSection inherits Rectangle {
         }
     }
 
-    // Focus scope for pick — arrows navigate cards, Enter/Space activates,
-    // Tab rejected so it bubbles (pick→tune, no trap). Esc always closes panel.
+    // Focus scope for pick — arrows navigate cards, Enter/Space activates.
+    // Keyboard R11 v2 Tab contract: Tab moves to the NEXT GROUP explicitly
+    // (first tune slider), Shift+Tab leaves to the previous section; the
+    // last tune scope hands Tab to tab-next — no traps, deterministic order.
     fs := FocusScope {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
             if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Tab) {
-                return reject;
+                if (event.modifiers.shift) { root.tab-prev(); } else { size-fs.focus(); }
+                return accept;
             }
             if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
                 if (root.border-files.length > 0) {
@@ -218,7 +223,10 @@ export component BordersSection inherits Rectangle {
                     size-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { fs.focus() } else { radius-fs.focus() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-size + 1, 5);
                                 if (next != root.geom-size) {
@@ -271,7 +279,10 @@ export component BordersSection inherits Rectangle {
                     radius-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { size-fs.focus() } else { gap-in-fs.focus() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-radius + 1, 100);
                                 if (next != root.geom-radius) {
@@ -324,7 +335,10 @@ export component BordersSection inherits Rectangle {
                     gap-in-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { radius-fs.focus() } else { gap-out-fs.focus() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-gap-in + 1, 30);
                                 if (next != root.geom-gap-in) {
@@ -377,7 +391,10 @@ export component BordersSection inherits Rectangle {
                     gap-out-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { gap-in-fs.focus() } else { root.tab-next() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.geom-gap-out + 1, 30);
                                 if (next != root.geom-gap-out) {

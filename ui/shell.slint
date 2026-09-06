@@ -203,6 +203,10 @@ export component ShellRoot inherits Rectangle {
     callback panel-refresh-saved-theme();
     callback panel-overwrite-saved-theme(string);
     callback panel-save-search-changed(string);
+    callback panel-save-nav(int);
+    callback panel-save-focus-requested(int);
+    callback panel-tab-next();
+    callback panel-tab-prev();
     callback panel-apply-border(int, string);
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
@@ -513,6 +517,10 @@ export component ShellRoot inherits Rectangle {
                     docs-label: root.panel-docs-label;
                     back => { root.panel-back(); }
                     section-selected(section) => { root.panel-section-selected(section); }
+                    save-nav(d) => { root.panel-save-nav(d); }
+                    save-focus-requested(idx) => { root.panel-save-focus-requested(idx); }
+                    tab-next => { root.panel-tab-next(); }
+                    tab-prev => { root.panel-tab-prev(); }
                     save-theme(name) => { root.panel-save-theme(name); }
                     apply-saved-theme(idx) => { root.panel-apply-saved-theme(idx); }
                     rename-saved-theme(old, new) => { root.panel-rename-saved-theme(old, new); }

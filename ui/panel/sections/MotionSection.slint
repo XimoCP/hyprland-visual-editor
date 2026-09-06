@@ -65,6 +65,8 @@ export component MotionSection inherits Rectangle {
     in property <int> active-index: -1;
     callback apply-animation(int, string);
     callback back();
+    callback tab-next();
+    callback tab-prev();
 
     // Tune layer — 4 bezier values (in-out so Rust snap can write them if needed)
     in-out property <float> bezier-a: 0.25;
@@ -83,7 +85,10 @@ export component MotionSection inherits Rectangle {
         key-pressed(event) => {
             if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Tab) {
-                return reject;
+                // R11 v2: list is the first group — Tab enters the bezier
+                // sliders, Shift+Tab leaves to the previous section.
+                if (event.modifiers.shift) { root.tab-prev(); } else { a-fs.focus(); }
+                return accept;
             }
             if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
                 if (root.anim-files.length > 0) {
@@ -189,7 +194,10 @@ export component MotionSection inherits Rectangle {
                     a-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { fs.focus() } else { b-fs.focus() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.bezier-a + 0.05, 1.0);
                                 if (next != root.bezier-a) { root.bezier-a = next; }
@@ -218,7 +226,10 @@ export component MotionSection inherits Rectangle {
                     b-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { a-fs.focus() } else { c-fs.focus() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.bezier-b + 0.05, 2.0);
                                 if (next != root.bezier-b) { root.bezier-b = next; }
@@ -247,7 +258,10 @@ export component MotionSection inherits Rectangle {
                     c-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { b-fs.focus() } else { d-fs.focus() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.bezier-c + 0.05, 1.0);
                                 if (next != root.bezier-c) { root.bezier-c = next; }
@@ -276,7 +290,10 @@ export component MotionSection inherits Rectangle {
                     d-fs := FocusScope {
                         key-pressed(event) => {
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) { return reject; }
+                            if (event.text == Key.Tab) {
+                if (event.modifiers.shift) { c-fs.focus() } else { root.tab-next() }
+                return accept;
+            }
                             if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                                 let next = min(root.bezier-d + 0.05, 2.0);
                                 if (next != root.bezier-d) { root.bezier-d = next; }

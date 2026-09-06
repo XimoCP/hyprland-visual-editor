@@ -64,6 +64,8 @@ export component SystemSection inherits Rectangle {
     callback restart-app();
     callback open-docs();
     callback back();
+    callback tab-next();
+    callback tab-prev();
 
     property <int> focused-row: 0;
     property <int> row-count: 11;
@@ -80,7 +82,11 @@ export component SystemSection inherits Rectangle {
         height: 100%;
         key-pressed(event) => {
             if (event.text == Key.Escape) { root.back(); return accept; }
-            if (event.text == Key.Tab) { return reject; }
+            if (event.text == Key.Tab) {
+                // R11 v2: single group — Tab/Shift+Tab move between sections.
+                if (event.modifiers.shift) { root.tab-prev(); } else { root.tab-next(); }
+                return accept;
+            }
             if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
                 root.focused-row = min(root.focused-row + 1, root.row-count - 1);
                 return accept;

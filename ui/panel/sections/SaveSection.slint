@@ -109,9 +109,17 @@ export component SaveSection inherits Rectangle {
     callback overwrite-theme(string);
     callback search-query-changed(string);
     callback focus-requested(int);
+    callback save-nav(int);
+    callback tab-next();
+    callback tab-prev();
     callback back();
 
     background: transparent;
+
+    // Keyboard R11 v2: focus lands on the theme list when the section opens,
+    // so arrows work immediately (list is the primary group; the name input
+    // and buttons stay reachable via framework Tab from there).
+    init => { list-fs.focus(); }
 
     // Esc must always close panel — even when LineEdit has focus (LineEdit may eat Esc)
     escape-fs := FocusScope {
@@ -240,7 +248,7 @@ export component SaveSection inherits Rectangle {
         }
 
         Text {
-            text: "Tip: Enter saves • Esc returns to Gallery • Tab navigates";
+            text: "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section";
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-12;
             color: HveColors.text-muted.transparentize(0.4);
@@ -277,58 +285,93 @@ export component SaveSection inherits Rectangle {
             }
         }
 
-        // ── Empty state (classic ◈) ──
-        if (root.saved-names.length == 0) : Rectangle {
-            height: 120px;
-
-            VerticalLayout {
-                spacing: 8px;
-                alignment: center;
-
-                Text {
-                    text: "◈";
-                    color: HveColors.text-muted;
-                    font-size: 32px;
-                    horizontal-alignment: center;
-                }
-
-                Text {
-                    text: root.empty-text;
-                    color: HveColors.text-muted;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                }
-            }
-        }
-
         // ── Theme cards (classic SavedThemeCard rows) ──
-        for name[i] in root.saved-names : SavedThemeCard {
-            theme-name: name;
-            theme-saved-at: root.saved-ats[i];
-            is-active: root.saved-actives[i];
-            keyboard-focused: root.focused-index == i;
-            accent: HveColors.accent-pink;
-            apply-text: root.apply-text;
-            refresh-text: root.refresh-text;
-            rename-text: root.rename-text;
-            delete-text: root.delete-text;
-            index: i;
-            apply-theme(theme-name) => { root.apply-saved-theme(i); }
-            open-rename(theme-name) => {
-                root.rename-input = theme-name;
-                root.dialog-target = theme-name;
-                root.dialog-mode = "rename";
+        // Keyboard R11 v2: this list is the section's primary group. Arrows
+        // move focus (Rust owns the index so search filters stay consistent),
+        // Enter/Space applies the focused theme, Esc closes dialog or panel,
+        // Tab/Shift+Tab leave the section (next/previous). The ◈ empty state
+        // lives inside the scope so focus has somewhere to land either way.
+        list-fs := FocusScope {
+            vertical-stretch: 1;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    if (root.dialog-mode != "") { root.dialog-mode = ""; } else { root.back(); }
+                    return accept;
+                }
+                if (root.dialog-mode != "") { return reject; }
+                if (event.text == Key.DownArrow) { root.save-nav(1); return accept; }
+                if (event.text == Key.UpArrow) { root.save-nav(-1); return accept; }
+                if (event.text == Key.Return || event.text == Key.Space) {
+                    if (root.focused-index >= 0 && root.focused-index < root.saved-names.length) {
+                        root.apply-saved-theme(root.focused-index);
+                    }
+                    return accept;
+                }
+                if (event.text == Key.Tab) {
+                    if (event.modifiers.shift) { root.tab-prev(); } else { root.tab-next(); }
+                    return accept;
+                }
+                return reject;
             }
-            open-delete(theme-name) => {
-                root.dialog-target = theme-name;
-                root.dialog-mode = "delete";
+
+            // FocusScope does not arrange children — the VerticalLayout does.
+            VerticalLayout {
+                width: 100%;
+                height: 100%;
+                spacing: SkwdTokens.spacing-12;
+
+                if (root.saved-names.length == 0) : Rectangle {
+                height: 120px;
+
+                VerticalLayout {
+                    spacing: 8px;
+                    alignment: center;
+
+                    Text {
+                        text: "◈";
+                        color: HveColors.text-muted;
+                        font-size: 32px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: root.empty-text;
+                        color: HveColors.text-muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
             }
-            open-refresh(theme-name) => {
-                root.dialog-target = theme-name;
-                root.dialog-mode = "refresh";
+
+            for name[i] in root.saved-names : SavedThemeCard {
+                theme-name: name;
+                theme-saved-at: root.saved-ats[i];
+                is-active: root.saved-actives[i];
+                keyboard-focused: root.focused-index == i;
+                accent: HveColors.accent-pink;
+                apply-text: root.apply-text;
+                refresh-text: root.refresh-text;
+                rename-text: root.rename-text;
+                delete-text: root.delete-text;
+                index: i;
+                apply-theme(theme-name) => { root.apply-saved-theme(i); }
+                open-rename(theme-name) => {
+                    root.rename-input = theme-name;
+                    root.dialog-target = theme-name;
+                    root.dialog-mode = "rename";
+                }
+                open-delete(theme-name) => {
+                    root.dialog-target = theme-name;
+                    root.dialog-mode = "delete";
+                }
+                open-refresh(theme-name) => {
+                    root.dialog-target = theme-name;
+                    root.dialog-mode = "refresh";
+                }
+                focus-requested(idx) => { root.focus-requested(idx); }
             }
-            focus-requested(idx) => { root.focus-requested(idx); }
+            }
         }
         }
     }

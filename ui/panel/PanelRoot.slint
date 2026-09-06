@@ -109,6 +109,10 @@ export component PanelRoot inherits Rectangle {
     in property <string> docs-label: "View documentation";
     callback back();
     callback section-selected(int);
+    callback save-nav(int);
+    callback save-focus-requested(int);
+    callback tab-next();
+    callback tab-prev();
     callback save-theme(string);
     callback apply-saved-theme(int);
     callback rename-saved-theme(string, string);
@@ -229,6 +233,10 @@ export component PanelRoot inherits Rectangle {
                     refresh-theme() => { root.refresh-saved-theme(); }
                     overwrite-theme(name) => { root.overwrite-saved-theme(name); }
                     search-query-changed(q) => { root.save-search-changed(q); }
+                    save-nav(d) => { root.save-nav(d); }
+                    focus-requested(idx) => { root.save-focus-requested(idx); }
+                    tab-next => { root.tab-next(); }
+                    tab-prev => { root.tab-prev(); }
                     back => { root.back(); }
                 }
                 if root.section == 1 : BordersSection {
@@ -245,6 +253,8 @@ export component PanelRoot inherits Rectangle {
                     geom-gap-out <=> root.gap-out;
                     apply-border(idx, file) => { root.apply-border(idx, file); }
                     apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
+                    tab-next => { root.tab-next(); }
+                    tab-prev => { root.tab-prev(); }
                     back => { root.back(); }
                 }
                 if root.section == 2 : MotionSection {
@@ -260,6 +270,8 @@ export component PanelRoot inherits Rectangle {
                     bezier-c <=> root.bezier-c;
                     bezier-d <=> root.bezier-d;
                     apply-animation(idx, file) => { root.apply-animation(idx, file); }
+                    tab-next => { root.tab-next(); }
+                    tab-prev => { root.tab-prev(); }
                     back => { root.back(); }
                 }
                 if root.section == 3 : FiltersSection {
@@ -271,13 +283,17 @@ export component PanelRoot inherits Rectangle {
                     shader-files: root.shader-files;
                     active-index: root.shader-active-index;
                     apply-shader(idx, file) => { root.apply-shader(idx, file); }
+                    tab-next => { root.tab-next(); }
+                    tab-prev => { root.tab-prev(); }
                     back => { root.back(); }
                 }
                 if root.section == 4 : SystemSection {
                     width: 100%;
-                    height: 100%;
-                    back => { root.back(); }
-                    system-active: root.system-active;
+                     height: 100%;
+                     back => { root.back(); }
+                     tab-next => { root.tab-next(); }
+                     tab-prev => { root.tab-prev(); }
+                     system-active: root.system-active;
                     auto-minimize: root.auto-minimize;
                     minimize-seconds: root.minimize-seconds;
                     language: root.language;

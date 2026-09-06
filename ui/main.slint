@@ -223,6 +223,10 @@ export component MainWindow inherits Window {
     in-out property <float> bezier-d: 1.0;
     callback panel-back();
     callback panel-section-selected(int);
+    callback panel-save-nav(int);
+    callback panel-save-focus-requested(int);
+    callback panel-tab-next();
+    callback panel-tab-prev();
     callback panel-save-theme(string);
     callback panel-rename-saved-theme(string, string);
     callback panel-delete-saved-theme(string);
@@ -393,6 +397,10 @@ export component MainWindow inherits Window {
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
         panel-back => { root.panel-back(); }
         panel-section-selected(section) => { root.panel-section-selected(section); }
+        panel-save-nav(d) => { root.panel-save-nav(d); }
+        panel-save-focus-requested(idx) => { root.panel-save-focus-requested(idx); }
+        panel-tab-next => { root.panel-tab-next(); }
+        panel-tab-prev => { root.panel-tab-prev(); }
         panel-save-theme(name) => { root.panel-save-theme(name); }
         panel-rename-saved-theme(old, new) => { root.panel-rename-saved-theme(old, new); }
         panel-delete-saved-theme(name) => { root.panel-delete-saved-theme(name); }
