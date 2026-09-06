@@ -373,11 +373,15 @@ export component GeometrySlider inherits Rectangle {
     in property <int> max: 5;
     in property <string> label: "Border Thickness";
     in property <bool> engaged: false;
+    in property <bool> focused: false;
     callback changed(int);
 
     height: 80px;
     border-radius: 8px;
-    background: HveColors.bg-card;
+    // Card-like background: bg-card idle, bg-hover focused or engaged
+    // (same 200ms ease-in-out as PresetCard/SavedThemeCard).
+    background: root.engaged || root.focused ? HveColors.bg-hover : HveColors.bg-card;
+    animate background { duration: 200ms; easing: ease-in-out; }
     border-width: 1px;
     border-color: HveColors.border;
 

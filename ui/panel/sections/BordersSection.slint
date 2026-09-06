@@ -297,8 +297,8 @@ export component BordersSection inherits Rectangle {
                 // Size 1-5
                 size-wrap := Rectangle {
                     // Slider blocks expand like cards (same 250ms ease-in-out-back):
-                    // +10px on keyboard focus, +20px engaged (inside vs outside).
-                    height: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 100px : 90px) : 80px;
+                    // +16px on keyboard focus, +32px engaged — proportional to the taller slider block (inside vs outside).
+                    height: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -307,6 +307,7 @@ export component BordersSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 0;
+                        focused: root.focused-index == root.border-files.length && fs.has-focus;
                         label: "Border Thickness";
                         value: root.geom-size;
                         min: 1;
@@ -326,8 +327,8 @@ export component BordersSection inherits Rectangle {
                 // Radius 0-100
                 radius-wrap := Rectangle {
                     // Slider blocks expand like cards (same 250ms ease-in-out-back):
-                    // +10px on keyboard focus, +20px engaged (inside vs outside).
-                    height: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 100px : 90px) : 80px;
+                    // +16px on keyboard focus, +32px engaged — proportional to the taller slider block (inside vs outside).
+                    height: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -336,6 +337,7 @@ export component BordersSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 1;
+                        focused: root.focused-index == root.border-files.length + 1 && fs.has-focus;
                         label: "Corner Radius";
                         value: root.geom-radius;
                         min: 0;
@@ -355,8 +357,8 @@ export component BordersSection inherits Rectangle {
                 // Gap In 0-30
                 gap-in-wrap := Rectangle {
                     // Slider blocks expand like cards (same 250ms ease-in-out-back):
-                    // +10px on keyboard focus, +20px engaged (inside vs outside).
-                    height: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 100px : 90px) : 80px;
+                    // +16px on keyboard focus, +32px engaged — proportional to the taller slider block (inside vs outside).
+                    height: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -365,6 +367,7 @@ export component BordersSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 2;
+                        focused: root.focused-index == root.border-files.length + 2 && fs.has-focus;
                         label: "Inner Gap";
                         value: root.geom-gap-in;
                         min: 0;
@@ -384,8 +387,8 @@ export component BordersSection inherits Rectangle {
                 // Gap Out 0-30
                 gap-out-wrap := Rectangle {
                     // Slider blocks expand like cards (same 250ms ease-in-out-back):
-                    // +10px on keyboard focus, +20px engaged (inside vs outside).
-                    height: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 100px : 90px) : 80px;
+                    // +16px on keyboard focus, +32px engaged — proportional to the taller slider block (inside vs outside).
+                    height: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -394,6 +397,7 @@ export component BordersSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 3;
+                        focused: root.focused-index == root.border-files.length + 3 && fs.has-focus;
                         label: "Outer Gap";
                         value: root.geom-gap-out;
                         min: 0;

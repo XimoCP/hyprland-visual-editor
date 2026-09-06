@@ -23,10 +23,12 @@ component BezierSlider inherits Rectangle {
     in property <float> max: 1.0;
     in property <string> label: "";
     in property <bool> engaged: false;
+    in property <bool> focused: false;
     callback changed(float);
     height: 72px;
     border-radius: 8px;
-    background: HveColors.bg-card;
+    background: root.engaged || root.focused ? HveColors.bg-hover : HveColors.bg-card;
+    animate background { duration: 200ms; easing: ease-in-out; }
     border-width: 1px;
     border-color: HveColors.border.transparentize(0.7);
     VerticalLayout {
@@ -239,8 +241,8 @@ export component MotionSection inherits Rectangle {
 
                 // Bezier sliders a,b,c,d — arrow steps ±0.05 clamped, Tab no trap
                 a-wrap := Rectangle {
-                    // Same card-like expansion: +10px focused, +20px engaged.
-                    height: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 92px : 82px) : 72px;
+                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
+                    height: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -249,6 +251,7 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 0;
+                        focused: root.focused-index == root.anim-files.length && fs.has-focus;
                         label: "X1 — a";
                         value: root.bezier-a;
                         min: 0.0;
@@ -257,8 +260,8 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 b-wrap := Rectangle {
-                    // Same card-like expansion: +10px focused, +20px engaged.
-                    height: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 92px : 82px) : 72px;
+                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
+                    height: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -267,6 +270,7 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 1;
+                        focused: root.focused-index == root.anim-files.length + 1 && fs.has-focus;
                         label: "Y1 — b";
                         value: root.bezier-b;
                         min: -1.0;
@@ -275,8 +279,8 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 c-wrap := Rectangle {
-                    // Same card-like expansion: +10px focused, +20px engaged.
-                    height: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 92px : 82px) : 72px;
+                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
+                    height: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -285,6 +289,7 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 2;
+                        focused: root.focused-index == root.anim-files.length + 2 && fs.has-focus;
                         label: "X2 — c";
                         value: root.bezier-c;
                         min: 0.0;
@@ -293,8 +298,8 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 d-wrap := Rectangle {
-                    // Same card-like expansion: +10px focused, +20px engaged.
-                    height: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 92px : 82px) : 72px;
+                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
+                    height: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
@@ -303,6 +308,7 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 3;
+                        focused: root.focused-index == root.anim-files.length + 3 && fs.has-focus;
                         label: "Y2 — d";
                         value: root.bezier-d;
                         min: -1.0;
