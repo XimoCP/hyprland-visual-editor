@@ -1,7 +1,7 @@
 // HVE 2 — SystemSection (mutating-window R7 + R11).
 //
 // Reuses SettingsPanel row patterns and their existing callbacks
-// (auto-minimize + timer 3/5/10s, language EN/ES, keyboard shortcuts,
+// (auto-minimize + timer Off/2/4/6/8/10s, language EN/ES, keyboard shortcuts,
 // autostart, theme preference, reset presets, restart — all wired in
 // callbacks.rs via on_toggle_system etc.), plus system ON/OFF status block
 // + About HVE content from hidden HomeModule (status, About accordion via
@@ -98,9 +98,17 @@ export component SystemSection inherits Rectangle {
                 if (root.focused-row == 0) { root.toggle-system(!root.system-active); }
                 else if (root.focused-row == 1) { root.toggle-auto-minimize(!root.auto-minimize); }
                 else if (root.focused-row == 2) {
-                    if (root.minimize-seconds == 3) { root.change-minimize-seconds(5); }
-                    else if (root.minimize-seconds == 5) { root.change-minimize-seconds(10); }
-                    else { root.change-minimize-seconds(3); }
+                    // Steps Off → 2 → 4 → 6 → 8 → 10 → Off. Legacy 3/5s
+                    // configs snap up to the next step (3→4, 5→6).
+                    if (root.minimize-seconds == 0) { root.change-minimize-seconds(2); }
+                    else if (root.minimize-seconds == 2) { root.change-minimize-seconds(4); }
+                    else if (root.minimize-seconds == 3) { root.change-minimize-seconds(4); }
+                    else if (root.minimize-seconds == 4) { root.change-minimize-seconds(6); }
+                    else if (root.minimize-seconds == 5) { root.change-minimize-seconds(6); }
+                    else if (root.minimize-seconds == 6) { root.change-minimize-seconds(8); }
+                    else if (root.minimize-seconds == 8) { root.change-minimize-seconds(10); }
+                    else if (root.minimize-seconds == 10) { root.change-minimize-seconds(0); }
+                    else { root.change-minimize-seconds(2); }
                 }
                 else if (root.focused-row == 3) {
                     if (root.language == "en") { root.change-language("es"); } else { root.change-language("en"); }
@@ -233,7 +241,7 @@ export component SystemSection inherits Rectangle {
                     }
                 }
 
-                // 2 — Timer 3/5/10s
+                // 2 — Timer Off/2/4/6/8/10s (Off = hide instantly on focus loss)
                 if root.auto-minimize : Rectangle {
                     height: 40px; border-radius: 8px;
                     background: HveColors.bg-card;
@@ -242,12 +250,12 @@ export component SystemSection inherits Rectangle {
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px;
                         Text { text: root.timer-label; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
-                        for sec in [3, 5, 10] : Rectangle {
-                            width: 36px; height: 28px; border-radius: 6px;
+                        for sec in [0, 2, 4, 6, 8, 10] : Rectangle {
+                            width: sec == 0 ? 44px : 34px; height: 28px; border-radius: 6px;
                             background: root.minimize-seconds == sec ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
                             border-width: 1px;
                             border-color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.border;
-                            Text { text: sec; color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: sec == 0 ? "Off" : sec + ""; color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                             TouchArea { width: 100%; height: 100%; clicked => { root.change-minimize-seconds(sec); } }
                         }
                         Text { text: "s"; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }

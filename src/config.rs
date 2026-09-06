@@ -60,7 +60,7 @@ impl Default for Config {
             active_shader_file: String::new(),
             auto_start: false,
             auto_minimize_enabled: true,
-            minimize_seconds: 5,
+            minimize_seconds: 4,
             language: String::new(),
             tiling_mode: false,
             theme: "system".to_string(),
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(cfg.gaps_out, 5, "gaps_out should default to 5");
         assert!(!cfg.auto_start, "auto_start should default to false");
         assert!(cfg.auto_minimize_enabled, "auto_minimize_enabled should default to true");
-        assert_eq!(cfg.minimize_seconds, 5, "minimize_seconds should default to 5");
+        assert_eq!(cfg.minimize_seconds, 4, "minimize_seconds should default to 4");
         assert_eq!(cfg.theme, "system", "theme should default to system");
         assert!(!cfg.tiling_mode, "tiling_mode should default to false");
         assert!(

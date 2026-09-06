@@ -79,6 +79,11 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
     }
 
     let seconds = window.get_minimize_seconds();
+    if resolve_grace(seconds) == GraceDecision::Immediate {
+        tracing::info!("[countdown] Margen desactivado (0s): ocultando al instante");
+        minimize_now(window_weak);
+        return;
+    }
     tracing::info!("[countdown] Iniciando countdown de {}s", seconds);
     window.set_countdown_active(true);
     window.set_countdown_seconds(seconds);
@@ -132,6 +137,23 @@ pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool) -> boo
         return false;
     }
     gallery_active
+}
+
+/// Grace decision for focus loss: Off (0 or negative) hides immediately,
+/// any positive value runs the visible countdown first (returning focus
+/// cancels it). Pure + tested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GraceDecision {
+    Immediate,
+    Countdown,
+}
+
+pub(crate) fn resolve_grace(seconds: i32) -> GraceDecision {
+    if seconds <= 0 {
+        GraceDecision::Immediate
+    } else {
+        GraceDecision::Countdown
+    }
 }
 
 /// Pure blur decision for focus-lost, gated by ShowStateMachine.
@@ -373,6 +395,25 @@ mod tests {
         assert_eq!(result.next_seconds, 2);
         assert_eq!(result.progress, 2.0 / 3.0);
         assert!(!result.should_minimize);
+    }
+
+    // ── resolve_grace — Off hides at once, positive counts down ───────
+
+    #[test]
+    fn test_grace_zero_is_immediate() {
+        assert_eq!(resolve_grace(0), GraceDecision::Immediate);
+    }
+
+    #[test]
+    fn test_grace_negative_is_immediate() {
+        assert_eq!(resolve_grace(-3), GraceDecision::Immediate);
+    }
+
+    #[test]
+    fn test_grace_positive_counts_down() {
+        for s in [1, 2, 4, 6, 8, 10] {
+            assert_eq!(resolve_grace(s), GraceDecision::Countdown, "{s}s must countdown");
+        }
     }
 
     // ── blur_decision — gated by ShowStateMachine (unit 3) ──────────────
