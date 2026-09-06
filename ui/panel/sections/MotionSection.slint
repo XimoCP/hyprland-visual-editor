@@ -26,11 +26,11 @@ component BezierSlider inherits Rectangle {
     in property <bool> focused: false;
     callback changed(float);
     height: 72px;
-    border-radius: 8px;
-    background: root.engaged || root.focused ? HveColors.bg-hover : HveColors.bg-card;
-    animate background { duration: 200ms; easing: ease-in-out; }
-    border-width: 1px;
-    border-color: HveColors.border.transparentize(0.7);
+    // Bare content: the section wrapper owns ALL card visuals
+    // (background, border, radius, expansion). This inner layer stays
+    // transparent and borderless so there is exactly one visible frame.
+    background: transparent;
+    border-width: 0px;
     VerticalLayout {
         padding: 12px;
         spacing: 6px;
@@ -251,7 +251,7 @@ export component MotionSection inherits Rectangle {
                     border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
                     border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-a := TouchArea {
                         width: 100%;
@@ -281,7 +281,7 @@ export component MotionSection inherits Rectangle {
                     border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
                     border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-b := TouchArea {
                         width: 100%;
@@ -311,7 +311,7 @@ export component MotionSection inherits Rectangle {
                     border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
                     border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-c := TouchArea {
                         width: 100%;
@@ -341,7 +341,7 @@ export component MotionSection inherits Rectangle {
                     border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
                     border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-d := TouchArea {
                         width: 100%;

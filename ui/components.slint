@@ -377,13 +377,11 @@ export component GeometrySlider inherits Rectangle {
     callback changed(int);
 
     height: 80px;
-    border-radius: 8px;
-    // Card-like background: bg-card idle, bg-hover focused or engaged
-    // (same 200ms ease-in-out as PresetCard/SavedThemeCard).
-    background: root.engaged || root.focused ? HveColors.bg-hover : HveColors.bg-card;
-    animate background { duration: 200ms; easing: ease-in-out; }
-    border-width: 1px;
-    border-color: HveColors.border;
+    // Bare content: the section wrapper owns ALL card visuals
+    // (background, border, radius, expansion). This inner layer stays
+    // transparent and borderless so there is exactly one visible frame.
+    background: transparent;
+    border-width: 0px;
 
     VerticalLayout {
         padding: 16px;
