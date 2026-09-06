@@ -188,7 +188,7 @@ thread_local! {
 
 /// Chained-glide duration for the slice carousel — matches
 /// `SkwdTokens.anim-expand` (ui/tokens.slint).
-const SLICE_GLIDE_MS: f32 = 350.0;
+const SLICE_GLIDE_MS: f32 = 150.0;
 
 /// Ensure the reel display pump is running. Each tick advances the spring
 /// and writes the position; when the spring reports idle the timer stops
