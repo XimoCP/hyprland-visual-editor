@@ -239,10 +239,15 @@ export component MotionSection inherits Rectangle {
 
                 // Bezier sliders a,b,c,d — arrow steps ±0.05 clamped, Tab no trap
                 a-wrap := Rectangle {
+                    // Same card-like expansion: +10px focused, +20px engaged.
+                    height: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 92px : 82px) : 72px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 0;
                         label: "X1 — a";
                         value: root.bezier-a;
@@ -252,10 +257,15 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 b-wrap := Rectangle {
+                    // Same card-like expansion: +10px focused, +20px engaged.
+                    height: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 92px : 82px) : 72px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 1;
                         label: "Y1 — b";
                         value: root.bezier-b;
@@ -265,10 +275,15 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 c-wrap := Rectangle {
+                    // Same card-like expansion: +10px focused, +20px engaged.
+                    height: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 92px : 82px) : 72px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 2;
                         label: "X2 — c";
                         value: root.bezier-c;
@@ -278,10 +293,15 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 d-wrap := Rectangle {
+                    // Same card-like expansion: +10px focused, +20px engaged.
+                    height: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 92px : 82px) : 72px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 3;
                         label: "Y2 — d";
                         value: root.bezier-d;

@@ -296,10 +296,16 @@ export component BordersSection inherits Rectangle {
 
                 // Size 1-5
                 size-wrap := Rectangle {
+                    // Slider blocks expand like cards (same 250ms ease-in-out-back):
+                    // +10px on keyboard focus, +20px engaged (inside vs outside).
+                    height: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 100px : 90px) : 80px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 0;
                         label: "Border Thickness";
                         value: root.geom-size;
@@ -319,10 +325,16 @@ export component BordersSection inherits Rectangle {
 
                 // Radius 0-100
                 radius-wrap := Rectangle {
+                    // Slider blocks expand like cards (same 250ms ease-in-out-back):
+                    // +10px on keyboard focus, +20px engaged (inside vs outside).
+                    height: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 100px : 90px) : 80px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 1;
                         label: "Corner Radius";
                         value: root.geom-radius;
@@ -342,10 +354,16 @@ export component BordersSection inherits Rectangle {
 
                 // Gap In 0-30
                 gap-in-wrap := Rectangle {
+                    // Slider blocks expand like cards (same 250ms ease-in-out-back):
+                    // +10px on keyboard focus, +20px engaged (inside vs outside).
+                    height: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 100px : 90px) : 80px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 2;
                         label: "Inner Gap";
                         value: root.geom-gap-in;
@@ -365,10 +383,16 @@ export component BordersSection inherits Rectangle {
 
                 // Gap Out 0-30
                 gap-out-wrap := Rectangle {
+                    // Slider blocks expand like cards (same 250ms ease-in-out-back):
+                    // +10px on keyboard focus, +20px engaged (inside vs outside).
+                    height: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 100px : 90px) : 80px;
+                    animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
                     border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 3;
                         label: "Outer Gap";
                         value: root.geom-gap-out;
