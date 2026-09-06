@@ -2660,6 +2660,15 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(mut ctrl) = composer::global_controller() {
             ctrl.set_window_hidden(false);
             ctrl.set_tray_mode(false);
+            // Drive the ShowStateMachine for the fresh-launch show: without
+            // begin_show it stays Hidden forever and every focus-lost is
+            // ignored (no countdown, no auto-minimize — the bug where the X
+            // never morphed and the window never closed). The tray path does
+            // this inside toggle_tray; startup must do it here. Confirm
+            // (focus-gained) or the 1s entry timeout moves it to Visible.
+            if ctrl.begin_show_machine() {
+                ctrl.schedule_entry_timeout(window.as_weak());
+            }
         }
 
         // ── Legacy prewarm/warmup removed — panel handles its own focus (R11) ──

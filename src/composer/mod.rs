@@ -179,8 +179,9 @@ impl Controller {
 
     /// Schedule the single-shot entry timeout (1000ms) after a successful
     /// show. If the compositor never confirms focus, the timeout promotes
-    /// Entering→Visible and runs settle exactly once.
-    fn schedule_entry_timeout(&self, win_weak: slint::Weak<crate::MainWindow>) {
+    /// Entering→Visible and runs settle exactly once. Used by toggle_tray
+    /// and by the fresh-launch startup show in main.rs.
+    pub(crate) fn schedule_entry_timeout(&self, win_weak: slint::Weak<crate::MainWindow>) {
         slint::Timer::single_shot(Duration::from_secs(1), move || {
             // Try to lock without blocking; if contended, the focus-gained
             // path may already have settled.
