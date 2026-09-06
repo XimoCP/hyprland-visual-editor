@@ -14,7 +14,7 @@
 import { Slider, ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
-import { PresetCard } from "../../components.slint";
+import { PresetCard, HveKnobSlider } from "../../components.slint";
 import { CurvePreview } from "../CurvePreview.slint";
 
 component BezierSlider inherits Rectangle {
@@ -22,6 +22,7 @@ component BezierSlider inherits Rectangle {
     in property <float> min: 0.0;
     in property <float> max: 1.0;
     in property <string> label: "";
+    in property <bool> engaged: false;
     callback changed(float);
     height: 72px;
     border-radius: 8px;
@@ -34,7 +35,7 @@ component BezierSlider inherits Rectangle {
         HorizontalLayout {
             Text {
                 text: root.label;
-                color: HveColors.accent-cyan;
+                color: root.engaged ? #ffffff : HveColors.accent-cyan;
                 font-size: 12px;
                 font-weight: 600;
                 vertical-alignment: center;
@@ -48,10 +49,11 @@ component BezierSlider inherits Rectangle {
                 vertical-alignment: center;
             }
         }
-        Slider {
-            minimum: root.min;
-            maximum: root.max;
+        HveKnobSlider {
+            min: root.min;
+            max: root.max;
             value: root.value;
+            engaged: root.engaged;
             changed(v) => { root.changed(v); }
         }
     }
@@ -237,10 +239,11 @@ export component MotionSection inherits Rectangle {
 
                 // Bezier sliders a,b,c,d — arrow steps ±0.05 clamped, Tab no trap
                 a-wrap := Rectangle {
-                    border-width: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        engaged: root.engaged-slider == 0;
                         label: "X1 — a";
                         value: root.bezier-a;
                         min: 0.0;
@@ -249,10 +252,11 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 b-wrap := Rectangle {
-                    border-width: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        engaged: root.engaged-slider == 1;
                         label: "Y1 — b";
                         value: root.bezier-b;
                         min: -1.0;
@@ -261,10 +265,11 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 c-wrap := Rectangle {
-                    border-width: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        engaged: root.engaged-slider == 2;
                         label: "X2 — c";
                         value: root.bezier-c;
                         min: 0.0;
@@ -273,10 +278,11 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 d-wrap := Rectangle {
-                    border-width: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     BezierSlider {
+                        engaged: root.engaged-slider == 3;
                         label: "Y2 — d";
                         value: root.bezier-d;
                         min: -1.0;

@@ -274,12 +274,105 @@ export component SectionHeader inherits VerticalLayout {
     }
 }
 
+// ─── Knob Slider ────────────────────────────────────────────────────
+// Custom horizontal slider: track + accent fill + knob circle.
+// The std Slider draws its thumb from the global palette (not recolorable),
+// so keyboard R11 v3 "engaged" emphasis (colored knob + 3px wrapper ring)
+// needs a widget that owns its pixels. Drag moves the knob (TouchArea);
+// release ends the drag. Keyboard stays with the section FocusScope, so
+// this widget takes no keys — it mirrors value and engaged only.
+export component HveKnobSlider inherits Rectangle {
+    in-out property <float> value: 0;
+    in property <float> min: 0;
+    in property <float> max: 1;
+    in property <color> accent: #8fd8ff;
+    in property <bool> engaged: false;
+    callback changed(float);
+
+    property <length> knob-r: 10px;
+    // range-d is guarded against 0 (identical min/max); set-from-x keeps
+    // value inside [min, max], so frac stays in [0, 1] without clamping.
+    property <float> range-d: root.max > root.min ? (root.max - root.min) : 0.0001;
+    property <float> frac: root.max > root.min ? (root.value - root.min) / root.range-d : 0;
+
+    height: 24px;
+
+    track := Rectangle {
+        x: 0;
+        width: 100%;
+        height: 4px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 2px;
+        background: HveColors.bg-surface;
+    }
+
+    fill := Rectangle {
+        // Anchored to the knob's own center by construction: whatever the
+        // knob reads, the fill ends exactly there (no shared-formula drift).
+        x: 0;
+        width: knob.x + root.knob-r;
+        height: 4px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 2px;
+        background: root.accent;
+    }
+
+    knob := Rectangle {
+        width: 2 * root.knob-r;
+        height: 2 * root.knob-r;
+        x: (parent.width - self.width) * root.frac;
+        y: (parent.height - self.height) / 2;
+        border-radius: root.knob-r;
+        // Idle: white knob with cyan ring (skwd look). Engaged: fills with
+        // the accent so the grabbed slider reads at a glance.
+        background: root.engaged ? root.accent : #ffffff;
+        border-width: 2px;
+        border-color: root.engaged ? #ffffff : root.accent;
+        animate background { duration: 150ms; easing: ease-in-out; }
+        animate border-color { duration: 150ms; easing: ease-in-out; }
+    }
+
+    function set-from-x(x: length) {
+        let usable = root.width > 2 * root.knob-r ? (root.width - 2 * root.knob-r) : 1px;
+        let raw = (x - root.knob-r) / usable;
+        let t = raw < 0 ? 0 : (raw > 1 ? 1 : raw);
+        let v = root.min + t * (root.max - root.min);
+        if (v != root.value) {
+            root.value = v;
+            root.changed(v);
+        }
+    }
+
+    drag := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        accessible-role: slider;
+        property <bool> dragging: false;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                self.dragging = true;
+                root.set-from-x(self.mouse-x);
+            }
+            if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                self.dragging = false;
+            }
+        }
+        moved => {
+            if (self.dragging) {
+                root.set-from-x(self.mouse-x);
+            }
+        }
+    }
+}
+
 // ─── Geometry Slider ────────────────────────────────────────────────
 export component GeometrySlider inherits Rectangle {
     in property <int> value: 2;
     in property <int> min: 1;
     in property <int> max: 5;
     in property <string> label: "Border Thickness";
+    in property <bool> engaged: false;
     callback changed(int);
 
     height: 80px;
@@ -295,7 +388,7 @@ export component GeometrySlider inherits Rectangle {
         HorizontalLayout {
             Text {
                 text: root.label;
-                color: HveColors.text;
+                color: root.engaged ? #8fd8ff : HveColors.text;
                 font-size: 13px;
                 font-weight: 600;
                 vertical-alignment: center;
@@ -311,11 +404,12 @@ export component GeometrySlider inherits Rectangle {
             }
         }
 
-        Slider {
-            minimum: root.min;
-            maximum: root.max;
+        HveKnobSlider {
+            min: root.min;
+            max: root.max;
             value: root.value;
-            changed(v) => { root.changed(v); }
+            engaged: root.engaged;
+            changed(v) => { root.changed(Math.round(v)); }
         }
     }
 }

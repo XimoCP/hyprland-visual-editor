@@ -1208,6 +1208,69 @@ fn save_scroll_follows_focus_past_the_fold() {
     save_slice_png(b_scrolled, "/tmp/opencode/borders_scroll_follow.png");
 }
 
+// ── HveKnobSlider endpoints: min → knob glued left, no fill; max → knob ──
+// glued right, full fill. (Headless geometry probe for the custom slider.)
+#[test]
+fn knob_slider_endpoints_render() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(1);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Soft"),
+        SharedString::from("Sharp"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_kbd_preview_index(2); // Border Thickness slider
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    win.set_border_size(1);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let lo = win.window().take_snapshot().expect("knob min snapshot");
+    save_slice_png(lo.clone(), "/tmp/opencode/knob_min.png");
+
+    win.set_border_size(5);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let hi = win.window().take_snapshot().expect("knob max snapshot");
+    save_slice_png(hi.clone(), "/tmp/opencode/knob_max.png");
+
+    let diff = count_buffer_diff(&lo, &hi);
+    assert!(diff > 2000, "min and max endpoints must differ — got {diff}");
+}
+
 #[test]
 fn slice_twenty_chained_steps_settle_without_drift() {
     use crate::shell::gallery::views::slice::{focus_step, scaled_metrics, slice_delta_tiles};

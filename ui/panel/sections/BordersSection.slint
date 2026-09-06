@@ -296,10 +296,11 @@ export component BordersSection inherits Rectangle {
 
                 // Size 1-5
                 size-wrap := Rectangle {
-                    border-width: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        engaged: root.engaged-slider == 0;
                         label: "Border Thickness";
                         value: root.geom-size;
                         min: 1;
@@ -318,10 +319,11 @@ export component BordersSection inherits Rectangle {
 
                 // Radius 0-100
                 radius-wrap := Rectangle {
-                    border-width: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        engaged: root.engaged-slider == 1;
                         label: "Corner Radius";
                         value: root.geom-radius;
                         min: 0;
@@ -340,10 +342,11 @@ export component BordersSection inherits Rectangle {
 
                 // Gap In 0-30
                 gap-in-wrap := Rectangle {
-                    border-width: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        engaged: root.engaged-slider == 2;
                         label: "Inner Gap";
                         value: root.geom-gap-in;
                         min: 0;
@@ -362,10 +365,11 @@ export component BordersSection inherits Rectangle {
 
                 // Gap Out 0-30
                 gap-out-wrap := Rectangle {
-                    border-width: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 2px : 1px) : 0px;
-                    border-color: #8fd8ff;
+                    border-width: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
+                    border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
                     GeometrySlider {
+                        engaged: root.engaged-slider == 3;
                         label: "Outer Gap";
                         value: root.geom-gap-out;
                         min: 0;
