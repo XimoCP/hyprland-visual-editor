@@ -177,6 +177,20 @@ export component MotionSection inherits Rectangle {
 
         ScrollView {
             vertical-stretch: 1;
+            // Scroll follows the keyboard focus: cards pitch 66px, the
+            // bezier tune blocks (~72px + spacing) sit after the divider
+            // and the curve preview.
+            property <length> focus-y:
+                root.focused-index < root.anim-files.length
+                    ? root.focused-index * 66px
+                      + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
+                      + (root.active-index == root.focused-index ? 21px : 0px)
+                    : root.anim-files.length * 66px + 70px + (root.active-index >= 0 ? 42px : 0px)
+                      + (root.focused-index - root.anim-files.length) * 80px;
+            viewport-y: root.focused-index >= 0
+                ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+                : 0px;
+            animate viewport-y { duration: 250ms; easing: ease-out; }
             VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;

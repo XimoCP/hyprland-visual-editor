@@ -149,6 +149,13 @@ export component SystemSection inherits Rectangle {
 
         ScrollView {
             vertical-stretch: 1;
+            // Scroll follows the keyboard focus (rows ~36-40px + 10 spacing
+            // → pitch 46px, mixed blocks).
+            property <length> focus-y: root.focused-row * 46px;
+            viewport-y: root.focused-row >= 0
+                ? (0px - max(0px, self.focus-y + 18px - self.height / 2))
+                : 0px;
+            animate viewport-y { duration: 250ms; easing: ease-out; }
             VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;

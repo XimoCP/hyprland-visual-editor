@@ -229,6 +229,20 @@ export component BordersSection inherits Rectangle {
         // Scrollable stacked pick+tune (visible together, scroll if overflow)
         ScrollView {
             vertical-stretch: 1;
+            // Scroll follows the keyboard focus (master recipe adapted):
+            // cards pitch 66px (58 + 8), an expanded card above adds 42px,
+            // slider blocks ~88px after the divider + color placeholder.
+            property <length> focus-y:
+                root.focused-index < root.border-files.length
+                    ? root.focused-index * 66px
+                      + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
+                      + (root.active-index == root.focused-index ? 21px : 0px)
+                    : root.border-files.length * 66px + 40px + (root.active-index >= 0 ? 42px : 0px)
+                      + (root.focused-index - root.border-files.length) * 88px;
+            viewport-y: root.focused-index >= 0
+                ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+                : 0px;
+            animate viewport-y { duration: 250ms; easing: ease-out; }
             VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;

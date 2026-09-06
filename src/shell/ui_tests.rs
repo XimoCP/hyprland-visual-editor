@@ -992,10 +992,220 @@ fn panel_menu_and_engaged_slider_render() {
     }
     let engaged = win.window().take_snapshot().expect("slider engaged snapshot");
     save_slice_png(engaged.clone(), "/tmp/opencode/borders_slider_engaged.png");
-
     let diff_menu = count_buffer_diff(&menu, &focused);
-    let diff_engaged = count_buffer_diff(&focused, &engaged);    assert!(diff_menu > 200, "menu ring and slider focus must differ — got {diff_menu}");
+    let diff_engaged = count_buffer_diff(&focused, &engaged);
+    assert!(diff_menu > 200, "menu ring and slider focus must differ — got {diff_menu}");
     assert!(diff_engaged > 200, "engaged slider must emphasize over focus — got {diff_engaged}");
+}
+
+// ── Save card expansion must animate like PresetCard (Borders/Motion) ──
+// User report: the Save row highlight feels instant — no expand, no
+// bounce — unlike the preset cards. This drives a real focus step and
+// snapshots mid-flight (t≈0) vs settled: an animated expansion differs
+// between the two; a snapped height renders identical.
+#[test]
+fn save_card_expansion_animates_like_preset_cards() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+        SharedString::from("Gamma"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-01-01"),
+        SharedString::from("2026-02-02"),
+        SharedString::from("2026-03-03"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false, false, false])));
+
+    // Production-equivalent save-nav wiring.
+    let w = win.as_weak();
+    win.on_panel_save_nav(move |delta| {
+        let Some(w) = w.upgrade() else { return; };
+        use slint::Model as _;
+        let len = w.get_theme_names().row_count();
+        w.set_panel_save_focused_index(crate::callbacks::save_nav_step(
+            w.get_panel_save_focused_index(),
+            delta,
+            len,
+        ));
+    });
+
+    // Settle fully collapsed (no focus yet).
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let collapsed = win.window().take_snapshot().expect("collapsed snapshot");
+
+    // Focus row 1 → expansion starts. Probe at ~96ms (mid-flight of the
+    // 250ms height animation), then settle.
+    win.invoke_panel_save_nav(1);
+    for _ in 0..6 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let mid_flight = win.window().take_snapshot().expect("mid-flight snapshot");
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let expanded = win.window().take_snapshot().expect("expanded snapshot");
+
+    let diff_mid = count_buffer_diff(&collapsed, &mid_flight);
+    let diff_full = count_buffer_diff(&collapsed, &expanded);
+    let diff_mid_end = count_buffer_diff(&mid_flight, &expanded);
+    save_slice_png(mid_flight.clone(), "/tmp/opencode/save_expand_mid.png");
+    save_slice_png(expanded.clone(), "/tmp/opencode/save_expand_end.png");
+    assert!(
+        diff_mid > 200,
+        "mid-flight frame must differ from collapsed (expansion in flight): got {diff_mid}"
+    );
+    assert!(
+        diff_mid_end > 200,
+        "mid-flight frame must differ from settled (animation not instant): got {diff_mid_end}"
+    );
+    assert!(
+        diff_full > 200,
+        "settled expansion must differ from collapsed: got {diff_full}"
+    );
+
+    // Parity probe: the same mid-flight walk on a Borders preset card.
+    win.set_panel_section(1);
+    win.set_panel_kbd_preview_index(-1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Soft"),
+        SharedString::from("Sharp"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("rounded"),
+        SharedString::from("square"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_kbd_preview_index(0);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let b_collapsed = win.window().take_snapshot().expect("borders collapsed snapshot");
+    win.set_panel_kbd_preview_index(1);
+    for _ in 0..6 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let b_mid = win.window().take_snapshot().expect("borders mid snapshot");
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let b_end = win.window().take_snapshot().expect("borders settled snapshot");
+    let b_mid_diff = count_buffer_diff(&b_collapsed, &b_mid);
+    let b_full_diff = count_buffer_diff(&b_collapsed, &b_end);
+    let _b_mid_end = count_buffer_diff(&b_mid, &b_end);
+    // Parity: Save's expansion moves a comparable share of pixels as the
+    // preset card's at the same probe time (same declared animation).
+    let ratio = diff_mid as f32 / b_mid_diff.max(1) as f32;
+    assert!(
+        ratio > 0.4 && ratio < 2.5,
+        "save expansion mid-flight {diff_mid} must be comparable to borders {b_mid_diff} (ratio {ratio})"
+    );
+}
+
+// ── Scroll-follow (keyboard R11 v3): navigating past the fold scrolls ──
+// 15 rows in Save, focus walks to row 12: the ScrollView must follow so
+// the focused row stays visible. PNGs for human review.
+#[test]
+fn save_scroll_follows_focus_past_the_fold() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    let names: Vec<SharedString> = (0..15)
+        .map(|i| SharedString::from(format!("Theme {i:02}")))
+        .collect();
+    win.set_theme_names(ModelRc::new(VecModel::from(names.clone())));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(
+        vec![SharedString::from("2026-01-01"); 15],
+    )));    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false; 15])));
+
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let top = win.window().take_snapshot().expect("top snapshot");
+    save_slice_png(top.clone(), "/tmp/opencode/save_scroll_top.png");
+
+    // Focus row 12 — well past the fold. The scroll must follow.
+    win.set_panel_save_focused_index(12);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let scrolled = win.window().take_snapshot().expect("scrolled snapshot");
+    save_slice_png(scrolled.clone(), "/tmp/opencode/save_scroll_follow.png");
+
+    // If the scroll did not follow, row 12 is off-screen and the frame is
+    // indistinguishable from just any far position — with follow, the last
+    // rows are on-screen, so the two frames must differ substantially.
+    let diff = count_buffer_diff(&top, &scrolled);
+    assert!(diff > 2000, "scroll must follow the focus — got {diff}");
+
+    // Same recipe on Borders (preset cards, preview hook): 10 cards, focus
+    // the 9th — the scroll must bring it into view.
+    win.set_panel_section(1);
+    let titles: Vec<SharedString> = (0..10)
+        .map(|i| SharedString::from(format!("Border {i:02}")))
+        .collect();
+    win.set_border_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_border_descs(ModelRc::new(VecModel::from(
+        vec![SharedString::from(""); 10],
+    )));
+    win.set_border_tags(ModelRc::new(VecModel::from(
+        vec![SharedString::from(""); 10],
+    )));
+    win.set_border_files(ModelRc::new(VecModel::from(
+        vec![SharedString::from("b.lua"); 10],
+    )));
+    win.set_panel_kbd_preview_index(8);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let b_scrolled = win.window().take_snapshot().expect("borders scrolled snapshot");
+    save_slice_png(b_scrolled, "/tmp/opencode/borders_scroll_follow.png");
 }
 
 #[test]

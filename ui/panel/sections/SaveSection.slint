@@ -12,7 +12,7 @@
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-import { LineEdit, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { LineEdit, HorizontalBox, VerticalBox, ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { SavedThemeCard } from "SavedThemeCard.slint";
@@ -140,7 +140,13 @@ export component SaveSection inherits Rectangle {
         VerticalLayout {
         spacing: SkwdTokens.spacing-12;
         padding: SkwdTokens.spacing-16;
-        alignment: start;
+
+        // Fixed header block (stretch 0) — the theme list below takes the
+        // leftover height (alignment:start + ScrollView = collapsed list:
+        // a ScrollView contributes no preferred height to its FocusScope).
+        VerticalLayout {
+        spacing: SkwdTokens.spacing-12;
+        vertical-stretch: 0;
 
         Text {
             text: "Save Current Look";
@@ -287,6 +293,7 @@ export component SaveSection inherits Rectangle {
                 }
             }
         }
+        }
 
         // ── Theme cards (classic SavedThemeCard rows) ──
         // Keyboard R11 v2: this list is the section's primary group. Arrows
@@ -315,11 +322,24 @@ export component SaveSection inherits Rectangle {
                 return reject;
             }
 
-            // FocusScope does not arrange children — the VerticalLayout does.
-            VerticalLayout {
+            // FocusScope does not arrange children. The ScrollView scrolls
+            // WITH the keyboard focus (master scroll-follow, adapted): rows
+            // pitch 68px (56 collapsed + 12 spacing), an expanded (active)
+            // row adds 44px.
+            scroll := ScrollView {
                 width: 100%;
                 height: 100%;
-                spacing: SkwdTokens.spacing-12;
+                property <length> focus-y:
+                    root.focused-index * 68px
+                    + (root.saved-active-index >= 0 && root.saved-active-index < root.focused-index ? 44px : 0px)
+                    + (root.saved-active-index == root.focused-index ? 44px : 0px);
+                viewport-y: root.focused-index >= 0
+                    ? (0px - max(0px, self.focus-y + 28px - self.height / 2))
+                    : 0px;
+                animate viewport-y { duration: 250ms; easing: ease-out; }
+
+                VerticalLayout {
+                    spacing: SkwdTokens.spacing-12;
 
                 if (root.saved-names.length == 0) : Rectangle {
                 height: 120px;
@@ -375,6 +395,7 @@ export component SaveSection inherits Rectangle {
                 }
                 focus-requested(idx) => { root.focus-requested(idx); }
             }
+                }
             }
         }
         }

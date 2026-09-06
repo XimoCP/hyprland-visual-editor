@@ -102,6 +102,15 @@ export component FiltersSection inherits Rectangle {
 
         ScrollView {
             vertical-stretch: 1;
+            // Scroll follows the keyboard focus (cards only, pitch 66px).
+            property <length> focus-y:
+                root.focused-index * 66px
+                + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
+                + (root.active-index == root.focused-index ? 21px : 0px);
+            viewport-y: root.focused-index >= 0
+                ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+                : 0px;
+            animate viewport-y { duration: 250ms; easing: ease-out; }
             VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
