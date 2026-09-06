@@ -111,8 +111,12 @@ export component PanelRoot inherits Rectangle {
     callback section-selected(int);
     callback save-nav(int);
     callback save-focus-requested(int);
-    callback tab-next();
-    callback tab-prev();
+    callback menu-focus();
+    in property <int> kbd-preview-index: -1;
+    in property <bool> kbd-preview-engaged: false;
+    // Bumped every time the left rail hands focus back to the content, so
+    // the active section re-grabs keyboard focus (same-section case too).
+    in-out property <int> focus-gen: 0;
     callback save-theme(string);
     callback apply-saved-theme(int);
     callback rename-saved-theme(string, string);
@@ -181,11 +185,18 @@ export component PanelRoot inherits Rectangle {
             spacing: 0px;
 
             // Left rail
-            PanelMenu {
+            menu := PanelMenu {
                 width: 160px;
                 active-section: root.section;
                 reduced-motion: root.reduced-motion;
-                section-selected(section) => { root.section-selected(section); }
+                preview-index: root.kbd-preview-index;
+                section-selected(section) => {
+                    root.section-selected(section);
+                    // Same-section re-entry must refocus the content too.
+                    root.focus-gen += 1;
+                }
+                menu-left => { root.focus-gen += 1; }
+                back => { root.back(); }
             }
 
             Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
@@ -235,8 +246,10 @@ export component PanelRoot inherits Rectangle {
                     search-query-changed(q) => { root.save-search-changed(q); }
                     save-nav(d) => { root.save-nav(d); }
                     focus-requested(idx) => { root.save-focus-requested(idx); }
-                    tab-next => { root.tab-next(); }
-                    tab-prev => { root.tab-prev(); }
+                    menu-focus => { menu.take-focus(); }
+                    preview-index: root.kbd-preview-index;
+                    preview-engaged: root.kbd-preview-engaged;
+                    focus-gen: root.focus-gen;
                     back => { root.back(); }
                 }
                 if root.section == 1 : BordersSection {
@@ -253,8 +266,10 @@ export component PanelRoot inherits Rectangle {
                     geom-gap-out <=> root.gap-out;
                     apply-border(idx, file) => { root.apply-border(idx, file); }
                     apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
-                    tab-next => { root.tab-next(); }
-                    tab-prev => { root.tab-prev(); }
+                    menu-focus => { menu.take-focus(); }
+                    preview-index: root.kbd-preview-index;
+                    preview-engaged: root.kbd-preview-engaged;
+                    focus-gen: root.focus-gen;
                     back => { root.back(); }
                 }
                 if root.section == 2 : MotionSection {
@@ -270,8 +285,10 @@ export component PanelRoot inherits Rectangle {
                     bezier-c <=> root.bezier-c;
                     bezier-d <=> root.bezier-d;
                     apply-animation(idx, file) => { root.apply-animation(idx, file); }
-                    tab-next => { root.tab-next(); }
-                    tab-prev => { root.tab-prev(); }
+                    menu-focus => { menu.take-focus(); }
+                    preview-index: root.kbd-preview-index;
+                    preview-engaged: root.kbd-preview-engaged;
+                    focus-gen: root.focus-gen;
                     back => { root.back(); }
                 }
                 if root.section == 3 : FiltersSection {
@@ -283,16 +300,20 @@ export component PanelRoot inherits Rectangle {
                     shader-files: root.shader-files;
                     active-index: root.shader-active-index;
                     apply-shader(idx, file) => { root.apply-shader(idx, file); }
-                    tab-next => { root.tab-next(); }
-                    tab-prev => { root.tab-prev(); }
+                    menu-focus => { menu.take-focus(); }
+                    preview-index: root.kbd-preview-index;
+                    preview-engaged: root.kbd-preview-engaged;
+                    focus-gen: root.focus-gen;
                     back => { root.back(); }
                 }
                 if root.section == 4 : SystemSection {
                     width: 100%;
                      height: 100%;
                      back => { root.back(); }
-                     tab-next => { root.tab-next(); }
-                     tab-prev => { root.tab-prev(); }
+                     menu-focus => { menu.take-focus(); }
+                     preview-index: root.kbd-preview-index;
+                     preview-engaged: root.kbd-preview-engaged;
+                     focus-gen: root.focus-gen;
                      system-active: root.system-active;
                     auto-minimize: root.auto-minimize;
                     minimize-seconds: root.minimize-seconds;

@@ -24,8 +24,10 @@ export component BordersSection inherits Rectangle {
     in property <int> active-index: -1;
     callback apply-border(int, string);
     callback back();
-    callback tab-next();
-    callback tab-prev();
+    callback menu-focus();
+    in property <int> preview-index: -1;
+    in property <bool> preview-engaged: false;
+    in property <int> focus-gen: 0;
 
     // Tune layer — 4 geometry values (in-out so Rust snap can write them)
     in-out property <int> geom-size: 2;
@@ -37,8 +39,14 @@ export component BordersSection inherits Rectangle {
     background: transparent;
     clip: true;
 
-    // Internal keyboard focus index for arrow navigation (R11) — pick layer
-    property <int> focused-index: 0;
+    // Keyboard R11 v3 (spatial): ONE linear sequence over the section's
+    // controls — preset cards first, then the four tune sliders. Up/Down
+    // walk the sequence, Enter engages a slider (then Left/Right adjust),
+    // Tab/Esc disengage, Left (disengaged) hands focus to the left rail,
+    // Esc (disengaged) closes the panel.
+    property <int> focused-index: root.preview-index >= 0 ? root.preview-index : 0;
+    property <int> engaged-slider: root.preview-engaged ? (root.preview-index >= root.border-files.length ? root.preview-index - root.border-files.length : 0) : -1;
+    property <int> control-count: root.border-files.length + 4;
 
     // Tune debounce + skip-init + last-wins (R3)
     property <bool> size-init: false;
@@ -78,26 +86,82 @@ export component BordersSection inherits Rectangle {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
-            if (event.text == Key.Escape) { root.back(); return accept; }
+            if (event.text == Key.Escape) {
+                if (root.engaged-slider >= 0) { root.engaged-slider = -1; }
+                else { root.back(); }
+                return accept;
+            }
             if (event.text == Key.Tab) {
-                if (event.modifiers.shift) { root.tab-prev(); } else { size-fs.focus(); }
-                return accept;
+                if (root.engaged-slider >= 0) { root.engaged-slider = -1; return accept; }
+                return reject;
             }
-            if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
-                if (root.border-files.length > 0) {
-                    root.focused-index = min(root.focused-index + 1, root.border-files.length - 1);
+            if (root.engaged-slider >= 0) {
+                // Engaged slider: Left/Right adjust (±1, horizontal widget).
+                if (event.text == Key.RightArrow || event.text == Key.LeftArrow) {
+                    let up = event.text == Key.RightArrow;
+                    if (root.engaged-slider == 0) {
+                        let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
+                        if (next != root.geom-size) {
+                            root.geom-size = next;
+                            if (!root.size-init) { root.size-init = true; return accept; }
+                            root.pending-size = next;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                    else if (root.engaged-slider == 1) {
+                        let next = up ? min(root.geom-radius + 1, 100) : max(root.geom-radius - 1, 0);
+                        if (next != root.geom-radius) {
+                            root.geom-radius = next;
+                            if (!root.radius-init) { root.radius-init = true; return accept; }
+                            root.pending-radius = next;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                    else if (root.engaged-slider == 2) {
+                        let next = up ? min(root.geom-gap-in + 1, 30) : max(root.geom-gap-in - 1, 0);
+                        if (next != root.geom-gap-in) {
+                            root.geom-gap-in = next;
+                            if (!root.gap-in-init) { root.gap-in-init = true; return accept; }
+                            root.pending-gap-in = next;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
+                    else if (root.engaged-slider == 3) {
+                        let next = up ? min(root.geom-gap-out + 1, 30) : max(root.geom-gap-out - 1, 0);
+                        if (next != root.geom-gap-out) {
+                            root.geom-gap-out = next;
+                            if (!root.gap-out-init) { root.gap-out-init = true; return accept; }
+                            root.pending-gap-out = next;
+                            root.geom-dirty = false;
+                            root.geom-dirty = true;
+                            geom-timer.restart();
+                        }
+                    }
                 }
                 return accept;
             }
-            if (event.text == Key.UpArrow || event.text == Key.LeftArrow) {
-                if (root.border-files.length > 0) {
-                    root.focused-index = max(root.focused-index - 1, 0);
-                }
+            if (event.text == Key.DownArrow) {
+                root.focused-index = min(root.focused-index + 1, root.control-count - 1);
                 return accept;
             }
+            if (event.text == Key.UpArrow) {
+                root.focused-index = max(root.focused-index - 1, 0);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
             if (event.text == Key.Return || event.text == Key.Space) {
-                if (root.focused-index >= 0 && root.focused-index < root.border-files.length) {
-                    root.apply-border(root.focused-index, root.border-files[root.focused-index]);
+                if (root.focused-index < root.border-files.length) {
+                    if (root.focused-index >= 0 && root.border-files.length > 0) {
+                        root.apply-border(root.focused-index, root.border-files[root.focused-index]);
+                    }
+                } else {
+                    root.engaged-slider = root.focused-index - root.border-files.length;
                 }
                 return accept;
             }
@@ -111,6 +175,7 @@ export component BordersSection inherits Rectangle {
     border-radius: SkwdTokens.radius-8;
 
     init => { fs.focus(); }
+    changed focus-gen => { fs.focus(); }
 
     // Keep pending/last in sync when Rust snaps sliders (pick→tune one-way)
     changed geom-size => {
@@ -177,7 +242,7 @@ export component BordersSection inherits Rectangle {
                     tag: root.border-tags[i];
                     accent: #8fd8ff;
                     active: i == root.active-index;
-                    keyboard-focused: i == root.focused-index && fs.has-focus;
+                    keyboard-focused: i == root.focused-index && fs.has-focus && root.engaged-slider < 0;
                     index: i;
                     toggled => { root.apply-border(i, root.border-files[i]); }
                     focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
@@ -217,43 +282,9 @@ export component BordersSection inherits Rectangle {
 
                 // Size 1-5
                 size-wrap := Rectangle {
-                    border-width: size-fs.has-focus ? 1px : 0px;
+                    border-width: root.focused-index == root.border-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 2px : 1px) : 0px;
                     border-color: #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    size-fs := FocusScope {
-                        key-pressed(event) => {
-                            if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) {
-                if (event.modifiers.shift) { fs.focus() } else { radius-fs.focus() }
-                return accept;
-            }
-                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
-                                let next = min(root.geom-size + 1, 5);
-                                if (next != root.geom-size) {
-                                    root.geom-size = next;
-                                    if (!root.size-init) { root.size-init = true; return accept; }
-                                    root.pending-size = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
-                                let next = max(root.geom-size - 1, 1);
-                                if (next != root.geom-size) {
-                                    root.geom-size = next;
-                                    if (!root.size-init) { root.size-init = true; return accept; }
-                                    root.pending-size = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            return reject;
-                        }
-                    }
                     GeometrySlider {
                         label: "Border Thickness";
                         value: root.geom-size;
@@ -273,43 +304,9 @@ export component BordersSection inherits Rectangle {
 
                 // Radius 0-100
                 radius-wrap := Rectangle {
-                    border-width: radius-fs.has-focus ? 1px : 0px;
+                    border-width: root.focused-index == root.border-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 2px : 1px) : 0px;
                     border-color: #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    radius-fs := FocusScope {
-                        key-pressed(event) => {
-                            if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) {
-                if (event.modifiers.shift) { size-fs.focus() } else { gap-in-fs.focus() }
-                return accept;
-            }
-                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
-                                let next = min(root.geom-radius + 1, 100);
-                                if (next != root.geom-radius) {
-                                    root.geom-radius = next;
-                                    if (!root.radius-init) { root.radius-init = true; return accept; }
-                                    root.pending-radius = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
-                                let next = max(root.geom-radius - 1, 0);
-                                if (next != root.geom-radius) {
-                                    root.geom-radius = next;
-                                    if (!root.radius-init) { root.radius-init = true; return accept; }
-                                    root.pending-radius = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            return reject;
-                        }
-                    }
                     GeometrySlider {
                         label: "Corner Radius";
                         value: root.geom-radius;
@@ -329,43 +326,9 @@ export component BordersSection inherits Rectangle {
 
                 // Gap In 0-30
                 gap-in-wrap := Rectangle {
-                    border-width: gap-in-fs.has-focus ? 1px : 0px;
+                    border-width: root.focused-index == root.border-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 2px : 1px) : 0px;
                     border-color: #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    gap-in-fs := FocusScope {
-                        key-pressed(event) => {
-                            if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) {
-                if (event.modifiers.shift) { radius-fs.focus() } else { gap-out-fs.focus() }
-                return accept;
-            }
-                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
-                                let next = min(root.geom-gap-in + 1, 30);
-                                if (next != root.geom-gap-in) {
-                                    root.geom-gap-in = next;
-                                    if (!root.gap-in-init) { root.gap-in-init = true; return accept; }
-                                    root.pending-gap-in = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
-                                let next = max(root.geom-gap-in - 1, 0);
-                                if (next != root.geom-gap-in) {
-                                    root.geom-gap-in = next;
-                                    if (!root.gap-in-init) { root.gap-in-init = true; return accept; }
-                                    root.pending-gap-in = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            return reject;
-                        }
-                    }
                     GeometrySlider {
                         label: "Inner Gap";
                         value: root.geom-gap-in;
@@ -385,43 +348,9 @@ export component BordersSection inherits Rectangle {
 
                 // Gap Out 0-30
                 gap-out-wrap := Rectangle {
-                    border-width: gap-out-fs.has-focus ? 1px : 0px;
+                    border-width: root.focused-index == root.border-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 2px : 1px) : 0px;
                     border-color: #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
-                    gap-out-fs := FocusScope {
-                        key-pressed(event) => {
-                            if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.Tab) {
-                if (event.modifiers.shift) { gap-in-fs.focus() } else { root.tab-next() }
-                return accept;
-            }
-                            if (event.text == Key.UpArrow || event.text == Key.RightArrow) {
-                                let next = min(root.geom-gap-out + 1, 30);
-                                if (next != root.geom-gap-out) {
-                                    root.geom-gap-out = next;
-                                    if (!root.gap-out-init) { root.gap-out-init = true; return accept; }
-                                    root.pending-gap-out = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            if (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
-                                let next = max(root.geom-gap-out - 1, 0);
-                                if (next != root.geom-gap-out) {
-                                    root.geom-gap-out = next;
-                                    if (!root.gap-out-init) { root.gap-out-init = true; return accept; }
-                                    root.pending-gap-out = next;
-                                    root.geom-dirty = false;
-                                    root.geom-dirty = true;
-                                    geom-timer.restart();
-                                }
-                                return accept;
-                            }
-                            return reject;
-                        }
-                    }
                     GeometrySlider {
                         label: "Outer Gap";
                         value: root.geom-gap-out;
@@ -440,7 +369,7 @@ export component BordersSection inherits Rectangle {
                 }
 
                 Text {
-                    text: "↑↓ navigate • Enter/Space apply • arrows ±1 • Tab pick→tune→next • Esc back";
+                    text: "↑↓ navigate • Enter apply/engage • ←→ adjust • Esc/Tab release • ← menu • Esc back";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
                     color: HveColors.text-muted.transparentize(0.4);

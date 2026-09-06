@@ -739,17 +739,6 @@ pub fn save_nav_step(current: i32, delta: i32, len: usize) -> i32 {
     (current + delta).clamp(0, len as i32 - 1)
 }
 
-/// Panel section cycle (keyboard R11 v2 Tab-to-next/prev-section). Wraps
-/// around both ends: 4+1 → 0, 0-1 → 4 (total = section count, 5 today).
-#[allow(dead_code)]
-pub fn panel_next_section(current: i32, delta: i32, total: usize) -> i32 {
-    if total == 0 {
-        return 0;
-    }
-    let total = total as i32;
-    (current + delta).rem_euclid(total)
-}
-
 /// Borders pick layer helpers (mutating-window R3, slice 3 slice).
 /// Scan is engine.scan("borders") → PresetInfo list; apply wraps
 /// engine.apply_border with the file string from the card.
@@ -1015,7 +1004,7 @@ mod panel_save_tests {
 
 #[cfg(test)]
 mod keyboard_nav_tests {
-    use super::{panel_next_section, save_nav_step};
+    use super::save_nav_step;
 
     #[test]
     fn test_save_nav_step_clamps_and_starts() {
@@ -1025,14 +1014,6 @@ mod keyboard_nav_tests {
         assert_eq!(save_nav_step(0, -1, 3), 0, "backward clamps at first");
         assert_eq!(save_nav_step(2, -1, 3), 1, "up steps backward");
         assert_eq!(save_nav_step(1, 1, 0), -1, "empty list has no focus");
-    }
-
-    #[test]
-    fn test_panel_next_section_wraps_both_ends() {
-        assert_eq!(panel_next_section(0, 1, 5), 1, "Tab → next section");
-        assert_eq!(panel_next_section(4, 1, 5), 0, "Tab wraps past last");
-        assert_eq!(panel_next_section(0, -1, 5), 4, "Shift+Tab wraps to last");
-        assert_eq!(panel_next_section(2, -1, 5), 1, "Shift+Tab → previous");
     }
 }
 

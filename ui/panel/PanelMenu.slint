@@ -53,43 +53,80 @@ component MenuItem inherits Rectangle {
 export component PanelMenu inherits Rectangle {
     in property <int> active-section: 0;
     in property <bool> reduced-motion: false;
+    // Keyboard R11 v3 render hook (headless tests): >= 0 pins the focused
+    // item for a snapshot; < 0 = keyboard-driven (production).
+    in property <int> preview-index: -1;
     callback section-selected(int);
+    callback back();
+    callback menu-left();
+    callback take-focus();
 
-    background: transparent;
+    property <int> menu-index: root.preview-index >= 0 ? root.preview-index : 0;
 
-    VerticalLayout {
-        spacing: 4px;
-        padding: 12px;
+    // Public focus entry: the content hands focus here with Left (R11 v3
+    // spatial model — rail ↔ content, no Tab cycling).
+    take-focus => { menu-fs.focus(); }
 
-        MenuItem {
-            label: "Save";
-            active: root.active-section == 0;
-            reduced-motion: root.reduced-motion;
-            selected => { root.section-selected(0); }
+    menu-fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        key-pressed(event) => {
+            if (event.text == Key.Escape) { root.back(); return accept; }
+            if (event.text == Key.DownArrow) {
+                root.menu-index = min(root.menu-index + 1, 4);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.menu-index = max(root.menu-index - 1, 0);
+                return accept;
+            }
+            if (event.text == Key.RightArrow || event.text == Key.Return || event.text == Key.Space) {
+                root.section-selected(root.menu-index);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) { root.menu-left(); return accept; }
+            return reject;
         }
-        MenuItem {
-            label: "Borders";
-            active: root.active-section == 1;
-            reduced-motion: root.reduced-motion;
-            selected => { root.section-selected(1); }
-        }
-        MenuItem {
-            label: "Motion";
-            active: root.active-section == 2;
-            reduced-motion: root.reduced-motion;
-            selected => { root.section-selected(2); }
-        }
-        MenuItem {
-            label: "Filters";
-            active: root.active-section == 3;
-            reduced-motion: root.reduced-motion;
-            selected => { root.section-selected(3); }
-        }
-        MenuItem {
-            label: "System";
-            active: root.active-section == 4;
-            reduced-motion: root.reduced-motion;
-            selected => { root.section-selected(4); }
+
+        VerticalLayout {
+            spacing: 4px;
+            padding: 12px;
+
+            MenuItem {
+                label: "Save";
+                active: root.active-section == 0;
+                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 0;
+                reduced-motion: root.reduced-motion;
+                selected => { root.section-selected(0); }
+            }
+            MenuItem {
+                label: "Borders";
+                active: root.active-section == 1;
+                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 1;
+                reduced-motion: root.reduced-motion;
+                selected => { root.section-selected(1); }
+            }
+            MenuItem {
+                label: "Motion";
+                active: root.active-section == 2;
+                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 2;
+                reduced-motion: root.reduced-motion;
+                selected => { root.section-selected(2); }
+            }
+            MenuItem {
+                label: "Filters";
+                active: root.active-section == 3;
+                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 3;
+                reduced-motion: root.reduced-motion;
+                selected => { root.section-selected(3); }
+            }
+            MenuItem {
+                label: "System";
+                active: root.active-section == 4;
+                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 4;
+                reduced-motion: root.reduced-motion;
+                selected => { root.section-selected(4); }
+            }
         }
     }
 }

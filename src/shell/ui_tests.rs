@@ -209,15 +209,14 @@ fn main_window_exposes_navigation_callbacks() {
 
 #[test]
 fn panel_keyboard_nav_callbacks_exposed() {
-    // Keyboard R11 v2 (Settings): save-list arrows + click-focus converge on
-    // one Rust-owned focused index, and Tab/Shift+Tab cycle panel sections.
-    // The window must expose the whole callback surface.
+    // Keyboard R11 v3 (Settings, spatial model): save-list arrows + click
+    // focus converge on one Rust-owned focused index; Left hands focus to
+    // the left rail, Right/Enter re-enter a section from it.
     init_test_platform();
     let win = crate::MainWindow::new().unwrap();
 
     let navs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let focuses = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let tabs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
 
     win.on_panel_save_nav({
         let navs = navs.clone();
@@ -227,24 +226,13 @@ fn panel_keyboard_nav_callbacks_exposed() {
         let focuses = focuses.clone();
         move |idx| focuses.borrow_mut().push(idx)
     });
-    win.on_panel_tab_next({
-        let tabs = tabs.clone();
-        move || tabs.borrow_mut().push(1)
-    });
-    win.on_panel_tab_prev({
-        let tabs = tabs.clone();
-        move || tabs.borrow_mut().push(-1)
-    });
 
     win.invoke_panel_save_nav(1);
     win.invoke_panel_save_nav(-1);
     win.invoke_panel_save_focus_requested(2);
-    win.invoke_panel_tab_next();
-    win.invoke_panel_tab_prev();
 
     assert_eq!(*navs.borrow(), vec![1, -1], "save-nav reports arrow deltas");
     assert_eq!(*focuses.borrow(), vec![2], "click focus converges on the row index");
-    assert_eq!(*tabs.borrow(), vec![1, -1], "Tab next / Shift+Tab prev both fire");
 }
 
 // ── V6 focus-flow visual verification (headless render) ────────────────
@@ -919,37 +907,6 @@ fn save_list_keyboard_focus_navs_and_renders() {
             len,
         ));
     });
-    let sections = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    win.on_panel_section_selected({
-        let sections = sections.clone();
-        let w = win.as_weak();
-        move |s| {
-            sections.borrow_mut().push(s);
-            // Production keeps root.panel-section in sync (Shell::set_panel_section);
-            // mirror that so the Tab cycle reads the current section.
-            if let Some(w) = w.upgrade() {
-                w.set_panel_section(s);
-            }
-        }
-    });
-    let w = win.as_weak();
-    win.on_panel_tab_next(move || {
-        let Some(w) = w.upgrade() else { return; };
-        w.invoke_panel_section_selected(crate::callbacks::panel_next_section(
-            w.get_panel_section(),
-            1,
-            5,
-        ));
-    });
-    let w = win.as_weak();
-    win.on_panel_tab_prev(move || {
-        let Some(w) = w.upgrade() else { return; };
-        w.invoke_panel_section_selected(crate::callbacks::panel_next_section(
-            w.get_panel_section(),
-            -1,
-            5,
-        ));
-    });
 
     // Arrow walk: -1 (start) → 1 → 2 → clamp at 2 (Gamma is last).
     win.invoke_panel_save_nav(1);
@@ -968,17 +925,77 @@ fn save_list_keyboard_focus_navs_and_renders() {
     }
     let shot = win.window().take_snapshot().expect("save focus snapshot");
     save_slice_png(shot, "/tmp/opencode/save_focus_row.png");
+}
 
-    // Tab cycles sections through the same path PanelMenu uses.
-    win.invoke_panel_tab_next();
-    assert_eq!(*sections.borrow(), vec![1], "Tab → next section (Borders)");
-    win.invoke_panel_tab_next();
-    win.invoke_panel_tab_next();
-    win.invoke_panel_tab_next();
-    win.invoke_panel_tab_next();
-    assert_eq!(*sections.borrow(), vec![1, 2, 3, 4, 0], "Tab wraps back to Save");
-    win.invoke_panel_tab_prev();
-    assert_eq!(*sections.borrow(), vec![1, 2, 3, 4, 0, 4], "Shift+Tab wraps to System");
+// ── Keyboard R11 v3 (spatial) render hooks ──────────────────────────────
+// The left rail focus ring and the engaged-slider emphasis are new visual
+// states; the window-level preview hooks pin them for headless snapshots.
+#[test]
+fn panel_menu_and_engaged_slider_render() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(1); // Borders: cards + 4 tune sliders
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Soft"),
+        SharedString::from("Sharp"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("rounded"),
+        SharedString::from("square"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+
+    // Menu preview: third rail item (Motion) shows the keyboard ring.
+    win.set_panel_kbd_preview_index(2);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let menu = win.window().take_snapshot().expect("menu preview snapshot");
+    save_slice_png(menu.clone(), "/tmp/opencode/panel_menu_focus.png");
+
+    // Borders preview: 2 cards → slider #1 (radius) sits at sequence index 3.
+    win.set_panel_kbd_preview_index(3);
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let focused = win.window().take_snapshot().expect("slider focus snapshot");
+    save_slice_png(focused.clone(), "/tmp/opencode/borders_slider_focus.png");
+
+    // Engaged: same slider grabbed (emphasis ring, 2px).
+    win.set_panel_kbd_preview_engaged(true);
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let engaged = win.window().take_snapshot().expect("slider engaged snapshot");
+    save_slice_png(engaged.clone(), "/tmp/opencode/borders_slider_engaged.png");
+
+    let diff_menu = count_buffer_diff(&menu, &focused);
+    let diff_engaged = count_buffer_diff(&focused, &engaged);    assert!(diff_menu > 200, "menu ring and slider focus must differ — got {diff_menu}");
+    assert!(diff_engaged > 200, "engaged slider must emphasize over focus — got {diff_engaged}");
 }
 
 #[test]

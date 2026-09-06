@@ -109,6 +109,9 @@ export component ShellRoot inherits Rectangle {
 
     // ── Mutating panel (slice 1 skeleton + slice 2 Save + slice 3 Borders pick + slice 5 Motion) ──
     in property <int> panel-section: 0;
+    // Keyboard R11 v3 render hooks (headless tests): -1/false = keyboard-driven.
+    in property <int> panel-kbd-preview-index: -1;
+    in property <bool> panel-kbd-preview-engaged: false;
     in property <bool> is-mutating: false;
     in property <bool> is-panel-open: false;
     in-out property <string> panel-save-input: "";
@@ -205,8 +208,6 @@ export component ShellRoot inherits Rectangle {
     callback panel-save-search-changed(string);
     callback panel-save-nav(int);
     callback panel-save-focus-requested(int);
-    callback panel-tab-next();
-    callback panel-tab-prev();
     callback panel-apply-border(int, string);
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
@@ -434,6 +435,8 @@ export component ShellRoot inherits Rectangle {
                     opacity: 1.0;
                     section: root.panel-section;
                     open: root.is-panel-open;
+                    kbd-preview-index: root.panel-kbd-preview-index;
+                    kbd-preview-engaged: root.panel-kbd-preview-engaged;
                     mutating: root.is-mutating;
                     reduced-motion: root.gallery-reduced-motion;
                     save-input <=> root.panel-save-input;
@@ -519,8 +522,6 @@ export component ShellRoot inherits Rectangle {
                     section-selected(section) => { root.panel-section-selected(section); }
                     save-nav(d) => { root.panel-save-nav(d); }
                     save-focus-requested(idx) => { root.panel-save-focus-requested(idx); }
-                    tab-next => { root.panel-tab-next(); }
-                    tab-prev => { root.panel-tab-prev(); }
                     save-theme(name) => { root.panel-save-theme(name); }
                     apply-saved-theme(idx) => { root.panel-apply-saved-theme(idx); }
                     rename-saved-theme(old, new) => { root.panel-rename-saved-theme(old, new); }

@@ -110,8 +110,10 @@ export component SaveSection inherits Rectangle {
     callback search-query-changed(string);
     callback focus-requested(int);
     callback save-nav(int);
-    callback tab-next();
-    callback tab-prev();
+    callback menu-focus();
+    in property <int> preview-index: -1;
+    in property <bool> preview-engaged: false;
+    in property <int> focus-gen: 0;
     callback back();
 
     background: transparent;
@@ -120,6 +122,7 @@ export component SaveSection inherits Rectangle {
     // so arrows work immediately (list is the primary group; the name input
     // and buttons stay reachable via framework Tab from there).
     init => { list-fs.focus(); }
+    changed focus-gen => { list-fs.focus(); }
 
     // Esc must always close panel — even when LineEdit has focus (LineEdit may eat Esc)
     escape-fs := FocusScope {
@@ -301,16 +304,14 @@ export component SaveSection inherits Rectangle {
                 if (root.dialog-mode != "") { return reject; }
                 if (event.text == Key.DownArrow) { root.save-nav(1); return accept; }
                 if (event.text == Key.UpArrow) { root.save-nav(-1); return accept; }
+                if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
                 if (event.text == Key.Return || event.text == Key.Space) {
                     if (root.focused-index >= 0 && root.focused-index < root.saved-names.length) {
                         root.apply-saved-theme(root.focused-index);
                     }
                     return accept;
                 }
-                if (event.text == Key.Tab) {
-                    if (event.modifiers.shift) { root.tab-prev(); } else { root.tab-next(); }
-                    return accept;
-                }
+                if (event.text == Key.Tab) { return reject; }
                 return reject;
             }
 

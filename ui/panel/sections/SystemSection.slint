@@ -64,8 +64,10 @@ export component SystemSection inherits Rectangle {
     callback restart-app();
     callback open-docs();
     callback back();
-    callback tab-next();
-    callback tab-prev();
+    callback menu-focus();
+    in property <int> preview-index: -1;
+    in property <bool> preview-engaged: false;
+    in property <int> focus-gen: 0;
 
     property <int> focused-row: 0;
     property <int> row-count: 11;
@@ -82,16 +84,13 @@ export component SystemSection inherits Rectangle {
         height: 100%;
         key-pressed(event) => {
             if (event.text == Key.Escape) { root.back(); return accept; }
-            if (event.text == Key.Tab) {
-                // R11 v2: single group — Tab/Shift+Tab move between sections.
-                if (event.modifiers.shift) { root.tab-prev(); } else { root.tab-next(); }
-                return accept;
-            }
-            if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
+            if (event.text == Key.Tab) { return reject; }
+            if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
+            if (event.text == Key.DownArrow) {
                 root.focused-row = min(root.focused-row + 1, root.row-count - 1);
                 return accept;
             }
-            if (event.text == Key.UpArrow || event.text == Key.LeftArrow) {
+            if (event.text == Key.UpArrow) {
                 root.focused-row = max(root.focused-row - 1, 0);
                 return accept;
             }

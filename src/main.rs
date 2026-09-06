@@ -1852,32 +1852,6 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         }
         {
-            // Tab at the last group of a section → next section; Shift+Tab
-            // at the first group → previous section. Reuses the exact
-            // section-switch path (mutating guard included) via invoke.
-            let win = window.as_weak();
-            window.on_panel_tab_next(move || {
-                let Some(w) = win.upgrade() else { return; };
-                // 5 sections today: Save, Borders, Motion, Filters, System.
-                w.invoke_panel_section_selected(callbacks::panel_next_section(
-                    w.get_panel_section(),
-                    1,
-                    5,
-                ));
-            });
-        }
-        {
-            let win = window.as_weak();
-            window.on_panel_tab_prev(move || {
-                let Some(w) = win.upgrade() else { return; };
-                w.invoke_panel_section_selected(callbacks::panel_next_section(
-                    w.get_panel_section(),
-                    -1,
-                    5,
-                ));
-            });
-        }
-        {
             let shell_c = shell.clone();
             let win = window.as_weak();
             window.on_panel_back(move || {
