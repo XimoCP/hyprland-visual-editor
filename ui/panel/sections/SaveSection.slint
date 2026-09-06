@@ -349,7 +349,10 @@ export component SaveSection inherits Rectangle {
                 theme-name: name;
                 theme-saved-at: root.saved-ats[i];
                 is-active: root.saved-actives[i];
-                keyboard-focused: root.focused-index == i;
+                // Gate on list-fs.has-focus like every other section: moving
+                // to the rail with Left must drop the mark and collapse the
+                // row (the index stays — re-entry re-expands it).
+                keyboard-focused: root.focused-index == i && list-fs.has-focus;
                 accent: HveColors.accent-pink;
                 apply-text: root.apply-text;
                 refresh-text: root.refresh-text;
