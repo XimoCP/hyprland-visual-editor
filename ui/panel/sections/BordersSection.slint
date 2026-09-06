@@ -47,6 +47,11 @@ export component BordersSection inherits Rectangle {
     property <int> focused-index: root.preview-index >= 0 ? root.preview-index : 0;
     property <int> engaged-slider: root.preview-engaged ? (root.preview-index >= root.border-files.length ? root.preview-index - root.border-files.length : 0) : -1;
     property <int> control-count: root.border-files.length + 4;
+    // Scroll follows KEYBOARD focus only: arrows set focus-is-kbd, mouse
+    // hover clears it (the hovered item is always on screen, so freezing
+    // the view kills the seasick auto-scroll without losing key follow).
+    property <bool> focus-is-kbd: true;
+    property <length> saved-scroll-y: 0px;
 
     // Tune debounce + skip-init + last-wins (R3)
     property <bool> size-init: false;
@@ -148,10 +153,12 @@ export component BordersSection inherits Rectangle {
             }
             if (event.text == Key.DownArrow) {
                 root.focused-index = min(root.focused-index + 1, root.control-count - 1);
+                root.focus-is-kbd = true;
                 return accept;
             }
             if (event.text == Key.UpArrow) {
                 root.focused-index = max(root.focused-index - 1, 0);
+                root.focus-is-kbd = true;
                 return accept;
             }
             if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
@@ -232,6 +239,7 @@ export component BordersSection inherits Rectangle {
             // Scroll follows the keyboard focus (master recipe adapted):
             // cards pitch 66px (58 + 8), an expanded card above adds 42px,
             // slider blocks ~88px after the divider + color placeholder.
+            // Frozen while the mouse drives focus (focus-is-kbd false).
             property <length> focus-y:
                 root.focused-index < root.border-files.length
                     ? root.focused-index * 66px
@@ -239,10 +247,11 @@ export component BordersSection inherits Rectangle {
                       + (root.active-index == root.focused-index ? 21px : 0px)
                     : root.border-files.length * 66px + 40px + (root.active-index >= 0 ? 42px : 0px)
                       + (root.focused-index - root.border-files.length) * 88px;
-            viewport-y: root.focused-index >= 0
+            viewport-y: root.focus-is-kbd ? (root.focused-index >= 0
                 ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
-                : 0px;
+                : 0px) : root.saved-scroll-y;
             animate viewport-y { duration: 250ms; easing: ease-out; }
+            changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
             VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
@@ -260,7 +269,7 @@ export component BordersSection inherits Rectangle {
                     index: i;
                     hover-moves-focus: true;
                     toggled => { root.apply-border(i, root.border-files[i]); }
-                    focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
+                    focus-requested(idx) => { root.focused-index = idx; root.focus-is-kbd = false; fs.focus(); }
                 }
 
                 if root.border-files.length == 0 : Text {
@@ -316,6 +325,7 @@ export component BordersSection inherits Rectangle {
                         changed has-hover => {
                             if (self.has-hover) {
                                 root.focused-index = root.border-files.length;
+                                root.focus-is-kbd = false;
                                 fs.focus();
                             }
                         }
@@ -362,6 +372,7 @@ export component BordersSection inherits Rectangle {
                         changed has-hover => {
                             if (self.has-hover) {
                                 root.focused-index = root.border-files.length + 1;
+                                root.focus-is-kbd = false;
                                 fs.focus();
                             }
                         }
@@ -408,6 +419,7 @@ export component BordersSection inherits Rectangle {
                         changed has-hover => {
                             if (self.has-hover) {
                                 root.focused-index = root.border-files.length + 2;
+                                root.focus-is-kbd = false;
                                 fs.focus();
                             }
                         }
@@ -454,6 +466,7 @@ export component BordersSection inherits Rectangle {
                         changed has-hover => {
                             if (self.has-hover) {
                                 root.focused-index = root.border-files.length + 3;
+                                root.focus-is-kbd = false;
                                 fs.focus();
                             }
                         }
