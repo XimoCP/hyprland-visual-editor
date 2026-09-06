@@ -90,6 +90,121 @@ pub(crate) fn refresh_theme_list(
     window.set_active_theme_index(active_idx);
 }
 
+/// Initial carousel focus for the gallery slider: the ACTIVE theme's card
+/// index (first visible when the slider opens), or 0 when no theme is
+/// active / the list is empty. Callers feed the result into
+/// `set_gallery_focused` before `refresh_slice_ring`, which snaps both
+/// `focus-pos` and `delta-base` to it — zero drift is preserved
+/// (focus-pos == delta-base when settled).
+pub(crate) fn gallery_initial_focus(window: &crate::MainWindow) -> usize {
+    use slint::Model as _;
+    let cards = window.get_gallery_cards();
+    let count = cards.row_count() as usize;
+    if count == 0 {
+        return 0;
+    }
+    (0..count)
+        .find_map(|i| cards.row_data(i).filter(|row| row.is_active).map(|_| i))
+        .unwrap_or(0)
+}
+
+/// True when any gallery card carries the active mark.
+pub(crate) fn gallery_has_active(window: &crate::MainWindow) -> bool {
+    use slint::Model as _;
+    let cards = window.get_gallery_cards();
+    (0..cards.row_count()).any(|i| cards.row_data(i).is_some_and(|row| row.is_active))
+}
+
+/// Startup fallback latch: true when the gallery opened WITHOUT a resolved
+/// active card (focus fell back to 0, e.g. empty `last_applied` on disk).
+/// Consumed by `reaffirm_gallery_focus_on_active` — user navigation away
+/// from slot 0 also disarms it via the focused-index gate there.
+static GALLERY_STARTED_FALLBACK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record whether this startup resolved an active card. Call right AFTER
+/// `set_gallery_focused(gallery_initial_focus(..))` at every startup site.
+pub(crate) fn gallery_note_startup(window: &crate::MainWindow) {
+    GALLERY_STARTED_FALLBACK.store(
+        !gallery_has_active(window),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Snap focus onto a LATE-arriving active card (active resolved after a
+/// fallback startup — watcher refresh, late list resolution). Returns true
+/// when it moved focus; the caller must then run `refresh_slice_ring`,
+/// which snaps delta-base + focus-pos together (zero drift preserved).
+/// Idle (false) when: startup had an active card, no active card exists,
+/// focus already sits on the active card (latch consumed), or the user
+/// navigated away from the fallback slot (no yanking, ever).
+pub(crate) fn reaffirm_gallery_focus_on_active(window: &crate::MainWindow) -> bool {
+    use slint::Model as _;
+    if !GALLERY_STARTED_FALLBACK.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    let cards = window.get_gallery_cards();
+    let count = cards.row_count() as usize;
+    let Some(active) =
+        (0..count).find(|&i| cards.row_data(i).is_some_and(|row| row.is_active))
+    else {
+        return false;
+    };
+    let focused = window.get_gallery_focused().max(0) as usize;
+    if focused < count && cards.row_data(focused).is_some_and(|row| row.is_active) {
+        GALLERY_STARTED_FALLBACK.store(false, std::sync::atomic::Ordering::Relaxed);
+        return false;
+    }
+    if focused != 0 {
+        return false; // user navigated away — never yank
+    }
+    window.set_gallery_focused(active as i32);
+    GALLERY_STARTED_FALLBACK.store(false, std::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+// ── Active-theme backfill (legacy configs) ──────────────────────────────
+// Applies made before the active mark was persisted left
+// `cfg.last_applied_theme` empty on disk, so every restart resolved NO
+// active card and the carousel fell back to the first one (user report:
+// always the same theme centered). Resolve the active theme from the LIVE
+// wallpaper — the same IPC the noctalia-v5 provider saves with — adopt the
+// first matching theme in list order, and persist it so this only runs once.
+
+/// Saved noctalia-v5 wallpaper of one theme (empty dir/file → None).
+fn saved_theme_wallpaper(themes_dir: &std::path::Path, name: &str) -> Option<String> {
+    std::fs::read_to_string(
+        themes_dir
+            .join(name)
+            .join("providers")
+            .join("noctalia-v5")
+            .join("wallpaper.txt"),
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+}
+
+/// Resolve the backfill candidate: live wallpaper via IPC, then the first
+/// theme whose saved snapshot matches. IPC failure or no match → None (the
+/// caller keeps the old first-card fallback; next launch tries again).
+fn backfill_active_from_live(
+    tm: &crate::theme_manager::ThemeManager,
+    config_dir: &std::path::Path,
+) -> Option<String> {
+    let live = crate::providers::noctalia_runtime::noctalia_msg(&["msg", "wallpaper-get"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    let themes_dir = config_dir.join("hve").join("themes");
+    let themes = tm.list().ok()?;
+    let rows: Vec<(String, Option<String>)> = themes
+        .iter()
+        .map(|t| (t.name.clone(), saved_theme_wallpaper(&themes_dir, &t.name)))
+        .collect();
+    crate::callbacks::backfill_active_candidate(&rows, &live)
+}
+
 // ── Legacy prewarm/warmup — REMOVED slice 8 (R8) ──
 // Panel navigation no longer uses legacy_tab / nav-ready; held-key repeat handled per-section.
 
@@ -156,6 +271,58 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
         shell,
         crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery),
     );
+}
+
+/// Rebuild window gallery cards from gallery_tm in place (keeps baked thumbs)
+/// then refresh mosaic + slice ring. Shared by Save rename/delete/refresh/
+/// overwrite so the Gallery follows without restart.
+fn sync_save_gallery_ui(
+    w: &crate::MainWindow,
+    gallery_tm: &std::sync::Arc<std::sync::Mutex<crate::theme_manager::ThemeManager>>,
+    refresh_mosaic_page: &std::sync::Arc<dyn Fn(bool) + Send + Sync>,
+    refresh_slice_ring: &std::sync::Arc<dyn Fn() + Send + Sync>,
+) {
+    let new_rows: Vec<crate::GalleryCardData> = {
+        let gtm = gallery_tm.lock().unwrap();
+        gtm.list().unwrap_or_default().iter().map(|info| {
+            let card = crate::shell::gallery::ThemeCard::from_info(info);
+            crate::GalleryCardData {
+                name: slint::SharedString::from(info.name.as_str()),
+                saved_at: slint::SharedString::from(info.saved_at.as_str()),
+                is_active: info.is_active,
+                providers: slint::ModelRc::new(slint::VecModel::from(
+                    info.providers.iter().map(|p| slint::SharedString::from(p.as_str())).collect::<Vec<_>>(),
+                )),
+                accent: crate::theme::parse_hex(&card.colors.accent),
+                primary: crate::theme::parse_hex(&card.colors.primary),
+                secondary: crate::theme::parse_hex(&card.colors.secondary),
+                tertiary: crate::theme::parse_hex(&card.colors.tertiary),
+                surface: crate::theme::parse_hex(&card.colors.surface),
+                border_size: card.border.size,
+                border_radius: card.border.radius,
+                border_color: crate::theme::parse_hex(&card.border.color),
+                shader: slint::SharedString::from(card.shader.clone().unwrap_or_default()),
+                thumb_path: slint::SharedString::from(
+                    card.thumb_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                ),
+                thumb: slint::Image::default(),
+                hero: slint::Image::default(),
+                slat_image: slint::Image::default(),
+                slat_expanded_image: slint::Image::default(),
+            }
+        }).collect()
+    };
+    let model_rc = w.get_gallery_cards();
+    if let Some(model) = model_rc.as_any().downcast_ref::<slint::VecModel<crate::GalleryCardData>>() {
+        crate::shell::gallery::model::sync_cards(model, new_rows);
+    } else {
+        w.set_gallery_cards(slint::ModelRc::new(slint::VecModel::from(new_rows)));
+    }
+    // Late active arrival after a fallback startup: snap focus onto it
+    // BEFORE the ring refresh settles delta-base + focus-pos (zero drift).
+    reaffirm_gallery_focus_on_active(w);
+    refresh_mosaic_page(false);
+    refresh_slice_ring();
 }
 
 /// Debounce guard: overlapping reasserts (timed fallbacks + event-driven)
@@ -711,7 +878,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let proj = project_dir();
     let engine = Arc::new(Engine::new(&proj));
-    let cfg = Config::load();
+    let mut cfg = Config::load();
     // Use saved language, or auto-detect from system locale
     let tr_lang = if cfg.language.is_empty() {
         tr::detect_language()
@@ -788,6 +955,20 @@ fn main() -> Result<(), slint::PlatformError> {
     // Restore last applied theme from config
     if !cfg!(test) {
         theme_manager.last_applied = cfg.last_applied_theme.clone();
+        // Legacy configs: applies predating the persisted active mark left
+        // the field empty — resolve the active theme from the live wallpaper
+        // and persist it, so the gallery opens on the APPLIED card.
+        if theme_manager.last_applied.is_empty() {
+            if let Some(name) = backfill_active_from_live(&theme_manager, &config_dir) {
+                theme_manager.last_applied = name.clone();
+                cfg.last_applied_theme = name;
+                let _ = cfg.save();
+                tracing::info!(
+                    "[startup] Backfilled active theme '{}' from live wallpaper",
+                    theme_manager.last_applied
+                );
+            }
+        }
     }
 
     // Refresh UI theme list
@@ -1257,6 +1438,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let empty = carried.is_empty();
         window.set_gallery_cards(ModelRc::new(VecModel::from(carried)));
         window.set_gallery_empty(empty);
+        // Open on the active theme: initial carousel focus is the active
+        // card, so refresh_slice_ring below settles there (zero drift).
+        window.set_gallery_focused(crate::gallery_initial_focus(&window) as i32);
+        crate::gallery_note_startup(&window);
         refresh_mosaic_page(false); // startup: no under layer
         refresh_slice_ring();
         schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims, refresh_mosaic_page.clone());
@@ -1320,6 +1505,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(name) = name_opt {
                     let outcome = slot.apply_theme(&name);
                     if outcome == crate::shell::gallery::slot::ApplyOutcome::Applied {
+                        // Persist the active mark for the NEXT startup: tm.apply
+                        // holds it in memory (gallery_tm), cfg carries it on
+                        // disk — both managers seed last_applied from cfg, so
+                        // the gallery opens on this card instead of index 0.
+                        // (No SharedState in scope here; file-level write.)
+                        let mut cfg = crate::config::Config::load();
+                        cfg.last_applied_theme = name.clone();
+                        let _ = cfg.save();
                         let new_rows = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
                             // R3.1: in-place sync — no ModelRc replacement (preserves delegates,
@@ -1559,7 +1752,9 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
         window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
         window.set_gallery_style(0);
-        window.set_gallery_focused(0);
+        // Slider opens on the active theme — never hardcoded 0.
+        window.set_gallery_focused(crate::gallery_initial_focus(&window) as i32);
+        crate::gallery_note_startup(&window);
         refresh_slice_ring();
         window.set_gallery_reduced_motion(gallery_slot.is_reduced_motion());
         {
@@ -1794,6 +1989,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
+            // Existing name → overwrite confirm dialog (tranche B), no silent save
+            let exists = {
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                st.theme_manager().list().unwrap_or_default().iter().any(|t| t.name == trimmed)
+            };
+            if exists {
+                if let Some(w) = weak.upgrade() {
+                    w.set_panel_save_dialog_target(trimmed.clone().into());
+                    w.set_panel_save_dialog_mode("overwrite".into());
+                }
+                return;
+            }
             // Use pure helper for validation + dual write + sync callbacks
             let provider_ids = {
                 let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -1963,10 +2170,280 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
         // Also wire gallery-stage geometry changed from earlier? already wired.
+        // ── Panel Save "My Themes" apply: same Gallery path, dual-manager sync ──
+        // Row click applies via GallerySlot (gallery_tm) then mirrors
+        // last_applied into the main manager so refresh_theme_list shows the
+        // active mark in the Save list. No file writes — only active sync.
+        {
+            let state_c = state.clone();
+            let gallery_tm_c = gallery_tm.clone();
+            let slot_c = gallery_slot.clone();
+            let refresh_mosaic_page_c = refresh_mosaic_page.clone();
+            let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let weak = window.as_weak();
+            window.on_panel_apply_saved_theme(move |idx| {
+                let i = idx.max(0) as usize;
+                let name_opt = {
+                    let guard = gallery_tm_c.lock().unwrap();
+                    guard.list().unwrap_or_default().get(i).map(|info| info.name.clone())
+                };
+                let Some(name) = name_opt else { return; };
+                let outcome = slot_c.apply_theme(&name);
+                if outcome != crate::shell::gallery::slot::ApplyOutcome::Applied {
+                    return; // Pulsed (already active) / NotFound / Failed: no sync
+                }
+                // Dual-manager sync: mirror active into main manager AND
+                // persist to cfg so the next startup resolves the same card.
+                {
+                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.mark_theme_applied(&name);
+                    if let Some(w) = weak.upgrade() {
+                        st.refresh_theme_list(&w);
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    // In-place card sync (preserves baked thumbs, like gallery click)
+                    let new_rows: Vec<crate::GalleryCardData> = {
+                        let gtm = gallery_tm_c.lock().unwrap();
+                        let infos = gtm.list().unwrap_or_default();
+                        infos
+                            .iter()
+                            .map(|info| {
+                                let card = crate::shell::gallery::ThemeCard::from_info(info);
+                                crate::GalleryCardData {
+                                    name: slint::SharedString::from(info.name.as_str()),
+                                    saved_at: slint::SharedString::from(info.saved_at.as_str()),
+                                    is_active: info.is_active,
+                                    providers: slint::ModelRc::new(slint::VecModel::from(
+                                        info.providers
+                                            .iter()
+                                            .map(|p| slint::SharedString::from(p.as_str()))
+                                            .collect::<Vec<_>>(),
+                                    )),
+                                    accent: crate::theme::parse_hex(&card.colors.accent),
+                                    primary: crate::theme::parse_hex(&card.colors.primary),
+                                    secondary: crate::theme::parse_hex(&card.colors.secondary),
+                                    tertiary: crate::theme::parse_hex(&card.colors.tertiary),
+                                    surface: crate::theme::parse_hex(&card.colors.surface),
+                                    border_size: card.border.size,
+                                    border_radius: card.border.radius,
+                                    border_color: crate::theme::parse_hex(&card.border.color),
+                                    shader: slint::SharedString::from(card.shader.clone().unwrap_or_default()),
+                                    thumb_path: slint::SharedString::from(
+                                        card.thumb_path
+                                            .as_ref()
+                                            .map(|p| p.to_string_lossy().to_string())
+                                            .unwrap_or_default(),
+                                    ),
+                                    thumb: slint::Image::default(),
+                                    hero: slint::Image::default(),
+                                    slat_image: slint::Image::default(),
+                                    slat_expanded_image: slint::Image::default(),
+                                }
+                            })
+                            .collect()
+                    };
+                    let model_rc = w.get_gallery_cards();
+                    if let Some(model) = model_rc
+                        .as_any()
+                        .downcast_ref::<slint::VecModel<crate::GalleryCardData>>()
+                    {
+                        crate::shell::gallery::model::sync_cards(model, new_rows);
+                    } else {
+                        w.set_gallery_cards(slint::ModelRc::new(slint::VecModel::from(new_rows)));
+                    }
+                    w.set_gallery_focused(idx);
+                    refresh_mosaic_page_c(false);
+                    refresh_slice_ring_c();
+                }
+            });
+        }
+        // ── Panel Save tranche B: rename/delete/refresh/overwrite/search ──
+        // Dual-sync via pure callbacks::handle_panel_* (slot first for the
+        // gallery side, main TM converges on shared storage), then
+        // refresh_theme_list + gallery card sync + mosaic/slice refresh.
+        {
+            let state_c = state.clone();
+            let gallery_tm_c = gallery_tm.clone();
+            let slot_c = gallery_slot.clone();
+            let refresh_mosaic_page_c = refresh_mosaic_page.clone();
+            let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let weak = window.as_weak();
+            window.on_panel_rename_saved_theme(move |old, new| {
+                let (old_str, new_str) = (old.to_string(), new.to_string());
+                let mut error_msg = String::new();
+                let ok = {
+                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    let r = callbacks::handle_panel_rename(&old_str, &new_str, st.theme_manager_mut(), &slot_c, &mut error_msg);
+                    if r {
+                        // Rename moves last_applied in the manager — mirror to
+                        // cfg or the next startup loses the active card.
+                        let last = st.theme_manager().last_applied.clone();
+                        st.update_cfg(|c| c.last_applied_theme = last);
+                    }
+                    r
+                };
+                let Some(w) = weak.upgrade() else { return; };
+                if !ok {
+                    w.set_panel_save_error(error_msg.clone().into());
+                    w.set_theme_error_text(error_msg.into());
+                    return;
+                }
+                w.set_panel_save_error("".into());
+                w.set_theme_error_text("".into());
+                {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
+                }
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+            });
+        }
+        {
+            let state_c = state.clone();
+            let gallery_tm_c = gallery_tm.clone();
+            let slot_c = gallery_slot.clone();
+            let refresh_mosaic_page_c = refresh_mosaic_page.clone();
+            let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let weak = window.as_weak();
+            window.on_panel_delete_saved_theme(move |name| {
+                let name_str = name.to_string();
+                let del_idx = {
+                    let gtm = gallery_tm_c.lock().unwrap();
+                    gtm.list().unwrap_or_default().iter().position(|t| t.name == name_str).unwrap_or(0)
+                };
+                let mut error_msg = String::new();
+                let ok = {
+                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    let r = callbacks::handle_panel_delete(&name_str, st.theme_manager_mut(), &slot_c, &mut error_msg);
+                    if r {
+                        // Delete clears last_applied when the active theme is
+                        // removed — mirror so cfg never names a ghost theme.
+                        let last = st.theme_manager().last_applied.clone();
+                        st.update_cfg(|c| c.last_applied_theme = last);
+                    }
+                    r
+                };
+                let Some(w) = weak.upgrade() else { return; };
+                if !ok {
+                    w.set_panel_save_error(error_msg.clone().into());
+                    w.set_theme_error_text(error_msg.into());
+                    return;
+                }
+                w.set_panel_save_error("".into());
+                w.set_theme_error_text("".into());
+                {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
+                }
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+                // Focus the neighbor that takes the deleted slot (next, or previous if last)
+                let new_len = gallery_tm_c.lock().unwrap().list().unwrap_or_default().len();
+                w.set_panel_save_focused_index(callbacks::focus_after_delete(del_idx, new_len));
+            });
+        }
+        {
+            let state_c = state.clone();
+            let gallery_tm_c = gallery_tm.clone();
+            let refresh_mosaic_page_c = refresh_mosaic_page.clone();
+            let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let weak = window.as_weak();
+            window.on_panel_refresh_saved_theme(move || {
+                let mut error_msg = String::new();
+                let ok = {
+                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut gtm = gallery_tm_c.lock().unwrap();
+                    callbacks::handle_panel_refresh(st.theme_manager_mut(), &mut gtm, &mut error_msg)
+                };
+                let Some(w) = weak.upgrade() else { return; };
+                if !ok {
+                    w.set_panel_save_error(error_msg.clone().into());
+                    w.set_theme_error_text(error_msg.into());
+                    return;
+                }
+                w.set_panel_save_error("".into());
+                w.set_theme_error_text("".into());
+                {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
+                }
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+            });
+        }
+        {
+            let state_c = state.clone();
+            let gallery_tm_c = gallery_tm.clone();
+            let refresh_mosaic_page_c = refresh_mosaic_page.clone();
+            let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let weak = window.as_weak();
+            window.on_panel_overwrite_saved_theme(move |name| {
+                let name_str = name.to_string();
+                let mut error_msg = String::new();
+                let ok = {
+                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut gtm = gallery_tm_c.lock().unwrap();
+                    callbacks::handle_panel_save(&name_str, st.theme_manager_mut(), &mut gtm, || {}, || {}, &mut error_msg)
+                };
+                let Some(w) = weak.upgrade() else { return; };
+                if !ok {
+                    w.set_panel_save_error(error_msg.clone().into());
+                    w.set_theme_error_text(error_msg.into());
+                    return;
+                }
+                w.set_panel_save_error("".into());
+                w.set_theme_error_text("".into());
+                w.set_panel_save_input("".into());
+                {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
+                }
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+            });
+        }
+        {
+            let state_c = state.clone();
+            let weak = window.as_weak();
+            window.on_panel_save_search_changed(move |query| {
+                let Some(w) = weak.upgrade() else { return; };
+                let q = query.to_string();
+                if q.trim().is_empty() {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
+                    return;
+                }
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                let rows = callbacks::save_list_rows(st.theme_manager());
+                let out = callbacks::filter_saved_rows(&q, &rows);
+                w.set_theme_names(slint::ModelRc::new(slint::VecModel::from(
+                    out.iter().map(|(n, _, _)| slint::SharedString::from(n.as_str())).collect::<Vec<_>>(),
+                )));
+                w.set_theme_saved_ats(slint::ModelRc::new(slint::VecModel::from(
+                    out.iter().map(|(_, d, _)| slint::SharedString::from(d.as_str())).collect::<Vec<_>>(),
+                )));
+                w.set_theme_is_actives(slint::ModelRc::new(slint::VecModel::from(
+                    out.iter().map(|(_, _, a)| *a).collect::<Vec<_>>(),
+                )));
+            });
+        }
         // Ensure initial panel placeholders are cleared
         window.set_panel_save_placeholder("Theme name…".into());
         window.set_panel_save_button_text("Save".into());
         window.set_panel_save_error("".into());
+        // Save classic tranche A: search + card action labels (themes.* keys exist in en/es.json)
+        window.set_panel_save_search_placeholder(tr.tr_shared("themes.search_placeholder", "Search themes..."));
+        window.set_panel_save_empty_text(tr.tr_shared("themes.empty", "No themes yet."));
+        window.set_panel_save_apply_text(tr.tr_shared("themes.apply", "Apply"));
+        window.set_panel_save_refresh_text(tr.tr_shared("themes.refresh", "Refresh"));
+        window.set_panel_save_rename_text(tr.tr_shared("themes.rename", "Rename"));
+        window.set_panel_save_delete_text(tr.tr_shared("themes.delete", "Delete"));
+        // Save classic tranche B: dialog texts (themes.* keys in en/es.json)
+        window.set_panel_save_rename_title(tr.tr_shared("themes.rename_title", "Rename theme"));
+        window.set_panel_save_confirm_delete(tr.tr_shared("themes.confirm_delete", "Delete theme"));
+        window.set_panel_save_confirm_delete_msg(tr.tr_shared("themes.confirm_delete_msg", "Are you sure you want to delete"));
+        window.set_panel_save_confirm_refresh(tr.tr_shared("themes.confirm_refresh", "Refresh theme"));
+        window.set_panel_save_confirm_refresh_msg(tr.tr_shared("themes.confirm_refresh_msg", "This will reload the theme with the current configuration. Continue?"));
+        window.set_panel_save_overwrite_title(tr.tr_shared("themes.overwrite_title", "Overwrite theme"));
+        window.set_panel_save_overwrite_msg(tr.tr_shared("themes.overwrite_msg", "already exists. Overwrite it with the current setup?"));
+        window.set_panel_save_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
     }
 
     // ── Panel Borders tune: debounced geometry + snap-on-pick (slice 4, COLOR GATED) ──

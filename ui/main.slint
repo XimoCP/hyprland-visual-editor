@@ -198,6 +198,25 @@ export component MainWindow inherits Window {
     in-out property <string> panel-save-error: "";
     in property <string> panel-save-placeholder: "Theme name…";
     in property <string> panel-save-button-text: "Save";
+    in property <string> panel-save-list-title: "My Themes";
+    in property <string> panel-save-search-placeholder: "Search themes...";
+    in property <string> panel-save-empty-text: "No themes yet.";
+    in property <string> panel-save-apply-text: "Apply";
+    in property <string> panel-save-refresh-text: "Refresh";
+    in property <string> panel-save-rename-text: "Rename";
+    in property <string> panel-save-delete-text: "Delete";
+    in-out property <string> panel-save-search-query: "";
+    in property <string> panel-save-rename-title: "Rename theme";
+    in property <string> panel-save-confirm-delete: "Delete theme";
+    in property <string> panel-save-confirm-delete-msg: "Are you sure you want to delete";
+    in property <string> panel-save-confirm-refresh: "Refresh theme";
+    in property <string> panel-save-confirm-refresh-msg: "This will reload the theme with the current configuration. Continue?";
+    in property <string> panel-save-overwrite-title: "Overwrite theme";
+    in property <string> panel-save-overwrite-msg: "already exists. Overwrite it with the current setup?";
+    in property <string> panel-save-cancel-text: "Cancel";
+    in-out property <string> panel-save-dialog-mode: "";
+    in-out property <string> panel-save-dialog-target: "";
+    in property <int> panel-save-focused-index: -1;
     in-out property <float> bezier-a: 0.25;
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
@@ -205,6 +224,12 @@ export component MainWindow inherits Window {
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-save-theme(string);
+    callback panel-rename-saved-theme(string, string);
+    callback panel-delete-saved-theme(string);
+    callback panel-refresh-saved-theme();
+    callback panel-overwrite-saved-theme(string);
+    callback panel-save-search-changed(string);
+    callback panel-apply-saved-theme(int);
     callback panel-apply-border(int, string);
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
@@ -284,6 +309,29 @@ export component MainWindow inherits Window {
         panel-save-error: root.panel-save-error;
         panel-save-placeholder: root.panel-save-placeholder;
         panel-save-button-text: root.panel-save-button-text;
+        panel-save-list-title: root.panel-save-list-title;
+        panel-save-search-placeholder: root.panel-save-search-placeholder;
+        panel-save-empty-text: root.panel-save-empty-text;
+        panel-save-apply-text: root.panel-save-apply-text;
+        panel-save-refresh-text: root.panel-save-refresh-text;
+        panel-save-rename-text: root.panel-save-rename-text;
+        panel-save-delete-text: root.panel-save-delete-text;
+        panel-save-search-query <=> root.panel-save-search-query;
+        panel-save-rename-title: root.panel-save-rename-title;
+        panel-save-confirm-delete: root.panel-save-confirm-delete;
+        panel-save-confirm-delete-msg: root.panel-save-confirm-delete-msg;
+        panel-save-confirm-refresh: root.panel-save-confirm-refresh;
+        panel-save-confirm-refresh-msg: root.panel-save-confirm-refresh-msg;
+        panel-save-overwrite-title: root.panel-save-overwrite-title;
+        panel-save-overwrite-msg: root.panel-save-overwrite-msg;
+        panel-save-cancel-text: root.panel-save-cancel-text;
+        panel-save-dialog-mode <=> root.panel-save-dialog-mode;
+        panel-save-dialog-target <=> root.panel-save-dialog-target;
+        panel-save-focused-index: root.panel-save-focused-index;
+        panel-save-theme-names: root.theme-names;
+        panel-save-theme-saved-ats: root.theme-saved-ats;
+        panel-save-theme-is-actives: root.theme-is-actives;
+        panel-save-active-index: root.active-theme-index;
         panel-border-titles: root.border-titles;
         panel-border-descs: root.border-descs;
         panel-border-tags: root.border-tags;
@@ -346,6 +394,12 @@ export component MainWindow inherits Window {
         panel-back => { root.panel-back(); }
         panel-section-selected(section) => { root.panel-section-selected(section); }
         panel-save-theme(name) => { root.panel-save-theme(name); }
+        panel-rename-saved-theme(old, new) => { root.panel-rename-saved-theme(old, new); }
+        panel-delete-saved-theme(name) => { root.panel-delete-saved-theme(name); }
+        panel-refresh-saved-theme() => { root.panel-refresh-saved-theme(); }
+        panel-overwrite-saved-theme(name) => { root.panel-overwrite-saved-theme(name); }
+        panel-save-search-changed(q) => { root.panel-save-search-changed(q); }
+        panel-apply-saved-theme(idx) => { root.panel-apply-saved-theme(idx); }
         panel-apply-border(idx, file) => { root.panel-apply-border(idx, file); }
         panel-apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
         panel-apply-animation(idx, file) => { root.panel-apply-animation(idx, file); }

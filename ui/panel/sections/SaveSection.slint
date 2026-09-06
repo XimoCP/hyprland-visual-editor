@@ -1,23 +1,114 @@
-// HVE 2 — SaveSection (mutating-window slice 2, R10).
+// HVE 2 — SaveSection (Save classic restore, tranche A).
 //
-// LineEdit + Save (Enter submits, Esc leaves panel unchanged — Esc is
-// handled by ShellRoot/shell-kbd not this component), error label,
-// keyboard-focusable via arrows/Tab (R11). Dual-sync save writes BOTH
-// ThemeManagers then sync_cards + refresh_mosaic_page so Gallery shows
-// the new card instantly, no restart.
+// Save row (LineEdit + Save, Enter submits, Esc leaves panel unchanged —
+// Esc is handled by ShellRoot/shell-kbd, mirrored here) plus the classic
+// list from master:ui/modules.slint ThemesModule, adapted: old-style
+// 48px search box, ◈ empty state, SavedThemeCard rows (expand +
+// active/hover highlights + ▶/↻/✎/✕ buttons). Rename/delete/refresh
+// confirm dialogs + Rust handlers arrive in tranche B; the buttons emit
+// *-requested callbacks (no-op until wired).
+// Dual-sync save writes BOTH ThemeManagers then sync_cards +
+// refresh_mosaic_page so Gallery shows the new card instantly, no restart.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 import { LineEdit, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
+import { SavedThemeCard } from "SavedThemeCard.slint";
+
+// Old-style confirm dialog (master:ui/modules.slint 1:1 look — 300px card on
+// dim overlay, title + message + cancel/confirm). One component, three
+// instances (delete red, refresh purple, overwrite pink).
+component ConfirmDialog inherits Rectangle {
+    in property <string> title;
+    in property <color> title-color;
+    in property <string> message;
+    in property <string> cancel-text;
+    in property <string> confirm-text;
+    in property <color> confirm-color;
+    callback confirm();
+    callback cancel();
+
+    width: 100%;
+    height: 100%;
+    background: #00000060;
+
+    Rectangle {
+        width: 300px;
+        height: 160px;
+        border-radius: 12px;
+        background: HveColors.bg-surface;
+        border-width: 1px;
+        border-color: HveColors.border;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: #00000060;
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: root.title; color: root.title-color; font-size: 15px; font-weight: 700; }
+            Text { text: root.message; color: HveColors.text-muted; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Rectangle {
+                    width: 80px; height: 30px; border-radius: 6px;
+                    background: cancel-cd.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                    border-width: 1px; border-color: HveColors.border;
+                    Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    cancel-cd := TouchArea { width: 100%; height: 100%; clicked => { root.cancel(); } }
+                }
+                Rectangle {
+                    width: 80px; height: 30px; border-radius: 6px;
+                    background: apply-cd.has-hover ? root.confirm-color : root.confirm-color.transparentize(0.2);
+                    Text { text: root.confirm-text; color: HveColors.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    apply-cd := TouchArea { width: 100%; height: 100%; clicked => { root.confirm(); } }
+                }
+            }
+        }
+    }
+}
 
 export component SaveSection inherits Rectangle {
     in property <string> placeholder: "Theme name…";
     in property <string> save-label: "Save";
     in property <string> error-text: "";
+    in property <string> list-title: "My Themes";
+    in property <string> search-placeholder: "Search themes...";
+    in property <string> empty-text: "No themes yet.";
+    in property <string> apply-text: "Apply";
+    in property <string> refresh-text: "Refresh";
+    in property <string> rename-text: "Rename";
+    in property <string> delete-text: "Delete";
+    in property <[string]> saved-names;
+    in property <[string]> saved-ats;
+    in property <[bool]> saved-actives;
+    in property <int> saved-active-index: -1;
     in-out property <string> theme-name: "";
+    in-out property <string> search-query: "";
+    in-out property <string> dialog-mode: "";
+    in-out property <string> dialog-target: "";
+    in-out property <string> rename-input: "";
+    in property <int> focused-index: -1;
+    in property <string> rename-title: "Rename theme";
+    in property <string> confirm-delete: "Delete theme";
+    in property <string> confirm-delete-msg: "Are you sure you want to delete";
+    in property <string> confirm-refresh: "Refresh theme";
+    in property <string> confirm-refresh-msg: "This will reload the theme with the current configuration. Continue?";
+    in property <string> overwrite-title: "Overwrite theme";
+    in property <string> overwrite-msg: "already exists. Overwrite it with the current setup?";
+    in property <string> cancel-text: "Cancel";
     callback save-theme(string);
+    callback apply-saved-theme(int);
+    callback rename-theme(string, string);
+    callback delete-theme(string);
+    callback refresh-theme();
+    callback overwrite-theme(string);
+    callback search-query-changed(string);
+    callback focus-requested(int);
     callback back();
 
     background: transparent;
@@ -27,7 +118,11 @@ export component SaveSection inherits Rectangle {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
-            if (event.text == Key.Escape) { root.back(); return accept; }
+            if (event.text == Key.Escape) {
+                // Open dialog eats Esc (close dialog only); otherwise leave panel
+                if (root.dialog-mode != "") { root.dialog-mode = ""; } else { root.back(); }
+                return accept;
+            }
             return reject;
         }
 
@@ -137,12 +232,199 @@ export component SaveSection inherits Rectangle {
             wrap: word-wrap;
         }
 
+        // ── Divider (classic) ──
+        Rectangle {
+            height: 1px;
+            background: HveColors.border;
+            vertical-stretch: 0;
+        }
+
         Text {
             text: "Tip: Enter saves • Esc returns to Gallery • Tab navigates";
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-12;
             color: HveColors.text-muted.transparentize(0.4);
         }
+
+        // "My Themes" list title
+        Text {
+            text: root.list-title;
+            font-family: SkwdTokens.font-heading;
+            font-size: SkwdTokens.size-14;
+            font-weight: 700;
+            color: HveColors.text;
         }
+
+        // ── Search box, same 48px card style as the save block (classic) ──
+        if (root.saved-names.length > 0) : Rectangle {
+            height: 48px;
+            border-radius: 10px;
+            background: HveColors.bg-card;
+            border-width: 1px;
+            border-color: HveColors.border;
+
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 8px;
+
+                LineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: root.search-placeholder;
+                    font-size: 12px;
+                    text <=> root.search-query;
+                    edited => { root.search-query-changed(root.search-query); }
+                }
+            }
+        }
+
+        // ── Empty state (classic ◈) ──
+        if (root.saved-names.length == 0) : Rectangle {
+            height: 120px;
+
+            VerticalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                Text {
+                    text: "◈";
+                    color: HveColors.text-muted;
+                    font-size: 32px;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.empty-text;
+                    color: HveColors.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // ── Theme cards (classic SavedThemeCard rows) ──
+        for name[i] in root.saved-names : SavedThemeCard {
+            theme-name: name;
+            theme-saved-at: root.saved-ats[i];
+            is-active: root.saved-actives[i];
+            keyboard-focused: root.focused-index == i;
+            accent: HveColors.accent-pink;
+            apply-text: root.apply-text;
+            refresh-text: root.refresh-text;
+            rename-text: root.rename-text;
+            delete-text: root.delete-text;
+            index: i;
+            apply-theme(theme-name) => { root.apply-saved-theme(i); }
+            open-rename(theme-name) => {
+                root.rename-input = theme-name;
+                root.dialog-target = theme-name;
+                root.dialog-mode = "rename";
+            }
+            open-delete(theme-name) => {
+                root.dialog-target = theme-name;
+                root.dialog-mode = "delete";
+            }
+            open-refresh(theme-name) => {
+                root.dialog-target = theme-name;
+                root.dialog-mode = "refresh";
+            }
+            focus-requested(idx) => { root.focus-requested(idx); }
+        }
+        }
+    }
+
+    // ── Rename dialog (old-style 300x180, master 1:1) ──
+    if root.dialog-mode == "rename" : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000060;
+
+        Rectangle {
+            width: 300px;
+            height: 180px;
+            border-radius: 12px;
+            background: HveColors.bg-surface;
+            border-width: 1px;
+            border-color: HveColors.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000060;
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: root.rename-title; color: HveColors.text; font-size: 15px; font-weight: 700; }
+                LineEdit {
+                    height: 32px;
+                    placeholder-text: root.placeholder;
+                    font-size: 13px;
+                    text <=> root.rename-input;
+                }
+                if (root.error-text != "") : Text {
+                    text: root.error-text;
+                    color: HveColors.accent-red;
+                    font-size: 11px;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Rectangle {
+                        width: 80px; height: 30px; border-radius: 6px;
+                        background: cancel-rn.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                        border-width: 1px; border-color: HveColors.border;
+                        Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        cancel-rn := TouchArea { width: 100%; height: 100%; clicked => { root.dialog-mode = ""; } }
+                    }
+                    Rectangle {
+                        width: 80px; height: 30px; border-radius: 6px;
+                        background: apply-rn.has-hover ? HveColors.accent-pink.transparentize(0.2) : HveColors.accent-pink;
+                        Text { text: root.rename-text; color: HveColors.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        apply-rn := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => {
+                                if (root.rename-input != "" && root.rename-input != root.dialog-target) {
+                                    root.rename-theme(root.dialog-target, root.rename-input);
+                                }
+                                root.dialog-mode = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Delete / refresh / overwrite confirms (old-style 300x160) ──
+    if root.dialog-mode == "delete" : ConfirmDialog {
+        title: root.confirm-delete;
+        title-color: HveColors.accent-red;
+        message: root.confirm-delete-msg + " \"" + root.dialog-target + "\"?";
+        cancel-text: root.cancel-text;
+        confirm-text: root.delete-text;
+        confirm-color: HveColors.accent-red;
+        confirm => { root.delete-theme(root.dialog-target); root.dialog-mode = ""; }
+        cancel => { root.dialog-mode = ""; }
+    }
+    if root.dialog-mode == "refresh" : ConfirmDialog {
+        title: root.confirm-refresh;
+        title-color: HveColors.accent-purple;
+        message: root.confirm-refresh-msg;
+        cancel-text: root.cancel-text;
+        confirm-text: root.refresh-text;
+        confirm-color: HveColors.accent-purple;
+        confirm => { root.refresh-theme(); root.dialog-mode = ""; }
+        cancel => { root.dialog-mode = ""; }
+    }
+    if root.dialog-mode == "overwrite" : ConfirmDialog {
+        title: root.overwrite-title;
+        title-color: HveColors.accent-pink;
+        message: "\"" + root.dialog-target + "\" " + root.overwrite-msg;
+        cancel-text: root.cancel-text;
+        confirm-text: root.save-label;
+        confirm-color: HveColors.accent-pink;
+        confirm => { root.overwrite-theme(root.dialog-target); root.dialog-mode = ""; }
+        cancel => { root.dialog-mode = ""; }
     }
 }

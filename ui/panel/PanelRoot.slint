@@ -28,6 +28,29 @@ export component PanelRoot inherits Rectangle {
     in property <string> save-error: "";
     in property <string> save-placeholder: "Theme name…";
     in property <string> save-button-text: "Save";
+    in property <string> save-list-title: "My Themes";
+    in property <string> save-search-placeholder: "Search themes...";
+    in property <string> save-empty-text: "No themes yet.";
+    in property <string> save-apply-text: "Apply";
+    in property <string> save-refresh-text: "Refresh";
+    in property <string> save-rename-text: "Rename";
+    in property <string> save-delete-text: "Delete";
+    in-out property <string> save-search-query: "";
+    in property <string> save-rename-title: "Rename theme";
+    in property <string> save-confirm-delete: "Delete theme";
+    in property <string> save-confirm-delete-msg: "Are you sure you want to delete";
+    in property <string> save-confirm-refresh: "Refresh theme";
+    in property <string> save-confirm-refresh-msg: "This will reload the theme with the current configuration. Continue?";
+    in property <string> save-overwrite-title: "Overwrite theme";
+    in property <string> save-overwrite-msg: "already exists. Overwrite it with the current setup?";
+    in property <string> save-cancel-text: "Cancel";
+    in-out property <string> save-dialog-mode: "";
+    in-out property <string> save-dialog-target: "";
+    in property <int> save-focused-index: -1;
+    in property <[string]> save-theme-names;
+    in property <[string]> save-theme-saved-ats;
+    in property <[bool]> save-theme-is-actives;
+    in property <int> save-active-index: -1;
     // Borders pick layer (R3) — PresetCards from scan("borders")
     in property <[string]> border-titles;
     in property <[string]> border-descs;
@@ -87,6 +110,12 @@ export component PanelRoot inherits Rectangle {
     callback back();
     callback section-selected(int);
     callback save-theme(string);
+    callback apply-saved-theme(int);
+    callback rename-saved-theme(string, string);
+    callback delete-saved-theme(string);
+    callback refresh-saved-theme();
+    callback overwrite-saved-theme(string);
+    callback save-search-changed(string);
     callback apply-border(int, string);
     callback apply-geometry(int, int, int, int);
     callback apply-animation(int, string);
@@ -170,7 +199,36 @@ export component PanelRoot inherits Rectangle {
                     error-text: root.save-error;
                     placeholder: root.save-placeholder;
                     save-label: root.save-button-text;
+                    list-title: root.save-list-title;
+                    search-placeholder: root.save-search-placeholder;
+                    empty-text: root.save-empty-text;
+                    apply-text: root.save-apply-text;
+                    refresh-text: root.save-refresh-text;
+                    rename-text: root.save-rename-text;
+                    delete-text: root.save-delete-text;
+                    search-query <=> root.save-search-query;
+                    dialog-mode <=> root.save-dialog-mode;
+                    dialog-target <=> root.save-dialog-target;
+                    focused-index: root.save-focused-index;
+                    rename-title: root.save-rename-title;
+                    confirm-delete: root.save-confirm-delete;
+                    confirm-delete-msg: root.save-confirm-delete-msg;
+                    confirm-refresh: root.save-confirm-refresh;
+                    confirm-refresh-msg: root.save-confirm-refresh-msg;
+                    overwrite-title: root.save-overwrite-title;
+                    overwrite-msg: root.save-overwrite-msg;
+                    cancel-text: root.save-cancel-text;
+                    saved-names: root.save-theme-names;
+                    saved-ats: root.save-theme-saved-ats;
+                    saved-actives: root.save-theme-is-actives;
+                    saved-active-index: root.save-active-index;
                     save-theme(name) => { root.save-theme(name); }
+                    apply-saved-theme(idx) => { root.apply-saved-theme(idx); }
+                    rename-theme(old, new) => { root.rename-saved-theme(old, new); }
+                    delete-theme(name) => { root.delete-saved-theme(name); }
+                    refresh-theme() => { root.refresh-saved-theme(); }
+                    overwrite-theme(name) => { root.overwrite-saved-theme(name); }
+                    search-query-changed(q) => { root.save-search-changed(q); }
                     back => { root.back(); }
                 }
                 if root.section == 1 : BordersSection {

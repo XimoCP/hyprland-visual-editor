@@ -378,6 +378,456 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_rebasing(false);
 }
 
+// ── Gallery opens on the active theme (carousel initial focus) ─────────
+// Opening the slider must focus the ACTIVE theme first (not index 0):
+// with theme N active, the initial focus is N, settled with zero drift
+// (focus-pos == delta-base) and the expanded tile is the active card.
+#[test]
+fn gallery_opens_on_active_theme() {
+    use slint::{ComponentHandle as _, Model, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+
+    // 8 themes, theme 5 is the active one.
+    let count = 8usize;
+    let active = 5usize;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let src = slice_test_gradient(i);
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: i == active,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: {
+                let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+                let (w, h) = (rgba.width(), rgba.height());
+                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                slint::Image::from_rgba8(buf)
+            },
+            slat_expanded_image: {
+                let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
+                let (w, h) = (rgba.width(), rgba.height());
+                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                slint::Image::from_rgba8(buf)
+            },
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    // Opening the slider focuses the active theme — not index 0.
+    let initial = crate::gallery_initial_focus(&win);
+    assert_eq!(initial, active, "initial carousel focus must be the active theme");
+    win.set_gallery_focused(initial as i32);
+
+    // Settle exactly like production refresh_slice_ring: relabel deltas for
+    // the focused slot, snap delta-base and focus-pos together (zero drift).
+    let stage_w = 1920.0f32;
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, initial, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
+    // The expanded (center, focused) tile must be the active card.
+    let expanded = tiles.iter().find(|t| t.is_expanded).expect("one expanded tile");
+    assert_eq!(expanded.real_index as usize, active, "expanded tile must be the active theme");
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_delta_base(initial as i32);
+    win.set_gallery_slice_focus_pos(initial as f32);
+    assert_eq!(
+        win.get_gallery_slice_focus_pos(),
+        win.get_gallery_slice_delta_base() as f32,
+        "zero drift: focus-pos == delta-base when settled"
+    );
+    let shot = win.window().take_snapshot().expect("active-open snapshot");
+    save_slice_png(shot, "/tmp/opencode/slice_active_open.png");
+
+    // Fallback: no active theme → focus 0 (previous behavior preserved).
+    let model = win.get_gallery_cards();
+    if let Some(vm) = model.as_any().downcast_ref::<VecModel<crate::GalleryCardData>>() {
+        for i in 0..vm.row_count() {
+            let mut row = vm.row_data(i).unwrap();
+            row.is_active = false;
+            vm.set_row_data(i, row);
+        }
+    }
+    assert_eq!(crate::gallery_initial_focus(&win), 0, "no active theme → focus 0");
+}
+
+// ── Late-active re-affirm (real-startup reproduction) ───────────────────
+// Real startup resolves NO active card (cfg.last_applied_theme is empty on
+// disk because apply never persisted it): focus falls back to 0, exactly
+// like production. When the active mark arrives LATE (watcher refresh /
+// late list resolution), focus must snap onto it — but only if startup was
+// a fallback and the user never navigated away. The pre-fix code has no
+// re-affirm helper, so focus stays stuck on index 0 forever.
+// The startup-fallback latch in main.rs is process-global (production is
+// single UI-threaded, so that is fine); these three tests share it, so they
+// must not run concurrently — hold this guard for the whole test body.
+static REAFFIRM_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn late_card(name: &str, is_active: bool) -> crate::GalleryCardData {
+    use slint::{ModelRc, SharedString, VecModel};
+    crate::GalleryCardData {
+        name: SharedString::from(name),
+        saved_at: SharedString::from(""),
+        is_active,
+        providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+        accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+        primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+        secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+        tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+        surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+        border_size: 0,
+        border_radius: 0,
+        border_color: slint::Color::from_rgb_u8(0, 0, 0),
+        shader: SharedString::from(""),
+        thumb_path: SharedString::from(""),
+        thumb: slint::Image::default(),
+        hero: slint::Image::default(),
+        slat_image: slint::Image::default(),
+        slat_expanded_image: slint::Image::default(),
+    }
+}
+
+fn late_slice_tiles(count: usize, focused: usize, stage_w: f32) -> Vec<crate::SliceTileData> {
+    crate::shell::gallery::views::slice::slice_delta_tiles(count, focused, stage_w)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect()
+}
+
+#[test]
+fn gallery_fallback_focus_reaffirms_when_active_arrives_late() {
+    use slint::{ComponentHandle as _, Model, ModelRc, VecModel};
+    let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+
+    // Real startup: no active mark anywhere (empty last_applied on disk).
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        names.iter().map(|n| late_card(n, false)).collect::<Vec<_>>(),
+    )));
+    let initial = crate::gallery_initial_focus(&win);
+    assert_eq!(initial, 0, "no resolved active → fallback focus 0 (real startup)");
+    win.set_gallery_focused(initial as i32);
+    crate::gallery_note_startup(&win);
+    // Settle exactly like production refresh_slice_ring (zero drift).
+    let stage_w = 1920.0f32;
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+        names.len(),
+        initial,
+        stage_w,
+    ))));
+    win.set_gallery_slice_delta_base(initial as i32);
+    win.set_gallery_slice_focus_pos(initial as f32);
+    let fallback_shot = win.window().take_snapshot().expect("fallback snapshot");
+    save_slice_png(fallback_shot, "/tmp/opencode/slice_fallback_open.png");
+
+    // The active mark arrives LATE via the real in-place merge path.
+    let model = win.get_gallery_cards();
+    let vm = model
+        .as_any()
+        .downcast_ref::<VecModel<crate::GalleryCardData>>()
+        .expect("gallery cards must be a VecModel");
+    crate::shell::gallery::model::sync_cards(
+        vm,
+        names
+            .iter()
+            .map(|n| late_card(n, *n == "Gamma"))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(crate::gallery_initial_focus(&win), 2, "late active resolves at index 2");
+
+    // Re-affirm snaps focus onto the late active card (caller refreshes ring).
+    assert!(
+        crate::reaffirm_gallery_focus_on_active(&win),
+        "fallback startup + late active → must snap"
+    );
+    assert_eq!(win.get_gallery_focused(), 2, "focus must move to the late active card");
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+        names.len(),
+        2,
+        stage_w,
+    ))));
+    win.set_gallery_slice_delta_base(2);
+    win.set_gallery_slice_focus_pos(2.0);
+    assert_eq!(
+        win.get_gallery_slice_focus_pos(),
+        win.get_gallery_slice_delta_base() as f32,
+        "zero drift: focus-pos == delta-base after late re-affirm"
+    );
+    let tiles_model = win.get_gallery_slice_tiles();
+    let expanded = (0..tiles_model.row_count())
+        .filter_map(|i| tiles_model.row_data(i))
+        .find(|t| t.is_expanded)
+        .expect("one expanded tile");
+    assert_eq!(
+        expanded.real_index, 2,
+        "expanded tile must be the late active card"
+    );
+    let late_shot = win.window().take_snapshot().expect("late-active snapshot");
+    save_slice_png(late_shot, "/tmp/opencode/slice_late_active.png");
+
+    // Second call is a no-op (fallback consumed).
+    assert!(
+        !crate::reaffirm_gallery_focus_on_active(&win),
+        "re-affirm fires exactly once"
+    );
+}
+
+#[test]
+fn gallery_reaffirm_never_yanks_user_navigation() {
+    use slint::{ComponentHandle as _, Model, ModelRc, VecModel};
+    let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        names.iter().map(|n| late_card(n, false)).collect::<Vec<_>>(),
+    )));
+    win.set_gallery_focused(crate::gallery_initial_focus(&win) as i32);
+    crate::gallery_note_startup(&win);
+
+    // User navigates away from the fallback slot before the active arrives.
+    win.set_gallery_focused(1);
+    let model = win.get_gallery_cards();
+    let vm = model
+        .as_any()
+        .downcast_ref::<VecModel<crate::GalleryCardData>>()
+        .expect("gallery cards must be a VecModel");
+    crate::shell::gallery::model::sync_cards(
+        vm,
+        names
+            .iter()
+            .map(|n| late_card(n, *n == "Gamma"))
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        !crate::reaffirm_gallery_focus_on_active(&win),
+        "user navigated away → must NOT yank focus"
+    );
+    assert_eq!(win.get_gallery_focused(), 1, "user focus preserved");
+}
+
+#[test]
+fn gallery_reaffirm_idle_when_startup_had_active() {
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+
+    // Happy path: active already resolved at startup → focus sits on it,
+    // re-affirm stays idle forever.
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        names.iter().map(|n| late_card(n, *n == "Beta")).collect::<Vec<_>>(),
+    )));
+    let initial = crate::gallery_initial_focus(&win);
+    assert_eq!(initial, 1);
+    win.set_gallery_focused(initial as i32);
+    crate::gallery_note_startup(&win);
+    assert!(
+        !crate::reaffirm_gallery_focus_on_active(&win),
+        "startup with active → re-affirm idle"
+    );
+    assert_eq!(win.get_gallery_focused(), 1);
+}
+
+#[test]
+fn mark_theme_applied_persists_active_across_restart() {
+    // Root cause of the real bug: apply never wrote cfg.last_applied_theme,
+    // so every restart resolved NO active card and focus fell back to 0.
+    // Sandboxed HOME so no real user config is touched.
+    let _env = crate::test_utils::TempEnv::new();
+    let config_dir = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h: String| std::path::PathBuf::from(h).join(".config")))
+        .expect("sandboxed config dir");
+    for name in ["Alpha", "Beta", "Gamma"] {
+        let dir = config_dir.join("hve").join("themes").join(name);
+        std::fs::create_dir_all(&dir).expect("theme dir");
+        // Empty providers → kept by the provider filter without registration.
+        std::fs::write(
+            dir.join("meta.json"),
+            r#"{"saved_at":"","description":"","providers":[]}"#,
+        )
+        .expect("meta.json");
+    }
+
+    // Real startup: empty last_applied → no active anywhere.
+    let mut tm = crate::theme_manager::ThemeManager::new(&config_dir);
+    assert!(tm.last_applied.is_empty());
+    assert!(
+        tm.list().unwrap_or_default().iter().all(|t| !t.is_active),
+        "empty last_applied → no active card (real startup)"
+    );
+
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let mut state =
+        crate::app_state::AppState::new(crate::config::Config::load(), engine, tm);
+    state.mark_theme_applied("Beta");
+    assert_eq!(state.theme_manager().last_applied, "Beta");
+    assert_eq!(state.cfg().last_applied_theme, "Beta");
+    drop(state);
+
+    // Next process: cfg reload seeds the manager → Beta resolves active.
+    let reloaded = crate::config::Config::load();
+    assert_eq!(reloaded.last_applied_theme, "Beta", "active must survive restart");
+    let mut tm2 = crate::theme_manager::ThemeManager::new(&config_dir);
+    tm2.last_applied = reloaded.last_applied_theme.clone();
+    let infos = tm2.list().unwrap_or_default();
+    let beta = infos.iter().find(|t| t.name == "Beta").expect("Beta listed");
+    assert!(beta.is_active, "Beta must resolve active after restart");
+    assert_eq!(infos.iter().filter(|t| t.is_active).count(), 1);
+}
+
+// ── Save tranche B visual verification (headless render) ─────────────────
+// Panel Save section with two saved themes: plain list, delete confirm and
+// rename dialog. Snapshots go under /tmp/opencode/ for human review; the
+// dialog frames must differ from the plain list (dim overlay + 300px card).
+#[test]
+fn save_dialogs_render_list_delete_and_rename() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // Gallery screen hosts the panel morph
+    win.set_gallery_reduced_motion(true); // skip 640ms morph delays, deterministic
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-01-01"),
+        SharedString::from("2026-02-02"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false, true])));
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let list = win.window().take_snapshot().expect("save list snapshot");
+    save_slice_png(list.clone(), "/tmp/opencode/save_list.png");
+
+    win.set_panel_save_dialog_target(SharedString::from("Alpha"));
+    win.set_panel_save_dialog_mode(SharedString::from("delete"));
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let delete = win.window().take_snapshot().expect("save delete snapshot");
+    save_slice_png(delete.clone(), "/tmp/opencode/save_delete.png");
+
+    win.set_panel_save_dialog_mode(SharedString::from("rename"));
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let rename = win.window().take_snapshot().expect("save rename snapshot");
+    save_slice_png(rename.clone(), "/tmp/opencode/save_rename.png");
+
+    let diff_list_delete = count_buffer_diff(&list, &delete);
+    let diff_list_rename = count_buffer_diff(&list, &rename);
+    assert!(diff_list_delete > 300, "delete dialog must overlay the list — got {diff_list_delete}");
+    assert!(diff_list_rename > 300, "rename dialog must overlay the list — got {diff_list_rename}");
+}
+
 #[test]
 fn slice_twenty_chained_steps_settle_without_drift() {
     use crate::shell::gallery::views::slice::{focus_step, scaled_metrics, slice_delta_tiles};
@@ -545,12 +995,12 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
         win.set_gallery_focused(6);
         let count = 12usize;
         let mut cards: Vec<crate::GalleryCardData> = Vec::new();
-        for i in 0..count {
-            let src = slice_test_gradient(i);
-            cards.push(crate::GalleryCardData {
-                name: SharedString::from(format!("Theme {i}")),
-                saved_at: SharedString::from(""),
-                is_active: false,
+    for i in 0..count {
+        let src = slice_test_gradient(i);
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
                 providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
                 accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
                 primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
@@ -1245,7 +1695,7 @@ fn panel_morph_midflight_renders() {
     let stage_w = 1920.0f32;
     let mut cards: Vec<crate::GalleryCardData> = Vec::new();
     for i in 0..count {
-        let src = slice_test_gradient(i);
+        let _src = slice_test_gradient(i); // unused: default slats suffice here
         cards.push(crate::GalleryCardData {
             name: SharedString::from(format!("Theme {i}")),
             saved_at: SharedString::from(""),
@@ -1378,6 +1828,20 @@ fn panel_save_renders() {
     win.set_panel_save_error("".into());
     win.set_panel_save_placeholder("Theme name…".into());
     win.set_panel_save_button_text("Save".into());
+    win.set_panel_save_list_title("My Themes".into());
+    // "My Themes" list: names + dates + active mark (2nd row active)
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+        SharedString::from("Gamma"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-09-01"),
+        SharedString::from("2026-09-05"),
+        SharedString::from("2026-09-06"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false, true, false])));
+    win.set_active_theme_index(1);
 
     let count = 6usize;
     let stage_w = 1920.0f32;
@@ -1434,6 +1898,20 @@ fn panel_save_renders() {
 
     let diff = count_buffer_diff(&settled, &err_snap);
     assert!(diff > 200, "error label must change pixels — got {diff} expected >200");
+
+    // "My Themes" list must paint: clearing names/dates must change pixels
+    win.set_panel_save_error("".into());
+    win.set_theme_names(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(Vec::<bool>::new())));
+    win.set_active_theme_index(-1);
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let empty_list_snap = win.window().take_snapshot().expect("panel save empty list");
+    save_slice_png(empty_list_snap.clone(), "/tmp/opencode/panel_save_empty_list.png");
+    let list_diff = count_buffer_diff(&settled, &empty_list_snap);
+    assert!(list_diff > 200, "My Themes list rows must change pixels — got {list_diff} expected >200");
 
     // Basic sanity: panel save settled must differ from empty gallery snapshot baseline
     assert!(settled.width() == 1920, "snapshot width 1920");
@@ -2282,4 +2760,55 @@ fn theme_fade_renders_settled_dissolved_and_reappeared() {
         reappeared_frac < 0.995,
         "entrance fade must bring the content back (modal fraction {reappeared_frac:.3})"
     );
+}
+
+// ── Save classic restore, tranche A (old ThemesModule look, adapted) ────
+// Panel section 0 must expose the classic search box + per-theme action
+// cards (apply/refresh/rename/delete) with active/hover highlights, and
+// render them headless to /tmp/opencode/save_section.png for review.
+// Source of truth: master:ui/modules.slint ThemesModule + ThemeItem.
+#[test]
+fn save_section_renders_list_search_and_cards() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    // Software-rasterized headless backend (same as slice_focus_flow test).
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_gallery_reduced_motion(true);
+    win.set_mounted_screen(1); // 1 = Gallery screen (PanelRoot only mounts here)
+    win.set_is_panel_open(true);
+    win.set_panel_section(0);
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Nord"),
+        SharedString::from("Cyber"),
+        SharedString::from("Dracula"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-08-01"),
+        SharedString::from("2026-08-02"),
+        SharedString::from("2026-08-03"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![true, false, false])));
+    win.set_active_theme_index(0);
+    // Classic i18n props (master:ui/modules.slint ThemesModule inputs).
+    win.set_panel_save_search_placeholder(SharedString::from("Search themes..."));
+    win.set_panel_save_empty_text(SharedString::from("No themes yet."));
+    win.set_panel_save_apply_text(SharedString::from("Apply"));
+    win.set_panel_save_refresh_text(SharedString::from("Refresh"));
+    win.set_panel_save_rename_text(SharedString::from("Rename"));
+    win.set_panel_save_delete_text(SharedString::from("Delete"));
+    let snap = win.window().take_snapshot().expect("save section snapshot");
+    save_slice_png(snap, "/tmp/opencode/save_section.png");
+    assert_eq!(win.get_panel_save_search_placeholder(), "Search themes...");
+    assert_eq!(win.get_panel_save_apply_text(), "Apply");
 }

@@ -437,6 +437,9 @@
     "confirm_refresh": "Refresh theme",
     "confirm_refresh_msg": "This will reload the theme with the current configuration. Continue?",
     "rename_title": "Rename theme",
+    "overwrite_title": "Overwrite theme",
+    "overwrite_msg": "already exists. Overwrite it with the current setup?",
+    "cancel": "Cancel",
     "include": "Include:",
     "action_overwrite": "Overwrite",
     "provider": {

@@ -100,6 +100,16 @@ impl AppState {
         updated
     }
 
+    /// Mark a theme as the active one after a successful apply: mirror the
+    /// name into BOTH the in-memory manager (drives the Save-list active
+    /// marks via `refresh_theme_list`) and the on-disk config (seeds
+    /// `last_applied` for BOTH managers on the next startup, so the gallery
+    /// opens on the active card instead of falling back to index 0).
+    pub fn mark_theme_applied(&mut self, name: &str) {
+        self.theme_manager.last_applied = name.to_string();
+        self.cfg.last_applied_theme = name.to_string();
+        let _ = self.cfg.save();
+    }
     /// Convenience wrapper: refresh every window visual that depends on the
     /// engine palette and the given theme preference.
     pub fn refresh_visual_state(

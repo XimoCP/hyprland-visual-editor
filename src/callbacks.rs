@@ -575,6 +575,156 @@ where
     true
 }
 
+/// Save "My Themes" list rows (panel SaveSection).
+/// Maps ThemeManager.list() → (name, saved_at, is_active) in list order,
+/// the same source refresh_theme_list feeds into theme-names/saved-ats/
+/// is-actives. Pure helper so the list shows name + date + active mark.
+#[allow(dead_code)]
+pub fn save_list_rows(tm: &crate::theme_manager::ThemeManager) -> Vec<(String, String, bool)> {
+    tm.list()
+        .unwrap_or_default()
+        .iter()
+        .map(|t| (t.name.clone(), t.saved_at.clone(), t.is_active))
+        .collect()
+}
+
+/// One-time active-theme backfill resolver (startup, empty
+/// `cfg.last_applied_theme` legacy configs). Old applies never recorded the
+/// active theme, so after a restart no card was active and the carousel fell
+/// back to the first one. Pure decision: adopt the FIRST theme (list order,
+/// alphabetical) whose saved wallpaper equals the LIVE wallpaper. Zero or
+/// several distinct wallpapers never guess. Identical duplicates (test
+/// variants of the same look) resolve to the first — they are visually the
+/// same state, so the first IS the applied look for every practical purpose.
+/// `themes` arrives in `ThemeManager::list()` order: `(name, saved_wallpaper)`
+/// where `None` = theme without a noctalia-v5 wallpaper snapshot.
+#[allow(dead_code)]
+pub fn backfill_active_candidate(
+    themes: &[(String, Option<String>)],
+    live_wallpaper: &str,
+) -> Option<String> {
+    if live_wallpaper.is_empty() {
+        return None;
+    }
+    themes
+        .iter()
+        .find(|(_, wp)| wp.as_deref() == Some(live_wallpaper))
+        .map(|(name, _)| name.clone())
+}
+
+/// Panel Save rename dual-sync (tranche B). Gallery side goes through the
+/// GallerySlot (mutates gallery_tm + refreshes the slot model + counters);
+/// main side follows via ThemeManager::rename. Both managers share one
+/// themes dir on disk, so when the slot already moved the directory the main
+/// rename reports "not found" — then we only converge last_applied.
+#[allow(dead_code)]
+pub fn handle_panel_rename(
+    old: &str,
+    new: &str,
+    tm_main: &mut crate::theme_manager::ThemeManager,
+    slot: &crate::shell::gallery::GallerySlot,
+    error_out: &mut String,
+) -> bool {
+    if let Err(e) = slot.rename_theme(old, new) {
+        *error_out = e;
+        return false;
+    }
+    if let Err(e) = tm_main.rename(old, new) {
+        let (old_t, new_t) = (old.trim(), new.trim());
+        let converged = tm_main.list().unwrap_or_default().iter().any(|t| t.name == new_t);
+        if !converged {
+            *error_out = e;
+            return false;
+        }
+        if tm_main.last_applied == old_t {
+            tm_main.last_applied = new_t.to_string();
+        }
+    }
+    error_out.clear();
+    true
+}
+
+/// Panel Save delete dual-sync (tranche B). Same shared-storage pattern:
+/// slot first (gallery_tm + model), main converges (clears last_applied).
+#[allow(dead_code)]
+pub fn handle_panel_delete(
+    name: &str,
+    tm_main: &mut crate::theme_manager::ThemeManager,
+    slot: &crate::shell::gallery::GallerySlot,
+    error_out: &mut String,
+) -> bool {
+    if let Err(e) = slot.delete_theme(name) {
+        *error_out = e;
+        return false;
+    }
+    if let Err(e) = tm_main.delete(name) {
+        let gone = !tm_main.list().unwrap_or_default().iter().any(|t| t.name == name.trim());
+        if !gone {
+            *error_out = e;
+            return false;
+        }
+        if tm_main.last_applied == name.trim() {
+            tm_main.last_applied.clear();
+        }
+    }
+    error_out.clear();
+    true
+}
+
+/// Panel Save refresh (tranche B, master on_refresh_themes 1:1). Re-saves the
+/// active theme with the current provider state in BOTH managers, so ↻ means
+/// "store current look into the active theme". Empty last_applied → no-op ok.
+#[allow(dead_code)]
+pub fn handle_panel_refresh(
+    tm_main: &mut crate::theme_manager::ThemeManager,
+    tm_gallery: &mut crate::theme_manager::ThemeManager,
+    error_out: &mut String,
+) -> bool {
+    let last = tm_main.last_applied.clone();
+    if last.is_empty() {
+        error_out.clear();
+        return true;
+    }
+    let provider_ids = tm_main.provider_ids();
+    if let Err(e) = tm_main.save(&last, &provider_ids) {
+        *error_out = e;
+        return false;
+    }
+    if let Err(e) = tm_gallery.save(&last, &provider_ids) {
+        *error_out = e;
+        return false;
+    }
+    error_out.clear();
+    true
+}
+
+/// Live search filter (tranche B, master on_search_query_changed 1:1).
+/// Case-insensitive substring on the name; empty query restores the full list.
+#[allow(dead_code)]
+pub fn filter_saved_rows(
+    query: &str,
+    rows: &[(String, String, bool)],
+) -> Vec<(String, String, bool)> {
+    let q = query.to_lowercase();
+    if q.is_empty() {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|(n, _, _)| n.to_lowercase().contains(&q))
+        .cloned()
+        .collect()
+}
+
+/// Focus neighbor after delete (tranche B). The next card takes the deleted
+/// slot; deleting the last one focuses the previous; empty list → -1.
+#[allow(dead_code)]
+pub fn focus_after_delete(deleted_idx: usize, new_len: usize) -> i32 {
+    if new_len == 0 {
+        return -1;
+    }
+    deleted_idx.min(new_len - 1) as i32
+}
+
 /// Borders pick layer helpers (mutating-window R3, slice 3 slice).
 /// Scan is engine.scan("borders") → PresetInfo list; apply wraps
 /// engine.apply_border with the file string from the card.
@@ -811,8 +961,7 @@ mod panel_save_tests {
     }
 
     #[test]
-    fn test_save_overwrite_confirms() {
-        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
+    fn test_save_overwrite_confirms() {        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
         // pre-seed MyMix as last_applied
         tm1.save("MyMix", &["dummy".to_string()]).unwrap();
         tm1.last_applied = "MyMix".to_string();
@@ -836,6 +985,203 @@ mod panel_save_tests {
         assert_eq!(refresh.load(Ordering::SeqCst), 1, "refresh on overwrite");
         assert!(tm1.list().unwrap().iter().any(|t| t.name == "MyMix"));
         assert!(tm2.list().unwrap().iter().any(|t| t.name == "MyMix"));
+    }
+}
+
+#[cfg(test)]
+mod save_list_tests {
+    use super::save_list_rows;
+    use crate::theme_manager::{ProviderCapabilities, ThemeManager, ThemeProvider};
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    struct DummyProvider;
+    impl ThemeProvider for DummyProvider {
+        fn id(&self) -> &str { "dummy" }
+        fn display_name_key(&self) -> &str { "dummy" }
+        fn icon(&self) -> &str { "dummy" }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+    }
+
+    #[test]
+    fn test_save_list_shows_names_dates_active() {
+        let dir = TempDir::new().unwrap();
+        let mut tm = ThemeManager::new(dir.path());
+        tm.register_provider(Box::new(DummyProvider));
+        tm.save("Alpha", &["dummy".to_string()]).unwrap();
+        tm.save("Beta", &["dummy".to_string()]).unwrap();
+        tm.last_applied = "Beta".to_string();
+        let rows = save_list_rows(&tm);
+        assert_eq!(rows.len(), 2, "list must show both saved themes");
+        assert!(rows.iter().any(|(n, d, a)| *n == "Alpha" && !d.is_empty() && !a),
+            "Alpha shows name + date, not active");
+        assert!(rows.iter().any(|(n, d, a)| *n == "Beta" && !d.is_empty() && *a),
+            "Beta shows name + date + active mark");
+        let active_idx = rows.iter().position(|(_, _, a)| *a).unwrap();
+        assert_eq!(rows[active_idx].0, "Beta");
+    }
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::backfill_active_candidate;
+    use std::string::String;
+
+    fn row(name: &str, wp: Option<&str>) -> (String, Option<String>) {
+        (name.to_string(), wp.map(|w| w.to_string()))
+    }
+
+    #[test]
+    fn test_backfill_single_match_adopts_it() {
+        let themes = vec![
+            row("Alpha", Some("/w/a.png")),
+            row("Beta", Some("/w/b.png")),
+        ];
+        let got = backfill_active_candidate(&themes, "/w/b.png");
+        assert_eq!(got.as_deref(), Some("Beta"), "single wallpaper match wins");
+    }
+
+    #[test]
+    fn test_backfill_duplicate_group_takes_first() {
+        // Test variants of the same look share the wallpaper: the first in
+        // list order IS that state — the applied look for every purpose.
+        let themes = vec![
+            row("Alpha", Some("/w/a.png")),
+            row("Bor1", Some("/w/joker.png")),
+            row("Bor2", Some("/w/joker.png")),
+            row("Bor3", Some("/w/joker.png")),
+        ];
+        let got = backfill_active_candidate(&themes, "/w/joker.png");
+        assert_eq!(got.as_deref(), Some("Bor1"), "first of an identical group wins");
+    }
+
+    #[test]
+    fn test_backfill_no_match_returns_none() {
+        let themes = vec![row("Alpha", Some("/w/a.png")), row("Beta", None)];
+        assert_eq!(backfill_active_candidate(&themes, "/w/other.png"), None);
+        assert_eq!(backfill_active_candidate(&themes, "/w/a.png").as_deref(), Some("Alpha"));
+        assert_eq!(
+            backfill_active_candidate(&themes, "").is_none(),
+            true,
+            "empty live wallpaper never guesses"
+        );
+    }
+}
+
+#[cfg(test)]
+mod save_tranche_b_tests {
+    use super::{filter_saved_rows, focus_after_delete, handle_panel_delete, handle_panel_refresh, handle_panel_rename};
+    use crate::shell::gallery::GallerySlot;
+    use crate::theme_manager::{ProviderCapabilities, ThemeManager, ThemeProvider};
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+
+    struct DummyProvider;
+    impl ThemeProvider for DummyProvider {
+        fn id(&self) -> &str { "dummy" }
+        fn display_name_key(&self) -> &str { "dummy" }
+        fn icon(&self) -> &str { "dummy" }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
+        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+    }
+
+    fn main_plus_slot(dir: &TempDir) -> (ThemeManager, GallerySlot, Arc<Mutex<ThemeManager>>) {
+        let mut tm = ThemeManager::new(dir.path());
+        tm.register_provider(Box::new(DummyProvider));
+        let gtm = Arc::new(Mutex::new(ThemeManager::new(dir.path())));
+        gtm.lock().unwrap().register_provider(Box::new(DummyProvider));
+        let slot = GallerySlot::new(gtm.clone());
+        (tm, slot, gtm)
+    }
+
+    #[test]
+    fn test_rename_dual_sync_moves_last_applied() {
+        let dir = TempDir::new().unwrap();
+        let (mut tm, slot, gtm) = main_plus_slot(&dir);
+        // Shared themes dir (production layout): one save is visible to both
+        tm.save("Old", &["dummy".to_string()]).unwrap();
+        tm.last_applied = "Old".to_string();
+        gtm.lock().unwrap().last_applied = "Old".to_string();
+        let mut err = String::new();
+        assert!(handle_panel_rename("Old", "New", &mut tm, &slot, &mut err), "rename must succeed");
+        assert!(err.is_empty());
+        assert_eq!(slot.rename_calls(), 1, "gallery side goes through the slot");
+        for names in [tm.list().unwrap(), gtm.lock().unwrap().list().unwrap()] {
+            assert!(names.iter().any(|t| t.name == "New"), "renamed on shared storage");
+        }
+        assert_eq!(tm.last_applied, "New", "main active follows rename");
+        assert_eq!(gtm.lock().unwrap().last_applied, "New", "gallery active follows rename");
+    }
+
+    #[test]
+    fn test_rename_collision_reports_error() {
+        let dir = TempDir::new().unwrap();
+        let (mut tm, slot, _gtm) = main_plus_slot(&dir);
+        tm.save("A", &["dummy".to_string()]).unwrap();
+        tm.save("B", &["dummy".to_string()]).unwrap();
+        let mut err = String::new();
+        assert!(!handle_panel_rename("A", "B", &mut tm, &slot, &mut err), "collision must fail");
+        assert!(!err.is_empty(), "error message surfaces to UI");
+    }
+
+    #[test]
+    fn test_delete_dual_sync_clears_active() {
+        let dir = TempDir::new().unwrap();
+        let (mut tm, slot, gtm) = main_plus_slot(&dir);
+        tm.save("Gone", &["dummy".to_string()]).unwrap();
+        tm.last_applied = "Gone".to_string();
+        gtm.lock().unwrap().last_applied = "Gone".to_string();
+        let mut err = String::new();
+        assert!(handle_panel_delete("Gone", &mut tm, &slot, &mut err), "delete must succeed");
+        assert!(err.is_empty());
+        assert_eq!(slot.delete_calls(), 1, "gallery side goes through the slot");
+        assert!(tm.list().unwrap().is_empty(), "deleted from shared storage");
+        assert!(tm.last_applied.is_empty(), "main active cleared");
+        assert!(gtm.lock().unwrap().last_applied.is_empty(), "gallery active cleared");
+    }
+
+    #[test]
+    fn test_refresh_rewrites_active_in_both() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let mut tm1 = ThemeManager::new(dir1.path());
+        let mut tm2 = ThemeManager::new(dir2.path());
+        tm1.register_provider(Box::new(DummyProvider));
+        tm2.register_provider(Box::new(DummyProvider));
+        for tm in [&mut tm1, &mut tm2] {
+            tm.save("Live", &["dummy".to_string()]).unwrap();
+            tm.last_applied = "Live".to_string();
+        }
+        let mut err = String::new();
+        assert!(handle_panel_refresh(&mut tm1, &mut tm2, &mut err), "refresh must succeed");
+        assert!(err.is_empty());
+        for tm in [&tm1, &tm2] {
+            assert!(tm.list().unwrap().iter().any(|t| t.name == "Live"), "active rewritten in both");
+        }
+    }
+
+    #[test]
+    fn test_search_filters_case_insensitive() {
+        let rows = vec![
+            ("Alpha".to_string(), "d1".to_string(), false),
+            ("Beta".to_string(), "d2".to_string(), true),
+            ("Alpine".to_string(), "d3".to_string(), false),
+        ];
+        let out = filter_saved_rows("alp", &rows);
+        assert_eq!(out.len(), 2, "live filter matches substring, case-insensitive");
+        let out_all = filter_saved_rows("", &rows);
+        assert_eq!(out_all.len(), 3, "empty query restores full list");
+    }
+
+    #[test]
+    fn test_focus_moves_to_neighbor_after_delete() {
+        assert_eq!(focus_after_delete(1, 2), 1, "next takes the deleted slot");
+        assert_eq!(focus_after_delete(2, 2), 1, "last deleted focuses previous");
+        assert_eq!(focus_after_delete(0, 0), -1, "empty list has no focus");
     }
 }
 

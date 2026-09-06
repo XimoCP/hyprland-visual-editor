@@ -115,6 +115,29 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-save-error: "";
     in property <string> panel-save-placeholder: "Theme name…";
     in property <string> panel-save-button-text: "Save";
+    in property <string> panel-save-list-title: "My Themes";
+    in property <string> panel-save-search-placeholder: "Search themes...";
+    in property <string> panel-save-empty-text: "No themes yet.";
+    in property <string> panel-save-apply-text: "Apply";
+    in property <string> panel-save-refresh-text: "Refresh";
+    in property <string> panel-save-rename-text: "Rename";
+    in property <string> panel-save-delete-text: "Delete";
+    in-out property <string> panel-save-search-query: "";
+    in property <string> panel-save-rename-title: "Rename theme";
+    in property <string> panel-save-confirm-delete: "Delete theme";
+    in property <string> panel-save-confirm-delete-msg: "Are you sure you want to delete";
+    in property <string> panel-save-confirm-refresh: "Refresh theme";
+    in property <string> panel-save-confirm-refresh-msg: "This will reload the theme with the current configuration. Continue?";
+    in property <string> panel-save-overwrite-title: "Overwrite theme";
+    in property <string> panel-save-overwrite-msg: "already exists. Overwrite it with the current setup?";
+    in property <string> panel-save-cancel-text: "Cancel";
+    in-out property <string> panel-save-dialog-mode: "";
+    in-out property <string> panel-save-dialog-target: "";
+    in property <int> panel-save-focused-index: -1;
+    in property <[string]> panel-save-theme-names;
+    in property <[string]> panel-save-theme-saved-ats;
+    in property <[bool]> panel-save-theme-is-actives;
+    in property <int> panel-save-active-index: -1;
     // Borders pick layer (R3) — PresetCards from scan("borders")
     in property <[string]> panel-border-titles;
     in property <[string]> panel-border-descs;
@@ -174,6 +197,12 @@ export component ShellRoot inherits Rectangle {
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-save-theme(string);
+    callback panel-apply-saved-theme(int);
+    callback panel-rename-saved-theme(string, string);
+    callback panel-delete-saved-theme(string);
+    callback panel-refresh-saved-theme();
+    callback panel-overwrite-saved-theme(string);
+    callback panel-save-search-changed(string);
     callback panel-apply-border(int, string);
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
@@ -407,6 +436,29 @@ export component ShellRoot inherits Rectangle {
                     save-error: root.panel-save-error;
                     save-placeholder: root.panel-save-placeholder;
                     save-button-text: root.panel-save-button-text;
+                    save-list-title: root.panel-save-list-title;
+                    save-search-placeholder: root.panel-save-search-placeholder;
+                    save-empty-text: root.panel-save-empty-text;
+                    save-apply-text: root.panel-save-apply-text;
+                    save-refresh-text: root.panel-save-refresh-text;
+                    save-rename-text: root.panel-save-rename-text;
+                    save-delete-text: root.panel-save-delete-text;
+                    save-search-query <=> root.panel-save-search-query;
+                    save-dialog-mode <=> root.panel-save-dialog-mode;
+                    save-dialog-target <=> root.panel-save-dialog-target;
+                    save-focused-index: root.panel-save-focused-index;
+                    save-rename-title: root.panel-save-rename-title;
+                    save-confirm-delete: root.panel-save-confirm-delete;
+                    save-confirm-delete-msg: root.panel-save-confirm-delete-msg;
+                    save-confirm-refresh: root.panel-save-confirm-refresh;
+                    save-confirm-refresh-msg: root.panel-save-confirm-refresh-msg;
+                    save-overwrite-title: root.panel-save-overwrite-title;
+                    save-overwrite-msg: root.panel-save-overwrite-msg;
+                    save-cancel-text: root.panel-save-cancel-text;
+                    save-theme-names: root.panel-save-theme-names;
+                    save-theme-saved-ats: root.panel-save-theme-saved-ats;
+                    save-theme-is-actives: root.panel-save-theme-is-actives;
+                    save-active-index: root.panel-save-active-index;
                     border-titles: root.panel-border-titles;
                     border-descs: root.panel-border-descs;
                     border-tags: root.panel-border-tags;
@@ -462,6 +514,12 @@ export component ShellRoot inherits Rectangle {
                     back => { root.panel-back(); }
                     section-selected(section) => { root.panel-section-selected(section); }
                     save-theme(name) => { root.panel-save-theme(name); }
+                    apply-saved-theme(idx) => { root.panel-apply-saved-theme(idx); }
+                    rename-saved-theme(old, new) => { root.panel-rename-saved-theme(old, new); }
+                    delete-saved-theme(name) => { root.panel-delete-saved-theme(name); }
+                    refresh-saved-theme() => { root.panel-refresh-saved-theme(); }
+                    overwrite-saved-theme(name) => { root.panel-overwrite-saved-theme(name); }
+                    save-search-changed(q) => { root.panel-save-search-changed(q); }
                     apply-border(idx, file) => { root.panel-apply-border(idx, file); }
                     apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
                     apply-animation(idx, file) => { root.panel-apply-animation(idx, file); }

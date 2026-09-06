@@ -437,6 +437,9 @@
     "confirm_refresh": "Recargar tema",
     "confirm_refresh_msg": "Esto recargará el tema con la configuración actual. ¿Continuar?",
     "rename_title": "Renombrar tema",
+    "overwrite_title": "Sobrescribir tema",
+    "overwrite_msg": "ya existe. ¿Sobrescribirlo con la configuración actual?",
+    "cancel": "Cancelar",
     "include": "Incluir:",
     "action_overwrite": "Sobrescribir",
     "provider": {

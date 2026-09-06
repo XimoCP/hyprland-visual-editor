@@ -1,0 +1,154 @@
+// HVE 2 — SavedThemeCard (Save classic restore, tranche A).
+//
+// 1:1 port of ThemeItem from master:ui/modules.slint (lines ~583-732):
+// expand 56px ↔ 100px on active/hover/keyboard-focus, active check badge,
+// name + saved-at texts, four action IconButtons (apply ▶ green,
+// refresh ↻ purple, rename ✎ amber, delete ✕ red) with tooltips,
+// background/border/glow animations. Adapted: imports point at the
+// panel tree; geometry, colors and timings kept verbatim.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { IconButton } from "../../components.slint";
+import { HveColors } from "../../theme.slint";
+
+export component SavedThemeCard inherits Rectangle {
+    in property <string> theme-name;
+    in property <string> theme-saved-at;
+    in property <bool> is-active: false;
+    in property <bool> is-busy: false;
+    in property <bool> apply-in-progress: false;
+    in property <bool> keyboard-focused: false;
+    in property <color> accent;
+    in property <string> apply-text;
+    in property <string> refresh-text;
+    in property <string> rename-text;
+    in property <string> delete-text;
+    in property <int> index: 0;
+    callback apply-theme(string);
+    callback open-rename(string);
+    callback open-delete(string);
+    callback open-refresh(string);
+    callback focus-requested(int);
+
+    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover || ref-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
+    property <bool> _expanded: is-active || is-hovered || keyboard-focused;
+
+    height: _expanded ? 100px : 56px;
+    border-radius: 10px;
+    background: is-active ? HveColors.bg-hover : (is-hovered || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
+    border-width: is-active ? 3px : (keyboard-focused ? 1.5px : 1px);
+    border-color: (is-active && keyboard-focused) ? HveColors.text : (is-active ? accent : ((is-hovered || keyboard-focused) ? (keyboard-focused ? accent : accent.transparentize(0.6)) : HveColors.border));
+    visible: true;
+
+    // 1. Background layer for the card TouchArea (hover events)
+    card-ta := TouchArea {
+        width: 100%;
+        height: 100%;
+    }
+
+    // 2. Glow and shadows (visuals)
+    drop-shadow-blur: is-active ? 12px : 0px;
+    drop-shadow-color: is-active ? accent.transparentize(0.8) : transparent;
+
+    animate background { duration: 200ms; easing: ease-in-out; }
+    animate border-color { duration: 200ms; easing: ease-in-out; }
+    animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
+    animate height { duration: 250ms; easing: ease-in-out-back; }
+
+    // 3. Visual content (main layout)
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+
+        // 1. ACTIVE CHECK (leading, vertically centered)
+        if is-active : VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: 8px;
+                background: accent;
+
+                Text {
+                    text: "✓";
+                    color: HveColors.text;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // 2. TEXT (fills leftover space with horizontal-stretch: 1)
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.theme-name;
+                color: is-active ? accent : HveColors.text;
+                font-size: 14px;
+                font-weight: is-active ? 700 : 600;
+                overflow: elide;
+            }
+
+            if root.theme-saved-at != "" : Text {
+                text: root.theme-saved-at;
+                color: HveColors.text-muted;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+
+        // 3. ACTION BUTTONS (trailing, vertically centered)
+        VerticalLayout {
+            alignment: center;
+
+            HorizontalLayout {
+                spacing: 6px;
+
+                // Apply
+                apply-btn := IconButton {
+                    icon: "▶";
+                    bg-color: HveColors.accent-green;
+                    tooltip-text: root.apply-text;
+                    disabled: root.is-busy || root.apply-in-progress;
+                    clicked => {
+                        root.apply-theme(root.theme-name);
+                    }
+                }
+
+                // Reload / Reset
+                ref-btn := IconButton {
+                    icon: "↻";
+                    bg-color: HveColors.accent-purple;
+                    hover-bg-color: HveColors.accent-purple.transparentize(0.2);
+                    tooltip-text: root.refresh-text;
+                    clicked => { root.open-refresh(root.theme-name); }
+                }
+
+                // Rename
+                rn-btn := IconButton {
+                    icon: "✎";
+                    bg-color: HveColors.accent-amber;
+                    hover-bg-color: HveColors.accent-amber.transparentize(0.2);
+                    tooltip-text: root.rename-text;
+                    clicked => { root.open-rename(root.theme-name); }
+                }
+
+                // Delete
+                del-btn := IconButton {
+                    icon: "✕";
+                    bg-color: #f87171;
+                    hover-bg-color: #f87171.transparentize(0.2);
+                    tooltip-text: root.delete-text;
+                    clicked => { root.open-delete(root.theme-name); }
+                }
+            }
+        }
+    }
+}
