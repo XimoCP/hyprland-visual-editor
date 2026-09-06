@@ -241,17 +241,28 @@ export component MotionSection inherits Rectangle {
 
                 // Bezier sliders a,b,c,d — arrow steps ±0.05 clamped, Tab no trap
                 a-wrap := Rectangle {
-                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
-                    height: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 104px : 88px) : 72px;
+                    // Card-like block: lights up on keyboard focus OR mouse
+                    // hover (lit), reads "grabbed" when engaged. Heights mirror
+                    // the cards proportionally (250ms bounce).
+                    property <bool> lit: (root.focused-index == root.anim-files.length && fs.has-focus) || hover-a.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 0 && fs.has-focus;
+                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: root.focused-index == root.anim-files.length && fs.has-focus ? (root.engaged-slider == 0 ? 3px : 1px) : 0px;
-                    border-color: root.engaged-slider == 0 && fs.has-focus ? #ffffff : #8fd8ff;
+                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
+                    border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    animate background { duration: 200ms; easing: ease-in-out; }
+                    hover-a := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.focused-index = root.anim-files.length; fs.focus(); }
+                    }
                     BezierSlider {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 0;
-                        focused: root.focused-index == root.anim-files.length && fs.has-focus;
+                        focused: a-wrap.lit;
                         label: "X1 — a";
                         value: root.bezier-a;
                         min: 0.0;
@@ -260,17 +271,28 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 b-wrap := Rectangle {
-                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
-                    height: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 104px : 88px) : 72px;
+                    // Card-like block: lights up on keyboard focus OR mouse
+                    // hover (lit), reads "grabbed" when engaged. Heights mirror
+                    // the cards proportionally (250ms bounce).
+                    property <bool> lit: (root.focused-index == root.anim-files.length + 1 && fs.has-focus) || hover-b.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 1 && fs.has-focus;
+                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: root.focused-index == root.anim-files.length + 1 && fs.has-focus ? (root.engaged-slider == 1 ? 3px : 1px) : 0px;
-                    border-color: root.engaged-slider == 1 && fs.has-focus ? #ffffff : #8fd8ff;
+                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
+                    border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    animate background { duration: 200ms; easing: ease-in-out; }
+                    hover-b := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.focused-index = root.anim-files.length + 1; fs.focus(); }
+                    }
                     BezierSlider {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 1;
-                        focused: root.focused-index == root.anim-files.length + 1 && fs.has-focus;
+                        focused: b-wrap.lit;
                         label: "Y1 — b";
                         value: root.bezier-b;
                         min: -1.0;
@@ -279,17 +301,28 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 c-wrap := Rectangle {
-                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
-                    height: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 104px : 88px) : 72px;
+                    // Card-like block: lights up on keyboard focus OR mouse
+                    // hover (lit), reads "grabbed" when engaged. Heights mirror
+                    // the cards proportionally (250ms bounce).
+                    property <bool> lit: (root.focused-index == root.anim-files.length + 2 && fs.has-focus) || hover-c.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 2 && fs.has-focus;
+                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: root.focused-index == root.anim-files.length + 2 && fs.has-focus ? (root.engaged-slider == 2 ? 3px : 1px) : 0px;
-                    border-color: root.engaged-slider == 2 && fs.has-focus ? #ffffff : #8fd8ff;
+                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
+                    border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    animate background { duration: 200ms; easing: ease-in-out; }
+                    hover-c := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.focused-index = root.anim-files.length + 2; fs.focus(); }
+                    }
                     BezierSlider {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 2;
-                        focused: root.focused-index == root.anim-files.length + 2 && fs.has-focus;
+                        focused: c-wrap.lit;
                         label: "X2 — c";
                         value: root.bezier-c;
                         min: 0.0;
@@ -298,17 +331,28 @@ export component MotionSection inherits Rectangle {
                     }
                 }
                 d-wrap := Rectangle {
-                    // Same card-like expansion, proportional: +16px focused, +32px engaged.
-                    height: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 104px : 88px) : 72px;
+                    // Card-like block: lights up on keyboard focus OR mouse
+                    // hover (lit), reads "grabbed" when engaged. Heights mirror
+                    // the cards proportionally (250ms bounce).
+                    property <bool> lit: (root.focused-index == root.anim-files.length + 3 && fs.has-focus) || hover-d.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 3 && fs.has-focus;
+                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: root.focused-index == root.anim-files.length + 3 && fs.has-focus ? (root.engaged-slider == 3 ? 3px : 1px) : 0px;
-                    border-color: root.engaged-slider == 3 && fs.has-focus ? #ffffff : #8fd8ff;
+                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
+                    border-color: self.grabbed ? #ffffff : #8fd8ff;
                     border-radius: SkwdTokens.radius-8;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : transparent;
+                    animate background { duration: 200ms; easing: ease-in-out; }
+                    hover-d := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.focused-index = root.anim-files.length + 3; fs.focus(); }
+                    }
                     BezierSlider {
                         width: 100%;
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == 3;
-                        focused: root.focused-index == root.anim-files.length + 3 && fs.has-focus;
+                        focused: d-wrap.lit;
                         label: "Y2 — d";
                         value: root.bezier-d;
                         min: -1.0;
