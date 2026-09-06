@@ -209,6 +209,7 @@ export component MotionSection inherits Rectangle {
                     active: i == root.active-index;
                     keyboard-focused: i == root.focused-index && fs.has-focus && root.engaged-slider < 0;
                     index: i;
+                    hover-moves-focus: true;
                     toggled => { root.apply-animation(i, root.anim-files[i]); }
                     focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
                 }
@@ -257,6 +258,12 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length; fs.focus(); }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.focused-index = root.anim-files.length;
+                                fs.focus();
+                            }
+                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -287,6 +294,12 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length + 1; fs.focus(); }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.focused-index = root.anim-files.length + 1;
+                                fs.focus();
+                            }
+                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -317,6 +330,12 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length + 2; fs.focus(); }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.focused-index = root.anim-files.length + 2;
+                                fs.focus();
+                            }
+                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -347,6 +366,12 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length + 3; fs.focus(); }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.focused-index = root.anim-files.length + 3;
+                                fs.focus();
+                            }
+                        }
                     }
                     BezierSlider {
                         width: 100%;

@@ -16,6 +16,9 @@ export component PresetCard inherits Rectangle {
     in property <int> index: 0;
     in-out property <bool> keyboard-focused: false;
     in property <bool> fast-expand: false;
+    // Focus-follows-mouse (opt-in per section): when true, merely hovering
+    // the card moves keyboard focus to it — same index, same animations.
+    in property <bool> hover-moves-focus: false;
     callback toggled();
     callback focus-requested(int);
 
@@ -173,6 +176,11 @@ export component PresetCard inherits Rectangle {
         width: 100%;
         height: 100%;
         clicked => { root.focus-requested(root.index); root.toggled(); }
+        changed has-hover => {
+            if (self.has-hover && root.hover-moves-focus) {
+                root.focus-requested(root.index);
+            }
+        }
     }
 }
 
