@@ -88,7 +88,12 @@ windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
 ///
 /// When `tiling` is false (default): `float = true` → window floats
 /// When `tiling` is true:           `tile  = true` → window tiles
-pub(crate) fn set_tiling_window_rules(tiling: bool) {
+///
+/// Returns true when the file was rewritten (and `hyprctl reload` fired).
+/// Unchanged content is a strict no-op: every reload re-floats HVE and
+/// kills a pending fullscreen dispatch, so the startup path — which calls
+/// this on EVERY launch — must not reload when the rules already match.
+pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
     let path = hve_settings_path();
     if !path.exists() {
         tracing::warn!("[windowrules] File not found — creating default");
@@ -100,7 +105,7 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("[windowrules] Failed to read: {}", e);
-            return;
+            return false;
         }
     };
 
@@ -116,49 +121,18 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) {
     };
 
     // Build the replacement block
-    let rules_block: String = if tiling {
-        // Tiling ON → tile rule (overrides float from user's windowrules.lua)
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  tile  = true,
-}})
-{marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-windowrulev2 = tile, title:^(Hyprland Visual Editor)$
-{marker_end}"#,
-            )
-        }
-    } else {
-        // Tiling OFF → float rule (default)
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  float = true,
-  size  = {{ "95%", "95%" }},
-  move  = {{ "center", "center" }},
-}})
-{marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-windowrulev2 = float, title:^(Hyprland Visual Editor)$
-windowrulev2 = center, title:^(Hyprland Visual Editor)$
-windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
-{marker_end}"#,
-            )
-        }
-    };
+    let rules_block: String = window_rules_block(tiling, format, marker_start, marker_end);
+
+    // Steady state: same block already on disk → skip the rewrite AND the
+    // reload. A reload re-floats HVE and drops any pending fullscreen.
+    if !marker_block_needs_update(&content, marker_start, marker_end, &rules_block) {
+        tracing::info!(
+            "[windowrules] {} mode already applied — skip rewrite+reload (tile={})",
+            if tiling { "TILING" } else { "FLOATING" },
+            tiling,
+        );
+        return false;
+    }
 
     // Replace content between markers
     let new_content = if content.contains(marker_start) {
@@ -211,11 +185,109 @@ windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
             {
                 tracing::warn!("[hve] hyprctl reload failed: {}", e);
             }
+            true
         }
         Err(e) => {
             tracing::error!("[windowrules] Failed to write: {}", e);
+            false
         }
     }
+}
+
+/// Pure: desired window-rules block for (`tiling`, `format`).
+/// Extracted verbatim from `set_tiling_window_rules` so the compare-before-
+/// write guard and tests share one source of truth.
+fn window_rules_block(tiling: bool, format: &str, marker_start: &str, marker_end: &str) -> String {
+    if tiling {
+        // Tiling ON → tile rule (overrides float from user's windowrules.lua)
+        if format == "lua" {
+            format!(
+                r#"{marker_start}
+hl.window_rule({{
+  name  = "hve-floating",
+  match = {{ title = "^Hyprland Visual Editor$" }},
+  tile  = true,
+}})
+{marker_end}"#,
+            )
+        } else {
+            format!(
+                r#"{marker_start}
+windowrulev2 = tile, title:^(Hyprland Visual Editor)$
+{marker_end}"#,
+            )
+        }
+    } else {
+        // Tiling OFF → float rule (default)
+        if format == "lua" {
+            format!(
+                r#"{marker_start}
+hl.window_rule({{
+  name  = "hve-floating",
+  match = {{ title = "^Hyprland Visual Editor$" }},
+  float = true,
+  size  = {{ "95%", "95%" }},
+  move  = {{ "center", "center" }},
+}})
+{marker_end}"#,
+            )
+        } else {
+            format!(
+                r#"{marker_start}
+windowrulev2 = float, title:^(Hyprland Visual Editor)$
+windowrulev2 = center, title:^(Hyprland Visual Editor)$
+windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
+{marker_end}"#,
+            )
+        }
+    }
+}
+
+/// Pure: whether the block between `marker_start`/`marker_end` in `content`
+/// differs from `desired`. Returns true when the markers are absent (append
+/// path). Whitespace-normalized so semantically identical blocks skip the
+/// rewrite — and with it the `hyprctl reload` that would drop fullscreen.
+pub(crate) fn marker_block_needs_update(
+    content: &str,
+    marker_start: &str,
+    marker_end: &str,
+    desired: &str,
+) -> bool {
+    extract_marker_block(content, marker_start, marker_end).is_none_or(|current| {
+        current.trim() != desired.trim()
+    })
+}
+
+/// Extract the full block including both marker lines, if both markers
+/// are present. The result compares directly against a desired block from
+/// the `*_block` constructors (whitespace-normalized by the caller).
+fn extract_marker_block(content: &str, marker_start: &str, marker_end: &str) -> Option<String> {
+    let mut in_block = false;
+    let mut found_start = false;
+    let mut block = String::new();
+    for line in content.lines() {
+        if line.trim() == marker_start {
+            in_block = true;
+            found_start = true;
+            block.push_str(line);
+            block.push('\n');
+            continue;
+        }
+        if line.trim() == marker_end {
+            if found_start {
+                block.push_str(line);
+                block.push('\n');
+                return Some(block);
+            }
+            in_block = false;
+            continue;
+        }
+        if in_block {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    None
 }
 
 /// Write or remove the 5 HVE keybinds between `>>> HVE KEYBINDS <<<` markers
@@ -277,6 +349,21 @@ bind = SUPER ALT, S, exec, hve-ipc next-shader
     } else {
         String::new()
     };
+
+    // Steady state: identical block already on disk → skip the rewrite
+    // AND the reload (same fullscreen rationale as the window rules;
+    // startup re-applies keybinds on every launch).
+    let markers_present = content.contains(marker_start);
+    if !enabled && !markers_present {
+        return; // already clean — true no-op
+    }
+    if enabled
+        && markers_present
+        && !marker_block_needs_update(&content, marker_start, marker_end, &keybinds_block)
+    {
+        tracing::info!("[keybinds] already applied — skip rewrite+reload");
+        return;
+    }
 
     // Replace or remove content between markers
     let new_content = if content.contains(marker_start) {
@@ -399,6 +486,20 @@ exec-once = {} --tray
         String::new()
     };
 
+    // Same steady-state guard as keybinds/window rules: no rewrite means
+    // no `hyprctl reload` means no dropped fullscreen at startup.
+    let markers_present = content.contains(marker_start);
+    if !enabled && !markers_present {
+        return; // already clean — true no-op
+    }
+    if enabled
+        && markers_present
+        && !marker_block_needs_update(&content, marker_start, marker_end, &autostart_block)
+    {
+        tracing::info!("[autostart] already applied — skip rewrite+reload");
+        return;
+    }
+
     // Replace or remove content between markers
     let new_content = if content.contains(marker_start) {
         let mut result = String::new();
@@ -518,8 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_keybinds_noop_when_disabled_and_markers_absent() {
-        let _env = TempEnv::new();
+    fn test_set_keybinds_noop_when_disabled_and_markers_absent() {        let _env = TempEnv::new();
 
         // Create settings file manually WITHOUT keybinds markers
         let path = hve_settings_path();
@@ -537,5 +637,152 @@ mod tests {
         set_keybinds(false);
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(before, after, "disabling when markers absent should be no-op");
+    }
+
+    // ── Startup fullscreen race: skip rewrite+reload when rules unchanged ──
+    // Every `hyprctl reload` re-floats HVE and kills a pending fullscreen
+    // dispatch. The startup path calls set_tiling_window_rules on EVERY
+    // launch, so an unchanged file must not be rewritten nor reloaded.
+
+    fn file_mtime(path: &std::path::Path) -> std::time::SystemTime {
+        std::fs::metadata(path).unwrap().modified().unwrap()
+    }
+
+    fn assert_floating_content(content: &str) {
+        if super::super::config::hve_format() == "lua" {
+            assert!(content.contains("float = true"), "lua floating rule present");
+        } else {
+            assert!(
+                content.contains("windowrulev2 = float"),
+                "conf floating rule present"
+            );
+        }
+        assert!(!content.contains("tile"), "no tiling rule in floating mode");
+    }
+
+    fn assert_tiling_content(content: &str) {
+        assert!(content.contains("tile"), "tiling rule present, got:\n{content}");
+    }
+
+    #[test]
+    fn tiling_rules_skip_rewrite_when_floating_already_applied() {
+        let _env = TempEnv::new();
+        ensure_settings_file(); // default file is floating
+        set_tiling_window_rules(false); // canonicalize floating state
+        let path = hve_settings_path();
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert_floating_content(&before);
+        let before_mtime = file_mtime(&path);
+
+        set_tiling_window_rules(false);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(before, after, "content must be untouched");
+        assert_eq!(
+            before_mtime,
+            file_mtime(&path),
+            "same-mode apply must NOT rewrite the file (rewrite fires hyprctl reload, which kills pending fullscreen)"
+        );
+    }
+
+    #[test]
+    fn tiling_rules_skip_rewrite_when_tiling_already_applied() {
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        set_tiling_window_rules(true);
+        let path = hve_settings_path();
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert_tiling_content(&before);
+        let before_mtime = file_mtime(&path);
+
+        set_tiling_window_rules(true);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(before, after, "content must be untouched");
+        assert_eq!(
+            before_mtime,
+            file_mtime(&path),
+            "same-mode apply must NOT rewrite the file (rewrite fires hyprctl reload, which kills pending fullscreen)"
+        );
+    }
+
+    #[test]
+    fn tiling_rules_rewrite_when_mode_changes() {
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        set_tiling_window_rules(false);
+        let path = hve_settings_path();
+        assert_floating_content(&std::fs::read_to_string(&path).unwrap());
+
+        set_tiling_window_rules(true);
+        assert_tiling_content(&std::fs::read_to_string(&path).unwrap());
+
+        set_tiling_window_rules(false);
+        assert_floating_content(&std::fs::read_to_string(&path).unwrap());
+    }
+
+    #[test]
+    fn marker_block_needs_update_detects_changes() {
+        // Pure seam: only the block between markers decides rewrite vs skip.
+        let start = "# >>> HVE WINDOW RULES <<<";
+        let end = "# >>> HVE WINDOW RULES END <<<";
+        let desired = format!("{start}\nwindowrulev2 = tile, title:^(HVE)$\n{end}");
+        let same = format!("header\n{desired}\nfooter\n");
+        assert!(
+            !super::marker_block_needs_update(&same, start, end, &desired),
+            "identical block must not need an update"
+        );
+        let different = format!("header\n{start}\nwindowrulev2 = float, title:^(HVE)$\n{end}\nfooter\n");
+        assert!(
+            super::marker_block_needs_update(&different, start, end, &desired),
+            "different block must need an update"
+        );
+        assert!(
+            super::marker_block_needs_update("no markers here\n", start, end, &desired),
+            "missing markers must need an update"
+        );
+    }
+
+    #[test]
+    fn keybinds_skip_rewrite_when_already_enabled() {
+        // Startup calls set_keybinds(true) on every launch — same guard as
+        // the window rules: no rewrite means no extra hyprctl reload.
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        set_keybinds(true);
+        let path = hve_settings_path();
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(before.contains("hve-ipc"), "precondition: keybinds written");
+        let before_mtime = file_mtime(&path);
+
+        set_keybinds(true);
+
+        assert_eq!(before, std::fs::read_to_string(&path).unwrap());
+        assert_eq!(
+            before_mtime,
+            file_mtime(&path),
+            "re-enabling identical keybinds must NOT rewrite the file"
+        );
+    }
+
+    #[test]
+    fn autostart_skip_rewrite_when_state_matches() {
+        // Same guard for autostart: repeated applies with the same state
+        // must not rewrite nor reload.
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        set_autostart(false);
+        let path = hve_settings_path();
+        let before = std::fs::read_to_string(&path).unwrap();
+        let before_mtime = file_mtime(&path);
+
+        set_autostart(false);
+
+        assert_eq!(before, std::fs::read_to_string(&path).unwrap());
+        assert_eq!(
+            before_mtime,
+            file_mtime(&path),
+            "re-disabling autostart must NOT rewrite the file"
+        );
     }
 }

@@ -363,6 +363,106 @@ pub(crate) fn reassert_gallery_fullscreen() {
 /// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
 /// visible flashes after fade-in.
 
+// ── Fresh-launch fullscreen settle (floating-startup fix) ─────────────
+// The old eager path mapped the window first (small floating Home frame)
+// and fired focus + fullscreen on blind 200ms/400ms timers — often before
+// Hyprland mapped/focused the client — while an unconditional rules
+// rewrite + `hyprctl reload` re-floated the window mid-settle.
+//
+// The new path maps ONCE (rules applied + Gallery mounted pre-show) and
+// then retries fullscreen gated on `hyprctl clients -j`: dispatch only
+// once HVE is mapped, stop once fullscreen is confirmed.
+
+/// Absolute settle schedule (ms after show): two confirmation attempts
+/// plus a late reassert inside ~2s. Ticks that find HVE already
+/// fullscreen (or the schedule exhausted) dispatch nothing.
+pub(crate) const STARTUP_FULLSCREEN_RETRIES_MS: [u64; 3] = [300, 800, 1500];
+
+/// Pure settle decision for one startup retry tick.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum StartupFsAction {
+    /// HVE not mapped yet — wait for the next tick, dispatch nothing.
+    Wait,
+    /// HVE mapped but windowed — run one unset->set cycle now.
+    Assert,
+    /// Fullscreen confirmed, or attempts exhausted — stop retrying.
+    Done,
+}
+
+pub(crate) fn startup_fs_action(mapped: bool, fullscreen: bool, attempt: usize) -> StartupFsAction {
+    if fullscreen || attempt >= STARTUP_FULLSCREEN_RETRIES_MS.len() {
+        return StartupFsAction::Done;
+    }
+    if mapped {
+        StartupFsAction::Assert
+    } else {
+        StartupFsAction::Wait
+    }
+}
+
+/// Schedule tick `attempt` of the settle chain. Delays are absolute
+/// (schedule[N] ms after show); each tick chains the next only while the
+/// policy says so. Runs OUTSIDE the theme debounce window: a fresh
+/// startup owns no theme cycle, and the 1.5s debounce must not swallow
+/// the late reassert.
+fn schedule_startup_settle(attempt: usize, tile_toggle: bool) {
+    let Some(&at_ms) = STARTUP_FULLSCREEN_RETRIES_MS.get(attempt) else {
+        return;
+    };
+    let prev_ms = attempt
+        .checked_sub(1)
+        .and_then(|p| STARTUP_FULLSCREEN_RETRIES_MS.get(p))
+        .copied()
+        .unwrap_or(0);
+    let delay = at_ms.saturating_sub(prev_ms);
+    slint::Timer::single_shot(std::time::Duration::from_millis(delay), move || {
+        startup_settle_fullscreen(attempt, tile_toggle);
+    });
+}
+
+/// One tick of the startup settle chain. `tile_toggle` is the one-shot
+/// tiling-mode float toggle (only when the rules file actually changed at
+/// this launch); it is consumed on the first mapped tick and never
+/// re-fired, so retries can never stack visible minimizes.
+fn startup_settle_fullscreen(attempt: usize, tile_toggle: bool) {
+    if !crate::shell::Shell::is_gallery_expanded() || is_theme_transitioning_flag() {
+        return;
+    }
+    let seen = crate::composer::hyprland::query_hve_seen();
+    match startup_fs_action(seen.mapped, seen.fullscreen, attempt) {
+        StartupFsAction::Done => {
+            tracing::info!(
+                "[startup] fullscreen settle done (mapped={} fullscreen={} attempt={})",
+                seen.mapped,
+                seen.fullscreen,
+                attempt
+            );
+        }
+        StartupFsAction::Wait => {
+            tracing::info!("[startup] HVE not mapped yet — wait (attempt={})", attempt);
+            schedule_startup_settle(attempt + 1, tile_toggle);
+        }
+        StartupFsAction::Assert => {
+            if let Some(mut ctrl) = composer::global_controller() {
+                if tile_toggle {
+                    ctrl.composer().toggle_float();
+                    tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (mapped-gated)");
+                }
+                // Cycle unset->set to force a real compositor transition
+                // (a bare `set` on an already-fullscreen client is a no-op
+                // that leaves the shell bar visible — see reassert note).
+                let _ = ctrl.composer().set_fullscreen(false);
+                let ok = ctrl.composer().set_fullscreen(true);
+                if !ctrl.gallery_session_active() {
+                    let _ = ctrl.enter_gallery_session();
+                }
+                tracing::info!("[startup] mapped-gated unset->set fullscreen ok={} (attempt={})", ok, attempt);
+            }
+            schedule_startup_settle(attempt + 1, false);
+        }
+    }
+}
+
 fn get_active_workspace_name() -> String {
     std::process::Command::new("hyprctl")
         .args(["activeworkspace", "-j"])
@@ -2041,6 +2141,17 @@ fn main() -> Result<(), slint::PlatformError> {
         // PR1.1 scopes the fullscreen wiring to the eager-show path only.
         dispatch_initial_gallery_expand(&shell);
     } else {
+        // ── Fresh-launch settle (floating-startup fix) ──
+        // Rules BEFORE the first map (steady state: no-op, no reload → no
+        // re-float), Gallery mounted BEFORE the first map (first mapped
+        // frame is already Gallery, no Home flash), then ONE map + focus +
+        // confirmation-gated fullscreen retries. The window is never shown
+        // until it is ready, so a manual launch lands straight in
+        // fullscreen Gallery instead of a small floating frame.
+        let startup_tiling = state.lock().unwrap_or_else(|e| e.into_inner()).cfg().tiling_mode;
+        let rules_changed = set_tiling_window_rules(startup_tiling);
+        dispatch_initial_gallery_expand(&shell);
+
         window.show()?;
         if let Some(mut ctrl) = composer::global_controller() {
             ctrl.set_window_hidden(false);
@@ -2051,55 +2162,19 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // En Wayland/Hyprland, show() no garantiza foco automático.
         // Forzamos foco via Composer para evitar el doble-click inicial.
-        let startup_tiling = state.lock().unwrap_or_else(|e| e.into_inner()).cfg().tiling_mode;
-        // ── Startup order (gallery-immersive-redesign PR1.1) ──
-        // show() → focus() → initial Gallery expand(fullscreen session).
-        //
-        // The expand MUST live here instead of at setup time: the global
-        // Composer controller is initialized later than the old call site,
-        // and Hyprland only honors a fullscreen dispatch once HVE is mapped
-        // AND focused — both are guaranteed after this 200ms post-show pass.
-        let shell_for_expand = shell.clone();
-        slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
-            if let Some(ctrl) = composer::global_controller() {
-                ctrl.composer().focus();
-            }
+        if let Some(ctrl) = composer::global_controller() {
+            ctrl.composer().focus();
+        }
+        tracing::info!(
+            "[startup] mapped once (rules_changed={}) — settle chain armed",
+            rules_changed
+        );
 
-            // ── Ensure hyprland.conf rules match saved config ──
-            set_tiling_window_rules(startup_tiling);
-
-            // Tiling ON: float BEFORE entering the immersive session.
-            // exit_gallery_session restores floating geometry, so sessions
-            // are designed to start from a floating window; toggling float
-            // AFTER fullscreen could drop the fullscreen flag. The 600ms
-            // delay lets the config reload settle for the mapped window,
-            // then the expand runs in the same tick (float → fullscreen).
-            if startup_tiling {
-                slint::Timer::single_shot(std::time::Duration::from_millis(600), move || {
-                    if let Some(ctrl) = composer::global_controller() {
-                        ctrl.composer().toggle_float();
-                    }
-                    tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (delayed)");
-                    dispatch_initial_gallery_expand(&shell_for_expand);
-                    slint::Timer::single_shot(std::time::Duration::from_millis(400), || {
-                        if is_theme_transitioning_flag() {
-                            tracing::info!("[startup] skip reassert during theme fade");
-                            return;
-                        }
-                        reassert_gallery_fullscreen();
-                    });
-                });
-            } else {
-                dispatch_initial_gallery_expand(&shell_for_expand);
-                slint::Timer::single_shot(std::time::Duration::from_millis(400), || {
-                    if is_theme_transitioning_flag() {
-                        tracing::info!("[startup] skip reassert during theme fade");
-                        return;
-                    }
-                    reassert_gallery_fullscreen();
-                });
-            }
-        });
+        // Tiling ON + rules actually rewritten at this launch (reload
+        // pending): float BEFORE entering the session, once the client is
+        // mapped. Steady state (rules unchanged) skips this — the client
+        // maps per config and retries only assert fullscreen.
+        schedule_startup_settle(0, startup_tiling && rules_changed);
     }
 
     // ── Global event loop (decoupled from window lifecycle) ──
@@ -2266,6 +2341,36 @@ mod tests {
         // be able to capture a fresh origin and stage the view again.
         assert!(s.capture("5"), "next interlude can capture a new origin");
         assert!(s.should_move(), "state resets for the next generation");
+    }
+
+    // ── Startup fullscreen settle policy (confirmation-gated retries) ──
+    // The old path fired unset->set on fixed 200ms/400ms timers, often
+    // before Hyprland mapped the client. The new path polls
+    // `hyprctl clients -j` and only dispatches once HVE is mapped.
+
+    #[test]
+    fn startup_fs_waits_while_unmapped() {
+        assert_eq!(startup_fs_action(false, false, 0), StartupFsAction::Wait);
+        assert_eq!(startup_fs_action(false, false, 1), StartupFsAction::Wait);
+    }
+
+    #[test]
+    fn startup_fs_asserts_once_mapped_but_windowed() {
+        assert_eq!(startup_fs_action(true, false, 0), StartupFsAction::Assert);
+        assert_eq!(startup_fs_action(true, false, 1), StartupFsAction::Assert);
+    }
+
+    #[test]
+    fn startup_fs_done_once_fullscreen_confirmed() {
+        assert_eq!(startup_fs_action(true, true, 0), StartupFsAction::Done);
+        assert_eq!(startup_fs_action(false, true, 0), StartupFsAction::Done);
+    }
+
+    #[test]
+    fn startup_fs_done_when_attempts_exhausted() {
+        let last = STARTUP_FULLSCREEN_RETRIES_MS.len();
+        assert_eq!(startup_fs_action(false, false, last), StartupFsAction::Done);
+        assert_eq!(startup_fs_action(true, false, last), StartupFsAction::Done);
     }
 
 }

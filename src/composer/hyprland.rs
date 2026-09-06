@@ -451,6 +451,60 @@ pub(crate) fn v5_float_toggle() -> String {
     format!("hl.dsp.window.float({{ action = \"toggle\", window = \"title:{HVE_TITLE}\" }})")
 }
 
+/// Mapped/fullscreen snapshot of the HVE client, parsed from a
+/// `hyprctl clients -j` response. Pure data — headless-testable.
+/// Unlike `StuckState` (crash repair), this answers the startup settle
+/// question: "is HVE mapped yet, and is it already fullscreen?"
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub(crate) struct HveSeen {
+    /// An HVE-titled client exists in the compositor's client list.
+    pub mapped: bool,
+    /// That client sits in a fullscreen/maximized state.
+    pub fullscreen: bool,
+}
+
+/// Parse a `hyprctl clients -j` snapshot for the HVE client. Malformed
+/// JSON or a missing HVE client yields the default (unmapped) state —
+/// never panic on compositor output.
+///
+/// JSON field shapes verified against Hyprland 0.56.2 live output:
+/// `fullscreen`/`fullscreenClient` are ints (0 none, 1 fullscreen, 2
+/// maximized).
+pub(crate) fn parse_hve_seen(clients_json: &str) -> HveSeen {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(clients_json) else {
+        return HveSeen::default();
+    };
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| {
+            let title = w.get("title")?.as_str()?;
+            if !title.contains(HVE_TITLE) {
+                return None;
+            }
+            let flag = |key: &str| w.get(key).and_then(|f| f.as_i64()).unwrap_or(0) > 0;
+            Some(HveSeen {
+                mapped: true,
+                fullscreen: flag("fullscreen") || flag("fullscreenClient"),
+            })
+        })
+        .next()
+        .unwrap_or_default()
+}
+
+/// Best-effort live query: current mapped/fullscreen snapshot of HVE.
+/// No compositor interaction beyond a read-only `clients -j`; unmapped or
+/// unreachable sessions yield the default (unmapped) state.
+pub(crate) fn query_hve_seen() -> HveSeen {
+    std::process::Command::new("hyprctl")
+        .args(["clients", "-j"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|text| parse_hve_seen(&text))
+        .unwrap_or_default()
+}
+
 // ── Startup sanity (gallery-immersive-redesign 1.4/1.5) ────────────────
 
 /// Stuck-fullscreen state of the HVE window, parsed from a
@@ -584,8 +638,7 @@ mod tests {
 
     /// Healthy (floating, windowed) or absent HVE needs no repair at all.
     #[test]
-    fn sanity_healthy_or_absent_hve_needs_nothing() {
-        let healthy = parse_stuck_state(
+    fn sanity_healthy_or_absent_hve_needs_nothing() {        let healthy = parse_stuck_state(
             r#"[{"title": "Hyprland Visual Editor", "fullscreen": 0, "fullscreenClient": 0, "floating": true}]"#,
         );
         assert!(healthy.present && !healthy.needs_repair());
@@ -595,6 +648,46 @@ mod tests {
 
         let garbage = parse_stuck_state("not json");
         assert!(!garbage.present && !garbage.needs_repair());
+    }
+
+    // ── Startup fullscreen confirmation (fresh-launch settle) ──────────
+    // Fixed 200ms/400ms timers fire before Hyprland maps/focuses HVE, so
+    // the fullscreen dispatch lands on an unknown client. The startup path
+    // now gates retries on `hyprctl clients -j`: only dispatch once HVE is
+    // mapped, stop once it reports fullscreen.
+
+    #[test]
+    fn seen_reports_mapped_windowed_hve() {
+        let seen = parse_hve_seen(
+            r#"[{"title": "Hyprland Visual Editor", "fullscreen": 0, "fullscreenClient": 0, "floating": true}]"#,
+        );
+        assert!(seen.mapped, "HVE client must count as mapped");
+        assert!(!seen.fullscreen, "windowed HVE is not fullscreen");
+    }
+
+    #[test]
+    fn seen_reports_mapped_fullscreen_hve() {
+        let seen = parse_hve_seen(
+            r#"[{"title": "Hyprland Visual Editor", "fullscreen": 2, "fullscreenClient": 0, "floating": true}]"#,
+        );
+        assert!(seen.mapped);
+        assert!(seen.fullscreen, "internal fullscreen flag must be detected");
+    }
+
+    #[test]
+    fn seen_ignores_other_fullscreen_clients() {
+        let seen = parse_hve_seen(
+            r#"[{"title": "Some Game", "fullscreen": 2, "fullscreenClient": 2, "floating": false}]"#,
+        );
+        assert!(!seen.mapped, "only the HVE-titled client counts as mapped");
+        assert!(!seen.fullscreen);
+    }
+
+    #[test]
+    fn seen_defaults_on_absent_or_garbage() {
+        assert_eq!(parse_hve_seen(r#"[]"#), HveSeen::default());
+        assert_eq!(parse_hve_seen("not json"), HveSeen::default());
+        assert_eq!(parse_hve_seen(r#"{"not": "an array"}"#), HveSeen::default());
     }
 }
 
