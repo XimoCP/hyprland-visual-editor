@@ -150,45 +150,60 @@ fn is_dark_hex(hex: &str) -> bool {
     (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) < 128.0
 }
 
-// ── Wallpaper module policy (skwd-paper owns the fondo) ─────────────────
-// This setup renders the desktop background with skwd-wall (skwd-paper
-// layer). Noctalia's own wallpaper module renders a translucent layer OVER
-// it, and the compositor blurs what's behind translucent surfaces — the
-// "blurred fondo" seen during the theme interlude. Themes are snapshots of
-// whatever wallpaper state was live when they were saved, so apply() forces
-// the module off in the copied settings.json instead of trusting the
-// snapshot, and post_apply() skips the wallpaper IPC when the module is off.
-
-/// Force `wallpaper.enabled = false` in a Noctalia settings.json payload.
-/// Everything else is preserved byte-for-key; malformed JSON is returned
-/// unchanged (never corrupt the live config).
-fn force_noctalia_wallpaper_off(raw: &str) -> String {
-    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return raw.to_string();
-    };
-    let Some(obj) = v.as_object_mut() else {
-        return raw.to_string();
-    };
-    let wp = obj
-        .entry("wallpaper")
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    if let Some(wp_obj) = wp.as_object_mut() {
-        wp_obj.insert("enabled".into(), serde_json::Value::Bool(false));
+/// Best-effort delegation to skwd-walld (now skwd-wall-v2 / skwd-helm).
+///
+/// HVE remains agnostic: if the daemon's socket is absent we do nothing.
+/// If it is present we try `skwd-helm apply <path>` (and `skwd-wall-v2 apply` as fallback)
+/// and swallow any error so theme apply never fails. Invisible, no UI.
+fn skwd_wall_socket_path() -> PathBuf {
+    if let Ok(custom) = std::env::var("SKWD_WALL_V2_SOCK") {
+        let p = PathBuf::from(&custom);
+        if p.exists() {
+            return p;
+        }
     }
-    serde_json::to_string(&v).unwrap_or_else(|_| raw.to_string())
+    let runtime = std::env::var("XDG_RUNTIME_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/run/user/1000"));
+    runtime.join("skwd-wall-v2").join("wall.sock")
 }
 
-/// Whether Noctalia's wallpaper module is enabled in the live settings.json
-/// under `config_dir`. Unreadable or malformed file → `true` (conservative:
-/// keeps the legacy IPC behavior instead of guessing off).
-fn noctalia_wallpaper_module_enabled(config_dir: &Path) -> bool {
-    let Ok(raw) = fs::read_to_string(config_dir.join("settings.json")) else {
-        return true;
+fn delegate_to_skwd_walld(wallpaper_path: &Path) {
+    let socket = skwd_wall_socket_path();
+    if !socket.exists() {
+        tracing::debug!("[skwd-wall] socket absent at {:?} — skipping delegation", socket);
+        return;
+    }
+    let path_str = match wallpaper_path.to_str() {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            tracing::warn!("[skwd-wall] invalid wallpaper path {:?}", wallpaper_path);
+            return;
+        }
     };
-    serde_json::from_str::<serde_json::Value>(&raw)
-        .ok()
-        .and_then(|v| v.get("wallpaper")?.get("enabled")?.as_bool())
-        .unwrap_or(true)
+    // Try skwd-helm first, then skwd-wall-v2 as fallback
+    for bin in ["skwd-helm", "skwd-wall-v2"] {
+        let res = std::process::Command::new(bin)
+            .arg("apply")
+            .arg(path_str)
+            .output();
+        match res {
+            Ok(out) if out.status.success() => {
+                tracing::info!("[skwd-wall] delegated wallpaper to {}: {}", bin, path_str);
+                return;
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("[skwd-wall] {} apply failed: {}", bin, err.trim());
+                // try next bin
+            }
+            Err(e) => {
+                tracing::debug!("[skwd-wall] {} not available: {}", bin, e);
+            }
+        }
+    }
+    tracing::warn!("[skwd-wall] delegation failed for {} (daemon may be unreachable)", path_str);
 }
 
 /// Generate a `terminal` section for a Noctalia predefined scheme from M3 core colors.
@@ -375,18 +390,8 @@ impl ThemeProvider for NoctaliaV4Provider {
             if src_path.exists() {
                 let dst_path = dst.join(file);
                 let tmp = dst_path.with_extension("json.noctalia-tmp");
-                if file == "settings.json" {
-                    // skwd-paper owns the fondo — force the Noctalia wallpaper
-                    // module off no matter what the theme snapshot carried
-                    // (see the wallpaper module policy note above).
-                    let raw = fs::read_to_string(&src_path)
-                        .map_err(|e| format!("Cannot read {}: {}", file, e))?;
-                    fs::write(&tmp, force_noctalia_wallpaper_off(&raw))
-                        .map_err(|e| format!("Cannot write {}: {}", file, e))?;
-                } else {
-                    fs::copy(&src_path, &tmp)
-                        .map_err(|e| format!("Cannot copy {}: {}", file, e))?;
-                }
+                fs::copy(&src_path, &tmp)
+                    .map_err(|e| format!("Cannot copy {}: {}", file, e))?;
                 fs::rename(&tmp, &dst_path)
                     .map_err(|e| format!("Cannot rename {}: {}", file, e))?;
             }
@@ -430,33 +435,21 @@ impl ThemeProvider for NoctaliaV4Provider {
         //   - Set named screens individually
         //   - Only use the empty-string entry if there are NO named screens
         let entries = self.wallpaper_pending.lock().unwrap().clone();
-        let wallpaper_module_on = self
-            .shell
-            .config_dir()
-            .map(|d| noctalia_wallpaper_module_enabled(&d))
-            .unwrap_or(true);
         if !entries.is_empty() {
-            if wallpaper_module_on {
-                tracing::info!("[noctalia] Applying wallpapers via IPC...");
-                let has_named = entries.iter().any(|(s, _)| !s.is_empty());
-                for (screen, path) in &entries {
-                    if has_named && screen.is_empty() {
-                        tracing::debug!("[noctalia] Skipping empty-screen entry (named screens present)");
-                        continue;
-                    }
-                    tracing::debug!("[noctalia] IPC apply: screen='{}' path='{}'", screen, path);
-                    if let Err(e) = self.shell.apply_wallpaper(Path::new(path), screen) {
-                        tracing::warn!("[noctalia] Wallpaper IPC for '{}': {}", screen, e);
-                    }
+            tracing::info!("[noctalia] Applying wallpapers via IPC...");
+            let has_named = entries.iter().any(|(s, _)| !s.is_empty());
+            for (screen, path) in &entries {
+                if has_named && screen.is_empty() {
+                    tracing::debug!("[noctalia] Skipping empty-screen entry (named screens present)");
+                    continue;
                 }
-            } else {
-                // skwd-paper owns the fondo — the wallpaper IPC would persist
-                // a path into Noctalia's settings and re-summon its wallpaper
-                // layer over skwd-paper (the blurred-fondo regression).
-                tracing::info!(
-                    "[noctalia] wallpaper module disabled — skipping {} IPC wallpaper applies",
-                    entries.len()
-                );
+                tracing::debug!("[noctalia] IPC apply: screen='{}' path='{}'", screen, path);
+                if let Err(e) = self.shell.apply_wallpaper(Path::new(path), screen) {
+                    tracing::warn!("[noctalia] Wallpaper IPC for '{}': {}", screen, e);
+                } else {
+                    // Best-effort delegation to skwd-walld (agnostic, silent if absent)
+                    delegate_to_skwd_walld(Path::new(path));
+                }
             }
         }
 
@@ -864,6 +857,8 @@ impl ThemeProvider for NoctaliaV5Provider {
                 noctalia_msg(&["msg", "wallpaper-set", "", wp])
                     .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
                 tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
+                // Best-effort delegation to skwd-walld (agnostic, silent if absent)
+                delegate_to_skwd_walld(Path::new(wp));
             }
         }
 
@@ -994,45 +989,6 @@ mod tests {
         let path = path.unwrap();
         assert!(path.ends_with("JokerTheme.json"));
         assert!(path.to_string_lossy().contains("palettes"));
-    }
-
-    // ── Wallpaper module policy (skwd-paper owns the fondo) ─────────────
-
-    #[test]
-    fn settings_patch_forces_wallpaper_module_off_and_keeps_the_rest() {
-        let raw = r#"{"bar":{"position":"top"},"wallpaper":{"enabled":true,"directory":"/x","favorites":[1,2]}}"#;
-        let v: serde_json::Value = serde_json::from_str(&force_noctalia_wallpaper_off(raw)).unwrap();
-        assert_eq!(v["wallpaper"]["enabled"], false, "module must be forced off");
-        assert_eq!(v["wallpaper"]["directory"], "/x", "sibling keys preserved");
-        assert_eq!(v["wallpaper"]["favorites"], serde_json::json!([1, 2]));
-        assert_eq!(v["bar"]["position"], "top", "other sections preserved");
-    }
-
-    #[test]
-    fn settings_patch_creates_wallpaper_object_when_missing() {
-        let v: serde_json::Value =
-            serde_json::from_str(&force_noctalia_wallpaper_off(r#"{"a":1}"#)).unwrap();
-        assert_eq!(v["wallpaper"]["enabled"], false, "missing object is created off");
-        assert_eq!(v["a"], 1);
-    }
-
-    #[test]
-    fn settings_patch_never_corrupts_malformed_json() {
-        assert_eq!(force_noctalia_wallpaper_off("not json"), "not json");
-        assert_eq!(force_noctalia_wallpaper_off(""), "");
-    }
-
-    #[test]
-    fn wallpaper_module_enabled_reads_live_settings_conservatively() {
-        let dir = TempDir::new().unwrap();
-        // No settings.json → unreadable → true (legacy IPC behavior kept).
-        assert!(noctalia_wallpaper_module_enabled(dir.path()), "missing file must default to enabled");
-        std::fs::write(dir.path().join("settings.json"), r#"{"wallpaper":{"enabled":false}}"#).unwrap();
-        assert!(!noctalia_wallpaper_module_enabled(dir.path()), "explicit false must be honored");
-        std::fs::write(dir.path().join("settings.json"), r#"{"wallpaper":{"enabled":true}}"#).unwrap();
-        assert!(noctalia_wallpaper_module_enabled(dir.path()));
-        std::fs::write(dir.path().join("settings.json"), "garbage").unwrap();
-        assert!(noctalia_wallpaper_module_enabled(dir.path()), "malformed file must default to enabled");
     }
 
     #[test]
@@ -1238,5 +1194,97 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let result = parse_theme_entries(&dir.path().join("wallpapers.json"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn settings_json_copied_verbatim() {
+        // TDD for Task 1: apply must copy settings.json verbatim, not force wallpaper.enabled=false
+        let config_dir = TempDir::new().unwrap();
+        let theme_dir = TempDir::new().unwrap();
+        let provider_dir = theme_dir.path().join("providers").join("noctalia");
+        std::fs::create_dir_all(&provider_dir).unwrap();
+
+        let raw = r##"{"bar":{"position":"top"},"wallpaper":{"enabled":true,"directory":"/x"}}"##;
+        std::fs::write(provider_dir.join("settings.json"), raw).unwrap();
+        // Need at least one source file; colors.json dummy to satisfy other logic but not needed for this check
+        std::fs::write(provider_dir.join("colors.json"), r##"{"mPrimary":"#ff0000"}"##).unwrap();
+
+        // Point provider to our temp config dir via env var
+        let orig = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", config_dir.path());
+        // Ensure rendered_dir exists for save path (not needed for apply but create)
+        let hypr_dir = TempDir::new().unwrap();
+        std::env::set_var("HVE_NOCTALIA_HYPR", hypr_dir.path());
+
+        let provider = NoctaliaV4Provider::new();
+        let res = provider.apply(theme_dir.path());
+        assert!(res.is_ok(), "apply should succeed: {:?}", res);
+
+        let live = std::fs::read_to_string(config_dir.path().join("settings.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&live).unwrap();
+        assert_eq!(
+            v["wallpaper"]["enabled"], true,
+            "settings.json must be copied verbatim, not forced off"
+        );
+
+        // restore env
+        if let Some(val) = orig {
+            std::env::set_var("HVE_NOCTALIA_CONFIG", val);
+        } else {
+            std::env::remove_var("HVE_NOCTALIA_CONFIG");
+        }
+        std::env::remove_var("HVE_NOCTALIA_HYPR");
+    }
+
+    #[test]
+    fn delegate_noop_when_socket_absent() {
+        // Task 2: delegation must be no-op when socket absent and never panic
+        let tmp_runtime = TempDir::new().unwrap();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
+        std::env::remove_var("SKWD_WALL_V2_SOCK");
+        // No socket file exists in tmp_runtime/skwd-wall-v2/wall.sock
+        delegate_to_skwd_walld(Path::new("/tmp/fake-wallpaper.jpg"));
+        // Should not panic and socket path should be absent
+        assert!(!skwd_wall_socket_path().exists());
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
+    }
+
+    #[test]
+    fn delegate_swallow_failure_when_socket_is_not_socket() {
+        // Task 2: failure must be swallowed, not propagated
+        let tmp_runtime = TempDir::new().unwrap();
+        let sock_dir = tmp_runtime.path().join("skwd-wall-v2");
+        std::fs::create_dir_all(&sock_dir).unwrap();
+        let sock_path = sock_dir.join("wall.sock");
+        // Create a regular file where socket should be — connect will fail
+        std::fs::write(&sock_path, b"not a socket").unwrap();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
+        std::env::remove_var("SKWD_WALL_V2_SOCK");
+        // Must not panic, must swallow error
+        delegate_to_skwd_walld(Path::new("/tmp/another.jpg"));
+        // restore
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
     }
 }
