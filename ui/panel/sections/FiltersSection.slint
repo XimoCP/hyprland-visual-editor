@@ -125,7 +125,7 @@ export component FiltersSection inherits Rectangle {
                     active: i == root.active-index;
                     keyboard-focused: i == root.focused-index && fs.has-focus;
                     index: i;
-                    toggled => { root.apply-shader(i, root.shader-files[i]); }
+                    toggled => { root.focused-index = i; fs.focus(); root.apply-shader(i, root.shader-files[i]); }
                     focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
                 }
 

@@ -1944,15 +1944,13 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
     window.set_settings_restart_button(tr.tr_shared("settings.restart_button", "Restart"));
     window.set_settings_title(tr.tr_shared("settings.title", "Settings"));
-    window.set_auto_minimize_label(tr.tr_shared("settings.auto_minimize", "Auto-minimize"));
-    window.set_timer_label(tr.tr_shared("settings.timer", "Timer:"));
+    window.set_auto_minimize_label(tr.tr_shared("settings.auto_minimize", "Hide delay"));
+    window.set_timer_label(tr.tr_shared("settings.timer", "Delay:"));
     window.set_language_label(tr.tr_shared("settings.language", "Language"));
     window.set_tiling_label(tr.tr_shared("settings.tiling_mode", "Tiling mode"));
     window.set_autostart_label(tr.tr_shared("settings.autostart", "Autostart"));
     window.set_theme_label(tr.tr_shared("settings.theme", "Theme"));
     window.set_reset_label(tr.tr_shared("settings.reset_presets", "Reset presets"));
-    window.set_keybinds_label(tr.tr_shared("settings.keybinds", "Keyboard shortcuts"));
-    window.set_keybinds_mode(cfg.keybinds_enabled);
 
     // ── Legacy ThemesModule i18n — REMOVED slice 8 (R8) ──
     // Theme list UI replaced by Gallery cards + panel SaveSection.
@@ -2611,13 +2609,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── IPC server (Unix socket) ──
     ipc::start_ipc_server(window.as_weak(), proj.clone());
 
-    // ── Startup: sync keybinds + autostart from saved config ──
+    // ── Startup: sync autostart + ensure vital SUPER+H (2026-09-07 slim-down keeps only SUPER+H)
     {
         let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-        if state_guard.cfg().keybinds_enabled {
-            set_keybinds(true);
-        }
-        window.set_keybinds_mode(state_guard.cfg().keybinds_enabled);
+        set_keybinds(true);
         set_autostart(state_guard.cfg().auto_start);
     }
 

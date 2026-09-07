@@ -1,6 +1,6 @@
 use crate::app_state::{AppState, SharedState};
 use crate::config::Config;
-use crate::settings::{set_autostart, set_keybinds, set_tiling_window_rules};
+use crate::settings::{set_autostart, set_tiling_window_rules};
 use crate::shell::nav::{NavCommand, Screen};
 use crate::shell::gallery::views::mosaic::MosaicPages;
 use crate::shell::Shell;
@@ -359,19 +359,6 @@ pub fn setup_callbacks(
                 "[settings] Tiling mode {} — config updated + togglefloating dispatched",
                 if enabled { "ON" } else { "OFF" }
             );
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_toggle_keybinds(move |enabled| {
-            lock_state(&state).update_cfg(|c| c.keybinds_enabled = enabled);
-            if let Some(w) = weak.upgrade() {
-                w.set_keybinds_mode(enabled);
-            }
-            set_keybinds(enabled);
-            tracing::info!("[settings] Keyboard shortcuts {}", if enabled { "ON" } else { "OFF" });
         });
     }
 

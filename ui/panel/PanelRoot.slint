@@ -83,7 +83,6 @@ export component PanelRoot inherits Rectangle {
     in property <int> minimize-seconds: 5;
     in property <string> language: "en";
     in property <bool> tiling-mode: false;
-    in property <bool> keybinds-mode: false;
     in property <bool> autostart: false;
     in property <string> theme: "system";
     in property <bool> restart-required: false;
@@ -97,7 +96,6 @@ export component PanelRoot inherits Rectangle {
     in property <string> autostart-label: "Autostart";
     in property <string> theme-label: "Theme";
     in property <string> reset-label: "Reset presets";
-    in property <string> keybinds-label: "Keyboard shortcuts";
     in property <string> about-title: "About HVE";
     in property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
     in property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
@@ -133,7 +131,6 @@ export component PanelRoot inherits Rectangle {
     callback change-minimize-seconds(int);
     callback change-language(string);
     callback toggle-tiling-mode(bool);
-    callback toggle-keybinds(bool);
     callback toggle-autostart(bool);
     callback change-theme(string);
     callback reset-presets();
@@ -319,7 +316,6 @@ export component PanelRoot inherits Rectangle {
                     minimize-seconds: root.minimize-seconds;
                     language: root.language;
                     tiling-mode: root.tiling-mode;
-                    keybinds-mode: root.keybinds-mode;
                     autostart: root.autostart;
                     theme: root.theme;
                     restart-required: root.restart-required;
@@ -333,7 +329,6 @@ export component PanelRoot inherits Rectangle {
                     autostart-label: root.autostart-label;
                     theme-label: root.theme-label;
                     reset-label: root.reset-label;
-                    keybinds-label: root.keybinds-label;
                     about-title: root.about-title;
                     about-short: root.about-short;
                     about-full: root.about-full;
@@ -348,7 +343,6 @@ export component PanelRoot inherits Rectangle {
                     change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
                     change-language(v) => { root.change-language(v); }
                     toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
-                    toggle-keybinds(v) => { root.toggle-keybinds(v); }
                     toggle-autostart(v) => { root.toggle-autostart(v); }
                     change-theme(v) => { root.change-theme(v); }
                     reset-presets => { root.reset-presets(); }

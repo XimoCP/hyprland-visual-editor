@@ -200,14 +200,21 @@ export component MotionSection inherits Rectangle {
                     : root.anim-files.length * 66px + 70px + (root.active-index >= 0 ? 42px : 0px)
                       + (root.focused-index - root.anim-files.length) * 80px;
             viewport-y: root.focus-is-kbd ? (root.focused-index >= 0
-                ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+                // Slider rows center on half the LIT height (44px = 88/2):
+                // the focused slider grows 72→88 (104 grabbed), so the card
+                // half-height (29px) would park it too low and clip Y2-d.
+                ? (0px - max(0px, self.focus-y + (root.focused-index < root.anim-files.length ? 29px : 44px) - self.height / 2))
                 : 0px) : root.saved-scroll-y;
             animate viewport-y { duration: 250ms; easing: ease-out; }
             changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
             VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
-                padding-bottom: 12px;
+                // 28px bottom breathing room (not 12px like the card-only
+                // sections): the lit Y2-d block grows 72→88px (104 grabbed),
+                // so 12px clips it. 28 covers the +16 lit delta; the spacer
+                // below covers the grabbed delta + help text.
+                padding-bottom: 28px;
                 spacing: 8px;
 
                 for i in root.anim-files.length : PresetCard {
@@ -218,8 +225,8 @@ export component MotionSection inherits Rectangle {
                     active: i == root.active-index;
                     keyboard-focused: i == root.focused-index && fs.has-focus && root.engaged-slider < 0;
                     index: i;
-                    hover-moves-focus: true;
-                    toggled => { root.apply-animation(i, root.anim-files[i]); }
+                    hover-moves-focus: false;
+                    toggled => { root.focused-index = i; root.focus-is-kbd = false; fs.focus(); root.apply-animation(i, root.anim-files[i]); }
                     focus-requested(idx) => { root.focused-index = idx; root.focus-is-kbd = false; fs.focus(); }
                 }
 
@@ -267,13 +274,6 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length; fs.focus(); }
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                root.focused-index = root.anim-files.length;
-                                root.focus-is-kbd = false;
-                                fs.focus();
-                            }
-                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -304,13 +304,6 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length + 1; fs.focus(); }
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                root.focused-index = root.anim-files.length + 1;
-                                root.focus-is-kbd = false;
-                                fs.focus();
-                            }
-                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -341,13 +334,6 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length + 2; fs.focus(); }
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                root.focused-index = root.anim-files.length + 2;
-                                root.focus-is-kbd = false;
-                                fs.focus();
-                            }
-                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -378,13 +364,6 @@ export component MotionSection inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         clicked => { root.focused-index = root.anim-files.length + 3; fs.focus(); }
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                root.focused-index = root.anim-files.length + 3;
-                                root.focus-is-kbd = false;
-                                fs.focus();
-                            }
-                        }
                     }
                     BezierSlider {
                         width: 100%;
@@ -406,6 +385,11 @@ export component MotionSection inherits Rectangle {
                     color: HveColors.text-muted.transparentize(0.4);
                     horizontal-alignment: center;
                 }
+
+                // Over-scroll spacer: lets the ScrollView travel far enough
+                // that the grabbed Y2-d block (104px) + help text above fully
+                // reveal when scrolled to the bottom (keyboard or mouse).
+                Rectangle { height: 16px; }
             }
         }
     }

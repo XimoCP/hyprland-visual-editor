@@ -129,9 +129,9 @@ pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
 /// is active. `hidden` is true when the window is already hidden (idempotent
 /// guard). Returns true iff immediate hide is required.
 ///
-/// Note: gallery immediate-hide is unconditional — it is the immersive
-/// session contract. Even when `auto_minimize_enabled` is globally disabled,
-/// losing focus during gallery must hide immediately (same as Esc).
+/// Gallery hide now respects the user's delay setting: with auto-hide enabled
+/// and a positive delay it becomes a countdown instead of an instant hide.
+/// Only `Off` (0s) or disabled auto-hide keeps the old instant behaviour.
 pub(crate) fn should_hide_immediately(gallery_active: bool, hidden: bool) -> bool {
     if hidden {
         return false;
@@ -171,6 +171,7 @@ pub(crate) fn blur_decision(
     gallery_active: bool,
     hidden: bool,
     auto_minimize: bool,
+    minimize_seconds: i32,
 ) -> BlurDecision {
     if !machine_allows {
         return BlurDecision::Nothing;
@@ -179,7 +180,17 @@ pub(crate) fn blur_decision(
         return BlurDecision::Nothing;
     }
     if should_hide_immediately(gallery_active, hidden) {
-        return BlurDecision::ImmediateHide;
+        // Gallery fullscreen now honours the hide delay. Disabled auto-hide
+        // means "never auto-hide" (user closes with X/Esc). Off (0s) means
+        // instant hide. Positive delay → visible countdown so you can return
+        // from the other monitor before it hides.
+        if !auto_minimize {
+            return BlurDecision::Nothing;
+        }
+        return match resolve_grace(minimize_seconds) {
+            GraceDecision::Immediate => BlurDecision::ImmediateHide,
+            GraceDecision::Countdown => BlurDecision::StartCountdown,
+        };
     }
     if !gallery_active && auto_minimize {
         return BlurDecision::StartCountdown;
@@ -423,12 +434,12 @@ mod tests {
         // THE regression: gallery auto-minimize-on-open. Blur while Entering
         // must be ignored even with gallery active + auto_minimize.
         assert_eq!(
-            blur_decision(false, true, false, true),
+            blur_decision(false, true, false, true, 4),
             BlurDecision::Nothing,
             "blur during Entering → Nothing (machine_allows=false)"
         );
         assert_eq!(
-            blur_decision(false, false, false, true),
+            blur_decision(false, false, false, true, 4),
             BlurDecision::Nothing,
             "blur during Entering without gallery also Nothing"
         );
@@ -436,23 +447,30 @@ mod tests {
 
     #[test]
     fn test_blur_in_visible_with_gallery_immediate_hide() {
+        // Gallery Off (0s) → instant hide even with auto-hide enabled
         assert_eq!(
-            blur_decision(true, true, false, true),
+            blur_decision(true, true, false, true, 0),
             BlurDecision::ImmediateHide,
-            "blur in Visible + gallery → ImmediateHide"
+            "blur in Visible + gallery + 0s → ImmediateHide"
         );
-        // gallery is unconditional even if auto_minimize disabled
+        // Gallery with delay → countdown, so you can return from other monitor
         assert_eq!(
-            blur_decision(true, true, false, false),
-            BlurDecision::ImmediateHide,
-            "gallery ImmediateHide even with auto_minimize=false"
+            blur_decision(true, true, false, true, 4),
+            BlurDecision::StartCountdown,
+            "blur in Visible + gallery + 4s → StartCountdown"
+        );
+        // Gallery but auto-hide disabled → never auto-hide (user closes with X/Esc)
+        assert_eq!(
+            blur_decision(true, true, false, false, 4),
+            BlurDecision::Nothing,
+            "gallery with auto_minimize=false → Nothing (never hide)"
         );
     }
 
     #[test]
     fn test_blur_in_visible_without_gallery_auto_minimize_countdown() {
         assert_eq!(
-            blur_decision(true, false, false, true),
+            blur_decision(true, false, false, true, 4),
             BlurDecision::StartCountdown,
             "blur in Visible + !gallery + auto_minimize → StartCountdown"
         );
@@ -461,7 +479,7 @@ mod tests {
     #[test]
     fn test_blur_in_visible_without_gallery_no_auto_minimize_nothing() {
         assert_eq!(
-            blur_decision(true, false, false, false),
+            blur_decision(true, false, false, false, 4),
             BlurDecision::Nothing,
             "blur in Visible + !gallery + !auto_minimize → Nothing"
         );
@@ -470,18 +488,18 @@ mod tests {
     #[test]
     fn test_blur_while_hidden_nothing() {
         assert_eq!(
-            blur_decision(false, true, true, true),
+            blur_decision(false, true, true, true, 4),
             BlurDecision::Nothing,
             "blur while Hidden → Nothing even with gallery"
         );
         assert_eq!(
-            blur_decision(false, false, true, true),
+            blur_decision(false, false, true, true, 4),
             BlurDecision::Nothing,
             "blur while Hidden → Nothing"
         );
         // Even if machine_allows were true but hidden flag set, should stay Nothing
         assert_eq!(
-            blur_decision(true, true, true, true),
+            blur_decision(true, true, true, true, 4),
             BlurDecision::Nothing,
             "hidden flag overrides ImmediateHide"
         );
@@ -490,8 +508,8 @@ mod tests {
     #[test]
     fn test_blur_entering_vs_visible_hidden_flag_interaction() {
         // Machine allows false must win over every other flag
-        assert_eq!(blur_decision(false, true, false, false), BlurDecision::Nothing);
-        assert_eq!(blur_decision(false, false, false, false), BlurDecision::Nothing);
+        assert_eq!(blur_decision(false, true, false, false, 4), BlurDecision::Nothing);
+        assert_eq!(blur_decision(false, false, false, false, 4), BlurDecision::Nothing);
     }
 }
 
@@ -526,7 +544,8 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
                     .map(|c| (c.window_hidden(), c.gallery_session_active()))
                     .unwrap_or((false, false));
                 let auto_minimize = win.get_auto_minimize();
-                let decision = blur_decision(machine_allows, gallery_active, hidden, auto_minimize);
+                let minimize_seconds = win.get_minimize_seconds();
+                let decision = blur_decision(machine_allows, gallery_active, hidden, auto_minimize, minimize_seconds);
                 match decision {
                     BlurDecision::ImmediateHide => {
                         tracing::info!("[countdown] Gallery focus lost → immediate hide (Esc path)");

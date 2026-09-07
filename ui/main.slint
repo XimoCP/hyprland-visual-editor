@@ -88,7 +88,6 @@ export component MainWindow inherits Window {
     in property <string> autostart-label;
     in property <string> theme-label;
     in property <string> reset-label;
-    in property <string> keybinds-label;
 
     // Animation data
     in property <[string]> anim-titles;
@@ -247,7 +246,6 @@ export component MainWindow inherits Window {
     in-out property <int> minimize-seconds: 5;
     in property <string> language: "en";
     in-out property <bool> tiling-mode: false;
-    in property <bool> keybinds-mode: false;
     in-out property <bool> autostart: false;
     in property <string> theme: "system";
     in-out property <bool> restart-required: false;
@@ -259,7 +257,6 @@ export component MainWindow inherits Window {
     callback change-minimize-seconds(int);
     callback change-language(string);
     callback toggle-tiling-mode(bool);
-    callback toggle-keybinds(bool);
     callback toggle-autostart(bool);
     callback change-theme(string);
     callback reset-presets();
@@ -367,7 +364,6 @@ export component MainWindow inherits Window {
         panel-minimize-seconds: root.minimize-seconds;
         panel-language: root.language;
         panel-tiling-mode: root.tiling-mode;
-        panel-keybinds-mode: root.keybinds-mode;
         panel-autostart: root.autostart;
         panel-theme: root.theme;
         panel-restart-required: root.restart-required;
@@ -381,7 +377,6 @@ export component MainWindow inherits Window {
         panel-autostart-label: root.autostart-label;
         panel-theme-label: root.theme-label;
         panel-reset-label: root.reset-label;
-        panel-keybinds-label: root.keybinds-label;
         panel-about-title: root.home-about-title;
         panel-about-short: root.home-about-short;
         panel-about-full: root.home-about-full;
@@ -418,7 +413,6 @@ export component MainWindow inherits Window {
         panel-change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
         panel-change-language(v) => { root.change-language(v); }
         panel-toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
-        panel-toggle-keybinds(v) => { root.toggle-keybinds(v); }
         panel-toggle-autostart(v) => { root.toggle-autostart(v); }
         panel-change-theme(v) => { root.change-theme(v); }
         panel-reset-presets => { root.reset-presets(); }

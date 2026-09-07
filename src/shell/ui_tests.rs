@@ -2896,13 +2896,11 @@ fn panel_system_renders() {
     win.set_autostart(false);
     win.set_theme("system".into());
     win.set_restart_required(false);
-    win.set_keybinds_mode(false);
     // Settings labels (needed because MainWindow defaults are empty in test)
-    win.set_auto_minimize_label("Auto-minimize".into());
-    win.set_timer_label("Timer:".into());
+    win.set_auto_minimize_label("Retardo al ocultar".into());
+    win.set_timer_label("Retardo:".into());
     win.set_language_label("Language".into());
     win.set_tiling_label("Tiling mode".into());
-    win.set_keybinds_label("Keyboard shortcuts".into());
     win.set_autostart_label("Autostart".into());
     win.set_theme_label("Theme".into());
     win.set_reset_label("Reset presets".into());
@@ -3254,4 +3252,85 @@ fn save_section_renders_list_search_and_cards() {
     save_slice_png(snap, "/tmp/opencode/save_section.png");
     assert_eq!(win.get_panel_save_search_placeholder(), "Search themes...");
     assert_eq!(win.get_panel_save_apply_text(), "Apply");
+}
+
+// ── Motion R4 scroll-clip (Y2-d): last slider + help fully visible ────
+// Regression: padding-bottom 12px + card half-height centering (29px)
+// clipped the grabbed Y2-d block (104px) and hid the help text at the
+// bottom of the Motion ScrollView. Focus the last slider (len+3) through
+// the window kbd-preview hook and snapshot lit + grabbed for review;
+// the scrolled frame must differ substantially from the top frame
+// (scroll followed the keyboard focus).
+#[test]
+fn motion_last_slider_renders_unclipped() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .ok(); // allow already-initialized when tests share the thread
+
+    let win = crate::MainWindow::new().unwrap();
+    // Compact window: a short ScrollView viewport forces max-scroll
+    // clamping, which is exactly what clipped Y2-d on smaller screens
+    // (at 1920×1080 the viewport is tall enough to hide the bug).
+    win.window().set_size(slint::PhysicalSize::new(1366, 600));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(2); // Motion: cards + 4 bezier sliders + help
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    // Production card count (~19 anim presets): forces the ScrollView to
+    // travel so the Y2-d clip reproduces without the fix.
+    let titles: Vec<SharedString> = (0..19)
+        .map(|i| SharedString::from(format!("Anim {i:02}")))
+        .collect();
+    win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_anim_descs(ModelRc::new(VecModel::from(
+        vec![SharedString::from("ease curve"); 19],
+    )));
+    win.set_anim_tags(ModelRc::new(VecModel::from(
+        vec![SharedString::from(""); 19],
+    )));
+    win.set_anim_files(ModelRc::new(VecModel::from(
+        (0..19).map(|i| SharedString::from(format!("a{i}.lua"))).collect::<Vec<_>>(),
+    )));
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let top = win.window().take_snapshot().expect("motion top snapshot");
+    save_slice_png(top.clone(), "/tmp/opencode/motion_top.png");
+
+    // Y2-d sits at sequence index len+3 = 22: lit (88px) via focus.
+    win.set_panel_kbd_preview_index(22);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let lit = win.window().take_snapshot().expect("motion Y2-d lit snapshot");
+    save_slice_png(lit.clone(), "/tmp/opencode/motion_last_slider_lit.png");
+
+    // Grabbed (104px): same slider engaged.
+    win.set_panel_kbd_preview_engaged(true);
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let grabbed = win.window().take_snapshot().expect("motion Y2-d grabbed snapshot");
+    save_slice_png(grabbed.clone(), "/tmp/opencode/motion_last_slider_grabbed.png");
+
+    let diff_top_lit = count_buffer_diff(&top, &lit);
+    assert!(
+        diff_top_lit > 2000,
+        "scroll must follow focus to the last slider — got {diff_top_lit}"
+    );
+    let diff_lit_grabbed = count_buffer_diff(&lit, &grabbed);
+    assert!(
+        diff_lit_grabbed > 200,
+        "grabbed slider must emphasize over lit — got {diff_lit_grabbed}"
+    );
 }

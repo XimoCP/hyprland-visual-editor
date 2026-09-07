@@ -173,7 +173,6 @@ export component ShellRoot inherits Rectangle {
     in property <int> panel-minimize-seconds: 5;
     in property <string> panel-language: "en";
     in property <bool> panel-tiling-mode: false;
-    in property <bool> panel-keybinds-mode: false;
     in property <bool> panel-autostart: false;
     in property <string> panel-theme: "system";
     in property <bool> panel-restart-required: false;
@@ -187,7 +186,6 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-autostart-label: "Autostart";
     in property <string> panel-theme-label: "Theme";
     in property <string> panel-reset-label: "Reset presets";
-    in property <string> panel-keybinds-label: "Keyboard shortcuts";
     in property <string> panel-about-title: "About HVE";
     in property <string> panel-about-short: "Hyprland Visual Editor makes your desktop truly yours.";
     in property <string> panel-about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
@@ -217,7 +215,6 @@ export component ShellRoot inherits Rectangle {
     callback panel-change-minimize-seconds(int);
     callback panel-change-language(string);
     callback panel-toggle-tiling-mode(bool);
-    callback panel-toggle-keybinds(bool);
     callback panel-toggle-autostart(bool);
     callback panel-change-theme(string);
     callback panel-reset-presets();
@@ -494,7 +491,6 @@ export component ShellRoot inherits Rectangle {
                     minimize-seconds: root.panel-minimize-seconds;
                     language: root.panel-language;
                     tiling-mode: root.panel-tiling-mode;
-                    keybinds-mode: root.panel-keybinds-mode;
                     autostart: root.panel-autostart;
                     theme: root.panel-theme;
                     restart-required: root.panel-restart-required;
@@ -508,7 +504,6 @@ export component ShellRoot inherits Rectangle {
                     autostart-label: root.panel-autostart-label;
                     theme-label: root.panel-theme-label;
                     reset-label: root.panel-reset-label;
-                    keybinds-label: root.panel-keybinds-label;
                     about-title: root.panel-about-title;
                     about-short: root.panel-about-short;
                     about-full: root.panel-about-full;
@@ -538,7 +533,6 @@ export component ShellRoot inherits Rectangle {
                     change-minimize-seconds(v) => { root.panel-change-minimize-seconds(v); }
                     change-language(v) => { root.panel-change-language(v); }
                     toggle-tiling-mode(v) => { root.panel-toggle-tiling-mode(v); }
-                    toggle-keybinds(v) => { root.panel-toggle-keybinds(v); }
                     toggle-autostart(v) => { root.panel-toggle-autostart(v); }
                     change-theme(v) => { root.panel-change-theme(v); }
                     reset-presets => { root.panel-reset-presets(); }

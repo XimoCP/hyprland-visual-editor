@@ -290,10 +290,11 @@ fn extract_marker_block(content: &str, marker_start: &str, marker_end: &str) -> 
     None
 }
 
-/// Write or remove the 5 HVE keybinds between `>>> HVE KEYBINDS <<<` markers
-/// in the hve-settings file. Supports both Lua and conf formats.
-///
-/// When `enabled` is true: writes the 5 IPC keybind entries between markers.
+/// Write or remove the essential HVE keybind (SUPER+H) between
+/// `>>> HVE KEYBINDS <<<` markers in the hve-settings file. Supports both
+/// Lua and conf formats. The 4 extra binds (ALT+Q/N/B/S) were removed per
+/// user request (2026-09-07) — only SUPER+H (toggle-tray) is vital.
+/// When `enabled` is true: writes the single toggle-tray bind.
 /// When `enabled` is false: removes the markers and their content entirely.
 /// Calls `hyprctl reload` after a successful write.
 pub(crate) fn set_keybinds(enabled: bool) {
@@ -323,26 +324,18 @@ pub(crate) fn set_keybinds(enabled: bool) {
         "# >>> HVE KEYBINDS END <<<"
     };
 
-    // Build the replacement block when enabled
+    // Build the replacement block when enabled — only SUPER+H is vital
     let keybinds_block: String = if enabled {
         if format == "lua" {
             format!(
                 r#"{marker_start}
 hl.bind("SUPER + H", hl.dsp.exec_cmd("hve-ipc toggle-tray"))
-hl.bind("SUPER + ALT + Q", hl.dsp.exec_cmd("hve-ipc pause-restart"))
-hl.bind("SUPER + ALT + N", hl.dsp.exec_cmd("hve-ipc next-anim"))
-hl.bind("SUPER + ALT + B", hl.dsp.exec_cmd("hve-ipc next-border"))
-hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd("hve-ipc next-shader"))
 {marker_end}"#,
             )
         } else {
             format!(
                 r#"{marker_start}
 bind = SUPER, H, exec, hve-ipc toggle-tray
-bind = SUPER ALT, Q, exec, hve-ipc pause-restart
-bind = SUPER ALT, N, exec, hve-ipc next-anim
-bind = SUPER ALT, B, exec, hve-ipc next-border
-bind = SUPER ALT, S, exec, hve-ipc next-shader
 {marker_end}"#,
             )
         }
@@ -587,19 +580,14 @@ mod tests {
             content.contains("toggle-tray"),
             "should have toggle-tray bind"
         );
+        // Only SUPER+H is kept — the 4 extra ALT binds were removed (2026-09-07)
         assert!(
-            content.contains("pause-restart"),
-            "should have pause-restart bind"
+            !content.contains("pause-restart"),
+            "should NOT have pause-restart after slim-down"
         );
-        assert!(content.contains("next-anim"), "should have next-anim bind");
-        assert!(
-            content.contains("next-border"),
-            "should have next-border bind"
-        );
-        assert!(
-            content.contains("next-shader"),
-            "should have next-shader bind"
-        );
+        assert!(!content.contains("next-anim"), "should NOT have next-anim");
+        assert!(!content.contains("next-border"), "should NOT have next-border");
+        assert!(!content.contains("next-shader"), "should NOT have next-shader");
 
         // Disable keybinds
         set_keybinds(false);
