@@ -62,10 +62,9 @@ export component FiltersSection inherits Rectangle {
         }
     }
 
-    border-width: fs.has-focus ? 1px : 0px;
-    border-color: #8fd8ff;
-    border-radius: SkwdTokens.radius-8;
-
+    // Save/System pattern: no zone border on the root — it toggled
+    // width on focus gain and relayouted content between press and
+    // release, eating the first click. Keyboard marks live on cards.
     init => { fs.focus(); }
     // Rail re-entry handoff (same pattern as Borders/Motion/Save): every
     // PanelRoot section-selected/menu-left bumps focus-gen so the active
@@ -129,8 +128,8 @@ export component FiltersSection inherits Rectangle {
                     active: i == root.active-index;
                     keyboard-focused: i == root.focused-index && fs.has-focus;
                     index: i;
-                    toggled => { root.focused-index = i; fs.focus(); root.apply-shader(i, root.shader-files[i]); }
-                    focus-requested(idx) => { root.focused-index = idx; fs.focus(); }
+                    toggled => { root.focused-index = i; root.apply-shader(i, root.shader-files[i]); }
+                    focus-requested(idx) => { root.focused-index = idx; }
                 }
 
                 if root.shader-files.length == 0 : Text {
