@@ -3472,10 +3472,11 @@ fn system_rail_handoff_returns_focus_to_content() {
         }
     });
 
-    // Baseline: the freshly opened section owns keyboard focus.
+    // Baseline: the freshly opened section owns keyboard focus. Save
+    // pattern: no zone border, so icy comes from row marks only (~3200).
     let base = win.window().take_snapshot().expect("base snapshot");
     let base_icy = count_icy_pixels(&base);
-    assert!(base_icy > 4000, "system content must start focused, icy={base_icy}");
+    assert!(base_icy > 2000, "system content must start focused, icy={base_icy}");
 
     // Left hands focus to the rail (production spatial model).
     focus_press_key(&win, Key::LeftArrow);
@@ -3490,7 +3491,7 @@ fn system_rail_handoff_returns_focus_to_content() {
     let back = win.window().take_snapshot().expect("handoff snapshot");
     save_slice_png(back.clone(), "/tmp/opencode/system_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
-    assert!(back_icy > 4000, "content must refocus via focus-gen, icy={back_icy}");
+    assert!(back_icy > 2000, "content must refocus via focus-gen, icy={back_icy}");
     assert_eq!(win.get_panel_section(), 4, "section must stay System");
 
     // Keyboard drives the content row again (row 0 toggles system).
@@ -3550,7 +3551,7 @@ fn panel_section_switch_routes_and_focuses() {
     assert_eq!(win.get_panel_section(), 4, "switch must return to System");
     let system = win.window().take_snapshot().expect("system snapshot");
     let system_icy = count_icy_pixels(&system);
-    assert!(system_icy > 4000, "fresh System must own focus, icy={system_icy}");
+    assert!(system_icy > 2000, "fresh System must own focus, icy={system_icy}");
 }
 
 /// Same handoff contract on Filters: rail round-trip must return focus
@@ -3589,32 +3590,45 @@ fn filters_rail_handoff_returns_focus_to_content() {
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
-/// Row click handlers never touch focus (fully mouse-ignored scope):
-/// FocusScope has focus-on-click FALSE and NO mouse handler calls
-/// fs.focus() — the mouse neither takes nor changes section focus, so
-/// every TouchArea press+release completes as clicked on the FIRST touch
-/// and the zone border never toggles under the cursor. Keyboard enters
-/// only via init, Tab (forward-focus) and the rail focus-gen handoff;
-/// mouse clicks still sync focused-row so the keyboard resumes on the
-/// clicked row when it re-enters. Raw mouse dispatch is timing-sensitive
-/// under the headless backend, so this pins the wiring statically.
+/// Save-pattern focus split (mouse and keyboard never interfere):
+/// SystemSection mirrors SaveSection's list-fs: one small borderless
+/// keyboard scope (`kb`), no zone border on the root, no focus-on-click
+/// override, no forward-focus, and NO focus call in any mouse handler.
+/// Clicks always land first-touch (nothing relayouts under the cursor);
+/// keyboard enters via init + rail focus-gen and marks rows through
+/// focused-row gated on kb.has-focus — same split as Save. Raw mouse
+/// dispatch is timing-sensitive under the headless backend, so this pins
+/// the wiring statically.
 #[test]
 fn system_row_click_handlers_refocus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
         .expect("SystemSection.slint must exist");
-    // Mouse-ignored scope contract: forward-focus + focus-on-click false.
+    // Save pattern: small keyboard scope, defaults untouched.
     assert!(
-        src.contains("forward-focus: fs;"),
-        "SystemSection must forward-focus to fs for keyboard entry"
+        src.contains("kb := FocusScope"),
+        "SystemSection must own a small kb keyboard scope like Save's list-fs"
     );
     assert!(
-        src.contains("focus-on-click: false;"),
-        "SystemSection fs must use focus-on-click false so the scope never eats the first press"
+        !src.contains("focus-on-click:"),
+        "SystemSection must not override focus-on-click (Save uses defaults)"
     );
-    // focus-gen handoff, same as BordersSection/MotionSection/SaveSection.
     assert!(
-        src.contains("changed focus-gen => { fs.focus(); }"),
-        "SystemSection must refocus on focus-gen like the other sections"
+        !src.contains("forward-focus"),
+        "SystemSection must not forward-focus (Save has no zone scope to seed)"
+    );
+    // No zone border on the root — Save paints no section outline.
+    assert!(
+        !src.contains("border-color: fs.has-focus"),
+        "SystemSection must have no zone border leftovers"
+    );
+    // Keyboard entry: init + rail focus-gen land on kb.
+    assert!(
+        src.contains("init => { kb.focus(); }"),
+        "SystemSection must focus kb on init like Save focuses list-fs"
+    );
+    assert!(
+        src.contains("changed focus-gen => { kb.focus(); }"),
+        "SystemSection must refocus kb on focus-gen like the other sections"
     );
     // Click handlers: sync the keyboard row.
     for row in [
@@ -3625,14 +3639,14 @@ fn system_row_click_handlers_refocus_by_construction() {
     ] {
         assert!(src.contains(row), "SystemSection must contain `{row}`");
     }
-    // No mouse handler may touch focus — init + focus-gen are the only
-    // programmatic focus entries, so the mouse can never toggle the zone.
+    // No mouse handler may touch focus — kb is keyboard-only, so the
+    // mouse can never toggle any zone highlight.
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled(") || line.contains("toggled =>") || line.contains("open-docs =>"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
-                !line.contains("fs.focus()"),
+                !line.contains(".focus()"),
                 "no mouse handler may touch focus: {line}"
             );
         }

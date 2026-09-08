@@ -19,7 +19,6 @@ import { HveColors } from "../../theme.slint";
 import { ActivationCard, AccordionCard, AboutItem } from "../../components.slint";
 
 export component SystemSection inherits Rectangle {
-    forward-focus: fs;
     // System state
     in property <bool> system-active: false;
     in property <bool> auto-minimize: true;
@@ -73,21 +72,14 @@ export component SystemSection inherits Rectangle {
 
     background: transparent;
     clip: true;
-    // Fixed 1px width always: toggling width 0<->1 relayouts content on
-    // focus gain and breaks press/release pairing (first click lost).
-    // Only the color toggles so the mouse never sees geometry shift.
-    border-width: 1px;
-    border-color: fs.has-focus ? #8fd8ff : transparent;
-    border-radius: SkwdTokens.radius-8;
 
-    fs := FocusScope {
-        // focus-on-click false + NO fs.focus() in any mouse handler: the
-        // mouse never takes nor changes section focus, so clicks always
-        // land first-touch and the zone border never toggles under the
-        // cursor. Keyboard enters only via init, Tab (forward-focus) and
-        // the rail focus-gen handoff; mouse clicks still sync focused-row
-        // so the keyboard resumes on the clicked row when it re-enters.
-        focus-on-click: false;
+    // Save-pattern keyboard scope: small, borderless, no visuals of its
+    // own — exactly like SaveSection's list-fs. The mouse never touches
+    // focus (no focus-on-click override needed, no kb.focus() in any
+    // TouchArea), the keyboard lives here via init + rail focus-gen.
+    // Row highlight comes from focused-row + hover, gated on kb.has-focus
+    // only for the keyboard mark — same split as Save.
+    kb := FocusScope {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
@@ -179,7 +171,7 @@ export component SystemSection inherits Rectangle {
                 // 0 — System ON/OFF status block (reuse ActivationCard pattern, icy focus)
                 Rectangle {
                     border-width: 1px;
-                    border-color: root.focused-row == 0 && fs.has-focus ? #8fd8ff : transparent;
+                    border-color: root.focused-row == 0 && kb.has-focus ? #8fd8ff : transparent;
                     border-radius: SkwdTokens.radius-8;
                     ActivationCard {
                         active: root.system-active;
@@ -224,7 +216,7 @@ export component SystemSection inherits Rectangle {
 
                 // 1+2 — Retardo al ocultar — hover sobre chips/toggle no apaga fila
                 retardo-wrap := Rectangle {
-                    property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && fs.has-focus) || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
+                    property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && kb.has-focus) || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -308,7 +300,7 @@ export component SystemSection inherits Rectangle {
 
                 // 3 — Language EN/ES — altura fija, hover sobre pills no apaga fila
                 lang-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 3 && fs.has-focus) || hover-lang.has-hover || en-ta.has-hover || es-ta.has-hover;
+                    property <bool> lit: (root.focused-row == 3 && kb.has-focus) || hover-lang.has-hover || en-ta.has-hover || es-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -342,7 +334,7 @@ export component SystemSection inherits Rectangle {
 
                 // 4 — Autostart — hover sobre toggle no apaga fila
                 autostart-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 4 && fs.has-focus) || hover-autostart.has-hover || autostart-toggle-ta.has-hover;
+                    property <bool> lit: (root.focused-row == 4 && kb.has-focus) || hover-autostart.has-hover || autostart-toggle-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -368,7 +360,7 @@ export component SystemSection inherits Rectangle {
 
                 // 5 — Theme preference — hover sobre pills no apaga fila
                 theme-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 5 && fs.has-focus) || hover-theme.has-hover || theme-dark-ta.has-hover || theme-light-ta.has-hover || theme-system-ta.has-hover;
+                    property <bool> lit: (root.focused-row == 5 && kb.has-focus) || hover-theme.has-hover || theme-dark-ta.has-hover || theme-light-ta.has-hover || theme-system-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -415,8 +407,8 @@ export component SystemSection inherits Rectangle {
                 if root.restart-required : Rectangle {
                     height: 36px; border-radius: 8px;
                     background: HveColors.accent-amber.transparentize(0.85);
-                    border-width: root.focused-row == 6 && fs.has-focus ? 1px : 1px;
-                    border-color: root.focused-row == 6 && fs.has-focus ? #8fd8ff : HveColors.accent-amber.transparentize(0.4);
+                    border-width: root.focused-row == 6 && kb.has-focus ? 1px : 1px;
+                    border-color: root.focused-row == 6 && kb.has-focus ? #8fd8ff : HveColors.accent-amber.transparentize(0.4);
                     Text { text: "Restart"; color: HveColors.accent-amber; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                     TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
                 }
@@ -426,7 +418,7 @@ export component SystemSection inherits Rectangle {
                 // 7 — About HVE (reused AccordionCard via existing tr.rs keys)
                 Rectangle {
                     border-width: 1px;
-                    border-color: ((root.restart-required && root.focused-row == 7) || (!root.restart-required && root.focused-row == 6)) && fs.has-focus ? #8fd8ff : transparent;
+                    border-color: ((root.restart-required && root.focused-row == 7) || (!root.restart-required && root.focused-row == 6)) && kb.has-focus ? #8fd8ff : transparent;
                     border-radius: SkwdTokens.radius-8;
                     AccordionCard {
                         card-title: root.about-title;
@@ -463,6 +455,6 @@ export component SystemSection inherits Rectangle {
     }
     }
 
-    init => { fs.focus(); }
-    changed focus-gen => { fs.focus(); }
+    init => { kb.focus(); }
+    changed focus-gen => { kb.focus(); }
 }
