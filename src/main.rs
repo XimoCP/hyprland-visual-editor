@@ -879,6 +879,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let proj = project_dir();
     let engine = Arc::new(Engine::new(&proj));
     let mut cfg = Config::load();
+    // Capture System active for startup re-apply (must survive move into AppState)
+    let startup_system_active = cfg.is_system_active;
     // Use saved language, or auto-detect from system locale
     let tr_lang = if cfg.language.is_empty() {
         tr::detect_language()
@@ -1978,6 +1980,13 @@ fn main() -> Result<(), slint::PlatformError> {
         (*engine).clone(),
         theme_manager,
     )));
+    // Re-apply System active on startup — window shows ON via set_system_active,
+    // but engine must be enabled too, otherwise restart appears as "not persisted".
+    if startup_system_active {
+        if let Ok(st) = state.lock() {
+            let _ = st.engine().init_enable();
+        }
+    }
     drop(engine);
 
     callbacks::setup_callbacks(

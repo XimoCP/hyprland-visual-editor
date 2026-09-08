@@ -3651,6 +3651,27 @@ fn system_row_click_handlers_refocus_by_construction() {
     );
 }
 
+/// Startup must re-apply System active state — otherwise window shows ON
+/// but engine was never enabled after restart, so user perceives "not
+/// persisted". Construction check: main.rs must call init_enable when
+/// cfg.is_system_active was true at launch.
+#[test]
+fn system_active_applies_on_startup_by_construction() {
+    let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    // Must capture the startup flag before moving cfg into AppState
+    assert!(
+        src.contains("is_system_active"),
+        "main.rs must reference is_system_active at startup"
+    );
+    // Startup apply: engine init_enable when active — tolerate either
+    // AppState path or direct engine path, but must exist.
+    let has_startup_apply = src.contains("init_enable") && src.contains("is_system_active");
+    assert!(
+        has_startup_apply,
+        "main.rs must call init_enable when cfg.is_system_active at startup — otherwise restart shows ON but engine is disabled (perceived as not persisted)"
+    );
+}
+
 /// System rows must stay lit when hovering inner chips/toggles, not only the
 /// empty row background — otherwise the row visually "apagón" when mouse is
 /// over a chip because the outer hover TouchArea loses has-hover to the
