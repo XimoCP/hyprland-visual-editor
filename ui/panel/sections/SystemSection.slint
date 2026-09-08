@@ -19,6 +19,7 @@ import { HveColors } from "../../theme.slint";
 import { ActivationCard, AccordionCard, AboutItem } from "../../components.slint";
 
 export component SystemSection inherits Rectangle {
+    forward-focus: fs;
     // System state
     in property <bool> system-active: false;
     in property <bool> auto-minimize: true;
@@ -77,7 +78,7 @@ export component SystemSection inherits Rectangle {
     border-radius: SkwdTokens.radius-8;
 
     fs := FocusScope {
-        focus-on-click: false;
+        focus-on-click: true;
         width: 100%;
         height: 100%;
         key-pressed(event) => {
@@ -178,7 +179,7 @@ export component SystemSection inherits Rectangle {
                         inactive-text: "Visual Editor Disabled";
                         // Row 0: sync the keyboard row and keep section
                         // focus before toggling (same as all other rows).
-                        toggled(v) => { root.focused-row = 0; fs.focus(); root.toggle-system(v); }
+                        toggled(v) => { root.focused-row = 0; root.toggle-system(v); }
                     }
                 }
 
@@ -224,7 +225,7 @@ export component SystemSection inherits Rectangle {
                         width: 100%; height: 100%;
                         // Empty row area: sync the keyboard row and keep
                         // section focus (same as the chips/toggles below).
-                        clicked => { root.focused-row = 1; fs.focus(); }
+                        clicked => { root.focused-row = 1; }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -239,7 +240,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "Off"; color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec0-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(0); } }
+                                sec0-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; root.change-minimize-seconds(0); } }
                             }
                             Rectangle {
                                 width: 34px; height: 28px; border-radius: 6px;
@@ -247,7 +248,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "2"; color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec2-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(2); } }
+                                sec2-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; root.change-minimize-seconds(2); } }
                             }
                             Rectangle {
                                 width: 34px; height: 28px; border-radius: 6px;
@@ -255,7 +256,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "4"; color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec4-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(4); } }
+                                sec4-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; root.change-minimize-seconds(4); } }
                             }
                             Rectangle {
                                 width: 34px; height: 28px; border-radius: 6px;
@@ -263,7 +264,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "6"; color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec6-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(6); } }
+                                sec6-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; root.change-minimize-seconds(6); } }
                             }
                             Rectangle {
                                 width: 34px; height: 28px; border-radius: 6px;
@@ -271,7 +272,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "8"; color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec8-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(8); } }
+                                sec8-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; root.change-minimize-seconds(8); } }
                             }
                             Rectangle {
                                 width: 34px; height: 28px; border-radius: 6px;
@@ -279,7 +280,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "10"; color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec10-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(10); } }
+                                sec10-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; root.change-minimize-seconds(10); } }
                             }
                             Text { text: "s"; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
                         }
@@ -290,7 +291,7 @@ export component SystemSection inherits Rectangle {
                                 width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2;
                                 background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
                                 Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.auto-minimize ? parent.width - self.width - 3px : 3px; y: 3px; animate x { duration: 150ms; easing: ease-out; } }
-                                retardo-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 1; fs.focus(); root.toggle-auto-minimize(!root.auto-minimize); } }
+                                retardo-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 1; root.toggle-auto-minimize(!root.auto-minimize); } }
                             }
                         }
                     }
@@ -306,7 +307,7 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-lang := TouchArea {
                         width: 100%; height: 100%;
-                        clicked => { root.focused-row = 3; fs.focus(); }
+                        clicked => { root.focused-row = 3; }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -318,12 +319,12 @@ export component SystemSection inherits Rectangle {
                                 Rectangle {
                                     width: 50%; height: 100%; border-radius: root.language == "en" ? 5px : 0px; background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
                                     Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    en-ta := TouchArea { width: 100%; height: 100%; clicked => { debug("GHOST EN clicked"); root.focused-row = 3; fs.focus(); root.change-language("en"); } }
+                                    en-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 3; root.change-language("en"); } }
                                 }
                                 Rectangle {
                                     width: 50%; height: 100%; border-radius: root.language == "es" ? 5px : 0px; background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
                                     Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    es-ta := TouchArea { width: 100%; height: 100%; clicked => { debug("GHOST ES clicked"); root.focused-row = 3; fs.focus(); root.change-language("es"); } }
+                                    es-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 3; root.change-language("es"); } }
                                 }
                             }
                         }
@@ -340,7 +341,7 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-autostart := TouchArea {
                         width: 100%; height: 100%;
-                        clicked => { root.focused-row = 4; fs.focus(); }
+                        clicked => { root.focused-row = 4; }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -350,7 +351,7 @@ export component SystemSection inherits Rectangle {
                             Rectangle {
                                 width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2; background: root.autostart ? HveColors.accent-cyan : HveColors.border;
                                 Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.autostart ? parent.width - self.width - 3px : 3px; y: 3px; }
-                                autostart-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 4; fs.focus(); root.toggle-autostart(!root.autostart); } }
+                                autostart-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 4; root.toggle-autostart(!root.autostart); } }
                             }
                         }
                     }
@@ -366,7 +367,7 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-theme := TouchArea {
                         width: 100%; height: 100%;
-                        clicked => { root.focused-row = 5; fs.focus(); }
+                        clicked => { root.focused-row = 5; }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -379,7 +380,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "dark"; color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                theme-dark-ta := TouchArea { width: 100%; height: 100%; clicked => { debug("GHOST theme dark clicked"); root.focused-row = 5; fs.focus(); root.change-theme("dark"); } }
+                                theme-dark-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; root.change-theme("dark"); } }
                             }
                             Rectangle {
                                 width: 56px; height: 28px; border-radius: 6px;
@@ -387,7 +388,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.theme == "light" ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "light"; color: root.theme == "light" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                theme-light-ta := TouchArea { width: 100%; height: 100%; clicked => { debug("GHOST theme light clicked"); root.focused-row = 5; fs.focus(); root.change-theme("light"); } }
+                                theme-light-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; root.change-theme("light"); } }
                             }
                             Rectangle {
                                 width: 56px; height: 28px; border-radius: 6px;
@@ -395,7 +396,7 @@ export component SystemSection inherits Rectangle {
                                 border-width: 1px;
                                 border-color: root.theme == "system" ? HveColors.accent-cyan : HveColors.border;
                                 Text { text: "system"; color: root.theme == "system" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                theme-system-ta := TouchArea { width: 100%; height: 100%; clicked => { debug("GHOST theme system clicked"); root.focused-row = 5; fs.focus(); root.change-theme("system"); } }
+                                theme-system-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; root.change-theme("system"); } }
                             }
                         }
                     }
@@ -436,7 +437,7 @@ export component SystemSection inherits Rectangle {
                         // sync the keyboard row and keep section focus. The
                         // AccordionCard consumes the click via ac-ta and
                         // reports back through toggled.
-                        toggled => { root.focused-row = root.restart-required ? 7 : 6; fs.focus(); root.about-expanded = !root.about-expanded; }
+                        toggled => { root.focused-row = root.restart-required ? 7 : 6; root.about-expanded = !root.about-expanded; }
                         open-docs => { root.open-docs(); }
                     }
                 }

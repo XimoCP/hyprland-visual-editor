@@ -3589,40 +3589,58 @@ fn filters_rail_handoff_returns_focus_to_content() {
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
-/// Row click handlers refocus by construction: every mouse TouchArea in
-/// the System rows (empty-row hover areas, the ON/OFF switch, the About
-/// accordion) syncs the keyboard row and grabs section focus — the same
-/// pattern the preset-chip handlers already use. Raw mouse dispatch is
-/// timing-sensitive under the headless backend, so this pins the wiring
-/// statically (same approach as `test_no_active_tab_orphans`).
+/// Row click handlers use native focus (no manual fs.focus() in clicked):
+/// FocusScope has focus-on-click true + forward-focus so a single mouse
+/// press delivers both focus and clicked. Manual fs.focus() inside clicked
+/// stole the first press (double-click ghost). Keyboard focus still enters
+/// via init + focus-gen handoff. Raw mouse dispatch is timing-sensitive
+/// under the headless backend, so this pins the wiring statically.
 #[test]
 fn system_row_click_handlers_refocus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
         .expect("SystemSection.slint must exist");
+    // Native focus contract: forward-focus + focus-on-click true.
+    assert!(
+        src.contains("forward-focus: fs;"),
+        "SystemSection must forward-focus to fs for single-click"
+    );
+    assert!(
+        src.contains("focus-on-click: true;"),
+        "SystemSection fs must use focus-on-click true so first press delivers clicked"
+    );
     // focus-gen handoff, same as BordersSection/MotionSection/SaveSection.
     assert!(
         src.contains("changed focus-gen => { fs.focus(); }"),
         "SystemSection must refocus on focus-gen like the other sections"
     );
-    // Empty-row areas: sync the keyboard row and keep section focus.
+    // Click handlers: sync the keyboard row but must NOT steal focus
+    // manually — fs.focus() inside clicked caused the double-click ghost.
     for row in [
-        "root.focused-row = 1; fs.focus();",
-        "root.focused-row = 3; fs.focus();",
-        "root.focused-row = 4; fs.focus();",
-        "root.focused-row = 5; fs.focus();",
+        "root.focused-row = 1;",
+        "root.focused-row = 3;",
+        "root.focused-row = 4;",
+        "root.focused-row = 5;",
     ] {
         assert!(src.contains(row), "SystemSection must contain `{row}`");
     }
-    // System ON/OFF switch: row 0 + focus before toggling.
     assert!(
-        src.contains("fs.focus(); root.toggle-system(v);"),
-        "SystemSection must focus before toggle-system"
+        !src.contains("fs.focus(); root.toggle-system"),
+        "SystemSection must NOT fs.focus() inside clicked (double-click ghost)"
     );
-    // About accordion: focus before expanding.
     assert!(
-        src.contains("fs.focus(); root.about-expanded"),
-        "SystemSection must focus before toggling About"
+        !src.contains("fs.focus(); root.about-expanded"),
+        "SystemSection must NOT fs.focus() inside About toggled (double-click ghost)"
     );
+    // No clicked handler may call fs.focus() — focus comes from
+    // focus-on-click natively plus init/focus-gen programmatically.
+    for line in src.lines() {
+        if line.contains("clicked =>") {
+            assert!(
+                !line.contains("fs.focus()"),
+                "no clicked handler may fs.focus(): {line}"
+            );
+        }
+    }
 
     let filters = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
