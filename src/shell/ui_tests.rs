@@ -3661,19 +3661,26 @@ fn system_row_click_handlers_refocus_by_construction() {
     for mark in ["root.mouse-row == 1", "root.mouse-row == 3", "root.mouse-row == 4", "root.mouse-row == 5"] {
         assert!(src.contains(mark), "row highlights must include `{mark}`");
     }
-    // Focus-follows-mouse (Borders/Motion pattern): every hover area
-    // moves both marks with the cursor and never touches scope focus,
-    // so the highlight travels instead of getting stuck.
+    // Hover moves ONLY the mouse mark (pure visual, zero layout):
+    // focused-row drives the animated ScrollView, so hover must never
+    // touch it — otherwise the list glides under the cursor between
+    // press and release and the first click is eaten (double-click
+    // ghost). Clicks keep syncing both rows as touch/keyboard fallback.
     let mut hover_follows = 0;
     for line in src.lines() {
         if line.contains("changed has-hover") && !line.trim_start().starts_with("//") {
             hover_follows += 1;
+            let seg = &line[line.find("changed has-hover").unwrap()..];
             assert!(
-                line.contains("root.focused-row") && line.contains("root.mouse-row"),
-                "hover must carry both marks: {line}"
+                seg.contains("root.mouse-row"),
+                "hover must carry the mouse mark: {line}"
             );
             assert!(
-                !line.contains(".focus()"),
+                !seg.contains("focused-row"),
+                "hover must NOT move focused-row (scroll glide eats clicks): {line}"
+            );
+            assert!(
+                !seg.contains(".focus()"),
                 "hover must never touch scope focus: {line}"
             );
         }
