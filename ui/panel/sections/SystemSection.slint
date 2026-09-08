@@ -128,6 +128,10 @@ export component SystemSection inherits Rectangle {
     }
 
     init => { fs.focus(); }
+    // Rail re-entry handoff (same pattern as Borders/Motion/Save): every
+    // PanelRoot section-selected/menu-left bumps focus-gen so the active
+    // content re-grabs keyboard focus from the rail.
+    changed focus-gen => { fs.focus(); }
 
     VerticalLayout {
         spacing: 0px;
@@ -177,7 +181,9 @@ export component SystemSection inherits Rectangle {
                         card-title: "System Activation";
                         active-text: "Visual Editor Enabled";
                         inactive-text: "Visual Editor Disabled";
-                        toggled(v) => { root.toggle-system(v); }
+                        // Row 0: sync the keyboard row and keep section
+                        // focus before toggling (same as all other rows).
+                        toggled(v) => { root.focused-row = 0; fs.focus(); root.toggle-system(v); }
                     }
                 }
 
@@ -222,6 +228,9 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-retardo := TouchArea {
                         width: 100%; height: 100%;
+                        // Empty row area: sync the keyboard row and keep
+                        // section focus (same as the chips/toggles below).
+                        clicked => { root.focused-row = 1; fs.focus(); }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -262,6 +271,7 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-lang := TouchArea {
                         width: 100%; height: 100%;
+                        clicked => { root.focused-row = 3; fs.focus(); }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -295,6 +305,7 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-autostart := TouchArea {
                         width: 100%; height: 100%;
+                        clicked => { root.focused-row = 4; fs.focus(); }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -320,6 +331,7 @@ export component SystemSection inherits Rectangle {
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     hover-theme := TouchArea {
                         width: 100%; height: 100%;
+                        clicked => { root.focused-row = 5; fs.focus(); }
                     }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
@@ -369,7 +381,11 @@ export component SystemSection inherits Rectangle {
                         tree-path-max: root.tree-path-max;
                         docs-label: root.docs-label;
                         expanded: root.about-expanded;
-                        toggled => { root.about-expanded = !root.about-expanded; }
+                        // About row (6, or 7 when the restart row is shown):
+                        // sync the keyboard row and keep section focus. The
+                        // AccordionCard consumes the click via ac-ta and
+                        // reports back through toggled.
+                        toggled => { root.focused-row = root.restart-required ? 7 : 6; fs.focus(); root.about-expanded = !root.about-expanded; }
                         open-docs => { root.open-docs(); }
                     }
                 }

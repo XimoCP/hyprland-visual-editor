@@ -665,6 +665,8 @@ export component ActivationCard inherits Rectangle {
                 animate background { duration: 300ms; }
 
                 TouchArea {
+                    width: 100%;
+                    height: 100%;
                     clicked => { root.toggled(!root.active); }
                 }
 

@@ -3334,3 +3334,319 @@ fn motion_last_slider_renders_unclipped() {
         "grabbed slider must emphasize over lit — got {diff_lit_grabbed}"
     );
 }
+
+// ── Settings panel focus (rail ↔ content spatial model) ───────────────
+// Regression tests: rail clicks must hand keyboard focus back to the
+// content section (via focus-gen), never strand it in the left rail.
+// Deterministic by construction: keyboard events + direct callback
+// invocation (raw mouse dispatch is timing-sensitive under the testing
+// backend, so mouse behavior is covered by snapshots + review, while the
+// focus handoff itself is driven exactly like production does).
+fn focus_open_system_panel() -> crate::MainWindow {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_panel_section(4);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    win.set_system_active(true);
+    win.set_auto_minimize(true);
+    win.set_minimize_seconds(5);
+    win.set_language("en".into());
+    win.set_tiling_mode(false);
+    win.set_autostart(false);
+    win.set_theme("system".into());
+    win.set_restart_required(false);
+    win.set_auto_minimize_label("Retardo al ocultar".into());
+    win.set_timer_label("Retardo:".into());
+    win.set_language_label("Language".into());
+    win.set_tiling_label("Tiling mode".into());
+    win.set_autostart_label("Autostart".into());
+    win.set_theme_label("Theme".into());
+    win.set_reset_label("Reset presets".into());
+    win.set_settings_title("System".into());
+    win.set_settings_restart_banner("Restart required".into());
+    win.set_settings_restart_button("Restart".into());
+    win.set_home_about_title("About HVE".into());
+    win.set_home_about_short("Hyprland Visual Editor makes your desktop truly yours.".into());
+    win.set_home_about_full("HVE is a graphical app.".into());
+    win.set_home_about_tree_label("Project structure".into());
+    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(vec![SharedString::from("a/b")])));
+    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(vec![SharedString::from("desc a")])));
+    win.set_home_about_tree_path_max("a/b".into());
+    win.set_home_about_docs_label("View documentation".into());
+    // Production-equivalent rail wiring (main.rs on_panel_section_selected):
+    // a rail click drives the Rust-owned panel section.
+    let w = win.as_weak();
+    win.on_panel_section_selected(move |section| {
+        let Some(w) = w.upgrade() else { return; };
+        w.set_panel_section(section);
+    });
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    win
+}
+
+/// Icy #8fd8ff (143,216,255) focus-border pixels in the whole frame.
+/// The System/Filters outer border plus the focused row border only paint
+/// while the section FocusScope holds keyboard focus, so a high count
+/// proves `fs.has-focus` and a low count proves focus was lost.
+fn count_icy_pixels(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> usize {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut count = 0usize;
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            let dr = (bytes[idx] as i16 - 143).abs();
+            let dg = (bytes[idx + 1] as i16 - 216).abs();
+            let db = (bytes[idx + 2] as i16 - 255).abs();
+            if dr <= 60 && dg <= 60 && db <= 60 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Dispatch a key press + release pair (production input path).
+fn focus_press_key(win: &crate::MainWindow, key: slint::platform::Key) {
+    use slint::ComponentHandle as _;
+    let text: slint::SharedString = key.into();
+    use slint::platform::WindowEvent;
+    win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    win.window().dispatch_event(WindowEvent::KeyReleased { text });
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+/// Settle border-color animations (200ms) so snapshots show the final
+/// focus state instead of a mid-fade frame.
+fn focus_settle() {
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+/// Rail → content handoff on System: handing focus to the rail (Left)
+/// then re-entering the section (Left again = PanelRoot menu-left →
+/// focus-gen bump) must return keyboard focus to the System content.
+/// Reproduces the reported bug without raw mouse input: a rail mouse
+/// click steals focus to menu-fs (focus-on-click) and only the focus-gen
+/// handoff brings it back — SystemSection had no `changed focus-gen`.
+#[test]
+fn system_rail_handoff_returns_focus_to_content() {
+    use slint::{ComponentHandle as _, platform::Key};
+    let win = focus_open_system_panel();
+    let toggles = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let w = win.as_weak();
+    win.on_toggle_system({
+        let toggles = toggles.clone();
+        move |v| {
+            toggles.borrow_mut().push(format!("system:{v}"));
+            if let Some(w) = w.upgrade() {
+                w.set_system_active(v);
+            }
+        }
+    });
+
+    // Baseline: the freshly opened section owns keyboard focus.
+    let base = win.window().take_snapshot().expect("base snapshot");
+    let base_icy = count_icy_pixels(&base);
+    assert!(base_icy > 4000, "system content must start focused, icy={base_icy}");
+
+    // Left hands focus to the rail (production spatial model).
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let stolen = win.window().take_snapshot().expect("stolen snapshot");
+    let stolen_icy = count_icy_pixels(&stolen);
+    assert!(stolen_icy < 1500, "rail must steal content focus, icy={stolen_icy}");
+
+    // Left again in the rail = menu-left → focus-gen bump → content refocus.
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let back = win.window().take_snapshot().expect("handoff snapshot");
+    save_slice_png(back.clone(), "/tmp/opencode/system_focus_handoff.png");
+    let back_icy = count_icy_pixels(&back);
+    assert!(back_icy > 4000, "content must refocus via focus-gen, icy={back_icy}");
+    assert_eq!(win.get_panel_section(), 4, "section must stay System");
+
+    // Keyboard drives the content row again (row 0 toggles system).
+    // With focus stranded in the rail, Enter would fire section-selected
+    // (menu-index 0) and flip the panel back to Save instead.
+    focus_press_key(&win, Key::Return);
+    assert!(
+        toggles.borrow().iter().any(|t| t.starts_with("system:")),
+        "Enter must toggle the system row, got {:?}",
+        toggles.borrow()
+    );
+    assert_eq!(win.get_panel_section(), 4, "Enter must not leave System");
+}
+
+/// Arrow keys keep driving System rows after the rail handoff.
+#[test]
+fn system_arrows_drive_rows_after_handoff() {
+    use slint::{ComponentHandle as _, platform::Key};
+    let win = focus_open_system_panel();
+    let rows = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    win.on_toggle_auto_minimize({
+        let rows = rows.clone();
+        move |v| rows.borrow_mut().push(format!("automin:{v}"))
+    });
+
+    // Rail round-trip, then arrows from the focused content.
+    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::DownArrow); // row 0 → row 1 (auto-minimize)
+    focus_press_key(&win, Key::Return);
+    assert!(
+        rows.borrow().iter().any(|t| t.starts_with("automin:")),
+        "Down+Enter must toggle row 1, got {:?}",
+        rows.borrow()
+    );
+    assert_eq!(win.get_panel_section(), 4, "arrows must not leave System");
+}
+
+/// Cross-section switches recreate the content, whose `init` grabs focus.
+/// This path never broke — it pins the healthy behavior both fixes keep.
+#[test]
+fn panel_section_switch_routes_and_focuses() {
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+    win.set_panel_section(1);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    assert_eq!(win.get_panel_section(), 1, "switch must reach Borders");
+    let borders = win.window().take_snapshot().expect("borders snapshot");
+    let borders_icy = count_icy_pixels(&borders);
+    assert!(borders_icy > 1000, "fresh Borders must own focus, icy={borders_icy}");
+    win.set_panel_section(4);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    assert_eq!(win.get_panel_section(), 4, "switch must return to System");
+    let system = win.window().take_snapshot().expect("system snapshot");
+    let system_icy = count_icy_pixels(&system);
+    assert!(system_icy > 4000, "fresh System must own focus, icy={system_icy}");
+}
+
+/// Same handoff contract on Filters: rail round-trip must return focus
+/// to the Filters content (it had the same missing `changed focus-gen`).
+#[test]
+fn filters_rail_handoff_returns_focus_to_content() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use slint::platform::Key;
+    let win = focus_open_system_panel();
+    win.set_panel_section(3);
+    win.set_shader_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Glitch")])));
+    win.set_shader_descs(ModelRc::new(VecModel::from(vec![SharedString::from("rgb split")])));
+    win.set_shader_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_shader_files(ModelRc::new(VecModel::from(vec![SharedString::from("glitch.lua")])));
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let base = win.window().take_snapshot().expect("filters base");
+    let base_icy = count_icy_pixels(&base);
+    assert!(base_icy > 1000, "filters content must start focused, icy={base_icy}");
+
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let stolen = win.window().take_snapshot().expect("filters stolen");
+    save_slice_png(stolen.clone(), "/tmp/opencode/filters_focus_stolen.png");
+    let stolen_icy = count_icy_pixels(&stolen);
+    assert!(stolen_icy < base_icy / 2, "rail must steal filters focus, icy={stolen_icy} vs {base_icy}");
+
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let back = win.window().take_snapshot().expect("filters handoff");
+    save_slice_png(back.clone(), "/tmp/opencode/filters_focus_handoff.png");
+    let back_icy = count_icy_pixels(&back);
+    assert!(back_icy > 1000, "filters must refocus via focus-gen, icy={back_icy}");
+    assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
+}
+
+/// Row click handlers refocus by construction: every mouse TouchArea in
+/// the System rows (empty-row hover areas, the ON/OFF switch, the About
+/// accordion) syncs the keyboard row and grabs section focus — the same
+/// pattern the preset-chip handlers already use. Raw mouse dispatch is
+/// timing-sensitive under the headless backend, so this pins the wiring
+/// statically (same approach as `test_no_active_tab_orphans`).
+#[test]
+fn system_row_click_handlers_refocus_by_construction() {
+    let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
+        .expect("SystemSection.slint must exist");
+    // focus-gen handoff, same as BordersSection/MotionSection/SaveSection.
+    assert!(
+        src.contains("changed focus-gen => { fs.focus(); }"),
+        "SystemSection must refocus on focus-gen like the other sections"
+    );
+    // Empty-row areas: sync the keyboard row and keep section focus.
+    for row in [
+        "root.focused-row = 1; fs.focus();",
+        "root.focused-row = 3; fs.focus();",
+        "root.focused-row = 4; fs.focus();",
+        "root.focused-row = 5; fs.focus();",
+    ] {
+        assert!(src.contains(row), "SystemSection must contain `{row}`");
+    }
+    // System ON/OFF switch: row 0 + focus before toggling.
+    assert!(
+        src.contains("fs.focus(); root.toggle-system(v);"),
+        "SystemSection must focus before toggle-system"
+    );
+    // About accordion: focus before expanding.
+    assert!(
+        src.contains("fs.focus(); root.about-expanded"),
+        "SystemSection must focus before toggling About"
+    );
+
+    let filters = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
+        .expect("FiltersSection.slint must exist");
+    assert!(
+        filters.contains("changed focus-gen => { fs.focus(); }"),
+        "FiltersSection must refocus on focus-gen like the other sections"
+    );
+
+    // Rail items keep the keyboard ring in sync with mouse selection.
+    let menu = std::fs::read_to_string("ui/panel/PanelMenu.slint")
+        .expect("PanelMenu.slint must exist");
+    for i in 0..5 {
+        let needle = format!("root.menu-index = {i};");
+        assert!(menu.contains(&needle), "PanelMenu must contain `{needle}`");
+    }
+
+    // The ActivationCard switch must be clickable (sized TouchArea).
+    let comp = std::fs::read_to_string("ui/components.slint")
+        .expect("ui/components.slint must exist");
+    let start = comp.find("export component ActivationCard").expect("ActivationCard must exist");
+    let block = &comp[start..(start + 6000).min(comp.len())];
+    let flat: String = block.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        flat.contains("TouchArea{width:100%;height:100%;clicked=>{root.toggled(!root.active);}}"),
+        "ActivationCard TouchArea must fill the switch"
+    );
+}

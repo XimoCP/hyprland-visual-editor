@@ -67,6 +67,10 @@ export component FiltersSection inherits Rectangle {
     border-radius: SkwdTokens.radius-8;
 
     init => { fs.focus(); }
+    // Rail re-entry handoff (same pattern as Borders/Motion/Save): every
+    // PanelRoot section-selected/menu-left bumps focus-gen so the active
+    // content re-grabs keyboard focus from the rail.
+    changed focus-gen => { fs.focus(); }
 
     // hidden Rect for shader_overlay suppression documentation (R5)
     // While PanelState != Closed the overlay is SUPPRESSED via GallerySlot guard;

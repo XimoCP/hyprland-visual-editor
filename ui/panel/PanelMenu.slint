@@ -97,35 +97,41 @@ export component PanelMenu inherits Rectangle {
                 active: root.active-section == 0;
                 has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 0;
                 reduced-motion: root.reduced-motion;
-                selected => { root.section-selected(0); }
+                // Sync the keyboard ring with the mouse choice, then hand
+                // off to the content. Focus itself must land in the content
+                // section via focus-gen (PanelRoot bumps it on every
+                // section-selected) — menu-fs.focus() here would strand
+                // keyboard focus in the rail (has-focus would stay true and
+                // System/Filters content would never re-grab it).
+                selected => { root.menu-index = 0; root.section-selected(0); }
             }
             MenuItem {
                 label: "Borders";
                 active: root.active-section == 1;
                 has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 1;
                 reduced-motion: root.reduced-motion;
-                selected => { root.section-selected(1); }
+                selected => { root.menu-index = 1; root.section-selected(1); }
             }
             MenuItem {
                 label: "Motion";
                 active: root.active-section == 2;
                 has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 2;
                 reduced-motion: root.reduced-motion;
-                selected => { root.section-selected(2); }
+                selected => { root.menu-index = 2; root.section-selected(2); }
             }
             MenuItem {
                 label: "Filters";
                 active: root.active-section == 3;
                 has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 3;
                 reduced-motion: root.reduced-motion;
-                selected => { root.section-selected(3); }
+                selected => { root.menu-index = 3; root.section-selected(3); }
             }
             MenuItem {
                 label: "System";
                 active: root.active-section == 4;
                 has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 4;
                 reduced-motion: root.reduced-motion;
-                selected => { root.section-selected(4); }
+                selected => { root.menu-index = 4; root.section-selected(4); }
             }
         }
     }
