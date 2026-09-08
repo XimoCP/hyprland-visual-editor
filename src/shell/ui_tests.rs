@@ -3589,14 +3589,15 @@ fn filters_rail_handoff_returns_focus_to_content() {
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
-/// Row click handlers use deferred focus (mouse-ignored scope):
-/// FocusScope has focus-on-click FALSE so it never steals the press for
-/// itself — every TouchArea press+release completes as clicked on the
-/// FIRST touch. Focus follows deterministically via a deferred fs.focus()
-/// at the END of each clicked/toggled (the click is already delivered, so
-/// nothing is eaten), plus init + focus-gen handoff for keyboard entry.
-/// Raw mouse dispatch is timing-sensitive under the headless backend, so
-/// this pins the wiring statically.
+/// Row click handlers never touch focus (fully mouse-ignored scope):
+/// FocusScope has focus-on-click FALSE and NO mouse handler calls
+/// fs.focus() — the mouse neither takes nor changes section focus, so
+/// every TouchArea press+release completes as clicked on the FIRST touch
+/// and the zone border never toggles under the cursor. Keyboard enters
+/// only via init, Tab (forward-focus) and the rail focus-gen handoff;
+/// mouse clicks still sync focused-row so the keyboard resumes on the
+/// clicked row when it re-enters. Raw mouse dispatch is timing-sensitive
+/// under the headless backend, so this pins the wiring statically.
 #[test]
 fn system_row_click_handlers_refocus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
@@ -3624,16 +3625,15 @@ fn system_row_click_handlers_refocus_by_construction() {
     ] {
         assert!(src.contains(row), "SystemSection must contain `{row}`");
     }
-    // Every mouse handler must end with deferred fs.focus() so keyboard
-    // follows the mouse click without stealing it (focus call runs after
-    // clicked is already delivered).
+    // No mouse handler may touch focus — init + focus-gen are the only
+    // programmatic focus entries, so the mouse can never toggle the zone.
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled(") || line.contains("toggled =>") || line.contains("open-docs =>"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
-                line.contains("fs.focus(); }"),
-                "every mouse handler must end with deferred fs.focus(): {line}"
+                !line.contains("fs.focus()"),
+                "no mouse handler may touch focus: {line}"
             );
         }
     }
