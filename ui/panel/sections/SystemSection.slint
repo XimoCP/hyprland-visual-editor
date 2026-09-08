@@ -77,6 +77,7 @@ export component SystemSection inherits Rectangle {
     border-radius: SkwdTokens.radius-8;
 
     fs := FocusScope {
+        focus-on-click: false;
         width: 100%;
         height: 100%;
         key-pressed(event) => {
