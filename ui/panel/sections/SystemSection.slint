@@ -217,10 +217,9 @@ export component SystemSection inherits Rectangle {
                     }
                 }
 
-                // 1+2 — Retardo al ocultar — altura fija 40px (el blanco no se mueve bajo el cursor),
-                // hover solo ilumina. El foco lo ponen los controles al clickear (lógica Save).
+                // 1+2 — Retardo al ocultar — hover sobre chips/toggle no apaga fila
                 retardo-wrap := Rectangle {
-                    property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && fs.has-focus) || hover-retardo.has-hover;
+                    property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && fs.has-focus) || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -235,16 +234,57 @@ export component SystemSection inherits Rectangle {
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
                         Text { text: root.auto-minimize-label; color: HveColors.text; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
-                        if root.auto-minimize : HorizontalLayout {
+                        HorizontalLayout {
                             spacing: 6px; alignment: center;
+                            visible: root.auto-minimize;
                             Text { text: root.timer-label; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
-                            for sec in [0, 2, 4, 6, 8, 10] : Rectangle {
-                                width: sec == 0 ? 44px : 34px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == sec ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            Rectangle {
+                                width: 44px; height: 28px; border-radius: 6px;
+                                background: root.minimize-seconds == 0 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
                                 border-width: 1px;
-                                border-color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: sec == 0 ? "Off" : sec + ""; color: root.minimize-seconds == sec ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(sec); } }
+                                border-color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "Off"; color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                sec0-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(0); } }
+                            }
+                            Rectangle {
+                                width: 34px; height: 28px; border-radius: 6px;
+                                background: root.minimize-seconds == 2 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "2"; color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                sec2-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(2); } }
+                            }
+                            Rectangle {
+                                width: 34px; height: 28px; border-radius: 6px;
+                                background: root.minimize-seconds == 4 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "4"; color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                sec4-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(4); } }
+                            }
+                            Rectangle {
+                                width: 34px; height: 28px; border-radius: 6px;
+                                background: root.minimize-seconds == 6 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "6"; color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                sec6-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(6); } }
+                            }
+                            Rectangle {
+                                width: 34px; height: 28px; border-radius: 6px;
+                                background: root.minimize-seconds == 8 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "8"; color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                sec8-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(8); } }
+                            }
+                            Rectangle {
+                                width: 34px; height: 28px; border-radius: 6px;
+                                background: root.minimize-seconds == 10 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "10"; color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                sec10-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 2; fs.focus(); root.change-minimize-seconds(10); } }
                             }
                             Text { text: "s"; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
                         }
@@ -255,15 +295,15 @@ export component SystemSection inherits Rectangle {
                                 width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2;
                                 background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
                                 Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.auto-minimize ? parent.width - self.width - 3px : 3px; y: 3px; animate x { duration: 150ms; easing: ease-out; } }
-                                TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 1; fs.focus(); root.toggle-auto-minimize(!root.auto-minimize); } }
+                                retardo-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 1; fs.focus(); root.toggle-auto-minimize(!root.auto-minimize); } }
                             }
                         }
                     }
                 }
 
-                // 3 — Language EN/ES — altura fija, hover solo ilumina (lógica Save)
+                // 3 — Language EN/ES — altura fija, hover sobre pills no apaga fila
                 lang-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 3 && fs.has-focus) || hover-lang.has-hover;
+                    property <bool> lit: (root.focused-row == 3 && fs.has-focus) || hover-lang.has-hover || en-ta.has-hover || es-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -283,21 +323,21 @@ export component SystemSection inherits Rectangle {
                                 Rectangle {
                                     width: 50%; height: 100%; border-radius: root.language == "en" ? 5px : 0px; background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
                                     Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 3; fs.focus(); root.change-language("en"); } }
+                                    en-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 3; fs.focus(); root.change-language("en"); } }
                                 }
                                 Rectangle {
                                     width: 50%; height: 100%; border-radius: root.language == "es" ? 5px : 0px; background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
                                     Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 3; fs.focus(); root.change-language("es"); } }
+                                    es-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 3; fs.focus(); root.change-language("es"); } }
                                 }
                             }
                         }
                     }
                 }
 
-                // 4 — Autostart — altura fija, hover solo ilumina (lógica Save)
+                // 4 — Autostart — hover sobre toggle no apaga fila
                 autostart-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 4 && fs.has-focus) || hover-autostart.has-hover;
+                    property <bool> lit: (root.focused-row == 4 && fs.has-focus) || hover-autostart.has-hover || autostart-toggle-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -315,15 +355,15 @@ export component SystemSection inherits Rectangle {
                             Rectangle {
                                 width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2; background: root.autostart ? HveColors.accent-cyan : HveColors.border;
                                 Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.autostart ? parent.width - self.width - 3px : 3px; y: 3px; }
-                                TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 4; fs.focus(); root.toggle-autostart(!root.autostart); } }
+                                autostart-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 4; fs.focus(); root.toggle-autostart(!root.autostart); } }
                             }
                         }
                     }
                 }
 
-                // 5 — Theme preference — altura fija, hover solo ilumina (lógica Save)
+                // 5 — Theme preference — hover sobre pills no apaga fila
                 theme-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 5 && fs.has-focus) || hover-theme.has-hover;
+                    property <bool> lit: (root.focused-row == 5 && fs.has-focus) || hover-theme.has-hover || theme-dark-ta.has-hover || theme-light-ta.has-hover || theme-system-ta.has-hover;
                     height: 40px;
                     border-radius: 8px;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
@@ -338,13 +378,29 @@ export component SystemSection inherits Rectangle {
                         Text { text: root.theme-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
                         HorizontalLayout {
                             spacing: 4px;
-                            for t in ["dark", "light", "system"] : Rectangle {
+                            Rectangle {
                                 width: 56px; height: 28px; border-radius: 6px;
-                                background: root.theme == t ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                background: root.theme == "dark" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
                                 border-width: 1px;
-                                border-color: root.theme == t ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: t; color: root.theme == t ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; fs.focus(); root.change-theme(t); } }
+                                border-color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "dark"; color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                theme-dark-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; fs.focus(); root.change-theme("dark"); } }
+                            }
+                            Rectangle {
+                                width: 56px; height: 28px; border-radius: 6px;
+                                background: root.theme == "light" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.theme == "light" ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "light"; color: root.theme == "light" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                theme-light-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; fs.focus(); root.change-theme("light"); } }
+                            }
+                            Rectangle {
+                                width: 56px; height: 28px; border-radius: 6px;
+                                background: root.theme == "system" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                                border-width: 1px;
+                                border-color: root.theme == "system" ? HveColors.accent-cyan : HveColors.border;
+                                Text { text: "system"; color: root.theme == "system" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                theme-system-ta := TouchArea { width: 100%; height: 100%; clicked => { root.focused-row = 5; fs.focus(); root.change-theme("system"); } }
                             }
                         }
                     }

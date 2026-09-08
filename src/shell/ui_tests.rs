@@ -3650,3 +3650,36 @@ fn system_row_click_handlers_refocus_by_construction() {
         "ActivationCard TouchArea must fill the switch"
     );
 }
+
+/// System rows must stay lit when hovering inner chips/toggles, not only the
+/// empty row background — otherwise the row visually "apagón" when mouse is
+/// over a chip because the outer hover TouchArea loses has-hover to the
+/// inner chip's TouchArea on top (z-order). Lit must be true if outer
+/// hover OR any inner has-hover OR focused-row+has-focus.
+#[test]
+fn system_rows_keep_lit_over_inner_chips() {
+    let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
+        .expect("SystemSection.slint must exist");
+    // Language row: lit must consider EN/ES pill hovers, not only outer
+    assert!(
+        src.contains("en-ta.has-hover") && src.contains("es-ta.has-hover"),
+        "Language row lit must include en-ta.has-hover and es-ta.has-hover — outer alone loses hover when over pill"
+    );
+    // Theme row: lit must consider dark/light/system pills
+    assert!(
+        src.contains("theme-dark-ta.has-hover")
+            && src.contains("theme-light-ta.has-hover")
+            && src.contains("theme-system-ta.has-hover"),
+        "Theme row lit must include inner pill hovers"
+    );
+    // Retardo row: at least one sec chip hover must be considered (unrolled loop)
+    assert!(
+        src.contains("sec0-ta.has-hover") || src.contains("sec-0-ta.has-hover"),
+        "Retardo row lit must include sec chip hovers — loop must be unrolled to expose has-hover"
+    );
+    // Autostart row: toggle hover must keep row lit
+    assert!(
+        src.contains("autostart-toggle-ta.has-hover"),
+        "Autostart row lit must include toggle has-hover"
+    );
+}
