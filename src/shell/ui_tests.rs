@@ -3589,32 +3589,33 @@ fn filters_rail_handoff_returns_focus_to_content() {
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
-/// Row click handlers use native focus (no manual fs.focus() in clicked):
-/// FocusScope has focus-on-click true + forward-focus so a single mouse
-/// press delivers both focus and clicked. Manual fs.focus() inside clicked
-/// stole the first press (double-click ghost). Keyboard focus still enters
-/// via init + focus-gen handoff. Raw mouse dispatch is timing-sensitive
-/// under the headless backend, so this pins the wiring statically.
+/// Row click handlers use deferred focus (mouse-ignored scope):
+/// FocusScope has focus-on-click FALSE so it never steals the press for
+/// itself — every TouchArea press+release completes as clicked on the
+/// FIRST touch. Focus follows deterministically via a deferred fs.focus()
+/// at the END of each clicked/toggled (the click is already delivered, so
+/// nothing is eaten), plus init + focus-gen handoff for keyboard entry.
+/// Raw mouse dispatch is timing-sensitive under the headless backend, so
+/// this pins the wiring statically.
 #[test]
 fn system_row_click_handlers_refocus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
         .expect("SystemSection.slint must exist");
-    // Native focus contract: forward-focus + focus-on-click true.
+    // Mouse-ignored scope contract: forward-focus + focus-on-click false.
     assert!(
         src.contains("forward-focus: fs;"),
-        "SystemSection must forward-focus to fs for single-click"
+        "SystemSection must forward-focus to fs for keyboard entry"
     );
     assert!(
-        src.contains("focus-on-click: true;"),
-        "SystemSection fs must use focus-on-click true so first press delivers clicked"
+        src.contains("focus-on-click: false;"),
+        "SystemSection fs must use focus-on-click false so the scope never eats the first press"
     );
     // focus-gen handoff, same as BordersSection/MotionSection/SaveSection.
     assert!(
         src.contains("changed focus-gen => { fs.focus(); }"),
         "SystemSection must refocus on focus-gen like the other sections"
     );
-    // Click handlers: sync the keyboard row but must NOT steal focus
-    // manually — fs.focus() inside clicked caused the double-click ghost.
+    // Click handlers: sync the keyboard row.
     for row in [
         "root.focused-row = 1;",
         "root.focused-row = 3;",
@@ -3623,21 +3624,16 @@ fn system_row_click_handlers_refocus_by_construction() {
     ] {
         assert!(src.contains(row), "SystemSection must contain `{row}`");
     }
-    assert!(
-        !src.contains("fs.focus(); root.toggle-system"),
-        "SystemSection must NOT fs.focus() inside clicked (double-click ghost)"
-    );
-    assert!(
-        !src.contains("fs.focus(); root.about-expanded"),
-        "SystemSection must NOT fs.focus() inside About toggled (double-click ghost)"
-    );
-    // No clicked handler may call fs.focus() — focus comes from
-    // focus-on-click natively plus init/focus-gen programmatically.
+    // Every mouse handler must end with deferred fs.focus() so keyboard
+    // follows the mouse click without stealing it (focus call runs after
+    // clicked is already delivered).
     for line in src.lines() {
-        if line.contains("clicked =>") {
+        if (line.contains("clicked =>") || line.contains("toggled(") || line.contains("toggled =>") || line.contains("open-docs =>"))
+            && !line.trim_start().starts_with("//")
+        {
             assert!(
-                !line.contains("fs.focus()"),
-                "no clicked handler may fs.focus(): {line}"
+                line.contains("fs.focus(); }"),
+                "every mouse handler must end with deferred fs.focus(): {line}"
             );
         }
     }
