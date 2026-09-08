@@ -125,15 +125,9 @@ export component SystemSection inherits Rectangle {
             }
             return reject;
         }
-    }
-
-    init => { fs.focus(); }
-    // Rail re-entry handoff (same pattern as Borders/Motion/Save): every
-    // PanelRoot section-selected/menu-left bumps focus-gen so the active
-    // content re-grabs keyboard focus from the rail.
-    changed focus-gen => { fs.focus(); }
-
-    VerticalLayout {
+        // Content nested inside FocusScope so TouchAreas are descendants
+        // and first click delivers both focus and clicked without double-tap.
+        VerticalLayout {
         spacing: 0px;
 
         // Header
@@ -456,4 +450,8 @@ export component SystemSection inherits Rectangle {
             }
         }
     }
+    }
+
+    init => { fs.focus(); }
+    changed focus-gen => { fs.focus(); }
 }
