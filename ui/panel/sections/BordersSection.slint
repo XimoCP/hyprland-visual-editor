@@ -176,11 +176,9 @@ export component BordersSection inherits Rectangle {
         }
     }
 
-    // Outer icy-cyan focus border when section has focus (R11)
-    border-width: fs.has-focus ? 1px : 0px;
-    border-color: #8fd8ff;
-    border-radius: SkwdTokens.radius-8;
-
+    // Save/System pattern: no zone border on the root — it toggled
+    // width on focus gain and relayouted content between press and
+    // release, eating the first click. Keyboard marks live on rows/cards.
     init => { fs.focus(); }
     changed focus-gen => { fs.focus(); }
 
@@ -268,8 +266,8 @@ export component BordersSection inherits Rectangle {
                     keyboard-focused: i == root.focused-index && fs.has-focus && root.engaged-slider < 0;
                     index: i;
                     hover-moves-focus: false;
-                    toggled => { root.focused-index = i; root.focus-is-kbd = false; fs.focus(); root.apply-border(i, root.border-files[i]); }
-                    focus-requested(idx) => { root.focused-index = idx; root.focus-is-kbd = false; fs.focus(); }
+                    toggled => { root.focused-index = i; root.focus-is-kbd = false; root.apply-border(i, root.border-files[i]); }
+                    focus-requested(idx) => { root.focused-index = idx; root.focus-is-kbd = false; }
                 }
 
                 if root.border-files.length == 0 : Text {
@@ -313,15 +311,15 @@ export component BordersSection inherits Rectangle {
                     property <bool> grabbed: root.engaged-slider == 0 && fs.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
-                    border-color: self.grabbed ? #ffffff : #8fd8ff;
+                    border-width: 1px;
+                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                     border-radius: SkwdTokens.radius-8;
                     background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-size := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length; fs.focus(); }
+                        clicked => { root.focused-index = root.border-files.length; }
                     }
                     GeometrySlider {
                         width: 100%;
@@ -353,15 +351,15 @@ export component BordersSection inherits Rectangle {
                     property <bool> grabbed: root.engaged-slider == 1 && fs.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
-                    border-color: self.grabbed ? #ffffff : #8fd8ff;
+                    border-width: 1px;
+                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                     border-radius: SkwdTokens.radius-8;
                     background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-radius := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length + 1; fs.focus(); }
+                        clicked => { root.focused-index = root.border-files.length + 1; }
                     }
                     GeometrySlider {
                         width: 100%;
@@ -393,15 +391,15 @@ export component BordersSection inherits Rectangle {
                     property <bool> grabbed: root.engaged-slider == 2 && fs.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
-                    border-color: self.grabbed ? #ffffff : #8fd8ff;
+                    border-width: 1px;
+                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                     border-radius: SkwdTokens.radius-8;
                     background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-gap-in := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length + 2; fs.focus(); }
+                        clicked => { root.focused-index = root.border-files.length + 2; }
                     }
                     GeometrySlider {
                         width: 100%;
@@ -433,15 +431,15 @@ export component BordersSection inherits Rectangle {
                     property <bool> grabbed: root.engaged-slider == 3 && fs.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: self.grabbed ? 3px : (self.lit ? 1px : 0px);
-                    border-color: self.grabbed ? #ffffff : #8fd8ff;
+                    border-width: 1px;
+                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                     border-radius: SkwdTokens.radius-8;
                     background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     animate background { duration: 200ms; easing: ease-in-out; }
                     hover-gap-out := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length + 3; fs.focus(); }
+                        clicked => { root.focused-index = root.border-files.length + 3; }
                     }
                     GeometrySlider {
                         width: 100%;
