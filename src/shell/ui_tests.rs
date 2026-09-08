@@ -3781,6 +3781,41 @@ fn filters_mouse_never_touches_focus_by_construction() {
     }
 }
 
+/// Motion follows the System/Save recipe: no zone border on the root
+/// and NO focus call in any mouse handler — keyboard enters via init +
+/// rail focus-gen only.
+#[test]
+fn motion_mouse_never_touches_focus_by_construction() {
+    let src = std::fs::read_to_string("ui/panel/sections/MotionSection.slint")
+        .expect("MotionSection.slint must exist");
+    assert!(
+        !src.contains("border-width: fs.has-focus"),
+        "MotionSection must have no zone border (focus gain must not relayout)"
+    );
+    assert!(
+        !src.contains("? 3px :"),
+        "MotionSection slider borders must be fixed-width (color-only states)"
+    );
+    assert!(
+        src.contains("init => { fs.focus(); }"),
+        "MotionSection must focus on init for keyboard entry"
+    );
+    assert!(
+        src.contains("changed focus-gen => { fs.focus(); }"),
+        "MotionSection must refocus on focus-gen like the other sections"
+    );
+    for line in src.lines() {
+        if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
+            && !line.trim_start().starts_with("//")
+        {
+            assert!(
+                !line.contains(".focus()"),
+                "no Motion mouse handler may touch focus: {line}"
+            );
+        }
+    }
+}
+
 /// Startup must re-apply System active state — otherwise window shows ON
 /// but engine was never enabled after restart, so user perceives "not
 /// persisted". Construction check: main.rs must call init_enable when
