@@ -3590,15 +3590,16 @@ fn filters_rail_handoff_returns_focus_to_content() {
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
-/// Save-pattern focus split (mouse and keyboard never interfere):
-/// SystemSection mirrors SaveSection's list-fs: one small borderless
-/// keyboard scope (`kb`), no zone border on the root, no focus-on-click
-/// override, no forward-focus, and NO focus call in any mouse handler.
-/// Clicks always land first-touch (nothing relayouts under the cursor);
-/// keyboard enters via init + rail focus-gen and marks rows through
-/// focused-row gated on kb.has-focus — same split as Save. Raw mouse
-/// dispatch is timing-sensitive under the headless backend, so this pins
-/// the wiring statically.
+/// Save-pattern focus split, one mark per input (mouse and keyboard
+/// never interfere): SystemSection mirrors SaveSection's list-fs — one
+/// small borderless keyboard scope (`kb`), no zone border on the root, no
+/// focus-on-click override, no forward-focus, and NO focus call in any
+/// mouse handler. Clicks always land first-touch (nothing relayouts under
+/// the cursor); keyboard enters via init + rail focus-gen and marks rows
+/// through focused-row gated on kb.has-focus, while the mouse keeps its
+/// own persistent mouse-row mark set on every click — same split as Save.
+/// Raw mouse dispatch is timing-sensitive under the headless backend, so
+/// this pins the wiring statically.
 #[test]
 fn system_row_click_handlers_refocus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
@@ -3650,6 +3651,15 @@ fn system_row_click_handlers_refocus_by_construction() {
                 "no mouse handler may touch focus: {line}"
             );
         }
+    }
+    // Mouse-owned mark: every click stamps mouse-row, and every row
+    // highlight includes it — the mouse mark survives without focus.
+    assert!(
+        src.contains("property <int> mouse-row: -1;"),
+        "SystemSection must own a mouse-row mark independent from focused-row"
+    );
+    for mark in ["root.mouse-row == 1", "root.mouse-row == 3", "root.mouse-row == 4", "root.mouse-row == 5"] {
+        assert!(src.contains(mark), "row highlights must include `{mark}`");
     }
 
     let filters = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
