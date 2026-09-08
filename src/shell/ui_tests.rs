@@ -3661,6 +3661,24 @@ fn system_row_click_handlers_refocus_by_construction() {
     for mark in ["root.mouse-row == 1", "root.mouse-row == 3", "root.mouse-row == 4", "root.mouse-row == 5"] {
         assert!(src.contains(mark), "row highlights must include `{mark}`");
     }
+    // Focus-follows-mouse (Borders/Motion pattern): every hover area
+    // moves both marks with the cursor and never touches scope focus,
+    // so the highlight travels instead of getting stuck.
+    let mut hover_follows = 0;
+    for line in src.lines() {
+        if line.contains("changed has-hover") && !line.trim_start().starts_with("//") {
+            hover_follows += 1;
+            assert!(
+                line.contains("root.focused-row") && line.contains("root.mouse-row"),
+                "hover must carry both marks: {line}"
+            );
+            assert!(
+                !line.contains(".focus()"),
+                "hover must never touch scope focus: {line}"
+            );
+        }
+    }
+    assert!(hover_follows >= 10, "every row hover must follow the mouse, got {hover_follows}");
 
     let filters = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
