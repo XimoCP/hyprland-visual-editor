@@ -73,8 +73,11 @@ export component SystemSection inherits Rectangle {
 
     background: transparent;
     clip: true;
-    border-width: fs.has-focus ? 1px : 0px;
-    border-color: #8fd8ff;
+    // Fixed 1px width always: toggling width 0<->1 relayouts content on
+    // focus gain and breaks press/release pairing (first click lost).
+    // Only the color toggles so the mouse never sees geometry shift.
+    border-width: 1px;
+    border-color: fs.has-focus ? #8fd8ff : transparent;
     border-radius: SkwdTokens.radius-8;
 
     fs := FocusScope {
@@ -169,8 +172,8 @@ export component SystemSection inherits Rectangle {
 
                 // 0 — System ON/OFF status block (reuse ActivationCard pattern, icy focus)
                 Rectangle {
-                    border-width: root.focused-row == 0 && fs.has-focus ? 1px : 0px;
-                    border-color: #8fd8ff;
+                    border-width: 1px;
+                    border-color: root.focused-row == 0 && fs.has-focus ? #8fd8ff : transparent;
                     border-radius: SkwdTokens.radius-8;
                     ActivationCard {
                         active: root.system-active;
@@ -416,8 +419,8 @@ export component SystemSection inherits Rectangle {
 
                 // 7 — About HVE (reused AccordionCard via existing tr.rs keys)
                 Rectangle {
-                    border-width: ((root.restart-required && root.focused-row == 7) || (!root.restart-required && root.focused-row == 6)) && fs.has-focus ? 1px : 0px;
-                    border-color: #8fd8ff;
+                    border-width: 1px;
+                    border-color: ((root.restart-required && root.focused-row == 7) || (!root.restart-required && root.focused-row == 6)) && fs.has-focus ? #8fd8ff : transparent;
                     border-radius: SkwdTokens.radius-8;
                     AccordionCard {
                         card-title: root.about-title;
