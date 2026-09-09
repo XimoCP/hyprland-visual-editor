@@ -114,7 +114,11 @@ export component PanelRoot inherits Rectangle {
     in property <bool> kbd-preview-engaged: false;
     // Bumped every time the left rail hands focus back to the content, so
     // the active section re-grabs keyboard focus (same-section case too).
+    // Also bumped when the panel opens — otherwise re-opening the same
+    // section strands focus in the rail and the first mouse click needs
+    // an extra wake-up click before arrows work.
     in-out property <int> focus-gen: 0;
+    changed open => { if (self.open) { root.focus-gen += 1; } }
     callback save-theme(string);
     callback apply-saved-theme(int);
     callback rename-saved-theme(string, string);

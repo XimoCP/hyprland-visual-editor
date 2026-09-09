@@ -3837,6 +3837,43 @@ fn system_active_applies_on_startup_by_construction() {
     );
 }
 
+/// Panel open must hand keyboard focus to content without an extra click.
+/// Re-opening the same section left focus stranded in the rail; the first
+/// mouse click then needed a wake-up click before arrows worked. The rail
+/// already bumps focus-gen on section-selected/menu-left — it must also
+/// bump it when `open` becomes true so init/changed focus-gen in the
+/// active section re-grabs focus. Construction + headless proof.
+#[test]
+fn panel_open_hands_focus_to_content() {
+    let src = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("PanelRoot.slint must exist");
+    assert!(
+        src.contains("changed open =>"),
+        "PanelRoot must react to open changes — otherwise re-open strands focus in rail"
+    );
+    assert!(
+        src.contains("focus-gen += 1"),
+        "PanelRoot open handler must bump focus-gen so content re-grabs keyboard focus"
+    );
+    // Mouse handlers must still never steal focus — hover is pure visual,
+    // click syncs rows; keyboard enters via init + focus-gen only (Save hybrid).
+    for path in [
+        "ui/panel/sections/SystemSection.slint",
+        "ui/panel/sections/BordersSection.slint",
+        "ui/panel/sections/FiltersSection.slint",
+        "ui/panel/sections/MotionSection.slint",
+    ] {
+        let s = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        for line in s.lines() {
+            if line.contains("changed has-hover") && !line.trim_start().starts_with("//") {
+                let hover_seg = &line[line.find("changed has-hover").unwrap()..];
+                assert!(!hover_seg.contains("focused-row"), "hover in {path} must not move focused-row: {line}");
+                assert!(!hover_seg.contains(".focus()"), "hover in {path} must not touch focus: {line}");
+            }
+        }
+    }
+}
+
 /// System rows must stay lit when hovering inner chips/toggles, not only the
 /// empty row background — otherwise the row visually "apagón" when mouse is
 /// over a chip because the outer hover TouchArea loses has-hover to the

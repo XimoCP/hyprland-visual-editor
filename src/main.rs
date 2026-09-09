@@ -1812,13 +1812,16 @@ fn main() -> Result<(), slint::PlatformError> {
         {
             let shell_c = shell.clone();
             window.on_panel_section_selected(move |section| {
+                tracing::debug!("[panel][mouse] section-selected section={} (rail click)", section);
                 if crate::shell::Shell::is_mutating(&shell_c) {
+                    tracing::debug!("[panel] section-selected ignored — mutating");
                     return;
                 }
                 let idx = section.max(0) as usize;
                 let target = crate::shell::nav::PanelSection::from_index(idx).unwrap_or(crate::shell::nav::PanelSection::Save);
                 let is_closed = crate::shell::Shell::with_nav(&shell_c, |n| n.panel_state() == crate::shell::nav::PanelState::Closed);
                 let is_open = crate::shell::Shell::with_nav(&shell_c, |n| matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)));
+                tracing::debug!("[panel] section-selected target={:?} is_closed={} is_open={}", target, is_closed, is_open);
                 if is_closed {
                     let _ = crate::shell::Shell::enter_panel(&shell_c, target);
                 } else if is_open {
@@ -1832,16 +1835,16 @@ fn main() -> Result<(), slint::PlatformError> {
             // stay consistent) and Tab/Shift+Tab cycle panel sections.
             let win = window.as_weak();
             window.on_panel_save_nav(move |delta| {
+                tracing::debug!("[panel][kbd] save-nav delta={} (arrow)", delta);
                 let Some(w) = win.upgrade() else { return; };
                 use slint::Model as _;
                 // PanelRoot reads root.theme-names (panel-save-theme-names is
                 // a shell binding), so the list length comes from there.
                 let len = w.get_theme_names().row_count();
-                w.set_panel_save_focused_index(callbacks::save_nav_step(
-                    w.get_panel_save_focused_index(),
-                    delta,
-                    len,
-                ));
+                let before = w.get_panel_save_focused_index();
+                let after = callbacks::save_nav_step(before, delta, len);
+                tracing::debug!("[panel][kbd] save-nav {} -> {} (len={})", before, after, len);
+                w.set_panel_save_focused_index(after);
             });
         }
         {
@@ -1849,6 +1852,7 @@ fn main() -> Result<(), slint::PlatformError> {
             // continue from where the mouse left off (keyboard == mouse, D8).
             let win = window.as_weak();
             window.on_panel_save_focus_requested(move |idx| {
+                tracing::debug!("[panel][mouse] focus-requested idx={} (click on Save row)", idx);
                 let Some(w) = win.upgrade() else { return; };
                 w.set_panel_save_focused_index(idx);
             });
@@ -1857,6 +1861,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let shell_c = shell.clone();
             let win = window.as_weak();
             window.on_panel_back(move || {
+                tracing::debug!("[panel][kbd] back pressed (Esc)");
                 let is_mutating = crate::shell::Shell::is_mutating(&shell_c);
                 let is_open = crate::shell::Shell::with_nav(&shell_c, |n| matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)));
                 if is_mutating || is_open {
@@ -2485,6 +2490,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let state_c = state.clone();
         let weak = window.as_weak();
         window.on_panel_apply_geometry(move |size, radius, gap_in, gap_out| {
+            tracing::debug!("[borders][mouse|kbd] apply-geometry size={} radius={} gap_in={} gap_out={}", size, radius, gap_in, gap_out);
             let result = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 if size == st.cfg().border_size && radius == st.cfg().border_radius && gap_in == st.cfg().gaps_in && gap_out == st.cfg().gaps_out {
@@ -2511,6 +2517,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let state_c = state.clone();
         let weak = window.as_weak();
         window.on_panel_apply_border(move |idx, file| {
+            tracing::debug!("[borders][mouse|kbd] apply-border idx={} file={} (click/card)", idx, file);
             use crate::callbacks::{preset_geometry_for, BorderGeometry};
             let file_str = file.to_string();
             let (is_deact, result, snap) = {
@@ -2552,6 +2559,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let state_c = state.clone();
         let weak = window.as_weak();
         window.on_panel_apply_animation(move |idx, file| {
+            tracing::debug!("[motion][mouse|kbd] apply-animation idx={} file={}", idx, file);
             let file_str = file.to_string();
             let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -2578,6 +2586,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let state_c = state.clone();
         let weak = window.as_weak();
         window.on_panel_apply_shader(move |idx, file| {
+            tracing::debug!("[filters][mouse|kbd] apply-shader idx={} file={}", idx, file);
             let file_str = file.to_string();
             let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());

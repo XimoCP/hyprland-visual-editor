@@ -246,6 +246,7 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_system(move |active| {
+            tracing::debug!("[system][mouse|kbd] toggle-system active={} (row 0)", active);
             tray_active.store(active, Ordering::Relaxed);
             let result = {
                 let mut state = lock_state(&state);
@@ -301,6 +302,7 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_auto_minimize(move |enabled| {
+            tracing::debug!("[system][mouse|kbd] toggle-auto-minimize enabled={} (row 1)", enabled);
             lock_state(&state).update_cfg(|c| c.auto_minimize_enabled = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_auto_minimize(enabled);
@@ -312,6 +314,7 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_change_minimize_seconds(move |secs| {
+            tracing::debug!("[system][mouse|kbd] change-minimize-seconds {} (row 2 chips)", secs);
             lock_state(&state).update_cfg(|c| c.minimize_seconds = secs);
             if let Some(w) = weak.upgrade() {
                 w.set_minimize_seconds(secs);
@@ -323,6 +326,7 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_change_language(move |lang| {
+            tracing::debug!("[system][mouse|kbd] change-language {} (row 3 pills)", lang);
             let lang_str = lang.to_string();
             lock_state(&state).update_cfg(|c| c.language = lang_str.clone());
             if let Some(w) = weak.upgrade() {
@@ -366,6 +370,7 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_autostart(move |enabled| {
+            tracing::debug!("[system][mouse|kbd] toggle-autostart {} (row 4)", enabled);
             lock_state(&state).update_cfg(|c| c.auto_start = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_autostart(enabled);
@@ -378,6 +383,7 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_change_theme(move |theme| {
+            tracing::debug!("[system][mouse|kbd] change-theme {} (row 5 pills)", theme);
             let theme_str = theme.to_string();
             {
                 let mut state = lock_state(&state);
