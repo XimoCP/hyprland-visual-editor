@@ -225,6 +225,8 @@ export component MainWindow inherits Window {
     in-out property <float> bezier-d: 1.0;
     callback panel-back();
     callback panel-section-selected(int);
+    callback panel-mouse-trace(string);
+    callback panel-focus-trace(string);
     callback panel-save-nav(int);
     callback panel-save-focus-requested(int);
     callback panel-save-theme(string);
@@ -394,6 +396,8 @@ export component MainWindow inherits Window {
         gallery-mit-open => { root.gallery-mit-open(); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
         panel-back => { root.panel-back(); }
+        panel-mouse-trace(reason) => { root.panel-mouse-trace(reason); }
+        panel-focus-trace(reason) => { root.panel-focus-trace(reason); }
         panel-section-selected(section) => { root.panel-section-selected(section); }
         panel-save-nav(d) => { root.panel-save-nav(d); }
         panel-save-focus-requested(idx) => { root.panel-save-focus-requested(idx); }

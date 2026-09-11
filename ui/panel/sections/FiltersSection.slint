@@ -6,7 +6,10 @@
 // Mutating (guard in GallerySlot::trigger_shader_overlay, hidden Rect below).
 //
 // Keyboard R11: arrows navigate cards, Enter/Space activates,
-// Tab pick→next never traps, icy-cyan #8fd8ff focus.
+// icy-cyan #8fd8ff focus. ALL keyboard dispatch lives in PanelRoot's
+// single `panel-kbd` FocusScope (HVE 1 pattern); this section is
+// presentational and owns no FocusScope. Mouse never steals focus —
+// clicks act only and never move `focused-index`.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -21,55 +24,18 @@ export component FiltersSection inherits Rectangle {
     in property <[string]> shader-tags;
     in property <[string]> shader-files;
     in property <int> active-index: -1;
+    // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
+    in property <int> focused-index: 0;
+    in property <bool> has-focus: false;
     callback apply-shader(int, string);
-    callback back();
-    callback menu-focus();
-    in property <int> preview-index: -1;
-    in property <bool> preview-engaged: false;
-    in property <int> focus-gen: 0;
 
     background: transparent;
     clip: true;
 
-    property <int> focused-index: 0;
-
-    fs := FocusScope {
-        width: 100%;
-        height: 100%;
-        key-pressed(event) => {
-            if (event.text == Key.Escape) { root.back(); return accept; }
-            if (event.text == Key.Tab) { return reject; }
-            if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
-                if (root.shader-files.length > 0) {
-                    root.focused-index = min(root.focused-index + 1, root.shader-files.length - 1);
-                }
-                return accept;
-            }
-            if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
-            if (event.text == Key.UpArrow) {
-                if (root.shader-files.length > 0) {
-                    root.focused-index = max(root.focused-index - 1, 0);
-                }
-                return accept;
-            }
-            if (event.text == Key.Return || event.text == Key.Space) {
-                if (root.focused-index >= 0 && root.focused-index < root.shader-files.length) {
-                    root.apply-shader(root.focused-index, root.shader-files[root.focused-index]);
-                }
-                return accept;
-            }
-            return reject;
-        }
-    }
-
-    // Save/System pattern: no zone border on the root — it toggled
-    // width on focus gain and relayouted content between press and
-    // release, eating the first click. Keyboard marks live on cards.
-    init => { fs.focus(); }
-    // Rail re-entry handoff (same pattern as Borders/Motion/Save): every
-    // PanelRoot section-selected/menu-left bumps focus-gen so the active
-    // content re-grabs keyboard focus from the rail.
-    changed focus-gen => { fs.focus(); }
+    // Scroll follows KEYBOARD focus only: when fs has focus, viewport
+    // follows focused-index; when false (rail has focus), viewport freezes
+    // at saved-scroll-y.
+    property <length> saved-scroll-y: 0px;
 
     // hidden Rect for shader_overlay suppression documentation (R5)
     // While PanelState != Closed the overlay is SUPPRESSED via GallerySlot guard;
@@ -81,73 +47,81 @@ export component FiltersSection inherits Rectangle {
         background: transparent;
     }
 
+    // Presentational content. PanelRoot's single panel-kbd FocusScope owns
+    // ALL keyboard dispatch for the panel; the section owns no FocusScope.
     VerticalLayout {
+        width: 100%;
+        height: 100%;
         spacing: 0px;
 
-        VerticalLayout {
-            padding: 16px;
-            spacing: 4px;
-            Text {
-                text: "Filters";
-                font-family: SkwdTokens.font-heading;
-                font-size: SkwdTokens.size-16;
-                font-weight: 700;
-                color: HveColors.accent-cyan;
-            }
-            Text {
-                text: "Pick a shader — instantly applied. Repick active to turn off.";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-12;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-        }
-
-        ScrollView {
-            vertical-stretch: 1;
-            // Scroll follows the keyboard focus (cards only, pitch 66px).
-            property <length> focus-y:
-                root.focused-index * 66px
-                + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
-                + (root.active-index == root.focused-index ? 21px : 0px);
-            viewport-y: root.focused-index >= 0
-                ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
-                : 0px;
-            animate viewport-y { duration: 250ms; easing: ease-out; }
             VerticalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                padding-bottom: 12px;
-                spacing: 8px;
-
-                for i in root.shader-files.length : PresetCard {
-                    title: root.shader-titles[i];
-                    desc: root.shader-descs[i];
-                    tag: root.shader-tags[i];
-                    accent: #8fd8ff;
-                    active: i == root.active-index;
-                    keyboard-focused: i == root.focused-index && fs.has-focus;
-                    index: i;
-                    toggled => { root.focused-index = i; root.apply-shader(i, root.shader-files[i]); }
-                    focus-requested(idx) => { root.focused-index = idx; }
+                padding: 16px;
+                spacing: 4px;
+                Text {
+                    text: "Filters";
+                    font-family: SkwdTokens.font-heading;
+                    font-size: SkwdTokens.size-16;
+                    font-weight: 700;
+                    color: HveColors.accent-cyan;
                 }
-
-                if root.shader-files.length == 0 : Text {
-                    text: "No shader presets found.";
+                Text {
+                    text: "Pick a shader — instantly applied. Repick active to turn off.";
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
                     color: HveColors.text-muted;
-                    horizontal-alignment: center;
+                    wrap: word-wrap;
                 }
+            }
 
-                Text {
-                    text: "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back";
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-12;
-                    color: HveColors.text-muted.transparentize(0.4);
-                    horizontal-alignment: center;
+            scroll := ScrollView {
+                vertical-stretch: 1;
+                // Scroll follows the keyboard focus (cards only, pitch 66px).
+                // Frozen while the mouse drives (root.has-focus false) so a click
+                // never yanks the viewport that follows the keyboard focus.
+                property <length> focus-y:
+                    root.focused-index * 66px
+                    + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
+                    + (root.active-index == root.focused-index ? 21px : 0px);
+                viewport-y: root.has-focus ? (root.focused-index >= 0
+                    ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+                    : 0px) : root.saved-scroll-y;
+                animate viewport-y { duration: 250ms; easing: ease-out; }
+                changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+                VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-bottom: 12px;
+                    spacing: 8px;
+
+                    for i in root.shader-files.length : PresetCard {
+                        title: root.shader-titles[i];
+                        desc: root.shader-descs[i];
+                        tag: root.shader-tags[i];
+                        accent: #8fd8ff;
+                        active: i == root.active-index;
+                        keyboard-focused: i == root.focused-index && root.has-focus;
+                        index: i;
+                        // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
+                        hover-moves-focus: false;
+                        toggled => { root.apply-shader(i, root.shader-files[i]); }
+                    }
+
+                    if root.shader-files.length == 0 : Text {
+                        text: "No shader presets found.";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        color: HveColors.text-muted;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        color: HveColors.text-muted.transparentize(0.4);
+                        horizontal-alignment: center;
+                    }
                 }
             }
         }
-    }
 }

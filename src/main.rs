@@ -1478,7 +1478,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let gallery_themes_root = gallery_themes_root.clone();
             let shell_c = shell.clone();
             window.on_gallery_card_clicked(move |idx| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-clicked idx={idx}")));
                 if crate::shell::Shell::is_mutating(&shell_c) {
+                    tracing::debug!("[gallery] card-clicked ignored — mutating");
                     return;
                 }
                 let i = idx as usize;
@@ -1765,6 +1767,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let tm = gallery_tm.clone();
             let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_style_selected(move |style| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery style-selected style={style}")));
                 let idx = (style as usize).min(2);
                 if let Some(w) = win.upgrade() {
                     let _style = match idx {
@@ -1788,7 +1791,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let animate = animate_slice_step.clone();
             let shell_c = shell.clone();
             window.on_gallery_card_right_clicked(move |idx| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-right-clicked idx={idx}")));
                 if crate::shell::Shell::is_mutating(&shell_c) {
+                    tracing::debug!("[gallery] card-right-clicked ignored — mutating");
                     return;
                 }
                 if let Some(w) = win.upgrade() {
@@ -1855,6 +1860,24 @@ fn main() -> Result<(), slint::PlatformError> {
                 tracing::debug!("[panel][mouse] focus-requested idx={} (click on Save row)", idx);
                 let Some(w) = win.upgrade() else { return; };
                 w.set_panel_save_focused_index(idx);
+            });
+        }
+        {
+            // Generic mouse trace cable: Slint-only clicks (empty state,
+            // dialog cancels, card bodies, mutating guard) forward a reason
+            // string here so --verbose shows every mouse interaction.
+            // No state change, no focus move — trace only.
+            window.on_panel_mouse_trace(move |reason| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&reason));
+            });
+        }
+        {
+            // Generic focus trace cable: menu-fs / kb / shell-kbd gain+loss
+            // handlers forward "scope direction via reason" here so
+            // --verbose shows every keyboard-focus move.
+            // No state change, no focus move — trace only.
+            window.on_panel_focus_trace(move |reason| {
+                tracing::debug!("{}", crate::callbacks::focus_trace(&reason));
             });
         }
         {
@@ -2020,6 +2043,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_panel_save_theme(move |name| {
             let name_str = name.to_string();
+            tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("save-theme name={} (save button/enter)", name_str.trim())));
             let trimmed = name_str.trim().to_string();
             if trimmed.is_empty() {
                 if let Some(w) = weak.upgrade() {
@@ -2221,6 +2245,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_apply_saved_theme(move |idx| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("apply-saved-theme idx={idx}")));
                 let i = idx.max(0) as usize;
                 let name_opt = {
                     let guard = gallery_tm_c.lock().unwrap();
@@ -2309,6 +2334,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_rename_saved_theme(move |old, new| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("rename-saved-theme old={old} new={new}")));
                 let (old_str, new_str) = (old.to_string(), new.to_string());
                 let mut error_msg = String::new();
                 let ok = {
@@ -2345,6 +2371,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_delete_saved_theme(move |name| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("delete-saved-theme name={name}")));
                 let name_str = name.to_string();
                 let del_idx = {
                     let gtm = gallery_tm_c.lock().unwrap();
@@ -2387,6 +2414,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_refresh_saved_theme(move || {
+                tracing::debug!("{}", crate::callbacks::mouse_trace("refresh-saved-theme"));
                 let mut error_msg = String::new();
                 let ok = {
                     let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -2415,6 +2443,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_overwrite_saved_theme(move |name| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("overwrite-saved-theme name={name}")));
                 let name_str = name.to_string();
                 let mut error_msg = String::new();
                 let ok = {
@@ -2442,6 +2471,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let state_c = state.clone();
             let weak = window.as_weak();
             window.on_panel_save_search_changed(move |query| {
+                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("save-search-changed q={query}")));
                 let Some(w) = weak.upgrade() else { return; };
                 let q = query.to_string();
                 if q.trim().is_empty() {

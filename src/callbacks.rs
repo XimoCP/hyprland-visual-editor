@@ -77,6 +77,7 @@ pub fn setup_callbacks(
     {
         let shell = shell.clone();
         window.on_card_activated(move |card_idx| {
+            tracing::debug!("{}", mouse_trace(&format!("card-activated idx={card_idx} (home card click)")));
             // If already in Gallery expanded, card click is GallerySlot action:
             // current card → ExpandToSettings (S9) 1200x800→1300x900, non-current → instant apply via state (handled below via gallery apply path)
             let is_gallery = Shell::with_nav(&shell, |n| {
@@ -100,6 +101,7 @@ pub fn setup_callbacks(
     {
         let weak = window.as_weak();
         window.on_back_activated(move || {
+            tracing::debug!("{}", mouse_trace("back-activated (chrome back / Esc-hide)"));
             // Esc now hides/minimizes the window (same as tray minimize via
             // Controller::toggle_tray hide path → composer.hide). Idempotent:
             // if already hidden, do nothing. Supersedes spec Settings Mutation
@@ -129,6 +131,7 @@ pub fn setup_callbacks(
         window.on_nav_move(move |direction| {
             // R9 input guard: ignore arrows while mutating
             if crate::shell::Shell::is_mutating(&shell) {
+                tracing::debug!("[shell] nav-move ignored — mutating");
                 return;
             }
             use crate::shell::nav::ExpansionState;
@@ -215,6 +218,7 @@ pub fn setup_callbacks(
         let _ = &_refresh;
         window.on_gallery_wheel_step(move |dir| {
             if crate::shell::Shell::is_mutating(&shell_c) {
+                tracing::debug!("[gallery] wheel-step ignored — mutating");
                 return;
             }
             let _ = &weak;
@@ -232,6 +236,7 @@ pub fn setup_callbacks(
         let shell_c = shell.clone();
         window.on_gallery_mosaic_page_step(move |dir| {
             if crate::shell::Shell::is_mutating(&shell_c) {
+                tracing::debug!("[gallery] mosaic-page-step ignored — mutating");
                 return;
             }
             let changed = pages.lock().unwrap().step(dir as isize);
@@ -289,6 +294,7 @@ pub fn setup_callbacks(
     {
         let weak = window.as_weak();
         window.on_close_button_clicked(move || {
+            tracing::debug!("{}", mouse_trace("close-button-clicked (chrome X)"));
             crate::countdown::minimize_now(weak.clone());
         });
     }
@@ -718,8 +724,9 @@ pub fn focus_after_delete(deleted_idx: usize, new_len: usize) -> i32 {
     deleted_idx.min(new_len - 1) as i32
 }
 
-/// Save-list arrow navigation step (keyboard R11 v2). Unfocused (-1) starts
-/// at 0 on the FIRST step (either direction); steps clamp inside 0..len-1;
+/// Save-list arrow navigation step (keyboard R11 v2) — 1:1 legacy wrap.
+/// Unfocused (-1) starts at 0 on the FIRST step; steps wrap circularly
+/// like master ui/main.slint step-down/step-up (last -> 0, 0 -> last);
 /// empty list stays -1 (nothing focused).
 #[allow(dead_code)]
 pub fn save_nav_step(current: i32, delta: i32, len: usize) -> i32 {
@@ -729,7 +736,14 @@ pub fn save_nav_step(current: i32, delta: i32, len: usize) -> i32 {
     if current < 0 {
         return 0;
     }
-    (current + delta).clamp(0, len as i32 - 1)
+    let last = len as i32 - 1;
+    if delta > 0 {
+        if current >= last { 0 } else { current + 1 }
+    } else if delta < 0 {
+        if current <= 0 { last } else { current - 1 }
+    } else {
+        current
+    }
 }
 
 /// Borders pick layer helpers (mutating-window R3, slice 3 slice).
@@ -1003,8 +1017,8 @@ mod keyboard_nav_tests {
     fn test_save_nav_step_clamps_and_starts() {
         assert_eq!(save_nav_step(-1, 1, 3), 0, "unfocused starts at first");
         assert_eq!(save_nav_step(0, 1, 3), 1, "down steps forward");
-        assert_eq!(save_nav_step(2, 1, 3), 2, "forward clamps at last");
-        assert_eq!(save_nav_step(0, -1, 3), 0, "backward clamps at first");
+        assert_eq!(save_nav_step(2, 1, 3), 0, "forward wraps last -> 0 (1:1 legacy)");
+        assert_eq!(save_nav_step(0, -1, 3), 2, "backward wraps 0 -> last (1:1 legacy)");
         assert_eq!(save_nav_step(2, -1, 3), 1, "up steps backward");
         assert_eq!(save_nav_step(1, 1, 0), -1, "empty list has no focus");
     }
@@ -1531,6 +1545,87 @@ exit 0
         std::thread::sleep(Duration::from_millis(400));
         slot.trigger_shader_overlay();
         assert!(!slot.is_shader_overlay_visible(), "300ms must NOT be enough — requires 3000ms");
+    }
+}
+
+/// Mouse verbose trace formatter.
+///
+/// Every mouse interaction inside the app must leave a `[panel][mouse]`
+/// trace in --verbose mode, even when the click never reaches Rust today
+/// (Slint-only empty rows, hover-only zones, card bodies, mutating guard).
+/// Slint-only clicks travel through the generic `panel-mouse-trace`
+/// cable and land here for one uniform debug line.
+pub fn mouse_trace(reason: &str) -> String {
+    format!("[panel][mouse] {reason}")
+}
+
+/// Focus verbose trace formatter.
+///
+/// Every keyboard-focus move between the panel scopes (menu-fs rail, kb
+/// System content, shell-kbd shell) leaves a `[focus]` trace in --verbose
+/// mode, with scope + direction + FocusReason. Slint gain/loss handlers
+/// travel through the generic `panel-focus-trace` cable and land here for
+/// one uniform debug line.
+pub fn focus_trace(reason: &str) -> String {
+    format!("[focus] {reason}")
+}
+
+/// Mouse verbose trace (TDD RED first).
+///
+/// Every mouse interaction inside the app must leave a `[panel][mouse]`
+/// trace in --verbose mode, even when the click never reaches Rust today
+/// (Slint-only empty rows, hover-only zones, card bodies, mutating guard).
+/// Pure formatter so unit tests prove the trace shape without a window.
+#[cfg(test)]
+mod mouse_verbose_tests {
+    use super::{focus_trace, mouse_trace};
+
+    #[test]
+    fn test_every_mouse_click_leaves_verbose_trace() {
+        // Save handlers (today mute in main.rs) + close + back.
+        for reason in [
+            "save-theme name=MyMix (save button/enter)",
+            "apply-saved-theme idx=0",
+            "rename-saved-theme old=A new=B",
+            "delete-saved-theme name=Gone",
+            "refresh-saved-theme",
+            "overwrite-saved-theme name=MyMix",
+            "save-search-changed q=alp",
+            "close-button-clicked (chrome X)",
+            "back-activated (chrome back / Esc-hide)",
+            // Slint-only clicks forwarded via the generic trace cable.
+            "save-empty-clicked",
+            "save-dialog-cancelled",
+            "save-card-body idx=1",
+            "save-open-rename name=Alpha",
+            "save-open-delete name=Alpha",
+            "save-open-refresh name=Alpha",
+            "mutating-guard-click ignored — mutating",
+            // Gallery + shell clicks (today mute or silently gated).
+            "gallery card-clicked idx=2",
+            "gallery card-right-clicked idx=2",
+            "gallery style-selected style=1",
+            "card-activated idx=0 (home card click)",
+        ] {
+            let msg = mouse_trace(reason);
+            assert_eq!(msg, format!("[panel][mouse] {reason}"), "trace shape for {reason}");
+        }
+    }
+
+    #[test]
+    fn test_every_focus_move_leaves_verbose_trace() {
+        // Gain + loss of each traced scope with the reason tag.
+        for reason in [
+            "menu-fs gained via programmatic",
+            "menu-fs lost via pointer-click",
+            "kb gained via programmatic",
+            "kb lost via tab-navigation",
+            "shell-kbd gained via window-activation",
+            "shell-kbd lost via popup-activation",
+        ] {
+            let msg = focus_trace(reason);
+            assert_eq!(msg, format!("[focus] {reason}"), "trace shape for {reason}");
+        }
     }
 }
 

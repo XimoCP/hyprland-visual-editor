@@ -21,6 +21,10 @@ export component PresetCard inherits Rectangle {
     in property <bool> hover-moves-focus: false;
     callback toggled();
     callback focus-requested(int);
+    // 1:1 legacy: clicking a card must NOT steal keyboard focus.
+    // This callback refocuses the section's FocusScope so keyboard keeps
+    // working after a mouse click — without moving focused-index.
+    callback refocus();
 
      height: (active || ta.has-hover || root.keyboard-focused) ? 100px : 58px;
      border-radius: 10px;
@@ -172,15 +176,13 @@ export component PresetCard inherits Rectangle {
     }
 
     // ── TouchArea (solo toggle, sin pointer-event para evitar foco atascado) ──
+    // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
+    // Hover expands visually (height/bg/border) but never writes focus.
+    // Click applies directly without touching focused-index.
     ta := TouchArea {
         width: 100%;
         height: 100%;
-        clicked => { root.focus-requested(root.index); root.toggled(); }
-        changed has-hover => {
-            if (self.has-hover && root.hover-moves-focus) {
-                root.focus-requested(root.index);
-            }
-        }
+        clicked => { root.toggled(); root.refocus(); }
     }
 }
 

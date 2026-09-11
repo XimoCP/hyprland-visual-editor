@@ -196,6 +196,20 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-tree-path-max: "";
     in property <string> panel-docs-label: "View documentation";
     callback panel-back();
+    callback panel-mouse-trace(string);
+    // Verbose focus tracer (same cable pattern as panel-mouse-trace):
+    // menu-fs / kb / shell-kbd report gain + loss with the reason mapped
+    // to a string. Trace only — never moves focus or touches visuals.
+    callback panel-focus-trace(string);
+    // Maps the Slint 1.17 FocusReason enum to a short --verbose tag.
+    function focus-reason-label(reason: FocusReason) -> string {
+        if (reason == FocusReason.programmatic) { return "programmatic"; }
+        if (reason == FocusReason.tab-navigation) { return "tab-navigation"; }
+        if (reason == FocusReason.pointer-click) { return "pointer-click"; }
+        if (reason == FocusReason.popup-activation) { return "popup-activation"; }
+        if (reason == FocusReason.window-activation) { return "window-activation"; }
+        return "unknown";
+    }
     callback panel-section-selected(int);
     callback panel-save-theme(string);
     callback panel-apply-saved-theme(int);
@@ -514,6 +528,8 @@ export component ShellRoot inherits Rectangle {
                     tree-path-max: root.panel-tree-path-max;
                     docs-label: root.panel-docs-label;
                     back => { root.panel-back(); }
+                    mouse-trace(reason) => { root.panel-mouse-trace(reason); }
+                    focus-trace(reason) => { root.panel-focus-trace(reason); }
                     section-selected(section) => { root.panel-section-selected(section); }
                     save-nav(d) => { root.panel-save-nav(d); }
                     save-focus-requested(idx) => { root.panel-save-focus-requested(idx); }
@@ -550,8 +566,8 @@ export component ShellRoot inherits Rectangle {
                         width: 100%;
                         height: 100%;
                         mouse-cursor: default;
-                        // Consume without forwarding
-                        clicked => {}
+                        // Consume without forwarding — trace only, no nav change.
+                        clicked => { root.panel-mouse-trace("mutating-guard-click ignored — mutating"); }
                     }
                 }
             }
@@ -584,41 +600,43 @@ export component ShellRoot inherits Rectangle {
     // arrows → nav-move (Rust moves focus, mirrors `focused-card` back),
     // Return → activate the focused card, Escape → hide/minimize window (tray).
     shell-kbd := FocusScope {
-        KeyBinding {
-            keys: @keys(DownArrow);
-            activated => { root.nav-move("down"); }
-        }
-        KeyBinding {
-            keys: @keys(UpArrow);
-            activated => { root.nav-move("up"); }
-        }
-        KeyBinding {
-            keys: @keys(RightArrow);
-            activated => { root.nav-move("right"); }
-        }
-        KeyBinding {
-            keys: @keys(LeftArrow);
-            activated => { root.nav-move("left"); }
-        }
-        KeyBinding {
-            keys: @keys(Return);
-            activated => {
-                if (root.mounted-screen == 1) {
-                    root.gallery-card-clicked(root.gallery-focused);
-                } else {
-                    root.card-activated(root.focused-card);
-                }
-            }
-        }
-        KeyBinding {
-            keys: @keys(Escape);
-            activated => {
+        // Mouse never moves keyboard focus. `FocusScope` expands to the full
+        // window and sits on top, so with the default `focus-on-click: true`
+        // it consumes the FIRST press anywhere to re-grab focus whenever it
+        // does not hold it — which is exactly the panel-open state, since
+        // panel-kbd owns focus. That is the classic perceived double-click
+        // barrier (i-slint-core input_items.rs returns EventAccepted). Focus
+        // stays programmatic (`shell-kbd.focus()` below / on panel close).
+        focus-on-click: false;
+        focus-gained(reason) => { root.panel-focus-trace("shell-kbd gained via " + root.focus-reason-label(reason)); }
+        focus-lost(reason) => { root.panel-focus-trace("shell-kbd lost via " + root.focus-reason-label(reason)); }
+        // 1:1 legacy: when the panel is open, shell-kbd steps aside and lets
+        // panel-kbd own the keyboard — just like the original hve where one
+        // root FocusScope handed off to the panel's own scope.  Escape always
+        // stays here so the panel can be closed from any sub-scope.
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
                 if (root.is-mutating || root.is-panel-open) {
                     root.panel-back();
                 } else {
                     root.back-activated();
                 }
+                return accept;
             }
+            if (root.is-panel-open) { return reject; }
+            if (event.text == Key.DownArrow) { root.nav-move("down"); return accept; }
+            if (event.text == Key.UpArrow) { root.nav-move("up"); return accept; }
+            if (event.text == Key.RightArrow) { root.nav-move("right"); return accept; }
+            if (event.text == Key.LeftArrow) { root.nav-move("left"); return accept; }
+            if (event.text == Key.Return) {
+                if (root.mounted-screen == 1) {
+                    root.gallery-card-clicked(root.gallery-focused);
+                } else {
+                    root.card-activated(root.focused-card);
+                }
+                return accept;
+            }
+            return reject;
         }
     }
 }

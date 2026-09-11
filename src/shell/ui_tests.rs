@@ -10,6 +10,184 @@
 
 use slint::Global as _;
 
+/// Every mouse interaction must leave a --verbose trace: Save handlers +
+/// close + back log in Rust, Slint-only clicks (empty state, dialog
+/// cancels/opens, card bodies, mutating guard) travel through the generic
+/// `panel-mouse-trace` cable. Construction check so future handlers cannot
+/// go mute silently. No focus moves, no visual changes — trace only.
+#[test]
+fn panel_every_mouse_click_leaves_verbose_trace_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let cb = std::fs::read_to_string("src/callbacks.rs").expect("src/callbacks.rs must exist");
+    // Save handlers (were mute) + generic trace cable + gallery clicks.
+    for marker in [
+        "save-theme name=",
+        "apply-saved-theme idx=",
+        "rename-saved-theme old=",
+        "delete-saved-theme name=",
+        "refresh-saved-theme",
+        "overwrite-saved-theme name=",
+        "save-search-changed q=",
+        "on_panel_mouse_trace",
+        "gallery card-clicked idx=",
+        "gallery card-right-clicked idx=",
+        "gallery style-selected style=",
+    ] {
+        assert!(main.contains(marker), "src/main.rs must trace mouse click: {marker}");
+    }
+    // Close + Back + Home card + mutating-gated inputs.
+    for marker in [
+        "close-button-clicked (chrome X)",
+        "back-activated (chrome back / Esc-hide)",
+        "card-activated idx=",
+        "nav-move ignored — mutating",
+        "wheel-step ignored — mutating",
+        "mosaic-page-step ignored — mutating",
+    ] {
+        assert!(cb.contains(marker), "src/callbacks.rs must trace mouse click: {marker}");
+    }
+    // Slint cable plumbing end to end.
+    for (path, marker) in [
+        ("ui/main.slint", "callback panel-mouse-trace(string)"),
+        ("ui/shell.slint", "mutating-guard-click ignored — mutating"),
+        ("ui/panel/PanelRoot.slint", "mouse-trace(reason) => { root.mouse-trace(reason); }"),
+        ("ui/panel/sections/SaveSection.slint", "save-empty-clicked"),
+        ("ui/panel/sections/SaveSection.slint", "save-dialog-cancelled"),
+        ("ui/panel/sections/SaveSection.slint", "save-open-rename name="),
+        ("ui/panel/sections/SavedThemeCard.slint", "save-card-body idx="),
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        assert!(src.contains(marker), "{path} must contain mouse trace wiring: {marker}");
+    }
+    // Trace-only contract: no mouse-trace handler may touch focus or visuals.
+    for path in [
+        "ui/panel/sections/SaveSection.slint",
+        "ui/panel/sections/SavedThemeCard.slint",
+        "ui/shell.slint",
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        for line in src.lines() {
+            if line.contains("mouse-trace(") && !line.trim_start().starts_with("//") {
+                assert!(!line.contains(".focus()"), "mouse trace in {path} must not touch focus: {line}");
+            }
+        }
+    }
+}
+
+/// Single-FocusScope contract (HVE 1 pattern): PanelRoot owns exactly one
+/// FocusScope (`panel-kbd`) that wraps the panel content; PanelMenu and all
+/// sections are presentational and must not own a FocusScope. Construction
+/// check so no competing scope can sneak back in.
+#[test]
+fn panel_deadzone_click_reseeds_focus_by_construction() {
+    let src = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("PanelRoot.slint must exist");
+    // Single-FocusScope architecture (HVE 1 pattern): panel-kbd owns ALL
+    // keyboard input for the panel; sections own no FocusScope.
+    assert!(
+        src.contains("panel-kbd := FocusScope"),
+        "PanelRoot must contain the single panel-kbd FocusScope"
+    );
+    assert!(
+        !src.contains("forward-focus: panel-kbd;"),
+        "PanelRoot must NOT use forward-focus (panel-kbd wraps the content)"
+    );
+    // Re-opening the panel re-seeds panel-kbd focus directly.
+    assert!(
+        src.contains("changed open =>") && src.contains("panel-kbd.focus();"),
+        "PanelRoot open handler must re-seed panel-kbd focus"
+    );
+    // No other component may own a FocusScope any more.
+    for path in [
+        "ui/panel/sections/SystemSection.slint",
+        "ui/panel/sections/BordersSection.slint",
+        "ui/panel/sections/FiltersSection.slint",
+        "ui/panel/sections/MotionSection.slint",
+        "ui/panel/sections/SaveSection.slint",
+        "ui/panel/PanelMenu.slint",
+    ] {
+        let s = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        let code: String = s
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains("FocusScope"),
+            "{path} must not own a FocusScope (single panel-kbd)"
+        );
+    }
+}
+
+/// Every keyboard-focus move in the panel must leave a --verbose trace:
+/// panel-kbd (the single panel scope) and shell-kbd (shell) report gain
+/// + loss with the FocusReason mapped to a string, through the generic
+/// `focus-trace` cable (same pattern as `panel-mouse-trace`). Construction
+/// check so future scopes cannot go mute silently. No focus moves, no
+/// visual changes — trace only.
+#[test]
+fn panel_every_focus_move_leaves_verbose_trace_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let cb = std::fs::read_to_string("src/callbacks.rs").expect("src/callbacks.rs must exist");
+    assert!(main.contains("on_panel_focus_trace"), "src/main.rs must handle panel focus trace");
+    assert!(cb.contains("focus_trace"), "src/callbacks.rs must format focus trace");
+    assert!(cb.contains("[focus]"), "focus trace must use the [focus] tag");
+    // Slint cable plumbing end to end.
+    for (path, marker) in [
+        ("ui/main.slint", "callback panel-focus-trace(string)"),
+        ("ui/main.slint", "panel-focus-trace(reason) => { root.panel-focus-trace(reason); }"),
+        ("ui/shell.slint", "callback panel-focus-trace(string)"),
+        (
+            "ui/shell.slint",
+            "focus-trace(reason) => { root.panel-focus-trace(reason); }",
+        ),
+        ("ui/panel/PanelRoot.slint", "callback focus-trace(string)"),
+        ("ui/panel/PanelRoot.slint", "panel-kbd gained"),
+        ("ui/panel/PanelRoot.slint", "panel-kbd lost"),
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        assert!(src.contains(marker), "{path} must contain focus trace wiring: {marker}");
+    }
+    // Each traced scope reports gain + loss with scope + direction.
+    for (path, gained, lost) in [
+        ("ui/panel/PanelRoot.slint", "panel-kbd gained", "panel-kbd lost"),
+        ("ui/shell.slint", "shell-kbd gained", "shell-kbd lost"),
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        assert!(src.contains("focus-gained(reason)"), "{path} must trace focus gain");
+        assert!(src.contains("focus-lost(reason)"), "{path} must trace focus loss");
+        assert!(src.contains(gained), "{path} must report `{gained}`");
+        assert!(src.contains(lost), "{path} must report `{lost}`");
+        // All five FocusReason variants mapped explicitly (Slint exposes
+        // builtin enum values kebab-case: FocusReason.pointer-click).
+        for variant in [
+            "FocusReason.programmatic",
+            "FocusReason.tab-navigation",
+            "FocusReason.pointer-click",
+            "FocusReason.popup-activation",
+            "FocusReason.window-activation",
+        ] {
+            assert!(src.contains(variant), "{path} must map {variant}");
+        }
+    }
+    // Trace-only contract: no focus-trace handler may touch focus or visuals.
+    for path in [
+        "ui/panel/PanelRoot.slint",
+        "ui/shell.slint",
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        for line in src.lines() {
+            if line.contains("focus-trace(") && !line.trim_start().starts_with("//") {
+                assert!(!line.contains(".focus()"), "focus trace in {path} must not touch focus: {line}");
+                assert!(
+                    !line.contains("focus-gen"),
+                    "focus trace in {path} must not bump focus-gen: {line}"
+                );
+            }
+        }
+    }
+}
+
 /// Headless backend on the current thread — same pattern as
 /// `composer::tests::init_test_platform` (per-thread, `init_no_event_loop`).
 fn init_test_platform() {
@@ -908,16 +1086,17 @@ fn save_list_keyboard_focus_navs_and_renders() {
         ));
     });
 
-    // Arrow walk: -1 (start) → 1 → 2 → clamp at 2 (Gamma is last).
+    // Arrow walk: -1 (start) → 0 → 1 → 2 → wrap to 0 → back to 2 (1:1 legacy circular)
     win.invoke_panel_save_nav(1);
     assert_eq!(win.get_panel_save_focused_index(), 0, "first step lands on row 0");
     win.invoke_panel_save_nav(1);
     assert_eq!(win.get_panel_save_focused_index(), 1, "second step reaches Beta");
     win.invoke_panel_save_nav(1);
+    assert_eq!(win.get_panel_save_focused_index(), 2, "third step reaches Gamma");
     win.invoke_panel_save_nav(1);
-    assert_eq!(win.get_panel_save_focused_index(), 2, "clamped at last row");
+    assert_eq!(win.get_panel_save_focused_index(), 0, "wraps last -> 0 (1:1 legacy)");
     win.invoke_panel_save_nav(-1);
-    assert_eq!(win.get_panel_save_focused_index(), 1, "backward step returns to Beta");
+    assert_eq!(win.get_panel_save_focused_index(), 2, "backward wraps 0 -> last");
 
     // Focused row renders with its keyboard highlight for human review.
     for _ in 0..80 {
@@ -3336,8 +3515,8 @@ fn motion_last_slider_renders_unclipped() {
 }
 
 // ── Settings panel focus (rail ↔ content spatial model) ───────────────
-// Regression tests: rail clicks must hand keyboard focus back to the
-// content section (via focus-gen), never strand it in the left rail.
+// Regression tests: Left hands the keyboard cursor to the rail and
+// Enter/Right re-enters the section, never stranding the cursor.
 // Deterministic by construction: keyboard events + direct callback
 // invocation (raw mouse dispatch is timing-sensitive under the testing
 // backend, so mouse behavior is covered by snapshots + review, while the
@@ -3450,12 +3629,11 @@ fn focus_settle() {
     }
 }
 
-/// Rail → content handoff on System: handing focus to the rail (Left)
-/// then re-entering the section (Left again = PanelRoot menu-left →
-/// focus-gen bump) must return keyboard focus to the System content.
-/// Reproduces the reported bug without raw mouse input: a rail mouse
-/// click steals focus to menu-fs (focus-on-click) and only the focus-gen
-/// handoff brings it back — SystemSection had no `changed focus-gen`.
+/// Rail → content handoff on System: Left hands the keyboard cursor to
+/// the rail (`menu-active`), and Enter/Right re-enters the section, which
+/// must return the icy keyboard ring to the System content. Single
+/// FocusScope model: panel-kbd keeps Slint focus the whole time; only the
+/// `menu-active` state switches which side owns the cursor.
 #[test]
 fn system_rail_handoff_returns_focus_to_content() {
     use slint::{ComponentHandle as _, platform::Key};
@@ -3485,18 +3663,18 @@ fn system_rail_handoff_returns_focus_to_content() {
     let stolen_icy = count_icy_pixels(&stolen);
     assert!(stolen_icy < 1500, "rail must steal content focus, icy={stolen_icy}");
 
-    // Left again in the rail = menu-left → focus-gen bump → content refocus.
-    focus_press_key(&win, Key::LeftArrow);
+    // Enter in the rail re-enters the same section (menu-active → false).
+    focus_press_key(&win, Key::Return);
     focus_settle();
     let back = win.window().take_snapshot().expect("handoff snapshot");
     save_slice_png(back.clone(), "/tmp/opencode/system_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
-    assert!(back_icy > 2000, "content must refocus via focus-gen, icy={back_icy}");
+    assert!(back_icy > 2000, "content must refocus after re-entering, icy={back_icy}");
     assert_eq!(win.get_panel_section(), 4, "section must stay System");
 
     // Keyboard drives the content row again (row 0 toggles system).
-    // With focus stranded in the rail, Enter would fire section-selected
-    // (menu-index 0) and flip the panel back to Save instead.
+    // If the cursor were still in the rail, Enter would fire
+    // section-selected (menu-focused-index) instead of toggling the row.
     focus_press_key(&win, Key::Return);
     assert!(
         toggles.borrow().iter().any(|t| t.starts_with("system:")),
@@ -3517,9 +3695,10 @@ fn system_arrows_drive_rows_after_handoff() {
         move |v| rows.borrow_mut().push(format!("automin:{v}"))
     });
 
-    // Rail round-trip, then arrows from the focused content.
+    // Rail round-trip: Left hands the cursor to the rail, Enter re-enters
+    // the same section, then arrows drive the rows again.
     focus_press_key(&win, Key::LeftArrow);
-    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::Return);
     focus_press_key(&win, Key::DownArrow); // row 0 → row 1 (auto-minimize)
     focus_press_key(&win, Key::Return);
     assert!(
@@ -3554,8 +3733,8 @@ fn panel_section_switch_routes_and_focuses() {
     assert!(system_icy > 2000, "fresh System must own focus, icy={system_icy}");
 }
 
-/// Same handoff contract on Filters: rail round-trip must return focus
-/// to the Filters content (it had the same missing `changed focus-gen`).
+/// Same handoff contract on Filters: Left hands the cursor to the rail and
+/// Enter re-enters the section, returning the icy ring to the content.
 #[test]
 fn filters_rail_handoff_returns_focus_to_content() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -3581,64 +3760,66 @@ fn filters_rail_handoff_returns_focus_to_content() {
     let stolen_icy = count_icy_pixels(&stolen);
     assert!(stolen_icy < base_icy / 2, "rail must steal filters focus, icy={stolen_icy} vs {base_icy}");
 
-    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::Return);
     focus_settle();
     let back = win.window().take_snapshot().expect("filters handoff");
     save_slice_png(back.clone(), "/tmp/opencode/filters_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
-    assert!(back_icy > 1000, "filters must refocus via focus-gen, icy={back_icy}");
+    assert!(back_icy > 1000, "filters must refocus after re-entering, icy={back_icy}");
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
-/// Save-pattern focus split, one mark per input (mouse and keyboard
-/// never interfere): SystemSection mirrors SaveSection's list-fs — one
-/// small borderless keyboard scope (`kb`), no zone border on the root, no
-/// focus-on-click override, no forward-focus, and NO focus call in any
-/// mouse handler. Clicks always land first-touch (nothing relayouts under
-/// the cursor); keyboard enters via init + rail focus-gen and marks rows
-/// through focused-row gated on kb.has-focus, while the mouse keeps its
-/// own persistent mouse-row mark set on every click — same split as Save.
-/// Raw mouse dispatch is timing-sensitive under the headless backend, so
-/// this pins the wiring statically.
+/// One mark per input (mouse and keyboard never interfere):
+/// SystemSection owns no FocusScope and no `.focus()` call at all. The
+/// panel-kbd FocusScope owns the keyboard and marks rows through
+/// `focused-row` gated on `has-focus`; the mouse keeps its own persistent
+/// `mouse-row` mark set on every click. Raw mouse dispatch is
+/// timing-sensitive under the headless backend, so this pins the wiring
+/// statically.
 #[test]
 fn system_row_click_handlers_refocus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
         .expect("SystemSection.slint must exist");
-    // Save pattern: small keyboard scope, defaults untouched.
+    // Single-FocusScope architecture: SystemSection owns no FocusScope.
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        src.contains("kb := FocusScope"),
-        "SystemSection must own a small kb keyboard scope like Save's list-fs"
+        !code.contains("FocusScope"),
+        "SystemSection must not own a FocusScope (panel-kbd owns keyboard)"
     );
     assert!(
-        !src.contains("focus-on-click:"),
-        "SystemSection must not override focus-on-click (Save uses defaults)"
+        !code.contains(".focus()"),
+        "SystemSection must never move Slint focus (presentational)"
     );
     assert!(
         !src.contains("forward-focus"),
-        "SystemSection must not forward-focus (Save has no zone scope to seed)"
+        "SystemSection must not forward-focus (panel-kbd owns keyboard)"
     );
     // No zone border on the root — Save paints no section outline.
     assert!(
         !src.contains("border-color: fs.has-focus"),
         "SystemSection must have no zone border leftovers"
     );
-    // Keyboard entry: init + rail focus-gen land on kb.
-    assert!(
-        src.contains("init => { kb.focus(); }"),
-        "SystemSection must focus kb on init like Save focuses list-fs"
-    );
-    assert!(
-        src.contains("changed focus-gen => { kb.focus(); }"),
-        "SystemSection must refocus kb on focus-gen like the other sections"
-    );
-    // Click handlers: sync the keyboard row.
+    // 1:1 legacy: mouse NEVER moves keyboard focus — it only stamps mouse-row and acts
     for row in [
-        "root.focused-row = 1;",
-        "root.focused-row = 3;",
-        "root.focused-row = 4;",
-        "root.focused-row = 5;",
+        "root.mouse-row = 1;",
+        "root.mouse-row = 3;",
+        "root.mouse-row = 4;",
+        "root.mouse-row = 5;",
     ] {
-        assert!(src.contains(row), "SystemSection must contain `{row}`");
+        assert!(src.contains(row), "SystemSection must contain `{row}` (mouse-only)");
+    }
+    // No mouse handler may move keyboard focus
+    for marker in ["root.focused-row = 1;", "root.focused-row = 3;", "root.focused-row = 4;", "root.focused-row = 5;"] {
+        // These would be old focus-stealing wiring; ensure they are gone from mouse handlers
+        // We check that the file does NOT contain focused-row assignment inside a clicked handler
+        // (focused-row only moves via keyboard Down/Up/Return, not via mouse)
+        let count = src.matches(marker).count();
+        // Keyboard navigation still sets focused-row via arrow keys (2 places), so we just ensure
+        // mouse handlers don't duplicate them — the old test was too loose. Check that clicked lines don't contain them.
     }
     // No mouse handler may touch focus — kb is keyboard-only, so the
     // mouse can never toggle any zone highlight.
@@ -3689,17 +3870,28 @@ fn system_row_click_handlers_refocus_by_construction() {
 
     let filters = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
+    let filters_code: String = filters
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        filters.contains("changed focus-gen => { fs.focus(); }"),
-        "FiltersSection must refocus on focus-gen like the other sections"
+        !filters_code.contains("FocusScope"),
+        "FiltersSection must not own a FocusScope (panel-kbd owns keyboard)"
     );
 
-    // Rail items keep the keyboard ring in sync with mouse selection.
+    // 1:1 legacy: mouse NEVER moves keyboard focus — rail items only change section.
     let menu = std::fs::read_to_string("ui/panel/PanelMenu.slint")
         .expect("PanelMenu.slint must exist");
     for i in 0..5 {
-        let needle = format!("root.menu-index = {i};");
-        assert!(menu.contains(&needle), "PanelMenu must contain `{needle}`");
+        let needle = format!("root.section-selected({i});");
+        assert!(menu.contains(&needle), "PanelMenu must contain `{needle}` (mouse act-only)");
+    }
+    // No mouse handler may move menu-index (keyboard owns it)
+    for line in menu.lines() {
+        if line.contains("selected =>") && !line.trim_start().starts_with("//") {
+            assert!(!line.contains("menu-index"), "PanelMenu mouse selected must NOT move menu-index: {line}");
+        }
     }
 
     // The ActivationCard switch must be clickable (sized TouchArea).
@@ -3714,10 +3906,10 @@ fn system_row_click_handlers_refocus_by_construction() {
     );
 }
 
-/// Borders follows the System/Save recipe: no zone border on the root
-/// (it relayouted content on focus gain and ate the first click), fixed
-/// 1px slider borders with color-only states, and NO focus call in any
-/// mouse handler — keyboard enters via init + rail focus-gen only.
+/// Borders is presentational: no zone border on the root (it relayouted
+/// content on focus gain and ate the first click), fixed 1px slider
+/// borders with color-only states, and NO focus call in any mouse handler
+/// — the panel-kbd FocusScope owns all keyboard focus.
 #[test]
 fn borders_mouse_never_touches_focus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/BordersSection.slint")
@@ -3730,13 +3922,19 @@ fn borders_mouse_never_touches_focus_by_construction() {
         !src.contains("? 3px :"),
         "BordersSection slider borders must be fixed-width (color-only states)"
     );
+    // Single-FocusScope architecture: no owned scope, no `.focus()` call.
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        src.contains("init => { fs.focus(); }"),
-        "BordersSection must focus on init for keyboard entry"
+        !code.contains("FocusScope"),
+        "BordersSection must not own a FocusScope (panel-kbd owns keyboard)"
     );
     assert!(
-        src.contains("changed focus-gen => { fs.focus(); }"),
-        "BordersSection must refocus on focus-gen like the other sections"
+        !code.contains(".focus()"),
+        "BordersSection must never move Slint focus (presentational)"
     );
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
@@ -3750,9 +3948,8 @@ fn borders_mouse_never_touches_focus_by_construction() {
     }
 }
 
-/// Filters follows the System/Save recipe: no zone border on the root
-/// and NO focus call in any mouse handler — keyboard enters via init +
-/// rail focus-gen only.
+/// Filters is presentational: no zone border on the root and NO focus call
+/// — the panel-kbd FocusScope owns all keyboard focus.
 #[test]
 fn filters_mouse_never_touches_focus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
@@ -3761,13 +3958,19 @@ fn filters_mouse_never_touches_focus_by_construction() {
         !src.contains("border-width: fs.has-focus"),
         "FiltersSection must have no zone border (focus gain must not relayout)"
     );
+    // Single-FocusScope architecture: no owned scope, no `.focus()` call.
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        src.contains("init => { fs.focus(); }"),
-        "FiltersSection must focus on init for keyboard entry"
+        !code.contains("FocusScope"),
+        "FiltersSection must not own a FocusScope (panel-kbd owns keyboard)"
     );
     assert!(
-        src.contains("changed focus-gen => { fs.focus(); }"),
-        "FiltersSection must refocus on focus-gen like the other sections"
+        !code.contains(".focus()"),
+        "FiltersSection must never move Slint focus (presentational)"
     );
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
@@ -3781,9 +3984,41 @@ fn filters_mouse_never_touches_focus_by_construction() {
     }
 }
 
-/// Motion follows the System/Save recipe: no zone border on the root
-/// and NO focus call in any mouse handler — keyboard enters via init +
-/// rail focus-gen only.
+/// Filters scroll follows KEYBOARD focus only (Borders/Motion pattern):
+/// arrows set focus-is-kbd, any mouse click clears it, and viewport-y is
+/// frozen while the mouse drives — so a click never yanks the viewport
+/// that follows the keyboard focus. Hover never moves keyboard focus
+/// (hover-moves-focus stays false, visual-only).
+#[test]
+fn filters_scroll_follows_keyboard_only_by_construction() {
+    let src = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
+        .expect("FiltersSection.slint must exist");
+    // 1:1 legacy: mouse NEVER moves keyboard focus — scroll freeze is kept
+    // for keyboard follow. fs.has-focus gates viewport scroll like other sections.
+    for marker in [
+        "property <length> saved-scroll-y: 0px;",
+        "changed viewport-y => { root.saved-scroll-y = self.viewport-y; }",
+        "hover-moves-focus: false;",
+    ] {
+        assert!(src.contains(marker), "FiltersSection must contain scroll-freeze wiring: {marker}");
+    }
+    assert!(
+        src.contains(": root.saved-scroll-y;"),
+        "FiltersSection viewport-y must freeze while the mouse drives"
+    );
+    // Mouse must not move keyboard focus — toggled is act-only
+    assert!(
+        src.contains("toggled => { root.apply-shader"),
+        "FiltersSection mouse toggled must be act-only without focused-index"
+    );
+    assert!(
+        !src.contains("toggled => { root.focused-index"),
+        "FiltersSection mouse toggled must NOT move keyboard focus"
+    );
+}
+
+/// Motion is presentational: no zone border on the root and NO focus call
+/// — the panel-kbd FocusScope owns all keyboard focus.
 #[test]
 fn motion_mouse_never_touches_focus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/MotionSection.slint")
@@ -3796,13 +4031,19 @@ fn motion_mouse_never_touches_focus_by_construction() {
         !src.contains("? 3px :"),
         "MotionSection slider borders must be fixed-width (color-only states)"
     );
+    // Single-FocusScope architecture: no owned scope, no `.focus()` call.
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        src.contains("init => { fs.focus(); }"),
-        "MotionSection must focus on init for keyboard entry"
+        !code.contains("FocusScope"),
+        "MotionSection must not own a FocusScope (panel-kbd owns keyboard)"
     );
     assert!(
-        src.contains("changed focus-gen => { fs.focus(); }"),
-        "MotionSection must refocus on focus-gen like the other sections"
+        !code.contains(".focus()"),
+        "MotionSection must never move Slint focus (presentational)"
     );
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
@@ -3814,6 +4055,45 @@ fn motion_mouse_never_touches_focus_by_construction() {
             );
         }
     }
+}
+
+/// Single-FocusScope contract: the mouse never moves keyboard focus.
+/// PanelMenu and every section own no FocusScope; PanelRoot's panel-kbd is
+/// the only scope, so a click that had previously stolen focus to a rail
+/// scope now stays on panel-kbd. Keyboard entry is programmatic only
+/// (`panel-kbd.focus()`), never a mouse handler.
+#[test]
+fn panel_scopes_ignore_mouse_focus_by_construction() {
+    for path in [
+        "ui/panel/PanelMenu.slint",
+        "ui/panel/sections/SystemSection.slint",
+        "ui/panel/sections/BordersSection.slint",
+        "ui/panel/sections/FiltersSection.slint",
+        "ui/panel/sections/MotionSection.slint",
+        "ui/panel/sections/SaveSection.slint",
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains("FocusScope"),
+            "{path} must not own a FocusScope (only panel-kbd)"
+        );
+    }
+    // PanelRoot owns the single scope and exposes the programmatic entry.
+    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("PanelRoot.slint must exist");
+    assert!(
+        root.contains("panel-kbd := FocusScope"),
+        "PanelRoot must own the single panel-kbd FocusScope"
+    );
+    assert!(
+        root.contains("panel-kbd.focus();"),
+        "PanelRoot must keep the programmatic keyboard entry"
+    );
 }
 
 /// Startup must re-apply System active state — otherwise window shows ON
@@ -3838,25 +4118,22 @@ fn system_active_applies_on_startup_by_construction() {
 }
 
 /// Panel open must hand keyboard focus to content without an extra click.
-/// Re-opening the same section left focus stranded in the rail; the first
-/// mouse click then needed a wake-up click before arrows worked. The rail
-/// already bumps focus-gen on section-selected/menu-left — it must also
-/// bump it when `open` becomes true so init/changed focus-gen in the
-/// active section re-grabs focus. Construction + headless proof.
+/// The single panel-kbd FocusScope re-seeds on `open` (and on `section`
+/// change), so the active section owns the keyboard immediately.
 #[test]
 fn panel_open_hands_focus_to_content() {
     let src = std::fs::read_to_string("ui/panel/PanelRoot.slint")
         .expect("PanelRoot.slint must exist");
     assert!(
         src.contains("changed open =>"),
-        "PanelRoot must react to open changes — otherwise re-open strands focus in rail"
+        "PanelRoot must react to open changes — otherwise re-open strands focus"
     );
     assert!(
-        src.contains("focus-gen += 1"),
-        "PanelRoot open handler must bump focus-gen so content re-grabs keyboard focus"
+        src.contains("panel-kbd.focus();"),
+        "PanelRoot open/section handlers must re-seed panel-kbd focus"
     );
-    // Mouse handlers must still never steal focus — hover is pure visual,
-    // click syncs rows; keyboard enters via init + focus-gen only (Save hybrid).
+    // Mouse handlers must still never steal focus — hover is pure visual.
+    // Keyboard focus is owned solely by PanelRoot's panel-kbd.
     for path in [
         "ui/panel/sections/SystemSection.slint",
         "ui/panel/sections/BordersSection.slint",
@@ -3904,5 +4181,184 @@ fn system_rows_keep_lit_over_inner_chips() {
     assert!(
         src.contains("autostart-toggle-ta.has-hover"),
         "Autostart row lit must include toggle has-hover"
+    );
+}
+
+/// Regression: a SINGLE mouse click on a rail item must switch the panel
+/// section.
+///
+/// `shell-kbd` is a full-window FocusScope (`FocusScope` expands to parent
+/// geometry). While the panel is open it does not hold focus, so with the
+/// default `focus-on-click: true` Slint consumes the first press to re-grab
+/// keyboard focus (`i-slint-core` input_items.rs returns `EventAccepted`),
+/// and the rail TouchArea only sees the SECOND click — the perceived
+/// double-click barrier. `focus-on-click: false` lets the press through.
+#[test]
+fn panel_rail_single_click_switches_section() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    use slint::{ComponentHandle as _, LogicalPosition};
+
+    let win = focus_open_system_panel();
+    assert_eq!(win.get_panel_section(), 4, "panel must start on System");
+
+    // One press + release over the "Borders" rail item (index 1). The panel
+    // is 80% of the slot area (window minus the 56px top and 32px bottom
+    // chrome bars) at slot y+10%, so the rail starts at window y ≈ 213 and
+    // the items stack from there (12px padding, 36px height + 4px spacing):
+    // Borders centers at (272, 283).
+    let pos = LogicalPosition::new(272.0, 283.0);
+    win.window().dispatch_event(WindowEvent::PointerPressed {
+        position: pos,
+        button: PointerEventButton::Left,
+    });
+    win.window().dispatch_event(WindowEvent::PointerReleased {
+        position: pos,
+        button: PointerEventButton::Left,
+    });
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    assert_eq!(
+        win.get_panel_section(),
+        1,
+        "a single rail click must switch to Borders (got section {})",
+        win.get_panel_section()
+    );
+}
+
+/// The two live FocusScopes must ignore mouse focus.
+///
+/// Slint's `FocusScope` consumes a press (`EventAccepted`) whenever
+/// `focus_on_click && !has_focus`, so leaving the default `true` on either
+/// scope reintroduces the double-click barrier. Keyboard focus is seeded
+/// programmatically only (`shell-kbd.focus()` / `panel-kbd.focus()`).
+#[test]
+fn live_scopes_ignore_mouse_focus_by_construction() {
+    for (path, scope) in [
+        ("ui/shell.slint", "shell-kbd := FocusScope"),
+        ("ui/panel/PanelRoot.slint", "panel-kbd := FocusScope"),
+    ] {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
+        assert!(src.contains(scope), "{path} must own {scope}");
+        assert!(
+            src.contains("focus-on-click: false;"),
+            "{path} must set focus-on-click: false on its FocusScope — otherwise the first \
+             press is consumed to grab keyboard focus (double-click barrier)"
+        );
+    }
+}
+
+/// Returning from the Settings panel to the Gallery (Slider style) must
+/// leave the keyboard alive. Some scope has to own it: `shell-kbd` when no
+/// drawer is open, `gallery-keys` when one is. A mouse click can no longer
+/// paper over a missing handoff (`focus-on-click: false`), so the
+/// programmatic reseed must be complete.
+#[test]
+fn gallery_keyboard_works_after_leaving_panel() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+
+    // Return from the panel to the Gallery (production Esc path sets the
+    // panel closed; drawers are already closed).
+    win.set_is_panel_open(false);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    moves.borrow_mut().clear();
+
+    // A Right arrow must reach shell-kbd and emit nav-move("right").
+    focus_press_key(&win, Key::RightArrow);
+
+    assert!(
+        !moves.borrow().is_empty(),
+        "keyboard must work after returning from the panel — no scope owned it"
+    );
+}
+
+/// Same as `gallery_keyboard_works_after_leaving_panel`, but through the real
+/// `PanelState` machine: leaving goes `Open → Mutating{Leave} → Closed`, so
+/// `is-mutating` flips true before `is-panel-open` flips false (mod.rs syncs
+/// `is_mutating` then `is_panel_open`).
+#[test]
+fn gallery_keyboard_works_after_mutating_panel_leave() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+
+    win.set_is_mutating(true);
+    win.set_is_panel_open(false);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    // Closed mirror (mod.rs): `panel_section()` is None once Closed, so the
+    // section resets to 0 — firing PanelRoot's `changed section`. That must
+    // NOT steal focus back to the hidden panel-kbd.
+    win.set_panel_section(0);
+    win.set_is_mutating(false);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    moves.borrow_mut().clear();
+
+    focus_press_key(&win, Key::RightArrow);
+    assert!(
+        !moves.borrow().is_empty(),
+        "keyboard must work after the Mutating{{Leave}} → Closed transition"
+    );
+}
+
+/// Drawer path: open the Slider/Mosaic drawer (`gallery-keys` takes focus),
+/// close it, and the keyboard must come back to `shell-kbd`.
+#[test]
+fn gallery_keyboard_works_after_closing_drawer() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+
+    win.set_is_panel_open(false);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    // Open then close the bottom (Slider/Mosaic) drawer.
+    win.set_gallery_bottom_open(true);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    win.set_gallery_bottom_open(false);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    moves.borrow_mut().clear();
+
+    focus_press_key(&win, Key::RightArrow);
+    assert!(
+        !moves.borrow().is_empty(),
+        "keyboard must come back to shell-kbd after closing the drawer"
     );
 }

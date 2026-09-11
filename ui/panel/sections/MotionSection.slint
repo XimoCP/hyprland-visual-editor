@@ -67,12 +67,11 @@ export component MotionSection inherits Rectangle {
     in property <[string]> anim-tags;
     in property <[string]> anim-files;
     in property <int> active-index: -1;
+    // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
+    in property <int> focused-index: 0;
+    in property <int> engaged-slider: -1;
+    in property <bool> has-focus: false;
     callback apply-animation(int, string);
-    callback back();
-    callback menu-focus();
-    in property <int> preview-index: -1;
-    in property <bool> preview-engaged: false;
-    in property <int> focus-gen: 0;
 
     // Tune layer — 4 bezier values (in-out so Rust snap can write them if needed)
     in-out property <float> bezier-a: 0.25;
@@ -85,83 +84,34 @@ export component MotionSection inherits Rectangle {
 
     // Keyboard R11 v3 (spatial): ONE linear sequence — preset cards first,
     // then the four bezier sliders. Up/Down walk, Enter engages a slider
-    // (Left/Right adjust ±0.05 while engaged), Tab/Esc disengage, Left
-    // (disengaged) hands focus to the left rail, Esc closes the panel.
-    property <int> focused-index: root.preview-index >= 0 ? root.preview-index : 0;
-    property <int> engaged-slider: root.preview-engaged ? (root.preview-index >= root.anim-files.length ? root.preview-index - root.anim-files.length : 0) : -1;
-    property <int> control-count: root.anim-files.length + 4;
+    // (Left/Right adjust ±0.05 while engaged), Left (disengaged) hands the
+    // keyboard back to the rail, Esc closes. All dispatch lives in
+    // PanelRoot's panel-kbd; this section only renders state.
     // Scroll follows KEYBOARD focus only: arrows set focus-is-kbd, mouse
     // hover clears it (the hovered item is always on screen, so freezing
     // the view kills the seasick auto-scroll without losing key follow).
     property <bool> focus-is-kbd: true;
     property <length> saved-scroll-y: 0px;
 
-    fs := FocusScope {
-        width: 100%;
-        height: 100%;
-        key-pressed(event) => {
-            if (event.text == Key.Escape) {
-                if (root.engaged-slider >= 0) { root.engaged-slider = -1; }
-                else { root.back(); }
-                return accept;
-            }
-            if (event.text == Key.Tab) {
-                if (root.engaged-slider >= 0) { root.engaged-slider = -1; return accept; }
-                return reject;
-            }
-            if (root.engaged-slider >= 0) {
-                // Engaged bezier slider: Left/Right adjust ±0.05 clamped.
-                if (event.text == Key.RightArrow || event.text == Key.LeftArrow) {
-                    let up = event.text == Key.RightArrow;
-                    if (root.engaged-slider == 0) {
-                        let next = up ? min(root.bezier-a + 0.05, 1.0) : max(root.bezier-a - 0.05, 0.0);
-                        if (next != root.bezier-a) { root.bezier-a = next; }
-                    }
-                    else if (root.engaged-slider == 1) {
-                        let next = up ? min(root.bezier-b + 0.05, 2.0) : max(root.bezier-b - 0.05, -1.0);
-                        if (next != root.bezier-b) { root.bezier-b = next; }
-                    }
-                    else if (root.engaged-slider == 2) {
-                        let next = up ? min(root.bezier-c + 0.05, 1.0) : max(root.bezier-c - 0.05, 0.0);
-                        if (next != root.bezier-c) { root.bezier-c = next; }
-                    }
-                    else if (root.engaged-slider == 3) {
-                        let next = up ? min(root.bezier-d + 0.05, 2.0) : max(root.bezier-d - 0.05, -1.0);
-                        if (next != root.bezier-d) { root.bezier-d = next; }
-                    }
-                }
-                return accept;
-            }
-            if (event.text == Key.DownArrow) {
-                root.focused-index = min(root.focused-index + 1, root.control-count - 1);
-                root.focus-is-kbd = true;
-                return accept;
-            }
-            if (event.text == Key.UpArrow) {
-                root.focused-index = max(root.focused-index - 1, 0);
-                root.focus-is-kbd = true;
-                return accept;
-            }
-            if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
-            if (event.text == Key.Return || event.text == Key.Space) {
-                if (root.focused-index < root.anim-files.length) {
-                    if (root.focused-index >= 0 && root.anim-files.length > 0) {
-                        root.apply-animation(root.focused-index, root.anim-files[root.focused-index]);
-                    }
-                } else {
-                    root.engaged-slider = root.focused-index - root.anim-files.length;
-                }
-                return accept;
-            }
-            return reject;
+    // Slider adjust is a domain action, not keyboard handling: PanelRoot's
+    // panel-kbd decides when a slider is engaged and calls this with the
+    // arrow direction. Arrow steps ±0.05 clamped stay here so the section
+    // remains the single owner of its bezier pipeline.
+    public function adjust-slider(up: bool) {
+        if (root.engaged-slider == 0) {
+            let next = up ? min(root.bezier-a + 0.05, 1.0) : max(root.bezier-a - 0.05, 0.0);
+            if (next != root.bezier-a) { root.bezier-a = next; }
+        } else if (root.engaged-slider == 1) {
+            let next = up ? min(root.bezier-b + 0.05, 2.0) : max(root.bezier-b - 0.05, -1.0);
+            if (next != root.bezier-b) { root.bezier-b = next; }
+        } else if (root.engaged-slider == 2) {
+            let next = up ? min(root.bezier-c + 0.05, 1.0) : max(root.bezier-c - 0.05, 0.0);
+            if (next != root.bezier-c) { root.bezier-c = next; }
+        } else if (root.engaged-slider == 3) {
+            let next = up ? min(root.bezier-d + 0.05, 2.0) : max(root.bezier-d - 0.05, -1.0);
+            if (next != root.bezier-d) { root.bezier-d = next; }
         }
     }
-
-    // Save/System pattern: no zone border on the root — it toggled
-    // width on focus gain and relayouted content between press and
-    // release, eating the first click. Keyboard marks live on rows/cards.
-    init => { fs.focus(); }
-    changed focus-gen => { fs.focus(); }
 
     VerticalLayout {
         spacing: 0px;
@@ -222,11 +172,11 @@ export component MotionSection inherits Rectangle {
                     tag: root.anim-tags[i];
                     accent: #8fd8ff;
                     active: i == root.active-index;
-                    keyboard-focused: i == root.focused-index && fs.has-focus && root.engaged-slider < 0;
+                    keyboard-focused: i == root.focused-index && root.has-focus && root.engaged-slider < 0;
                     index: i;
+                    // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
                     hover-moves-focus: false;
-                    toggled => { root.focused-index = i; root.focus-is-kbd = false; root.apply-animation(i, root.anim-files[i]); }
-                    focus-requested(idx) => { root.focused-index = idx; root.focus-is-kbd = false; }
+                    toggled => { root.apply-animation(i, root.anim-files[i]); }
                 }
 
                 if root.anim-files.length == 0 : Text {
@@ -260,8 +210,8 @@ export component MotionSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length && fs.has-focus) || hover-a.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 0 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.anim-files.length && root.has-focus) || hover-a.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -272,7 +222,8 @@ export component MotionSection inherits Rectangle {
                     hover-a := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.anim-files.length; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     BezierSlider {
                         width: 100%;
@@ -290,8 +241,8 @@ export component MotionSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length + 1 && fs.has-focus) || hover-b.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 1 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.anim-files.length + 1 && root.has-focus) || hover-b.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -302,7 +253,8 @@ export component MotionSection inherits Rectangle {
                     hover-b := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.anim-files.length + 1; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     BezierSlider {
                         width: 100%;
@@ -320,8 +272,8 @@ export component MotionSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length + 2 && fs.has-focus) || hover-c.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 2 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.anim-files.length + 2 && root.has-focus) || hover-c.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -332,7 +284,8 @@ export component MotionSection inherits Rectangle {
                     hover-c := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.anim-files.length + 2; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     BezierSlider {
                         width: 100%;
@@ -350,8 +303,8 @@ export component MotionSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length + 3 && fs.has-focus) || hover-d.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 3 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.anim-files.length + 3 && root.has-focus) || hover-d.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -362,7 +315,8 @@ export component MotionSection inherits Rectangle {
                     hover-d := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.anim-files.length + 3; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     BezierSlider {
                         width: 100%;

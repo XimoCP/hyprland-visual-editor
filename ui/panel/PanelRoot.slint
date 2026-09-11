@@ -1,10 +1,9 @@
-// HVE 2 — PanelRoot (mutating-window slice 1 stub).
+// HVE 2 — PanelRoot (mutating-window slice 1 + single-FocusScope keyboard).
 //
-// Root sheet for the panel's 5 internal sections (R2). Slice 1 is a
-// placeholder skeleton: header + left rail + content placeholder + back
-// affordance. Later slices fill each section (Save, Borders, Motion, etc.)
-// inside the content area. Esc handling is via shell-level FocusScope —
-// this component just forwards the callback.
+// Root sheet for the panel's 5 internal sections (R2). Keyboard is owned
+// by ONE FocusScope (`panel-kbd`) that wraps the content and dispatches by
+// `section` — the HVE 1 pattern. Sections are presentational: they render
+// state and report actions, they own no FocusScope and no key handling.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -106,19 +105,13 @@ export component PanelRoot inherits Rectangle {
     in property <string> tree-path-max: "";
     in property <string> docs-label: "View documentation";
     callback back();
+    callback mouse-trace(string);
+    callback focus-trace(string);
     callback section-selected(int);
     callback save-nav(int);
     callback save-focus-requested(int);
-    callback menu-focus();
     in property <int> kbd-preview-index: -1;
     in property <bool> kbd-preview-engaged: false;
-    // Bumped every time the left rail hands focus back to the content, so
-    // the active section re-grabs keyboard focus (same-section case too).
-    // Also bumped when the panel opens — otherwise re-opening the same
-    // section strands focus in the rail and the first mouse click needs
-    // an extra wake-up click before arrows work.
-    in-out property <int> focus-gen: 0;
-    changed open => { if (self.open) { root.focus-gen += 1; } }
     callback save-theme(string);
     callback apply-saved-theme(int);
     callback rename-saved-theme(string, string);
@@ -140,6 +133,54 @@ export component PanelRoot inherits Rectangle {
     callback reset-presets();
     callback restart-app();
     callback open-docs();
+
+    // ── Single-FocusScope keyboard state ──────────────────────────────
+    // Menu cursor: `menu-active` is true only while the rail owns the
+    // keyboard cursor. The panel opens in content mode (`false`); Left in
+    // a section returns to the menu, Right/Enter/Space re-enters a section.
+    property <bool> menu-active: true;
+    property <int> menu-focused-index: 0;
+    // Per-section focus state owned by PanelRoot; sections receive it as
+    // `in` properties. Keyboard never uses these to steal Slint focus.
+    in-out property <int> borders-focused-index: 0;
+    in-out property <int> borders-engaged-slider: -1;
+    in-out property <int> motion-focused-index: 0;
+    in-out property <int> motion-engaged-slider: -1;
+    in-out property <int> filters-focused-index: 0;
+    in-out property <int> system-focused-row: 0;
+    in-out property <bool> system-about-expanded: false;
+
+    // Maps the Slint 1.17 FocusReason enum to a short --verbose tag.
+    function focus-reason-label(reason: FocusReason) -> string {
+        if (reason == FocusReason.programmatic) { return "programmatic"; }
+        if (reason == FocusReason.tab-navigation) { return "tab-navigation"; }
+        if (reason == FocusReason.pointer-click) { return "pointer-click"; }
+        if (reason == FocusReason.popup-activation) { return "popup-activation"; }
+        if (reason == FocusReason.window-activation) { return "window-activation"; }
+        return "unknown";
+    }
+
+    // The panel always opens in content mode with the cursor on the active
+    // section. Re-opening the same section re-seeds it. `changed section`
+    // also covers Rust moving the section directly (menu selection emits
+    // section-selected first, so both ends land on the same state).
+    init => { root.menu-focused-index = root.section; root.menu-active = false; }
+    changed open => {
+        if (self.open) {
+            root.menu-focused-index = root.section;
+            root.menu-active = false;
+            panel-kbd.focus();
+        }
+    }
+    changed section => {
+        root.menu-focused-index = root.section;
+        root.menu-active = false;
+        // Only claim the keyboard while the panel is actually open. When the
+        // panel closes, `section` resets to 0 (PanelState::Closed has no
+        // section), and an unconditional focus() here would steal focus back
+        // from shell-kbd — leaving the Gallery keyboard dead.
+        if (root.open) { panel-kbd.focus(); }
+    }
 
     background: HveColors.bg-dark;
     border-radius: SkwdTokens.radius-12;
@@ -185,211 +226,423 @@ export component PanelRoot inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            // Left rail
+            // Left rail — presentational; PanelRoot's panel-kbd drives it.
             menu := PanelMenu {
                 width: 160px;
                 active-section: root.section;
                 reduced-motion: root.reduced-motion;
+                menu-active: root.menu-active;
+                focused-index: root.menu-focused-index;
                 preview-index: root.kbd-preview-index;
                 section-selected(section) => {
                     root.section-selected(section);
-                    // Same-section re-entry must refocus the content too.
-                    root.focus-gen += 1;
+                    root.menu-focused-index = section;
+                    root.menu-active = false;
                 }
-                menu-left => { root.focus-gen += 1; }
-                back => { root.back(); }
             }
 
             Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
 
-            // Content area — SaveSection for section 0, BordersSection for 1, placeholders for others (later slices)
+            // Content area — panel-kbd is the ONE FocusScope for the whole
+            // panel (menu + content). It wraps the sections so key events
+            // rejected by focusable widgets (e.g. Save's LineEdit) bubble
+            // up to it. All keyboard dispatch lives here.
             Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
                 background: HveColors.bg-dark;
                 clip: true;
-                if root.section == 0 : SaveSection {
+
+                panel-kbd := FocusScope {
                     width: 100%;
                     height: 100%;
-                    theme-name <=> root.save-input;
-                    error-text: root.save-error;
-                    placeholder: root.save-placeholder;
-                    save-label: root.save-button-text;
-                    list-title: root.save-list-title;
-                    search-placeholder: root.save-search-placeholder;
-                    empty-text: root.save-empty-text;
-                    apply-text: root.save-apply-text;
-                    refresh-text: root.save-refresh-text;
-                    rename-text: root.save-rename-text;
-                    delete-text: root.save-delete-text;
-                    search-query <=> root.save-search-query;
-                    dialog-mode <=> root.save-dialog-mode;
-                    dialog-target <=> root.save-dialog-target;
-                    focused-index: root.save-focused-index;
-                    rename-title: root.save-rename-title;
-                    confirm-delete: root.save-confirm-delete;
-                    confirm-delete-msg: root.save-confirm-delete-msg;
-                    confirm-refresh: root.save-confirm-refresh;
-                    confirm-refresh-msg: root.save-confirm-refresh-msg;
-                    overwrite-title: root.save-overwrite-title;
-                    overwrite-msg: root.save-overwrite-msg;
-                    cancel-text: root.save-cancel-text;
-                    saved-names: root.save-theme-names;
-                    saved-ats: root.save-theme-saved-ats;
-                    saved-actives: root.save-theme-is-actives;
-                    saved-active-index: root.save-active-index;
-                    save-theme(name) => { root.save-theme(name); }
-                    apply-saved-theme(idx) => { root.apply-saved-theme(idx); }
-                    rename-theme(old, new) => { root.rename-saved-theme(old, new); }
-                    delete-theme(name) => { root.delete-saved-theme(name); }
-                    refresh-theme() => { root.refresh-saved-theme(); }
-                    overwrite-theme(name) => { root.overwrite-saved-theme(name); }
-                    search-query-changed(q) => { root.save-search-changed(q); }
-                    save-nav(d) => { root.save-nav(d); }
-                    focus-requested(idx) => { root.save-focus-requested(idx); }
-                    menu-focus => { menu.take-focus(); }
-                    preview-index: root.kbd-preview-index;
-                    preview-engaged: root.kbd-preview-engaged;
-                    focus-gen: root.focus-gen;
-                    back => { root.back(); }
-                }
-                if root.section == 1 : BordersSection {
-                    width: 100%;
-                    height: 100%;
-                    border-titles: root.border-titles;
-                    border-descs: root.border-descs;
-                    border-tags: root.border-tags;
-                    border-files: root.border-files;
-                    active-index: root.border-active-index;
-                    geom-size <=> root.border-size;
-                    geom-radius <=> root.corner-radius;
-                    geom-gap-in <=> root.gap-in;
-                    geom-gap-out <=> root.gap-out;
-                    apply-border(idx, file) => { root.apply-border(idx, file); }
-                    apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
-                    menu-focus => { menu.take-focus(); }
-                    preview-index: root.kbd-preview-index;
-                    preview-engaged: root.kbd-preview-engaged;
-                    focus-gen: root.focus-gen;
-                    back => { root.back(); }
-                }
-                if root.section == 2 : MotionSection {
-                    width: 100%;
-                    height: 100%;
-                    anim-titles: root.anim-titles;
-                    anim-descs: root.anim-descs;
-                    anim-tags: root.anim-tags;
-                    anim-files: root.anim-files;
-                    active-index: root.anim-active-index;
-                    bezier-a <=> root.bezier-a;
-                    bezier-b <=> root.bezier-b;
-                    bezier-c <=> root.bezier-c;
-                    bezier-d <=> root.bezier-d;
-                    apply-animation(idx, file) => { root.apply-animation(idx, file); }
-                    menu-focus => { menu.take-focus(); }
-                    preview-index: root.kbd-preview-index;
-                    preview-engaged: root.kbd-preview-engaged;
-                    focus-gen: root.focus-gen;
-                    back => { root.back(); }
-                }
-                if root.section == 3 : FiltersSection {
-                    width: 100%;
-                    height: 100%;
-                    shader-titles: root.shader-titles;
-                    shader-descs: root.shader-descs;
-                    shader-tags: root.shader-tags;
-                    shader-files: root.shader-files;
-                    active-index: root.shader-active-index;
-                    apply-shader(idx, file) => { root.apply-shader(idx, file); }
-                    menu-focus => { menu.take-focus(); }
-                    preview-index: root.kbd-preview-index;
-                    preview-engaged: root.kbd-preview-engaged;
-                    focus-gen: root.focus-gen;
-                    back => { root.back(); }
-                }
-                if root.section == 4 : SystemSection {
-                    width: 100%;
-                     height: 100%;
-                     back => { root.back(); }
-                     menu-focus => { menu.take-focus(); }
-                     preview-index: root.kbd-preview-index;
-                     preview-engaged: root.kbd-preview-engaged;
-                     focus-gen: root.focus-gen;
-                     system-active: root.system-active;
-                    auto-minimize: root.auto-minimize;
-                    minimize-seconds: root.minimize-seconds;
-                    language: root.language;
-                    tiling-mode: root.tiling-mode;
-                    autostart: root.autostart;
-                    theme: root.theme;
-                    restart-required: root.restart-required;
-                    settings-title: root.settings-title;
-                    restart-banner-text: root.restart-banner-text;
-                    restart-button-text: root.restart-button-text;
-                    auto-minimize-label: root.auto-minimize-label;
-                    timer-label: root.timer-label;
-                    language-label: root.language-label;
-                    tiling-label: root.tiling-label;
-                    autostart-label: root.autostart-label;
-                    theme-label: root.theme-label;
-                    reset-label: root.reset-label;
-                    about-title: root.about-title;
-                    about-short: root.about-short;
-                    about-full: root.about-full;
-                    about-items: root.about-items;
-                    tree-label: root.tree-label;
-                    tree-paths: root.tree-paths;
-                    tree-descs: root.tree-descs;
-                    tree-path-max: root.tree-path-max;
-                    docs-label: root.docs-label;
-                    toggle-system(v) => { root.toggle-system(v); }
-                    toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
-                    change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
-                    change-language(v) => { root.change-language(v); }
-                    toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
-                    toggle-autostart(v) => { root.toggle-autostart(v); }
-                    change-theme(v) => { root.change-theme(v); }
-                    reset-presets => { root.reset-presets(); }
-                    restart-app => { root.restart-app(); }
-                    open-docs => { root.open-docs(); }
-                }
-                if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 : VerticalLayout {
-                    alignment: center;
-                    spacing: SkwdTokens.spacing-12;
-                    Text {
-                        text: ["Save","Borders","Motion","Filters","System"][root.section];
-                        font-family: SkwdTokens.font-heading;
-                        font-size: SkwdTokens.size-24;
-                        color: HveColors.accent-cyan;
-                        horizontal-alignment: center;
+                    // Mouse never moves keyboard focus: a click that lands on
+                    // a TouchArea must not be consumed to re-grab focus (the
+                    // Slint default would eat the first press when this scope
+                    // lost focus, e.g. after the Save LineEdit took it). Focus
+                    // is seeded programmatically (init / changed open / changed
+                    // section).
+                    focus-on-click: false;
+                    init => { panel-kbd.focus(); }
+                    focus-gained(reason) => { root.focus-trace("panel-kbd gained via " + root.focus-reason-label(reason)); }
+                    focus-lost(reason) => { root.focus-trace("panel-kbd lost via " + root.focus-reason-label(reason)); }
+                    key-pressed(event) => {
+                        if (event.text == Key.Tab) { return reject; }
+
+                        // ── Menu mode: the rail owns the keyboard cursor ──
+                        if (root.menu-active) {
+                            if (event.text == Key.Escape) { root.back(); return accept; }
+                            if (event.text == Key.DownArrow) {
+                                if (root.menu-focused-index >= 4) { root.menu-focused-index = 0; }
+                                else { root.menu-focused-index += 1; }
+                                return accept;
+                            }
+                            if (event.text == Key.UpArrow) {
+                                if (root.menu-focused-index <= 0) { root.menu-focused-index = 4; }
+                                else { root.menu-focused-index -= 1; }
+                                return accept;
+                            }
+                            if (event.text == Key.RightArrow || event.text == Key.Return || event.text == Key.Space) {
+                                root.section-selected(root.menu-focused-index);
+                                root.menu-active = false;
+                                return accept;
+                            }
+                            return reject;
+                        }
+
+                        // ── Content mode: dispatch to the active section ──
+                        if (root.section == 0) {
+                            // Save: Down/Up → save-nav, Enter → apply, Left → menu
+                            if (event.text == Key.Escape) {
+                                // An open dialog eats Esc (close dialog only).
+                                if (root.save-dialog-mode != "") { root.save-dialog-mode = ""; }
+                                else { root.back(); }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow) { root.save-nav(1); return accept; }
+                            if (event.text == Key.UpArrow) { root.save-nav(-1); return accept; }
+                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.Return || event.text == Key.Space) {
+                                if (root.save-focused-index >= 0 && root.save-focused-index < root.save-theme-names.length) {
+                                    root.apply-saved-theme(root.save-focused-index);
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        if (root.section == 1) {
+                            // Borders: Down/Up walk cards+sliders, Enter applies
+                            // or engages a slider, Left/Right adjust when engaged.
+                            if (event.text == Key.Escape) {
+                                if (root.borders-engaged-slider >= 0) { root.borders-engaged-slider = -1; }
+                                else { root.back(); }
+                                return accept;
+                            }
+                            if (root.borders-engaged-slider >= 0) {
+                                if (event.text == Key.RightArrow) { borders.adjust-slider(true); return accept; }
+                                if (event.text == Key.LeftArrow) { borders.adjust-slider(false); return accept; }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow) {
+                                if (root.border-files.length + 4 > 0) {
+                                    if (root.borders-focused-index >= root.border-files.length + 3) { root.borders-focused-index = 0; }
+                                    else { root.borders-focused-index += 1; }
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.UpArrow) {
+                                if (root.border-files.length + 4 > 0) {
+                                    if (root.borders-focused-index <= 0) { root.borders-focused-index = root.border-files.length + 3; }
+                                    else { root.borders-focused-index -= 1; }
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.Return || event.text == Key.Space) {
+                                if (root.borders-focused-index < root.border-files.length) {
+                                    if (root.borders-focused-index >= 0 && root.border-files.length > 0) {
+                                        root.apply-border(root.borders-focused-index, root.border-files[root.borders-focused-index]);
+                                    }
+                                } else {
+                                    root.borders-engaged-slider = root.borders-focused-index - root.border-files.length;
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        if (root.section == 2) {
+                            // Motion: same pattern as Borders with bezier sliders.
+                            if (event.text == Key.Escape) {
+                                if (root.motion-engaged-slider >= 0) { root.motion-engaged-slider = -1; }
+                                else { root.back(); }
+                                return accept;
+                            }
+                            if (root.motion-engaged-slider >= 0) {
+                                if (event.text == Key.RightArrow) { motion.adjust-slider(true); return accept; }
+                                if (event.text == Key.LeftArrow) { motion.adjust-slider(false); return accept; }
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow) {
+                                if (root.anim-files.length + 4 > 0) {
+                                    if (root.motion-focused-index >= root.anim-files.length + 3) { root.motion-focused-index = 0; }
+                                    else { root.motion-focused-index += 1; }
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.UpArrow) {
+                                if (root.anim-files.length + 4 > 0) {
+                                    if (root.motion-focused-index <= 0) { root.motion-focused-index = root.anim-files.length + 3; }
+                                    else { root.motion-focused-index -= 1; }
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.Return || event.text == Key.Space) {
+                                if (root.motion-focused-index < root.anim-files.length) {
+                                    if (root.motion-focused-index >= 0 && root.anim-files.length > 0) {
+                                        root.apply-animation(root.motion-focused-index, root.anim-files[root.motion-focused-index]);
+                                    }
+                                } else {
+                                    root.motion-engaged-slider = root.motion-focused-index - root.anim-files.length;
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        if (root.section == 3) {
+                            // Filters: Down/Up walk cards, Enter applies.
+                            if (event.text == Key.Escape) { root.back(); return accept; }
+                            if (event.text == Key.DownArrow) {
+                                if (root.shader-files.length > 0) {
+                                    if (root.filters-focused-index >= root.shader-files.length - 1) { root.filters-focused-index = 0; }
+                                    else { root.filters-focused-index += 1; }
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.UpArrow) {
+                                if (root.shader-files.length > 0) {
+                                    if (root.filters-focused-index <= 0) { root.filters-focused-index = root.shader-files.length - 1; }
+                                    else { root.filters-focused-index -= 1; }
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.Return || event.text == Key.Space) {
+                                if (root.filters-focused-index >= 0 && root.filters-focused-index < root.shader-files.length) {
+                                    root.apply-shader(root.filters-focused-index, root.shader-files[root.filters-focused-index]);
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        if (root.section == 4) {
+                            // System: Down/Up walk rows, Enter toggles, Left → menu.
+                            if (event.text == Key.Escape) { root.back(); return accept; }
+                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.DownArrow) {
+                                if (root.system-focused-row >= (root.restart-required ? 7 : 6)) { root.system-focused-row = 0; }
+                                else { root.system-focused-row += 1; }
+                                return accept;
+                            }
+                            if (event.text == Key.UpArrow) {
+                                if (root.system-focused-row <= 0) { root.system-focused-row = root.restart-required ? 7 : 6; }
+                                else { root.system-focused-row -= 1; }
+                                return accept;
+                            }
+                            if (event.text == Key.Return || event.text == Key.Space) {
+                                if (root.system-focused-row == 0) { root.toggle-system(!root.system-active); }
+                                else if (root.system-focused-row == 1) { root.toggle-auto-minimize(!root.auto-minimize); }
+                                else if (root.system-focused-row == 2) {
+                                    // Steps Off → 2 → 4 → 6 → 8 → 10 → Off.
+                                    if (root.minimize-seconds == 0) { root.change-minimize-seconds(2); }
+                                    else if (root.minimize-seconds == 2) { root.change-minimize-seconds(4); }
+                                    else if (root.minimize-seconds == 3) { root.change-minimize-seconds(4); }
+                                    else if (root.minimize-seconds == 4) { root.change-minimize-seconds(6); }
+                                    else if (root.minimize-seconds == 5) { root.change-minimize-seconds(6); }
+                                    else if (root.minimize-seconds == 6) { root.change-minimize-seconds(8); }
+                                    else if (root.minimize-seconds == 8) { root.change-minimize-seconds(10); }
+                                    else if (root.minimize-seconds == 10) { root.change-minimize-seconds(0); }
+                                    else { root.change-minimize-seconds(2); }
+                                }
+                                else if (root.system-focused-row == 3) {
+                                    if (root.language == "en") { root.change-language("es"); } else { root.change-language("en"); }
+                                }
+                                else if (root.system-focused-row == 4) { root.toggle-autostart(!root.autostart); }
+                                else if (root.system-focused-row == 5) {
+                                    if (root.theme == "system") { root.change-theme("light"); }
+                                    else if (root.theme == "light") { root.change-theme("dark"); }
+                                    else { root.change-theme("system"); }
+                                }
+                                else if (root.system-focused-row == 6) {
+                                    if (root.restart-required) { root.restart-app(); }
+                                    else { root.system-about-expanded = !root.system-about-expanded; }
+                                }
+                                else if (root.system-focused-row == 7) { root.system-about-expanded = !root.system-about-expanded; }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        return reject;
                     }
-                    Text {
-                        text: "Section placeholder — slice 1 skeleton";
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        color: HveColors.text-muted;
-                        horizontal-alignment: center;
+
+                    save := SaveSection {
+                        visible: root.section == 0;
+                        width: 100%;
+                        height: 100%;
+                        theme-name <=> root.save-input;
+                        error-text: root.save-error;
+                        placeholder: root.save-placeholder;
+                        save-label: root.save-button-text;
+                        list-title: root.save-list-title;
+                        search-placeholder: root.save-search-placeholder;
+                        empty-text: root.save-empty-text;
+                        apply-text: root.save-apply-text;
+                        refresh-text: root.save-refresh-text;
+                        rename-text: root.save-rename-text;
+                        delete-text: root.save-delete-text;
+                        search-query <=> root.save-search-query;
+                        dialog-mode <=> root.save-dialog-mode;
+                        dialog-target <=> root.save-dialog-target;
+                        focused-index: root.save-focused-index;
+                        has-focus: panel-kbd.has-focus && !root.menu-active;
+                        rename-title: root.save-rename-title;
+                        confirm-delete: root.save-confirm-delete;
+                        confirm-delete-msg: root.save-confirm-delete-msg;
+                        confirm-refresh: root.save-confirm-refresh;
+                        confirm-refresh-msg: root.save-confirm-refresh-msg;
+                        overwrite-title: root.save-overwrite-title;
+                        overwrite-msg: root.save-overwrite-msg;
+                        cancel-text: root.save-cancel-text;
+                        saved-names: root.save-theme-names;
+                        saved-ats: root.save-theme-saved-ats;
+                        saved-actives: root.save-theme-is-actives;
+                        saved-active-index: root.save-active-index;
+                        save-theme(name) => { root.save-theme(name); }
+                        apply-saved-theme(idx) => { root.apply-saved-theme(idx); }
+                        rename-theme(old, new) => { root.rename-saved-theme(old, new); }
+                        delete-theme(name) => { root.delete-saved-theme(name); }
+                        refresh-theme() => { root.refresh-saved-theme(); }
+                        overwrite-theme(name) => { root.overwrite-saved-theme(name); }
+                        search-query-changed(q) => { root.save-search-changed(q); }
+                        save-nav(d) => { root.save-nav(d); }
+                        mouse-trace(reason) => { root.mouse-trace(reason); }
+                        focus-requested(idx) => { root.save-focus-requested(idx); }
                     }
-                    Rectangle {
-                        height: 40px;
-                        width: 160px;
-                        background: HveColors.accent-cyan.transparentize(0.85);
-                        border-radius: SkwdTokens.radius-8;
-                        horizontal-stretch: 0;
-                        x: (parent.width - self.width) / 2;
+                    borders := BordersSection {
+                        visible: root.section == 1;
+                        width: 100%;
+                        height: 100%;
+                        border-titles: root.border-titles;
+                        border-descs: root.border-descs;
+                        border-tags: root.border-tags;
+                        border-files: root.border-files;
+                        active-index: root.border-active-index;
+                        focused-index: root.kbd-preview-index >= 0 ? root.kbd-preview-index : root.borders-focused-index;
+                        engaged-slider: root.kbd-preview-engaged ? (root.kbd-preview-index >= root.border-files.length ? root.kbd-preview-index - root.border-files.length : 0) : root.borders-engaged-slider;
+                        has-focus: (panel-kbd.has-focus && !root.menu-active) || root.kbd-preview-index >= 0;
+                        geom-size <=> root.border-size;
+                        geom-radius <=> root.corner-radius;
+                        geom-gap-in <=> root.gap-in;
+                        geom-gap-out <=> root.gap-out;
+                        apply-border(idx, file) => { root.apply-border(idx, file); }
+                        apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
+                    }
+                    motion := MotionSection {
+                        visible: root.section == 2;
+                        width: 100%;
+                        height: 100%;
+                        anim-titles: root.anim-titles;
+                        anim-descs: root.anim-descs;
+                        anim-tags: root.anim-tags;
+                        anim-files: root.anim-files;
+                        active-index: root.anim-active-index;
+                        focused-index: root.kbd-preview-index >= 0 ? root.kbd-preview-index : root.motion-focused-index;
+                        engaged-slider: root.kbd-preview-engaged ? (root.kbd-preview-index >= root.anim-files.length ? root.kbd-preview-index - root.anim-files.length : 0) : root.motion-engaged-slider;
+                        has-focus: (panel-kbd.has-focus && !root.menu-active) || root.kbd-preview-index >= 0;
+                        bezier-a <=> root.bezier-a;
+                        bezier-b <=> root.bezier-b;
+                        bezier-c <=> root.bezier-c;
+                        bezier-d <=> root.bezier-d;
+                        apply-animation(idx, file) => { root.apply-animation(idx, file); }
+                    }
+                    filters := FiltersSection {
+                        visible: root.section == 3;
+                        width: 100%;
+                        height: 100%;
+                        shader-titles: root.shader-titles;
+                        shader-descs: root.shader-descs;
+                        shader-tags: root.shader-tags;
+                        shader-files: root.shader-files;
+                        active-index: root.shader-active-index;
+                        focused-index: root.kbd-preview-index >= 0 ? root.kbd-preview-index : root.filters-focused-index;
+                        has-focus: (panel-kbd.has-focus && !root.menu-active) || root.kbd-preview-index >= 0;
+                        apply-shader(idx, file) => { root.apply-shader(idx, file); }
+                    }
+                    system := SystemSection {
+                        visible: root.section == 4;
+                        width: 100%;
+                        height: 100%;
+                        system-active: root.system-active;
+                        auto-minimize: root.auto-minimize;
+                        minimize-seconds: root.minimize-seconds;
+                        language: root.language;
+                        tiling-mode: root.tiling-mode;
+                        autostart: root.autostart;
+                        theme: root.theme;
+                        restart-required: root.restart-required;
+                        settings-title: root.settings-title;
+                        restart-banner-text: root.restart-banner-text;
+                        restart-button-text: root.restart-button-text;
+                        auto-minimize-label: root.auto-minimize-label;
+                        timer-label: root.timer-label;
+                        language-label: root.language-label;
+                        tiling-label: root.tiling-label;
+                        autostart-label: root.autostart-label;
+                        theme-label: root.theme-label;
+                        reset-label: root.reset-label;
+                        about-title: root.about-title;
+                        about-short: root.about-short;
+                        about-full: root.about-full;
+                        about-items: root.about-items;
+                        tree-label: root.tree-label;
+                        tree-paths: root.tree-paths;
+                        tree-descs: root.tree-descs;
+                        tree-path-max: root.tree-path-max;
+                        docs-label: root.docs-label;
+                        focused-row: root.system-focused-row;
+                        has-focus: panel-kbd.has-focus && !root.menu-active;
+                        about-expanded <=> root.system-about-expanded;
+                        toggle-system(v) => { root.toggle-system(v); }
+                        toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+                        change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+                        change-language(v) => { root.change-language(v); }
+                        toggle-tiling-mode(v) => { root.toggle-tiling-mode(v); }
+                        toggle-autostart(v) => { root.toggle-autostart(v); }
+                        change-theme(v) => { root.change-theme(v); }
+                        reset-presets => { root.reset-presets(); }
+                        restart-app => { root.restart-app(); }
+                        open-docs => { root.open-docs(); }
+                    }
+                    if root.section != 0 && root.section != 1 && root.section != 2 && root.section != 3 && root.section != 4 : VerticalLayout {
+                        width: 100%;
+                        height: 100%;
+                        alignment: center;
+                        spacing: SkwdTokens.spacing-12;
                         Text {
-                            text: "Back to Gallery";
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-13;
+                            text: ["Save","Borders","Motion","Filters","System"][root.section];
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-24;
                             color: HveColors.accent-cyan;
                             horizontal-alignment: center;
-                            vertical-alignment: center;
                         }
-                        TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            mouse-cursor: pointer;
-                            clicked => { root.back(); }
+                        Text {
+                            text: "Section placeholder — slice 1 skeleton";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text-muted;
+                            horizontal-alignment: center;
+                        }
+                        Rectangle {
+                            height: 40px;
+                            width: 160px;
+                            background: HveColors.accent-cyan.transparentize(0.85);
+                            border-radius: SkwdTokens.radius-8;
+                            horizontal-stretch: 0;
+                            x: (parent.width - self.width) / 2;
+                            Text {
+                                text: "Back to Gallery";
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-13;
+                                color: HveColors.accent-cyan;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => { root.back(); }
+                            }
                         }
                     }
                 }

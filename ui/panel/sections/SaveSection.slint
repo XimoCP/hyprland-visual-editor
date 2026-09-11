@@ -109,35 +109,18 @@ export component SaveSection inherits Rectangle {
     callback overwrite-theme(string);
     callback search-query-changed(string);
     callback focus-requested(int);
+    callback mouse-trace(string);
     callback save-nav(int);
-    callback menu-focus();
-    in property <int> preview-index: -1;
-    in property <bool> preview-engaged: false;
-    in property <int> focus-gen: 0;
-    callback back();
+    // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
+    in property <bool> has-focus: false;
 
     background: transparent;
 
-    // Keyboard R11 v2: focus lands on the theme list when the section opens,
-    // so arrows work immediately (list is the primary group; the name input
-    // and buttons stay reachable via framework Tab from there).
-    init => { list-fs.focus(); }
-    changed focus-gen => { list-fs.focus(); }
-
-    // Esc must always close panel — even when LineEdit has focus (LineEdit may eat Esc)
-    escape-fs := FocusScope {
+    // Esc-to-close (including while the LineEdit has focus) is handled by
+    // PanelRoot's panel-kbd, the single ancestor FocusScope.
+    VerticalLayout {
         width: 100%;
         height: 100%;
-        key-pressed(event) => {
-            if (event.text == Key.Escape) {
-                // Open dialog eats Esc (close dialog only); otherwise leave panel
-                if (root.dialog-mode != "") { root.dialog-mode = ""; } else { root.back(); }
-                return accept;
-            }
-            return reject;
-        }
-
-        VerticalLayout {
         spacing: SkwdTokens.spacing-12;
         padding: SkwdTokens.spacing-16;
 
@@ -194,49 +177,35 @@ export component SaveSection inherits Rectangle {
                 }
             }
 
-            // Save button (mouse + keyboard: Tab focus, icy-cyan border, Enter/Space activates)
-            save-btn-scope := FocusScope {
+            // Save button (mouse; keyboard Enter submits from the LineEdit).
+            save-btn := Rectangle {
                 width: 84px;
                 height: 36px;
-                save-btn := Rectangle {
+                background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                border-radius: SkwdTokens.radius-8;
+                border-width: 0px;
+                border-color: #8fd8ff;
+                animate background { duration: 120ms; }
+
+                Text {
+                    text: root.save-label;
+                    color: HveColors.bg-dark;
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-13;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                save-ta := TouchArea {
                     width: 100%;
                     height: 100%;
-                    background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
-                    border-radius: SkwdTokens.radius-8;
-                    border-width: save-btn-scope.has-focus ? 1px : 0px;
-                    border-color: #8fd8ff;
-                    animate background { duration: 120ms; }
-
-                    Text {
-                        text: root.save-label;
-                        color: HveColors.bg-dark;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-13;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    save-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        clicked => {
-                            if (root.theme-name != "") {
-                                root.save-theme(root.theme-name);
-                            }
-                        }
-                    }
-                }
-                key-pressed(event) => {
-                    if (event.text == Key.Escape) { root.back(); return accept; }
-                    if (event.text == Key.Return || event.text == Key.Space) {
+                    mouse-cursor: pointer;
+                    clicked => {
                         if (root.theme-name != "") {
                             root.save-theme(root.theme-name);
                         }
-                        return accept;
                     }
-                    return reject;
                 }
             }
         }
@@ -296,37 +265,11 @@ export component SaveSection inherits Rectangle {
         }
 
         // ── Theme cards (classic SavedThemeCard rows) ──
-        // Keyboard R11 v2: this list is the section's primary group. Arrows
-        // move focus (Rust owns the index so search filters stay consistent),
-        // Enter/Space applies the focused theme, Esc closes dialog or panel,
-        // Tab/Shift+Tab leave the section (next/previous). The ◈ empty state
-        // lives inside the scope so focus has somewhere to land either way.
-        list-fs := FocusScope {
+        // Keyboard R11 v2: this list is the section's primary group. Arrows,
+        // Enter/Space and Esc are all dispatched by PanelRoot's panel-kbd;
+        // the ScrollView just follows the Rust-owned focused index.
+        scroll := ScrollView {
             vertical-stretch: 1;
-            key-pressed(event) => {
-                if (event.text == Key.Escape) {
-                    if (root.dialog-mode != "") { root.dialog-mode = ""; } else { root.back(); }
-                    return accept;
-                }
-                if (root.dialog-mode != "") { return reject; }
-                if (event.text == Key.DownArrow) { root.save-nav(1); return accept; }
-                if (event.text == Key.UpArrow) { root.save-nav(-1); return accept; }
-                if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
-                if (event.text == Key.Return || event.text == Key.Space) {
-                    if (root.focused-index >= 0 && root.focused-index < root.saved-names.length) {
-                        root.apply-saved-theme(root.focused-index);
-                    }
-                    return accept;
-                }
-                if (event.text == Key.Tab) { return reject; }
-                return reject;
-            }
-
-            // FocusScope does not arrange children. The ScrollView scrolls
-            // WITH the keyboard focus (master scroll-follow, adapted): rows
-            // pitch 68px (56 collapsed + 12 spacing), an expanded (active)
-            // row adds 44px.
-            scroll := ScrollView {
                 width: 100%;
                 height: 100%;
                 property <length> focus-y:
@@ -343,6 +286,14 @@ export component SaveSection inherits Rectangle {
 
                 if (root.saved-names.length == 0) : Rectangle {
                 height: 120px;
+
+                // Trace-only: empty clicks never reach Rust otherwise.
+                // No focus move, no visual change — the TouchArea is transparent.
+                empty-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { root.mouse-trace("save-empty-clicked"); }
+                }
 
                 VerticalLayout {
                     spacing: 8px;
@@ -369,10 +320,10 @@ export component SaveSection inherits Rectangle {
                 theme-name: name;
                 theme-saved-at: root.saved-ats[i];
                 is-active: root.saved-actives[i];
-                // Gate on list-fs.has-focus like every other section: moving
+                // Gate on `has-focus` like every other section: moving
                 // to the rail with Left must drop the mark and collapse the
                 // row (the index stays — re-entry re-expands it).
-                keyboard-focused: root.focused-index == i && list-fs.has-focus;
+                keyboard-focused: root.focused-index == i && root.has-focus;
                 accent: HveColors.accent-pink;
                 apply-text: root.apply-text;
                 refresh-text: root.refresh-text;
@@ -381,25 +332,31 @@ export component SaveSection inherits Rectangle {
                 index: i;
                 apply-theme(theme-name) => { root.apply-saved-theme(i); }
                 open-rename(theme-name) => {
+                    root.mouse-trace("save-open-rename name=" + theme-name);
                     root.rename-input = theme-name;
                     root.dialog-target = theme-name;
                     root.dialog-mode = "rename";
                 }
                 open-delete(theme-name) => {
+                    root.mouse-trace("save-open-delete name=" + theme-name);
                     root.dialog-target = theme-name;
                     root.dialog-mode = "delete";
                 }
                 open-refresh(theme-name) => {
+                    root.mouse-trace("save-open-refresh name=" + theme-name);
                     root.dialog-target = theme-name;
                     root.dialog-mode = "refresh";
                 }
+                // Intentionally unwired: the card body is trace-only and never
+                // emits focus-requested, so the mouse cannot steal the
+                // keyboard's focused-index. Hover/mouse never moves keyboard
+                // focus — parity with legacy navigation.
                 focus-requested(idx) => { root.focus-requested(idx); }
+                mouse-trace(reason) => { root.mouse-trace(reason); }
             }
                 }
             }
         }
-        }
-    }
 
     // ── Rename dialog (old-style 300x180, master 1:1) ──
     if root.dialog-mode == "rename" : Rectangle {
@@ -442,7 +399,7 @@ export component SaveSection inherits Rectangle {
                         background: cancel-rn.has-hover ? HveColors.bg-hover : HveColors.bg-card;
                         border-width: 1px; border-color: HveColors.border;
                         Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                        cancel-rn := TouchArea { width: 100%; height: 100%; clicked => { root.dialog-mode = ""; } }
+                        cancel-rn := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-trace("save-dialog-cancelled"); root.dialog-mode = ""; } }
                     }
                     Rectangle {
                         width: 80px; height: 30px; border-radius: 6px;
@@ -473,7 +430,7 @@ export component SaveSection inherits Rectangle {
         confirm-text: root.delete-text;
         confirm-color: HveColors.accent-red;
         confirm => { root.delete-theme(root.dialog-target); root.dialog-mode = ""; }
-        cancel => { root.dialog-mode = ""; }
+        cancel => { root.mouse-trace("save-dialog-cancelled"); root.dialog-mode = ""; }
     }
     if root.dialog-mode == "refresh" : ConfirmDialog {
         title: root.confirm-refresh;
@@ -483,7 +440,7 @@ export component SaveSection inherits Rectangle {
         confirm-text: root.refresh-text;
         confirm-color: HveColors.accent-purple;
         confirm => { root.refresh-theme(); root.dialog-mode = ""; }
-        cancel => { root.dialog-mode = ""; }
+        cancel => { root.mouse-trace("save-dialog-cancelled"); root.dialog-mode = ""; }
     }
     if root.dialog-mode == "overwrite" : ConfirmDialog {
         title: root.overwrite-title;
@@ -493,6 +450,6 @@ export component SaveSection inherits Rectangle {
         confirm-text: root.save-label;
         confirm-color: HveColors.accent-pink;
         confirm => { root.overwrite-theme(root.dialog-target); root.dialog-mode = ""; }
-        cancel => { root.dialog-mode = ""; }
+        cancel => { root.mouse-trace("save-dialog-cancelled"); root.dialog-mode = ""; }
     }
 }

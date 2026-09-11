@@ -22,12 +22,11 @@ export component BordersSection inherits Rectangle {
     in property <[string]> border-tags;
     in property <[string]> border-files;
     in property <int> active-index: -1;
+    // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
+    in property <int> focused-index: 0;
+    in property <int> engaged-slider: -1;
+    in property <bool> has-focus: false;
     callback apply-border(int, string);
-    callback back();
-    callback menu-focus();
-    in property <int> preview-index: -1;
-    in property <bool> preview-engaged: false;
-    in property <int> focus-gen: 0;
 
     // Tune layer — 4 geometry values (in-out so Rust snap can write them)
     in-out property <int> geom-size: 2;
@@ -42,11 +41,8 @@ export component BordersSection inherits Rectangle {
     // Keyboard R11 v3 (spatial): ONE linear sequence over the section's
     // controls — preset cards first, then the four tune sliders. Up/Down
     // walk the sequence, Enter engages a slider (then Left/Right adjust),
-    // Tab/Esc disengage, Left (disengaged) hands focus to the left rail,
-    // Esc (disengaged) closes the panel.
-    property <int> focused-index: root.preview-index >= 0 ? root.preview-index : 0;
-    property <int> engaged-slider: root.preview-engaged ? (root.preview-index >= root.border-files.length ? root.preview-index - root.border-files.length : 0) : -1;
-    property <int> control-count: root.border-files.length + 4;
+    // Left (disengaged) hands the keyboard back to the rail, Esc closes.
+    // All dispatch lives in PanelRoot's panel-kbd; this only renders state.
     // Scroll follows KEYBOARD focus only: arrows set focus-is-kbd, mouse
     // hover clears it (the hovered item is always on screen, so freezing
     // the view kills the seasick auto-scroll without losing key follow).
@@ -83,104 +79,54 @@ export component BordersSection inherits Rectangle {
         }
     }
 
-    // Focus scope for pick — arrows navigate cards, Enter/Space activates.
-    // Keyboard R11 v2 Tab contract: Tab moves to the NEXT GROUP explicitly
-    // (first tune slider), Shift+Tab leaves to the previous section; the
-    // last tune scope hands Tab to tab-next — no traps, deterministic order.
-    fs := FocusScope {
-        width: 100%;
-        height: 100%;
-        key-pressed(event) => {
-            if (event.text == Key.Escape) {
-                if (root.engaged-slider >= 0) { root.engaged-slider = -1; }
-                else { root.back(); }
-                return accept;
+    // Slider adjust is a domain action, not keyboard handling: PanelRoot's
+    // panel-kbd decides when a slider is engaged and calls this with the
+    // arrow direction. The 80ms debounce + skip-init + last-wins stay here
+    // so the section remains the single owner of its geometry pipeline.
+    public function adjust-slider(up: bool) {
+        if (root.engaged-slider == 0) {
+            let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
+            if (next != root.geom-size) {
+                root.geom-size = next;
+                if (!root.size-init) { root.size-init = true; return; }
+                root.pending-size = next;
+                root.geom-dirty = false;
+                root.geom-dirty = true;
+                geom-timer.restart();
             }
-            if (event.text == Key.Tab) {
-                if (root.engaged-slider >= 0) { root.engaged-slider = -1; return accept; }
-                return reject;
+        } else if (root.engaged-slider == 1) {
+            let next = up ? min(root.geom-radius + 1, 100) : max(root.geom-radius - 1, 0);
+            if (next != root.geom-radius) {
+                root.geom-radius = next;
+                if (!root.radius-init) { root.radius-init = true; return; }
+                root.pending-radius = next;
+                root.geom-dirty = false;
+                root.geom-dirty = true;
+                geom-timer.restart();
             }
-            if (root.engaged-slider >= 0) {
-                // Engaged slider: Left/Right adjust (±1, horizontal widget).
-                if (event.text == Key.RightArrow || event.text == Key.LeftArrow) {
-                    let up = event.text == Key.RightArrow;
-                    if (root.engaged-slider == 0) {
-                        let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
-                        if (next != root.geom-size) {
-                            root.geom-size = next;
-                            if (!root.size-init) { root.size-init = true; return accept; }
-                            root.pending-size = next;
-                            root.geom-dirty = false;
-                            root.geom-dirty = true;
-                            geom-timer.restart();
-                        }
-                    }
-                    else if (root.engaged-slider == 1) {
-                        let next = up ? min(root.geom-radius + 1, 100) : max(root.geom-radius - 1, 0);
-                        if (next != root.geom-radius) {
-                            root.geom-radius = next;
-                            if (!root.radius-init) { root.radius-init = true; return accept; }
-                            root.pending-radius = next;
-                            root.geom-dirty = false;
-                            root.geom-dirty = true;
-                            geom-timer.restart();
-                        }
-                    }
-                    else if (root.engaged-slider == 2) {
-                        let next = up ? min(root.geom-gap-in + 1, 30) : max(root.geom-gap-in - 1, 0);
-                        if (next != root.geom-gap-in) {
-                            root.geom-gap-in = next;
-                            if (!root.gap-in-init) { root.gap-in-init = true; return accept; }
-                            root.pending-gap-in = next;
-                            root.geom-dirty = false;
-                            root.geom-dirty = true;
-                            geom-timer.restart();
-                        }
-                    }
-                    else if (root.engaged-slider == 3) {
-                        let next = up ? min(root.geom-gap-out + 1, 30) : max(root.geom-gap-out - 1, 0);
-                        if (next != root.geom-gap-out) {
-                            root.geom-gap-out = next;
-                            if (!root.gap-out-init) { root.gap-out-init = true; return accept; }
-                            root.pending-gap-out = next;
-                            root.geom-dirty = false;
-                            root.geom-dirty = true;
-                            geom-timer.restart();
-                        }
-                    }
-                }
-                return accept;
+        } else if (root.engaged-slider == 2) {
+            let next = up ? min(root.geom-gap-in + 1, 30) : max(root.geom-gap-in - 1, 0);
+            if (next != root.geom-gap-in) {
+                root.geom-gap-in = next;
+                if (!root.gap-in-init) { root.gap-in-init = true; return; }
+                root.pending-gap-in = next;
+                root.geom-dirty = false;
+                root.geom-dirty = true;
+                geom-timer.restart();
             }
-            if (event.text == Key.DownArrow) {
-                root.focused-index = min(root.focused-index + 1, root.control-count - 1);
-                root.focus-is-kbd = true;
-                return accept;
+        } else if (root.engaged-slider == 3) {
+            let next = up ? min(root.geom-gap-out + 1, 30) : max(root.geom-gap-out - 1, 0);
+            if (next != root.geom-gap-out) {
+                root.geom-gap-out = next;
+                if (!root.gap-out-init) { root.gap-out-init = true; return; }
+                root.pending-gap-out = next;
+                root.geom-dirty = false;
+                root.geom-dirty = true;
+                geom-timer.restart();
             }
-            if (event.text == Key.UpArrow) {
-                root.focused-index = max(root.focused-index - 1, 0);
-                root.focus-is-kbd = true;
-                return accept;
-            }
-            if (event.text == Key.LeftArrow) { root.menu-focus(); return accept; }
-            if (event.text == Key.Return || event.text == Key.Space) {
-                if (root.focused-index < root.border-files.length) {
-                    if (root.focused-index >= 0 && root.border-files.length > 0) {
-                        root.apply-border(root.focused-index, root.border-files[root.focused-index]);
-                    }
-                } else {
-                    root.engaged-slider = root.focused-index - root.border-files.length;
-                }
-                return accept;
-            }
-            return reject;
         }
     }
 
-    // Save/System pattern: no zone border on the root — it toggled
-    // width on focus gain and relayouted content between press and
-    // release, eating the first click. Keyboard marks live on rows/cards.
-    init => { fs.focus(); }
-    changed focus-gen => { fs.focus(); }
 
     // Keep pending/last in sync when Rust snaps sliders (pick→tune one-way)
     changed geom-size => {
@@ -263,11 +209,11 @@ export component BordersSection inherits Rectangle {
                     tag: root.border-tags[i];
                     accent: #8fd8ff;
                     active: i == root.active-index;
-                    keyboard-focused: i == root.focused-index && fs.has-focus && root.engaged-slider < 0;
+                    keyboard-focused: i == root.focused-index && root.has-focus && root.engaged-slider < 0;
                     index: i;
+                    // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
                     hover-moves-focus: false;
-                    toggled => { root.focused-index = i; root.focus-is-kbd = false; root.apply-border(i, root.border-files[i]); }
-                    focus-requested(idx) => { root.focused-index = idx; root.focus-is-kbd = false; }
+                    toggled => { root.apply-border(i, root.border-files[i]); }
                 }
 
                 if root.border-files.length == 0 : Text {
@@ -307,8 +253,8 @@ export component BordersSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.border-files.length && fs.has-focus) || hover-size.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 0 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.border-files.length && root.has-focus) || hover-size.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -319,7 +265,8 @@ export component BordersSection inherits Rectangle {
                     hover-size := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length; }
+                        // 1:1 legacy: mouse never steals keyboard focus — slider is mouse-direct
+                        clicked => { }
                     }
                     GeometrySlider {
                         width: 100%;
@@ -347,8 +294,8 @@ export component BordersSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.border-files.length + 1 && fs.has-focus) || hover-radius.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 1 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.border-files.length + 1 && root.has-focus) || hover-radius.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -359,7 +306,8 @@ export component BordersSection inherits Rectangle {
                     hover-radius := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length + 1; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     GeometrySlider {
                         width: 100%;
@@ -387,8 +335,8 @@ export component BordersSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.border-files.length + 2 && fs.has-focus) || hover-gap-in.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 2 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.border-files.length + 2 && root.has-focus) || hover-gap-in.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -399,7 +347,8 @@ export component BordersSection inherits Rectangle {
                     hover-gap-in := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length + 2; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     GeometrySlider {
                         width: 100%;
@@ -427,8 +376,8 @@ export component BordersSection inherits Rectangle {
                     // Card-like block: lights up on keyboard focus OR mouse
                     // hover (lit), reads "grabbed" when engaged. Heights mirror
                     // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.border-files.length + 3 && fs.has-focus) || hover-gap-out.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 3 && fs.has-focus;
+                    property <bool> lit: (root.focused-index == root.border-files.length + 3 && root.has-focus) || hover-gap-out.has-hover;
+                    property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
                     height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
                     animate height { duration: 250ms; easing: ease-in-out-back; }
                     border-width: 1px;
@@ -439,7 +388,8 @@ export component BordersSection inherits Rectangle {
                     hover-gap-out := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { root.focused-index = root.border-files.length + 3; }
+                        // 1:1 legacy: mouse never steals keyboard focus
+                        clicked => { }
                     }
                     GeometrySlider {
                         width: 100%;

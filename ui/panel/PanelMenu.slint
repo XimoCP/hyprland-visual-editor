@@ -1,8 +1,10 @@
-// HVE 2 — PanelMenu (mutating-window slice 1 stub).
+// HVE 2 — PanelMenu (presentational left rail).
 //
-// Left rail for the panel's internal navigation (R2). 5 sections, active
-// indicator, keyboard arrows, section-selected callback. Skeleton only —
-// visual refinement and focus detail land in later slices.
+// Left rail for the panel's internal navigation (R2): 5 sections, active
+// indicator and keyboard highlight ring. ALL keyboard handling for the
+// panel lives in PanelRoot's single `panel-kbd` FocusScope (HVE 1 pattern);
+// this component only renders the state it is given and reports mouse
+// selections. It owns no FocusScope.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -53,86 +55,61 @@ component MenuItem inherits Rectangle {
 export component PanelMenu inherits Rectangle {
     in property <int> active-section: 0;
     in property <bool> reduced-motion: false;
+    // Keyboard state owned by PanelRoot's single FocusScope. `menu-active`
+    // is true only while the rail owns the keyboard cursor; `focused-index`
+    // mirrors PanelRoot's `menu-focused-index`.
+    in property <bool> menu-active: false;
+    in property <int> focused-index: 0;
     // Keyboard R11 v3 render hook (headless tests): >= 0 pins the focused
     // item for a snapshot; < 0 = keyboard-driven (production).
     in property <int> preview-index: -1;
     callback section-selected(int);
-    callback back();
-    callback menu-left();
-    callback take-focus();
 
-    property <int> menu-index: root.preview-index >= 0 ? root.preview-index : 0;
+    property <int> menu-index: root.preview-index >= 0 ? root.preview-index : root.focused-index;
+    // Ring lights while the rail owns the keyboard cursor, or when the
+    // headless preview hook pins an item.
+    property <bool> keyboard-ring: (root.menu-active && root.preview-index < 0) || root.preview-index >= 0;
 
-    // Public focus entry: the content hands focus here with Left (R11 v3
-    // spatial model — rail ↔ content, no Tab cycling).
-    take-focus => { menu-fs.focus(); }
+    VerticalLayout {
+        spacing: 4px;
+        padding: 12px;
 
-    menu-fs := FocusScope {
-        width: 100%;
-        height: 100%;
-        key-pressed(event) => {
-            if (event.text == Key.Escape) { root.back(); return accept; }
-            if (event.text == Key.DownArrow) {
-                root.menu-index = min(root.menu-index + 1, 4);
-                return accept;
-            }
-            if (event.text == Key.UpArrow) {
-                root.menu-index = max(root.menu-index - 1, 0);
-                return accept;
-            }
-            if (event.text == Key.RightArrow || event.text == Key.Return || event.text == Key.Space) {
-                root.section-selected(root.menu-index);
-                return accept;
-            }
-            if (event.text == Key.LeftArrow) { root.menu-left(); return accept; }
-            return reject;
+        MenuItem {
+            label: "Save";
+            active: root.active-section == 0;
+            has-focus: root.keyboard-ring && root.menu-index == 0;
+            reduced-motion: root.reduced-motion;
+            // 1:1 legacy: mouse NEVER moves keyboard focus — it only changes section.
+            // menu-index stays where keyboard left it; active-section drives the highlight.
+            selected => { root.section-selected(0); }
         }
-
-        VerticalLayout {
-            spacing: 4px;
-            padding: 12px;
-
-            MenuItem {
-                label: "Save";
-                active: root.active-section == 0;
-                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 0;
-                reduced-motion: root.reduced-motion;
-                // Sync the keyboard ring with the mouse choice, then hand
-                // off to the content. Focus itself must land in the content
-                // section via focus-gen (PanelRoot bumps it on every
-                // section-selected) — menu-fs.focus() here would strand
-                // keyboard focus in the rail (has-focus would stay true and
-                // System/Filters content would never re-grab it).
-                selected => { root.menu-index = 0; root.section-selected(0); }
-            }
-            MenuItem {
-                label: "Borders";
-                active: root.active-section == 1;
-                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 1;
-                reduced-motion: root.reduced-motion;
-                selected => { root.menu-index = 1; root.section-selected(1); }
-            }
-            MenuItem {
-                label: "Motion";
-                active: root.active-section == 2;
-                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 2;
-                reduced-motion: root.reduced-motion;
-                selected => { root.menu-index = 2; root.section-selected(2); }
-            }
-            MenuItem {
-                label: "Filters";
-                active: root.active-section == 3;
-                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 3;
-                reduced-motion: root.reduced-motion;
-                selected => { root.menu-index = 3; root.section-selected(3); }
-            }
-            MenuItem {
-                label: "System";
-                active: root.active-section == 4;
-                has-focus: (menu-fs.has-focus || root.preview-index >= 0) && root.menu-index == 4;
-                reduced-motion: root.reduced-motion;
-                selected => { root.menu-index = 4; root.section-selected(4); }
-            }
+        MenuItem {
+            label: "Borders";
+            active: root.active-section == 1;
+            has-focus: root.keyboard-ring && root.menu-index == 1;
+            reduced-motion: root.reduced-motion;
+            selected => { root.section-selected(1); }
+        }
+        MenuItem {
+            label: "Motion";
+            active: root.active-section == 2;
+            has-focus: root.keyboard-ring && root.menu-index == 2;
+            reduced-motion: root.reduced-motion;
+            selected => { root.section-selected(2); }
+        }
+        MenuItem {
+            label: "Filters";
+            active: root.active-section == 3;
+            has-focus: root.keyboard-ring && root.menu-index == 3;
+            reduced-motion: root.reduced-motion;
+            selected => { root.section-selected(3); }
+        }
+        MenuItem {
+            label: "System";
+            active: root.active-section == 4;
+            has-focus: root.keyboard-ring && root.menu-index == 4;
+            reduced-motion: root.reduced-motion;
+            selected => { root.section-selected(4); }
         }
     }
 }

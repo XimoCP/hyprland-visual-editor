@@ -29,7 +29,13 @@ export component SavedThemeCard inherits Rectangle {
     callback open-rename(string);
     callback open-delete(string);
     callback open-refresh(string);
+    // Dead by design: the card body is trace-only (apply goes through the
+    // ▶ button), so nothing here ever emits focus-requested. Hover/mouse
+    // never moves keyboard focus — parity with legacy navigation.
     callback focus-requested(int);
+    callback mouse-trace(string);
+    // 1:1 legacy: clicking a card must NOT steal keyboard focus.
+    callback refocus();
 
     property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover || ref-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
     property <bool> _expanded: is-active || is-hovered || keyboard-focused;
@@ -44,9 +50,12 @@ export component SavedThemeCard inherits Rectangle {
     visible: true;
 
     // 1. Background layer for the card TouchArea (hover events)
+    // Trace-only body click: no focus move, no visual change. Hover/mouse
+    // never moves keyboard focus — parity with legacy navigation.
     card-ta := TouchArea {
         width: 100%;
         height: 100%;
+        clicked => { root.mouse-trace("save-card-body idx=" + root.index); root.refocus(); }
     }
 
     // 2. Glow and shadows (visuals)
@@ -121,6 +130,7 @@ export component SavedThemeCard inherits Rectangle {
                     disabled: root.is-busy || root.apply-in-progress;
                     clicked => {
                         root.apply-theme(root.theme-name);
+                        root.refocus();
                     }
                 }
 
@@ -130,7 +140,7 @@ export component SavedThemeCard inherits Rectangle {
                     bg-color: HveColors.accent-purple;
                     hover-bg-color: HveColors.accent-purple.transparentize(0.2);
                     tooltip-text: root.refresh-text;
-                    clicked => { root.open-refresh(root.theme-name); }
+                    clicked => { root.open-refresh(root.theme-name); root.refocus(); }
                 }
 
                 // Rename
@@ -139,7 +149,7 @@ export component SavedThemeCard inherits Rectangle {
                     bg-color: HveColors.accent-amber;
                     hover-bg-color: HveColors.accent-amber.transparentize(0.2);
                     tooltip-text: root.rename-text;
-                    clicked => { root.open-rename(root.theme-name); }
+                    clicked => { root.open-rename(root.theme-name); root.refocus(); }
                 }
 
                 // Delete
@@ -148,7 +158,7 @@ export component SavedThemeCard inherits Rectangle {
                     bg-color: #f87171;
                     hover-bg-color: #f87171.transparentize(0.2);
                     tooltip-text: root.delete-text;
-                    clicked => { root.open-delete(root.theme-name); }
+                    clicked => { root.open-delete(root.theme-name); root.refocus(); }
                 }
             }
         }
