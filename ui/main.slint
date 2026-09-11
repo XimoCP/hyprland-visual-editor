@@ -140,6 +140,16 @@ export component MainWindow inherits Window {
     in-out property <bool> expanded: false;
     in-out property <int> focused-card: 0;
 
+    // ── Panel responsive breakpoint (two settings panes side by side) ──
+    // The settings panel is 80% of the window wide and the rail takes 160px
+    // +1px divider, so the section content width is `0.8 * window - 161px`.
+    // Switch to two panes when the section has at least ~520px to split;
+    // below that the panes stack into one column. Computed from the WINDOW
+    // width (external, not layout-derived) so it cannot loop with the panel
+    // layout. Single source of truth — tune the threshold here.
+    property <length> panel-two-col-min-window: 852px;
+    property <bool> panel-two-col: root.width >= root.panel-two-col-min-window;
+
     // ── Shell chrome i18n strings (nav-shell spec R5) ──
     in property <string> shell-brand-text: "HVE";
     in property <string> shell-brand-subtitle: "Hyprland Visual Editor";
@@ -307,6 +317,7 @@ export component MainWindow inherits Window {
         gallery-top-open <=> root.gallery-top-open;
         gallery-bottom-open <=> root.gallery-bottom-open;
         panel-section: root.panel-section;
+        panel-two-col: root.panel-two-col;
         panel-kbd-preview-index: root.panel-kbd-preview-index;
         panel-kbd-preview-engaged: root.panel-kbd-preview-engaged;
         is-mutating: root.is-mutating;

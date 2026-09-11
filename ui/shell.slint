@@ -109,6 +109,9 @@ export component ShellRoot inherits Rectangle {
 
     // ── Mutating panel (slice 1 skeleton + slice 2 Save + slice 3 Borders pick + slice 5 Motion) ──
     in property <int> panel-section: 0;
+    // Responsive breakpoint computed from the window width (see ui/main.slint):
+    // wide → settings sections split into two panes, narrow → single column.
+    in property <bool> panel-two-col: false;
     // Keyboard R11 v3 render hooks (headless tests): -1/false = keyboard-driven.
     in property <int> panel-kbd-preview-index: -1;
     in property <bool> panel-kbd-preview-engaged: false;
@@ -445,6 +448,7 @@ export component ShellRoot inherits Rectangle {
                     height: 100%;
                     opacity: 1.0;
                     section: root.panel-section;
+                    two-col: root.panel-two-col;
                     open: root.is-panel-open;
                     kbd-preview-index: root.panel-kbd-preview-index;
                     kbd-preview-engaged: root.panel-kbd-preview-engaged;

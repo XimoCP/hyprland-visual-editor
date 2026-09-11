@@ -1,14 +1,16 @@
-// HVE 2 — SaveSection (Save classic restore, tranche A).
+// HVE 2 — SaveSection (Save classic restore, two-pane).
 //
-// Save row (LineEdit + Save, Enter submits, Esc leaves panel unchanged —
-// Esc is handled by ShellRoot/shell-kbd, mirrored here) plus the classic
-// list from master:ui/modules.slint ThemesModule, adapted: old-style
-// 48px search box, ◈ empty state, SavedThemeCard rows (expand +
-// active/hover highlights + ▶/↻/✎/✕ buttons). Rename/delete/refresh
-// confirm dialogs + Rust handlers arrive in tranche B; the buttons emit
-// *-requested callbacks (no-op until wired).
-// Dual-sync save writes BOTH ThemeManagers then sync_cards +
-// refresh_mosaic_page so Gallery shows the new card instantly, no restart.
+// Two INDEPENDENT scroll regions:
+//   • Form pane — "Save Current Look" (LineEdit + Save button).
+//   • List pane — "My Themes" title + search + SavedThemeCard rows.
+// Wide section → panes side by side; narrow → stacked. Each pane owns its
+// ScrollView. Keyboard note: the arrow cursor lives ONLY on the theme list
+// (the form is a LineEdit reached with Tab), so Save stays one arrow block
+// for ← / → purposes. Rename/delete/refresh/overwrite dialogs overlay the
+// whole section.
+//
+// Dual-sync save writes BOTH ThemeManagers then sync_cards + refresh_mosaic_page
+// so Gallery shows the new card instantly, no restart.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -72,6 +74,261 @@ component ConfirmDialog inherits Rectangle {
     }
 }
 
+// ─── Form pane: save-current-look input. Own ScrollView. ───
+component SaveFormPane inherits Rectangle {
+    in property <string> placeholder: "Theme name…";
+    in property <string> save-label: "Save";
+    in property <string> error-text: "";
+    in-out property <string> theme-name: "";
+    callback save-theme(string);
+
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        // Fills the pane Rectangle by default (no explicit height).
+        VerticalLayout {
+            width: 100%;
+            alignment: start;
+            spacing: SkwdTokens.spacing-12;
+            padding: SkwdTokens.spacing-16;
+
+            Text {
+                text: "Save Current Look";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-16;
+                font-weight: 700;
+                color: HveColors.accent-cyan;
+            }
+            Text {
+                text: "Save your current setup as a theme. It appears instantly in the Gallery — no restart.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // Input row: LineEdit + Save button (Tab-focusable, icy-cyan when focused)
+            HorizontalLayout {
+                spacing: SkwdTokens.spacing-8;
+                height: 36px;
+
+                save-line-wrap := Rectangle {
+                    horizontal-stretch: 1;
+                    height: 36px;
+                    background: HveColors.bg-card;
+                    border-radius: SkwdTokens.radius-8;
+                    border-width: save-input.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+
+                    save-input := LineEdit {
+                        x: 4px;
+                        y: 4px;
+                        width: parent.width - 8px;
+                        height: parent.height - 8px;
+                        placeholder-text: root.placeholder;
+                        text <=> root.theme-name;
+                        font-size: SkwdTokens.size-13;
+                        accepted(text) => {
+                            if (text != "") {
+                                root.save-theme(text);
+                            }
+                        }
+                    }
+                }
+
+                save-btn := Rectangle {
+                    width: 84px;
+                    height: 36px;
+                    background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                    border-radius: SkwdTokens.radius-8;
+                    border-width: 0px;
+                    border-color: #8fd8ff;
+                    animate background { duration: 120ms; }
+
+                    Text {
+                        text: root.save-label;
+                        color: HveColors.bg-dark;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-13;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    save-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (root.theme-name != "") {
+                                root.save-theme(root.theme-name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.error-text != "" : Text {
+                text: root.error-text;
+                color: HveColors.accent-red;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                height: 1px;
+                background: HveColors.border;
+            }
+
+            Text {
+                text: "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted.transparentize(0.4);
+            }
+        }
+    }
+}
+
+// ─── List pane: "My Themes" title + search + SavedThemeCard rows. ───
+component SaveListPane inherits Rectangle {
+    in property <string> list-title: "My Themes";
+    in property <string> search-placeholder: "Search themes...";
+    in property <string> empty-text: "No themes yet.";
+    in property <string> apply-text: "Apply";
+    in property <string> refresh-text: "Refresh";
+    in property <string> rename-text: "Rename";
+    in property <string> delete-text: "Delete";
+    in property <[string]> saved-names;
+    in property <[string]> saved-ats;
+    in property <[bool]> saved-actives;
+    in property <int> saved-active-index: -1;
+    in property <int> focused-index: -1;
+    in property <bool> has-focus: false;
+    in-out property <string> search-query: "";
+    callback apply-saved-theme(int);
+    callback open-rename(string);
+    callback open-delete(string);
+    callback open-refresh(string);
+    callback search-query-changed(string);
+    callback focus-requested(int);
+    callback mouse-trace(string);
+
+    background: transparent;
+    clip: true;
+
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: SkwdTokens.spacing-12;
+        padding: SkwdTokens.spacing-16;
+
+        Text {
+            text: root.list-title;
+            font-family: SkwdTokens.font-heading;
+            font-size: SkwdTokens.size-14;
+            font-weight: 700;
+            color: HveColors.text;
+        }
+
+        // Search box, same 48px card style as the save block (classic)
+        if (root.saved-names.length > 0) : Rectangle {
+            height: 48px;
+            border-radius: 10px;
+            background: HveColors.bg-card;
+            border-width: 1px;
+            border-color: HveColors.border;
+
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 8px;
+
+                LineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: root.search-placeholder;
+                    font-size: 12px;
+                    text <=> root.search-query;
+                    edited => { root.search-query-changed(root.search-query); }
+                }
+            }
+        }
+
+        // Keyboard R11 v2: this list is the section's primary group. Arrows,
+        // Enter/Space and Esc are dispatched by PanelRoot's panel-kbd; the
+        // ScrollView follows the Rust-owned focused index.
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            property <length> focus-y:
+                root.focused-index * 68px
+                + (root.saved-active-index >= 0 && root.saved-active-index < root.focused-index ? 44px : 0px)
+                + (root.saved-active-index == root.focused-index ? 44px : 0px);
+            viewport-y: root.focused-index >= 0
+                ? (0px - max(0px, self.focus-y + 28px - self.height / 2))
+                : 0px;
+            animate viewport-y { duration: 250ms; easing: ease-out; }
+
+            VerticalLayout {
+                spacing: SkwdTokens.spacing-12;
+
+                if (root.saved-names.length == 0) : Rectangle {
+                    height: 120px;
+
+                    // Trace-only: empty clicks never reach Rust otherwise.
+                    empty-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.mouse-trace("save-empty-clicked"); }
+                    }
+
+                    VerticalLayout {
+                        spacing: 8px;
+                        alignment: center;
+
+                        Text {
+                            text: "◈";
+                            color: HveColors.text-muted;
+                            font-size: 32px;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: root.empty-text;
+                            color: HveColors.text-muted;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                for name[i] in root.saved-names : SavedThemeCard {
+                    theme-name: name;
+                    theme-saved-at: root.saved-ats[i];
+                    is-active: root.saved-actives[i];
+                    keyboard-focused: root.focused-index == i && root.has-focus;
+                    accent: HveColors.accent-pink;
+                    apply-text: root.apply-text;
+                    refresh-text: root.refresh-text;
+                    rename-text: root.rename-text;
+                    delete-text: root.delete-text;
+                    index: i;
+                    apply-theme(theme-name) => { root.apply-saved-theme(i); }
+                    open-rename(theme-name) => { root.open-rename(theme-name); }
+                    open-delete(theme-name) => { root.open-delete(theme-name); }
+                    open-refresh(theme-name) => { root.open-refresh(theme-name); }
+                    // Intentionally unwired: the card body is trace-only and never
+                    // emits focus-requested, so the mouse cannot steal the
+                    // keyboard's focused-index.
+                    focus-requested(idx) => { root.focus-requested(idx); }
+                    mouse-trace(reason) => { root.mouse-trace(reason); }
+                }
+            }
+        }
+    }
+}
+
 export component SaveSection inherits Rectangle {
     in property <string> placeholder: "Theme name…";
     in property <string> save-label: "Save";
@@ -116,247 +373,127 @@ export component SaveSection inherits Rectangle {
 
     background: transparent;
 
+    // Responsive split from the window width (ShellRoot), never from
+    // root.width (binding loop). Wide → form | list; narrow → stacked.
+    in property <bool> two-col: false;
+
     // Esc-to-close (including while the LineEdit has focus) is handled by
     // PanelRoot's panel-kbd, the single ancestor FocusScope.
     VerticalLayout {
         width: 100%;
         height: 100%;
-        spacing: SkwdTokens.spacing-12;
-        padding: SkwdTokens.spacing-16;
+        spacing: 0px;
 
-        // Fixed header block (stretch 0) — the theme list below takes the
-        // leftover height (alignment:start + ScrollView = collapsed list:
-        // a ScrollView contributes no preferred height to its FocusScope).
-        VerticalLayout {
-        spacing: SkwdTokens.spacing-12;
-        vertical-stretch: 0;
-
-        Text {
-            text: "Save Current Look";
-            font-family: SkwdTokens.font-heading;
-            font-size: SkwdTokens.size-16;
-            font-weight: 700;
-            color: HveColors.accent-cyan;
-        }
-        Text {
-            text: "Save your current setup as a theme. It appears instantly in the Gallery — no restart.";
-            font-family: SkwdTokens.font-body;
-            font-size: SkwdTokens.size-12;
-            color: HveColors.text-muted;
-            wrap: word-wrap;
-        }
-
-        // Input row: LineEdit + Save button (keyboard-focusable via Tab, icy-cyan when focused)
-        HorizontalLayout {
-            spacing: SkwdTokens.spacing-8;
-            height: 36px;
-
-            // LineEdit wrapper with icy-cyan focus border (R11 focus always visible)
-            save-line-wrap := Rectangle {
-                horizontal-stretch: 1;
-                height: 36px;
-                background: HveColors.bg-card;
-                border-radius: SkwdTokens.radius-8;
-                border-width: save-input.has-focus ? 1px : 0px;
-                border-color: #8fd8ff;
-
-                save-input := LineEdit {
-                    x: 4px;
-                    y: 4px;
-                    width: parent.width - 8px;
-                    height: parent.height - 8px;
-                    placeholder-text: root.placeholder;
-                    text <=> root.theme-name;
-                    font-size: SkwdTokens.size-13;
-                    // Enter submits — same as Save button
-                    accepted(text) => {
-                        if (text != "") {
-                            root.save-theme(text);
-                        }
-                    }
-                }
-            }
-
-            // Save button (mouse; keyboard Enter submits from the LineEdit).
-            save-btn := Rectangle {
-                width: 84px;
-                height: 36px;
-                background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
-                border-radius: SkwdTokens.radius-8;
-                border-width: 0px;
-                border-color: #8fd8ff;
-                animate background { duration: 120ms; }
-
-                Text {
-                    text: root.save-label;
-                    color: HveColors.bg-dark;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-13;
-                    font-weight: 700;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-
-                save-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => {
-                        if (root.theme-name != "") {
-                            root.save-theme(root.theme-name);
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.error-text != "" : Text {
-            text: root.error-text;
-            color: HveColors.accent-red;
-            font-family: SkwdTokens.font-body;
-            font-size: SkwdTokens.size-12;
-            wrap: word-wrap;
-        }
-
-        // ── Divider (classic) ──
-        Rectangle {
-            height: 1px;
-            background: HveColors.border;
-            vertical-stretch: 0;
-        }
-
-        Text {
-            text: "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section";
-            font-family: SkwdTokens.font-body;
-            font-size: SkwdTokens.size-12;
-            color: HveColors.text-muted.transparentize(0.4);
-        }
-
-        // "My Themes" list title
-        Text {
-            text: root.list-title;
-            font-family: SkwdTokens.font-heading;
-            font-size: SkwdTokens.size-14;
-            font-weight: 700;
-            color: HveColors.text;
-        }
-
-        // ── Search box, same 48px card style as the save block (classic) ──
-        if (root.saved-names.length > 0) : Rectangle {
-            height: 48px;
-            border-radius: 10px;
-            background: HveColors.bg-card;
-            border-width: 1px;
-            border-color: HveColors.border;
-
-            HorizontalLayout {
-                padding: 8px;
-                spacing: 8px;
-
-                LineEdit {
-                    horizontal-stretch: 1;
-                    placeholder-text: root.search-placeholder;
-                    font-size: 12px;
-                    text <=> root.search-query;
-                    edited => { root.search-query-changed(root.search-query); }
-                }
-            }
-        }
-        }
-
-        // ── Theme cards (classic SavedThemeCard rows) ──
-        // Keyboard R11 v2: this list is the section's primary group. Arrows,
-        // Enter/Space and Esc are all dispatched by PanelRoot's panel-kbd;
-        // the ScrollView just follows the Rust-owned focused index.
-        scroll := ScrollView {
+        // Two independent panes. Wide: side by side. Narrow: stacked.
+        if root.two-col : HorizontalLayout {
+            width: 100%;
             vertical-stretch: 1;
-                width: 100%;
-                height: 100%;
-                property <length> focus-y:
-                    root.focused-index * 68px
-                    + (root.saved-active-index >= 0 && root.saved-active-index < root.focused-index ? 44px : 0px)
-                    + (root.saved-active-index == root.focused-index ? 44px : 0px);
-                viewport-y: root.focused-index >= 0
-                    ? (0px - max(0px, self.focus-y + 28px - self.height / 2))
-                    : 0px;
-                animate viewport-y { duration: 250ms; easing: ease-out; }
+            spacing: 0px;
 
-                VerticalLayout {
-                    spacing: SkwdTokens.spacing-12;
-
-                if (root.saved-names.length == 0) : Rectangle {
-                height: 120px;
-
-                // Trace-only: empty clicks never reach Rust otherwise.
-                // No focus move, no visual change — the TouchArea is transparent.
-                empty-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    clicked => { root.mouse-trace("save-empty-clicked"); }
-                }
-
-                VerticalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    Text {
-                        text: "◈";
-                        color: HveColors.text-muted;
-                        font-size: 32px;
-                        horizontal-alignment: center;
-                    }
-
-                    Text {
-                        text: root.empty-text;
-                        color: HveColors.text-muted;
-                        font-size: 13px;
-                        horizontal-alignment: center;
-                        wrap: word-wrap;
-                    }
-                }
+            SaveFormPane {
+                horizontal-stretch: 1;
+                placeholder: root.placeholder;
+                save-label: root.save-label;
+                error-text: root.error-text;
+                theme-name <=> root.theme-name;
+                save-theme(name) => { root.save-theme(name); }
             }
 
-            for name[i] in root.saved-names : SavedThemeCard {
-                theme-name: name;
-                theme-saved-at: root.saved-ats[i];
-                is-active: root.saved-actives[i];
-                // Gate on `has-focus` like every other section: moving
-                // to the rail with Left must drop the mark and collapse the
-                // row (the index stays — re-entry re-expands it).
-                keyboard-focused: root.focused-index == i && root.has-focus;
-                accent: HveColors.accent-pink;
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+
+            SaveListPane {
+                horizontal-stretch: 1;
+                list-title: root.list-title;
+                search-placeholder: root.search-placeholder;
+                empty-text: root.empty-text;
                 apply-text: root.apply-text;
                 refresh-text: root.refresh-text;
                 rename-text: root.rename-text;
                 delete-text: root.delete-text;
-                index: i;
-                apply-theme(theme-name) => { root.apply-saved-theme(i); }
-                open-rename(theme-name) => {
-                    root.mouse-trace("save-open-rename name=" + theme-name);
-                    root.rename-input = theme-name;
-                    root.dialog-target = theme-name;
+                saved-names: root.saved-names;
+                saved-ats: root.saved-ats;
+                saved-actives: root.saved-actives;
+                saved-active-index: root.saved-active-index;
+                focused-index: root.focused-index;
+                has-focus: root.has-focus;
+                search-query <=> root.search-query;
+                apply-saved-theme(idx) => { root.apply-saved-theme(idx); }
+                open-rename(name) => {
+                    root.mouse-trace("save-open-rename name=" + name);
+                    root.rename-input = name;
+                    root.dialog-target = name;
                     root.dialog-mode = "rename";
                 }
-                open-delete(theme-name) => {
-                    root.mouse-trace("save-open-delete name=" + theme-name);
-                    root.dialog-target = theme-name;
+                open-delete(name) => {
+                    root.mouse-trace("save-open-delete name=" + name);
+                    root.dialog-target = name;
                     root.dialog-mode = "delete";
                 }
-                open-refresh(theme-name) => {
-                    root.mouse-trace("save-open-refresh name=" + theme-name);
-                    root.dialog-target = theme-name;
+                open-refresh(name) => {
+                    root.mouse-trace("save-open-refresh name=" + name);
+                    root.dialog-target = name;
                     root.dialog-mode = "refresh";
                 }
-                // Intentionally unwired: the card body is trace-only and never
-                // emits focus-requested, so the mouse cannot steal the
-                // keyboard's focused-index. Hover/mouse never moves keyboard
-                // focus — parity with legacy navigation.
+                search-query-changed(q) => { root.search-query-changed(q); }
                 focus-requested(idx) => { root.focus-requested(idx); }
                 mouse-trace(reason) => { root.mouse-trace(reason); }
             }
+        }
+        if !root.two-col : VerticalLayout {
+            width: 100%;
+            vertical-stretch: 1;
+            spacing: 0px;
+
+            SaveFormPane {
+                vertical-stretch: 1;
+                placeholder: root.placeholder;
+                save-label: root.save-label;
+                error-text: root.error-text;
+                theme-name <=> root.theme-name;
+                save-theme(name) => { root.save-theme(name); }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+
+            SaveListPane {
+                vertical-stretch: 1;
+                list-title: root.list-title;
+                search-placeholder: root.search-placeholder;
+                empty-text: root.empty-text;
+                apply-text: root.apply-text;
+                refresh-text: root.refresh-text;
+                rename-text: root.rename-text;
+                delete-text: root.delete-text;
+                saved-names: root.saved-names;
+                saved-ats: root.saved-ats;
+                saved-actives: root.saved-actives;
+                saved-active-index: root.saved-active-index;
+                focused-index: root.focused-index;
+                has-focus: root.has-focus;
+                search-query <=> root.search-query;
+                apply-saved-theme(idx) => { root.apply-saved-theme(idx); }
+                open-rename(name) => {
+                    root.mouse-trace("save-open-rename name=" + name);
+                    root.rename-input = name;
+                    root.dialog-target = name;
+                    root.dialog-mode = "rename";
                 }
+                open-delete(name) => {
+                    root.mouse-trace("save-open-delete name=" + name);
+                    root.dialog-target = name;
+                    root.dialog-mode = "delete";
+                }
+                open-refresh(name) => {
+                    root.mouse-trace("save-open-refresh name=" + name);
+                    root.dialog-target = name;
+                    root.dialog-mode = "refresh";
+                }
+                search-query-changed(q) => { root.search-query-changed(q); }
+                focus-requested(idx) => { root.focus-requested(idx); }
+                mouse-trace(reason) => { root.mouse-trace(reason); }
             }
         }
+    }
 
     // ── Rename dialog (old-style 300x180, master 1:1) ──
     if root.dialog-mode == "rename" : Rectangle {

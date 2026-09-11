@@ -1,15 +1,15 @@
-// HVE 2 — SystemSection (mutating-window R7 + R11).
+// HVE 2 — SystemSection (mutating-window R7 + R11, two-pane).
 //
-// Reuses SettingsPanel row patterns and their existing callbacks
-// (auto-minimize + timer Off/2/4/6/8/10s, language EN/ES, keyboard shortcuts,
-// autostart, theme preference, reset presets, restart — all wired in
-// callbacks.rs via on_toggle_system etc.), plus system ON/OFF status block
-// + About HVE content from hidden HomeModule (status, About accordion via
-// existing tr.rs keys — REUSE, do not rewrite). Tiling toggle stays
-// EXACTLY as-is (deferred window-rules/fullscreen-redesign).
+// Two INDEPENDENT scroll regions:
+//   • Settings pane — System ON/OFF + rows (retardo, language, autostart,
+//     theme, restart). Reuses SettingsPanel patterns + callbacks.rs handlers.
+//   • About pane    — About HVE accordion (reused from HomeModule via tr.rs).
+// Wide section → panes side by side; narrow → stacked. Each pane owns its
+// ScrollView. The keyboard stays the single linear sequence owned by
+// PanelRoot's panel-kbd: rows 0..split-1 target the settings pane, the About
+// row (split) targets the About pane. ← / → jump one panel.
 //
-// Keyboard R11: rows navigable by arrows/Tab (no trap), toggles Enter/Space,
-// icy-cyan #8fd8ff focus.
+// Tiling toggle stays EXACTLY as-is (deferred window-rules/fullscreen-redesign).
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -17,6 +17,384 @@ import { ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { ActivationCard, AccordionCard, AboutItem } from "../../components.slint";
+
+// ─── Settings pane: activation + settings rows. Own ScrollView + scroll memory. ───
+component SystemSettingsPane inherits Rectangle {
+    in property <bool> system-active: false;
+    in property <bool> auto-minimize: true;
+    in property <int> minimize-seconds: 5;
+    in property <string> language: "en";
+    in property <bool> autostart: false;
+    in property <string> theme: "system";
+    in property <bool> restart-required: false;
+    in property <string> restart-banner-text: "⚠ Restart required";
+    in property <string> restart-button-text: "Restart";
+    in property <string> auto-minimize-label: "Auto-minimize";
+    in property <string> timer-label: "Timer:";
+    in property <string> language-label: "Language";
+    in property <string> autostart-label: "Autostart";
+    in property <string> theme-label: "Theme";
+    in property <int> focused-row: 0;
+    in property <bool> has-focus: false;
+    in property <bool> follow: false;
+    in-out property <int> mouse-row: -1;
+    callback toggle-system(bool);
+    callback toggle-auto-minimize(bool);
+    callback change-minimize-seconds(int);
+    callback change-language(string);
+    callback toggle-autostart(bool);
+    callback change-theme(string);
+    callback restart-app();
+
+    property <length> saved-scroll-y: 0px;
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        // Fills the pane Rectangle by default (no explicit height). Scroll
+        // follows the keyboard focus (rows ~36-40px + 10 spacing → pitch 46px).
+        property <length> focus-y: root.focused-row * 46px;
+        viewport-y: root.follow ? (root.focused-row >= 0
+            ? (0px - max(0px, self.focus-y + 18px - self.height / 2))
+            : 0px) : root.saved-scroll-y;
+        animate viewport-y { duration: 250ms; easing: ease-out; }
+        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 16px;
+            padding-bottom: 16px;
+            spacing: 14px;
+            alignment: start;
+
+            // 0 — System ON/OFF status block (reuse ActivationCard pattern, icy focus)
+            Rectangle {
+                // 2px inset so the card does not paint over the wrapper's icy
+                // focus ring (with `alignment: start` the wrapper would
+                // otherwise collapse to the card size and hide the ring).
+                height: 88px;
+                border-width: 1px;
+                border-color: (root.focused-row == 0 && root.has-focus) || root.mouse-row == 0 ? #8fd8ff : transparent;
+                border-radius: SkwdTokens.radius-8;
+                ActivationCard {
+                    width: parent.width - 4px;
+                    x: 2px;
+                    y: 2px;
+                    active: root.system-active;
+                    card-title: "System Activation";
+                    active-text: "Visual Editor Enabled";
+                    inactive-text: "Visual Editor Disabled";
+                    toggled(v) => { root.mouse-row = 0; root.toggle-system(v); }
+                }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+
+            // Restart banner when required
+            if root.restart-required : Rectangle {
+                height: 32px;
+                border-radius: 8px;
+                background: HveColors.accent-amber.transparentize(0.85);
+                border-width: 1px;
+                border-color: HveColors.accent-amber.transparentize(0.4);
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 8px;
+                    spacing: 8px;
+                    Text {
+                        text: root.restart-banner-text;
+                        color: HveColors.accent-amber;
+                        font-size: 12px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 60px; height: 24px; border-radius: 6px;
+                        background: HveColors.bg-card;
+                        Text { text: root.restart-button-text; color: HveColors.accent-amber; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } changed has-hover => { if (self.has-hover) { root.mouse-row = 6; } } }
+                    }
+                }
+            }
+
+            // 1+2 — Retardo al ocultar — hover sobre chips/toggle no apaga fila
+            retardo-wrap := Rectangle {
+                property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && root.has-focus) || root.mouse-row == 1 || root.mouse-row == 2 || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
+                height: 40px;
+                border-radius: 8px;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
+                border-width: self.lit ? 1px : 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                hover-retardo := TouchArea {
+                    width: 100%; height: 100%;
+                    clicked => { root.mouse-row = 1; }
+                    changed has-hover => { if (self.has-hover) { root.mouse-row = 1; } }
+                }
+                HorizontalLayout {
+                    padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
+                    Text { text: root.auto-minimize-label; color: HveColors.text; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide; }
+                    HorizontalLayout {
+                        spacing: 4px; alignment: center;
+                        visible: root.auto-minimize;
+                        Rectangle {
+                            width: 40px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == 0 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "Off"; color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            sec0-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(0); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
+                        }
+                        Rectangle {
+                            width: 30px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == 2 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "2"; color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            sec2-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(2); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
+                        }
+                        Rectangle {
+                            width: 30px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == 4 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "4"; color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            sec4-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(4); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
+                        }
+                        Rectangle {
+                            width: 30px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == 6 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "6"; color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            sec6-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(6); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
+                        }
+                        Rectangle {
+                            width: 30px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == 8 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "8"; color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            sec8-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(8); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
+                        }
+                        Rectangle {
+                            width: 30px; height: 28px; border-radius: 6px;
+                            background: root.minimize-seconds == 10 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "10"; color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            sec10-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(10); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
+                        }
+                        Text { text: "s"; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        width: 40px; height: 28px;
+                        Rectangle {
+                            width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2;
+                            background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
+                            Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.auto-minimize ? parent.width - self.width - 3px : 3px; y: 3px; animate x { duration: 150ms; easing: ease-out; } }
+                            retardo-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 1; root.toggle-auto-minimize(!root.auto-minimize); } changed has-hover => { if (self.has-hover) { root.mouse-row = 1; } } }
+                        }
+                    }
+                }
+            }
+
+            // 3 — Language EN/ES
+            lang-wrap := Rectangle {
+                property <bool> lit: (root.focused-row == 3 && root.has-focus) || root.mouse-row == 3 || hover-lang.has-hover || en-ta.has-hover || es-ta.has-hover;
+                height: 40px;
+                border-radius: 8px;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
+                border-width: self.lit ? 1px : 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                hover-lang := TouchArea {
+                    width: 100%; height: 100%;
+                    clicked => { root.mouse-row = 3; }
+                    changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } }
+                }
+                HorizontalLayout {
+                    padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
+                    Text { text: root.language-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; min-width: 0px; overflow: elide; }
+                    Rectangle {
+                        width: 60px; height: 28px; border-radius: 6px; background: HveColors.bg-card; border-width: 1px; border-color: HveColors.border;
+                        HorizontalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                width: 50%; height: 100%; border-radius: root.language == "en" ? 5px : 0px; background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
+                                Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                en-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 3; root.change-language("en"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } } }
+                            }
+                            Rectangle {
+                                width: 50%; height: 100%; border-radius: root.language == "es" ? 5px : 0px; background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
+                                Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                es-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 3; root.change-language("es"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4 — Autostart
+            autostart-wrap := Rectangle {
+                property <bool> lit: (root.focused-row == 4 && root.has-focus) || root.mouse-row == 4 || hover-autostart.has-hover || autostart-toggle-ta.has-hover;
+                height: 40px;
+                border-radius: 8px;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
+                border-width: self.lit ? 1px : 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                hover-autostart := TouchArea {
+                    width: 100%; height: 100%;
+                    clicked => { root.mouse-row = 4; }
+                    changed has-hover => { if (self.has-hover) { root.mouse-row = 4; } }
+                }
+                HorizontalLayout {
+                    padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
+                    Text { text: root.autostart-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; min-width: 0px; overflow: elide; }
+                    Rectangle {
+                        width: 40px; height: 28px;
+                        Rectangle {
+                            width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2; background: root.autostart ? HveColors.accent-cyan : HveColors.border;
+                            Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.autostart ? parent.width - self.width - 3px : 3px; y: 3px; }
+                            autostart-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 4; root.toggle-autostart(!root.autostart); } changed has-hover => { if (self.has-hover) { root.mouse-row = 4; } } }
+                        }
+                    }
+                }
+            }
+
+            // 5 — Theme preference
+            theme-wrap := Rectangle {
+                property <bool> lit: (root.focused-row == 5 && root.has-focus) || root.mouse-row == 5 || hover-theme.has-hover || theme-dark-ta.has-hover || theme-light-ta.has-hover || theme-system-ta.has-hover;
+                height: 40px;
+                border-radius: 8px;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
+                border-width: self.lit ? 1px : 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                hover-theme := TouchArea {
+                    width: 100%; height: 100%;
+                    clicked => { root.mouse-row = 5; }
+                    changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } }
+                }
+                HorizontalLayout {
+                    padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
+                    Text { text: root.theme-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; min-width: 0px; overflow: elide; }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Rectangle {
+                            width: 56px; height: 28px; border-radius: 6px;
+                            background: root.theme == "dark" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "dark"; color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            theme-dark-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("dark"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
+                        }
+                        Rectangle {
+                            width: 56px; height: 28px; border-radius: 6px;
+                            background: root.theme == "light" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.theme == "light" ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "light"; color: root.theme == "light" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            theme-light-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("light"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
+                        }
+                        Rectangle {
+                            width: 56px; height: 28px; border-radius: 6px;
+                            background: root.theme == "system" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
+                            border-width: 1px;
+                            border-color: root.theme == "system" ? HveColors.accent-cyan : HveColors.border;
+                            Text { text: "system"; color: root.theme == "system" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            theme-system-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("system"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
+                        }
+                    }
+                }
+            }
+
+            // 6 — Restart (only when restart required)
+            if root.restart-required : Rectangle {
+                height: 36px; border-radius: 8px;
+                background: HveColors.accent-amber.transparentize(0.85);
+                border-width: root.focused-row == 6 && root.has-focus ? 1px : 1px;
+                border-color: (root.focused-row == 6 && root.has-focus) || root.mouse-row == 6 ? #8fd8ff : HveColors.accent-amber.transparentize(0.4);
+                Text { text: "Restart"; color: HveColors.accent-amber; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
+            }
+
+            Text {
+                text: "↑↓ navigate • ←→ switch panel • Enter/Space toggle • Esc back";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted.transparentize(0.4);
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+// ─── About pane: About HVE accordion. Own ScrollView. ───
+component SystemAboutPane inherits Rectangle {
+    in property <string> about-title: "About HVE";
+    in property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
+    in property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in property <[AboutItem]> about-items;
+    in property <string> tree-label: "Project structure";
+    in property <[string]> tree-paths;
+    in property <[string]> tree-descs;
+    in property <string> tree-path-max: "";
+    in property <string> docs-label: "View documentation";
+    // Row index of the About block (6 without the restart row, 7 with it).
+    in property <int> about-row: 6;
+    in property <int> focused-row: 0;
+    in property <bool> has-focus: false;
+    in property <bool> follow: false;
+    in-out property <int> mouse-row: -1;
+    in-out property <bool> about-expanded: false;
+    callback open-docs();
+
+    property <length> saved-scroll-y: 0px;
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        // Fills the pane Rectangle by default (no explicit height).
+        property <length> focus-y: 0px;
+        viewport-y: root.follow ? 0px : root.saved-scroll-y;
+        animate viewport-y { duration: 250ms; easing: ease-out; }
+        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+            alignment: start;
+
+            Rectangle {
+                // 2px inset so the accordion does not paint over the wrapper's
+                // icy focus ring (same reason as the activation wrapper).
+                height: about-acc.height + 4px;
+                border-width: 1px;
+                border-color: (root.focused-row == root.about-row && root.has-focus) || root.mouse-row == root.about-row ? #8fd8ff : transparent;
+                border-radius: SkwdTokens.radius-8;
+                about-acc := AccordionCard {
+                    width: parent.width - 4px;
+                    x: 2px;
+                    y: 2px;
+                    card-title: root.about-title;
+                    icon-text: "💡";
+                    accent: HveColors.accent-cyan;
+                    border: HveColors.border;
+                    short-desc: root.about-short;
+                    full-desc: root.about-full;
+                    about-items: root.about-items;
+                    tree-label: root.tree-label;
+                    tree-paths: root.tree-paths;
+                    tree-descs: root.tree-descs;
+                    tree-path-max: root.tree-path-max;
+                    docs-label: root.docs-label;
+                    expanded: root.about-expanded;
+                    toggled => { root.mouse-row = root.about-row; root.about-expanded = !root.about-expanded; }
+                    open-docs => { root.mouse-row = root.about-row; root.open-docs(); }
+                }
+            }
+        }
+    }
+}
 
 export component SystemSection inherits Rectangle {
     // System state
@@ -61,28 +439,24 @@ export component SystemSection inherits Rectangle {
     callback restart-app();
     callback open-docs();
     // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
-    // The section is presentational: it renders `has-focus`/`focused-row`
-    // and reports actions; it owns no FocusScope and no key handling.
     in property <bool> has-focus: false;
 
     in property <int> focused-row: 0;
-    // Mouse-owned mark: the last row the mouse touched. Independent from
-    // the keyboard's focused-row + root.has-focus — each input keeps its own
-    // highlight and neither clears the other's.
-    property <int> mouse-row: -1;
+    // Mouse-owned mark: set on every click/hover. Shared by both panes.
+    in-out property <int> mouse-row: -1;
     property <int> row-count: root.restart-required ? 8 : 7;
     in-out property <bool> about-expanded: false;
 
     background: transparent;
     clip: true;
 
-    // Presentational content. PanelRoot's single panel-kbd FocusScope owns
-    // ALL keyboard dispatch for the panel; each input keeps its own mark:
-    // keyboard via focused-row gated on `has-focus`, mouse via mouse-row
-    // set on every click — neither clears the other's.
+    // Responsive split from the window width (ShellRoot), never from
+    // root.width (binding loop). Wide → two panes; narrow → stacked.
+    in property <bool> two-col: false;
+    // About row index: the last row (6 without the restart row, 7 with it).
+    property <int> about-row: root.restart-required ? 7 : 6;
+
     VerticalLayout {
-        width: 100%;
-        height: 100%;
         spacing: 0px;
 
         // Header
@@ -97,7 +471,7 @@ export component SystemSection inherits Rectangle {
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "System rows — ON/OFF, settings, and About. Tiling stays as-is.";
+                text: "Activation, settings and About. Tiling stays as-is.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -105,308 +479,117 @@ export component SystemSection inherits Rectangle {
             }
         }
 
-        ScrollView {
+        // Two independent panes. Wide: side by side. Narrow: stacked.
+        if root.two-col : HorizontalLayout {
+            width: 100%;
             vertical-stretch: 1;
-            // Scroll follows the keyboard focus (rows ~36-40px + 10 spacing
-            // → pitch 46px, mixed blocks).
-            property <length> focus-y: root.focused-row * 46px;
-            viewport-y: root.focused-row >= 0
-                ? (0px - max(0px, self.focus-y + 18px - self.height / 2))
-                : 0px;
-            animate viewport-y { duration: 250ms; easing: ease-out; }
-            VerticalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                padding-bottom: 16px;
-                spacing: 14px;
+            spacing: 0px;
 
-                // 0 — System ON/OFF status block (reuse ActivationCard pattern, icy focus)
-                Rectangle {
-                    border-width: 1px;
-                    border-color: (root.focused-row == 0 && root.has-focus) || root.mouse-row == 0 ? #8fd8ff : transparent;
-                    border-radius: SkwdTokens.radius-8;
-                    ActivationCard {
-                        active: root.system-active;
-                        card-title: "System Activation";
-                        active-text: "Visual Editor Enabled";
-                        inactive-text: "Visual Editor Disabled";
-                        // 1:1 legacy: mouse NEVER moves keyboard focus — only marks mouse-row and acts
-                        toggled(v) => { root.mouse-row = 0; root.toggle-system(v); }
-                    }
-                }
+            SystemSettingsPane {
+                horizontal-stretch: 1;
+                system-active: root.system-active;
+                auto-minimize: root.auto-minimize;
+                minimize-seconds: root.minimize-seconds;
+                language: root.language;
+                autostart: root.autostart;
+                theme: root.theme;
+                restart-required: root.restart-required;
+                restart-banner-text: root.restart-banner-text;
+                restart-button-text: root.restart-button-text;
+                auto-minimize-label: root.auto-minimize-label;
+                timer-label: root.timer-label;
+                language-label: root.language-label;
+                autostart-label: root.autostart-label;
+                theme-label: root.theme-label;
+                focused-row: root.focused-row;
+                has-focus: root.has-focus;
+                follow: root.focused-row < root.about-row;
+                mouse-row <=> root.mouse-row;
+                toggle-system(v) => { root.toggle-system(v); }
+                toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+                change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+                change-language(v) => { root.change-language(v); }
+                toggle-autostart(v) => { root.toggle-autostart(v); }
+                change-theme(v) => { root.change-theme(v); }
+                restart-app => { root.restart-app(); }
+            }
 
-                Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
 
-                // Restart banner when required
-                if root.restart-required : Rectangle {
-                    height: 32px;
-                    border-radius: 8px;
-                    background: HveColors.accent-amber.transparentize(0.85);
-                    border-width: 1px;
-                    border-color: HveColors.accent-amber.transparentize(0.4);
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 8px;
-                        spacing: 8px;
-                        Text {
-                            text: root.restart-banner-text;
-                            color: HveColors.accent-amber;
-                            font-size: 12px;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        Rectangle {
-                            width: 60px; height: 24px; border-radius: 6px;
-                            background: HveColors.bg-card;
-                            Text { text: root.restart-button-text; color: HveColors.accent-amber; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } changed has-hover => { if (self.has-hover) { root.mouse-row = 6; } } }
-                        }
-                    }
-                }
+            SystemAboutPane {
+                horizontal-stretch: 1;
+                about-title: root.about-title;
+                about-short: root.about-short;
+                about-full: root.about-full;
+                about-items: root.about-items;
+                tree-label: root.tree-label;
+                tree-paths: root.tree-paths;
+                tree-descs: root.tree-descs;
+                tree-path-max: root.tree-path-max;
+                docs-label: root.docs-label;
+                about-row: root.about-row;
+                focused-row: root.focused-row;
+                has-focus: root.has-focus;
+                follow: root.focused-row >= root.about-row;
+                mouse-row <=> root.mouse-row;
+                about-expanded <=> root.about-expanded;
+                open-docs => { root.open-docs(); }
+            }
+        }
+        if !root.two-col : VerticalLayout {
+            width: 100%;
+            vertical-stretch: 1;
+            spacing: 0px;
 
-                // 1+2 — Retardo al ocultar — hover sobre chips/toggle no apaga fila
-                retardo-wrap := Rectangle {
-                    property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && root.has-focus) || root.mouse-row == 1 || root.mouse-row == 2 || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
-                    height: 40px;
-                    border-radius: 8px;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                    border-width: self.lit ? 1px : 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    hover-retardo := TouchArea {
-                        width: 100%; height: 100%;
-                        // 1:1 legacy: mouse never moves keyboard focus — only mouse-row
-                        clicked => { root.mouse-row = 1; }
-                        changed has-hover => { if (self.has-hover) { root.mouse-row = 1; } }
-                    }
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
-                        Text { text: root.auto-minimize-label; color: HveColors.text; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
-                        HorizontalLayout {
-                            spacing: 6px; alignment: center;
-                            visible: root.auto-minimize;
-                            Text { text: root.timer-label; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
-                            Rectangle {
-                                width: 44px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == 0 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "Off"; color: root.minimize-seconds == 0 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec0-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(0); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
-                            }
-                            Rectangle {
-                                width: 34px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == 2 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "2"; color: root.minimize-seconds == 2 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec2-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(2); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
-                            }
-                            Rectangle {
-                                width: 34px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == 4 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "4"; color: root.minimize-seconds == 4 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec4-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(4); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
-                            }
-                            Rectangle {
-                                width: 34px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == 6 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "6"; color: root.minimize-seconds == 6 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec6-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(6); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
-                            }
-                            Rectangle {
-                                width: 34px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == 8 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "8"; color: root.minimize-seconds == 8 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec8-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(8); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
-                            }
-                            Rectangle {
-                                width: 34px; height: 28px; border-radius: 6px;
-                                background: root.minimize-seconds == 10 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "10"; color: root.minimize-seconds == 10 ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                sec10-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 2; root.change-minimize-seconds(10); } changed has-hover => { if (self.has-hover) { root.mouse-row = 2; } } }
-                            }
-                            Text { text: "s"; color: HveColors.text-muted; font-size: 12px; vertical-alignment: center; }
-                        }
-                        // Toggle — centrado verticalmente respecto a chips (28px vs 22px)
-                        Rectangle {
-                            width: 40px; height: 28px;
-                            Rectangle {
-                                width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2;
-                                background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
-                                Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.auto-minimize ? parent.width - self.width - 3px : 3px; y: 3px; animate x { duration: 150ms; easing: ease-out; } }
-                                retardo-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 1; root.toggle-auto-minimize(!root.auto-minimize); } changed has-hover => { if (self.has-hover) { root.mouse-row = 1; } } }
-                            }
-                        }
-                    }
-                }
+            SystemSettingsPane {
+                vertical-stretch: 1;
+                system-active: root.system-active;
+                auto-minimize: root.auto-minimize;
+                minimize-seconds: root.minimize-seconds;
+                language: root.language;
+                autostart: root.autostart;
+                theme: root.theme;
+                restart-required: root.restart-required;
+                restart-banner-text: root.restart-banner-text;
+                restart-button-text: root.restart-button-text;
+                auto-minimize-label: root.auto-minimize-label;
+                timer-label: root.timer-label;
+                language-label: root.language-label;
+                autostart-label: root.autostart-label;
+                theme-label: root.theme-label;
+                focused-row: root.focused-row;
+                has-focus: root.has-focus;
+                follow: root.focused-row < root.about-row;
+                mouse-row <=> root.mouse-row;
+                toggle-system(v) => { root.toggle-system(v); }
+                toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
+                change-minimize-seconds(v) => { root.change-minimize-seconds(v); }
+                change-language(v) => { root.change-language(v); }
+                toggle-autostart(v) => { root.toggle-autostart(v); }
+                change-theme(v) => { root.change-theme(v); }
+                restart-app => { root.restart-app(); }
+            }
 
-                // 3 — Language EN/ES — altura fija, hover sobre pills no apaga fila
-                lang-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 3 && root.has-focus) || root.mouse-row == 3 || hover-lang.has-hover || en-ta.has-hover || es-ta.has-hover;
-                    height: 40px;
-                    border-radius: 8px;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                    border-width: self.lit ? 1px : 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    hover-lang := TouchArea {
-                        width: 100%; height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { root.mouse-row = 3; }
-                        changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } }
-                    }
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
-                        Text { text: root.language-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                        Rectangle {
-                            width: 60px; height: 28px; border-radius: 6px; background: HveColors.bg-card; border-width: 1px; border-color: HveColors.border;
-                            HorizontalLayout {
-                                spacing: 0px;
-                                Rectangle {
-                                    width: 50%; height: 100%; border-radius: root.language == "en" ? 5px : 0px; background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
-                                    Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    en-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 3; root.change-language("en"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } } }
-                                }
-                                Rectangle {
-                                    width: 50%; height: 100%; border-radius: root.language == "es" ? 5px : 0px; background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
-                                    Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    es-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 3; root.change-language("es"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } } }
-                                }
-                            }
-                        }
-                    }
-                }
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
 
-                // 4 — Autostart — hover sobre toggle no apaga fila
-                autostart-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 4 && root.has-focus) || root.mouse-row == 4 || hover-autostart.has-hover || autostart-toggle-ta.has-hover;
-                    height: 40px;
-                    border-radius: 8px;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                    border-width: self.lit ? 1px : 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    hover-autostart := TouchArea {
-                        width: 100%; height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { root.mouse-row = 4; }
-                        changed has-hover => { if (self.has-hover) { root.mouse-row = 4; } }
-                    }
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
-                        Text { text: root.autostart-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                        Rectangle {
-                            width: 40px; height: 28px;
-                            Rectangle {
-                                width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2; background: root.autostart ? HveColors.accent-cyan : HveColors.border;
-                                Rectangle { width: 16px; height: 16px; border-radius: 8px; background: HveColors.bg-dark; x: root.autostart ? parent.width - self.width - 3px : 3px; y: 3px; }
-                                autostart-toggle-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 4; root.toggle-autostart(!root.autostart); } changed has-hover => { if (self.has-hover) { root.mouse-row = 4; } } }
-                            }
-                        }
-                    }
-                }
-
-                // 5 — Theme preference — hover sobre pills no apaga fila
-                theme-wrap := Rectangle {
-                    property <bool> lit: (root.focused-row == 5 && root.has-focus) || root.mouse-row == 5 || hover-theme.has-hover || theme-dark-ta.has-hover || theme-light-ta.has-hover || theme-system-ta.has-hover;
-                    height: 40px;
-                    border-radius: 8px;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                    border-width: self.lit ? 1px : 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    hover-theme := TouchArea {
-                        width: 100%; height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { root.mouse-row = 5; }
-                        changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } }
-                    }
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 12px; spacing: 8px; y: (parent.height - self.height) / 2; width: parent.width; height: self.preferred-height;
-                        Text { text: root.theme-label; color: HveColors.text; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                        HorizontalLayout {
-                            spacing: 4px;
-                            Rectangle {
-                                width: 56px; height: 28px; border-radius: 6px;
-                                background: root.theme == "dark" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "dark"; color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                theme-dark-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("dark"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
-                            }
-                            Rectangle {
-                                width: 56px; height: 28px; border-radius: 6px;
-                                background: root.theme == "light" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.theme == "light" ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "light"; color: root.theme == "light" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                theme-light-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("light"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
-                            }
-                            Rectangle {
-                                width: 56px; height: 28px; border-radius: 6px;
-                                background: root.theme == "system" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
-                                border-width: 1px;
-                                border-color: root.theme == "system" ? HveColors.accent-cyan : HveColors.border;
-                                Text { text: "system"; color: root.theme == "system" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                theme-system-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("system"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
-                            }
-                        }
-                    }
-                }
-
-                // 6 — Restart (only when restart required)
-                if root.restart-required : Rectangle {
-                    height: 36px; border-radius: 8px;
-                    background: HveColors.accent-amber.transparentize(0.85);
-                    border-width: root.focused-row == 6 && root.has-focus ? 1px : 1px;
-                    border-color: (root.focused-row == 6 && root.has-focus) || root.mouse-row == 6 ? #8fd8ff : HveColors.accent-amber.transparentize(0.4);
-                    Text { text: "Restart"; color: HveColors.accent-amber; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
-                }
-
-                Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
-
-                // 7 — About HVE (reused AccordionCard via existing tr.rs keys)
-                Rectangle {
-                    border-width: 1px;
-                    border-color: (((root.restart-required && root.focused-row == 7) || (!root.restart-required && root.focused-row == 6)) && root.has-focus) || root.mouse-row == (root.restart-required ? 7 : 6) ? #8fd8ff : transparent;
-                    border-radius: SkwdTokens.radius-8;
-                    AccordionCard {
-                        card-title: root.about-title;
-                        icon-text: "💡";
-                        accent: HveColors.accent-cyan;
-                        border: HveColors.border;
-                        short-desc: root.about-short;
-                        full-desc: root.about-full;
-                        about-items: root.about-items;
-                        tree-label: root.tree-label;
-                        tree-paths: root.tree-paths;
-                        tree-descs: root.tree-descs;
-                        tree-path-max: root.tree-path-max;
-                        docs-label: root.docs-label;
-                        expanded: root.about-expanded;
-                        // About row (6, or 7 when the restart row is shown):
-                        // sync the keyboard row and keep section focus. The
-                        // AccordionCard consumes the click via ac-ta and
-                        // reports back through toggled.
-                        toggled => { root.mouse-row = root.restart-required ? 7 : 6; root.about-expanded = !root.about-expanded; }
-                        open-docs => { root.mouse-row = root.restart-required ? 7 : 6; root.open-docs(); }
-                    }
-                }
-
-                Text {
-                    text: "↑↓ navigate • Enter/Space toggle • Tab next • Esc back";
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-12;
-                    color: HveColors.text-muted.transparentize(0.4);
-                    horizontal-alignment: center;
-                }
+            SystemAboutPane {
+                vertical-stretch: 1;
+                about-title: root.about-title;
+                about-short: root.about-short;
+                about-full: root.about-full;
+                about-items: root.about-items;
+                tree-label: root.tree-label;
+                tree-paths: root.tree-paths;
+                tree-descs: root.tree-descs;
+                tree-path-max: root.tree-path-max;
+                docs-label: root.docs-label;
+                about-row: root.about-row;
+                focused-row: root.focused-row;
+                has-focus: root.has-focus;
+                follow: root.focused-row >= root.about-row;
+                mouse-row <=> root.mouse-row;
+                about-expanded <=> root.about-expanded;
+                open-docs => { root.open-docs(); }
             }
         }
     }

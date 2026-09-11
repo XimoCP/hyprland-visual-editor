@@ -1,13 +1,15 @@
-// HVE 2 — MotionSection (mutating-window R4 pick + tune + CurvePreview).
+// HVE 2 — MotionSection (mutating-window R4 pick + tune + CurvePreview, two-pane).
 //
-// Pick layer: PresetCards from scan("animations") → apply_animation, active
-// indicator + toggle-off → none. Tune layer below divider: 4 bezier sliders
-// a,b,c,d (x1,y1,x2,y2) + mini CurvePreview Path 120×48 redraws on slider
-// changed. Ranges: a,c in [0,1], b,d in [-1,2] per CSS bezier convention;
-// defaults 0.25/0.1/0.25/1. Arrow steps ±0.05 clamped.
+// Two INDEPENDENT scroll regions:
+//   • Pick pane  — PresetCards from scan("animations") → apply_animation.
+//   • Tune pane  — CurvePreview + 4 bezier sliders a,b,c,d (x1,y1,x2,y2).
+// Wide section → panes side by side; narrow → stacked. Each pane owns its
+// ScrollView. The keyboard stays the single linear sequence owned by
+// PanelRoot's panel-kbd: index < N targets the pick pane, index >= N the tune
+// pane, and only the owning pane scroll-follows. ← / → jump one panel.
 //
-// Keyboard R11: arrows navigate cards/sliders, Enter/Space activates,
-// sliders ±0.05, Tab pick→tune→next never traps, icy-cyan #8fd8ff focus.
+// Ranges: a,c in [0,1], b,d in [-1,2] per CSS bezier convention; defaults
+// 0.25/0.1/0.25/1. Arrow steps ±0.05 clamped.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -61,6 +63,237 @@ component BezierSlider inherits Rectangle {
     }
 }
 
+// ─── Pick pane: animation preset cards only. Own ScrollView + scroll memory. ───
+component MotionPickPane inherits Rectangle {
+    in property <[string]> titles;
+    in property <[string]> descs;
+    in property <[string]> tags;
+    in property <[string]> files;
+    in property <int> active-index: -1;
+    in property <int> focused-index: 0;
+    in property <bool> has-focus: false;
+    in property <int> engaged-slider: -1;
+    in property <bool> follow: false;
+    callback apply-animation(int, string);
+
+    property <length> saved-scroll-y: 0px;
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        // Fills the pane Rectangle by default (no explicit height).
+        property <length> focus-y:
+            root.focused-index * 66px
+            + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
+            + (root.active-index == root.focused-index ? 21px : 0px);
+        viewport-y: root.follow ? (root.focused-index >= 0
+            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+            : 0px) : root.saved-scroll-y;
+        animate viewport-y { duration: 250ms; easing: ease-out; }
+        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 16px;
+            padding-bottom: 12px;
+            spacing: 8px;
+
+            for i in root.files.length : PresetCard {
+                title: root.titles[i];
+                desc: root.descs[i];
+                tag: root.tags[i];
+                accent: #8fd8ff;
+                active: i == root.active-index;
+                keyboard-focused: i == root.focused-index && root.has-focus && root.engaged-slider < 0;
+                index: i;
+                // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
+                hover-moves-focus: false;
+                toggled => { root.apply-animation(i, root.files[i]); }
+            }
+
+            if root.files.length == 0 : Text {
+                text: "No animation presets found.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// ─── Tune pane: CurvePreview + 4 bezier sliders. ───
+component MotionTunePane inherits Rectangle {
+    in-out property <float> bezier-a: 0.25;
+    in-out property <float> bezier-b: 0.1;
+    in-out property <float> bezier-c: 0.25;
+    in-out property <float> bezier-d: 1.0;
+    in property <int> focused-index: 0;
+    in property <int> split: 0;
+    in property <bool> has-focus: false;
+    in property <int> engaged-slider: -1;
+    in property <bool> follow: false;
+
+    property <length> saved-scroll-y: 0px;
+    property <int> local-focus: root.focused-index - root.split;
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        // Fills the pane Rectangle by default (no explicit height).
+        property <length> focus-y: 70px + root.local-focus * 80px;
+        viewport-y: root.follow ? (root.local-focus >= 0
+            // Slider rows center on half the LIT height (44px = 88/2).
+            ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
+            : 0px) : root.saved-scroll-y;
+        animate viewport-y { duration: 250ms; easing: ease-out; }
+        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 16px;
+            // 28px bottom breathing room: the lit Y2-d block grows 72→88px
+            // (104 grabbed), so 12px would clip it.
+            padding-bottom: 28px;
+            spacing: 8px;
+
+            // Curve preview 120×48 — redraws on slider changed via binding
+            HorizontalLayout {
+                alignment: center;
+                CurvePreview {
+                    a: root.bezier-a;
+                    b: root.bezier-b;
+                    c: root.bezier-c;
+                    d: root.bezier-d;
+                    width: 120px;
+                    height: 48px;
+                }
+            }
+
+            a-wrap := Rectangle {
+                property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-a.has-hover;
+                property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-a := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { }
+                }
+                BezierSlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 0;
+                    focused: a-wrap.lit;
+                    label: "X1 — a";
+                    value: root.bezier-a;
+                    min: 0.0;
+                    max: 1.0;
+                    changed(v) => { root.bezier-a = v; }
+                }
+            }
+            b-wrap := Rectangle {
+                property <bool> lit: (root.focused-index == root.split + 1 && root.has-focus) || hover-b.has-hover;
+                property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-b := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { }
+                }
+                BezierSlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 1;
+                    focused: b-wrap.lit;
+                    label: "Y1 — b";
+                    value: root.bezier-b;
+                    min: -1.0;
+                    max: 2.0;
+                    changed(v) => { root.bezier-b = v; }
+                }
+            }
+            c-wrap := Rectangle {
+                property <bool> lit: (root.focused-index == root.split + 2 && root.has-focus) || hover-c.has-hover;
+                property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-c := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { }
+                }
+                BezierSlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 2;
+                    focused: c-wrap.lit;
+                    label: "X2 — c";
+                    value: root.bezier-c;
+                    min: 0.0;
+                    max: 1.0;
+                    changed(v) => { root.bezier-c = v; }
+                }
+            }
+            d-wrap := Rectangle {
+                property <bool> lit: (root.focused-index == root.split + 3 && root.has-focus) || hover-d.has-hover;
+                property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-d := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { }
+                }
+                BezierSlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 3;
+                    focused: d-wrap.lit;
+                    label: "Y2 — d";
+                    value: root.bezier-d;
+                    min: -1.0;
+                    max: 2.0;
+                    changed(v) => { root.bezier-d = v; }
+                }
+            }
+
+            Text {
+                text: "↑↓ navigate • ←→ switch panel • Enter/Space apply • arrows ±0.05 • Esc back";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted.transparentize(0.4);
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            // Over-scroll spacer so the grabbed Y2-d block + help fully reveal.
+            Rectangle { height: 16px; }
+        }
+    }
+}
+
 export component MotionSection inherits Rectangle {
     in property <[string]> anim-titles;
     in property <[string]> anim-descs;
@@ -82,16 +315,10 @@ export component MotionSection inherits Rectangle {
     background: transparent;
     clip: true;
 
-    // Keyboard R11 v3 (spatial): ONE linear sequence — preset cards first,
-    // then the four bezier sliders. Up/Down walk, Enter engages a slider
-    // (Left/Right adjust ±0.05 while engaged), Left (disengaged) hands the
-    // keyboard back to the rail, Esc closes. All dispatch lives in
-    // PanelRoot's panel-kbd; this section only renders state.
-    // Scroll follows KEYBOARD focus only: arrows set focus-is-kbd, mouse
-    // hover clears it (the hovered item is always on screen, so freezing
-    // the view kills the seasick auto-scroll without losing key follow).
-    property <bool> focus-is-kbd: true;
-    property <length> saved-scroll-y: 0px;
+    // Responsive split from the window width (ShellRoot), never from
+    // root.width (binding loop). Wide → two panes; narrow → stacked.
+    in property <bool> two-col: false;
+    property <int> split: root.anim-files.length;
 
     // Slider adjust is a domain action, not keyboard handling: PanelRoot's
     // panel-kbd decides when a slider is engaged and calls this with the
@@ -127,7 +354,7 @@ export component MotionSection inherits Rectangle {
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Pick an animation — instantly applied. Tune curve below.";
+                text: "Pick an animation — instantly applied. Shape the curve.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -135,214 +362,73 @@ export component MotionSection inherits Rectangle {
             }
         }
 
-        ScrollView {
+        // Two independent panes. Wide: side by side. Narrow: stacked.
+        if root.two-col : HorizontalLayout {
+            width: 100%;
             vertical-stretch: 1;
-            // Scroll follows the keyboard focus: cards pitch 66px, the
-            // bezier tune blocks (~72px + spacing) sit after the divider
-            // and the curve preview. Frozen while the mouse drives focus
-            // (focus-is-kbd false).
-            property <length> focus-y:
-                root.focused-index < root.anim-files.length
-                    ? root.focused-index * 66px
-                      + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
-                      + (root.active-index == root.focused-index ? 21px : 0px)
-                    : root.anim-files.length * 66px + 70px + (root.active-index >= 0 ? 42px : 0px)
-                      + (root.focused-index - root.anim-files.length) * 80px;
-            viewport-y: root.focus-is-kbd ? (root.focused-index >= 0
-                // Slider rows center on half the LIT height (44px = 88/2):
-                // the focused slider grows 72→88 (104 grabbed), so the card
-                // half-height (29px) would park it too low and clip Y2-d.
-                ? (0px - max(0px, self.focus-y + (root.focused-index < root.anim-files.length ? 29px : 44px) - self.height / 2))
-                : 0px) : root.saved-scroll-y;
-            animate viewport-y { duration: 250ms; easing: ease-out; }
-            changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-            VerticalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                // 28px bottom breathing room (not 12px like the card-only
-                // sections): the lit Y2-d block grows 72→88px (104 grabbed),
-                // so 12px clips it. 28 covers the +16 lit delta; the spacer
-                // below covers the grabbed delta + help text.
-                padding-bottom: 28px;
-                spacing: 8px;
+            spacing: 0px;
 
-                for i in root.anim-files.length : PresetCard {
-                    title: root.anim-titles[i];
-                    desc: root.anim-descs[i];
-                    tag: root.anim-tags[i];
-                    accent: #8fd8ff;
-                    active: i == root.active-index;
-                    keyboard-focused: i == root.focused-index && root.has-focus && root.engaged-slider < 0;
-                    index: i;
-                    // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
-                    hover-moves-focus: false;
-                    toggled => { root.apply-animation(i, root.anim-files[i]); }
-                }
+            MotionPickPane {
+                horizontal-stretch: 1;
+                titles: root.anim-titles;
+                descs: root.anim-descs;
+                tags: root.anim-tags;
+                files: root.anim-files;
+                active-index: root.active-index;
+                focused-index: root.focused-index;
+                has-focus: root.has-focus;
+                engaged-slider: root.engaged-slider;
+                follow: root.focused-index < root.split;
+                apply-animation(idx, file) => { root.apply-animation(idx, file); }
+            }
 
-                if root.anim-files.length == 0 : Text {
-                    text: "No animation presets found.";
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-12;
-                    color: HveColors.text-muted;
-                    horizontal-alignment: center;
-                }
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
 
-                Rectangle {
-                    height: 1px;
-                    background: HveColors.border.transparentize(0.6);
-                }
+            MotionTunePane {
+                horizontal-stretch: 1;
+                bezier-a <=> root.bezier-a;
+                bezier-b <=> root.bezier-b;
+                bezier-c <=> root.bezier-c;
+                bezier-d <=> root.bezier-d;
+                focused-index: root.focused-index;
+                split: root.split;
+                has-focus: root.has-focus;
+                engaged-slider: root.engaged-slider;
+                follow: root.focused-index >= root.split;
+            }
+        }
+        if !root.two-col : VerticalLayout {
+            width: 100%;
+            vertical-stretch: 1;
+            spacing: 0px;
 
-                // Curve preview 120×48 — redraws on slider changed via binding
-                HorizontalLayout {
-                    alignment: center;
-                    CurvePreview {
-                        a: root.bezier-a;
-                        b: root.bezier-b;
-                        c: root.bezier-c;
-                        d: root.bezier-d;
-                        width: 120px;
-                        height: 48px;
-                    }
-                }
+            MotionPickPane {
+                vertical-stretch: 1;
+                titles: root.anim-titles;
+                descs: root.anim-descs;
+                tags: root.anim-tags;
+                files: root.anim-files;
+                active-index: root.active-index;
+                focused-index: root.focused-index;
+                has-focus: root.has-focus;
+                engaged-slider: root.engaged-slider;
+                follow: root.focused-index < root.split;
+                apply-animation(idx, file) => { root.apply-animation(idx, file); }
+            }
 
-                // Bezier sliders a,b,c,d — arrow steps ±0.05 clamped, Tab no trap
-                a-wrap := Rectangle {
-                    // Card-like block: lights up on keyboard focus OR mouse
-                    // hover (lit), reads "grabbed" when engaged. Heights mirror
-                    // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length && root.has-focus) || hover-a.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
-                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
-                    animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: 1px;
-                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                    animate background { duration: 200ms; easing: ease-in-out; }
-                    hover-a := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { }
-                    }
-                    BezierSlider {
-                        width: 100%;
-                        y: (parent.height - self.height) / 2;
-                        engaged: root.engaged-slider == 0;
-                        focused: a-wrap.lit;
-                        label: "X1 — a";
-                        value: root.bezier-a;
-                        min: 0.0;
-                        max: 1.0;
-                        changed(v) => { root.bezier-a = v; }
-                    }
-                }
-                b-wrap := Rectangle {
-                    // Card-like block: lights up on keyboard focus OR mouse
-                    // hover (lit), reads "grabbed" when engaged. Heights mirror
-                    // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length + 1 && root.has-focus) || hover-b.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
-                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
-                    animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: 1px;
-                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                    animate background { duration: 200ms; easing: ease-in-out; }
-                    hover-b := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { }
-                    }
-                    BezierSlider {
-                        width: 100%;
-                        y: (parent.height - self.height) / 2;
-                        engaged: root.engaged-slider == 1;
-                        focused: b-wrap.lit;
-                        label: "Y1 — b";
-                        value: root.bezier-b;
-                        min: -1.0;
-                        max: 2.0;
-                        changed(v) => { root.bezier-b = v; }
-                    }
-                }
-                c-wrap := Rectangle {
-                    // Card-like block: lights up on keyboard focus OR mouse
-                    // hover (lit), reads "grabbed" when engaged. Heights mirror
-                    // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length + 2 && root.has-focus) || hover-c.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
-                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
-                    animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: 1px;
-                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                    animate background { duration: 200ms; easing: ease-in-out; }
-                    hover-c := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { }
-                    }
-                    BezierSlider {
-                        width: 100%;
-                        y: (parent.height - self.height) / 2;
-                        engaged: root.engaged-slider == 2;
-                        focused: c-wrap.lit;
-                        label: "X2 — c";
-                        value: root.bezier-c;
-                        min: 0.0;
-                        max: 1.0;
-                        changed(v) => { root.bezier-c = v; }
-                    }
-                }
-                d-wrap := Rectangle {
-                    // Card-like block: lights up on keyboard focus OR mouse
-                    // hover (lit), reads "grabbed" when engaged. Heights mirror
-                    // the cards proportionally (250ms bounce).
-                    property <bool> lit: (root.focused-index == root.anim-files.length + 3 && root.has-focus) || hover-d.has-hover;
-                    property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
-                    height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
-                    animate height { duration: 250ms; easing: ease-in-out-back; }
-                    border-width: 1px;
-                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                    animate background { duration: 200ms; easing: ease-in-out; }
-                    hover-d := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        // 1:1 legacy: mouse never steals keyboard focus
-                        clicked => { }
-                    }
-                    BezierSlider {
-                        width: 100%;
-                        y: (parent.height - self.height) / 2;
-                        engaged: root.engaged-slider == 3;
-                        focused: d-wrap.lit;
-                        label: "Y2 — d";
-                        value: root.bezier-d;
-                        min: -1.0;
-                        max: 2.0;
-                        changed(v) => { root.bezier-d = v; }
-                    }
-                }
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
 
-                Text {
-                    text: "↑↓ navigate • Enter/Space apply • arrows ±0.05 • Tab pick→tune→next • Esc back";
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-12;
-                    color: HveColors.text-muted.transparentize(0.4);
-                    horizontal-alignment: center;
-                }
-
-                // Over-scroll spacer: lets the ScrollView travel far enough
-                // that the grabbed Y2-d block (104px) + help text above fully
-                // reveal when scrolled to the bottom (keyboard or mouse).
-                Rectangle { height: 16px; }
+            MotionTunePane {
+                vertical-stretch: 1;
+                bezier-a <=> root.bezier-a;
+                bezier-b <=> root.bezier-b;
+                bezier-c <=> root.bezier-c;
+                bezier-d <=> root.bezier-d;
+                focused-index: root.focused-index;
+                split: root.split;
+                has-focus: root.has-focus;
+                engaged-slider: root.engaged-slider;
+                follow: root.focused-index >= root.split;
             }
         }
     }

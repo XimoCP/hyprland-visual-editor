@@ -19,6 +19,9 @@ import { SystemSection } from "sections/SystemSection.slint";
 
 export component PanelRoot inherits Rectangle {
     in property <int> section: 0;
+    // Responsive breakpoint (from ShellRoot, computed from window width):
+    // sections with a natural functional seam render as two panes when true.
+    in property <bool> two-col: false;
     in property <bool> mutating: false;
     in property <bool> open: false;
     in property <bool> reduced-motion: false;
@@ -285,6 +288,12 @@ export component PanelRoot inherits Rectangle {
                             if (event.text == Key.RightArrow || event.text == Key.Return || event.text == Key.Space) {
                                 root.section-selected(root.menu-focused-index);
                                 root.menu-active = false;
+                                // Entering content always lands on the FIRST block, so
+                                // Right advances exactly one panel: menu -> A -> B.
+                                if (root.menu-focused-index == 1) { root.borders-focused-index = 0; }
+                                else if (root.menu-focused-index == 2) { root.motion-focused-index = 0; }
+                                else if (root.menu-focused-index == 3) { root.filters-focused-index = 0; }
+                                else if (root.menu-focused-index == 4) { root.system-focused-row = 0; }
                                 return accept;
                             }
                             return reject;
@@ -337,7 +346,22 @@ export component PanelRoot inherits Rectangle {
                                 }
                                 return accept;
                             }
-                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.RightArrow) {
+                                // Jump one panel right: pick block → tune block.
+                                if (root.border-files.length > 0 && root.borders-focused-index < root.border-files.length) {
+                                    root.borders-focused-index = root.border-files.length;
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.LeftArrow) {
+                                // Jump one panel left: tune block → pick block → menu.
+                                if (root.border-files.length > 0 && root.borders-focused-index >= root.border-files.length) {
+                                    root.borders-focused-index = 0;
+                                } else {
+                                    root.menu-active = true;
+                                }
+                                return accept;
+                            }
                             if (event.text == Key.Return || event.text == Key.Space) {
                                 if (root.borders-focused-index < root.border-files.length) {
                                     if (root.borders-focused-index >= 0 && root.border-files.length > 0) {
@@ -376,7 +400,22 @@ export component PanelRoot inherits Rectangle {
                                 }
                                 return accept;
                             }
-                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.RightArrow) {
+                                // Jump one panel right: pick block → tune block.
+                                if (root.anim-files.length > 0 && root.motion-focused-index < root.anim-files.length) {
+                                    root.motion-focused-index = root.anim-files.length;
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.LeftArrow) {
+                                // Jump one panel left: tune block → pick block → menu.
+                                if (root.anim-files.length > 0 && root.motion-focused-index >= root.anim-files.length) {
+                                    root.motion-focused-index = 0;
+                                } else {
+                                    root.menu-active = true;
+                                }
+                                return accept;
+                            }
                             if (event.text == Key.Return || event.text == Key.Space) {
                                 if (root.motion-focused-index < root.anim-files.length) {
                                     if (root.motion-focused-index >= 0 && root.anim-files.length > 0) {
@@ -418,7 +457,22 @@ export component PanelRoot inherits Rectangle {
                         if (root.section == 4) {
                             // System: Down/Up walk rows, Enter toggles, Left → menu.
                             if (event.text == Key.Escape) { root.back(); return accept; }
-                            if (event.text == Key.LeftArrow) { root.menu-active = true; return accept; }
+                            if (event.text == Key.RightArrow) {
+                                // Jump one panel right: settings rows → About block.
+                                if (root.system-focused-row < (root.restart-required ? 7 : 6)) {
+                                    root.system-focused-row = root.restart-required ? 7 : 6;
+                                }
+                                return accept;
+                            }
+                            if (event.text == Key.LeftArrow) {
+                                // Jump one panel left: About block → settings rows → menu.
+                                if (root.system-focused-row >= (root.restart-required ? 7 : 6)) {
+                                    root.system-focused-row = 0;
+                                } else {
+                                    root.menu-active = true;
+                                }
+                                return accept;
+                            }
                             if (event.text == Key.DownArrow) {
                                 if (root.system-focused-row >= (root.restart-required ? 7 : 6)) { root.system-focused-row = 0; }
                                 else { root.system-focused-row += 1; }
@@ -469,6 +523,7 @@ export component PanelRoot inherits Rectangle {
                         visible: root.section == 0;
                         width: 100%;
                         height: 100%;
+                        two-col: root.two-col;
                         theme-name <=> root.save-input;
                         error-text: root.save-error;
                         placeholder: root.save-placeholder;
@@ -512,6 +567,7 @@ export component PanelRoot inherits Rectangle {
                         visible: root.section == 1;
                         width: 100%;
                         height: 100%;
+                        two-col: root.two-col;
                         border-titles: root.border-titles;
                         border-descs: root.border-descs;
                         border-tags: root.border-tags;
@@ -531,6 +587,7 @@ export component PanelRoot inherits Rectangle {
                         visible: root.section == 2;
                         width: 100%;
                         height: 100%;
+                        two-col: root.two-col;
                         anim-titles: root.anim-titles;
                         anim-descs: root.anim-descs;
                         anim-tags: root.anim-tags;
@@ -562,6 +619,7 @@ export component PanelRoot inherits Rectangle {
                         visible: root.section == 4;
                         width: 100%;
                         height: 100%;
+                        two-col: root.two-col;
                         system-active: root.system-active;
                         auto-minimize: root.auto-minimize;
                         minimize-seconds: root.minimize-seconds;
