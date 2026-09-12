@@ -1,2 +1,7 @@
 /target/
 .engram/
+
+# Runtime-generated fragments: assets/scripts/{border,geometry,apply_animation,shader}.sh
+# rewrite these on every preset change, so tracking them makes git report
+# phantom modifications that are not source work.
+assets/fragments/
