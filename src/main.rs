@@ -2,6 +2,8 @@ mod app_state;
 mod callbacks;
 mod composer;
 mod config;
+mod config_guard;
+mod config_markers;
 mod countdown;
 mod engine;
 mod hypr_ipc;
