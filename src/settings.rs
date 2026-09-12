@@ -664,4 +664,63 @@ mod tests {
             "re-disabling autostart must NOT rewrite the file"
         );
     }
+
+    // ── R2: settings path is always Lua (drop-conf-support follow-up) ──
+
+    #[test]
+    fn settings_path_always_ends_with_lua() {
+        let _env = TempEnv::new();
+        let path = hve_settings_path();
+        assert!(
+            path.to_string_lossy().ends_with("hve-settings.lua"),
+            "settings path must always be the Lua file, got: {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn ensure_settings_file_creates_lua_and_ignores_stale_conf() {
+        let _env = TempEnv::new();
+        // Simulate a pre-migration system: a stale .conf file exists.
+        let stale = hve_cache_dir().join("hve-settings.conf");
+        std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        std::fs::write(&stale, "# >>> HVE WINDOW RULES <<<\nwindowrulev2 = float\n")
+            .unwrap();
+
+        ensure_settings_file();
+
+        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
+        assert!(
+            content.contains("-- >>> HVE WINDOW RULES <<<"),
+            "generated file must use Lua markers"
+        );
+        assert!(
+            !content.contains("windowrulev2"),
+            "must never copy a byte from the stale .conf"
+        );
+        // D4: the stale .conf is orphaned, not deleted.
+        assert!(stale.exists(), "stale .conf is orphaned, not deleted");
+    }
+
+    // ── R3: autostart emission is Lua (drop-conf-support follow-up) ──
+
+    #[test]
+    fn autostart_emits_lua_block_and_never_conf() {
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        set_autostart(true);
+        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
+        assert!(
+            content.contains("hl.on(\"hyprland.start\""),
+            "must emit the Lua autostart block"
+        );
+        assert!(
+            content.contains(" --tray"),
+            "autostart must launch in tray mode"
+        );
+        assert!(
+            !content.contains("exec-once ="),
+            "must never emit conf syntax"
+        );
+    }
 }
