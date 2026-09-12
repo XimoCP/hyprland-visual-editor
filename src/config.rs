@@ -218,19 +218,6 @@ impl Config {
     }
 }
 
-/// Detect whether HVE is in lua or conf mode by reading the format cache.
-pub fn hve_format() -> &'static str {
-    use std::sync::OnceLock;
-    static CACHE: OnceLock<String> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let format_path = hve_cache_dir().join("hve_format");
-        match std::fs::read_to_string(&format_path) {
-            Ok(content) if content.trim() == "lua" => "lua".to_string(),
-            _ => "conf".to_string(),
-        }
-    })
-}
-
 /// HVE cache directory: ~/.cache/hve/
 pub fn hve_cache_dir() -> PathBuf {
     dirs::cache_dir()
@@ -241,16 +228,18 @@ pub fn hve_cache_dir() -> PathBuf {
         .join("hve")
 }
 
-/// Path to the HVE settings file (hve-settings.lua or .conf).
+/// Path to the HVE settings file: always `~/.cache/hve/hve-settings.lua`.
 /// This file controls HVE's window rules and keyboard shortcuts.
-/// Replaces the old hve-windowrules.{lua,conf} naming.
-/// Migrates the old file to the new name on first call if it exists.
+///
+/// The legacy `hve-windowrules.lua` is renamed to `hve-settings.lua` on first
+/// call if it exists and the new name does not. The old `conf` variants are
+/// intentionally left orphaned: settings are regenerable and conf bytes must
+/// never be copied into the Lua file.
 pub fn hve_settings_path() -> PathBuf {
-    let ext = if hve_format() == "lua" { "lua" } else { "conf" };
-    let new_path = hve_cache_dir().join(format!("hve-settings.{}", ext));
-    let old_path = hve_cache_dir().join(format!("hve-windowrules.{}", ext));
+    let new_path = hve_cache_dir().join("hve-settings.lua");
+    let old_path = hve_cache_dir().join("hve-windowrules.lua");
 
-    // Migrate old hve-windowrules file to hve-settings if it exists and new one doesn't
+    // Migrate the legacy Lua name to the current one if needed.
     if old_path.exists() && !new_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&old_path) {
             if std::fs::write(&new_path, &content).is_ok() {

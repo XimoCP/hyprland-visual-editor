@@ -1,3 +1,7 @@
+use crate::config_markers::{
+    LUA_AUTOSTART_END, LUA_AUTOSTART_START, LUA_KEYBINDS_END, LUA_KEYBINDS_START,
+    LUA_WINDOW_RULES_END, LUA_WINDOW_RULES_START,
+};
 use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
 use crate::utils::{edit_between_markers, extract_block};
 use serde::{Deserialize, Serialize};
@@ -11,28 +15,11 @@ pub struct HyprlandSettingsState {
     pub window_rules: Option<String>,
 }
 
-pub struct HyprlandSettingsProvider {
-    format: String,
-}
+pub struct HyprlandSettingsProvider;
 
 impl HyprlandSettingsProvider {
     pub fn new() -> Self {
-        Self {
-            format: crate::config::hve_format().to_string(),
-        }
-    }
-
-    fn markers(&self) -> (&'static str, &'static str, &'static str, &'static str, &'static str, &'static str) {
-        let (wr_start, wr_end, kb_start, kb_end, as_start, as_end) = if self.format == "lua" {
-            ("-- >>> HVE WINDOW RULES <<<", "-- >>> HVE WINDOW RULES END <<<",
-             "-- >>> HVE KEYBINDS <<<", "-- >>> HVE KEYBINDS END <<<",
-             "-- >>> HVE AUTOSTART <<<", "-- >>> HVE AUTOSTART END <<<")
-        } else {
-            ("# >>> HVE WINDOW RULES <<<", "# >>> HVE WINDOW RULES END <<<",
-             "# >>> HVE KEYBINDS <<<", "# >>> HVE KEYBINDS END <<<",
-             "# >>> HVE AUTOSTART <<<", "# >>> HVE AUTOSTART END <<<")
-        };
-        (wr_start, wr_end, kb_start, kb_end, as_start, as_end)
+        Self
     }
 
     /// Remove a marker block (markers AND content) from `path` when present.
@@ -104,7 +91,14 @@ impl ThemeProvider for HyprlandSettingsProvider {
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read settings file: {}", e))?;
 
-        let (wr_start, wr_end, kb_start, kb_end, as_start, as_end) = self.markers();
+        let (wr_start, wr_end, kb_start, kb_end, as_start, as_end) = (
+            LUA_WINDOW_RULES_START,
+            LUA_WINDOW_RULES_END,
+            LUA_KEYBINDS_START,
+            LUA_KEYBINDS_END,
+            LUA_AUTOSTART_START,
+            LUA_AUTOSTART_END,
+        );
 
         let state = HyprlandSettingsState {
             window_rules: extract_block(&content, wr_start, wr_end),
@@ -141,7 +135,14 @@ impl ThemeProvider for HyprlandSettingsProvider {
         let state: HyprlandSettingsState = serde_json::from_str(&raw)
             .map_err(|e| format!("Parse error: {}", e))?;
 
-        let (wr_start, wr_end, kb_start, kb_end, as_start, as_end) = self.markers();
+        let (wr_start, wr_end, kb_start, kb_end, as_start, as_end) = (
+            LUA_WINDOW_RULES_START,
+            LUA_WINDOW_RULES_END,
+            LUA_KEYBINDS_START,
+            LUA_KEYBINDS_END,
+            LUA_AUTOSTART_START,
+            LUA_AUTOSTART_END,
+        );
 
         // Apply window rules — `None` means the block was disabled when the
         // theme was saved, so the currently active block must be REMOVED.
@@ -229,12 +230,12 @@ mod tests {
     fn test_apply_removes_block_when_state_none() {
         let _env = TempEnv::new();
         write_settings(
-            "# >>> HVE WINDOW RULES <<<\n\
-             windowrulev2 = float, title:^(Hyprland Visual Editor)$\n\
-             # >>> HVE WINDOW RULES END <<<\n\
-             # >>> HVE KEYBINDS <<<\n\
-             bind = SUPER, H, exec, hve-ipc toggle-tray\n\
-             # >>> HVE KEYBINDS END <<<\n",
+            "-- >>> HVE WINDOW RULES <<<\n\
+             -- HVE 2 manages its own window state via the Composer trait\n\
+             -- >>> HVE WINDOW RULES END <<<\n\
+             -- >>> HVE KEYBINDS <<<\n\
+             hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\
+             -- >>> HVE KEYBINDS END <<<\n",
         );
 
         let theme = TempDir::new().unwrap();
@@ -243,7 +244,7 @@ mod tests {
             r#"{
                 "keybinds": null,
                 "autostart": null,
-                "window_rules": "windowrulev2 = float, title:^(Hyprland Visual Editor)$"
+                "window_rules": "-- HVE 2 manages its own window state via the Composer trait"
             }"#,
         );
 
@@ -269,9 +270,9 @@ mod tests {
         let _env = TempEnv::new();
         // Settings file WITHOUT keybinds/autostart markers at save time.
         write_settings(
-            "# >>> HVE WINDOW RULES <<<\n\
-             windowrulev2 = float, title:^(Hyprland Visual Editor)$\n\
-             # >>> HVE WINDOW RULES END <<<\n",
+            "-- >>> HVE WINDOW RULES <<<\n\
+             -- HVE 2 manages its own window state via the Composer trait\n\
+             -- >>> HVE WINDOW RULES END <<<\n",
         );
 
         let theme = TempDir::new().unwrap();
@@ -288,15 +289,17 @@ mod tests {
         // Later the settings file gains active keybinds/autostart blocks
         // (e.g. enabled manually after the theme was saved).
         write_settings(
-            "# >>> HVE WINDOW RULES <<<\n\
-             windowrulev2 = float, title:^(Hyprland Visual Editor)$\n\
-             # >>> HVE WINDOW RULES END <<<\n\
-             # >>> HVE KEYBINDS <<<\n\
-             bind = SUPER, H, exec, hve-ipc toggle-tray\n\
-             # >>> HVE KEYBINDS END <<<\n\
-             # >>> HVE AUTOSTART <<<\n\
-             exec-once = hve --tray\n\
-             # >>> HVE AUTOSTART END <<<\n",
+            "-- >>> HVE WINDOW RULES <<<\n\
+             -- HVE 2 manages its own window state via the Composer trait\n\
+             -- >>> HVE WINDOW RULES END <<<\n\
+             -- >>> HVE KEYBINDS <<<\n\
+             hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\
+             -- >>> HVE KEYBINDS END <<<\n\
+             -- >>> HVE AUTOSTART <<<\n\
+             hl.on(\"hyprland.start\", function()\n\
+             hl.exec_cmd(\"hve --tray\")\n\
+             end)\n\
+             -- >>> HVE AUTOSTART END <<<\n",
         );
 
         provider.apply(theme.path()).expect("apply should succeed");

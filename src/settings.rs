@@ -1,7 +1,13 @@
-use crate::config::{hve_cache_dir, hve_format, hve_settings_path};
+use crate::config::{hve_cache_dir, hve_settings_path};
+use crate::config_markers::{
+    LUA_AUTOSTART_END, LUA_AUTOSTART_START, LUA_KEYBINDS_END, LUA_KEYBINDS_START,
+    LUA_WINDOW_RULES_END, LUA_WINDOW_RULES_START,
+};
 use std::path::PathBuf;
 
-/// Ensure the settings file exists with empty window rules and keybinds sections.
+/// Ensure the Lua settings file exists with empty window rules, keybinds and
+/// autostart sections.
+///
 /// HVE 2 manages its own window state via the Composer trait (fullscreen for
 /// Gallery, floating for settings), so no window rules are needed.
 /// Called once at startup — does NOT overwrite an existing file.
@@ -11,64 +17,12 @@ pub fn ensure_settings_file() {
         return;
     }
 
-    let format = hve_format();
-    let wr_marker_start = if format == "lua" {
-        "-- >>> HVE WINDOW RULES <<<"
-    } else {
-        "# >>> HVE WINDOW RULES <<<"
-    };
-    let wr_marker_end = if format == "lua" {
-        "-- >>> HVE WINDOW RULES END <<<"
-    } else {
-        "# >>> HVE WINDOW RULES END <<<"
-    };
-    let kb_marker_start = if format == "lua" {
-        "-- >>> HVE KEYBINDS <<<"
-    } else {
-        "# >>> HVE KEYBINDS <<<"
-    };
-    let kb_marker_end = if format == "lua" {
-        "-- >>> HVE KEYBINDS END <<<"
-    } else {
-        "# >>> HVE KEYBINDS END <<<"
-    };
-    let as_marker_start = if format == "lua" {
-        "-- >>> HVE AUTOSTART <<<"
-    } else {
-        "# >>> HVE AUTOSTART <<<"
-    };
-    let as_marker_end = if format == "lua" {
-        "-- >>> HVE AUTOSTART END <<<"
-    } else {
-        "# >>> HVE AUTOSTART END <<<"
-    };
     let _ = std::fs::create_dir_all(hve_cache_dir());
 
-    let content = if format == "lua" {
-        format!(
-            r#"{wr_marker_start}
--- HVE 2 manages its own window state via the Composer trait
--- (fullscreen for Gallery, floating for settings). No rules needed here.
-{wr_marker_end}
-{kb_marker_start}
-{kb_marker_end}
-{as_marker_start}
-{as_marker_end}
-"#,
-        )
-    } else {
-        format!(
-            r#"{wr_marker_start}
-# HVE 2 manages its own window state via the Composer trait
-# (fullscreen for Gallery, floating for settings). No rules needed here.
-{wr_marker_end}
-{kb_marker_start}
-{kb_marker_end}
-{as_marker_start}
-{as_marker_end}
-"#,
-        )
-    };
+    let content = format!(
+        "{window_rules}\n{LUA_KEYBINDS_START}\n{LUA_KEYBINDS_END}\n{LUA_AUTOSTART_START}\n{LUA_AUTOSTART_END}\n",
+        window_rules = window_rules_block(),
+    );
 
     match std::fs::write(&path, content) {
         Ok(_) => tracing::info!("[settings] Created at {}", path.display()),
@@ -76,14 +30,16 @@ pub fn ensure_settings_file() {
     }
 }
 
-/// Toggle HVE window rules between float (default) and tile.
+/// Apply HVE window rules to `hve-settings.lua`.
 ///
-/// Operates on hve-settings.lua/.conf — a dedicated file separate from
-/// the overlay (which is managed by assemble.sh). This file is loaded AFTER
-/// the user's windowrules.lua so its rule wins.
+/// HVE 2 manages its own window state via the Composer trait (fullscreen for
+/// Gallery, floating for settings), so the emitted window-rules block is
+/// always empty except for explanatory comments. The `tiling` parameter is
+/// retained for call-site compatibility, but it no longer changes the output.
 ///
-/// When `tiling` is false (default): `float = true` → window floats
-/// When `tiling` is true:           `tile  = true` → window tiles
+/// This file is a dedicated file separate from the overlay (which is managed
+/// by assemble.sh) and is loaded AFTER the user's windowrules.lua so its
+/// block wins.
 ///
 /// Returns true when the file was rewritten (and `hyprctl reload` fired).
 /// Unchanged content is a strict no-op: every reload re-floats HVE and
@@ -96,7 +52,6 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
         ensure_settings_file();
     }
 
-    let format = hve_format();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -105,19 +60,11 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
         }
     };
 
-    let marker_start = if format == "lua" {
-        "-- >>> HVE WINDOW RULES <<<"
-    } else {
-        "# >>> HVE WINDOW RULES <<<"
-    };
-    let marker_end = if format == "lua" {
-        "-- >>> HVE WINDOW RULES END <<<"
-    } else {
-        "# >>> HVE WINDOW RULES END <<<"
-    };
+    let marker_start = LUA_WINDOW_RULES_START;
+    let marker_end = LUA_WINDOW_RULES_END;
 
     // Build the replacement block
-    let rules_block: String = window_rules_block(tiling, format, marker_start, marker_end);
+    let rules_block = window_rules_block();
 
     // Steady state: same block already on disk → skip the rewrite AND the
     // reload. A reload re-floats HVE and drops any pending fullscreen.
@@ -190,27 +137,19 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
     }
 }
 
-/// Pure: desired window-rules block for (`tiling`, `format`).
-/// Extracted verbatim from `set_tiling_window_rules` so the compare-before-
-/// write guard and tests share one source of truth.
-fn window_rules_block(_tiling: bool, format: &str, marker_start: &str, marker_end: &str) -> String {
-    // HVE 2 manages its own window state via the Composer trait
-    // (fullscreen for Gallery, floating for settings). No window rules needed.
-    if format == "lua" {
-        format!(
-            r#"{marker_start}
--- HVE 2 manages its own window state via the Composer trait
--- (fullscreen for Gallery, floating for settings). No rules needed here.
-{marker_end}"#,
-        )
-    } else {
-        format!(
-            r#"{marker_start}
-# HVE 2 manages its own window state via the Composer trait
-# (fullscreen for Gallery, floating for settings). No rules needed here.
-{marker_end}"#,
-        )
-    }
+/// Pure: the desired Lua window-rules block.
+///
+/// HVE 2 manages its own window state via the Composer trait (fullscreen for
+/// Gallery, floating for settings), so the block carries only comments.
+/// Shared by the startup template and the compare-before-write guard so they
+/// cannot drift apart.
+fn window_rules_block() -> String {
+    format!(
+        "{LUA_WINDOW_RULES_START}\n\
+-- HVE 2 manages its own window state via the Composer trait\n\
+-- (fullscreen for Gallery, floating for settings). No rules needed here.\n\
+{LUA_WINDOW_RULES_END}"
+    )
 }
 
 /// Pure: whether the block between `marker_start`/`marker_end` in `content`
@@ -260,11 +199,11 @@ fn extract_marker_block(content: &str, marker_start: &str, marker_end: &str) -> 
     None
 }
 
-/// Write or remove the essential HVE keybind (SUPER+H) between
-/// `>>> HVE KEYBINDS <<<` markers in the hve-settings file. Supports both
-/// Lua and conf formats. The 4 extra binds (ALT+Q/N/B/S) were removed per
-/// user request (2026-09-07) — only SUPER+H (toggle-tray) is vital.
-/// When `enabled` is true: writes the single toggle-tray bind.
+/// Write or remove the essential HVE keybind (SUPER+H) between the Lua
+/// `>>> HVE KEYBINDS <<<` markers in `hve-settings.lua`. The 4 extra binds
+/// (ALT+Q/N/B/S) were removed per user request (2026-09-07) — only SUPER+H
+/// (toggle-tray) is vital.
+/// When `enabled` is true: writes the single `hl.bind` toggle-tray bind.
 /// When `enabled` is false: removes the markers and their content entirely.
 /// Calls `hyprctl reload` after a successful write.
 pub(crate) fn set_keybinds(enabled: bool) {
@@ -274,7 +213,6 @@ pub(crate) fn set_keybinds(enabled: bool) {
         ensure_settings_file();
     }
 
-    let format = hve_format();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -283,32 +221,16 @@ pub(crate) fn set_keybinds(enabled: bool) {
         }
     };
 
-    let marker_start = if format == "lua" {
-        "-- >>> HVE KEYBINDS <<<"
-    } else {
-        "# >>> HVE KEYBINDS <<<"
-    };
-    let marker_end = if format == "lua" {
-        "-- >>> HVE KEYBINDS END <<<"
-    } else {
-        "# >>> HVE KEYBINDS END <<<"
-    };
+    let marker_start = LUA_KEYBINDS_START;
+    let marker_end = LUA_KEYBINDS_END;
 
     // Build the replacement block when enabled — only SUPER+H is vital
     let keybinds_block: String = if enabled {
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.bind("SUPER + H", hl.dsp.exec_cmd("hve-ipc toggle-tray"))
-{marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-bind = SUPER, H, exec, hve-ipc toggle-tray
-{marker_end}"#,
-            )
-        }
+        format!(
+            "{marker_start}\n\
+hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\
+{marker_end}"
+        )
     } else {
         String::new()
     };
@@ -386,11 +308,11 @@ bind = SUPER, H, exec, hve-ipc toggle-tray
     }
 }
 
-/// Toggle HVE autostart in hve-settings.lua.
+/// Toggle HVE autostart in `hve-settings.lua`.
 ///
-/// When enabled, writes `hl.on("hyprland.start", ...)` with `hl.exec_cmd("hve --tray")`
-/// between markers. When disabled, removes the block entirely (markers stay in the
-/// template for next enable).
+/// When enabled, writes an `hl.on("hyprland.start", ...)` block with
+/// `hl.exec_cmd("hve --tray")` between the Lua markers. When disabled,
+/// removes the block entirely (markers stay in the template for next enable).
 ///
 /// This avoids touching the user's exec.lua — everything lives in our managed file,
 /// which is dofile'd from hyprland.lua. Clean uninstall: delete hve-settings.lua
@@ -402,7 +324,6 @@ pub(crate) fn set_autostart(enabled: bool) {
         ensure_settings_file();
     }
 
-    let format = hve_format();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -411,16 +332,8 @@ pub(crate) fn set_autostart(enabled: bool) {
         }
     };
 
-    let marker_start = if format == "lua" {
-        "-- >>> HVE AUTOSTART <<<"
-    } else {
-        "# >>> HVE AUTOSTART <<<"
-    };
-    let marker_end = if format == "lua" {
-        "-- >>> HVE AUTOSTART END <<<"
-    } else {
-        "# >>> HVE AUTOSTART END <<<"
-    };
+    let marker_start = LUA_AUTOSTART_START;
+    let marker_end = LUA_AUTOSTART_END;
 
     let exe = std::env::current_exe()
         .unwrap_or_else(|_| PathBuf::from("hve"))
@@ -428,23 +341,13 @@ pub(crate) fn set_autostart(enabled: bool) {
         .to_string();
 
     let autostart_block: String = if enabled {
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
+        format!(
+            r#"{marker_start}
 hl.on("hyprland.start", function()
-    hl.exec_cmd("{} --tray")
+    hl.exec_cmd("{exe} --tray")
 end)
-{marker_end}"#,
-                exe
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-exec-once = {} --tray
-{marker_end}"#,
-                exe
-            )
-        }
+{marker_end}"#
+        )
     } else {
         String::new()
     };
@@ -530,7 +433,7 @@ mod tests {
     fn test_set_keybinds_writes_and_removes() {
         let _env = TempEnv::new();
 
-        // Ensure settings file exists (created in the current hve_format, lua or conf)
+        // Ensure settings file exists (always created as Lua)
         ensure_settings_file();
         assert!(hve_settings_path().exists(), "settings file should exist");
 
@@ -577,12 +480,13 @@ mod tests {
     }
 
     #[test]
-    fn test_set_keybinds_noop_when_disabled_and_markers_absent() {        let _env = TempEnv::new();
+    fn test_set_keybinds_noop_when_disabled_and_markers_absent() {
+        let _env = TempEnv::new();
 
         // Create settings file manually WITHOUT keybinds markers
         let path = hve_settings_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let no_kb_content = "# >>> HVE WINDOW RULES <<<\nwindowrulev2 = float, title:^(Hyprland Visual Editor)$\n# >>> HVE WINDOW RULES END <<<\n";
+        let no_kb_content = "-- >>> HVE WINDOW RULES <<<\n-- HVE 2 manages its own window state via the Composer trait\n-- >>> HVE WINDOW RULES END <<<\n";
         std::fs::write(&path, no_kb_content).unwrap();
 
         let before = std::fs::read_to_string(&path).unwrap();
@@ -699,15 +603,15 @@ mod tests {
     #[test]
     fn marker_block_needs_update_detects_changes() {
         // Pure seam: only the block between markers decides rewrite vs skip.
-        let start = "# >>> HVE WINDOW RULES <<<";
-        let end = "# >>> HVE WINDOW RULES END <<<";
-        let desired = format!("{start}\nwindowrulev2 = tile, title:^(HVE)$\n{end}");
+        let start = "-- >>> HVE WINDOW RULES <<<";
+        let end = "-- >>> HVE WINDOW RULES END <<<";
+        let desired = format!("{start}\n-- tile rule\n{end}");
         let same = format!("header\n{desired}\nfooter\n");
         assert!(
             !super::marker_block_needs_update(&same, start, end, &desired),
             "identical block must not need an update"
         );
-        let different = format!("header\n{start}\nwindowrulev2 = float, title:^(HVE)$\n{end}\nfooter\n");
+        let different = format!("header\n{start}\n-- float rule\n{end}\nfooter\n");
         assert!(
             super::marker_block_needs_update(&different, start, end, &desired),
             "different block must need an update"
