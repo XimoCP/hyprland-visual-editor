@@ -583,6 +583,9 @@ export component CloseButton inherits Rectangle {
 // ─── Activation Toggle Card ─────────────────────────────────────────
 export component ActivationCard inherits Rectangle {
     in property <bool> active: false;
+    // Keyboard/mouse focus: the CARD recolors and thickens its own border,
+    // so there is a single focus line (no separate wrapper ring).
+    in property <bool> focused: false;
     in property <string> card-title: "System Activation";
     in property <string> active-text: "Visual effects are safely managed by HVE.";
     in property <string> inactive-text: "System halted. Enable to start.";
@@ -591,8 +594,10 @@ export component ActivationCard inherits Rectangle {
     height: 84px;
     border-radius: 12px;
     background: active ? HveColors.bg-card : HveColors.bg-surface;
-    border-width: 2px;
-    border-color: active ? HveColors.accent-green : HveColors.accent-red;
+    border-width: focused ? 3px : 2px;
+    border-color: focused ? #8fd8ff : (active ? HveColors.accent-green : HveColors.accent-red);
+
+    animate border-width { duration: 200ms; }
 
     drop-shadow-blur: active ? 16px : 0px;
     drop-shadow-color: active ? HveColors.accent-green.transparentize(0.85) : transparent;
@@ -704,6 +709,9 @@ export component AccordionCard inherits Rectangle {
     in property <[string]> tree-descs;
     in property <string> tree-path-max;
     in property <string> docs-label;
+    // Keyboard/mouse focus: the card draws its own focus border (single
+    // line), instead of a separate wrapper ring around it.
+    in property <bool> focused: false;
     callback toggled();
     callback open-docs();
 
@@ -723,8 +731,8 @@ export component AccordionCard inherits Rectangle {
     height: lv.preferred-height;
     border-radius: 12px;
     background: expanded ? accent.transparentize(0.93) : HveColors.bg-card;
-    border-width: expanded ? 2px : 1.5px;
-    border-color: expanded ? accent : border;
+    border-width: focused ? 3px : (expanded ? 2px : 1.5px);
+    border-color: focused ? #8fd8ff : (expanded ? accent : border);
     clip: true;
 
     drop-shadow-blur: expanded ? 16px : 0px;

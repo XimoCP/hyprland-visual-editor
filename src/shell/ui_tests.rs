@@ -3858,6 +3858,408 @@ fn system_arrows_drive_rows_after_handoff() {
     assert_eq!(win.get_panel_section(), 4, "arrows must not leave System");
 }
 
+/// Compound rows (timer / language / theme) engage with Enter: ←→ picks an
+/// option directly and applies it, instead of blindly cycling. ↑↓ leaves the
+/// engaged row and moves the cursor. Esc disengages without leaving the
+/// section (a second Esc goes back).
+#[test]
+fn system_compound_rows_engage_and_pick_with_arrows() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+
+    let secs = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
+    let langs = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let themes = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    {
+        let secs = secs.clone();
+        let w = win.as_weak();
+        win.on_change_minimize_seconds(move |v| {
+            secs.borrow_mut().push(v);
+            if let Some(w) = w.upgrade() {
+                w.set_minimize_seconds(v);
+            }
+        });
+    }
+    {
+        let langs = langs.clone();
+        let w = win.as_weak();
+        win.on_change_language(move |v| {
+            langs.borrow_mut().push(v.to_string());
+            if let Some(w) = w.upgrade() {
+                w.set_language(v);
+            }
+        });
+    }
+    {
+        let themes = themes.clone();
+        let w = win.as_weak();
+        win.on_change_theme(move |v| {
+            themes.borrow_mut().push(v.to_string());
+            if let Some(w) = w.upgrade() {
+                w.set_theme(v);
+            }
+        });
+    }
+
+    // Row 2 — timer chips: start at 4, ▶ → 6, ▶ → 8, ◀ → 6.
+    win.set_minimize_seconds(4);
+    focus_press_key(&win, Key::DownArrow); // row 1 (toggle)
+    focus_press_key(&win, Key::DownArrow); // row 2 (chips)
+    focus_press_key(&win, Key::Return); // engage
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::LeftArrow);
+    assert_eq!(
+        secs.borrow().as_slice(),
+        &[6, 8, 6],
+        "each ▶/◀ must pick the adjacent chip directly"
+    );
+
+    // ↑↓ exits engagement AND moves the row: Down → row 3 (language).
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return); // engage language
+    focus_press_key(&win, Key::RightArrow);
+    assert_eq!(
+        langs.borrow().as_slice(),
+        &["es"],
+        "▶ on the language row must pick ES"
+    );
+
+    // Down → row 4 (autostart, simple) → row 5 (theme). Enter engages theme.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return); // engage theme (system)
+    focus_press_key(&win, Key::LeftArrow);
+    assert_eq!(
+        themes.borrow().as_slice(),
+        &["light"],
+        "◀ on the theme row must step system → light"
+    );
+
+    assert_eq!(
+        win.get_panel_section(),
+        4,
+        "picking options must never leave the System section"
+    );
+}
+
+/// Esc inside an engaged compound row only disengages; it must not leave the
+/// section. A second Esc (already disengaged) goes back.
+#[test]
+fn system_engaged_row_esc_disengages_before_back() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+    let backs = std::rc::Rc::new(std::cell::RefCell::new(0usize));
+    win.on_panel_back({
+        let backs = backs.clone();
+        move || *backs.borrow_mut() += 1
+    });
+
+    focus_press_key(&win, Key::DownArrow); // row 1
+    focus_press_key(&win, Key::DownArrow); // row 2
+    focus_press_key(&win, Key::Return); // engage
+
+    focus_press_key(&win, Key::Escape);
+    assert_eq!(
+        *backs.borrow(),
+        0,
+        "Esc while engaged must only disengage, not leave the section"
+    );
+
+    focus_press_key(&win, Key::Escape);
+    assert_eq!(
+        *backs.borrow(),
+        1,
+        "Esc after disengaging must go back"
+    );
+}
+
+/// Engaged visual: the focused compound row swaps its icy ring for the
+/// white "grabbed" ring (same language as Borders/Motion sliders). Pins the
+/// pixel delta and saves both frames for visual inspection.
+#[test]
+fn panel_system_engaged_row_renders_white_ring() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+
+    // Row 2 (timer chips) focused, not yet engaged.
+    win.set_minimize_seconds(4);
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::DownArrow);
+    focus_settle();
+    let focused = win.window().take_snapshot().expect("focused row snapshot");
+    save_slice_png(focused.clone(), "/tmp/opencode/system_row2_focused.png");
+
+    // Enter engages: the row must repaint (white grabbed ring).
+    focus_press_key(&win, Key::Return);
+    focus_settle();
+    let engaged = win.window().take_snapshot().expect("engaged row snapshot");
+    save_slice_png(engaged.clone(), "/tmp/opencode/system_row2_engaged.png");
+
+    let diff = count_buffer_diff(&focused, &engaged);
+    assert!(
+        diff > 200,
+        "engaging a compound row must change pixels (white grabbed ring) — got {diff}"
+    );
+}
+
+/// The retardo card holds TWO keyboard stops: row 1 toggles the switch and
+/// row 2 picks the delay chips. They must not look identical, otherwise
+/// coming down from the menu it is impossible to know which stop owns the
+/// cursor (and Enter silently toggles instead of entering the chips).
+#[test]
+fn system_retardo_stops_are_visually_distinct() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+    win.set_minimize_seconds(4);
+
+    focus_press_key(&win, Key::DownArrow); // row 1 — switch stop
+    focus_settle();
+    let r1 = win.window().take_snapshot().expect("row1 snapshot");
+    save_slice_png(r1.clone(), "/tmp/opencode/system_retardo_stop_switch.png");
+
+    focus_press_key(&win, Key::DownArrow); // row 2 — chips stop
+    focus_settle();
+    let r2 = win.window().take_snapshot().expect("row2 snapshot");
+    save_slice_png(r2.clone(), "/tmp/opencode/system_retardo_stop_chips.png");
+
+    let diff = count_buffer_diff(&r1, &r2);
+    assert!(
+        diff > 200,
+        "switch stop and chips stop must render differently — got {diff}"
+    );
+}
+
+/// Rail arrows must PREVIEW the section live (no Enter needed); Enter/Space
+/// then moves the cursor into the content.
+#[test]
+fn rail_arrows_preview_section_live() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel(); // starts on System (4), content mode
+    assert_eq!(win.get_panel_section(), 4, "panel must start on System");
+
+    // Left → the rail owns the cursor. Arrows preview immediately.
+    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::DownArrow); // 4 → wraps to 0 (Save)
+    assert_eq!(
+        win.get_panel_section(),
+        0,
+        "Down in the rail must preview Save without Enter"
+    );
+    focus_press_key(&win, Key::DownArrow); // 0 → 1 (Borders)
+    assert_eq!(
+        win.get_panel_section(),
+        1,
+        "rail preview must follow the cursor"
+    );
+    focus_press_key(&win, Key::UpArrow); // 1 → 0 (Save)
+    assert_eq!(win.get_panel_section(), 0, "Up must preview back");
+
+    // Enter commits into the content: Down now navigates the Save list and
+    // must NOT keep moving the section.
+    focus_press_key(&win, Key::Return);
+    focus_press_key(&win, Key::DownArrow);
+    assert_eq!(
+        win.get_panel_section(),
+        0,
+        "after Enter the cursor must be inside the content, not the rail"
+    );
+}
+
+/// ↓ on an engaged Borders slider exits the engagement and moves to the next
+/// slider — same rule as the System chips (Esc still exits without moving).
+#[test]
+fn engaged_borders_slider_down_exits_and_moves_row() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    use slint::{ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Soft"),
+        SharedString::from("Sharp"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("rounded"),
+        SharedString::from("square"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(1);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
+    win.on_panel_apply_border({
+        let applied = applied.clone();
+        move |idx, _file| applied.borrow_mut().push(idx)
+    });
+
+    // Content: index 0. Down twice → index 2 (first slider), Enter engages it.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return);
+
+    // ↓ exits the engagement and moves to the next slider (index 3).
+    focus_press_key(&win, Key::DownArrow);
+
+    // Left from the tune block walks back to the pick block; Enter applies
+    // card 0. If ↓ had NOT disengaged, Left would adjust the slider and Enter
+    // would be swallowed — no border would be applied.
+    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[0],
+        "↓ must exit the engaged slider and move the cursor (Left then applies a card)"
+    );
+}
+
+/// Same rule on Motion bezier sliders.
+#[test]
+fn engaged_motion_slider_down_exits_and_moves_row() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    use slint::{ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("smooth"),
+        SharedString::from("bouncy"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(2);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
+    win.on_panel_apply_animation({
+        let applied = applied.clone();
+        move |idx, _file| applied.borrow_mut().push(idx)
+    });
+
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return); // engage first bezier slider
+    focus_press_key(&win, Key::DownArrow); // exit + move
+    focus_press_key(&win, Key::LeftArrow); // tune → pick
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[0],
+        "↓ must exit the engaged Motion slider and move the cursor"
+    );
+}
+
+/// Entering/leaving the rail must be visually obvious: the content dims
+/// while the rail owns the cursor, and the rail item carries a cursor mark.
+#[test]
+fn panel_rail_cursor_and_content_dimming_render() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+
+    let content = win.window().take_snapshot().expect("content focus snapshot");
+    save_slice_png(content.clone(), "/tmp/opencode/panel_content_focus.png");
+
+    focus_press_key(&win, Key::LeftArrow); // rail owns the cursor
+    focus_settle();
+    let rail = win.window().take_snapshot().expect("rail focus snapshot");
+    save_slice_png(rail.clone(), "/tmp/opencode/panel_rail_focus.png");
+
+    let diff = count_buffer_diff(&content, &rail);
+    assert!(
+        diff > 500,
+        "rail focus must read clearly (dim + cursor mark) — got {diff}"
+    );
+}
+
+/// The Activation / About cards draw ONE focus border: their own border
+/// recolors and thickens. A second wrapper ring (the old double border) is
+/// gone.
+#[test]
+fn activation_and_about_single_focus_border_by_construction() {
+    let comp = std::fs::read_to_string("ui/components.slint")
+        .expect("ui/components.slint must exist");
+    assert!(
+        comp.contains("in property <bool> focused"),
+        "ActivationCard/AccordionCard must take a `focused` flag so the card itself draws the focus border"
+    );
+    let sys = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
+        .expect("SystemSection.slint must exist");
+    assert!(
+        !sys.contains("#8fd8ff : transparent"),
+        "the Activation/About wrappers must not paint a second icy ring (double border)"
+    );
+    assert!(
+        sys.contains("focused:"),
+        "the cards must receive the focus flag"
+    );
+}
+
+/// When the rail owns the cursor the focused item carries a chevron, so the
+/// cursor is unmistakable even on the already-active (filled) item.
+#[test]
+fn panel_menu_marks_cursor_with_chevron_by_construction() {
+    let src = std::fs::read_to_string("ui/panel/PanelMenu.slint")
+        .expect("ui/panel/PanelMenu.slint must exist");
+    assert!(
+        src.contains("\u{25b6}") || src.contains("\u{203a}"),
+        "the rail cursor must carry a chevron"
+    );
+    assert!(
+        src.contains("keyboard-ring"),
+        "the chevron must be gated on the rail owning the cursor"
+    );
+}
+
+/// About accordion focused: one thick icy border drawn by the card itself
+/// (the old wrapper ring that caused the double border is gone).
+#[test]
+fn panel_system_about_focus_renders_single_border() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+
+    focus_settle();
+    let unfocused = win.window().take_snapshot().expect("about unfocused");
+    save_slice_png(unfocused.clone(), "/tmp/opencode/system_about_unfocused.png");
+
+    // Walk down to the About row (last row: 6 without the restart row).
+    for _ in 0..6 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    focus_settle();
+    let focused = win.window().take_snapshot().expect("about focused");
+    save_slice_png(focused.clone(), "/tmp/opencode/system_about_focused.png");
+
+    let diff = count_buffer_diff(&unfocused, &focused);
+    assert!(
+        diff > 200,
+        "focusing About must repaint with its single icy border — got {diff}"
+    );
+}
+
 /// Cross-section switches recreate the content, whose `init` grabs focus.
 /// This path never broke — it pins the healthy behavior both fixes keep.
 #[test]

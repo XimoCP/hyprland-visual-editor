@@ -20,7 +20,7 @@ component MenuItem inherits Rectangle {
 
     height: 36px;
     background: root.active ? HveColors.accent-cyan : (root.has-focus ? HveColors.bg-card.transparentize(0.2) : transparent);
-    border-width: root.has-focus ? 1px : 0px;
+    border-width: root.has-focus ? 2px : 0px;
     border-color: #8fd8ff;
     border-radius: SkwdTokens.radius-8;
     animate background { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
@@ -42,6 +42,20 @@ component MenuItem inherits Rectangle {
         x: 0px;
         background: HveColors.accent-cyan;
         border-radius: 2px;
+    }
+
+    // Keyboard cursor mark: a chevron, so the cursor is unmistakable even
+    // when it sits on the already-active (filled) item — the thin ring alone
+    // was lost against the cyan fill.
+    if root.has-focus : Text {
+        text: "▶";
+        color: root.active ? HveColors.bg-dark : HveColors.accent-cyan;
+        font-size: 10px;
+        width: 14px;
+        height: root.height;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: root.width - 22px;
     }
 
     TouchArea {

@@ -36,6 +36,7 @@ component SystemSettingsPane inherits Rectangle {
     in property <string> theme-label: "Theme";
     in property <int> focused-row: 0;
     in property <bool> has-focus: false;
+    in property <bool> option-engaged: false;
     in property <bool> follow: false;
     in-out property <int> mouse-row: -1;
     callback toggle-system(bool);
@@ -69,17 +70,14 @@ component SystemSettingsPane inherits Rectangle {
 
             // 0 — System ON/OFF status block (reuse ActivationCard pattern, icy focus)
             Rectangle {
-                // 2px inset so the card does not paint over the wrapper's icy
-                // focus ring (with `alignment: start` the wrapper would
-                // otherwise collapse to the card size and hide the ring).
+                // Plain holder: the ActivationCard draws its own single focus
+                // border (the old wrapper ring caused the double border).
                 height: 88px;
-                border-width: 1px;
-                border-color: (root.focused-row == 0 && root.has-focus) || root.mouse-row == 0 ? #8fd8ff : transparent;
-                border-radius: SkwdTokens.radius-8;
                 ActivationCard {
                     width: parent.width - 4px;
                     x: 2px;
                     y: 2px;
+                    focused: (root.focused-row == 0 && root.has-focus) || root.mouse-row == 0;
                     active: root.system-active;
                     card-title: "System Activation";
                     active-text: "Visual Editor Enabled";
@@ -121,11 +119,14 @@ component SystemSettingsPane inherits Rectangle {
             // 1+2 — Retardo al ocultar — hover sobre chips/toggle no apaga fila
             retardo-wrap := Rectangle {
                 property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && root.has-focus) || root.mouse-row == 1 || root.mouse-row == 2 || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
+                // Grabbed only on the chips stop (row 2), so the two keyboard
+                // stops on this card stay visually distinguishable.
+                property <bool> grabbed: root.option-engaged && root.focused-row == 2 && root.has-focus;
                 height: 40px;
                 border-radius: 8px;
                 background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                border-width: self.lit ? 1px : 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-width: self.grabbed ? 2px : 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                 hover-retardo := TouchArea {
                     width: 100%; height: 100%;
                     clicked => { root.mouse-row = 1; }
@@ -137,6 +138,11 @@ component SystemSettingsPane inherits Rectangle {
                     HorizontalLayout {
                         spacing: 4px; alignment: center;
                         visible: root.auto-minimize;
+                        // This card holds two keyboard stops; dim the chips
+                        // while the switch stop (row 1) owns the cursor so it
+                        // is obvious which one Enter will act on.
+                        opacity: (root.focused-row == 1 && root.has-focus) ? 0.3 : 1.0;
+                        animate opacity { duration: 150ms; easing: ease-in-out; }
                         Rectangle {
                             width: 40px; height: 28px; border-radius: 6px;
                             background: root.minimize-seconds == 0 ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
@@ -189,6 +195,10 @@ component SystemSettingsPane inherits Rectangle {
                     }
                     Rectangle {
                         width: 40px; height: 28px;
+                        // Mirror of the chips dim: while the chips stop (row 2)
+                        // owns the cursor the switch steps back.
+                        opacity: (root.focused-row == 2 && root.has-focus && root.auto-minimize) ? 0.3 : 1.0;
+                        animate opacity { duration: 150ms; easing: ease-in-out; }
                         Rectangle {
                             width: 40px; height: 22px; border-radius: 11px; y: (parent.height - self.height) / 2;
                             background: root.auto-minimize ? HveColors.accent-green : HveColors.border;
@@ -202,11 +212,12 @@ component SystemSettingsPane inherits Rectangle {
             // 3 — Language EN/ES
             lang-wrap := Rectangle {
                 property <bool> lit: (root.focused-row == 3 && root.has-focus) || root.mouse-row == 3 || hover-lang.has-hover || en-ta.has-hover || es-ta.has-hover;
+                property <bool> grabbed: root.option-engaged && root.focused-row == 3 && root.has-focus;
                 height: 40px;
                 border-radius: 8px;
                 background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                border-width: self.lit ? 1px : 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-width: self.grabbed ? 2px : 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                 hover-lang := TouchArea {
                     width: 100%; height: 100%;
                     clicked => { root.mouse-row = 3; }
@@ -264,11 +275,12 @@ component SystemSettingsPane inherits Rectangle {
             // 5 — Theme preference
             theme-wrap := Rectangle {
                 property <bool> lit: (root.focused-row == 5 && root.has-focus) || root.mouse-row == 5 || hover-theme.has-hover || theme-dark-ta.has-hover || theme-light-ta.has-hover || theme-system-ta.has-hover;
+                property <bool> grabbed: root.option-engaged && root.focused-row == 5 && root.has-focus;
                 height: 40px;
                 border-radius: 8px;
                 background: self.lit ? HveColors.bg-hover : HveColors.bg-card; animate background { duration: 200ms; easing: ease-in-out; }
-                border-width: self.lit ? 1px : 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-width: self.grabbed ? 2px : 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                 hover-theme := TouchArea {
                     width: 100%; height: 100%;
                     clicked => { root.mouse-row = 5; }
@@ -318,7 +330,7 @@ component SystemSettingsPane inherits Rectangle {
             }
 
             Text {
-                text: "↑↓ navigate • ←→ switch panel • Enter/Space toggle • Esc back";
+                text: root.option-engaged ? "←→ pick option • ↑↓/Esc exit" : "↑↓ navigate • ←→ switch panel • Enter/Space toggle • Esc back";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted.transparentize(0.4);
@@ -365,16 +377,14 @@ component SystemAboutPane inherits Rectangle {
             alignment: start;
 
             Rectangle {
-                // 2px inset so the accordion does not paint over the wrapper's
-                // icy focus ring (same reason as the activation wrapper).
+                // Plain holder: the AccordionCard draws its own single focus
+                // border (no wrapper ring → no double border).
                 height: about-acc.height + 4px;
-                border-width: 1px;
-                border-color: (root.focused-row == root.about-row && root.has-focus) || root.mouse-row == root.about-row ? #8fd8ff : transparent;
-                border-radius: SkwdTokens.radius-8;
                 about-acc := AccordionCard {
                     width: parent.width - 4px;
                     x: 2px;
                     y: 2px;
+                    focused: (root.focused-row == root.about-row && root.has-focus) || root.mouse-row == root.about-row;
                     card-title: root.about-title;
                     icon-text: "💡";
                     accent: HveColors.accent-cyan;
@@ -442,6 +452,9 @@ export component SystemSection inherits Rectangle {
     in property <bool> has-focus: false;
 
     in property <int> focused-row: 0;
+    // True while the focused compound row is engaged (Enter): ←/→ pick an
+    // option inside the row instead of jumping panels. Owned by PanelRoot.
+    in property <bool> option-engaged: false;
     // Mouse-owned mark: set on every click/hover. Shared by both panes.
     in-out property <int> mouse-row: -1;
     property <int> row-count: root.restart-required ? 8 : 7;
@@ -455,6 +468,56 @@ export component SystemSection inherits Rectangle {
     in property <bool> two-col: false;
     // About row index: the last row (6 without the restart row, 7 with it).
     property <int> about-row: root.restart-required ? 7 : 6;
+
+    // ── Compound-row option navigation ──────────────────────────────
+    // Rows 2 (timer), 3 (language) and 5 (theme) hold horizontal chips.
+    // PanelRoot's panel-kbd owns the keys and calls move-option() while the
+    // row is engaged; picking applies the value immediately, exactly like a
+    // mouse click on the chip.
+
+    // Nearest chip index for the current seconds: 0=Off, then 2/4/6/8/10.
+    // Legacy configs can hold a value outside the chip set (e.g. 5 from the
+    // old migration default); snapping to the nearest keeps ←/→ predictable.
+    function timer-index() -> int {
+        if (root.minimize-seconds <= 1) { return 0; }
+        if (root.minimize-seconds <= 3) { return 1; }
+        if (root.minimize-seconds <= 5) { return 2; }
+        if (root.minimize-seconds <= 7) { return 3; }
+        if (root.minimize-seconds <= 9) { return 4; }
+        return 5;
+    }
+
+    function apply-timer-index(idx: int) {
+        if (idx == 0) { root.change-minimize-seconds(0); }
+        else if (idx == 1) { root.change-minimize-seconds(2); }
+        else if (idx == 2) { root.change-minimize-seconds(4); }
+        else if (idx == 3) { root.change-minimize-seconds(6); }
+        else if (idx == 4) { root.change-minimize-seconds(8); }
+        else { root.change-minimize-seconds(10); }
+    }
+
+    // PanelRoot calls this only while `option-engaged` is true, so the
+    // engaged row is always the focused one.
+    public function move-option(right: bool) {
+        if (root.focused-row == 2) {
+            if (!root.auto-minimize) { return; }
+            let idx = root.timer-index();
+            let next = right ? min(idx + 1, 5) : max(idx - 1, 0);
+            if (next != idx) { root.apply-timer-index(next); }
+        } else if (root.focused-row == 3) {
+            let idx = root.language == "en" ? 0 : 1;
+            let next = right ? min(idx + 1, 1) : max(idx - 1, 0);
+            if (next != idx) { root.change-language(next == 0 ? "en" : "es"); }
+        } else if (root.focused-row == 5) {
+            let idx = root.theme == "dark" ? 0 : (root.theme == "light" ? 1 : 2);
+            let next = right ? min(idx + 1, 2) : max(idx - 1, 0);
+            if (next != idx) {
+                if (next == 0) { root.change-theme("dark"); }
+                else if (next == 1) { root.change-theme("light"); }
+                else { root.change-theme("system"); }
+            }
+        }
+    }
 
     VerticalLayout {
         spacing: 0px;
@@ -502,6 +565,7 @@ export component SystemSection inherits Rectangle {
                 autostart-label: root.autostart-label;
                 theme-label: root.theme-label;
                 focused-row: root.focused-row;
+                option-engaged: root.option-engaged;
                 has-focus: root.has-focus;
                 follow: root.focused-row < root.about-row;
                 mouse-row <=> root.mouse-row;
@@ -558,6 +622,7 @@ export component SystemSection inherits Rectangle {
                 autostart-label: root.autostart-label;
                 theme-label: root.theme-label;
                 focused-row: root.focused-row;
+                option-engaged: root.option-engaged;
                 has-focus: root.has-focus;
                 follow: root.focused-row < root.about-row;
                 mouse-row <=> root.mouse-row;

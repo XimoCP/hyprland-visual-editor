@@ -152,6 +152,12 @@ export component PanelRoot inherits Rectangle {
     in-out property <int> filters-focused-index: 0;
     in-out property <int> system-focused-row: 0;
     in-out property <bool> system-about-expanded: false;
+    // Compound-row engagement: when true, ← / → pick an option inside the
+    // focused System row (timer / language / theme) instead of jumping
+    // panels. Enter engages, Esc (or ↑ / ↓) exits. Same "grabbed" model as
+    // the Borders/Motion sliders, keyed on a bool because the cursor only
+    // ever moves within the row it was engaged on.
+    in-out property <bool> system-option-engaged: false;
 
     // Maps the Slint 1.17 FocusReason enum to a short --verbose tag.
     function focus-reason-label(reason: FocusReason) -> string {
@@ -167,22 +173,27 @@ export component PanelRoot inherits Rectangle {
     // section. Re-opening the same section re-seeds it. `changed section`
     // also covers Rust moving the section directly (menu selection emits
     // section-selected first, so both ends land on the same state).
-    init => { root.menu-focused-index = root.section; root.menu-active = false; }
+    init => { root.menu-focused-index = root.section; root.menu-active = false; root.system-option-engaged = false; }
     changed open => {
         if (self.open) {
             root.menu-focused-index = root.section;
             root.menu-active = false;
+            root.system-option-engaged = false;
             panel-kbd.focus();
         }
     }
     changed section => {
         root.menu-focused-index = root.section;
-        root.menu-active = false;
-        // Only claim the keyboard while the panel is actually open. When the
-        // panel closes, `section` resets to 0 (PanelState::Closed has no
-        // section), and an unconditional focus() here would steal focus back
+        // Rail preview commits the section while the rail keeps the cursor, so
+        // a section change coming from the rail must NOT reclaim the keyboard.
+        // Only a content-mode change (Rust moving the section directly) does.
+        // When the panel closes, `section` resets to 0 (PanelState::Closed has
+        // no section), and an unconditional focus() here would steal focus back
         // from shell-kbd — leaving the Gallery keyboard dead.
-        if (root.open) { panel-kbd.focus(); }
+        if (!root.menu-active) {
+            root.system-option-engaged = false;
+            if (root.open) { panel-kbd.focus(); }
+        }
     }
 
     background: HveColors.bg-dark;
@@ -255,6 +266,10 @@ export component PanelRoot inherits Rectangle {
                 vertical-stretch: 1;
                 background: HveColors.bg-dark;
                 clip: true;
+                // While the rail owns the cursor the content steps back, so
+                // "I am in the rail" vs "I am in the content" is obvious.
+                opacity: root.menu-active ? 0.55 : 1.0;
+                animate opacity { duration: 160ms; easing: ease-out; }
 
                 panel-kbd := FocusScope {
                     width: 100%;
@@ -278,11 +293,15 @@ export component PanelRoot inherits Rectangle {
                             if (event.text == Key.DownArrow) {
                                 if (root.menu-focused-index >= 4) { root.menu-focused-index = 0; }
                                 else { root.menu-focused-index += 1; }
+                                // Live preview: the content follows the rail
+                                // cursor without needing Enter.
+                                root.section-selected(root.menu-focused-index);
                                 return accept;
                             }
                             if (event.text == Key.UpArrow) {
                                 if (root.menu-focused-index <= 0) { root.menu-focused-index = 4; }
                                 else { root.menu-focused-index -= 1; }
+                                root.section-selected(root.menu-focused-index);
                                 return accept;
                             }
                             if (event.text == Key.RightArrow || event.text == Key.Return || event.text == Key.Space) {
@@ -293,7 +312,7 @@ export component PanelRoot inherits Rectangle {
                                 if (root.menu-focused-index == 1) { root.borders-focused-index = 0; }
                                 else if (root.menu-focused-index == 2) { root.motion-focused-index = 0; }
                                 else if (root.menu-focused-index == 3) { root.filters-focused-index = 0; }
-                                else if (root.menu-focused-index == 4) { root.system-focused-row = 0; }
+                                else if (root.menu-focused-index == 4) { root.system-focused-row = 0; root.system-option-engaged = false; }
                                 return accept;
                             }
                             return reject;
@@ -330,6 +349,25 @@ export component PanelRoot inherits Rectangle {
                             if (root.borders-engaged-slider >= 0) {
                                 if (event.text == Key.RightArrow) { borders.adjust-slider(true); return accept; }
                                 if (event.text == Key.LeftArrow) { borders.adjust-slider(false); return accept; }
+                                // ↑/↓ exit the engagement and move the row (same
+                                // rule as the System compound rows); Enter/Space exits.
+                                if (event.text == Key.DownArrow) {
+                                    root.borders-engaged-slider = -1;
+                                    if (root.border-files.length + 4 > 0) {
+                                        if (root.borders-focused-index >= root.border-files.length + 3) { root.borders-focused-index = 0; }
+                                        else { root.borders-focused-index += 1; }
+                                    }
+                                    return accept;
+                                }
+                                if (event.text == Key.UpArrow) {
+                                    root.borders-engaged-slider = -1;
+                                    if (root.border-files.length + 4 > 0) {
+                                        if (root.borders-focused-index <= 0) { root.borders-focused-index = root.border-files.length + 3; }
+                                        else { root.borders-focused-index -= 1; }
+                                    }
+                                    return accept;
+                                }
+                                if (event.text == Key.Return || event.text == Key.Space) { root.borders-engaged-slider = -1; return accept; }
                                 return accept;
                             }
                             if (event.text == Key.DownArrow) {
@@ -384,6 +422,25 @@ export component PanelRoot inherits Rectangle {
                             if (root.motion-engaged-slider >= 0) {
                                 if (event.text == Key.RightArrow) { motion.adjust-slider(true); return accept; }
                                 if (event.text == Key.LeftArrow) { motion.adjust-slider(false); return accept; }
+                                // ↑/↓ exit the engagement and move the row (same
+                                // rule as the System compound rows); Enter/Space exits.
+                                if (event.text == Key.DownArrow) {
+                                    root.motion-engaged-slider = -1;
+                                    if (root.anim-files.length + 4 > 0) {
+                                        if (root.motion-focused-index >= root.anim-files.length + 3) { root.motion-focused-index = 0; }
+                                        else { root.motion-focused-index += 1; }
+                                    }
+                                    return accept;
+                                }
+                                if (event.text == Key.UpArrow) {
+                                    root.motion-engaged-slider = -1;
+                                    if (root.anim-files.length + 4 > 0) {
+                                        if (root.motion-focused-index <= 0) { root.motion-focused-index = root.anim-files.length + 3; }
+                                        else { root.motion-focused-index -= 1; }
+                                    }
+                                    return accept;
+                                }
+                                if (event.text == Key.Return || event.text == Key.Space) { root.motion-engaged-slider = -1; return accept; }
                                 return accept;
                             }
                             if (event.text == Key.DownArrow) {
@@ -455,8 +512,32 @@ export component PanelRoot inherits Rectangle {
                             return reject;
                         }
                         if (root.section == 4) {
-                            // System: Down/Up walk rows, Enter toggles, Left → menu.
-                            if (event.text == Key.Escape) { root.back(); return accept; }
+                            // System: Down/Up walk rows, Enter toggles/engages,
+                            // Left → menu. Compound rows (timer/language/theme)
+                            // engage: then ←/→ pick an option and ↑/↓ or Esc exit.
+                            if (event.text == Key.Escape) {
+                                if (root.system-option-engaged) { root.system-option-engaged = false; }
+                                else { root.back(); }
+                                return accept;
+                            }
+                            if (root.system-option-engaged) {
+                                if (event.text == Key.RightArrow) { system.move-option(true); return accept; }
+                                if (event.text == Key.LeftArrow) { system.move-option(false); return accept; }
+                                if (event.text == Key.DownArrow) {
+                                    root.system-option-engaged = false;
+                                    if (root.system-focused-row >= (root.restart-required ? 7 : 6)) { root.system-focused-row = 0; }
+                                    else { root.system-focused-row += 1; }
+                                    return accept;
+                                }
+                                if (event.text == Key.UpArrow) {
+                                    root.system-option-engaged = false;
+                                    if (root.system-focused-row <= 0) { root.system-focused-row = root.restart-required ? 7 : 6; }
+                                    else { root.system-focused-row -= 1; }
+                                    return accept;
+                                }
+                                if (event.text == Key.Return || event.text == Key.Space) { root.system-option-engaged = false; return accept; }
+                                return accept;
+                            }
                             if (event.text == Key.RightArrow) {
                                 // Jump one panel right: settings rows → About block.
                                 if (root.system-focused-row < (root.restart-required ? 7 : 6)) {
@@ -466,6 +547,7 @@ export component PanelRoot inherits Rectangle {
                             }
                             if (event.text == Key.LeftArrow) {
                                 // Jump one panel left: About block → settings rows → menu.
+                                root.system-option-engaged = false;
                                 if (root.system-focused-row >= (root.restart-required ? 7 : 6)) {
                                     root.system-focused-row = 0;
                                 } else {
@@ -487,26 +569,13 @@ export component PanelRoot inherits Rectangle {
                                 if (root.system-focused-row == 0) { root.toggle-system(!root.system-active); }
                                 else if (root.system-focused-row == 1) { root.toggle-auto-minimize(!root.auto-minimize); }
                                 else if (root.system-focused-row == 2) {
-                                    // Steps Off → 2 → 4 → 6 → 8 → 10 → Off.
-                                    if (root.minimize-seconds == 0) { root.change-minimize-seconds(2); }
-                                    else if (root.minimize-seconds == 2) { root.change-minimize-seconds(4); }
-                                    else if (root.minimize-seconds == 3) { root.change-minimize-seconds(4); }
-                                    else if (root.minimize-seconds == 4) { root.change-minimize-seconds(6); }
-                                    else if (root.minimize-seconds == 5) { root.change-minimize-seconds(6); }
-                                    else if (root.minimize-seconds == 6) { root.change-minimize-seconds(8); }
-                                    else if (root.minimize-seconds == 8) { root.change-minimize-seconds(10); }
-                                    else if (root.minimize-seconds == 10) { root.change-minimize-seconds(0); }
-                                    else { root.change-minimize-seconds(2); }
+                                    // Timer chips: engage and pick with ←/→ (only
+                                    // when the chips are actually rendered).
+                                    if (root.auto-minimize) { root.system-option-engaged = true; }
                                 }
-                                else if (root.system-focused-row == 3) {
-                                    if (root.language == "en") { root.change-language("es"); } else { root.change-language("en"); }
-                                }
+                                else if (root.system-focused-row == 3) { root.system-option-engaged = true; }
                                 else if (root.system-focused-row == 4) { root.toggle-autostart(!root.autostart); }
-                                else if (root.system-focused-row == 5) {
-                                    if (root.theme == "system") { root.change-theme("light"); }
-                                    else if (root.theme == "light") { root.change-theme("dark"); }
-                                    else { root.change-theme("system"); }
-                                }
+                                else if (root.system-focused-row == 5) { root.system-option-engaged = true; }
                                 else if (root.system-focused-row == 6) {
                                     if (root.restart-required) { root.restart-app(); }
                                     else { root.system-about-expanded = !root.system-about-expanded; }
@@ -648,6 +717,7 @@ export component PanelRoot inherits Rectangle {
                         tree-path-max: root.tree-path-max;
                         docs-label: root.docs-label;
                         focused-row: root.system-focused-row;
+                        option-engaged: root.system-option-engaged;
                         has-focus: panel-kbd.has-focus && !root.menu-active;
                         about-expanded <=> root.system-about-expanded;
                         toggle-system(v) => { root.toggle-system(v); }
