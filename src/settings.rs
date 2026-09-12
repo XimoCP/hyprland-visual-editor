@@ -1,7 +1,9 @@
 use crate::config::{hve_cache_dir, hve_format, hve_settings_path};
 use std::path::PathBuf;
 
-/// Ensure the settings file exists with a default float rule and empty keybinds section.
+/// Ensure the settings file exists with empty window rules and keybinds sections.
+/// HVE 2 manages its own window state via the Composer trait (fullscreen for
+/// Gallery, floating for settings), so no window rules are needed.
 /// Called once at startup — does NOT overwrite an existing file.
 pub fn ensure_settings_file() {
     let path = hve_settings_path();
@@ -45,13 +47,8 @@ pub fn ensure_settings_file() {
     let content = if format == "lua" {
         format!(
             r#"{wr_marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  float = true,
-  size  = {{ "95%", "95%" }},
-  move  = {{ "center", "center" }},
-}})
+-- HVE 2 manages its own window state via the Composer trait
+-- (fullscreen for Gallery, floating for settings). No rules needed here.
 {wr_marker_end}
 {kb_marker_start}
 {kb_marker_end}
@@ -62,9 +59,8 @@ hl.window_rule({{
     } else {
         format!(
             r#"{wr_marker_start}
-windowrulev2 = float, title:^(Hyprland Visual Editor)$
-windowrulev2 = center, title:^(Hyprland Visual Editor)$
-windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
+# HVE 2 manages its own window state via the Composer trait
+# (fullscreen for Gallery, floating for settings). No rules needed here.
 {wr_marker_end}
 {kb_marker_start}
 {kb_marker_end}
@@ -197,49 +193,23 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
 /// Pure: desired window-rules block for (`tiling`, `format`).
 /// Extracted verbatim from `set_tiling_window_rules` so the compare-before-
 /// write guard and tests share one source of truth.
-fn window_rules_block(tiling: bool, format: &str, marker_start: &str, marker_end: &str) -> String {
-    if tiling {
-        // Tiling ON → tile rule (overrides float from user's windowrules.lua)
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  tile  = true,
-}})
+fn window_rules_block(_tiling: bool, format: &str, marker_start: &str, marker_end: &str) -> String {
+    // HVE 2 manages its own window state via the Composer trait
+    // (fullscreen for Gallery, floating for settings). No window rules needed.
+    if format == "lua" {
+        format!(
+            r#"{marker_start}
+-- HVE 2 manages its own window state via the Composer trait
+-- (fullscreen for Gallery, floating for settings). No rules needed here.
 {marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-windowrulev2 = tile, title:^(Hyprland Visual Editor)$
-{marker_end}"#,
-            )
-        }
+        )
     } else {
-        // Tiling OFF → float rule (default)
-        if format == "lua" {
-            format!(
-                r#"{marker_start}
-hl.window_rule({{
-  name  = "hve-floating",
-  match = {{ title = "^Hyprland Visual Editor$" }},
-  float = true,
-  size  = {{ "95%", "95%" }},
-  move  = {{ "center", "center" }},
-}})
+        format!(
+            r#"{marker_start}
+# HVE 2 manages its own window state via the Composer trait
+# (fullscreen for Gallery, floating for settings). No rules needed here.
 {marker_end}"#,
-            )
-        } else {
-            format!(
-                r#"{marker_start}
-windowrulev2 = float, title:^(Hyprland Visual Editor)$
-windowrulev2 = center, title:^(Hyprland Visual Editor)$
-windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
-{marker_end}"#,
-            )
-        }
+        )
     }
 }
 
@@ -637,19 +607,22 @@ mod tests {
     }
 
     fn assert_floating_content(content: &str) {
-        if super::super::config::hve_format() == "lua" {
-            assert!(content.contains("float = true"), "lua floating rule present");
-        } else {
-            assert!(
-                content.contains("windowrulev2 = float"),
-                "conf floating rule present"
-            );
-        }
-        assert!(!content.contains("tile"), "no tiling rule in floating mode");
+        // HVE 2 manages its own window state via the Composer trait
+        // (fullscreen for Gallery, floating for settings). No rules needed.
+        assert!(
+            content.contains("Composer trait"),
+            "HVE 2 Composer comment present in window rules"
+        );
+        assert!(!content.contains("tile = true"), "no tiling rule in floating mode");
     }
 
     fn assert_tiling_content(content: &str) {
-        assert!(content.contains("tile"), "tiling rule present, got:\n{content}");
+        // HVE 2 manages its own window state via the Composer trait
+        // (fullscreen for Gallery, floating for settings). No rules needed.
+        assert!(
+            content.contains("Composer trait"),
+            "HVE 2 Composer comment present in window rules, got:\n{content}"
+        );
     }
 
     #[test]
@@ -695,18 +668,32 @@ mod tests {
     }
 
     #[test]
-    fn tiling_rules_rewrite_when_mode_changes() {
+    fn tiling_rules_no_rewrite_since_composer_manages_state() {
+        // HVE 2 manages window state via the Composer trait, so
+        // set_tiling_window_rules always writes empty rules regardless
+        // of the tiling parameter. The file should never be rewritten.
         let _env = TempEnv::new();
         ensure_settings_file();
         set_tiling_window_rules(false);
         let path = hve_settings_path();
         assert_floating_content(&std::fs::read_to_string(&path).unwrap());
+        let before_mtime = file_mtime(&path);
 
         set_tiling_window_rules(true);
         assert_tiling_content(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(
+            before_mtime,
+            file_mtime(&path),
+            "tiling mode change must NOT rewrite the file (Composer manages state)"
+        );
 
         set_tiling_window_rules(false);
         assert_floating_content(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(
+            before_mtime,
+            file_mtime(&path),
+            "back to floating must NOT rewrite the file"
+        );
     }
 
     #[test]

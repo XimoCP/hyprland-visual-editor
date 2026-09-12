@@ -102,31 +102,25 @@ setup_files() {
     # ── Create hve-settings with default window rules and keybinds section (if not exists) ──
     if [ ! -f "$SETTINGS_FILE" ]; then
         echo "Creating default settings at $SETTINGS_FILE..."
-        if [ "$HVE_FORMAT" = "lua" ]; then
-            cat > "$SETTINGS_FILE" << 'SETEOF'
+    if [ "$HVE_FORMAT" = "lua" ]; then
+        cat > "$SETTINGS_FILE" << 'SETEOF'
 -- >>> HVE WINDOW RULES <<<
-hl.window_rule({
-  name  = "hve-floating",
-  match = { title = "^Hyprland Visual Editor$" },
-  float = true,
-  size  = { "95%", "95%" },
-  move  = { "center", "center" },
-})
+-- HVE 2 manages its own window state via the Composer trait
+-- (fullscreen for Gallery, floating for settings). No rules needed here.
 -- >>> HVE WINDOW RULES END <<<
 -- >>> HVE KEYBINDS <<<
 -- >>> HVE KEYBINDS END <<<
 SETEOF
-        else
-            cat > "$SETTINGS_FILE" << 'SETEOF'
+    else
+        cat > "$SETTINGS_FILE" << 'SETEOF'
 # >>> HVE WINDOW RULES <<<
-windowrulev2 = float, title:^(Hyprland Visual Editor)$
-windowrulev2 = center, title:^(Hyprland Visual Editor)$
-windowrulev2 = size 95% 95%, title:^(Hyprland Visual Editor)$
+# HVE 2 manages its own window state via the Composer trait
+# (fullscreen for Gallery, floating for settings). No rules needed here.
 # >>> HVE WINDOW RULES END <<<
 # >>> HVE KEYBINDS <<<
 # >>> HVE KEYBINDS END <<<
 SETEOF
-        fi
+    fi
     fi
 }
 
