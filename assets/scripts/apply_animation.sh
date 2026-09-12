@@ -4,55 +4,26 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 source "$SCRIPT_DIR/utils.sh"
 
-# Detect format BEFORE resolving preset so we pick the right extension
-FORMAT_CACHE="$HVE_SAFE_DIR/hve_format"
-if [ -f "$FORMAT_CACHE" ]; then
-    export HVE_FORMAT=$(cat "$FORMAT_CACHE")
-else
-    source "$HVE_SCRIPTS_DIR/detect_format.sh"
-    export HVE_FORMAT=$(detect_format 2>/dev/null || echo "conf")
-fi
-
-# 🎛️ ASIGNACIÓN DINÁMICA DE EXTENSIÓN
-if [ "$HVE_FORMAT" = "lua" ]; then
-    EXT="lua"
-    ALT_EXT="conf"  # Extensión alternativa para limpieza
-else
-    EXT="conf"
-    ALT_EXT="lua"   # Extensión alternativa para limpieza
-fi
-
+# Lua-only fragment target (config format is never detected at runtime).
 mkdir -p "$HVE_FRAGMENTS_DIR"
 PRESET_NAME=$1
-
-# Definimos las rutas de los fragmentos de forma dinámica
-TARGET_FRAGMENT="$HVE_FRAGMENTS_DIR/animation.${EXT}"
-OLD_FRAGMENT="$HVE_FRAGMENTS_DIR/animation.${ALT_EXT}"
+TARGET_FRAGMENT="$HVE_FRAGMENTS_DIR/animation.lua"
 
 # 1. SHUTDOWN LOGIC (None or empty)
 if [ "$PRESET_NAME" == "none" ] || [ -z "$PRESET_NAME" ]; then
-    rm -f "$TARGET_FRAGMENT" "$OLD_FRAGMENT"
+    rm -f "$TARGET_FRAGMENT"
     echo "Animations disabled."
 else
-    # Limpieza preventiva: eliminamos el fragmento del formato opuesto
-    rm -f "$OLD_FRAGMENT"
-
-    # 2. DYNAMIC LOADING - Respects HVE_FORMAT for extension preference
+    # 2. LOADING - presets resolve to `$HVE_ANIMATIONS_DIR/$name.lua`
     TARGET_FILE=$(hve_resolve_preset "$HVE_ANIMATIONS_DIR" "$PRESET_NAME")
 
     if [ $? -eq 0 ] && [ -n "$TARGET_FILE" ]; then
         # Copy the preset content to the dynamic fragment
         cat "$TARGET_FILE" > "$TARGET_FRAGMENT"
-        echo "Animation preset applied: $PRESET_NAME ($EXT mode)"
+        echo "Animation preset applied: $PRESET_NAME (lua mode)"
     else
-        # 🚨 SECURITY FALLBACK: Corregido con sintaxis real de animaciones
-        if [ "$EXT" = "lua" ]; then
-            # Activa animaciones en la API de Lua de Hyprland
-            echo 'hl.config({ animations = { enabled = true } })' > "$TARGET_FRAGMENT"
-        else
-            # Activa animaciones en la sintaxis clásica de Hyprland
-            echo "animations { enabled = true }" > "$TARGET_FRAGMENT"
-        fi
+        # Security fallback: a valid Lua animation fragment.
+        echo 'hl.config({ animations = { enabled = true } })' > "$TARGET_FRAGMENT"
         echo "Warning: Preset $PRESET_NAME not found. Using safe animation fallback."
     fi
 fi

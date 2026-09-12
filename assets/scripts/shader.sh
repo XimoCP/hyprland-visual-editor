@@ -4,30 +4,9 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 source "$SCRIPT_DIR/utils.sh"
 
-# Detect format BEFORE resolving preset so we pick the right extension
-FORMAT_CACHE="$HVE_SAFE_DIR/hve_format"
-if [ -f "$FORMAT_CACHE" ]; then
-    export HVE_FORMAT=$(cat "$FORMAT_CACHE")
-else
-    source "$HVE_SCRIPTS_DIR/detect_format.sh"
-    export HVE_FORMAT=$(detect_format 2>/dev/null || echo "conf")
-fi
-
-# 🎛️ ASIGNACIÓN DINÁMICA DE EXTENSIÓN PARA EL FRAGMENTO
-if [ "$HVE_FORMAT" = "lua" ]; then
-    EXT="lua"
-    ALT_EXT="conf"
-else
-    EXT="conf"
-    ALT_EXT="lua"
-fi
-
-# Ensure the internal fragments folder exists
+# Lua-only fragment target (config format is never detected at runtime).
 mkdir -p "$HVE_FRAGMENTS_DIR"
-
-# Definimos las rutas de los fragmentos de forma dinámica
-TARGET_FRAGMENT="$HVE_FRAGMENTS_DIR/shader.${EXT}"
-OLD_FRAGMENT="$HVE_FRAGMENTS_DIR/shader.${ALT_EXT}"
+TARGET_FRAGMENT="$HVE_FRAGMENTS_DIR/shader.lua"
 
 # The preset is the filename (e.g., 02_monocromo.frag)
 PRESET=$1
@@ -37,16 +16,12 @@ PRESET=$1
 # Case 1: Disable (None, empty, or 'clean' shader)
 if [ "$PRESET" == "none" ] || [ -z "$PRESET" ] || [ "$PRESET" == "00_limpio.frag" ]; then
 
-    # Delete both internal fragments to avoid ghost configs
-    rm -f "$TARGET_FRAGMENT" "$OLD_FRAGMENT"
+    # Delete the internal fragment to avoid ghost configs
+    rm -f "$TARGET_FRAGMENT"
 
     # PRO TIP: Force Hyprland to clear the shader in memory immediately.
-    # Evaluamos la sintaxis de hyprctl según la versión (en v0.55+ Lua cambia el keyword)
-    if [ "$EXT" = "lua" ]; then
-        hyprctl keyword decoration:screen_shader "" 2>/dev/null || hyprctl keyword decoration.screen_shader ""
-    else
-        hyprctl keyword decoration:screen_shader ""
-    fi
+    # (Hyprland 0.55+ Lua routes the keyword through the Lua shim.)
+    hyprctl keyword decoration:screen_shader "" 2>/dev/null || hyprctl keyword decoration.screen_shader ""
 
     echo "Syncing: Shaders disabled."
 
@@ -66,9 +41,6 @@ else
             ;;
     esac
 
-    # Limpieza preventiva del formato opuesto
-    rm -f "$OLD_FRAGMENT"
-
     SHADER_PATH="$HVE_SHADERS_DIR/$PRESET"
 
     # Security check in the internal path
@@ -77,18 +49,10 @@ else
         exit 1
     fi
 
-    # 💾 GENERACIÓN DEL FRAGMENTO ENVOLTORIO SEGÚN FORMATO
-    if [ "$EXT" = "lua" ]; then
-        # Sintaxis nativa para el master overlay.lua
-        echo "hl.config({ decoration = { [\"screen_shader\"] = \"$SHADER_PATH\" } })" > "$TARGET_FRAGMENT"
-    else
-        # Sintaxis clásica para el master overlay.conf
-        echo "decoration {
-    screen_shader = $SHADER_PATH
-}" > "$TARGET_FRAGMENT"
-    fi
+    # 💾 GENERATE THE LUA WRAPPER FRAGMENT for the master overlay.lua
+    echo "hl.config({ decoration = { [\"screen_shader\"] = \"$SHADER_PATH\" } })" > "$TARGET_FRAGMENT"
 
-    echo "Syncing: Applying shader $PRESET ($EXT wrapper)"
+    echo "Syncing: Applying shader $PRESET (lua wrapper)"
 fi
 
 # --- CALL THE MASTER ASSEMBLER ---

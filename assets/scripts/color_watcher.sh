@@ -27,24 +27,16 @@ _log() {
 find_watch_files() {
     local files=()
 
-    # Noctalia v4: rendered output in noctalia/ subdirectory
-    local noctalia_conf="$HVE_HYPR_DIR/noctalia/noctalia-colors.conf"
+    # Noctalia v4: rendered Lua output in noctalia/ subdirectory
     local noctalia_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
-    if [ -f "$noctalia_conf" ]; then
-        files+=("$noctalia_conf")
-    fi
     if [ -f "$noctalia_lua" ]; then
         files+=("$noctalia_lua")
     fi
 
-    # Noctalia v5: rendered output directly in hypr dir (noctalia.lua or noctalia.conf)
+    # Noctalia v5: rendered Lua output directly in the hypr dir
     local noctalia_v5_lua="$HVE_HYPR_DIR/noctalia.lua"
-    local noctalia_v5_conf="$HVE_HYPR_DIR/noctalia.conf"
     if [ -f "$noctalia_v5_lua" ]; then
         files+=("$noctalia_v5_lua")
-    fi
-    if [ -f "$noctalia_v5_conf" ]; then
-        files+=("$noctalia_v5_conf")
     fi
 
     # Noctalia v5: settings.toml changes when user modifies colors in Noctalia's own UI.
@@ -86,11 +78,11 @@ find_watch_files() {
         fi
     fi
 
-    # Manual fallback: scan hypr config files for color definitions
+    # Manual fallback: scan hypr Lua config files for color definitions
     if [ ${#files[@]} -eq 0 ]; then
         while IFS= read -r f; do
             files+=("$f")
-        done < <(find "$HVE_HYPR_DIR" -maxdepth 2 \( -name "*.lua" -o -name "*.conf" \) -type f 2>/dev/null)
+        done < <(find "$HVE_HYPR_DIR" -maxdepth 2 -name "*.lua" -type f 2>/dev/null)
     fi
 
     # Return unique files
@@ -181,21 +173,20 @@ while true; do
         fi
 
         # Noctalia v5: if settings.toml changed, run templates-apply FIRST so the
-        # rendered files (noctalia-colors.conf) reflect the new palette before
-        # assemble.sh reads them. This bridges the gap where v5's color-scheme-set
-        # only persists the setting but does NOT auto-run templates-apply.
+        # rendered Lua files (noctalia.lua / noctalia-colors.lua) reflect the new
+        # palette before assemble.sh reads them. This bridges the gap where v5's
+        # color-scheme-set only persists the setting but does NOT auto-run
+        # templates-apply.
         if [ "$noctalia_settings_changed" = true ] && [ -f "$NOCTALIA_V5_SETTINGS" ] && command -v noctalia &>/dev/null; then
             _log "Noctalia v5 settings changed — applying templates..."
             if noctalia msg templates-apply >> "$LOG_FILE" 2>&1; then
                 _log "Templates applied"
                 # Update hashes of rendered files so they don't trigger a second pass
-                # v4 paths: noctalia/noctalia-colors.{conf,lua}
-                # v5 paths: noctalia.{lua,conf}
+                # v4: noctalia/noctalia-colors.lua
+                # v5: noctalia.lua
                 for f in \
-                    "$HVE_HYPR_DIR/noctalia/noctalia-colors.conf" \
                     "$HVE_HYPR_DIR/noctalia/noctalia-colors.lua" \
-                    "$HVE_HYPR_DIR/noctalia.lua" \
-                    "$HVE_HYPR_DIR/noctalia.conf"; do
+                    "$HVE_HYPR_DIR/noctalia.lua"; do
                     [ -f "$f" ] && LAST_HASHES["$f"]=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
                 done
             else

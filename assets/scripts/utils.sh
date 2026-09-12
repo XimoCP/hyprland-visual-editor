@@ -31,42 +31,25 @@ HVE_SAFE_DIR="${HVE_CACHE_DIR:-$HOME/.cache/hve}"
 # Hyprland config directory
 HVE_HYPR_DIR="$HOME/.config/hypr"
 
-# Resolve a preset file that may be .conf or .lua
+# Resolve a preset file. Lua-only: HVE never detects config format at runtime,
+# so a preset name always resolves to `$dir/$name.lua`.
 # Usage: _resolved_file=$(hve_resolve_preset "$PRESETS_DIR" "$PRESET_NAME")
-# Respects HVE_FORMAT env var: if "conf" prefers .conf, if "lua" prefers .lua
 hve_resolve_preset() {
     local dir="$1"
     local name="$2"
-    local format="${HVE_FORMAT:-conf}"
 
-    # If name already has an extension, use it as-is if it exists
+    # If the name already carries an extension, honour it only if it exists.
     if [[ "$name" == *.* ]]; then
         if [ -f "$dir/$name" ]; then
             echo "$dir/$name"
             return 0
-        else
-            return 1
         fi
+        return 1
     fi
 
-    # Respect system format: prefer matching extension, fallback to the other
-    if [ "$format" = "lua" ]; then
-        if [ -f "$dir/$name.lua" ]; then
-            echo "$dir/$name.lua"
-            return 0
-        elif [ -f "$dir/$name.conf" ]; then
-            echo "$dir/$name.conf"
-            return 0
-        fi
-    else
-        # conf mode: prefer .conf, fallback to .lua
-        if [ -f "$dir/$name.conf" ]; then
-            echo "$dir/$name.conf"
-            return 0
-        elif [ -f "$dir/$name.lua" ]; then
-            echo "$dir/$name.lua"
-            return 0
-        fi
+    if [ -f "$dir/$name.lua" ]; then
+        echo "$dir/$name.lua"
+        return 0
     fi
 
     return 1

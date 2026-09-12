@@ -47,19 +47,6 @@ _hve_extract_lua_vars() {
     done
 }
 
-# Conf variable: $primary = rgb(2ec436)
-_hve_extract_conf_vars() {
-    local file="$1"
-    grep -E '^\$?(primary|secondary|tertiary|surface|surface_lowest|accent|error)\s*=' "$file" 2>/dev/null | while IFS='=' read -r var val; do
-        var=$(echo "$var" | tr -d ' $')
-        val=$(echo "$val" | tr -d ' ')
-        local hex
-        hex=$(_hve_normalize_color "$val")
-        # Prefix with HVE_ and uppercase
-        [ -n "$hex" ] && echo "HVE_$(echo "$var" | tr '[:lower:]' '[:upper:]')=${hex}"
-    done
-}
-
 # Lua border gradient: active_border = { colors = { "rgba(...)", "rgba(...)" } }
 _hve_extract_border_gradient() {
     local file="$1"
@@ -234,33 +221,22 @@ PY
     return 1
 }
 
-# Noctalia template output fallback:
-#   v5: ~/.config/hypr/noctalia.{lua,conf}
-#   v4: ~/.config/hypr/noctalia/noctalia-colors.{lua,conf}
+# Noctalia template output fallback (Lua-only):
+#   v5: ~/.config/hypr/noctalia.lua
+#   v4: ~/.config/hypr/noctalia/noctalia-colors.lua
 _hve_try_noctalia() {
     local noctalia_v5_lua="$HVE_HYPR_DIR/noctalia.lua"
-    local noctalia_v5_conf="$HVE_HYPR_DIR/noctalia.conf"
     local noctalia_v4_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
-    local noctalia_v4_conf="$HVE_HYPR_DIR/noctalia/noctalia-colors.conf"
 
-    # Prefer v5 output (templates-apply writes here). Lua mode first (detected by
-    # templates-apply if Hyprland is in Lua mode), then conf mode.
+    # Prefer v5 output (templates-apply writes here).
     if [ -f "$noctalia_v5_lua" ]; then
         echo "[HVE] Colors from: Noctalia v5 (lua)" >&2
         eval "$(_hve_extract_lua_vars "$noctalia_v5_lua")"
         return 0
-    elif [ -f "$noctalia_v5_conf" ]; then
-        echo "[HVE] Colors from: Noctalia v5 (conf)" >&2
-        eval "$(_hve_extract_conf_vars "$noctalia_v5_conf")"
-        return 0
     fi
 
-    # Fallback to v4 paths
-    if [ -f "$noctalia_v4_conf" ]; then
-        echo "[HVE] Colors from: Noctalia v4 (conf)" >&2
-        eval "$(_hve_extract_conf_vars "$noctalia_v4_conf")"
-        return 0
-    elif [ -f "$noctalia_v4_lua" ]; then
+    # Fallback to v4 path.
+    if [ -f "$noctalia_v4_lua" ]; then
         echo "[HVE] Colors from: Noctalia v4 (lua)" >&2
         eval "$(_hve_extract_lua_vars "$noctalia_v4_lua")"
         return 0
@@ -302,10 +278,9 @@ _hve_try_matugen() {
 
         if [ -n "$output_file" ] && [ -f "$output_file" ]; then
             echo "[HVE] Colors from: matugen ($output_file)" >&2
-            # Try lua first, then conf
+            # Lua-only output.
             local found
             found=$(_hve_extract_lua_vars "$output_file")
-            [ -z "$found" ] && found=$(_hve_extract_conf_vars "$output_file")
             [ -n "$found" ] && eval "$found"
             return 0
         fi
@@ -329,19 +304,6 @@ _hve_try_manual() {
             break
         fi
     done < <(find "$HVE_HYPR_DIR" -maxdepth 2 -name "*.lua" -type f 2>/dev/null)
-
-    # Scan .conf files
-    if [ $found -eq 0 ]; then
-        while IFS= read -r file; do
-            local vars
-            vars=$(_hve_extract_conf_vars "$file")
-            if [ -n "$vars" ]; then
-                eval "$vars"
-                found=1
-                break
-            fi
-        done < <(find "$HVE_HYPR_DIR" -maxdepth 2 -name "*.conf" -type f 2>/dev/null)
-    fi
 
     # Last resort: border gradient from appearance
     if [ $found -eq 0 ]; then

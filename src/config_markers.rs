@@ -4,11 +4,6 @@
 //! The shell scripts mirror these exact literals across their own process
 //! boundary; this module owns the Rust side.
 
-// Not yet consumed by production: settings/provider migration lands in PR 2 and
-// the mutation gates in PR 3 of the drop-conf-support chain. This allows the
-// self-contained contract + its tests to compile green until then.
-#![allow(dead_code)]
-
 /// Start/end markers for the window-rules section of the HVE settings file.
 pub(crate) const LUA_WINDOW_RULES_START: &str = "-- >>> HVE WINDOW RULES <<<";
 pub(crate) const LUA_WINDOW_RULES_END: &str = "-- >>> HVE WINDOW RULES END <<<";
@@ -24,7 +19,12 @@ pub(crate) const LUA_AUTOSTART_END: &str = "-- >>> HVE AUTOSTART END <<<";
 /// Start/end markers for the HVE-managed block injected into `hyprland.lua`.
 /// `HVE_BLOCK_START` is the marker the migration guard requires before it will
 /// treat a valid `hyprland.lua` as ready for mutation.
+///
+/// `HVE_BLOCK_END` is mirrored verbatim by `assets/scripts/init.sh` (which
+/// removes the whole block on disable); the Rust side only needs the start
+/// marker, so keep the end constant for contract parity.
 pub(crate) const HVE_BLOCK_START: &str = "-- >>> HYPRLAND VISUAL EDITOR START <<<";
+#[allow(dead_code)]
 pub(crate) const HVE_BLOCK_END: &str = "-- >>> HYPRLAND VISUAL EDITOR END <<<";
 
 #[cfg(test)]

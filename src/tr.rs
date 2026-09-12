@@ -257,4 +257,32 @@ mod tests {
         assert_eq!(t.tr("shell.brand"), Some("HVE"));
         assert_eq!(t.tr("shell.back_hint"), Some("Esc hides"));
     }
+
+    // ── Migration guard status strings (drop-conf-support R8) ─────────
+
+    #[test]
+    fn test_shell_guard_keys_resolve_in_english() {
+        let t = Tr::with_lang("en");
+        assert_eq!(
+            t.tr("shell.lua_migration"),
+            Some("HVE only manages hyprland.lua — migrate from hyprland.conf")
+        );
+        assert_eq!(
+            t.tr("shell.lua_enable"),
+            Some("Run init.sh enable to let HVE manage hyprland.lua")
+        );
+    }
+
+    #[test]
+    fn test_shell_guard_keys_resolve_in_spanish() {
+        let t = Tr::with_lang("es");
+        assert_eq!(
+            t.tr("shell.lua_migration"),
+            Some("HVE solo gestiona hyprland.lua — migre desde hyprland.conf")
+        );
+        assert_eq!(
+            t.tr("shell.lua_enable"),
+            Some("Ejecute init.sh enable para que HVE gestione hyprland.lua")
+        );
+    }
 }

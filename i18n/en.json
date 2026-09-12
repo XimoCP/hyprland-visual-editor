@@ -405,6 +405,8 @@
     "brand": "HVE",
     "subtitle": "Hyprland Visual Editor",
     "status_ready": "Ready",
+    "lua_migration": "HVE only manages hyprland.lua — migrate from hyprland.conf",
+    "lua_enable": "Run init.sh enable to let HVE manage hyprland.lua",
     "back_hint": "Esc hides",
     "slots": {
       "home": "Home",

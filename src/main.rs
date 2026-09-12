@@ -20,6 +20,8 @@ mod tray;
 mod utils;
 mod watcher;
 #[cfg(test)]
+mod scripts_contract;
+#[cfg(test)]
 mod test_utils;
 
 use app_state::AppState;
@@ -893,8 +895,33 @@ fn main() -> Result<(), slint::PlatformError> {
 
     tracing::info!("Locale: {}", tr.lang);
 
+    // ── Migration guard (drop-conf-support R6–R8) ──────────────────────
+    // Evaluate BEFORE any settings write so a conf-only system never
+    // receives writes it would ignore. The window still opens; blocked
+    // paths surface a bilingual status instead of mutating.
+    let guard_decision = config_guard::evaluate_config_guard_default();
+    tracing::info!(
+        "[guard] migration decision: {:?} (init enable permitted: {})",
+        guard_decision,
+        guard_decision.permits_init_enable()
+    );
+    let guard_permits = guard_decision.permits_mutation();
+    let guard_block_message: slint::SharedString = match guard_decision {
+        config_guard::ConfigGuardDecision::PromptToEnable => tr.tr_shared(
+            "shell.lua_enable",
+            "Run init.sh enable to let HVE manage hyprland.lua",
+        ),
+        config_guard::ConfigGuardDecision::ConfOnly => tr.tr_shared(
+            "shell.lua_migration",
+            "HVE only manages hyprland.lua — migrate from hyprland.conf",
+        ),
+        _ => slint::SharedString::from(""),
+    };
+
     // ── Ensure hve-settings exists with default window rules and keybinds section ──
-    ensure_settings_file();
+    if guard_permits {
+        ensure_settings_file();
+    }
 
     let window = MainWindow::new()?;
 
@@ -911,7 +938,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // Set shell i18n strings (nav-shell spec R5).
     window.set_shell_brand_text(tr.tr_shared("shell.brand", "HVE"));
     window.set_shell_brand_subtitle(tr.tr_shared("shell.subtitle", "Hyprland Visual Editor"));
-    window.set_shell_status_text(tr.tr_shared("shell.status_ready", "Ready"));
+    window.set_shell_status_text(if guard_block_message.is_empty() {
+        tr.tr_shared("shell.status_ready", "Ready")
+    } else {
+        guard_block_message.clone()
+    });
     window.set_shell_back_hint(tr.tr_shared("shell.back_hint", "Esc hides"));
     window.set_shell_home_hint(tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"));
     window.set_shell_gallery_hint(tr.tr_shared("shell.gallery.hint", "Gallery slot — module 2"));
@@ -1479,8 +1510,17 @@ fn main() -> Result<(), slint::PlatformError> {
             let animate = animate_slice_step.clone();
             let gallery_themes_root = gallery_themes_root.clone();
             let shell_c = shell.clone();
+            let guard_permits = guard_permits;
+            let guard_block_message = guard_block_message.clone();
             window.on_gallery_card_clicked(move |idx| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-clicked idx={idx}")));
+                if !guard_permits {
+                    tracing::warn!("[guard] gallery apply refused (migration guard)");
+                    if let Some(w) = win.upgrade() {
+                        w.set_shell_status_text(guard_block_message.clone());
+                    }
+                    return;
+                }
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     tracing::debug!("[gallery] card-clicked ignored — mutating");
                     return;
@@ -2246,8 +2286,17 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_mosaic_page_c = refresh_mosaic_page.clone();
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
+            let guard_permits = guard_permits;
+            let guard_block_message = guard_block_message.clone();
             window.on_panel_apply_saved_theme(move |idx| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("apply-saved-theme idx={idx}")));
+                if !guard_permits {
+                    tracing::warn!("[guard] saved-theme apply refused (migration guard)");
+                    if let Some(w) = weak.upgrade() {
+                        w.set_shell_status_text(guard_block_message.clone());
+                    }
+                    return;
+                }
                 let i = idx.max(0) as usize;
                 let name_opt = {
                     let guard = gallery_tm_c.lock().unwrap();
@@ -2521,8 +2570,17 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
+        let guard_permits = guard_permits;
+        let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_geometry(move |size, radius, gap_in, gap_out| {
             tracing::debug!("[borders][mouse|kbd] apply-geometry size={} radius={} gap_in={} gap_out={}", size, radius, gap_in, gap_out);
+            if !guard_permits {
+                tracing::warn!("[guard] geometry apply refused (migration guard)");
+                if let Some(w) = weak.upgrade() {
+                    w.set_shell_status_text(guard_block_message.clone());
+                }
+                return;
+            }
             let result = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 if size == st.cfg().border_size && radius == st.cfg().border_radius && gap_in == st.cfg().gaps_in && gap_out == st.cfg().gaps_out {
@@ -2548,8 +2606,17 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
+        let guard_permits = guard_permits;
+        let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_border(move |idx, file| {
             tracing::debug!("[borders][mouse|kbd] apply-border idx={} file={} (click/card)", idx, file);
+            if !guard_permits {
+                tracing::warn!("[guard] border apply refused (migration guard)");
+                if let Some(w) = weak.upgrade() {
+                    w.set_shell_status_text(guard_block_message.clone());
+                }
+                return;
+            }
             use crate::callbacks::{preset_geometry_for, BorderGeometry};
             let file_str = file.to_string();
             let (is_deact, result, snap) = {
@@ -2590,8 +2657,17 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
+        let guard_permits = guard_permits;
+        let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_animation(move |idx, file| {
             tracing::debug!("[motion][mouse|kbd] apply-animation idx={} file={}", idx, file);
+            if !guard_permits {
+                tracing::warn!("[guard] animation apply refused (migration guard)");
+                if let Some(w) = weak.upgrade() {
+                    w.set_shell_status_text(guard_block_message.clone());
+                }
+                return;
+            }
             let file_str = file.to_string();
             let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -2617,8 +2693,17 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
+        let guard_permits = guard_permits;
+        let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_shader(move |idx, file| {
             tracing::debug!("[filters][mouse|kbd] apply-shader idx={} file={}", idx, file);
+            if !guard_permits {
+                tracing::warn!("[guard] shader apply refused (migration guard)");
+                if let Some(w) = weak.upgrade() {
+                    w.set_shell_status_text(guard_block_message.clone());
+                }
+                return;
+            }
             let file_str = file.to_string();
             let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -2662,8 +2747,12 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── Startup: sync autostart + ensure vital SUPER+H (2026-09-07 slim-down keeps only SUPER+H)
     {
         let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
-        set_keybinds(true);
-        set_autostart(state_guard.cfg().auto_start);
+        if guard_permits {
+            set_keybinds(true);
+            set_autostart(state_guard.cfg().auto_start);
+        } else {
+            tracing::warn!("[guard] startup settings write skipped (migration guard)");
+        }
     }
 
     // ── Startup sanity: repair a fullscreen state left stuck by a crash
@@ -2698,7 +2787,12 @@ fn main() -> Result<(), slint::PlatformError> {
         // until it is ready, so a manual launch lands straight in
         // fullscreen Gallery instead of a small floating frame.
         let startup_tiling = state.lock().unwrap_or_else(|e| e.into_inner()).cfg().tiling_mode;
-        let rules_changed = set_tiling_window_rules(startup_tiling);
+        let rules_changed = if guard_permits {
+            set_tiling_window_rules(startup_tiling)
+        } else {
+            tracing::warn!("[guard] startup window rules skipped (migration guard)");
+            false
+        };
         dispatch_initial_gallery_expand(&shell);
 
         window.show()?;

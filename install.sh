@@ -41,6 +41,9 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_RUST_NOT_FOUND="Rust no encontrado — instalando rustup..."
     MSG_RUST_INSTALLED="Rust instalado: %s"
     MSG_RUST_FAIL="Fallo la instalación de Rust. Intenta manualmente: https://rustup.rs"
+    MSG_PREFLIGHT_LUA="Configuración Lua de Hyprland detectada — HVE gestionará hyprland.lua"
+    MSG_PREFLIGHT_CONF="Hyprland usa un hyprland.conf heredado y HVE 2 solo gestiona hyprland.lua. Migre su configuración antes de habilitar HVE."
+    MSG_PREFLIGHT_NONE="Aún no se encontró configuración de Hyprland — HVE generará los ajustes Lua en la primera ejecución."
     MSG_BUILDING="Compilando HVE (esto puede llevar un rato)..."
     MSG_BUILD_DONE="Compilación completada"
     MSG_INSTALLING="Instalando HVE..."
@@ -83,6 +86,9 @@ else
     MSG_RUST_NOT_FOUND="Rust not found — installing rustup..."
     MSG_RUST_INSTALLED="Rust installed: %s"
     MSG_RUST_FAIL="Rust installation failed. Try manually: https://rustup.rs"
+    MSG_PREFLIGHT_LUA="Hyprland Lua config detected — HVE will manage hyprland.lua"
+    MSG_PREFLIGHT_CONF="Hyprland runs a legacy hyprland.conf and HVE 2 only manages hyprland.lua. Migrate your config before enabling HVE."
+    MSG_PREFLIGHT_NONE="No Hyprland config found yet — HVE will generate Lua settings on first run."
     MSG_BUILDING="Building HVE (this may take a while)..."
     MSG_BUILD_DONE="Build complete"
     MSG_INSTALLING="Installing HVE..."
@@ -283,6 +289,18 @@ else
 fi
 
 # ============================================================================
+# 3b. HYPRLAND LUA PREFLIGHT (HVE 2 is Lua-only)
+# ============================================================================
+echo ""
+if [ -f "$HYPR_DIR/hyprland.lua" ] && grep -qE 'hl\.|require\(' "$HYPR_DIR/hyprland.lua" 2>/dev/null; then
+    ok "$MSG_PREFLIGHT_LUA"
+elif [ -f "$HYPR_DIR/hyprland.conf" ]; then
+    warn "$MSG_PREFLIGHT_CONF"
+else
+    info "$MSG_PREFLIGHT_NONE"
+fi
+
+# ============================================================================
 # 4. BUILD
 # ============================================================================
 echo ""
@@ -394,8 +412,8 @@ fi
 echo ""
 AUTOSTART_INSTALLED=false
 if prompt_yes_no "$MSG_AUTOSTART_PROMPT" "no"; then
-    # HVE's set_autostart() writes the Hyprland-native autostart block into
-    # hve-settings.{lua,conf} as exec-once = /path/to/hve --tray.
+    # HVE's set_autostart() writes the Lua autostart block into
+    # hve-settings.lua as hl.on("hyprland.start", ...) for `hve --tray`.
     #
     # We write auto_start:true to config.json. On next launch, HVE reads it
     # and calls set_autostart(true), which handles the hve-settings injection.

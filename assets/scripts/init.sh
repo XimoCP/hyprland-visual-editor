@@ -4,20 +4,11 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 source "$SCRIPT_DIR/utils.sh"
 
-# Detect format
-source "$HVE_SCRIPTS_DIR/detect_format.sh"
-export HVE_FORMAT=$(detect_format 2>/dev/null || echo "conf")
-
 # Safe directory and overlay
 WATCHDOG_FILE="$HVE_SAFE_DIR/hve_watchdog.sh"
 
-# Settings extension matches HVE format (lua or conf)
-if [ "$HVE_FORMAT" = "lua" ]; then
-    SETTINGS_EXT="lua"
-else
-    SETTINGS_EXT="conf"
-fi
-SETTINGS_FILE="$HVE_SAFE_DIR/hve-settings.${SETTINGS_EXT}"
+# Lua-only settings file (config format is never detected at runtime)
+SETTINGS_FILE="$HVE_SAFE_DIR/hve-settings.lua"
 
 # Hyprland config files
 HYPR_CONF="$HVE_HYPR_DIR/hyprland.conf"
@@ -26,26 +17,42 @@ HYPR_LUA="$HVE_HYPR_DIR/hyprland.lua"
 # Internal assembler path
 ASSEMBLE_SCRIPT="$HVE_SCRIPTS_DIR/assemble.sh"
 
-# --- RECONSTRUIR VARIABLE DE COLORES PERDIDA ---
-# Usamos HVE_COLORS_BASE que viene del utils.sh y añadimos la extensión correcta
+# --- COLOR PALETTE (HVE_COLORS_BASE) ---
+# HVE emits Lua only; `HVE_COLORS_BASE` is not set by utils.sh today, so this
+# block is inert. Its removal is deferred to a follow-up change.
 if [ -n "$HVE_COLORS_BASE" ]; then
-    if [ "$HVE_FORMAT" = "lua" ]; then
-        HVE_COLORS_FILE="${HVE_COLORS_BASE}.lua"
-    else
-        HVE_COLORS_FILE="${HVE_COLORS_BASE}.conf"
-    fi
+    HVE_COLORS_FILE="${HVE_COLORS_BASE}.lua"
 else
     HVE_COLORS_FILE=""
 fi
 
 # --- MARKERS ---
-# Conf mode uses # comments, Lua mode uses -- comments
+# Lua injection uses `--` comments. The conf markers are retained only so
+# `clean_hyprland_conf` can strip HVE's legacy block (one-way hygiene).
 MARKER_START_CONF="# >>> HYPRLAND VISUAL EDITOR START <<<"
 MARKER_END_CONF="# >>> HYPRLAND VISUAL EDITOR END <<<"
 MARKER_START_LUA="-- >>> HYPRLAND VISUAL EDITOR START <<<"
 MARKER_END_LUA="-- >>> HYPRLAND VISUAL EDITOR END <<<"
 
 ACTION=$1
+
+# --- MIGRATION GUARD ---
+# Mirror of src/config_guard.rs: HVE only manages hyprland.lua. A valid Lua
+# config (using `hl.` or `require(`) is ready for HVE; a legacy hyprland.conf
+# without valid Lua is conf-only and must be migrated before enabling HVE.
+hve_lua_is_valid() {
+    [ -f "$HYPR_LUA" ] && grep -qE 'hl\.|require\(' "$HYPR_LUA" 2>/dev/null
+}
+
+hve_guard_allows_enable() {
+    if hve_lua_is_valid; then
+        return 0
+    fi
+    if [ -f "$HYPR_CONF" ]; then
+        return 1
+    fi
+    return 0
+}
 
 # --- CLEANUP FUNCTIONS ---
 
@@ -85,24 +92,14 @@ setup_files() {
     # Execute the internal assembler
     if [ -f "$ASSEMBLE_SCRIPT" ]; then
         bash "$ASSEMBLE_SCRIPT"
-
-        # SECURITY PATCH: In case assemble.sh has the old hardcoded path
-        if [ -f "$HVE_PLUGIN_DIR/overlay.conf" ]; then
-            mv "$HVE_PLUGIN_DIR/overlay.conf" "$HVE_SAFE_DIR/overlay.conf"
-        fi
     else
-        if [ "$HVE_FORMAT" = "lua" ]; then
-            echo '#!/usr/bin/env hyprland' > "$HVE_SAFE_DIR/overlay.lua"
-            echo "# Hyprland Visual Editor Overlay Base" >> "$HVE_SAFE_DIR/overlay.lua"
-        else
-            echo "# Hyprland Visual Editor Overlay Base" > "$HVE_SAFE_DIR/overlay.conf"
-        fi
+        echo '#!/usr/bin/env hyprland' > "$HVE_SAFE_DIR/overlay.lua"
+        echo "-- Hyprland Visual Editor Overlay Base" >> "$HVE_SAFE_DIR/overlay.lua"
     fi
 
     # ── Create hve-settings with default window rules and keybinds section (if not exists) ──
     if [ ! -f "$SETTINGS_FILE" ]; then
         echo "Creating default settings at $SETTINGS_FILE..."
-    if [ "$HVE_FORMAT" = "lua" ]; then
         cat > "$SETTINGS_FILE" << 'SETEOF'
 -- >>> HVE WINDOW RULES <<<
 -- HVE 2 manages its own window state via the Composer trait
@@ -111,30 +108,27 @@ setup_files() {
 -- >>> HVE KEYBINDS <<<
 -- >>> HVE KEYBINDS END <<<
 SETEOF
-    else
-        cat > "$SETTINGS_FILE" << 'SETEOF'
-# >>> HVE WINDOW RULES <<<
-# HVE 2 manages its own window state via the Composer trait
-# (fullscreen for Gallery, floating for settings). No rules needed here.
-# >>> HVE WINDOW RULES END <<<
-# >>> HVE KEYBINDS <<<
-# >>> HVE KEYBINDS END <<<
-SETEOF
-    fi
     fi
 }
 
 # --- MAIN LOGIC ---
 
 if [ "$ACTION" == "enable" ]; then
+    if ! hve_guard_allows_enable; then
+        echo "HVE 2 only manages hyprland.lua — migrate from hyprland.conf."
+        echo "HVE 2 solo gestiona hyprland.lua — migre desde hyprland.conf."
+        echo "Migrate your config, then run 'init.sh enable' again."
+        echo "Migre su configuración y ejecute 'init.sh enable' de nuevo."
+        exit 1
+    fi
+
     setup_files
 
-    if [ "$HVE_FORMAT" = "lua" ]; then
-        # === LUA MODE: inject into hyprland.lua ===
-        clean_hyprland_lua
-        clean_hyprland_conf  # Also clean old conf entries if migrating
+    # === LUA MODE: inject into hyprland.lua ===
+    clean_hyprland_lua
+    clean_hyprland_conf  # One-way hygiene: strip a legacy conf block if present
 
-        cat >> "$HYPR_LUA" <<EOF
+    cat >> "$HYPR_LUA" <<EOF
 
 $MARKER_START_LUA
 -- 1. Active Uninstall Watchdog
@@ -148,27 +142,6 @@ hl.on("hyprland.start", function()
 end)
 $MARKER_END_LUA
 EOF
-
-    else
-        # === CONF MODE: inject into hyprland.conf ===
-        clean_hyprland_conf
-
-        {
-            echo ""
-            echo "$MARKER_START_CONF"
-            echo "# 1. Active Uninstall Watchdog"
-            echo "exec-once = $WATCHDOG_FILE"
-            if [ -n "$HVE_COLORS_FILE" ] && [ -f "$HVE_COLORS_FILE" ]; then
-                echo "# 2. Variable Definition (Color Palette)"
-                echo "source = $HVE_COLORS_FILE"
-            fi
-            echo "# Effects Application (Visual Editor)"
-            echo "source = $HVE_SAFE_DIR/overlay.conf"
-            echo "# HVE Settings (window rules + keybinds)"
-            echo "source = $SETTINGS_FILE"
-            echo "$MARKER_END_CONF"
-        } >> "$HYPR_CONF"
-    fi
 
     hyprctl reload
 

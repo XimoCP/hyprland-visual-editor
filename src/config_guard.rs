@@ -3,16 +3,13 @@
 //!
 //! The predicate is intentionally filesystem-free: callers read the files and
 //! pass content/existence in, which keeps every matrix row trivially testable.
-
-// Not yet consumed by production: the mutation gates that call this land in PR 3
-// of the drop-conf-support chain. This allows the self-contained contract + its
-// tests to compile green until then.
-#![allow(dead_code)]
+//! [`evaluate_config_guard_at`] is the thin path adapter used at startup.
 
 use crate::config_markers::HVE_BLOCK_START;
+use std::path::{Path, PathBuf};
 
 /// Outcome of evaluating the migration guard for a Hyprland config state.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConfigGuardDecision {
     /// Valid Lua with the HVE block present: mutating paths may proceed.
     LuaReady,
@@ -55,6 +52,49 @@ pub(crate) fn evaluate_config_guard(
 /// another module. Anything else is an invalid stub for guard purposes.
 fn is_valid_lua(content: &str) -> bool {
     content.contains("hl.") || content.contains("require(")
+}
+
+impl ConfigGuardDecision {
+    /// Whether HVE may write to the user's config: preset/theme applies,
+    /// engine callbacks and the generated settings file.
+    ///
+    /// Only a fully migrated system (`LuaReady`) or a fresh install with
+    /// nothing to migrate (`NothingToDo`) may mutate. `PromptToEnable` and
+    /// `ConfOnly` must not, because their writes would be ignored.
+    pub(crate) fn permits_mutation(self) -> bool {
+        matches!(self, Self::LuaReady | Self::NothingToDo)
+    }
+
+    /// Whether `init.sh enable` may inject the HVE block.
+    ///
+    /// Enabling is the remediation for a valid-Lua system that lacks the HVE
+    /// block (`PromptToEnable`); a conf-only system would ignore the injected
+    /// Lua, so it is refused there too.
+    pub(crate) fn permits_init_enable(self) -> bool {
+        !matches!(self, Self::ConfOnly)
+    }
+}
+
+/// Read the real `hyprland.lua` / `hyprland.conf` files under `hypr_dir` and
+/// evaluate the migration guard (used at startup, before any settings write).
+pub(crate) fn evaluate_config_guard_at(hypr_dir: &Path) -> ConfigGuardDecision {
+    let lua = std::fs::read_to_string(hypr_dir.join("hyprland.lua")).ok();
+    let conf_exists = hypr_dir.join("hyprland.conf").exists();
+    evaluate_config_guard(lua.as_deref(), conf_exists)
+}
+
+/// Evaluate the guard at the standard `$XDG_CONFIG_HOME/hypr` (or
+/// `~/.config/hypr`) location, falling back to `NothingToDo` when no home
+/// directory can be resolved.
+pub(crate) fn evaluate_config_guard_default() -> ConfigGuardDecision {
+    let hypr_dir: Option<PathBuf> = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .map(|d| d.join("hypr"));
+
+    match hypr_dir {
+        Some(dir) => evaluate_config_guard_at(&dir),
+        None => ConfigGuardDecision::NothingToDo,
+    }
 }
 
 #[cfg(test)]
@@ -129,6 +169,75 @@ mod tests {
         assert_eq!(
             evaluate_config_guard(Some(&format!("{HVE_BLOCK_START}\nnot lua\n")), true),
             ConfigGuardDecision::ConfOnly
+        );
+    }
+
+    // ── Mutation policy (R7/R8): the gates wired into main.rs in PR 3 ──
+
+    #[test]
+    fn lua_ready_permits_mutations_and_init_enable() {
+        let d = ConfigGuardDecision::LuaReady;
+        assert!(d.permits_mutation(), "a migrated Lua system may mutate");
+        assert!(d.permits_init_enable());
+    }
+
+    #[test]
+    fn prompt_to_enable_refuses_mutation_but_permits_init_enable() {
+        let d = ConfigGuardDecision::PromptToEnable;
+        assert!(
+            !d.permits_mutation(),
+            "applies must be refused until the HVE block is enabled"
+        );
+        assert!(d.permits_init_enable(), "init enable is the remediation");
+    }
+
+    #[test]
+    fn conf_only_refuses_mutation_and_init_enable() {
+        let d = ConfigGuardDecision::ConfOnly;
+        assert!(!d.permits_mutation());
+        assert!(
+            !d.permits_init_enable(),
+            "injecting Lua into a conf-only system would be ignored"
+        );
+    }
+
+    #[test]
+    fn nothing_to_do_preserves_current_behavior() {
+        let d = ConfigGuardDecision::NothingToDo;
+        assert!(d.permits_mutation(), "a fresh install keeps writing settings");
+        assert!(d.permits_init_enable());
+    }
+
+    // ── Path adapter: main.rs reads the real Hyprland files ───────────
+
+    #[test]
+    fn path_adapter_reads_lua_and_conf_from_disk() {
+        let ready = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ready.path().join("hyprland.lua"),
+            format!("{HVE_BLOCK_START}\nhl.config({{}})\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate_config_guard_at(ready.path()),
+            ConfigGuardDecision::LuaReady
+        );
+
+        let conf_only = tempfile::tempdir().unwrap();
+        std::fs::write(
+            conf_only.path().join("hyprland.conf"),
+            "general { gaps_in = 5 }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate_config_guard_at(conf_only.path()),
+            ConfigGuardDecision::ConfOnly
+        );
+
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            evaluate_config_guard_at(empty.path()),
+            ConfigGuardDecision::NothingToDo
         );
     }
 }
