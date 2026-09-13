@@ -60,6 +60,23 @@ pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Confi
     populate_metadata(&animations, &cfg.active_anim_file, |v| window.set_anim_tags(v), |v| window.set_anim_files(v), |i| window.set_active_anim_index(i));
     populate_metadata(&borders, &cfg.active_border_file, |v| window.set_border_tags(v), |v| window.set_border_files(v), |i| window.set_active_border_index(i));
     populate_metadata(&shaders, &cfg.active_shader_file, |v| window.set_shader_tags(v), |v| window.set_shader_files(v), |i| window.set_active_shader_index(i));
+
+    // ── User-created presets (saved to ~/.config/hve/presets/) ──
+    let border_store = crate::preset_store::PresetStore::new("borders");
+    let user_border_names: Vec<SharedString> = border_store.list()
+        .into_iter().map(|n| SharedString::from(n)).collect();
+    let user_border_tags: Vec<SharedString> = user_border_names.iter()
+        .map(|_| SharedString::from("CUSTOM")).collect();
+    window.set_user_border_preset_names(ModelRc::from(user_border_names.as_slice()));
+    window.set_user_border_preset_tags(ModelRc::from(user_border_tags.as_slice()));
+
+    let anim_store = crate::preset_store::PresetStore::new("animations");
+    let user_anim_names: Vec<SharedString> = anim_store.list()
+        .into_iter().map(|n| SharedString::from(n)).collect();
+    let user_anim_tags: Vec<SharedString> = user_anim_names.iter()
+        .map(|_| SharedString::from("CUSTOM")).collect();
+    window.set_user_animation_preset_names(ModelRc::from(user_anim_names.as_slice()));
+    window.set_user_animation_preset_tags(ModelRc::from(user_anim_tags.as_slice()));
 }
 
 #[cfg(test)]

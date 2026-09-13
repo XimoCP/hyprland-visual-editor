@@ -2690,6 +2690,195 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
+    // ── Border preset CRUD ──
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        window.on_panel_save_border_preset(move |name| {
+            let name_str = name.to_string();
+            tracing::debug!("[borders][preset] save name={}", name_str);
+            let result = if let Some(w) = weak.upgrade() {
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                let size = st.cfg().border_size;
+                let radius = st.cfg().border_radius;
+                let gap_in = st.cfg().gaps_in;
+                let gap_out = st.cfg().gaps_out;
+                drop(st);
+                let content = crate::preset_store::PresetStore::generate_border_lua(
+                    &name_str, size, radius, gap_in, gap_out,
+                );
+                let store = crate::preset_store::PresetStore::new("borders");
+                let r = store.save(&name_str, &content);
+                if r.is_ok() {
+                    let store2 = crate::preset_store::PresetStore::new("borders");
+                    let names: Vec<_> = store2.list()
+                        .into_iter()
+                        .map(|n| slint::SharedString::from(n.as_str()))
+                        .collect();
+                    let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                    w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
+                    w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
+                    w.set_border_save_error(String::new().into());
+                    w.set_border_preset_name(String::new().into());
+                }
+                r
+            } else {
+                Ok(())
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Border preset save error: {}", e);
+                if let Some(w) = weak.upgrade() {
+                    w.set_border_save_error(e.into());
+                }
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_panel_rename_border_preset(move |old_name, new_name| {
+            let old = old_name.to_string();
+            let new = new_name.to_string();
+            tracing::debug!("[borders][preset] rename old={} new={}", old, new);
+            let result = {
+                let store = crate::preset_store::PresetStore::new("borders");
+                store.rename(&old, &new)
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Border preset rename error: {}", e);
+                if let Some(w) = weak.upgrade() {
+                    w.set_border_save_error(e.into());
+                }
+            } else if let Some(w) = weak.upgrade() {
+                let store = crate::preset_store::PresetStore::new("borders");
+                let names: Vec<_> = store.list()
+                    .into_iter()
+                    .map(|n| slint::SharedString::from(n.as_str()))
+                    .collect();
+                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                    w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
+                    w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_panel_delete_border_preset(move |name| {
+            let name_str = name.to_string();
+            tracing::debug!("[borders][preset] delete name={}", name_str);
+            let result = {
+                let store = crate::preset_store::PresetStore::new("borders");
+                store.delete(&name_str)
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Border preset delete error: {}", e);
+                if let Some(w) = weak.upgrade() {
+                    w.set_border_save_error(e.into());
+                }
+            } else if let Some(w) = weak.upgrade() {
+                let store = crate::preset_store::PresetStore::new("borders");
+                let names: Vec<_> = store.list()
+                    .into_iter()
+                    .map(|n| slint::SharedString::from(n.as_str()))
+                    .collect();
+                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                    w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
+                    w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
+            }
+        });
+    }
+    // ── Animation preset CRUD ──
+    {
+        let weak = window.as_weak();
+        window.on_panel_save_animation_preset(move |name| {
+            let name_str = name.to_string();
+            tracing::debug!("[motion][preset] save name={}", name_str);
+            let result = if let Some(w) = weak.upgrade() {
+                let a = w.get_bezier_a() as f64;
+                let b = w.get_bezier_b() as f64;
+                let c = w.get_bezier_c() as f64;
+                let d = w.get_bezier_d() as f64;
+                let content = crate::preset_store::PresetStore::generate_animation_lua(
+                    &name_str, a, b, c, d,
+                );
+                let store = crate::preset_store::PresetStore::new("animations");
+                let r = store.save(&name_str, &content);
+                if r.is_ok() {
+                    let store2 = crate::preset_store::PresetStore::new("animations");
+                    let names: Vec<_> = store2.list()
+                        .into_iter()
+                        .map(|n| slint::SharedString::from(n.as_str()))
+                        .collect();
+                    let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                    w.set_user_animation_preset_names(slint::ModelRc::from(names.as_slice()));
+                    w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
+                    w.set_animation_save_error(String::new().into());
+                    w.set_animation_preset_name(String::new().into());
+                }
+                r
+            } else {
+                Ok(())
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Animation preset save error: {}", e);
+                if let Some(w) = weak.upgrade() {
+                    w.set_animation_save_error(e.into());
+                }
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_panel_rename_animation_preset(move |old_name, new_name| {
+            let old = old_name.to_string();
+            let new = new_name.to_string();
+            tracing::debug!("[motion][preset] rename old={} new={}", old, new);
+            let result = {
+                let store = crate::preset_store::PresetStore::new("animations");
+                store.rename(&old, &new)
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Animation preset rename error: {}", e);
+                if let Some(w) = weak.upgrade() {
+                    w.set_animation_save_error(e.into());
+                }
+            } else if let Some(w) = weak.upgrade() {
+                let store = crate::preset_store::PresetStore::new("animations");
+                let names: Vec<_> = store.list()
+                    .into_iter()
+                    .map(|n| slint::SharedString::from(n.as_str()))
+                    .collect();
+                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                w.set_user_animation_preset_names(slint::ModelRc::from(names.as_slice()));
+                w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_panel_delete_animation_preset(move |name| {
+            let name_str = name.to_string();
+            tracing::debug!("[motion][preset] delete name={}", name_str);
+            let result = {
+                let store = crate::preset_store::PresetStore::new("animations");
+                store.delete(&name_str)
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Animation preset delete error: {}", e);
+                if let Some(w) = weak.upgrade() {
+                    w.set_animation_save_error(e.into());
+                }
+            } else if let Some(w) = weak.upgrade() {
+                let store = crate::preset_store::PresetStore::new("animations");
+                let names: Vec<_> = store.list()
+                    .into_iter()
+                    .map(|n| slint::SharedString::from(n.as_str()))
+                    .collect();
+                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                w.set_user_animation_preset_names(slint::ModelRc::from(names.as_slice()));
+                w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
+            }
+        });
+    }
     // ── Panel Filters pick (slice 6, R5) — shader cards toggle-off → none (3s overlay suppression via GallerySlot guard)
     {
         let state_c = state.clone();

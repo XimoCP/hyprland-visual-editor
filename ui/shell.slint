@@ -154,6 +154,16 @@ export component ShellRoot inherits Rectangle {
     in-out property <int> panel-corner-radius: 32;
     in-out property <int> panel-gap-in: 5;
     in-out property <int> panel-gap-out: 5;
+    // Border preset state
+    in-out property <string> panel-border-preset-name: "";
+    in property <string> panel-border-save-error: "";
+    in property <[string]> panel-user-border-preset-names;
+    in property <[string]> panel-user-border-preset-tags;
+    // Animation preset state
+    in-out property <string> panel-animation-preset-name: "";
+    in property <string> panel-animation-save-error: "";
+    in property <[string]> panel-user-animation-preset-names;
+    in property <[string]> panel-user-animation-preset-tags;
     // Motion pick layer (R4) — 19 cards from scan("animations")
     in property <[string]> panel-anim-titles;
     in property <[string]> panel-anim-descs;
@@ -227,6 +237,12 @@ export component ShellRoot inherits Rectangle {
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
     callback panel-apply-shader(int, string);
+    callback panel-save-border-preset(string);
+    callback panel-rename-border-preset(string, string);
+    callback panel-delete-border-preset(string);
+    callback panel-save-animation-preset(string);
+    callback panel-rename-animation-preset(string, string);
+    callback panel-delete-animation-preset(string);
     callback panel-toggle-system(bool);
     callback panel-toggle-auto-minimize(bool);
     callback panel-change-minimize-seconds(int);
@@ -490,6 +506,14 @@ export component ShellRoot inherits Rectangle {
                     corner-radius <=> root.panel-corner-radius;
                     gap-in <=> root.panel-gap-in;
                     gap-out <=> root.panel-gap-out;
+                    border-preset-name <=> root.panel-border-preset-name;
+                    border-save-error: root.panel-border-save-error;
+                    user-border-preset-names: root.panel-user-border-preset-names;
+                    user-border-preset-tags: root.panel-user-border-preset-tags;
+                    animation-preset-name <=> root.panel-animation-preset-name;
+                    animation-save-error: root.panel-animation-save-error;
+                    user-animation-preset-names: root.panel-user-animation-preset-names;
+                    user-animation-preset-tags: root.panel-user-animation-preset-tags;
                     anim-titles: root.panel-anim-titles;
                     anim-descs: root.panel-anim-descs;
                     anim-tags: root.panel-anim-tags;
@@ -548,6 +572,12 @@ export component ShellRoot inherits Rectangle {
                     apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
                     apply-animation(idx, file) => { root.panel-apply-animation(idx, file); }
                     apply-shader(idx, file) => { root.panel-apply-shader(idx, file); }
+                    save-border-preset(name) => { root.panel-save-border-preset(name); }
+                    rename-border-preset(old, new) => { root.panel-rename-border-preset(old, new); }
+                    delete-border-preset(name) => { root.panel-delete-border-preset(name); }
+                    save-animation-preset(name) => { root.panel-save-animation-preset(name); }
+                    rename-animation-preset(old, new) => { root.panel-rename-animation-preset(old, new); }
+                    delete-animation-preset(name) => { root.panel-delete-animation-preset(name); }
                     toggle-system(v) => { root.panel-toggle-system(v); }
                     toggle-auto-minimize(v) => { root.panel-toggle-auto-minimize(v); }
                     change-minimize-seconds(v) => { root.panel-change-minimize-seconds(v); }

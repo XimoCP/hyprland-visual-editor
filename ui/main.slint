@@ -109,6 +109,15 @@ export component MainWindow inherits Window {
     in-out property <int> gap-out: 5;
     in property <string> gap-in-label;
     in property <string> gap-out-label;
+    // Border preset state
+    in-out property <string> border-preset-name: "";
+    in property <string> border-save-error: "";
+    in property <[string]> user-border-preset-names;
+    in property <[string]> user-border-preset-tags;
+    in-out property <string> animation-preset-name: "";
+    in property <string> animation-save-error: "";
+    in property <[string]> user-animation-preset-names;
+    in property <[string]> user-animation-preset-tags;
 
     // Shader data
     in property <[string]> shader-titles;
@@ -250,6 +259,12 @@ export component MainWindow inherits Window {
     callback panel-apply-geometry(int, int, int, int);
     callback panel-apply-animation(int, string);
     callback panel-apply-shader(int, string);
+    callback panel-save-border-preset(string);
+    callback panel-rename-border-preset(string, string);
+    callback panel-delete-border-preset(string);
+    callback panel-save-animation-preset(string);
+    callback panel-rename-animation-preset(string, string);
+    callback panel-delete-animation-preset(string);
 
 
     // ── Settings (panel System reuses these rows) ──
@@ -358,6 +373,14 @@ export component MainWindow inherits Window {
         panel-corner-radius <=> root.corner-radius;
         panel-gap-in <=> root.gap-in;
         panel-gap-out <=> root.gap-out;
+        panel-border-preset-name <=> root.border-preset-name;
+        panel-border-save-error: root.border-save-error;
+        panel-user-border-preset-names: root.user-border-preset-names;
+        panel-user-border-preset-tags: root.user-border-preset-tags;
+        panel-animation-preset-name <=> root.animation-preset-name;
+        panel-animation-save-error: root.animation-save-error;
+        panel-user-animation-preset-names: root.user-animation-preset-names;
+        panel-user-animation-preset-tags: root.user-animation-preset-tags;
         panel-anim-titles: root.anim-titles;
         panel-anim-descs: root.anim-descs;
         panel-anim-tags: root.anim-tags;
@@ -423,6 +446,12 @@ export component MainWindow inherits Window {
         panel-apply-geometry(size, radius, gap-in, gap-out) => { root.panel-apply-geometry(size, radius, gap-in, gap-out); }
         panel-apply-animation(idx, file) => { root.panel-apply-animation(idx, file); }
         panel-apply-shader(idx, file) => { root.panel-apply-shader(idx, file); }
+        panel-save-border-preset(name) => { root.panel-save-border-preset(name); }
+        panel-rename-border-preset(old, new) => { root.panel-rename-border-preset(old, new); }
+        panel-delete-border-preset(name) => { root.panel-delete-border-preset(name); }
+        panel-save-animation-preset(name) => { root.panel-save-animation-preset(name); }
+        panel-rename-animation-preset(old, new) => { root.panel-rename-animation-preset(old, new); }
+        panel-delete-animation-preset(name) => { root.panel-delete-animation-preset(name); }
         panel-toggle-system(v) => { root.toggle-system(v); }
         panel-toggle-auto-minimize(v) => { root.toggle-auto-minimize(v); }
         panel-change-minimize-seconds(v) => { root.change-minimize-seconds(v); }

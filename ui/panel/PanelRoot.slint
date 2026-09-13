@@ -63,6 +63,12 @@ export component PanelRoot inherits Rectangle {
     in-out property <int> corner-radius: 32;
     in-out property <int> gap-in: 5;
     in-out property <int> gap-out: 5;
+    // Border preset state
+    in-out property <string> border-preset-name: "";
+    in property <string> border-save-error: "";
+    in property <[string]> user-border-preset-names;
+    in property <[string]> user-border-preset-tags;
+    // Animation preset state
     // Motion pick layer (R4) — 19 cards from scan("animations")
     in property <[string]> anim-titles;
     in property <[string]> anim-descs;
@@ -73,6 +79,11 @@ export component PanelRoot inherits Rectangle {
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
+    // Animation preset state
+    in-out property <string> animation-preset-name: "";
+    in property <string> animation-save-error: "";
+    in property <[string]> user-animation-preset-names;
+    in property <[string]> user-animation-preset-tags;
     // Filters pick layer (R5) — shader cards from scan("shaders")
     in property <[string]> shader-titles;
     in property <[string]> shader-descs;
@@ -126,6 +137,14 @@ export component PanelRoot inherits Rectangle {
     callback apply-geometry(int, int, int, int);
     callback apply-animation(int, string);
     callback apply-shader(int, string);
+    // Border preset CRUD
+    callback save-border-preset(string);
+    callback rename-border-preset(string, string);
+    callback delete-border-preset(string);
+    // Animation preset CRUD
+    callback save-animation-preset(string);
+    callback rename-animation-preset(string, string);
+    callback delete-animation-preset(string);
     callback toggle-system(bool);
     callback toggle-auto-minimize(bool);
     callback change-minimize-seconds(int);
@@ -651,9 +670,13 @@ export component PanelRoot inherits Rectangle {
                         geom-gap-out <=> root.gap-out;
                         apply-border(idx, file) => { root.apply-border(idx, file); }
                         apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
-                        save-border-preset(name) => { }
-                        rename-border-preset(old, new) => { }
-                        delete-border-preset(name) => { }
+                        save-border-preset(name) => { root.save-border-preset(name); }
+                        rename-border-preset(old, new) => { root.rename-border-preset(old, new); }
+                        delete-border-preset(name) => { root.delete-border-preset(name); }
+                        save-error: root.border-save-error;
+                        preset-name <=> root.border-preset-name;
+                        user-preset-names: root.user-border-preset-names;
+                        user-preset-tags: root.user-border-preset-tags;
                     }
                     motion := MotionSection {
                         visible: root.section == 2;
@@ -673,9 +696,13 @@ export component PanelRoot inherits Rectangle {
                         bezier-c <=> root.bezier-c;
                         bezier-d <=> root.bezier-d;
                         apply-animation(idx, file) => { root.apply-animation(idx, file); }
-                        save-animation-preset(name) => { }
-                        rename-animation-preset(old, new) => { }
-                        delete-animation-preset(name) => { }
+                        save-animation-preset(name) => { root.save-animation-preset(name); }
+                        rename-animation-preset(old, new) => { root.rename-animation-preset(old, new); }
+                        delete-animation-preset(name) => { root.delete-animation-preset(name); }
+                        save-error: root.animation-save-error;
+                        preset-name <=> root.animation-preset-name;
+                        user-preset-names: root.user-animation-preset-names;
+                        user-preset-tags: root.user-animation-preset-tags;
                     }
                     filters := FiltersSection {
                         visible: root.section == 3;
