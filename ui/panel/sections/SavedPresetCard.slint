@@ -1,0 +1,146 @@
+// HVE 2 — SavedPresetCard (Borders/Motion preset list, user + built-in).
+//
+// Reuse of the SaveSection SavedThemeCard pattern: expand 56px ↔ 100px on
+// active/hover/keyboard-focus, action buttons, background/border/glow anims.
+// Difference: built-in presets (is-user=false) show ONLY Apply; user presets
+// (is-user=true) show Apply + Rename + Delete and carry a ★ badge.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { IconButton } from "../../components.slint";
+import { HveColors } from "../../theme.slint";
+
+export component SavedPresetCard inherits Rectangle {
+    in property <string> preset-name;
+    in property <bool> is-active: false;
+    in property <bool> is-user: false;
+    in property <bool> keyboard-focused: false;
+    in property <color> accent;
+    in property <string> apply-text: "Apply";
+    in property <string> rename-text: "Rename";
+    in property <string> delete-text: "Delete";
+    in property <int> index: 0;
+    callback apply-preset(int, string);
+    callback open-rename(string);
+    callback open-delete(string);
+    callback refocus();
+
+    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
+    property <bool> _expanded: is-active || is-hovered || keyboard-focused;
+
+    height: _expanded ? 100px : 56px;
+    border-radius: 10px;
+    background: is-active ? HveColors.bg-hover : (is-hovered || keyboard-focused ? HveColors.bg-hover : HveColors.bg-card);
+    border-width: is-active ? 3px : (keyboard-focused ? 1.5px : 1px);
+    border-color: (is-active && keyboard-focused) ? HveColors.text : (is-active ? accent : (keyboard-focused ? #8fd8ff : (is-hovered ? accent.transparentize(0.6) : HveColors.border)));
+    visible: true;
+
+    // Trace-only body click: no focus move.
+    card-ta := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.refocus(); }
+    }
+
+    // Glow and shadows.
+    drop-shadow-blur: is-active ? 12px : 0px;
+    drop-shadow-color: is-active ? accent.transparentize(0.8) : transparent;
+
+    animate background { duration: 200ms; easing: ease-in-out; }
+    animate border-color { duration: 200ms; easing: ease-in-out; }
+    animate drop-shadow-blur { duration: 300ms; easing: ease-out; }
+    animate height { duration: 250ms; easing: ease-in-out-back; }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+
+        // ACTIVE CHECK (leading)
+        if is-active : VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: 8px;
+                background: accent;
+
+                Text {
+                    text: "✓";
+                    color: HveColors.text;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // TEXT (fills leftover space)
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            HorizontalLayout {
+                spacing: 6px;
+
+                Text {
+                    text: root.preset-name;
+                    color: is-active ? accent : HveColors.text;
+                    font-size: 14px;
+                    font-weight: is-active ? 700 : 600;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                // User badge ★
+                if root.is-user : Text {
+                    text: "★";
+                    color: HveColors.accent-amber;
+                    font-size: 12px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // ACTION BUTTONS (trailing)
+        VerticalLayout {
+            alignment: center;
+
+            HorizontalLayout {
+                spacing: 6px;
+
+                // Apply (always visible)
+                apply-btn := IconButton {
+                    icon: "▶";
+                    bg-color: HveColors.accent-green;
+                    tooltip-text: root.apply-text;
+                    clicked => {
+                        root.apply-preset(root.index, root.preset-name);
+                        root.refocus();
+                    }
+                }
+
+                // Rename (user only)
+                if root.is-user : rn-btn := IconButton {
+                    icon: "✎";
+                    bg-color: HveColors.accent-amber;
+                    hover-bg-color: HveColors.accent-amber.transparentize(0.2);
+                    tooltip-text: root.rename-text;
+                    clicked => { root.open-rename(root.preset-name); root.refocus(); }
+                }
+
+                // Delete (user only)
+                if root.is-user : del-btn := IconButton {
+                    icon: "✕";
+                    bg-color: #f87171;
+                    hover-bg-color: #f87171.transparentize(0.2);
+                    tooltip-text: root.delete-text;
+                    clicked => { root.open-delete(root.preset-name); root.refocus(); }
+                }
+            }
+        }
+    }
+}
