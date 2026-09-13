@@ -651,6 +651,9 @@ export component PanelRoot inherits Rectangle {
                         geom-gap-out <=> root.gap-out;
                         apply-border(idx, file) => { root.apply-border(idx, file); }
                         apply-geometry(size, radius, gap-in, gap-out) => { root.apply-geometry(size, radius, gap-in, gap-out); }
+                        save-border-preset(name) => { }
+                        rename-border-preset(old, new) => { }
+                        delete-border-preset(name) => { }
                     }
                     motion := MotionSection {
                         visible: root.section == 2;

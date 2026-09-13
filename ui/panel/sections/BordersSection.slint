@@ -1,115 +1,51 @@
-// HVE 2 — BordersSection (mutating-window R3 pick + R3 tune debounced, two-pane).
+// HVE 2 — BordersSection (tune + preset list, two-pane).
 //
-// Two INDEPENDENT scroll regions that separate functionality:
-//   • Pick pane  — PresetCards from scan("borders") → apply_border.
-//   • Tune pane  — COLOR-GATED placeholder + 4 GeometrySliders (size1-5,
-//     radius0-100, gap_in/out0-30) → 80ms Timer last-wins → apply_geometry
-//     compare-then-apply, skip init.
-// Wide section → panes side by side; narrow section → panes stacked. Either
-// way each pane owns its own ScrollView, so scrolling one never moves the
-// other. The keyboard stays the single linear sequence owned by PanelRoot's
-// panel-kbd: index < N targets the pick pane, index >= N the tune pane, and
-// only the owning pane scroll-follows. ← / → jump one panel at a time
-// (menu -> pick -> tune).
+// Two INDEPENDENT scroll regions:
+//   • Tune pane  — 4 GeometrySliders (size 1-5, radius 0-100, gap_in/out
+//     0-30) → 80ms debounce → apply_geometry, plus save form (LineEdit +
+//     Save button) at the bottom for saving current geometry as a user preset.
+//   • List pane  — Built-in presets (apply only) + user presets (apply,
+//     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
+// Wide section → panes side by side; narrow section → stacked. Each pane owns
+// its own ScrollView. Keyboard: single linear sequence owned by PanelRoot's
+// panel-kbd; ← / → jump one panel at a time (menu → tune → list).
 //
 // Keyboard R11: arrows navigate cards/sliders, Enter/Space activates,
 // sliders ±1, icy-cyan #8fd8ff focus.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-import { ScrollView } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
-import { PresetCard, GeometrySlider } from "../../components.slint";
+import { GeometrySlider } from "../../components.slint";
+import { SavedPresetCard } from "SavedPresetCard.slint";
 
-// ─── Pick pane: preset cards only. Own ScrollView + own scroll memory. ───
-component BordersPickPane inherits Rectangle {
-    in property <[string]> titles;
-    in property <[string]> descs;
-    in property <[string]> tags;
-    in property <[string]> files;
-    in property <int> active-index: -1;
-    in property <int> focused-index: 0;
-    in property <bool> has-focus: false;
-    in property <int> engaged-slider: -1;
-    // True while this pane owns the keyboard cursor → the ScrollView follows
-    // focus. False → the user's saved scroll position is preserved.
-    in property <bool> follow: false;
-    callback apply-border(int, string);
-
-    property <length> saved-scroll-y: 0px;
-    background: transparent;
-    clip: true;
-
-    ScrollView {
-        // ScrollView is a container: it fills the pane Rectangle by default.
-        // Scroll follows the keyboard focus: cards pitch 66px (58 + 8), an
-        // expanded card above adds 42px.
-        property <length> focus-y:
-            root.focused-index * 66px
-            + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
-            + (root.active-index == root.focused-index ? 21px : 0px);
-        viewport-y: root.follow ? (root.focused-index >= 0
-            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
-            : 0px) : root.saved-scroll-y;
-        animate viewport-y { duration: 250ms; easing: ease-out; }
-        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
-            padding-left: 16px;
-            padding-right: 16px;
-            padding-top: 16px;
-            padding-bottom: 12px;
-            spacing: 8px;
-
-            for i in root.files.length : PresetCard {
-                title: root.titles[i];
-                desc: root.descs[i];
-                tag: root.tags[i];
-                accent: #8fd8ff;
-                active: i == root.active-index;
-                keyboard-focused: i == root.focused-index && root.has-focus && root.engaged-slider < 0;
-                index: i;
-                // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
-                hover-moves-focus: false;
-                toggled => { root.apply-border(i, root.files[i]); }
-            }
-
-            if root.files.length == 0 : Text {
-                text: "No border presets found.";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-12;
-                color: HveColors.text-muted;
-                horizontal-alignment: center;
-            }
-        }
-    }
-}
-
-// ─── Tune pane: color-gated placeholder + 4 geometry sliders. ───
+// ─── Tune pane: geometry sliders + save form. ───
 component BordersTunePane inherits Rectangle {
     in property <int> size: 2;
     in property <int> radius: 32;
     in property <int> gap-in: 5;
     in property <int> gap-out: 5;
-    // Global keyboard index (pick cards fill 0..split-1, sliders split..split+3).
     in property <int> focused-index: 0;
     in property <int> split: 0;
     in property <bool> has-focus: false;
     in property <int> engaged-slider: -1;
     in property <bool> follow: false;
+    // Save form state
+    in property <string> error-text: "";
+    in-out property <string> preset-name: "";
     callback slider-changed(int, int);
+    callback save-preset(string);
 
     property <length> saved-scroll-y: 0px;
-    // 0..3 = which slider the keyboard cursor sits on (negative = pick pane).
+    // 0..3 = slider index; 4 = save form (LineEdit)
     property <int> local-focus: root.focused-index - root.split;
     background: transparent;
     clip: true;
 
     ScrollView {
-        // Fills the pane Rectangle by default (no explicit height).
-        // Tune layer scroll-follow: colour placeholder (~40px) then slider
-        // blocks ~88px pitch.
-        property <length> focus-y: 40px + root.local-focus * 88px;
+        property <length> focus-y: local-focus <= 3 ? local-focus * 88px : 3 * 88px + 60px;
         viewport-y: root.follow ? (root.local-focus >= 0
             ? (0px - max(0px, self.focus-y + 48px - self.height / 2))
             : 0px) : root.saved-scroll-y;
@@ -122,29 +58,8 @@ component BordersTunePane inherits Rectangle {
             padding-bottom: 12px;
             spacing: 8px;
 
-            // COLOR_GATE: inert placeholder (must stay inert, no color behavior)
-            // COLOR_GATE: needs Engine::apply_border_color + config field — USER DECISION REQUIRED
-            Rectangle {
-                height: 28px;
-                background: transparent;
-                border-width: 1px;
-                border-color: #8fd8ff.transparentize(0.7);
-                border-radius: SkwdTokens.radius-8;
-                Text {
-                    text: "color — gated (next slice)";
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-12;
-                    color: HveColors.text-muted.transparentize(0.3);
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-
             // Size 1-5
             size-wrap := Rectangle {
-                // Card-like block: lights up on keyboard focus OR mouse
-                // hover (lit), reads "grabbed" when engaged. Heights mirror
-                // the cards proportionally (250ms bounce).
                 property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-size.has-hover;
                 property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
                 height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
@@ -154,12 +69,7 @@ component BordersTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-size := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    // 1:1 legacy: mouse never steals keyboard focus — slider is mouse-direct
-                    clicked => { }
-                }
+                hover-size := TouchArea { width: 100%; height: 100%; clicked => { } }
                 GeometrySlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -184,12 +94,7 @@ component BordersTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-radius := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    // 1:1 legacy: mouse never steals keyboard focus
-                    clicked => { }
-                }
+                hover-radius := TouchArea { width: 100%; height: 100%; clicked => { } }
                 GeometrySlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -214,12 +119,7 @@ component BordersTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-gap-in := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    // 1:1 legacy: mouse never steals keyboard focus
-                    clicked => { }
-                }
+                hover-gap-in := TouchArea { width: 100%; height: 100%; clicked => { } }
                 GeometrySlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -244,12 +144,7 @@ component BordersTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-gap-out := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    // 1:1 legacy: mouse never steals keyboard focus
-                    clicked => { }
-                }
+                hover-gap-out := TouchArea { width: 100%; height: 100%; clicked => { } }
                 GeometrySlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -263,9 +158,87 @@ component BordersTunePane inherits Rectangle {
                 }
             }
 
-            // Keyboard hint travels with the tune content (bottom of scroll).
+            // Separator
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // Save form: LineEdit + Save button
+            VerticalLayout { spacing: 8px; }
             Text {
-                text: "↑↓ navigate • ←→ switch panel • Enter apply/engage • ←/→ adjust slider • Esc back";
+                text: "Save as Preset";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-14;
+                font-weight: 700;
+                color: HveColors.accent-cyan;
+            }
+
+            HorizontalLayout {
+                spacing: SkwdTokens.spacing-8;
+                height: 36px;
+
+                save-line-wrap := Rectangle {
+                    horizontal-stretch: 1;
+                    height: 36px;
+                    background: HveColors.bg-card;
+                    border-radius: SkwdTokens.radius-8;
+                    border-width: save-input.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+
+                    save-input := LineEdit {
+                        x: 4px;
+                        y: 4px;
+                        width: parent.width - 8px;
+                        height: parent.height - 8px;
+                        placeholder-text: "Border preset name…";
+                        text <=> root.preset-name;
+                        font-size: SkwdTokens.size-13;
+                        accepted(text) => {
+                            if (text != "") {
+                                root.save-preset(text);
+                            }
+                        }
+                    }
+                }
+
+                save-btn := Rectangle {
+                    width: 84px;
+                    height: 36px;
+                    background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                    border-radius: SkwdTokens.radius-8;
+
+                    Text {
+                        text: "Save";
+                        color: HveColors.bg-dark;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-13;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    save-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (root.preset-name != "") {
+                                root.save-preset(root.preset-name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.error-text != "" : Text {
+                text: root.error-text;
+                color: HveColors.accent-red;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                wrap: word-wrap;
+            }
+
+            // Keyboard hint
+            Text {
+                text: "↑↓ navigate • ←→ switch panel • Enter apply/engage • arrows ±1 • Esc back";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted.transparentize(0.4);
@@ -276,19 +249,124 @@ component BordersTunePane inherits Rectangle {
     }
 }
 
+// ─── List pane: built-in + user presets. ───
+component BordersListPane inherits Rectangle {
+    in property <[string]> builtin-names;
+    in property <[string]> builtin-tags;
+    in property <[string]> user-names;
+    in property <[string]> user-tags;
+    in property <int> active-index: -1;
+    in property <int> focused-index: 0;
+    in property <bool> has-focus: false;
+    in property <bool> follow: false;
+    callback apply-preset(int, string);
+    callback open-rename(string);
+    callback open-delete(string);
+
+    property <length> saved-scroll-y: 0px;
+    // Split index: built-in cards fill 0..builtin-count-1, user cards fill builtin-count..
+    property <int> builtin-count: root.builtin-names.length;
+    property <int> total-count: root.builtin-names.length + root.user-names.length;
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        property <length> focus-y: root.focused-index * 66px;
+        viewport-y: root.follow ? (root.focused-index >= 0
+            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+            : 0px) : root.saved-scroll-y;
+        animate viewport-y { duration: 250ms; easing: ease-out; }
+        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 16px;
+            padding-bottom: 12px;
+            spacing: 8px;
+
+            // Built-in presets header
+            if root.builtin-names.length > 0 : Text {
+                text: "Built-in";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-12;
+                font-weight: 600;
+                color: HveColors.text-muted;
+            }
+
+            for i in root.builtin-names.length : SavedPresetCard {
+                preset-name: root.builtin-names[i];
+                is-active: i == root.active-index;
+                is-user: false;
+                keyboard-focused: root.focused-index == i && root.has-focus;
+                accent: #8fd8ff;
+                index: i;
+                apply-preset(idx, name) => { root.apply-preset(idx, name); }
+                refocus() => { }
+            }
+
+            // User presets header
+            if root.user-names.length > 0 : Rectangle { height: 8px; }
+            if root.user-names.length > 0 : Text {
+                text: "My Border Presets";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-12;
+                font-weight: 600;
+                color: HveColors.text-muted;
+            }
+
+            for i in root.user-names.length : SavedPresetCard {
+                preset-name: root.user-names[i];
+                is-active: root.builtin-names.length + i == root.active-index;
+                is-user: true;
+                keyboard-focused: root.focused-index == root.builtin-names.length + i && root.has-focus;
+                accent: HveColors.accent-amber;
+                index: root.builtin-names.length + i;
+                apply-preset(idx, name) => { root.apply-preset(idx, name); }
+                open-rename(name) => { root.open-rename(name); }
+                open-delete(name) => { root.open-delete(name); }
+                refocus() => { }
+            }
+
+            // Empty state
+            if root.total-count == 0 : Text {
+                text: "No border presets found.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BordersSection (exported)
+// ══════════════════════════════════════════════════════════════════════════════
 export component BordersSection inherits Rectangle {
+    // Built-in presets
     in property <[string]> border-titles;
     in property <[string]> border-descs;
     in property <[string]> border-tags;
     in property <[string]> border-files;
+    // User presets
+    in property <[string]> user-preset-names;
+    in property <[string]> user-preset-tags;
+    // Active selection
     in property <int> active-index: -1;
-    // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
+    // Keyboard state (owned by PanelRoot)
     in property <int> focused-index: 0;
     in property <int> engaged-slider: -1;
     in property <bool> has-focus: false;
+    // Save form error
+    in property <string> save-error: "";
+    in-out property <string> preset-name: "";
+    // Callbacks
     callback apply-border(int, string);
+    callback save-border-preset(string);
+    callback rename-border-preset(string, string);
+    callback delete-border-preset(string);
 
-    // Tune layer — 4 geometry values (in-out so Rust snap can write them)
+    // Tune layer — 4 geometry values
     in-out property <int> geom-size: 2;
     in-out property <int> geom-radius: 32;
     in-out property <int> geom-gap-in: 5;
@@ -298,14 +376,12 @@ export component BordersSection inherits Rectangle {
     background: transparent;
     clip: true;
 
-    // Responsive split driven from the window width (ShellRoot), NOT from
-    // this section's own width: reading root.width here would feed the layout
-    // solver back into itself (binding loop). Wide → panes side by side;
-    // narrow → stacked single column.
+    // Responsive split from window width (ShellRoot), never root.width.
     in property <bool> two-col: false;
-    property <int> split: root.border-files.length;
+    // split: sliders (4) + save form (1) = 5 items in tune pane
+    property <int> split: 5;
 
-    // Tune debounce + skip-init + last-wins (R3)
+    // ── Geometry debounce (R3) ──
     property <bool> size-init: false;
     property <bool> radius-init: false;
     property <bool> gap-in-init: false;
@@ -335,10 +411,7 @@ export component BordersSection inherits Rectangle {
         }
     }
 
-    // Slider adjust is a domain action, not keyboard handling: PanelRoot's
-    // panel-kbd decides when a slider is engaged and calls this with the
-    // arrow direction. The 80ms debounce + skip-init + last-wins stay here
-    // so the section remains the single owner of its geometry pipeline.
+    // Slider adjust (keyboard arrows)
     public function adjust-slider(up: bool) {
         if (root.engaged-slider == 0) {
             let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
@@ -383,8 +456,7 @@ export component BordersSection inherits Rectangle {
         }
     }
 
-    // Mouse-direct slider edits from the tune pane. Same debounce + skip-init
-    // + last-wins pipeline as adjust-slider, keyed by slider id (0..3).
+    // Mouse-direct slider edits
     function slider-changed(id: int, v: int) {
         if (id == 0) {
             if (!root.size-init) { root.size-init = true; return; }
@@ -421,31 +493,11 @@ export component BordersSection inherits Rectangle {
         }
     }
 
-    // Keep pending/last in sync when Rust snaps sliders (pick→tune one-way)
-    changed geom-size => {
-        if (!root.geom-dirty) {
-            root.pending-size = root.geom-size;
-            root.last-size = root.geom-size;
-        }
-    }
-    changed geom-radius => {
-        if (!root.geom-dirty) {
-            root.pending-radius = root.geom-radius;
-            root.last-radius = root.geom-radius;
-        }
-    }
-    changed geom-gap-in => {
-        if (!root.geom-dirty) {
-            root.pending-gap-in = root.geom-gap-in;
-            root.last-gap-in = root.geom-gap-in;
-        }
-    }
-    changed geom-gap-out => {
-        if (!root.geom-dirty) {
-            root.pending-gap-out = root.geom-gap-out;
-            root.last-gap-out = root.geom-gap-out;
-        }
-    }
+    // Sync pending/last when Rust snaps sliders
+    changed geom-size => { if (!root.geom-dirty) { root.pending-size = root.geom-size; root.last-size = root.geom-size; } }
+    changed geom-radius => { if (!root.geom-dirty) { root.pending-radius = root.geom-radius; root.last-radius = root.geom-radius; } }
+    changed geom-gap-in => { if (!root.geom-dirty) { root.pending-gap-in = root.geom-gap-in; root.last-gap-in = root.geom-gap-in; } }
+    changed geom-gap-out => { if (!root.geom-dirty) { root.pending-gap-out = root.geom-gap-out; root.last-gap-out = root.geom-gap-out; } }
 
     VerticalLayout {
         spacing: 0px;
@@ -462,7 +514,7 @@ export component BordersSection inherits Rectangle {
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Pick a border style — instantly applied. Adjust thickness, radius and gaps.";
+                text: "Adjust geometry, then save as a preset. Or pick an existing style.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -476,22 +528,6 @@ export component BordersSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            BordersPickPane {
-                horizontal-stretch: 1;
-                titles: root.border-titles;
-                descs: root.border-descs;
-                tags: root.border-tags;
-                files: root.border-files;
-                active-index: root.active-index;
-                focused-index: root.focused-index;
-                has-focus: root.has-focus;
-                engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
-                apply-border(idx, file) => { root.apply-border(idx, file); }
-            }
-
-            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
-
             BordersTunePane {
                 horizontal-stretch: 1;
                 size: root.geom-size;
@@ -499,11 +535,31 @@ export component BordersSection inherits Rectangle {
                 gap-in: root.geom-gap-in;
                 gap-out: root.geom-gap-out;
                 focused-index: root.focused-index;
-                split: root.split;
+                split: 0;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
-                follow: root.focused-index >= root.split;
+                follow: root.focused-index < root.split;
+                error-text: root.save-error;
+                preset-name <=> root.preset-name;
                 slider-changed(id, v) => { root.slider-changed(id, v); }
+                save-preset(name) => { root.save-border-preset(name); }
+            }
+
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+
+            BordersListPane {
+                horizontal-stretch: 1;
+                builtin-names: root.border-titles;
+                builtin-tags: root.border-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index - root.split;
+                has-focus: root.has-focus;
+                follow: root.focused-index >= root.split;
+                apply-preset(idx, name) => { root.apply-border(idx, name); }
+                open-rename(name) => { root.rename-border-preset(name, ""); }
+                open-delete(name) => { root.delete-border-preset(name); }
             }
         }
         if !root.two-col : VerticalLayout {
@@ -511,22 +567,6 @@ export component BordersSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            BordersPickPane {
-                vertical-stretch: 1;
-                titles: root.border-titles;
-                descs: root.border-descs;
-                tags: root.border-tags;
-                files: root.border-files;
-                active-index: root.active-index;
-                focused-index: root.focused-index;
-                has-focus: root.has-focus;
-                engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
-                apply-border(idx, file) => { root.apply-border(idx, file); }
-            }
-
-            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
-
             BordersTunePane {
                 vertical-stretch: 1;
                 size: root.geom-size;
@@ -534,11 +574,31 @@ export component BordersSection inherits Rectangle {
                 gap-in: root.geom-gap-in;
                 gap-out: root.geom-gap-out;
                 focused-index: root.focused-index;
-                split: root.split;
+                split: 0;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
-                follow: root.focused-index >= root.split;
+                follow: root.focused-index < root.split;
+                error-text: root.save-error;
+                preset-name <=> root.preset-name;
                 slider-changed(id, v) => { root.slider-changed(id, v); }
+                save-preset(name) => { root.save-border-preset(name); }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+
+            BordersListPane {
+                vertical-stretch: 1;
+                builtin-names: root.border-titles;
+                builtin-tags: root.border-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index - root.split;
+                has-focus: root.has-focus;
+                follow: root.focused-index >= root.split;
+                apply-preset(idx, name) => { root.apply-border(idx, name); }
+                open-rename(name) => { root.rename-border-preset(name, ""); }
+                open-delete(name) => { root.delete-border-preset(name); }
             }
         }
     }

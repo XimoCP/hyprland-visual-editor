@@ -25,7 +25,7 @@ export component SavedPresetCard inherits Rectangle {
     callback open-delete(string);
     callback refocus();
 
-    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
+    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover;
     property <bool> _expanded: is-active || is-hovered || keyboard-focused;
 
     height: _expanded ? 100px : 56px;
