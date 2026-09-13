@@ -9,6 +9,7 @@ mod engine;
 mod hypr_ipc;
 mod ipc;
 mod presets;
+mod preset_store;
 mod providers;
 mod settings;
 mod shell;
