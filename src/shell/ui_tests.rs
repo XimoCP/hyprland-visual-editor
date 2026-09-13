@@ -3625,8 +3625,8 @@ fn motion_last_slider_renders_unclipped() {
     let top = win.window().take_snapshot().expect("motion top snapshot");
     save_slice_png(top.clone(), "/tmp/opencode/motion_top.png");
 
-    // Y2-d sits at sequence index len+3 = 22: lit (88px) via focus.
-    win.set_panel_kbd_preview_index(22);
+    // Y2-d sits at tune pane index 3 (0-based: a=0, b=1, c=2, d=3).
+    win.set_panel_kbd_preview_index(3);
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }

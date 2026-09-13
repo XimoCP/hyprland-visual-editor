@@ -1,23 +1,26 @@
-// HVE 2 — MotionSection (mutating-window R4 pick + tune + CurvePreview, two-pane).
+// HVE 2 — MotionSection (tune + preset list, two-pane).
 //
 // Two INDEPENDENT scroll regions:
-//   • Pick pane  — PresetCards from scan("animations") → apply_animation.
-//   • Tune pane  — CurvePreview + 4 bezier sliders a,b,c,d (x1,y1,x2,y2).
-// Wide section → panes side by side; narrow → stacked. Each pane owns its
-// ScrollView. The keyboard stays the single linear sequence owned by
-// PanelRoot's panel-kbd: index < N targets the pick pane, index >= N the tune
-// pane, and only the owning pane scroll-follows. ← / → jump one panel.
+//   • Tune pane  — CurvePreview + 4 bezier sliders a,b,c,d (x1,y1,x2,y2)
+//     → 80ms debounce → apply_bezier, plus save form (LineEdit + Save button)
+//     at the bottom for saving current curve as a user preset.
+//   • List pane  — Built-in presets (apply only) + user presets (apply,
+//     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
+// Wide section → panes side by side; narrow → stacked. Each pane owns its own
+// ScrollView. Keyboard: single linear sequence owned by PanelRoot's panel-kbd;
+// ← / → jump one panel at a time (menu → tune → list).
 //
 // Ranges: a,c in [0,1], b,d in [-1,2] per CSS bezier convention; defaults
 // 0.25/0.1/0.25/1. Arrow steps ±0.05 clamped.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-import { Slider, ScrollView } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
-import { PresetCard, HveKnobSlider } from "../../components.slint";
+import { HveKnobSlider } from "../../components.slint";
 import { CurvePreview } from "../CurvePreview.slint";
+import { SavedPresetCard } from "SavedPresetCard.slint";
 
 component BezierSlider inherits Rectangle {
     in property <float> value: 0.25;
@@ -28,9 +31,6 @@ component BezierSlider inherits Rectangle {
     in property <bool> focused: false;
     callback changed(float);
     height: 72px;
-    // Bare content: the section wrapper owns ALL card visuals
-    // (background, border, radius, expansion). This inner layer stays
-    // transparent and borderless so there is exactly one visible frame.
     background: transparent;
     border-width: 0px;
     VerticalLayout {
@@ -63,66 +63,7 @@ component BezierSlider inherits Rectangle {
     }
 }
 
-// ─── Pick pane: animation preset cards only. Own ScrollView + scroll memory. ───
-component MotionPickPane inherits Rectangle {
-    in property <[string]> titles;
-    in property <[string]> descs;
-    in property <[string]> tags;
-    in property <[string]> files;
-    in property <int> active-index: -1;
-    in property <int> focused-index: 0;
-    in property <bool> has-focus: false;
-    in property <int> engaged-slider: -1;
-    in property <bool> follow: false;
-    callback apply-animation(int, string);
-
-    property <length> saved-scroll-y: 0px;
-    background: transparent;
-    clip: true;
-
-    ScrollView {
-        // Fills the pane Rectangle by default (no explicit height).
-        property <length> focus-y:
-            root.focused-index * 66px
-            + (root.active-index >= 0 && root.active-index < root.focused-index ? 42px : 0px)
-            + (root.active-index == root.focused-index ? 21px : 0px);
-        viewport-y: root.follow ? (root.focused-index >= 0
-            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
-            : 0px) : root.saved-scroll-y;
-        animate viewport-y { duration: 250ms; easing: ease-out; }
-        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
-            padding-left: 16px;
-            padding-right: 16px;
-            padding-top: 16px;
-            padding-bottom: 12px;
-            spacing: 8px;
-
-            for i in root.files.length : PresetCard {
-                title: root.titles[i];
-                desc: root.descs[i];
-                tag: root.tags[i];
-                accent: #8fd8ff;
-                active: i == root.active-index;
-                keyboard-focused: i == root.focused-index && root.has-focus && root.engaged-slider < 0;
-                index: i;
-                // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
-                hover-moves-focus: false;
-                toggled => { root.apply-animation(i, root.files[i]); }
-            }
-
-            if root.files.length == 0 : Text {
-                text: "No animation presets found.";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-12;
-                color: HveColors.text-muted;
-                horizontal-alignment: center;
-            }
-        }
-    }
-}
-
-// ─── Tune pane: CurvePreview + 4 bezier sliders. ───
+// ─── Tune pane: CurvePreview + 4 bezier sliders + save form. ───
 component MotionTunePane inherits Rectangle {
     in-out property <float> bezier-a: 0.25;
     in-out property <float> bezier-b: 0.1;
@@ -133,17 +74,22 @@ component MotionTunePane inherits Rectangle {
     in property <bool> has-focus: false;
     in property <int> engaged-slider: -1;
     in property <bool> follow: false;
+    // Save form state
+    in property <string> error-text: "";
+    in-out property <string> preset-name: "";
+    callback save-preset(string);
 
     property <length> saved-scroll-y: 0px;
+    // 0..3 = bezier sliders; 4 = save form
     property <int> local-focus: root.focused-index - root.split;
     background: transparent;
     clip: true;
 
     ScrollView {
-        // Fills the pane Rectangle by default (no explicit height).
-        property <length> focus-y: 70px + root.local-focus * 80px;
+        property <length> focus-y: local-focus <= 3
+            ? 70px + root.local-focus * 80px
+            : 70px + 3 * 80px + 60px;
         viewport-y: root.follow ? (root.local-focus >= 0
-            // Slider rows center on half the LIT height (44px = 88/2).
             ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
             : 0px) : root.saved-scroll-y;
         animate viewport-y { duration: 250ms; easing: ease-out; }
@@ -152,12 +98,10 @@ component MotionTunePane inherits Rectangle {
             padding-left: 16px;
             padding-right: 16px;
             padding-top: 16px;
-            // 28px bottom breathing room: the lit Y2-d block grows 72→88px
-            // (104 grabbed), so 12px would clip it.
             padding-bottom: 28px;
             spacing: 8px;
 
-            // Curve preview 120×48 — redraws on slider changed via binding
+            // Curve preview 120×48
             HorizontalLayout {
                 alignment: center;
                 CurvePreview {
@@ -180,11 +124,7 @@ component MotionTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-a := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    clicked => { }
-                }
+                hover-a := TouchArea { width: 100%; height: 100%; clicked => { } }
                 BezierSlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -207,11 +147,7 @@ component MotionTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-b := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    clicked => { }
-                }
+                hover-b := TouchArea { width: 100%; height: 100%; clicked => { } }
                 BezierSlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -234,11 +170,7 @@ component MotionTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-c := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    clicked => { }
-                }
+                hover-c := TouchArea { width: 100%; height: 100%; clicked => { } }
                 BezierSlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -261,11 +193,7 @@ component MotionTunePane inherits Rectangle {
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-d := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    clicked => { }
-                }
+                hover-d := TouchArea { width: 100%; height: 100%; clicked => { } }
                 BezierSlider {
                     width: 100%;
                     y: (parent.height - self.height) / 2;
@@ -279,6 +207,84 @@ component MotionTunePane inherits Rectangle {
                 }
             }
 
+            // Separator
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // Save form
+            Text {
+                text: "Save as Preset";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-14;
+                font-weight: 700;
+                color: HveColors.accent-cyan;
+            }
+
+            HorizontalLayout {
+                spacing: SkwdTokens.spacing-8;
+                height: 36px;
+
+                save-line-wrap := Rectangle {
+                    horizontal-stretch: 1;
+                    height: 36px;
+                    background: HveColors.bg-card;
+                    border-radius: SkwdTokens.radius-8;
+                    border-width: save-input.has-focus ? 1px : 0px;
+                    border-color: #8fd8ff;
+
+                    save-input := LineEdit {
+                        x: 4px;
+                        y: 4px;
+                        width: parent.width - 8px;
+                        height: parent.height - 8px;
+                        placeholder-text: "Animation preset name…";
+                        text <=> root.preset-name;
+                        font-size: SkwdTokens.size-13;
+                        accepted(text) => {
+                            if (text != "") {
+                                root.save-preset(text);
+                            }
+                        }
+                    }
+                }
+
+                save-btn := Rectangle {
+                    width: 84px;
+                    height: 36px;
+                    background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                    border-radius: SkwdTokens.radius-8;
+
+                    Text {
+                        text: "Save";
+                        color: HveColors.bg-dark;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-13;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    save-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (root.preset-name != "") {
+                                root.save-preset(root.preset-name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.error-text != "" : Text {
+                text: root.error-text;
+                color: HveColors.accent-red;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                wrap: word-wrap;
+            }
+
+            // Keyboard hint
             Text {
                 text: "↑↓ navigate • ←→ switch panel • Enter/Space apply • arrows ±0.05 • Esc back";
                 font-family: SkwdTokens.font-body;
@@ -287,26 +293,127 @@ component MotionTunePane inherits Rectangle {
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
-
-            // Over-scroll spacer so the grabbed Y2-d block + help fully reveal.
-            Rectangle { height: 16px; }
         }
     }
 }
 
+// ─── List pane: built-in + user presets. ───
+component MotionListPane inherits Rectangle {
+    in property <[string]> builtin-names;
+    in property <[string]> builtin-tags;
+    in property <[string]> user-names;
+    in property <[string]> user-tags;
+    in property <int> active-index: -1;
+    in property <int> focused-index: 0;
+    in property <bool> has-focus: false;
+    in property <bool> follow: false;
+    callback apply-preset(int, string);
+    callback open-rename(string);
+    callback open-delete(string);
+
+    property <length> saved-scroll-y: 0px;
+    property <int> builtin-count: root.builtin-names.length;
+    property <int> total-count: root.builtin-names.length + root.user-names.length;
+    background: transparent;
+    clip: true;
+
+    ScrollView {
+        property <length> focus-y: root.focused-index * 66px;
+        viewport-y: root.follow ? (root.focused-index >= 0
+            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
+            : 0px) : root.saved-scroll-y;
+        animate viewport-y { duration: 250ms; easing: ease-out; }
+        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 16px;
+            padding-bottom: 12px;
+            spacing: 8px;
+
+            // Built-in presets header
+            if root.builtin-names.length > 0 : Text {
+                text: "Built-in";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-12;
+                font-weight: 600;
+                color: HveColors.text-muted;
+            }
+
+            for i in root.builtin-names.length : SavedPresetCard {
+                preset-name: root.builtin-names[i];
+                is-active: i == root.active-index;
+                is-user: false;
+                keyboard-focused: root.focused-index == i && root.has-focus;
+                accent: #8fd8ff;
+                index: i;
+                apply-preset(idx, name) => { root.apply-preset(idx, name); }
+                refocus() => { }
+            }
+
+            // User presets header
+            if root.user-names.length > 0 : Rectangle { height: 8px; }
+            if root.user-names.length > 0 : Text {
+                text: "My Animation Presets";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-12;
+                font-weight: 600;
+                color: HveColors.text-muted;
+            }
+
+            for i in root.user-names.length : SavedPresetCard {
+                preset-name: root.user-names[i];
+                is-active: root.builtin-names.length + i == root.active-index;
+                is-user: true;
+                keyboard-focused: root.focused-index == root.builtin-names.length + i && root.has-focus;
+                accent: HveColors.accent-amber;
+                index: root.builtin-names.length + i;
+                apply-preset(idx, name) => { root.apply-preset(idx, name); }
+                open-rename(name) => { root.open-rename(name); }
+                open-delete(name) => { root.open-delete(name); }
+                refocus() => { }
+            }
+
+            // Empty state
+            if root.total-count == 0 : Text {
+                text: "No animation presets found.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-12;
+                color: HveColors.text-muted;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MotionSection (exported)
+// ══════════════════════════════════════════════════════════════════════════════
 export component MotionSection inherits Rectangle {
+    // Built-in presets
     in property <[string]> anim-titles;
     in property <[string]> anim-descs;
     in property <[string]> anim-tags;
     in property <[string]> anim-files;
+    // User presets
+    in property <[string]> user-preset-names;
+    in property <[string]> user-preset-tags;
+    // Active selection
     in property <int> active-index: -1;
-    // Keyboard state owned by PanelRoot's single panel-kbd FocusScope.
+    // Keyboard state (owned by PanelRoot)
     in property <int> focused-index: 0;
     in property <int> engaged-slider: -1;
     in property <bool> has-focus: false;
+    // Save form error
+    in property <string> save-error: "";
+    in-out property <string> preset-name: "";
+    // Callbacks
     callback apply-animation(int, string);
+    callback save-animation-preset(string);
+    callback rename-animation-preset(string, string);
+    callback delete-animation-preset(string);
 
-    // Tune layer — 4 bezier values (in-out so Rust snap can write them if needed)
+    // Tune layer — 4 bezier values
     in-out property <float> bezier-a: 0.25;
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
@@ -315,15 +422,12 @@ export component MotionSection inherits Rectangle {
     background: transparent;
     clip: true;
 
-    // Responsive split from the window width (ShellRoot), never from
-    // root.width (binding loop). Wide → two panes; narrow → stacked.
+    // Responsive split from window width (ShellRoot).
     in property <bool> two-col: false;
-    property <int> split: root.anim-files.length;
+    // split: 4 sliders + 1 save form = 5 items in tune pane
+    property <int> split: 5;
 
-    // Slider adjust is a domain action, not keyboard handling: PanelRoot's
-    // panel-kbd decides when a slider is engaged and calls this with the
-    // arrow direction. Arrow steps ±0.05 clamped stay here so the section
-    // remains the single owner of its bezier pipeline.
+    // Slider adjust (keyboard arrows, ±0.05 clamped)
     public function adjust-slider(up: bool) {
         if (root.engaged-slider == 0) {
             let next = up ? min(root.bezier-a + 0.05, 1.0) : max(root.bezier-a - 0.05, 0.0);
@@ -343,6 +447,7 @@ export component MotionSection inherits Rectangle {
     VerticalLayout {
         spacing: 0px;
 
+        // Header fixed
         VerticalLayout {
             padding: 16px;
             spacing: 4px;
@@ -354,7 +459,7 @@ export component MotionSection inherits Rectangle {
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Pick an animation — instantly applied. Shape the curve.";
+                text: "Shape the curve, then save as a preset. Or pick an existing animation.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -368,22 +473,6 @@ export component MotionSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            MotionPickPane {
-                horizontal-stretch: 1;
-                titles: root.anim-titles;
-                descs: root.anim-descs;
-                tags: root.anim-tags;
-                files: root.anim-files;
-                active-index: root.active-index;
-                focused-index: root.focused-index;
-                has-focus: root.has-focus;
-                engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
-                apply-animation(idx, file) => { root.apply-animation(idx, file); }
-            }
-
-            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
-
             MotionTunePane {
                 horizontal-stretch: 1;
                 bezier-a <=> root.bezier-a;
@@ -391,10 +480,30 @@ export component MotionSection inherits Rectangle {
                 bezier-c <=> root.bezier-c;
                 bezier-d <=> root.bezier-d;
                 focused-index: root.focused-index;
-                split: root.split;
+                split: 0;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
+                follow: root.focused-index < root.split;
+                error-text: root.save-error;
+                preset-name <=> root.preset-name;
+                save-preset(name) => { root.save-animation-preset(name); }
+            }
+
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+
+            MotionListPane {
+                horizontal-stretch: 1;
+                builtin-names: root.anim-titles;
+                builtin-tags: root.anim-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index - root.split;
+                has-focus: root.has-focus;
                 follow: root.focused-index >= root.split;
+                apply-preset(idx, name) => { root.apply-animation(idx, name); }
+                open-rename(name) => { root.rename-animation-preset(name, ""); }
+                open-delete(name) => { root.delete-animation-preset(name); }
             }
         }
         if !root.two-col : VerticalLayout {
@@ -402,22 +511,6 @@ export component MotionSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            MotionPickPane {
-                vertical-stretch: 1;
-                titles: root.anim-titles;
-                descs: root.anim-descs;
-                tags: root.anim-tags;
-                files: root.anim-files;
-                active-index: root.active-index;
-                focused-index: root.focused-index;
-                has-focus: root.has-focus;
-                engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
-                apply-animation(idx, file) => { root.apply-animation(idx, file); }
-            }
-
-            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
-
             MotionTunePane {
                 vertical-stretch: 1;
                 bezier-a <=> root.bezier-a;
@@ -425,10 +518,30 @@ export component MotionSection inherits Rectangle {
                 bezier-c <=> root.bezier-c;
                 bezier-d <=> root.bezier-d;
                 focused-index: root.focused-index;
-                split: root.split;
+                split: 0;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
+                follow: root.focused-index < root.split;
+                error-text: root.save-error;
+                preset-name <=> root.preset-name;
+                save-preset(name) => { root.save-animation-preset(name); }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+
+            MotionListPane {
+                vertical-stretch: 1;
+                builtin-names: root.anim-titles;
+                builtin-tags: root.anim-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index - root.split;
+                has-focus: root.has-focus;
                 follow: root.focused-index >= root.split;
+                apply-preset(idx, name) => { root.apply-animation(idx, name); }
+                open-rename(name) => { root.rename-animation-preset(name, ""); }
+                open-delete(name) => { root.delete-animation-preset(name); }
             }
         }
     }

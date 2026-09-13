@@ -666,13 +666,16 @@ export component PanelRoot inherits Rectangle {
                         anim-files: root.anim-files;
                         active-index: root.anim-active-index;
                         focused-index: root.kbd-preview-index >= 0 ? root.kbd-preview-index : root.motion-focused-index;
-                        engaged-slider: root.kbd-preview-engaged ? (root.kbd-preview-index >= root.anim-files.length ? root.kbd-preview-index - root.anim-files.length : 0) : root.motion-engaged-slider;
+                        engaged-slider: root.kbd-preview-engaged ? root.kbd-preview-index : root.motion-engaged-slider;
                         has-focus: (panel-kbd.has-focus && !root.menu-active) || root.kbd-preview-index >= 0;
                         bezier-a <=> root.bezier-a;
                         bezier-b <=> root.bezier-b;
                         bezier-c <=> root.bezier-c;
                         bezier-d <=> root.bezier-d;
                         apply-animation(idx, file) => { root.apply-animation(idx, file); }
+                        save-animation-preset(name) => { }
+                        rename-animation-preset(old, new) => { }
+                        delete-animation-preset(name) => { }
                     }
                     filters := FiltersSection {
                         visible: root.section == 3;
