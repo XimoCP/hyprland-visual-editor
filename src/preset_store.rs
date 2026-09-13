@@ -9,6 +9,7 @@ pub struct PresetStore {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // used by Apply feature (upcoming)
 pub struct PresetMeta {
     pub name: String,
     pub tag: String,
@@ -50,6 +51,7 @@ impl PresetStore {
     }
 
     /// Load a user preset file content by name.
+    #[allow(dead_code)] // used by Apply feature (upcoming)
     pub fn load(&self, name: &str) -> Result<String, String> {
         let path = self.base.join(format!("{}.lua", name));
         fs::read_to_string(&path)
@@ -93,6 +95,7 @@ impl PresetStore {
     }
 
     /// Check if a user preset exists.
+    #[allow(dead_code)] // used by Apply feature (upcoming)
     pub fn exists(&self, name: &str) -> bool {
         self.base.join(format!("{}.lua", name)).exists()
     }
