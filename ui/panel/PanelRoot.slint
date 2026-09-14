@@ -68,6 +68,14 @@ export component PanelRoot inherits Rectangle {
     in property <string> border-save-error: "";
     in property <[string]> user-border-preset-names;
     in property <[string]> user-border-preset-tags;
+    // Tune pane — dynamic (Unit 2)
+    in-out property <string> tune-active-colors: "";
+    in-out property <int> tune-color-count: 0;
+    in-out property <int> tune-angle: 90;
+    in-out property <string> tune-inactive-color: "";
+    in-out property <string> tune-glow: "";
+    in-out property <string> tune-animations: "";
+    in-out property <bool> tune-rule-enabled: false;
     // Animation preset state
     // Motion pick layer (R4) — 19 cards from scan("animations")
     in property <[string]> anim-titles;
@@ -141,6 +149,7 @@ export component PanelRoot inherits Rectangle {
     callback save-border-preset(string);
     callback rename-border-preset(string, string);
     callback delete-border-preset(string);
+    callback tune-changed(string, int, string, string, string, bool);
     // Animation preset CRUD
     callback save-animation-preset(string);
     callback rename-animation-preset(string, string);
@@ -677,6 +686,14 @@ export component PanelRoot inherits Rectangle {
                         preset-name <=> root.border-preset-name;
                         user-preset-names: root.user-border-preset-names;
                         user-preset-tags: root.user-border-preset-tags;
+                        tune-active-colors <=> root.tune-active-colors;
+                        tune-color-count <=> root.tune-color-count;
+                        tune-angle <=> root.tune-angle;
+                        tune-inactive-color <=> root.tune-inactive-color;
+                        tune-glow <=> root.tune-glow;
+                        tune-animations <=> root.tune-animations;
+                        tune-rule-enabled <=> root.tune-rule-enabled;
+                        tune-changed(colors, angle, inactive, glow, anims, rule) => { root.tune-changed(colors, angle, inactive, glow, anims, rule); }
                     }
                     motion := MotionSection {
                         visible: root.section == 2;

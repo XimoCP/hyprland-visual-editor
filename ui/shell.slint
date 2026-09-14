@@ -159,6 +159,14 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-border-save-error: "";
     in property <[string]> panel-user-border-preset-names;
     in property <[string]> panel-user-border-preset-tags;
+    // Tune pane — dynamic (Unit 2)
+    in-out property <string> panel-tune-active-colors: "";
+    in-out property <int> panel-tune-color-count: 0;
+    in-out property <int> panel-tune-angle: 90;
+    in-out property <string> panel-tune-inactive-color: "";
+    in-out property <string> panel-tune-glow: "";
+    in-out property <string> panel-tune-animations: "";
+    in-out property <bool> panel-tune-rule-enabled: false;
     // Animation preset state
     in-out property <string> panel-animation-preset-name: "";
     in property <string> panel-animation-save-error: "";
@@ -240,6 +248,7 @@ export component ShellRoot inherits Rectangle {
     callback panel-save-border-preset(string);
     callback panel-rename-border-preset(string, string);
     callback panel-delete-border-preset(string);
+    callback panel-tune-changed(string, int, string, string, string, bool);
     callback panel-save-animation-preset(string);
     callback panel-rename-animation-preset(string, string);
     callback panel-delete-animation-preset(string);
@@ -510,6 +519,13 @@ export component ShellRoot inherits Rectangle {
                     border-save-error: root.panel-border-save-error;
                     user-border-preset-names: root.panel-user-border-preset-names;
                     user-border-preset-tags: root.panel-user-border-preset-tags;
+                    tune-active-colors <=> root.panel-tune-active-colors;
+                    tune-color-count <=> root.panel-tune-color-count;
+                    tune-angle <=> root.panel-tune-angle;
+                    tune-inactive-color <=> root.panel-tune-inactive-color;
+                    tune-glow <=> root.panel-tune-glow;
+                    tune-animations <=> root.panel-tune-animations;
+                    tune-rule-enabled <=> root.panel-tune-rule-enabled;
                     animation-preset-name <=> root.panel-animation-preset-name;
                     animation-save-error: root.panel-animation-save-error;
                     user-animation-preset-names: root.panel-user-animation-preset-names;
@@ -575,6 +591,7 @@ export component ShellRoot inherits Rectangle {
                     save-border-preset(name) => { root.panel-save-border-preset(name); }
                     rename-border-preset(old, new) => { root.panel-rename-border-preset(old, new); }
                     delete-border-preset(name) => { root.panel-delete-border-preset(name); }
+                    tune-changed(colors, angle, inactive, glow, anims, rule) => { root.panel-tune-changed(colors, angle, inactive, glow, anims, rule); }
                     save-animation-preset(name) => { root.panel-save-animation-preset(name); }
                     rename-animation-preset(old, new) => { root.panel-rename-animation-preset(old, new); }
                     delete-animation-preset(name) => { root.panel-delete-animation-preset(name); }

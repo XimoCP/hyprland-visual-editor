@@ -75,6 +75,30 @@ fn project_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// D4: drop the hidden border draft and restore the active border (or no border
+/// at all) by re-running the existing engine apply path, so the desktop never
+/// keeps an unsaved draft behind the panel. Failures surface to the user.
+fn teardown_border_draft(
+    state: &std::sync::Mutex<AppState>,
+    proj: &std::path::Path,
+    weak: &slint::Weak<MainWindow>,
+) {
+    crate::preset_store::PresetStore::remove_draft(proj);
+    let st = state.lock().unwrap_or_else(|e| e.into_inner());
+    let active = st.cfg().active_border_file.clone();
+    let arg = if active.is_empty() { "none".to_string() } else { active };
+    if let Err(e) = st.engine().apply_border(&arg) {
+        tracing::error!("[panel] re-apply after draft cleanup failed: {}", e);
+        drop(st);
+        if let Some(w) = weak.upgrade() {
+            w.set_shell_status_text(slint::SharedString::from(&format!(
+                "Border restore failed: {}",
+                e
+            )));
+        }
+    }
+}
+
 /// Refresh the Slint theme list UI from the ThemeManager state.
 pub(crate) fn refresh_theme_list(
     window: &crate::MainWindow,
@@ -1858,26 +1882,8 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         // ── Mutating panel wiring (slice 1, R1, R2, R8, R9) ──
         // 350ms Timer → complete_mutation, Esc reverses, wheel/click gated, fullscreen held (no resize).
-        {
-            let shell_c = shell.clone();
-            window.on_panel_section_selected(move |section| {
-                tracing::debug!("[panel][mouse] section-selected section={} (rail click)", section);
-                if crate::shell::Shell::is_mutating(&shell_c) {
-                    tracing::debug!("[panel] section-selected ignored — mutating");
-                    return;
-                }
-                let idx = section.max(0) as usize;
-                let target = crate::shell::nav::PanelSection::from_index(idx).unwrap_or(crate::shell::nav::PanelSection::Save);
-                let is_closed = crate::shell::Shell::with_nav(&shell_c, |n| n.panel_state() == crate::shell::nav::PanelState::Closed);
-                let is_open = crate::shell::Shell::with_nav(&shell_c, |n| matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)));
-                tracing::debug!("[panel] section-selected target={:?} is_closed={} is_open={}", target, is_closed, is_open);
-                if is_closed {
-                    let _ = crate::shell::Shell::enter_panel(&shell_c, target);
-                } else if is_open {
-                    crate::shell::Shell::set_panel_section(&shell_c, target);
-                }
-            });
-        }
+        // NOTE: panel_section_selected is wired further down, after `state` exists, because D4
+        // draft cleanup needs the engine to restore the active border when leaving Borders.
         {
             // Keyboard R11 v2 (Settings): save-list arrows own ONE focused
             // index (Rust-side, so search filters and delete focus shifts
@@ -1924,28 +1930,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 tracing::debug!("{}", crate::callbacks::focus_trace(&reason));
             });
         }
-        {
-            let shell_c = shell.clone();
-            let win = window.as_weak();
-            window.on_panel_back(move || {
-                tracing::debug!("[panel][kbd] back pressed (Esc)");
-                let is_mutating = crate::shell::Shell::is_mutating(&shell_c);
-                let is_open = crate::shell::Shell::with_nav(&shell_c, |n| matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)));
-                if is_mutating || is_open {
-                    let _ = crate::shell::Shell::leave_panel(&shell_c);
-                } else {
-                    // Fallback: hide/minimize via composer (same as back-activated when not in panel)
-                    if let Some(w) = win.upgrade() {
-                        if let Some(mut ctrl) = crate::composer::global_controller() {
-                            if !ctrl.window_hidden() {
-                                ctrl.toggle_tray(&w);
-                                crate::tray::refresh_global_menu();
-                            }
-                        }
-                    }
-                }
-            });
-        }
+        // NOTE: on_panel_back is wired further down, after `state` exists, because
+        // D4 draft teardown needs the engine to restore the active border on close.
         // D10 MIT pill: open the skwd-wall attribution link. Constant argv
         // (xdg-open + a compile-time URL default) — no user input reaches
         // the command line (threat matrix: subprocess usage documented).
@@ -2073,6 +2059,83 @@ fn main() -> Result<(), slint::PlatformError> {
         refresh_slice_ring.clone(),
         animate_slice_step.clone(),
     );
+
+    // ── D4: Section-leave draft cleanup ──
+    // Wire this AFTER state is created so we can access the engine for re-apply.
+    // All section changes (rail clicks + keyboard) flow through this single callback.
+    {
+        let shell_c = shell.clone();
+        let state_c = state.clone();
+        let proj_c = proj.clone();
+        let weak = window.as_weak();
+        window.on_panel_section_selected(move |section| {
+            tracing::debug!("[panel][mouse] section-selected section={} (rail click)", section);
+            if crate::shell::Shell::is_mutating(&shell_c) {
+                tracing::debug!("[panel] section-selected ignored — mutating");
+                return;
+            }
+            let idx = section.max(0) as usize;
+            let target = crate::shell::nav::PanelSection::from_index(idx).unwrap_or(crate::shell::nav::PanelSection::Save);
+            let (is_closed, is_open, prev_section) = crate::shell::Shell::with_nav(&shell_c, |n| {
+                let state = n.panel_state();
+                let is_closed = state == crate::shell::nav::PanelState::Closed;
+                let is_open = matches!(state, crate::shell::nav::PanelState::Open(_));
+                let prev = n.panel_section();
+                (is_closed, is_open, prev)
+            });
+            tracing::debug!("[panel] section-selected target={:?} is_closed={} is_open={}", target, is_closed, is_open);
+            if is_closed {
+                let _ = crate::shell::Shell::enter_panel(&shell_c, target);
+            } else if is_open {
+                // D4: leaving Borders drops the hidden draft and restores the
+                // active border (same teardown as closing the panel).
+                if prev_section == Some(crate::shell::nav::PanelSection::Borders)
+                    && target != crate::shell::nav::PanelSection::Borders
+                {
+                    tracing::debug!("[panel] leaving Borders section — cleaning up draft");
+                    teardown_border_draft(&state_c, &proj_c, &weak);
+                }
+                crate::shell::Shell::set_panel_section(&shell_c, target);
+            }
+        });
+    }
+
+    // ── Esc / back press: close the panel (D4 draft teardown on close) ──
+    // Wired here, after `state` exists, so closing the panel from the Borders
+    // section restores the active border instead of leaving the draft live.
+    {
+        let shell_c = shell.clone();
+        let state_c = state.clone();
+        let proj_c = proj.clone();
+        let win = window.as_weak();
+        window.on_panel_back(move || {
+            tracing::debug!("[panel][kbd] back pressed (Esc)");
+            let is_mutating = crate::shell::Shell::is_mutating(&shell_c);
+            let (is_open, on_borders) = crate::shell::Shell::with_nav(&shell_c, |n| {
+                (
+                    matches!(n.panel_state(), crate::shell::nav::PanelState::Open(_)),
+                    n.panel_section() == Some(crate::shell::nav::PanelSection::Borders),
+                )
+            });
+            if is_mutating || is_open {
+                if is_open && on_borders {
+                    tracing::debug!("[panel] closing panel from Borders — cleaning up draft");
+                    teardown_border_draft(&state_c, &proj_c, &win);
+                }
+                let _ = crate::shell::Shell::leave_panel(&shell_c);
+            } else {
+                // Fallback: hide/minimize via composer (same as back-activated when not in panel)
+                if let Some(w) = win.upgrade() {
+                    if let Some(mut ctrl) = crate::composer::global_controller() {
+                        if !ctrl.window_hidden() {
+                            ctrl.toggle_tray(&w);
+                            crate::tray::refresh_global_menu();
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // ── Panel Save dual-sync (mutating-window slice 2, R10) ──
     // Save must write BOTH ThemeManagers (main + gallery_tm) then sync_cards +
@@ -2723,6 +2786,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
+        let proj_c = proj.clone();
         window.on_panel_save_border_preset(move |name| {
             let name_str = name.to_string();
             tracing::debug!("[borders][preset] save name={}", name_str);
@@ -2764,6 +2828,20 @@ fn main() -> Result<(), slint::PlatformError> {
                     w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
                     w.set_border_save_error(String::new().into());
                     w.set_border_preset_name(String::new().into());
+                    // D4: remove hidden draft after save + re-apply saved border
+                    PresetStore::remove_draft(&proj_c);
+                    {
+                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Err(e) = st.engine().apply_border(&name_str) {
+                            tracing::error!("[borders][preset] re-apply after save failed: {}", e);
+                            drop(st);
+                            if let Some(w) = weak.upgrade() {
+                                w.set_border_save_error(slint::SharedString::from(
+                                    &format!("Border apply failed: {}", e),
+                                ));
+                            }
+                        }
+                    }
                 }
                 r
             } else {
@@ -2827,6 +2905,63 @@ fn main() -> Result<(), slint::PlatformError> {
                 let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
                     w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
                     w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
+            }
+        });
+    }
+    // ── Border tune-changed: live draft (D4) ──
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        let proj_c = proj.clone();
+        window.on_panel_tune_changed(move |colors, angle, inactive, glow, anims, rule| {
+            tracing::debug!("[borders][tune] tune-changed angle={} rule={}", angle, rule);
+            let is_deact = {
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                st.cfg().active_border_file.is_empty()
+            };
+            if is_deact { return; }
+            use crate::preset_store::PresetStore;
+            let size = {
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                st.cfg().border_size
+            };
+            let params = crate::border_preset::BorderParams {
+                active_colors: PresetStore::decode_colors(&colors.to_string()),
+                angle,
+                inactive: PresetStore::decode_colors(&inactive.to_string()).into_iter().next()
+                    .unwrap_or(crate::border_preset::BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest)),
+                border_size: Some(size),
+                glow: PresetStore::decode_glow(&glow.to_string()),
+                rule_enabled: rule,
+                animations: PresetStore::decode_animations(&anims.to_string()),
+                curves: Vec::new(),
+            };
+            let content = PresetStore::generate_border_lua_full("draft", &params);
+            match PresetStore::write_draft(&content, &proj_c) {
+                Ok(_fragment) => {
+                    // Assemble via the engine's existing script runner.
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Err(e) = st.engine().run_script("assemble.sh", &[]) {
+                        tracing::error!("[borders][tune] assemble after draft write failed: {}", e);
+                        drop(st);
+                        if let Some(w) = weak.upgrade() {
+                            w.set_border_save_error(slint::SharedString::from(
+                                &format!("Live preview failed: {}", e),
+                            ));
+                        }
+                    } else if let Some(w) = weak.upgrade() {
+                        // Clear any previous error on successful apply
+                        w.set_border_save_error(String::new().into());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[borders][tune] draft write failed: {}", e);
+                    if let Some(w) = weak.upgrade() {
+                        w.set_border_save_error(slint::SharedString::from(
+                            &format!("Draft write failed: {}", e),
+                        ));
+                    }
+                }
             }
         });
     }

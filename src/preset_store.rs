@@ -277,6 +277,33 @@ hl.config({{
         Err(format!("Preset '{}' not found in built-in or user dirs", name))
     }
 
+    /// Write a draft border Lua file to the fragments directory.
+    /// This is the D4 live-draft path: it bypasses `apply_border`
+    /// (which resolves names inside scanned dirs) and writes directly
+    /// to the fragment that `border.sh` would have produced.
+    /// Returns the path to the written fragment.
+    pub fn write_draft(content: &str, proj: &std::path::Path) -> Result<std::path::PathBuf, String> {
+        let fragment_dir = proj.join("assets").join("fragments");
+        fs::create_dir_all(&fragment_dir)
+            .map_err(|e| format!("Cannot create fragments dir: {}", e))?;
+        let fragment = fragment_dir.join("border.lua");
+        fs::write(&fragment, content)
+            .map_err(|e| format!("Cannot write draft fragment: {}", e))?;
+        Ok(fragment)
+    }
+
+    /// Remove the draft border fragment.
+    pub fn remove_draft(proj: &std::path::Path) {
+        let fragment = proj.join("assets").join("fragments").join("border.lua");
+        let _ = fs::remove_file(fragment);
+    }
+
+    /// Check whether a draft border fragment exists on disk.
+    #[cfg(test)]
+    pub fn has_draft(proj: &std::path::Path) -> bool {
+        proj.join("assets").join("fragments").join("border.lua").exists()
+    }
+
     /// Encode BorderParams color slots into a Slint-compat string for the
     /// Encode BorderParams color slots → Slint `tune-active-colors` string.
     /// Format: comma-separated `type:value` where type is `p` (palette) or `c` (custom RGBA hex).
@@ -719,5 +746,45 @@ mod tests {
         assert!(content.contains("leaf = \"border\""));
         assert!(content.contains("leaf = \"fadeShadow\""));
         assert_eq!(crate::border_preset::parse(&content), params);
+    }
+
+    #[test]
+    fn draft_lifecycle_write_list_unchanged_cleanup() {
+        use crate::border_preset::{BorderParams, BorderColor, PaletteToken};
+        let dir = temp_dir();
+        // Simulate a project dir with fragments/ and assets/borders/
+        let proj = dir.join("project");
+        let frag_dir = proj.join("assets").join("fragments");
+        fs::create_dir_all(&frag_dir).unwrap();
+        // Write a draft
+        let params = BorderParams {
+            active_colors: vec![BorderColor::Token(PaletteToken::Primary)],
+            angle: 45,
+            inactive: BorderColor::Token(PaletteToken::SurfaceLowest),
+            border_size: Some(1),
+            glow: None,
+            rule_enabled: false,
+            animations: vec![],
+            curves: vec![],
+        };
+        let content = PresetStore::generate_border_lua_full("draft", &params);
+        let fragment = PresetStore::write_draft(&content, &proj).unwrap();
+        assert!(fragment.exists(), "draft fragment must exist after write");
+        assert!(PresetStore::has_draft(&proj));
+        // User preset list must NOT contain the draft
+        let store = PresetStore { base: dir.join("user_presets") };
+        fs::create_dir_all(&store.base).unwrap();
+        store.save("real_preset", "-- test").unwrap();
+        let names = store.list();
+        assert_eq!(names.len(), 1);
+        assert!(names.contains(&"real_preset".to_string()));
+        // Cleanup removes the draft
+        PresetStore::remove_draft(&proj);
+        assert!(!fragment.exists(), "fragment must be gone after cleanup");
+        assert!(!PresetStore::has_draft(&proj));
+        // Cleanup is idempotent
+        PresetStore::remove_draft(&proj);
+        assert!(!PresetStore::has_draft(&proj));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
