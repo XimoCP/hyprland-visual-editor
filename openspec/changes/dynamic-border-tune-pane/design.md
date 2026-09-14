@@ -113,7 +113,7 @@ user card click ─▶ same load path (user dir file) — round-trip closed
 
 ## Threat Matrix
 
-No new subprocess, no new file writes outside the existing preset store path, no network, no IPC change. The reader reads the same `.lua` files the engine already executes; it never executes them. Save path reuses `PresetStore::save` (existing user-consent flow with overwrite guard via rename-exists error). No new threat rows.
+No new subprocess TYPE: the live-draft path reuses the engine's existing `assemble.sh` script through `Engine::run_script`, the same script `border.sh` already ran on every border apply, writing and removing the same `assets/fragments/border.lua` fragment the border flow already owned. `preset_store.rs` stays pure file I/O (no `Command`/`spawn`; verified by inspection). No file writes outside the paths the border flow already used (`assets/fragments/` is gitignored), no network, no IPC change. The reader reads the same `.lua` files the engine already executes; it never executes them. Save path reuses `PresetStore::save` (existing user-consent flow with overwrite guard via rename-exists error). No new threat rows.
 
 ## Migration / Rollout
 
@@ -122,11 +122,11 @@ No data migration. Existing user presets (geometry-only files from the old gener
 ## Open Questions
 
 - [x] D4 staged-vs-live semantics — RESOLVED (user-approved): everything applies live via a hidden draft preset file. See D4.
-- [ ] A2 `error` token display fallback — proposed: resolve via scheme `accent`, else a fixed alert red; saved files always re-emit the bare `error` token. Confirm at review.
+- [x] A2 `error` token display fallback — RESOLVED: display-only fallback chain (`accent` value, else a fixed alert red) and the swatch always renders the token name; saved files always re-emit the bare `error` token. See A2.
 
 ## Assumptions
 
 - **A1**: `border_size` range is 1..5 (data shows 1..2; frozen decision allows 1..5). Reader accepts any positive int; the slider clamps to 1..5.
-- **A2**: `error` is a valid palette token in preset files (used by `05`, `07`, `09`) but `engine::ColorScheme` has no `error` field (it has `accent`). For DISPLAY, the reader resolves `error` through the same scheme lookup with a fallback chain (scheme `accent` value, else a fixed alert red), documented in code. If the engine's Lua runtime maps `error` differently, only the swatch preview is affected — saved files always re-emit the bare `error` token.
+- **A2 (RESOLVED)**: `error` is a valid palette token in preset files (used by `05`, `07`, `09`) but `engine::ColorScheme` has no `error` field (it has `accent`), and the engine is sealed. The shell side already extracts `HVE_ERROR` in `assets/scripts/colors.sh`, but the JSON the engine consumes (`get_colors.sh`) does not emit it, so the Rust side cannot read it without changing sealed code. DISPLAY therefore uses a documented fallback chain: the scheme's `accent` value, else a fixed alert red. The swatch always renders the token NAME (`error`) beside the preview so the user is never misled about which token is set, and saved files always re-emit the bare `error` token, so the fallback never leaks into a preset file. If the engine is ever unsealed, the real value can be read and the fallback removed.
 - **A3**: `angle` is restricted to 30/45/90 in the UI (segmented control); the reader accepts any int but the tune control snaps to the nearest of the three (all observed values).
 - **A4**: offset is always `{0, 0}` in the data; the glow group exposes no offset control (fixed pair emitted). If a future preset carries a nonzero offset, the reader preserves it in state but the UI shows it read-only with a description.

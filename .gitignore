@@ -5,3 +5,6 @@
 # rewrite these on every preset change, so tracking them makes git report
 # phantom modifications that are not source work.
 assets/fragments/
+
+# gentle-ai runtime ledger instance marker: tool state, not source work.
+.gentle-ai-instance
