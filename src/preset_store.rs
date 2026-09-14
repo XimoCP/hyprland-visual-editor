@@ -102,40 +102,6 @@ impl PresetStore {
         self.base.join(format!("{}.lua", name)).exists()
     }
 
-    /// Generate Lua content for a border preset with geometry values.
-    /// NOTE: kept for the Unit 2 call-site switch (zero-warning rule);
-    /// superseded by [`PresetStore::generate_border_lua_full`].
-    pub fn generate_border_lua(
-        name: &str,
-        size: i32,
-        radius: i32,
-        gap_in: i32,
-        gap_out: i32,
-    ) -> String {
-        format!(
-            r#"-- @Title: {name}
--- @Source: user
--- @Tag: CUSTOM
--- @Desc: User-created border preset.
----@diagnostic disable: undefined-global
-
-hl.config({{
-    general = {{
-        border_size = {size},
-        rounding = {radius},
-        gaps_in = {gap_in},
-        gaps_out = {gap_out},
-    }}
-}})
-"#,
-            name = name,
-            size = size,
-            radius = radius,
-            gap_in = gap_in,
-            gap_out = gap_out,
-        )
-    }
-
     /// Generate Lua content for a border preset with the COMPLETE tune
     /// schema (D5): active colors + angle, inactive color, border size
     /// (omitted when `None` = keep-current), the `decoration.shadow`
@@ -288,6 +254,132 @@ hl.config({{
             d = bezier_d,
         )
     }
+
+    /// Read a border preset Lua file from the built-in or user preset directory.
+    /// `project_dir` is the resolved project root (see `project_dir()` in main.rs).
+    /// Returns the file content if found, or an error message.
+    pub fn read_border_file(name: &str, project_dir: &std::path::Path) -> Result<String, String> {
+        // Built-in directory (assets/borders/)
+        let builtin = project_dir
+            .join("assets")
+            .join("borders")
+            .join(format!("{}.lua", name));
+        if builtin.exists() {
+            return fs::read_to_string(&builtin)
+                .map_err(|e| format!("Cannot read {}: {}", builtin.display(), e));
+        }
+        // User preset directory
+        let user = Self::new("borders").base.join(format!("{}.lua", name));
+        if user.exists() {
+            return fs::read_to_string(&user)
+                .map_err(|e| format!("Cannot read {}: {}", user.display(), e));
+        }
+        Err(format!("Preset '{}' not found in built-in or user dirs", name))
+    }
+
+    /// Encode BorderParams color slots into a Slint-compat string for the
+    /// Encode BorderParams color slots → Slint `tune-active-colors` string.
+    /// Format: comma-separated `type:value` where type is `p` (palette) or `c` (custom RGBA hex).
+    pub fn encode_colors(colors: &[crate::border_preset::BorderColor]) -> String {
+        use crate::border_preset::BorderColor;
+        let parts: Vec<String> = colors.iter().map(|c| match c {
+            BorderColor::Token(t) => format!("p:{}", t.as_str()),
+            BorderColor::Custom { r, g, b, a } => format!("c:{:02x}{:02x}{:02x}{:02x}", r, g, b, a),
+        }).collect();
+        parts.join(",")
+    }
+
+    /// Decode a Slint `tune-active-colors` string → Vec<BorderColor>.
+    pub fn decode_colors(s: &str) -> Vec<crate::border_preset::BorderColor> {
+        use crate::border_preset::{BorderColor, PaletteToken};
+        if s.is_empty() { return Vec::new(); }
+        s.split(',').filter(|p| !p.is_empty()).map(|p| {
+            if let Some(rest) = p.strip_prefix("p:") {
+                let tok = match rest.trim() {
+                    "primary" => PaletteToken::Primary,
+                    "secondary" => PaletteToken::Secondary,
+                    "tertiary" => PaletteToken::Tertiary,
+                    "error" => PaletteToken::Error,
+                    "surface" => PaletteToken::Surface,
+                    "surface_lowest" => PaletteToken::SurfaceLowest,
+                    _ => PaletteToken::Primary,
+                };
+                BorderColor::Token(tok)
+            } else if let Some(hex) = p.strip_prefix("c:") {
+                let hex = hex.trim();
+                let bytes: Vec<u8> = (0..hex.len()).step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&hex[i..i+2], 16).ok())
+                    .collect();
+                match bytes.as_slice() {
+                    [r, g, b, a] => BorderColor::Custom { r: *r, g: *g, b: *b, a: *a },
+                    [r, g, b] => BorderColor::Custom { r: *r, g: *g, b: *b, a: 0xff },
+                    _ => BorderColor::Token(PaletteToken::Primary),
+                }
+            } else {
+                BorderColor::Token(PaletteToken::Primary)
+            }
+        }).collect()
+    }
+
+    /// Encode inactive border color → Slint string.
+    pub fn encode_inactive(c: &crate::border_preset::BorderColor) -> String {
+        Self::encode_colors(&[c.clone()])
+    }
+
+    /// Encode glow state → pipe-separated `key=value` pairs for Slint.
+    pub fn encode_glow(g: Option<&crate::border_preset::GlowParams>) -> String {
+        let Some(glow) = g else { return String::new(); };
+        format!("enabled:{}|range:{}|power:{}|color:{}|inactive:{}|ox:{}|oy:{}",
+            glow.enabled, glow.range, glow.render_power,
+            Self::encode_colors(&[glow.color.clone()]),
+            Self::encode_colors(&[glow.color_inactive.clone()]),
+            glow.offset.0, glow.offset.1)
+    }
+
+    /// Decode glow string → Option<GlowParams>.
+    pub fn decode_glow(s: &str) -> Option<crate::border_preset::GlowParams> {
+        if s.is_empty() { return None; }
+        let (mut enabled, mut range, mut power) = (false, 20, 4);
+        let (mut ox, mut oy) = (0i32, 0i32);
+        let (mut color, mut inactive) = (
+            crate::border_preset::BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x44 },
+            crate::border_preset::BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x00 },
+        );
+        for part in s.split('|') {
+            if let Some(v) = part.strip_prefix("enabled:") { enabled = v == "true"; }
+            else if let Some(v) = part.strip_prefix("range:") { range = v.parse().unwrap_or(20); }
+            else if let Some(v) = part.strip_prefix("power:") { power = v.parse().unwrap_or(4); }
+            else if let Some(v) = part.strip_prefix("color:") { if let Some(c) = Self::decode_colors(v).into_iter().next() { color = c; } }
+            else if let Some(v) = part.strip_prefix("inactive:") { if let Some(c) = Self::decode_colors(v).into_iter().next() { inactive = c; } }
+            else if let Some(v) = part.strip_prefix("ox:") { ox = v.parse().unwrap_or(0); }
+            else if let Some(v) = part.strip_prefix("oy:") { oy = v.parse().unwrap_or(0); }
+        }
+        Some(crate::border_preset::GlowParams { enabled, range, render_power: power, color, color_inactive: inactive, offset: (ox, oy) })
+    }
+
+    /// Encode animations → pipe-separated leaf entries for Slint.
+    pub fn encode_animations(a: &[crate::border_preset::AnimLeaf]) -> String {
+        a.iter().map(|l| {
+            format!("{}|{}|{}|{}|{}", l.leaf, l.enabled,
+                l.speed.map(|s| s.to_string()).unwrap_or_default(),
+                l.bezier.as_deref().unwrap_or(""), l.style.as_deref().unwrap_or(""))
+        }).collect::<Vec<_>>().join(",")
+    }
+
+    /// Decode animations string → Vec<AnimLeaf>.
+    pub fn decode_animations(s: &str) -> Vec<crate::border_preset::AnimLeaf> {
+        if s.is_empty() { return Vec::new(); }
+        s.split(',').filter(|p| !p.is_empty()).map(|p| {
+            let parts: Vec<&str> = p.split('|').collect();
+            crate::border_preset::AnimLeaf {
+                leaf: parts.first().unwrap_or(&"").to_string(),
+                enabled: parts.get(1).map(|v| *v == "true").unwrap_or(false),
+                speed: parts.get(2).and_then(|v| v.parse().ok()),
+                bezier: parts.get(3).filter(|v| !v.is_empty()).map(|v| v.to_string()),
+                style: parts.get(4).filter(|v| !v.is_empty()).map(|v| v.to_string()),
+            }
+        }).collect()
+    }
 }
 
 #[cfg(test)]
@@ -355,15 +447,6 @@ mod tests {
     }
 
     #[test]
-    fn generate_border_lua_content() {
-        let content = PresetStore::generate_border_lua("Test", 2, 32, 5, 5);
-        assert!(content.contains("-- @Title: Test"));
-        assert!(content.contains("-- @Source: user"));
-        assert!(content.contains("border_size = 2"));
-        assert!(content.contains("rounding = 32"));
-    }
-
-    #[test]
     fn generate_animation_lua_content() {
         let content = PresetStore::generate_animation_lua("Bounce", 0.25, 0.1, 0.25, 1.0);
         assert!(content.contains("-- @Title: Bounce"));
@@ -411,6 +494,7 @@ mod tests {
         };
         let content = PresetStore::generate_border_lua_full("Duo", &params);
         assert!(content.contains("-- @Title: Duo"));
+        assert!(content.contains("-- @Source: user"));
         assert!(content.contains("colors = { primary, surface }"));
         assert!(content.contains("angle = 90"));
         assert!(content.contains("inactive_border = surface_lowest"));
@@ -419,6 +503,165 @@ mod tests {
         assert!(!content.contains("shadow"));
         assert!(!content.contains("windowrulev2"));
         assert_eq!(crate::border_preset::parse(&content), params);
+    }
+
+    #[test]
+    fn read_border_file_finds_builtin_preset() {
+        let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let content = PresetStore::read_border_file("01_cascade", &proj).unwrap();
+        assert!(content.contains("colors"), "should contain colors block");
+        assert!(content.contains("angle"), "should contain angle");
+    }
+
+    #[test]
+    fn read_border_file_missing_returns_err() {
+        let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let err = PresetStore::read_border_file("nonexistent_preset_xyz", &proj);
+        assert!(err.is_err(), "missing preset should return error");
+        assert!(err.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn read_border_file_explicit_dir_no_env_dependency() {
+        // Verify that read_border_file works with an explicitly passed dir,
+        // with NO env!("CARGO_MANIFEST_DIR") dependency at call time.
+        let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // Point to a different dir (tmp) to prove the param is used, not env!
+        let fake = temp_dir();
+        let err = PresetStore::read_border_file("01_cascade", &fake);
+        assert!(err.is_err(), "wrong dir must fail");
+        // Correct dir succeeds
+        let ok = PresetStore::read_border_file("01_cascade", &proj);
+        assert!(ok.is_ok(), "correct dir must succeed");
+        fs::remove_dir_all(&fake).unwrap();
+    }
+
+    #[test]
+    fn encode_decode_colors_round_trip() {
+        use crate::border_preset::{BorderColor, PaletteToken};
+        let colors = vec![
+            BorderColor::Token(PaletteToken::Primary),
+            BorderColor::Custom { r: 0xff, g: 0x00, b: 0x88, a: 0xcc },
+            BorderColor::Token(PaletteToken::SurfaceLowest),
+        ];
+        let encoded = PresetStore::encode_colors(&colors);
+        assert_eq!(encoded, "p:primary,c:ff0088cc,p:surface_lowest");
+        let decoded = PresetStore::decode_colors(&encoded);
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(decoded[0], BorderColor::Token(PaletteToken::Primary));
+        assert_eq!(decoded[1], BorderColor::Custom { r: 0xff, g: 0x00, b: 0x88, a: 0xcc });
+        assert_eq!(decoded[2], BorderColor::Token(PaletteToken::SurfaceLowest));
+        // Empty round-trip
+        assert_eq!(PresetStore::encode_colors(&[]), "");
+        assert!(PresetStore::decode_colors("").is_empty());
+    }
+
+    #[test]
+    fn encode_decode_glow_round_trip() {
+        use crate::border_preset::{BorderColor, GlowParams};
+        let glow = GlowParams {
+            enabled: true, range: 20, render_power: 4,
+            color: BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 },
+            color_inactive: BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x00 },
+            offset: (0, 0),
+        };
+        let encoded = PresetStore::encode_glow(Some(&glow));
+        assert!(encoded.contains("enabled:true"));
+        assert!(encoded.contains("range:20"));
+        let decoded = PresetStore::decode_glow(&encoded).unwrap();
+        assert_eq!(decoded.enabled, true);
+        assert_eq!(decoded.range, 20);
+        assert_eq!(decoded.render_power, 4);
+        assert_eq!(decoded.color, BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 });
+        // None round-trip
+        assert_eq!(PresetStore::encode_glow(None), "");
+        assert!(PresetStore::decode_glow("").is_none());
+    }
+
+    #[test]
+    fn encode_decode_animations_round_trip() {
+        use crate::border_preset::AnimLeaf;
+        let anims = vec![
+            AnimLeaf { leaf: "borderangle".into(), enabled: true, speed: Some(30), bezier: Some("my_curve".into()), style: Some("loop".into()) },
+            AnimLeaf { leaf: "border".into(), enabled: false, speed: None, bezier: None, style: None },
+        ];
+        let encoded = PresetStore::encode_animations(&anims);
+        assert_eq!(encoded, "borderangle|true|30|my_curve|loop,border|false|||");
+        let decoded = PresetStore::decode_animations(&encoded);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].leaf, "borderangle");
+        assert_eq!(decoded[0].enabled, true);
+        assert_eq!(decoded[0].speed, Some(30));
+        assert_eq!(decoded[0].bezier, Some("my_curve".into()));
+        assert_eq!(decoded[0].style, Some("loop".into()));
+        assert_eq!(decoded[1].leaf, "border");
+        assert_eq!(decoded[1].enabled, false);
+        assert!(decoded[1].speed.is_none());
+    }
+
+    #[test]
+    fn build_border_params_loads_all_tune_properties() {
+        let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let content = PresetStore::read_border_file("07_infinity", &proj).unwrap();
+        let params = crate::border_preset::parse(&content);
+        // Task 2.1: 8 slots + angle 45 + rule on
+        assert_eq!(params.active_colors.len(), 8, "infinity has 8 color slots");
+        assert_eq!(params.angle, 45, "infinity angle is 45");
+        assert!(params.rule_enabled, "infinity rule is on");
+    }
+
+    #[test]
+    fn build_border_params_joker_missing_size_keeps_current() {
+        let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let content = PresetStore::read_border_file("13_the_joker", &proj).unwrap();
+        let params = crate::border_preset::parse(&content);
+        // D3: missing border_size keeps current value — the parse returns None
+        assert_eq!(params.border_size, None, "joker has no border_size key");
+    }
+
+    #[test]
+    fn save_round_trip_preserves_tune_state() {
+        use crate::border_preset::{AnimLeaf, BorderColor, BorderParams, GlowParams};
+        let params = BorderParams {
+            active_colors: vec![
+                BorderColor::Custom { r: 0xff, g: 0x00, b: 0x00, a: 0xff },
+                BorderColor::Token(crate::border_preset::PaletteToken::Primary),
+                BorderColor::Custom { r: 0x00, g: 0xff, b: 0x00, a: 0x88 },
+            ],
+            angle: 45,
+            inactive: BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest),
+            border_size: Some(2),
+            glow: Some(GlowParams {
+                enabled: true,
+                range: 20,
+                render_power: 4,
+                color: BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x44 },
+                color_inactive: BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x00 },
+                offset: (0, 0),
+            }),
+            rule_enabled: true,
+            animations: vec![
+                AnimLeaf { leaf: "borderangle".into(), enabled: true, speed: Some(30), bezier: Some("my_curve".into()), style: Some("loop".into()) },
+                AnimLeaf { leaf: "border".into(), enabled: false, speed: None, bezier: None, style: None },
+                AnimLeaf { leaf: "fadeShadow".into(), enabled: false, speed: None, bezier: None, style: None },
+            ],
+            curves: vec!["my_curve".to_string()],
+        };
+        let dir = temp_dir();
+        let store = PresetStore::new("borders");
+        // Override the base for testing (the field is private but we access via the constructor)
+        // Instead, use a trick: save via the generated content and read back
+        let content = PresetStore::generate_border_lua_full("roundtrip", &params);
+        // Write to a temp file directly
+        let preset_dir = dir.join("borders");
+        fs::create_dir_all(&preset_dir).unwrap();
+        fs::write(preset_dir.join("roundtrip.lua"), &content).unwrap();
+        let loaded = fs::read_to_string(preset_dir.join("roundtrip.lua")).unwrap();
+        let reparsed = crate::border_preset::parse(&loaded);
+        assert_eq!(reparsed, params, "round-trip: parse(generate(params)) == params");
+        fs::remove_dir_all(&dir).unwrap();
+        // Suppress unused variable warning
+        let _ = store;
     }
 
     #[test]

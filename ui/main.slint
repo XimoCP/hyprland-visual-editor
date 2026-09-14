@@ -114,6 +114,14 @@ export component MainWindow inherits Window {
     in property <string> border-save-error: "";
     in property <[string]> user-border-preset-names;
     in property <[string]> user-border-preset-tags;
+    // Tune pane — dynamic (Unit 2)
+    in-out property <string> tune-active-colors: "";
+    in-out property <int> tune-color-count: 0;
+    in-out property <int> tune-angle: 90;
+    in-out property <string> tune-inactive-color: "";
+    in-out property <string> tune-glow: "";
+    in-out property <string> tune-animations: "";
+    in-out property <bool> tune-rule-enabled: false;
     in-out property <string> animation-preset-name: "";
     in property <string> animation-save-error: "";
     in property <[string]> user-animation-preset-names;
@@ -262,6 +270,7 @@ export component MainWindow inherits Window {
     callback panel-save-border-preset(string);
     callback panel-rename-border-preset(string, string);
     callback panel-delete-border-preset(string);
+    callback panel-tune-changed(string, int, string, string, string, bool);
     callback panel-save-animation-preset(string);
     callback panel-rename-animation-preset(string, string);
     callback panel-delete-animation-preset(string);

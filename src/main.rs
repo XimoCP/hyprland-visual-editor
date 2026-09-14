@@ -2610,6 +2610,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
+        let proj_c = proj.clone();
         window.on_panel_apply_border(move |idx, file| {
             tracing::debug!("[borders][mouse|kbd] apply-border idx={} file={} (click/card)", idx, file);
             if !guard_permits {
@@ -2621,6 +2622,8 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             use crate::callbacks::{preset_geometry_for, BorderGeometry};
             let file_str = file.to_string();
+            // Strip .lua extension for preset lookup (scan may include it)
+            let preset_name = file_str.strip_suffix(".lua").unwrap_or(&file_str);
             let (is_deact, result, snap) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 let is_deact = st.cfg().active_border_file == file_str;
@@ -2652,6 +2655,31 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_corner_radius(snap.radius);
                 w.set_gap_in(snap.gap_in);
                 w.set_gap_out(snap.gap_out);
+                // Task 2.2: read .lua → parse → bulk-set tune properties
+                if !is_deact {
+                    if let Ok(content) = crate::preset_store::PresetStore::read_border_file(preset_name, &proj_c) {
+                        let params = crate::border_preset::parse(&content);
+                        use crate::preset_store::PresetStore;
+                        let count = params.active_colors.len() as i32;
+                        w.set_tune_color_count(count);
+                        w.set_tune_active_colors(slint::SharedString::from(PresetStore::encode_colors(&params.active_colors).as_str()));
+                        w.set_tune_angle(params.angle);
+                        w.set_tune_inactive_color(slint::SharedString::from(PresetStore::encode_inactive(&params.inactive).as_str()));
+                        w.set_tune_glow(slint::SharedString::from(PresetStore::encode_glow(params.glow.as_ref()).as_str()));
+                        w.set_tune_rule_enabled(params.rule_enabled);
+                        w.set_tune_animations(slint::SharedString::from(PresetStore::encode_animations(&params.animations).as_str()));
+                        // D3: missing border_size keeps current slider (already done via snap above)
+                    }
+                } else {
+                    // Deselect: clear tune properties
+                    w.set_tune_color_count(0);
+                    w.set_tune_active_colors(String::new().into());
+                    w.set_tune_angle(90);
+                    w.set_tune_inactive_color(String::new().into());
+                    w.set_tune_glow(String::new().into());
+                    w.set_tune_rule_enabled(false);
+                    w.set_tune_animations(String::new().into());
+                }
             }
         });
     }
@@ -2699,19 +2727,34 @@ fn main() -> Result<(), slint::PlatformError> {
             let name_str = name.to_string();
             tracing::debug!("[borders][preset] save name={}", name_str);
             let result = if let Some(w) = weak.upgrade() {
-                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                let size = st.cfg().border_size;
-                let radius = st.cfg().border_radius;
-                let gap_in = st.cfg().gaps_in;
-                let gap_out = st.cfg().gaps_out;
-                drop(st);
-                let content = crate::preset_store::PresetStore::generate_border_lua(
-                    &name_str, size, radius, gap_in, gap_out,
-                );
-                let store = crate::preset_store::PresetStore::new("borders");
+                // Task 2.4: build params from tune properties → generate_border_lua_full
+                let tune_colors = w.get_tune_active_colors().to_string();
+                let tune_inactive = w.get_tune_inactive_color().to_string();
+                let tune_glow = w.get_tune_glow().to_string();
+                let tune_anims = w.get_tune_animations().to_string();
+                let angle = w.get_tune_angle();
+                let rule_enabled = w.get_tune_rule_enabled();
+                let size = {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.cfg().border_size
+                };
+                use crate::preset_store::PresetStore;
+                let params = crate::border_preset::BorderParams {
+                    active_colors: PresetStore::decode_colors(&tune_colors),
+                    angle,
+                    inactive: PresetStore::decode_colors(&tune_inactive).into_iter().next()
+                        .unwrap_or(crate::border_preset::BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest)),
+                    border_size: Some(size),
+                    glow: PresetStore::decode_glow(&tune_glow),
+                    rule_enabled,
+                    animations: PresetStore::decode_animations(&tune_anims),
+                    curves: Vec::new(),
+                };
+                let content = PresetStore::generate_border_lua_full(&name_str, &params);
+                let store = PresetStore::new("borders");
                 let r = store.save(&name_str, &content);
                 if r.is_ok() {
-                    let store2 = crate::preset_store::PresetStore::new("borders");
+                    let store2 = PresetStore::new("borders");
                     let names: Vec<_> = store2.list()
                         .into_iter()
                         .map(|n| slint::SharedString::from(n.as_str()))
