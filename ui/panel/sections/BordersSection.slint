@@ -1469,6 +1469,9 @@ export component BordersSection inherits Rectangle {
     in-out property <string> tune-anim-fadeshadow-style: "";
     in-out property <[string]> tune-anim-curves: [];
     in-out property <bool> tune-rule-enabled: false;
+    // D4 live-vs-saved: set by every edit below, cleared by Rust on load and
+    // after a successful save.
+    in-out property <bool> tune-dirty: false;
     callback tune-changed([string], int, string, string, string, bool);
 
     background: transparent;
@@ -1542,6 +1545,14 @@ export component BordersSection inherits Rectangle {
             + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
     }
 
+    // Single funnel for every tune edit: marks the working state as unsaved
+    // (D4) and pushes the whole tune snapshot to Rust, which applies the live
+    // draft. Having one place means an edit can never silently skip the notify.
+    function notify-tune-changed() {
+        root.tune-dirty = true;
+        root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+    }
+
     // ── Geometry debounce (R3) — only size slider remains ──
     property <bool> size-init: false;
     property <int> pending-size: root.geom-size;
@@ -1585,13 +1596,13 @@ export component BordersSection inherits Rectangle {
         }
         if (e == 2) {
             root.tune-inactive-color = root.next-token(root.tune-inactive-color, up);
-            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            root.notify-tune-changed();
             return;
         }
         if (e >= 3 && e < 3 + n) {
             let i = e - 3;
             root.tune-active-colors[i] = root.next-token(root.tune-active-colors[i], up);
-            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            root.notify-tune-changed();
             return;
         }
         if (root.tune-glow-enabled) {
@@ -1600,7 +1611,7 @@ export component BordersSection inherits Rectangle {
                 if (next != root.tune-glow-range) {
                     root.tune-glow-range = next;
                     root.tune-glow = root.rebuild-glow();
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 return;
             }
@@ -1609,20 +1620,20 @@ export component BordersSection inherits Rectangle {
                 if (next != root.tune-glow-render-power) {
                     root.tune-glow-render-power = next;
                     root.tune-glow = root.rebuild-glow();
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 return;
             }
             if (e == 8 + n) {
                 root.tune-glow-color = root.next-token(root.tune-glow-color, up);
                 root.tune-glow = root.rebuild-glow();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == 9 + n) {
                 root.tune-glow-color-inactive = root.next-token(root.tune-glow-color-inactive, up);
                 root.tune-glow = root.rebuild-glow();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
         }
@@ -1634,19 +1645,19 @@ export component BordersSection inherits Rectangle {
                 let next = up ? min(root.tune-anim-borderangle-speed + 5, 120) : max(root.tune-anim-borderangle-speed - 5, 5);
                 root.tune-anim-borderangle-speed = next;
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == base + 2) {
                 root.tune-anim-borderangle-bezier = root.next-bezier(root.tune-anim-borderangle-bezier, up);
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == base + 3) {
                 root.tune-anim-borderangle-style = root.next-style(root.tune-anim-borderangle-style, up);
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
         }
@@ -1655,19 +1666,19 @@ export component BordersSection inherits Rectangle {
                 let next = up ? min(root.tune-anim-border-speed + 5, 120) : max(root.tune-anim-border-speed - 5, 5);
                 root.tune-anim-border-speed = next;
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == b1 + 2) {
                 root.tune-anim-border-bezier = root.next-bezier(root.tune-anim-border-bezier, up);
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == b1 + 3) {
                 root.tune-anim-border-style = root.next-style(root.tune-anim-border-style, up);
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
         }
@@ -1676,19 +1687,19 @@ export component BordersSection inherits Rectangle {
                 let next = up ? min(root.tune-anim-fadeshadow-speed + 5, 120) : max(root.tune-anim-fadeshadow-speed - 5, 5);
                 root.tune-anim-fadeshadow-speed = next;
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == b2 + 2) {
                 root.tune-anim-fadeshadow-bezier = root.next-bezier(root.tune-anim-fadeshadow-bezier, up);
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
             if (e == b2 + 3) {
                 root.tune-anim-fadeshadow-style = root.next-style(root.tune-anim-fadeshadow-style, up);
                 root.tune-animations = root.rebuild-anims();
-                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                root.notify-tune-changed();
                 return;
             }
         }
@@ -1705,7 +1716,7 @@ export component BordersSection inherits Rectangle {
         if (local == 5 + n) {
             root.tune-glow-enabled = !root.tune-glow-enabled;
             root.tune-glow = root.rebuild-glow();
-            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            root.notify-tune-changed();
             return 1;
         }
         let base = root.tune-glow-enabled ? 10 + n : 6 + n;
@@ -1715,23 +1726,26 @@ export component BordersSection inherits Rectangle {
         if (local == base) {
             root.tune-anim-borderangle-enabled = !root.tune-anim-borderangle-enabled;
             root.tune-animations = root.rebuild-anims();
-            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            root.notify-tune-changed();
             return 1;
         }
         if (local == b1) {
             root.tune-anim-border-enabled = !root.tune-anim-border-enabled;
             root.tune-animations = root.rebuild-anims();
-            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            root.notify-tune-changed();
             return 1;
         }
         if (local == b2) {
             root.tune-anim-fadeshadow-enabled = !root.tune-anim-fadeshadow-enabled;
             root.tune-animations = root.rebuild-anims();
-            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            root.notify-tune-changed();
             return 1;
         }
         if (local == tail) {
             root.tune-rule-enabled = !root.tune-rule-enabled;
+            // The rule was the one tune stop that did NOT notify, so flipping
+            // it never reached the live draft (D4: everything applies live).
+            root.notify-tune-changed();
             return 1;
         }
         if (local == tail + 1) { return 1; }
@@ -1779,6 +1793,29 @@ export component BordersSection inherits Rectangle {
                 color: HveColors.text-muted;
                 wrap: word-wrap;
             }
+
+            // D4 live-vs-saved: edits apply to the desktop immediately but are
+            // NOT persisted until Save. The header is outside the ScrollView on
+            // purpose, so this can never scroll out of sight and mislead.
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: root.tune-dirty ? HveColors.accent-amber : HveColors.accent-cyan;
+                }
+                Text {
+                    text: root.tune-dirty
+                        ? "Live preview — unsaved changes"
+                        : "Live preview — no unsaved changes";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-11;
+                    font-weight: 600;
+                    color: root.tune-dirty ? HveColors.accent-amber : HveColors.text-muted;
+                    vertical-alignment: center;
+                }
+            }
         }
 
         // Two independent panes. Wide: side by side. Narrow: stacked.
@@ -1807,11 +1844,11 @@ export component BordersSection inherits Rectangle {
                 remove-color-slot => { root.remove-color-slot(); }
                 slot-color-changed(idx, v) => {
                     root.tune-active-colors[idx] = v;
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 inactive-color-changed(v) => {
                     root.tune-inactive-color = v;
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 glow-enabled: root.tune-glow-enabled;
                 glow-range: root.tune-glow-range;
@@ -1830,7 +1867,7 @@ export component BordersSection inherits Rectangle {
                     } else {
                         root.tune-glow = "";
                     }
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 anim-borderangle-enabled: root.tune-anim-borderangle-enabled;
                 anim-borderangle-speed: root.tune-anim-borderangle-speed;
@@ -1866,7 +1903,7 @@ export component BordersSection inherits Rectangle {
                     root.tune-animations = "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
                         + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
                         + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
             }
 
@@ -1912,11 +1949,11 @@ export component BordersSection inherits Rectangle {
                 remove-color-slot => { root.remove-color-slot(); }
                 slot-color-changed(idx, v) => {
                     root.tune-active-colors[idx] = v;
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 inactive-color-changed(v) => {
                     root.tune-inactive-color = v;
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 glow-enabled: root.tune-glow-enabled;
                 glow-range: root.tune-glow-range;
@@ -1934,7 +1971,7 @@ export component BordersSection inherits Rectangle {
                     } else {
                         root.tune-glow = "";
                     }
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
                 anim-borderangle-enabled: root.tune-anim-borderangle-enabled;
                 anim-borderangle-speed: root.tune-anim-borderangle-speed;
@@ -1970,7 +2007,7 @@ export component BordersSection inherits Rectangle {
                     root.tune-animations = "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
                         + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
                         + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
-                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                    root.notify-tune-changed();
                 }
             }
 

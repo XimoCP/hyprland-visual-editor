@@ -2858,6 +2858,9 @@ fn main() -> Result<(), slint::PlatformError> {
                             w.set_tune_glow_color_inactive("p:surface_lowest".into());
                         }
                         w.set_tune_rule_enabled(params.rule_enabled);
+                        // Freshly loaded state is the saved state: clear the
+                        // D4 unsaved marker the pane shows in its header.
+                        w.set_tune_dirty(false);
                         w.set_tune_animations(slint::SharedString::from(PresetStore::encode_animations(&params.animations).as_str()));
                         // Set individual animation leaf properties
                         for leaf in &params.animations {
@@ -2916,6 +2919,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     w.set_tune_anim_fadeshadow_style("".into());
                     w.set_tune_anim_curves(slint::ModelRc::default());
                     w.set_tune_rule_enabled(false);
+                    // Nothing is selected, so there is no unsaved state to flag.
+                    w.set_tune_dirty(false);
                     w.set_tune_animations(String::new().into());
                 }
             }
@@ -2987,6 +2992,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
                     w.set_border_save_error(String::new().into());
                     w.set_border_preset_name(String::new().into());
+                    // The working state is now the saved preset (D4).
+                    w.set_tune_dirty(false);
                     // D4: remove hidden draft after save + re-apply saved border
                     PresetStore::remove_draft(&proj_c);
                     {

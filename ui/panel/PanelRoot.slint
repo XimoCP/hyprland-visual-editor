@@ -94,6 +94,8 @@ export component PanelRoot inherits Rectangle {
     in-out property <string> tune-anim-fadeshadow-style: "";
     in-out property <[string]> tune-anim-curves: [];
     in-out property <bool> tune-rule-enabled: false;
+    // D4 live-vs-saved status flag (see MainWindow.tune-dirty).
+    in-out property <bool> tune-dirty: false;
     // Animation preset state
     // Motion pick layer (R4) — 19 cards from scan("animations")
     in property <[string]> anim-titles;
@@ -742,6 +744,7 @@ export component PanelRoot inherits Rectangle {
                         tune-anim-fadeshadow-style <=> root.tune-anim-fadeshadow-style;
                         tune-anim-curves <=> root.tune-anim-curves;
                         tune-rule-enabled <=> root.tune-rule-enabled;
+                        tune-dirty <=> root.tune-dirty;
                         tune-changed(colors, angle, inactive, glow, anims, rule) => { root.tune-changed(colors, angle, inactive, glow, anims, rule); }
                         add-color-slot => { root.add-color-slot(); }
                         remove-color-slot => { root.remove-color-slot(); }

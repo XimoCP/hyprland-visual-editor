@@ -5324,5 +5324,19 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         count_icy_pixels(&shot) > 200,
         "the focused glow colour card must carry the icy ring"
     );
+
+    // D4 live-vs-saved header: the marker must flip to amber when the working
+    // state has unsaved edits. Captured for human review + diffed against the
+    // clean shot so a frozen indicator can't pass silently.
+    win.set_tune_dirty(true);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let dirty = win.window().take_snapshot().expect("dirty header snapshot");
+    save_slice_png(dirty.clone(), "/tmp/opencode/borders_tune_dirty_header.png");
+    assert!(
+        count_buffer_diff(&shot, &dirty) > 100,
+        "the header status must change when there are unsaved edits"
+    );
 }
 
