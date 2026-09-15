@@ -229,7 +229,99 @@ impl Shell {
         shell.borrow().nav.is_mutating()
     }
 
-    /// Enter panel from Gallery (R1). Holds fullscreen, no resize, starts 350ms Timer → complete.
+    /// Window presentation for the current navigation state (settings
+    /// self-preview).
+    ///
+    /// While the panel is open, HVE is presented FLOATING and CENTERED: it
+    /// leaves fullscreen, so the border the compositor draws around HVE
+    /// itself becomes a live preview of the border values being tuned. The
+    /// window is the preview surface — no second window, and no need to keep
+    /// any part of the desktop on screen. Every other state (Gallery,
+    /// collapsed) stays fullscreen.
+    ///
+    /// The floating size is derived from the monitor rather than fixed: a
+    /// margin must survive on every side, or the border sits flush against
+    /// the monitor edge and stops being readable. While the window still
+    /// covers the monitor its own logical size IS the monitor size, so this
+    /// needs no compositor query and no new I/O surface.
+    ///
+    /// `apply_size` gates the size resolution alone. The compositor actions
+    /// are idempotent and safe to re-assert (that is how a lost event is
+    /// recovered), but the size is resolved exactly once per entry: it is
+    /// measured from the surface while that surface still covers the monitor,
+    /// and after the float it no longer does.
+    ///
+    /// A compositor refusal is non-fatal: the panel stays fully functional
+    /// windowed (same contract as `enter_gallery_session`).
+    fn apply_window_presentation(shell: &Rc<RefCell<Self>>, apply_size: bool) {
+        if crate::is_theme_transitioning_flag() {
+            tracing::info!("[presentation] skip during theme fade");
+            return;
+        }
+        let panel_open = {
+            let s = shell.borrow();
+            !matches!(s.nav.panel_state(), crate::shell::nav::PanelState::Closed)
+        };
+        tracing::info!("[presentation] panel_open={panel_open} apply_size={apply_size}");
+        if panel_open {
+            // Compositor actions FIRST, then the size animation.
+            //
+            // Un-setting fullscreen makes the compositor restore the window's
+            // saved floating geometry, which lands whatever moment it lands —
+            // in a race with any `set_size` already in flight, so the window
+            // ended on an arbitrary intermediate size. Both dispatch paths are
+            // synchronous, so by the time the animator starts pushing sizes
+            // the compositor has settled and the last tick (the exact target)
+            // is what survives.
+            if let Some(ctrl) =
+                crate::composer::try_global_controller().or_else(crate::composer::global_controller)
+            {
+                let _ = ctrl.composer().set_fullscreen(false);
+                let _ = ctrl.composer().set_settings_float(true);
+            }
+            if apply_size {
+                // Logical size of the surface while it still covers the monitor.
+                let monitor = shell.borrow().window.upgrade().map(|w| {
+                    let phys = w.window().size();
+                    let scale = w.window().scale_factor();
+                    (phys.width as f32 / scale, phys.height as f32 / scale)
+                });
+                if let Some(monitor) = monitor {
+                    let target = shell.borrow().size.settings_float_size(monitor);
+                    tracing::info!(
+                        "[presentation] monitor={monitor:?} target={target:?} current={:?}",
+                        shell.borrow().current_size
+                    );
+                    // The compositor owns the geometry: a client-side size
+                    // request is NOT honoured for a floating window here
+                    // (verified live — the window landed on its minimum size
+                    // instead). So `current_size` is updated for the shell's
+                    // own layout state, and the resize goes out as an
+                    // explicit dispatch.
+                    shell.borrow_mut().current_size = target;
+                    if let Some(ctrl2) = crate::composer::try_global_controller()
+                        .or_else(crate::composer::global_controller)
+                    {
+                        let _ = ctrl2.composer().resize_window(target);
+                    }
+                }
+            }
+        } else if let Some(mut ctrl) =
+            crate::composer::try_global_controller().or_else(crate::composer::global_controller)
+        {
+            let _ = ctrl.composer().set_settings_float(false);
+            let _ = ctrl.composer().set_fullscreen(true);
+            // Keep the gallery session flag in step with the re-entered
+            // fullscreen, exactly as the pre-existing hold did.
+            if !ctrl.gallery_session_active() {
+                let _ = ctrl.enter_gallery_session();
+            }
+        }
+    }
+
+    /// Enter panel from Gallery (R1, as revised for the settings self-preview).
+    /// Sizes and presents the window for the panel — it leaves fullscreen and
+    /// floats centered — then starts the 350ms Timer → complete.
     pub fn enter_panel(shell: &Rc<RefCell<Self>>, section: crate::shell::nav::PanelSection) -> bool {
         let entered = {
             let mut s = shell.borrow_mut();
@@ -239,19 +331,8 @@ impl Shell {
             return false;
         }
         Self::mirror_panel(shell);
-        // Hold fullscreen (R1) — no window resize anywhere in the flow.
-        // Skip during theme fade so the single invisible cycle isn't duplicated.
-        if crate::is_theme_transitioning_flag() {
-            tracing::info!("[enter_panel] skip fullscreen hold during theme fade");
-        } else if let Some(mut ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
-            let _ = ctrl.composer().set_fullscreen(true);
-            // Ensure gallery logical session is marked active if gallery is expanded
-            if !ctrl.gallery_session_active() {
-                let _ = ctrl.enter_gallery_session();
-            }
-        } else {
-            // Headless fallback: no controller, still considered held
-        }
+        // Presentation for the open panel: size, leave fullscreen, float, center.
+        Self::apply_window_presentation(shell, true);
         let delay = {
             let s = shell.borrow();
             s.nav.effective_duration(350)
@@ -278,12 +359,10 @@ impl Shell {
             s.suppress_until = Some(Instant::now() + Duration::from_millis(crate::shell::gallery::slot::SHADER_FLICKER_MS));
         }
         Self::mirror_panel(shell);
-        // Re-assert fullscreen hold (no resize) — skip during theme fade
-        if crate::is_theme_transitioning_flag() {
-            tracing::info!("[complete_morph] skip fullscreen reassert during theme fade");
-        } else if let Some(ctrl) = crate::composer::try_global_controller().or_else(crate::composer::global_controller) {
-            let _ = ctrl.composer().set_fullscreen(true);
-        }
+        // Presentation after the morph settles: still open → floating
+        // preview; closed again → back to fullscreen. Re-assert only, never
+        // re-animate: the entry path already owns the size transition.
+        Self::apply_window_presentation(shell, false);
     }
 
     /// Leave panel (Esc reverses, R1). Starts 350ms Timer → Closed, or immediate when reduced-motion.

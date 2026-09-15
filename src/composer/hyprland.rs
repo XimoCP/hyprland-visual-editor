@@ -399,6 +399,73 @@ impl Composer for HyprlandComposer {
     fn active_workspace(&self) -> Option<String> {
         self.active_workspace()
     }
+
+    /// Floating Settings presentation (see the trait doc): float and center
+    /// HVE so the border the compositor draws around it becomes the live
+    /// preview of the border being tuned.
+    ///
+    /// Dispatch order matters: float FIRST, then center. A floating window
+    /// keeps its last position, so centering is what places it with the
+    /// margin visible all around — and centering a tiled window is a no-op.
+    ///
+    /// Both float actions are the idempotent `on`/`off` forms, never
+    /// `toggle`, so a lost event cannot wedge the state (same reasoning as
+    /// the fullscreen lifecycle above).
+    fn set_settings_float(&self, on: bool) -> bool {
+        match self.hypr_mode() {
+            HyprMode::V5 => {
+                let did_focus = self.hypr_dispatch_v5(&v5_focus());
+                if !did_focus {
+                    return false;
+                }
+                let s_float = if on { v5_float_on() } else { v5_float_off() };
+                let floated = self.hypr_dispatch_v5(&s_float);
+                if !on {
+                    return floated;
+                }
+                let centered = self.hypr_dispatch_v5(&v5_center());
+                floated && centered
+            }
+            // V4/conf fallback: no window targeting, so focus-by-title first
+            // (the same required pattern as set_fullscreen above). Legacy
+            // Hyprland has no on/off float form — `togglefloating` is the
+            // only dispatcher, so this branch is best-effort: a lost event
+            // can leave the float state inverted, which is why the V5 path
+            // is the contract and this one is the fallback.
+            HyprMode::V4 => {
+                if !self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]) {
+                    return false;
+                }
+                let floated = self.hypr_dispatch_v4(&["togglefloating", HVE_TITLE]);
+                if !on {
+                    return floated;
+                }
+                let centered = self.hypr_dispatch_v4(&["centerwindow"]);
+                floated && centered
+            }
+            HyprMode::None => false,
+        }
+    }
+
+    /// Explicit resize (see the trait doc): the client-side size request is
+    /// not honoured for a floating window here, so the resolved Settings size
+    /// is dispatched instead.
+    fn resize_window(&self, size: (f32, f32)) -> bool {
+        match self.hypr_mode() {
+            HyprMode::V5 => self.hypr_dispatch_v5(&v5_resize(size)),
+            // V4/conf fallback: no window targeting, so focus-by-title first.
+            HyprMode::V4 => {
+                if !self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]) {
+                    return false;
+                }
+                self.hypr_dispatch_v4(&[
+                    "resizeactive",
+                    &format!("exact {} {}", size.0.round() as i32, size.1.round() as i32),
+                ])
+            }
+            HyprMode::None => false,
+        }
+    }
 }
 
 const HVE_TITLE: &str = "Hyprland Visual Editor";
@@ -449,6 +516,27 @@ pub(crate) fn v5_float_on() -> String {
 
 pub(crate) fn v5_float_toggle() -> String {
     format!("hl.dsp.window.float({{ action = \"toggle\", window = \"title:{HVE_TITLE}\" }})")
+}
+
+pub(crate) fn v5_float_off() -> String {
+    format!("hl.dsp.window.float({{ action = \"off\", window = \"title:{HVE_TITLE}\" }})")
+}
+
+pub(crate) fn v5_center() -> String {
+    format!("hl.dsp.window.center({{ window = \"title:{HVE_TITLE}\" }})")
+}
+
+/// Explicit resize for the floating Settings presentation.
+///
+/// The only builder that carries numbers. They are rounded to `i32` here, so
+/// the dispatch string can only ever hold digits and a sign — no text from
+/// any other source reaches it (pinned by `v5_resize_is_integer_only`).
+pub(crate) fn v5_resize(size: (f32, f32)) -> String {
+    format!(
+        "hl.dsp.window.resize({{ x = {}, y = {}, relative = false, window = \"title:{HVE_TITLE}\" }})",
+        size.0.round() as i32,
+        size.1.round() as i32
+    )
 }
 
 /// Mapped/fullscreen snapshot of the HVE client, parsed from a
@@ -740,6 +828,44 @@ mod targeting_tests {
     #[test]
     fn v5_float_toggle_contains_window_selector() {
         assert_window_targeted(&v5_float_toggle());
+    }
+
+    #[test]
+    fn v5_float_off_contains_window_selector() {
+        assert_window_targeted(&v5_float_off());
+    }
+
+    #[test]
+    fn v5_center_contains_window_selector() {
+        assert_window_targeted(&v5_center());
+    }
+
+    /// `v5_resize` is the only builder carrying numbers. It must round to
+    /// integers, so the dispatch string can never hold text from any other
+    /// source.
+    #[test]
+    fn v5_resize_is_integer_only() {
+        let s = v5_resize((1000.4, 640.6));
+        assert_eq!(
+            s,
+            "hl.dsp.window.resize({ x = 1000, y = 641, relative = false, \
+             window = \"title:Hyprland Visual Editor\" })"
+        );
+        assert_window_targeted(&s);
+        // No fractional digits survive: the alphabet reaching the dispatch is
+        // exactly the fixed literal plus integer digits.
+        assert!(!s.contains("1000.4"), "value must be rounded, got: {s}");
+        assert!(!s.contains("640.6"), "value must be rounded, got: {s}");
+    }
+
+    /// The Settings presentation must be idempotent: `on`/`off`, never
+    /// `toggle`, or a lost event inverts the float state instead of being a
+    /// no-op.
+    #[test]
+    fn v5_settings_float_actions_are_not_toggle() {
+        assert!(!v5_float_on().contains("toggle"), "float on must be `on`, got: {}", v5_float_on());
+        assert!(!v5_float_off().contains("toggle"), "float off must be `off`, got: {}", v5_float_off());
+        assert!(v5_float_off().contains("action = \"off\""), "float off spelling");
     }
 
     #[test]

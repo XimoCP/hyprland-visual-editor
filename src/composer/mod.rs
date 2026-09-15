@@ -94,6 +94,24 @@ pub trait Composer: Send + Sync {
     /// UI never blocks on it.
     fn set_fullscreen(&self, on: bool) -> bool;
 
+    /// Enter (`on = true`) or leave (`on = false`) the floating Settings
+    /// presentation. HVE leaves fullscreen, floats and centers itself so the
+    /// border the compositor draws around HVE becomes the live preview of
+    /// the border values being tuned: the window is the preview surface.
+    ///
+    /// Idempotent by construction (float `on`/`off`, never `toggle`), so a
+    /// lost event cannot wedge the state. Returns false when the compositor
+    /// refused — the panel stays fully functional windowed.
+    fn set_settings_float(&self, on: bool) -> bool;
+
+    /// Resize the HVE window to `size` in logical pixels.
+    ///
+    /// Exists because a client-side size request is NOT honoured once the
+    /// window floats in this compositor: the window ended on an arbitrary
+    /// size instead of the resolved one, and the explicit dispatch was the
+    /// only reliable way to land it (verified live before wiring).
+    fn resize_window(&self, size: (f32, f32)) -> bool;
+
     /// Read-only discovery: current active workspace name, if queryable.
     fn active_workspace(&self) -> Option<String>;
 }
@@ -419,6 +437,16 @@ pub(crate) mod tests {
 
         fn set_fullscreen(&self, on: bool) -> bool {
             self.record(&format!("set_fullscreen({on})"));
+            self.fullscreen_ok
+        }
+
+        fn set_settings_float(&self, on: bool) -> bool {
+            self.record(&format!("set_settings_float({on})"));
+            self.fullscreen_ok
+        }
+
+        fn resize_window(&self, size: (f32, f32)) -> bool {
+            self.record(&format!("resize_window({}, {})", size.0, size.1));
             self.fullscreen_ok
         }
 
