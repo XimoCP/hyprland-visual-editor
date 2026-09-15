@@ -2092,7 +2092,10 @@ export component BordersSection inherits Rectangle {
                 active-index: root.active-index;
                 focused-index: root.focused-index;
                 has-focus: root.has-focus;
-                follow: root.focused-index >= root.split; // DIAG-G
+                // The LIST pane follows only when the focus is on a CARD
+                // (focused-index < split). With `>=` it chased the tune
+                // pane's focus, so navigating the tune dragged the list.
+                follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
                 open-rename(name) => { root.rename-border-preset(name, ""); }
                 open-delete(name) => { root.delete-border-preset(name); }
@@ -2201,7 +2204,10 @@ export component BordersSection inherits Rectangle {
                 active-index: root.active-index;
                 focused-index: root.focused-index;
                 has-focus: root.has-focus;
-                follow: root.focused-index >= root.split; // DIAG-G
+                // The LIST pane follows only when the focus is on a CARD
+                // (focused-index < split). With `>=` it chased the tune
+                // pane's focus, so navigating the tune dragged the list.
+                follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
                 open-rename(name) => { root.rename-border-preset(name, ""); }
                 open-delete(name) => { root.delete-border-preset(name); }
