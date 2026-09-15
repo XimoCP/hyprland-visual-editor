@@ -39,6 +39,7 @@ component BordersTunePane inherits Rectangle {
     in property <bool> follow: false;
     // Tune pane — dynamic (Unit 2)
     in property <[string]> tune-active-colors: [];
+    in property <[color]> tune-colors-resolved: [];
     in property <int> tune-color-count: 0;
     in-out property <int> tune-angle: 90;
     in property <string> tune-inactive-color: "";
@@ -131,6 +132,15 @@ component BordersTunePane inherits Rectangle {
     function is-token-color(v: string) -> bool {
         return v == "p:primary" || v == "p:secondary" || v == "p:tertiary"
             || v == "p:error" || v == "p:surface" || v == "p:surface_lowest";
+    }
+    // Label for a colour value. A custom value cannot be named (Slint cannot
+    // strip the "c:" prefix), and dumping "c:ff8800ff" at the user is noise —
+    // the colour chip beside the label is the real information, so the label
+    // just says what kind of value it is.
+    function value-label(v: string) -> string {
+        if (v == "") { return "(none)"; }
+        if (root.is-token-color(v)) { return root.readable-color(v); }
+        return "Custom";
     }
     background: transparent;
     clip: true;
@@ -281,8 +291,9 @@ component BordersTunePane inherits Rectangle {
                     BorderColorSlot {
                         width: 100%;
                         slot-value: root.tune-inactive-color;
+                        resolved-color: root.tune-colors-resolved[8];
                         slot-description: "Color of unfocused window borders. Tap a swatch to change it.";
-                        display-label: root.readable-color(root.tune-inactive-color);
+                        display-label: root.value-label(root.tune-inactive-color);
                         editable: true;
                         slot-changed(v) => { root.inactive-color-changed(v); }
                     }
@@ -322,10 +333,11 @@ component BordersTunePane inherits Rectangle {
                 BorderColorSlot {
                     width: 100%;
                     slot-value: root.tune-active-colors[i];
+                    resolved-color: root.tune-colors-resolved[i];
                     slot-description: "Active gradient color slot " + (i + 1) + " of " + root.slot-count + ". Tap a swatch to change.";
                     // Name the current pick too, so the user reads "Slot 2 · tertiary"
                     // instead of having to decode which swatch is outlined.
-                    display-label: "Slot " + (i + 1) + " · " + root.readable-color(root.tune-active-colors[i]);
+                    display-label: "Slot " + (i + 1) + " · " + root.value-label(root.tune-active-colors[i]);
                     editable: true;
                     is-token: root.is-token-color(root.tune-active-colors[i]);
                     slot-changed(v) => { root.slot-color-changed(i, v); }
@@ -615,8 +627,9 @@ component BordersTunePane inherits Rectangle {
                         BorderColorSlot {
                             width: 100%;
                             slot-value: root.glow-color;
+                            resolved-color: root.tune-colors-resolved[9];
                             slot-description: "Color of the glow on focused windows. Tap a swatch to change it.";
-                            display-label: root.readable-color(root.glow-color);
+                            display-label: root.value-label(root.glow-color);
                             editable: true;
                             is-token: root.is-token-color(root.glow-color);
                             slot-changed(v) => {
@@ -650,8 +663,9 @@ component BordersTunePane inherits Rectangle {
                         BorderColorSlot {
                             width: 100%;
                             slot-value: root.glow-color-inactive;
+                            resolved-color: root.tune-colors-resolved[10];
                             slot-description: "Glow color for unfocused windows. Tap a swatch to change it.";
-                            display-label: root.readable-color(root.glow-color-inactive);
+                            display-label: root.value-label(root.glow-color-inactive);
                             editable: true;
                             is-token: root.is-token-color(root.glow-color-inactive);
                             slot-changed(v) => {
@@ -1446,6 +1460,8 @@ export component BordersSection inherits Rectangle {
     // Tune pane — dynamic (Unit 2)
     in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
+    // Resolved colours (see MainWindow.tune-colors-resolved).
+    in-out property <[color]> tune-colors-resolved: [];
     in-out property <int> tune-angle: 90;
     in-out property <string> tune-inactive-color: "";
     in-out property <string> tune-glow: "";
@@ -1833,6 +1849,7 @@ export component BordersSection inherits Rectangle {
                 engaged-slider: root.engaged-slider;
                 follow: root.focused-index >= root.split;
                 tune-active-colors: root.tune-active-colors;
+                tune-colors-resolved: root.tune-colors-resolved;
                 tune-color-count: root.tune-color-count;
                 tune-angle: root.tune-angle;
                 tune-inactive-color: root.tune-inactive-color;
@@ -1938,6 +1955,7 @@ export component BordersSection inherits Rectangle {
                 engaged-slider: root.engaged-slider;
                 follow: root.focused-index >= root.split;
                 tune-active-colors: root.tune-active-colors;
+                tune-colors-resolved: root.tune-colors-resolved;
                 tune-color-count: root.tune-color-count;
                 tune-angle: root.tune-angle;
                 tune-inactive-color: root.tune-inactive-color;

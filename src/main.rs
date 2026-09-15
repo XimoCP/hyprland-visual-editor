@@ -118,6 +118,49 @@ fn read_tune_slots(w: &crate::MainWindow) -> Vec<String> {
         .collect()
 }
 
+/// Resolve one encoded tune colour into a real Slint colour. Slint cannot parse
+/// "#rrggbbaa", so the pane needs actual colours to preview them and to seed
+/// the colour picker. Token values reuse the `token-*` properties the theme
+/// already pushed onto the window, so no palette round-trip is needed.
+fn resolve_encoded_color(w: &crate::MainWindow, v: &str) -> slint::Color {
+    use crate::border_preset::{BorderColor, PaletteToken as P};
+    use crate::preset_store::PresetStore;
+    match PresetStore::decode_colors(v).into_iter().next() {
+        Some(BorderColor::Token(P::Primary)) => w.get_token_primary(),
+        Some(BorderColor::Token(P::Secondary)) => w.get_token_secondary(),
+        Some(BorderColor::Token(P::Tertiary)) => w.get_token_tertiary(),
+        // A2: the engine's ColorScheme has no `error` field, so display falls
+        // back to the accent value. Presets still store the bare token.
+        Some(BorderColor::Token(P::Error)) => w.get_token_error(),
+        Some(BorderColor::Token(P::Surface)) => w.get_token_surface(),
+        Some(BorderColor::Token(P::SurfaceLowest)) => w.get_token_surface_lowest(),
+        Some(BorderColor::Custom { r, g, b, a }) => slint::Color::from_argb_u8(a, r, g, b),
+        None => slint::Color::from_argb_u8(0, 0, 0, 0),
+    }
+}
+
+/// Fixed-size resolved-colour model so the pane can index it blindly without
+/// bounds checks: 0..7 = active gradient slots, 8 = inactive, 9 = glow colour,
+/// 10 = glow inactive colour. Rebuilt on load/add/remove only — never on every
+/// edit, or a changing seed would fight the picker the user is dragging.
+const RESOLVED_COLORS_LEN: usize = 11;
+
+fn refresh_resolved_colors(w: &crate::MainWindow) {
+    let transparent = slint::Color::from_argb_u8(0, 0, 0, 0);
+    let slots = read_tune_slots(w);
+    let mut out: Vec<slint::Color> = Vec::with_capacity(RESOLVED_COLORS_LEN);
+    for i in 0..8 {
+        out.push(match slots.get(i) {
+            Some(s) => resolve_encoded_color(w, s),
+            None => transparent,
+        });
+    }
+    out.push(resolve_encoded_color(w, &w.get_tune_inactive_color().to_string()));
+    out.push(resolve_encoded_color(w, &w.get_tune_glow_color().to_string()));
+    out.push(resolve_encoded_color(w, &w.get_tune_glow_color_inactive().to_string()));
+    w.set_tune_colors_resolved(slint::ModelRc::from(out.as_slice()));
+}
+
 /// Build `BorderParams` from the window's current tune state (D4 live path).
 /// `size` comes from the sealed config because the tune pane no longer owns a
 /// geometry model of its own.
@@ -178,6 +221,7 @@ fn commit_tune_slots(
         .collect();
     w.set_tune_active_colors(slint::ModelRc::from(model.as_slice()));
     w.set_tune_color_count(model.len() as i32);
+    refresh_resolved_colors(w);
     let size = {
         let st = state.lock().unwrap_or_else(|e| e.into_inner());
         st.cfg().border_size
@@ -2891,6 +2935,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             .map(|s| slint::SharedString::from(s.as_str()))
                             .collect();
                         w.set_tune_anim_curves(slint::ModelRc::from(curve_names.as_slice()));
+                        // Real colours for the pane's previews / picker seeds.
+                        refresh_resolved_colors(&w);
                         // D3: missing border_size keeps current slider (already done via snap above)
                     }
                 } else {
@@ -2922,6 +2968,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // Nothing is selected, so there is no unsaved state to flag.
                     w.set_tune_dirty(false);
                     w.set_tune_animations(String::new().into());
+                    refresh_resolved_colors(&w);
                 }
             }
         });

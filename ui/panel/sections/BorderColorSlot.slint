@@ -26,6 +26,10 @@ export component BorderColorSlot inherits Rectangle {
     in property <bool> is-token: false;
     // Display label for the value
     in property <string> display-label: "";
+    // The real colour behind the value, resolved by Rust (tokens and custom
+    // alike). Slint cannot parse "#rrggbbaa", so a custom value used to render
+    // as raw text with no way to see what it actually looked like.
+    in property <color> resolved-color: transparent;
 
     height: 110px;
     background: transparent;
@@ -37,13 +41,28 @@ export component BorderColorSlot inherits Rectangle {
         padding-bottom: 12px;
         spacing: 8px;
 
-        // Label: slot name or current value
-        Text {
-            text: root.display-label != "" ? root.display-label : root.slot-value;
-            font-family: SkwdTokens.font-body;
-            font-size: SkwdTokens.size-13;
-            font-weight: 600;
-            color: HveColors.text;
+        // Label row: colour chip + readable value.
+        HorizontalLayout {
+            spacing: 8px;
+
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                border-radius: SkwdTokens.radius-4;
+                border-width: 1px;
+                border-color: HveColors.border;
+                background: root.resolved-color;
+            }
+
+            Text {
+                text: root.display-label != "" ? root.display-label : root.slot-value;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-13;
+                font-weight: 600;
+                color: HveColors.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
         }
 
         // 6 interactive token swatches (Follow-theme mode)

@@ -5038,7 +5038,9 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     // Tune data: 3 color slots (tokens), angle 45, inactive surface_lowest
     let colors: Vec<SharedString> = vec![
         SharedString::from("p:primary"),
-        SharedString::from("p:tertiary"),
+        // A CUSTOM value: the label must read "Custom" and the chip must show
+        // the resolved colour, since Slint cannot parse "#rrggbbaa".
+        SharedString::from("c:ff8800ff"),
         SharedString::from("p:secondary"),
     ];
     win.set_tune_active_colors(ModelRc::new(VecModel::from(colors)));
@@ -5046,6 +5048,20 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     win.set_tune_angle(45);
     win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
     win.set_border_size(3);
+    // Fixed 11-slot layout: 0..7 slots, 8 inactive, 9 glow, 10 glow inactive.
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(vec![
+        slint::Color::from_rgb_u8(56, 189, 248),
+        slint::Color::from_rgb_u8(255, 136, 0),
+        slint::Color::from_rgb_u8(251, 191, 36),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_rgb_u8(15, 23, 42),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+    ])));
 
     // Settle animations
     for _ in 0..20 {
@@ -5288,7 +5304,9 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
     win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
         SharedString::from("p:primary"),
-        SharedString::from("p:secondary"),
+        // A CUSTOM value: the label must read "Custom" and the chip must show
+        // the real colour (Slint cannot parse "#rrggbbaa" itself).
+        SharedString::from("c:ff8800ff"),
     ])));
     win.set_tune_color_count(2);
     win.set_tune_angle(90);
@@ -5299,6 +5317,20 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     win.set_tune_glow_render_power(4);
     win.set_tune_glow_color(SharedString::from("p:tertiary"));
     win.set_tune_glow_color_inactive(SharedString::from("p:surface_lowest"));
+    // Fixed 11-slot layout: 0..7 slots, 8 inactive, 9 glow, 10 glow inactive.
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(vec![
+        slint::Color::from_rgb_u8(56, 189, 248),
+        slint::Color::from_rgb_u8(255, 136, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_rgb_u8(15, 23, 42),
+        slint::Color::from_rgb_u8(192, 132, 252),
+        slint::Color::from_rgb_u8(15, 23, 42),
+    ])));
 
     // Glow on, leaves off: 1 card + 18 tune stops. Focus the LAST glow colour
     // (glow-inactive) so both glow colour cards are inside the viewport.

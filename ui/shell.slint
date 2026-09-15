@@ -162,6 +162,8 @@ export component ShellRoot inherits Rectangle {
     // Tune pane — dynamic (Unit 2)
     in-out property <[string]> panel-tune-active-colors: [];
     in-out property <int> panel-tune-color-count: 0;
+    // Resolved colours (see MainWindow.tune-colors-resolved).
+    in-out property <[color]> panel-tune-colors-resolved: [];
     in-out property <int> panel-tune-angle: 90;
     in-out property <string> panel-tune-inactive-color: "";
     in-out property <string> panel-tune-glow: "";
@@ -544,6 +546,7 @@ export component ShellRoot inherits Rectangle {
                     user-border-preset-tags: root.panel-user-border-preset-tags;
                     tune-active-colors <=> root.panel-tune-active-colors;
                     tune-color-count <=> root.panel-tune-color-count;
+                    tune-colors-resolved <=> root.panel-tune-colors-resolved;
                     tune-angle <=> root.panel-tune-angle;
                     tune-inactive-color <=> root.panel-tune-inactive-color;
                     tune-glow <=> root.panel-tune-glow;
