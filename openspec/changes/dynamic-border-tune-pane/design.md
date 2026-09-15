@@ -81,6 +81,15 @@ engine.scan (sealed)   │  writes tune state → file       │   │ theme.rs 
 - `BorderColorSlot.slint` wraps the adapted picker: mode switch (Follow theme | Custom), 6 large token swatches in Follow mode (resolved via forwarded palette props), the adapted picker in Custom mode, plus an optional hex LineEdit (validated through the D2 byte-order tests; invalid input keeps the last valid color and shows the description hint). The tune pane instantiates 2..8 slots from `tune-color-count`; add/remove buttons clamp to 2..8 with descriptions explaining the Hyprland gradient range.
 - **Alternative rejected**: circular HSV wheel (out of scope); per-slot hex as primary input (frozen: no hex required); copying the GPL Slint picker (license-blocked).
 
+### D7 AMENDMENT (implemented) — one shared picker, no mode switch
+Three deliberate departures from the wording above, decided while implementing:
+1. **One picker instance, not one per slot.** The picker is ~344px tall and the pane has 2..8 colour slots in an already 2000px-plus scroll. A picker per slot would have multiplied that and reproduced the exact overflow-overlap class of defect fixed in the same session. The picker therefore lives once, in the pane's scroll flow at the top, open for the channel being edited (`editing-slot`, index space 0..7 slots, 8 inactive, 9 glow, 10 glow inactive), and the viewport jumps to it while it is open. It is NOT an overlay: a later sibling does not win over the `ScrollView`, and an overlay showed the pane bleeding through the picker.
+2. **No Theme/Custom mode switch.** The six token swatches stay visible at all times, with a "Custom…" button beside them. One state fewer, and the accessible path is never hidden. The frozen requirement that nobody should have to read a hex code is better served this way.
+3. **Hex is a readout, not an input.** An input needs hex *parsing*, which Slint cannot do ("#rrggbb" to colour is not expressible); it would need a Rust round-trip per slot. D7 already marked the hex LineEdit optional. The readout shows the exact `c:` payload the preset stores, which is genuinely useful.
+4. The adaptation lives in `ui/panel/ColorPicker.slint` (a reusable component) rather than inside `BorderColorSlot.slint`, matching the component inventory's own suggestion of `ui/panel/components/`.
+
+**Implementation gotcha worth recording**: Slint exposes `color.red/green/blue/alpha` as **0..255 floats**, not 0..1. Seeding an orange first produced `val=255`/`alpha=255` and painted yellow. Hue and saturation survived because they are scale-invariant, which is why nothing but rendering plus a debug readout caught it.
+
 ### D8 — Visual verification is mandatory
 - **Decision**: Unit 3 gates on `cargo test slice_focus_flow_renders` (extended to mount the rebuilt pane, or a sibling render test if the harness cannot mount panels) with PNGs read under `/tmp/opencode/` and geometry confirmed by inspection: slot count matches fixture (e.g. 8 slots for Infinity, 2 for Duo), glow group visible/addable states, descriptions rendered. "Tests green + build clean" alone does not close Unit 3.
 

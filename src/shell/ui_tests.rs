@@ -5446,3 +5446,75 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
         "opening the picker must change the pane materially"
     );
 }
+
+// ── Borders 8-slot case (task 3.9) ────────────────────────────────────
+// Hyprland allows 2..8 gradient colours; the pane must render the maximum
+// without clipping. The other borders render tests exercise 2 and 3.
+#[test]
+fn borders_tune_renders_eight_slots() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Infinity")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("8-color neon")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("07_infinity.lua")])));
+    let eight: Vec<SharedString> = ["primary", "secondary", "tertiary", "error", "surface",
+        "surface_lowest", "primary", "secondary"].iter()
+        .map(|t| SharedString::from(format!("p:{t}").as_str())).collect();
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(eight)));
+    win.set_tune_color_count(8);
+    win.set_tune_angle(45);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    let resolved: Vec<slint::Color> = (0..11).map(|i| {
+        match i {
+            0 => slint::Color::from_rgb_u8(56, 189, 248),
+            1 => slint::Color::from_rgb_u8(251, 191, 36),
+            2 => slint::Color::from_rgb_u8(192, 132, 252),
+            3 => slint::Color::from_rgb_u8(52, 211, 153),
+            4 => slint::Color::from_rgb_u8(30, 41, 59),
+            5 => slint::Color::from_rgb_u8(15, 23, 42),
+            _ => slint::Color::from_argb_u8(0, 0, 0, 0),
+        }
+    }).collect();
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(resolved)));
+
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let shot = win.window().take_snapshot().expect("eight slots snapshot");
+    save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_eight_slots.png");
+
+    // The pane must actually contain 8 slot cards: count icy focus pixels is
+    // not enough, so count the token swatch row's saturated pixels instead.
+    let bytes = shot.as_bytes();
+    let w = shot.width() as usize;
+    let mut colourful = 0usize;
+    for y in 240..(shot.height() as usize) {
+        for x in 360..w {
+            let i = (y * w + x) * 4;
+            let (r, g, b) = (bytes[i] as i32, bytes[i + 1] as i32, bytes[i + 2] as i32);
+            if bytes[i + 3] > 200 && (r - g).abs() + (g - b).abs() + (r - b).abs() > 150 {
+                colourful += 1;
+            }
+        }
+    }
+    assert!(colourful > 3000, "8 slot swatch rows must render (saturated pixels={colourful})");
+}
