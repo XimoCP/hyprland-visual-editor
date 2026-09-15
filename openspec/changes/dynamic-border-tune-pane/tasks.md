@@ -83,3 +83,14 @@ The previous session's blocker was "los cambios no se aplican — el grosor del 
 ## Traceability
 
 Reader core → 1.1–1.2 · Joker locals + missing size → 1.3–1.4 · Literal forms → 1.5–1.6 · Glow/rule/animations/curves → 1.7–1.8 · Generation + round-trip → 1.9–1.10 · Load on click → 2.1–2.2 · Save from tune → 2.3–2.4 · 4-layer forwarding → 2.5 · Full-suite gate → 2.6 · Slots + basics → 3.1–3.3 · Glow → 3.4 · Animations + rule → 3.5 · Picker → 3.2+3.6 · Keyboard → 3.7 · Status + save form → 3.8 · Visual proof → 3.9 · Final gate → 3.10 · Preserved (list pane, card CRUD rename/delete, engine apply paths, animation presets) → untouched, guarded by 2.6 + 3.10.
+
+## R1 revised: the panel is presented as a floating window (self-preview)
+
+The panel flow used to hold fullscreen from entry to exit — "Holds fullscreen, no window resize anywhere in the flow". That kept the desktop hidden, so a border change could be applied correctly and still never be seen. R1 is revised: while the panel is open, HVE leaves fullscreen, floats and centers itself, so the border Hyprland draws around **HVE** is the live preview of the border being tuned. The window is the preview surface — no second window, and no need to keep any part of the desktop on screen (a side-anchored panel would waste the screen on wallpaper when HVE is the only window open).
+
+- The floating size is derived from the monitor, measured off the surface while it still covers that monitor: no compositor query, no new I/O surface. `SizePolicy::settings_float_size` caps it so a margin survives on every side, because a border flush against the monitor edge is unreadable. On a 1440x900 monitor it resolves to 1000x640.
+- `Shell::apply_window_presentation` resolves the presentation from the navigation state. It runs on entry (size + compositor actions) and again when the morph settles (compositor state only, as a re-assert).
+- Two findings shaped this, both verified live rather than assumed. A client-side size request is **not** honoured for a floating window in this compositor — the window landed on its minimum — so the resize goes out as an explicit dispatch. And the compositor's restored floating geometry can land after an animation, so the size is resolved exactly once per entry.
+- Verified in the running app: the panel floats centered at 1000x640 with the border visible on all four sides, and Escape restores fullscreen 1440x900.
+
+Follow-ups this revision does not cover: the panel is still the inner floating card, and the keeper wants it full-bleed across HVE (that changes the 852px two-column threshold, since the panel goes from 80% to 100% of the window); and the `-- >>> HVE WINDOW RULES <<<` block in `src/settings.rs` still emits its dead `n` placeholder. Note for whoever wires those rules: HVE's `class` is **empty**, so a rule matching `class:` never fires — match `title:` or set the app id in the app first.
