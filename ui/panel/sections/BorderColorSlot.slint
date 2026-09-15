@@ -21,13 +21,9 @@ export component BorderColorSlot inherits Rectangle {
     callback slot-changed(string);             // fires when user picks a swatch
 
     // True when this slot uses a palette token (p:...) vs custom color (c:...)
+    // Selection is derived from slot-value itself, so callers only bind the
+    // value — no per-token flags to keep in sync (they could disagree).
     in property <bool> is-token: false;
-    in property <bool> is-primary: false;
-    in property <bool> is-secondary: false;
-    in property <bool> is-tertiary: false;
-    in property <bool> is-error: false;
-    in property <bool> is-surface: false;
-    in property <bool> is-surface-lowest: false;
     // Display label for the value
     in property <string> display-label: "";
 
@@ -68,13 +64,7 @@ export component BorderColorSlot inherits Rectangle {
                     : token-name == "surface" ? HveColors.token-surface
                     : HveColors.token-surface-lowest;
                 border-width: 2px;
-                border-color: (token-name == "primary" && root.is-primary)
-                    || (token-name == "secondary" && root.is-secondary)
-                    || (token-name == "tertiary" && root.is-tertiary)
-                    || (token-name == "error" && root.is-error)
-                    || (token-name == "surface" && root.is-surface)
-                    || (token-name == "surface_lowest" && root.is-surface-lowest)
-                    ? HveColors.accent-cyan : transparent;
+                border-color: root.slot-value == ("p:" + token-name) ? HveColors.accent-cyan : transparent;
 
                 Text {
                     text: token-name == "surface_lowest" ? "lowest" : token-name;

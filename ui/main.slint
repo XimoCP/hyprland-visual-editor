@@ -425,6 +425,22 @@ export component MainWindow inherits Window {
         panel-tune-glow-color <=> root.tune-glow-color;
         panel-tune-glow-color-inactive <=> root.tune-glow-color-inactive;
         panel-tune-animations <=> root.tune-animations;
+        // The per-leaf animation surface must cross this hop too: without it
+        // Rust -> UI was dead, so loading a preset whose leaves are enabled
+        // rendered them collapsed (the toggles stayed off).
+        panel-tune-anim-borderangle-enabled <=> root.tune-anim-borderangle-enabled;
+        panel-tune-anim-borderangle-speed <=> root.tune-anim-borderangle-speed;
+        panel-tune-anim-borderangle-bezier <=> root.tune-anim-borderangle-bezier;
+        panel-tune-anim-borderangle-style <=> root.tune-anim-borderangle-style;
+        panel-tune-anim-border-enabled <=> root.tune-anim-border-enabled;
+        panel-tune-anim-border-speed <=> root.tune-anim-border-speed;
+        panel-tune-anim-border-bezier <=> root.tune-anim-border-bezier;
+        panel-tune-anim-border-style <=> root.tune-anim-border-style;
+        panel-tune-anim-fadeshadow-enabled <=> root.tune-anim-fadeshadow-enabled;
+        panel-tune-anim-fadeshadow-speed <=> root.tune-anim-fadeshadow-speed;
+        panel-tune-anim-fadeshadow-bezier <=> root.tune-anim-fadeshadow-bezier;
+        panel-tune-anim-fadeshadow-style <=> root.tune-anim-fadeshadow-style;
+        panel-tune-anim-curves <=> root.tune-anim-curves;
         panel-tune-rule-enabled <=> root.tune-rule-enabled;
         panel-tune-changed(colors, angle, inactive, glow, anims, rule) => { root.panel-tune-changed(colors, angle, inactive, glow, anims, rule); }
         panel-add-color-slot => { root.panel-add-color-slot(); }

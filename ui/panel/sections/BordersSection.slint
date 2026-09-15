@@ -51,6 +51,9 @@ component BordersTunePane inherits Rectangle {
     callback add-color-slot();
     callback remove-color-slot();
     callback slot-color-changed(int, string);
+    // The inactive color is an `in` property here (the section owns the tune
+    // state), so a mouse pick has to travel back up as a callback.
+    callback inactive-color-changed(string);
     // Glow group
     in property <bool> glow-enabled: false;
     in-out property <int> glow-range: 20;
@@ -111,6 +114,24 @@ component BordersTunePane inherits Rectangle {
     property <int> idx-rule: root.base-tail;
     property <int> idx-save-name: root.base-tail + 1;
     property <int> idx-save-btn: root.base-tail + 2;
+
+    // Slint has no substring op, so the encoded value ("p:primary", "c:rrggbbaa")
+    // is mapped to a readable label explicitly. Raw encodings must never reach
+    // the UI: showing "p:surface_lowest" was a real defect (F1).
+    function readable-color(v: string) -> string {
+        if (v == "p:primary") { return "primary"; }
+        if (v == "p:secondary") { return "secondary"; }
+        if (v == "p:tertiary") { return "tertiary"; }
+        if (v == "p:error") { return "error"; }
+        if (v == "p:surface") { return "surface"; }
+        if (v == "p:surface_lowest") { return "surface_lowest"; }
+        if (v == "") { return "(none)"; }
+        return v;
+    }
+    function is-token-color(v: string) -> bool {
+        return v == "p:primary" || v == "p:secondary" || v == "p:tertiary"
+            || v == "p:error" || v == "p:surface" || v == "p:surface_lowest";
+    }
     background: transparent;
     clip: true;
 
@@ -260,17 +281,10 @@ component BordersTunePane inherits Rectangle {
                     BorderColorSlot {
                         width: 100%;
                         slot-value: root.tune-inactive-color;
-                        slot-description: "Color of unfocused window borders.";
-                        // Readable name: strip the p:/c: encoding prefix (Slint has no
-                        // substring op, so map the known palette tokens explicitly).
-                        display-label: root.tune-inactive-color == "p:primary" ? "primary" : root.tune-inactive-color == "p:secondary" ? "secondary" : root.tune-inactive-color == "p:tertiary" ? "tertiary" : root.tune-inactive-color == "p:error" ? "error" : root.tune-inactive-color == "p:surface" ? "surface" : root.tune-inactive-color == "p:surface_lowest" ? "surface_lowest" : root.tune-inactive-color == "" ? "(none)" : root.tune-inactive-color;
-                    is-token: root.tune-inactive-color == "p:primary" || root.tune-inactive-color == "p:secondary" || root.tune-inactive-color == "p:tertiary" || root.tune-inactive-color == "p:error" || root.tune-inactive-color == "p:surface" || root.tune-inactive-color == "p:surface_lowest";
-                    is-primary: root.tune-inactive-color == "p:primary";
-                    is-secondary: root.tune-inactive-color == "p:secondary";
-                    is-tertiary: root.tune-inactive-color == "p:tertiary";
-                    is-error: root.tune-inactive-color == "p:error";
-                    is-surface: root.tune-inactive-color == "p:surface";
-                    is-surface-lowest: root.tune-inactive-color == "p:surface_lowest";
+                        slot-description: "Color of unfocused window borders. Tap a swatch to change it.";
+                        display-label: root.readable-color(root.tune-inactive-color);
+                        editable: true;
+                        slot-changed(v) => { root.inactive-color-changed(v); }
                     }
                 }
             }
@@ -309,15 +323,11 @@ component BordersTunePane inherits Rectangle {
                     width: 100%;
                     slot-value: root.tune-active-colors[i];
                     slot-description: "Active gradient color slot " + (i + 1) + " of " + root.slot-count + ". Tap a swatch to change.";
-                    display-label: "Slot " + (i + 1);
+                    // Name the current pick too, so the user reads "Slot 2 · tertiary"
+                    // instead of having to decode which swatch is outlined.
+                    display-label: "Slot " + (i + 1) + " · " + root.readable-color(root.tune-active-colors[i]);
                     editable: true;
-                    is-token: root.tune-active-colors[i] == "p:primary" || root.tune-active-colors[i] == "p:secondary" || root.tune-active-colors[i] == "p:tertiary" || root.tune-active-colors[i] == "p:error" || root.tune-active-colors[i] == "p:surface" || root.tune-active-colors[i] == "p:surface_lowest";
-                    is-primary: root.tune-active-colors[i] == "p:primary";
-                    is-secondary: root.tune-active-colors[i] == "p:secondary";
-                    is-tertiary: root.tune-active-colors[i] == "p:tertiary";
-                    is-error: root.tune-active-colors[i] == "p:error";
-                    is-surface: root.tune-active-colors[i] == "p:surface";
-                    is-surface-lowest: root.tune-active-colors[i] == "p:surface_lowest";
+                    is-token: root.is-token-color(root.tune-active-colors[i]);
                     slot-changed(v) => { root.slot-color-changed(i, v); }
                 }
             }
@@ -453,6 +463,17 @@ component BordersTunePane inherits Rectangle {
                 }
             }
 
+            // ── Description: glow (empty state) ──
+            // Task 3.4 requires the addable state to explain itself, not just
+            // show a button.
+            if !root.glow-enabled : Text {
+                text: "This preset has no glow. Add one to give the border a coloured shadow around focused windows.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
             if root.glow-enabled : VerticalLayout {
                 spacing: 8px;
 
@@ -568,16 +589,19 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 // Glow color
+                // Height must fit title + BorderColorSlot (110px): the old 72/80px
+                // let the slot overflow and paint OVER the next title. Same sizing
+                // as the inactive-color card, which already fits.
                 Rectangle {
                     property <bool> lit: root.local-focus == root.idx-glow-color && root.has-focus;
-                    height: self.lit ? 80px : 72px;
+                    height: self.lit ? 184px : 168px;
                     border-width: 1px;
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     border-radius: SkwdTokens.radius-8;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
 
                     VerticalLayout {
-                        padding: 12px;
+                        padding: 16px;
                         spacing: 4px;
 
                         Text {
@@ -591,15 +615,13 @@ component BordersTunePane inherits Rectangle {
                         BorderColorSlot {
                             width: 100%;
                             slot-value: root.glow-color;
-                            slot-description: "Color of the glow on focused windows.";
-                            display-label: root.glow-color;
-                            is-token: root.glow-color == "p:primary" || root.glow-color == "p:secondary" || root.glow-color == "p:tertiary" || root.glow-color == "p:error" || root.glow-color == "p:surface" || root.glow-color == "p:surface_lowest";
-                            is-primary: root.glow-color == "p:primary";
-                            is-secondary: root.glow-color == "p:secondary";
-                            is-tertiary: root.glow-color == "p:tertiary";
-                            is-error: root.glow-color == "p:error";
-                            is-surface: root.glow-color == "p:surface";
-                            is-surface-lowest: root.glow-color == "p:surface_lowest";
+                            slot-description: "Color of the glow on focused windows. Tap a swatch to change it.";
+                            display-label: root.readable-color(root.glow-color);
+                            editable: true;
+                            is-token: root.is-token-color(root.glow-color);
+                            slot-changed(v) => {
+                                root.glow-changed(root.glow-enabled, root.glow-range, root.glow-render-power, v, root.glow-color-inactive);
+                            }
                         }
                     }
                 }
@@ -607,14 +629,14 @@ component BordersTunePane inherits Rectangle {
                 // Glow inactive color
                 Rectangle {
                     property <bool> lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
-                    height: self.lit ? 80px : 72px;
+                    height: self.lit ? 184px : 168px;
                     border-width: 1px;
                     border-color: self.lit ? #8fd8ff : HveColors.border;
                     border-radius: SkwdTokens.radius-8;
                     background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
 
                     VerticalLayout {
-                        padding: 12px;
+                        padding: 16px;
                         spacing: 4px;
 
                         Text {
@@ -628,15 +650,13 @@ component BordersTunePane inherits Rectangle {
                         BorderColorSlot {
                             width: 100%;
                             slot-value: root.glow-color-inactive;
-                            slot-description: "Glow color for unfocused windows.";
-                            display-label: root.glow-color-inactive;
-                            is-token: root.glow-color-inactive == "p:primary" || root.glow-color-inactive == "p:secondary" || root.glow-color-inactive == "p:tertiary" || root.glow-color-inactive == "p:error" || root.glow-color-inactive == "p:surface" || root.glow-color-inactive == "p:surface_lowest";
-                            is-primary: root.glow-color-inactive == "p:primary";
-                            is-secondary: root.glow-color-inactive == "p:secondary";
-                            is-tertiary: root.glow-color-inactive == "p:tertiary";
-                            is-error: root.glow-color-inactive == "p:error";
-                            is-surface: root.glow-color-inactive == "p:surface";
-                            is-surface-lowest: root.glow-color-inactive == "p:surface_lowest";
+                            slot-description: "Glow color for unfocused windows. Tap a swatch to change it.";
+                            display-label: root.readable-color(root.glow-color-inactive);
+                            editable: true;
+                            is-token: root.is-token-color(root.glow-color-inactive);
+                            slot-changed(v) => {
+                                root.glow-changed(root.glow-enabled, root.glow-range, root.glow-render-power, root.glow-color, v);
+                            }
                         }
                     }
                 }
@@ -652,6 +672,14 @@ component BordersTunePane inherits Rectangle {
                 font-size: SkwdTokens.size-13;
                 font-weight: 600;
                 color: HveColors.accent-cyan;
+            }
+
+            Text {
+                text: "Optional motion on the active border. Each animation turns on by itself; enabling one reveals its speed, curve and style.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
             }
 
             // Helper component for animation leaf
@@ -1199,7 +1227,6 @@ component BordersTunePane inherits Rectangle {
             Rectangle { height: 1px; background: HveColors.border; }
 
             // Save form: LineEdit + Save button
-            VerticalLayout { spacing: 8px; }
             Text {
                 text: "Save as Preset";
                 font-family: SkwdTokens.font-heading;
@@ -1746,7 +1773,7 @@ export component BordersSection inherits Rectangle {
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Adjust geometry, then save as a preset. Or pick an existing style.";
+                text: "Tune the border, then save it as a preset. Or pick an existing style.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -1780,6 +1807,10 @@ export component BordersSection inherits Rectangle {
                 remove-color-slot => { root.remove-color-slot(); }
                 slot-color-changed(idx, v) => {
                     root.tune-active-colors[idx] = v;
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                inactive-color-changed(v) => {
+                    root.tune-inactive-color = v;
                     root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
                 }
                 glow-enabled: root.tune-glow-enabled;
@@ -1881,6 +1912,10 @@ export component BordersSection inherits Rectangle {
                 remove-color-slot => { root.remove-color-slot(); }
                 slot-color-changed(idx, v) => {
                     root.tune-active-colors[idx] = v;
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                inactive-color-changed(v) => {
+                    root.tune-inactive-color = v;
                     root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
                 }
                 glow-enabled: root.tune-glow-enabled;
