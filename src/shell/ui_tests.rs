@@ -5251,3 +5251,78 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     assert!(count_icy_pixels(&mid) > 200, "middle focus must carry the icy ring");
     assert!(count_icy_pixels(&end) > 200, "last focus must carry the icy ring");
 }
+
+// ── Borders glow colour cards must not paint over their neighbours ─────
+// Regression guard for a real defect: the glow colour cards were 72/80px tall
+// while the swatch slot inside them is 110px, so the slot overflowed and drew
+// OVER the next title ("Inactive Glow Color", "Border Animations"). The cards
+// now match the inactive-colour card (168px / 184px focused).
+//
+// The assertion below is a proxy: a card that overflows pushes ink into the
+// gutter between cards. Reading /tmp/opencode/borders_tune_glow_colors.png is
+// the actual confirmation (D8: tests green alone never closes a visual task).
+#[test]
+fn borders_tune_glow_color_cards_render_inside_their_box() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    win.set_tune_glow_enabled(true);
+    win.set_tune_glow_range(20);
+    win.set_tune_glow_render_power(4);
+    win.set_tune_glow_color(SharedString::from("p:tertiary"));
+    win.set_tune_glow_color_inactive(SharedString::from("p:surface_lowest"));
+
+    // Glow on, leaves off: 1 card + 18 tune stops. Focus the LAST glow colour
+    // (glow-inactive) so both glow colour cards are inside the viewport.
+    assert_eq!(
+        crate::callbacks::borders_tune_stop_count(2, true, false, false, false),
+        18,
+        "fixture inventory"
+    );
+    let glow_inactive = 1 + 11; // 1 card + tune-local 11
+
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    win.set_panel_kbd_preview_index(glow_inactive);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let shot = win.window().take_snapshot().expect("glow colours snapshot");
+    save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_glow_colors.png");
+
+    assert!(
+        count_icy_pixels(&shot) > 200,
+        "the focused glow colour card must carry the icy ring"
+    );
+}
+

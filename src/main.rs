@@ -99,6 +99,117 @@ fn teardown_border_draft(
     }
 }
 
+/// Default color cycle used by "add slot" so a freshly added slot is visibly
+/// distinct from the previous ones (Hyprland allows 2..8 gradient colors).
+const BORDER_SLOT_CYCLE: [&str; 6] = [
+    "p:primary",
+    "p:secondary",
+    "p:tertiary",
+    "p:error",
+    "p:surface",
+    "p:surface_lowest",
+];
+
+/// Read the `tune-active-colors` model back as plain encoded strings.
+fn read_tune_slots(w: &crate::MainWindow) -> Vec<String> {
+    let model = w.get_tune_active_colors();
+    (0..model.row_count())
+        .map(|i| model.row_data(i).unwrap_or_default().to_string())
+        .collect()
+}
+
+/// Build `BorderParams` from the window's current tune state (D4 live path).
+/// `size` comes from the sealed config because the tune pane no longer owns a
+/// geometry model of its own.
+fn tune_params_from_window(w: &crate::MainWindow, size: i32) -> crate::border_preset::BorderParams {
+    use crate::border_preset::{BorderColor, PaletteToken};
+    use crate::preset_store::PresetStore;
+    crate::border_preset::BorderParams {
+        active_colors: PresetStore::decode_colors(&read_tune_slots(w).join(",")),
+        angle: w.get_tune_angle(),
+        inactive: PresetStore::decode_colors(&w.get_tune_inactive_color().to_string())
+            .into_iter()
+            .next()
+            .unwrap_or(BorderColor::Token(PaletteToken::SurfaceLowest)),
+        border_size: Some(size),
+        glow: PresetStore::decode_glow(&w.get_tune_glow().to_string()),
+        rule_enabled: w.get_tune_rule_enabled(),
+        animations: PresetStore::decode_animations(&w.get_tune_animations().to_string()),
+        curves: Vec::new(),
+    }
+}
+
+/// Write the hidden live draft and re-assemble it (D4). No-op when no border is
+/// active, so an unsaved draft can never become the desktop's border.
+fn apply_live_draft(
+    state: &std::sync::Mutex<AppState>,
+    proj: &std::path::Path,
+    params: &crate::border_preset::BorderParams,
+) -> Result<(), String> {
+    use crate::preset_store::PresetStore;
+    {
+        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+        if st.cfg().active_border_file.is_empty() {
+            return Ok(());
+        }
+    }
+    let content = PresetStore::generate_border_lua_full("draft", params);
+    PresetStore::write_draft(&content, proj).map_err(|e| format!("Draft write failed: {}", e))?;
+    let st = state.lock().unwrap_or_else(|e| e.into_inner());
+    st.engine().run_script("assemble.sh", &[]).map(|_| ()).map_err(|e| {
+        // Drop the draft so a later successful assemble cannot pick up this
+        // failed attempt's stale state.
+        PresetStore::remove_draft(proj);
+        format!("Live preview failed: {}", e)
+    })
+}
+
+/// Push a slot list back to the UI (model + count) and refresh the live draft.
+/// Shared by slot add/remove so both keep the pane and the draft in sync.
+fn commit_tune_slots(
+    w: &crate::MainWindow,
+    state: &std::sync::Mutex<AppState>,
+    proj: &std::path::Path,
+    slots: Vec<String>,
+) {
+    let model: Vec<slint::SharedString> = slots
+        .iter()
+        .map(|s| slint::SharedString::from(s.as_str()))
+        .collect();
+    w.set_tune_active_colors(slint::ModelRc::from(model.as_slice()));
+    w.set_tune_color_count(model.len() as i32);
+    let size = {
+        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+        st.cfg().border_size
+    };
+    let params = tune_params_from_window(w, size);
+    match apply_live_draft(state, proj, &params) {
+        Ok(()) => w.set_border_save_error(String::new().into()),
+        Err(msg) => w.set_border_save_error(slint::SharedString::from(msg.as_str())),
+    }
+}
+
+/// Append one gradient slot. `None` when the list is already at the Hyprland
+/// maximum (8), so callers can simply do nothing.
+fn slots_with_added(slots: &[String]) -> Option<Vec<String>> {
+    if slots.len() >= 8 {
+        return None;
+    }
+    let mut next = slots.to_vec();
+    next.push(BORDER_SLOT_CYCLE[next.len() % BORDER_SLOT_CYCLE.len()].to_string());
+    Some(next)
+}
+
+/// Drop the last gradient slot. `None` at the Hyprland minimum (2).
+fn slots_with_removed(slots: &[String]) -> Option<Vec<String>> {
+    if slots.len() <= 2 {
+        return None;
+    }
+    let mut next = slots.to_vec();
+    next.pop();
+    Some(next)
+}
+
 /// Refresh the Slint theme list UI from the ThemeManager state.
 pub(crate) fn refresh_theme_list(
     window: &crate::MainWindow,
@@ -2856,31 +2967,12 @@ fn main() -> Result<(), slint::PlatformError> {
             tracing::debug!("[borders][preset] save name={}", name_str);
             let result = if let Some(w) = weak.upgrade() {
                 // Task 2.4: build params from tune properties → generate_border_lua_full
-                let tune_colors: Vec<String> = {
-                    let model = w.get_tune_active_colors();
-                    (0..model.row_count()).map(|i| model.row_data(i).unwrap_or_default().to_string()).collect()
-                };
-                let tune_inactive = w.get_tune_inactive_color().to_string();
-                let tune_glow = w.get_tune_glow().to_string();
-                let tune_anims = w.get_tune_animations().to_string();
-                let angle = w.get_tune_angle();
-                let rule_enabled = w.get_tune_rule_enabled();
                 let size = {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.cfg().border_size
                 };
                 use crate::preset_store::PresetStore;
-                let params = crate::border_preset::BorderParams {
-                    active_colors: PresetStore::decode_colors(&tune_colors.join(",")),
-                    angle,
-                    inactive: PresetStore::decode_colors(&tune_inactive).into_iter().next()
-                        .unwrap_or(crate::border_preset::BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest)),
-                    border_size: Some(size),
-                    glow: PresetStore::decode_glow(&tune_glow),
-                    rule_enabled,
-                    animations: PresetStore::decode_animations(&tune_anims),
-                    curves: Vec::new(),
-                };
+                let params = tune_params_from_window(&w, size);
                 let content = PresetStore::generate_border_lua_full(&name_str, &params);
                 let store = PresetStore::new("borders");
                 let r = store.save(&name_str, &content);
@@ -3044,6 +3136,33 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 }
             }
+        });
+    }
+    // ── Border slot add/remove (U3.3) ──
+    // Hyprland supports 2..8 gradient colors; the pane clamps and so do we, and
+    // every change refreshes the live draft so the desktop follows immediately.
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        let proj_c = proj.clone();
+        window.on_panel_add_color_slot(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let Some(slots) = slots_with_added(&read_tune_slots(&w)) else {
+                return;
+            };
+            commit_tune_slots(&w, &state_c, &proj_c, slots);
+        });
+    }
+    {
+        let state_c = state.clone();
+        let weak = window.as_weak();
+        let proj_c = proj.clone();
+        window.on_panel_remove_color_slot(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let Some(slots) = slots_with_removed(&read_tune_slots(&w)) else {
+                return;
+            };
+            commit_tune_slots(&w, &state_c, &proj_c, slots);
         });
     }
     // ── Animation preset CRUD ──
@@ -3308,6 +3427,43 @@ mod tests {
         dispatch_initial_gallery_expand(&shell);
         assert_eq!(win.get_mounted_screen(), 1, "initial expand mounts Gallery");
         assert!(win.get_expanded(), "Gallery mounts expanded");
+    }
+
+    // ── Border gradient slot add/remove (U3.3) ──
+    // The pane's +/- buttons were declared through all four Slint layers but
+    // had no Rust handler, so they were dead. These pin the clamping rules.
+    #[test]
+    fn border_slot_add_clamps_at_the_hyprland_maximum() {
+        let seven: Vec<String> = (0..7).map(|i| format!("p:s{}", i)).collect();
+        let eight = slots_with_added(&seven).expect("7 -> 8 is allowed");
+        assert_eq!(eight.len(), 8);
+        assert!(slots_with_added(&eight).is_none(), "8 is the maximum");
+    }
+
+    #[test]
+    fn border_slot_add_appends_a_distinct_default() {
+        let two = vec!["p:primary".to_string(), "p:secondary".to_string()];
+        let three = slots_with_added(&two).expect("2 -> 3 is allowed");
+        assert_eq!(three.len(), 3);
+        assert_eq!(three[..2], two[..], "existing slots are preserved");
+        assert!(three[2].starts_with("p:"), "new slot is a palette token");
+        assert_ne!(three[2], three[1], "new slot differs from the previous one");
+    }
+
+    #[test]
+    fn border_slot_remove_clamps_at_the_hyprland_minimum() {
+        let three: Vec<String> = (0..3).map(|i| format!("p:s{}", i)).collect();
+        let two = slots_with_removed(&three).expect("3 -> 2 is allowed");
+        assert_eq!(two, three[..2].to_vec(), "the LAST slot is the one removed");
+        assert!(slots_with_removed(&two).is_none(), "2 is the minimum");
+    }
+
+    #[test]
+    fn border_slot_add_then_remove_round_trips() {
+        let start: Vec<String> = (0..4).map(|i| format!("p:s{}", i)).collect();
+        let grown = slots_with_added(&start).expect("4 -> 5 is allowed");
+        let back = slots_with_removed(&grown).expect("5 -> 4 is allowed");
+        assert_eq!(back, start);
     }
 
     // ── Keyboard navigation logic (legacy_tab) — REMOVED slice 8 (R8) ──
