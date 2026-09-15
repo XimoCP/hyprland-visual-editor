@@ -1,9 +1,11 @@
 // HVE 2 — BordersSection (tune + preset list, two-pane).
 //
 // Two INDEPENDENT scroll regions:
-//   • Tune pane  — 4 GeometrySliders (size 1-5, radius 0-100, gap_in/out
-//     0-30) → 80ms debounce → apply_geometry, plus save form (LineEdit +
-//     Save button) at the bottom for saving current geometry as a user preset.
+//   • Tune pane  — size slider (1-5) → 80ms debounce → apply_geometry,
+//     angle segmented control (30/45/90), inactive color row, dynamic
+//     color slots (2..8) from tune-active-colors model with interactive
+//     token swatches, add/remove controls, plus save form
+//     (LineEdit + Save button) at the bottom.
 //   • List pane  — Built-in presets (apply only) + user presets (apply,
 //     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
 // Wide section → panes side by side; narrow section → stacked. Each pane owns
@@ -20,45 +22,117 @@ import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { GeometrySlider } from "../../components.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
+import { BorderColorSlot } from "BorderColorSlot.slint";
 
-// ─── Tune pane: geometry sliders + save form. ───
+// ─── Tune pane: dynamic color slots + angle + inactive + size + save form. ───
+// Rebuilt in U3a: old 4-slider geometry block removed; only size 1-5 kept.
+// Dynamic color slots (2..8) rendered from tune-active-colors model.
+// Angle segmented control (30/45/90).
+// Inactive color row.
+// Every control carries a plain-language description (frozen requirement).
 component BordersTunePane inherits Rectangle {
     in property <int> size: 2;
-    in property <int> radius: 32;
-    in property <int> gap-in: 5;
-    in property <int> gap-out: 5;
     in property <int> focused-index: 0;
     in property <int> split: 0;
     in property <bool> has-focus: false;
     in property <int> engaged-slider: -1;
     in property <bool> follow: false;
+    // Tune pane — dynamic (Unit 2)
+    in property <[string]> tune-active-colors: [];
+    in property <int> tune-color-count: 0;
+    in-out property <int> tune-angle: 90;
+    in property <string> tune-inactive-color: "";
     // Save form state
     in property <string> error-text: "";
     in-out property <string> preset-name: "";
     callback slider-changed(int, int);
     callback save-preset(string);
+    // Slot management callbacks
+    callback add-color-slot();
+    callback remove-color-slot();
+    callback slot-color-changed(int, string);
+    // Glow group
+    in property <bool> glow-enabled: false;
+    in-out property <int> glow-range: 20;
+    in-out property <int> glow-render-power: 4;
+    in-out property <string> glow-color: "p:primary";
+    in-out property <string> glow-color-inactive: "p:surface_lowest";
+    callback glow-changed(bool, int, int, string, string);
+    // Animation leaves
+    in-out property <bool> anim-borderangle-enabled: false;
+    in-out property <int> anim-borderangle-speed: 30;
+    in-out property <string> anim-borderangle-bezier: "default";
+    in-out property <string> anim-borderangle-style: "";
+    in-out property <bool> anim-border-enabled: false;
+    in-out property <int> anim-border-speed: 30;
+    in-out property <string> anim-border-bezier: "default";
+    in-out property <string> anim-border-style: "";
+    in-out property <bool> anim-fadeshadow-enabled: false;
+    in-out property <int> anim-fadeshadow-speed: 30;
+    in-out property <string> anim-fadeshadow-bezier: "default";
+    in-out property <string> anim-fadeshadow-style: "";
+    in-out property <[string]> anim-curves: [];
+    callback anim-changed(string, bool, int, string, string);
+    // Rule toggle
+    in-out property <bool> tune-rule-enabled: false;
 
     property <length> saved-scroll-y: 0px;
-    // 0..3 = slider index; 4 = save form (LineEdit)
+    // Tune-local indices (cards-first global minus list split):
+    // 0=size, 1=angle, 2=inactive, 3..3+N-1=slots, 3+N=add, 4+N=remove,
+    // 5+N=glow-enabled (+range, power, color, inactive when on), then per
+    // anim leaf enabled (+speed, bezier, style when on) x3, rule, save-name,
+    // save-button. Mirrors callbacks::borders_tune_stop_count.
     property <int> local-focus: root.focused-index - root.split;
+    property <int> slot-count: clamp(root.tune-color-count, 0, 8);
+    property <int> first-slot-idx: 3;
+    property <int> idx-add: 3 + root.slot-count;
+    property <int> idx-remove: 4 + root.slot-count;
+    property <int> idx-glow-en: 5 + root.slot-count;
+    property <int> idx-glow-range: 6 + root.slot-count;
+    property <int> idx-glow-power: 7 + root.slot-count;
+    property <int> idx-glow-color: 8 + root.slot-count;
+    property <int> idx-glow-inactive: 9 + root.slot-count;
+    property <int> base-anim: root.glow-enabled ? 10 + root.slot-count : 6 + root.slot-count;
+    property <int> idx-a0-en: root.base-anim;
+    property <int> idx-a0-speed: root.base-anim + 1;
+    property <int> idx-a0-bezier: root.base-anim + 2;
+    property <int> idx-a0-style: root.base-anim + 3;
+    property <int> base-a1: root.base-anim + 1 + (root.anim-borderangle-enabled ? 3 : 0);
+    property <int> idx-a1-en: root.base-a1;
+    property <int> idx-a1-speed: root.base-a1 + 1;
+    property <int> idx-a1-bezier: root.base-a1 + 2;
+    property <int> idx-a1-style: root.base-a1 + 3;
+    property <int> base-a2: root.base-a1 + 1 + (root.anim-border-enabled ? 3 : 0);
+    property <int> idx-a2-en: root.base-a2;
+    property <int> idx-a2-speed: root.base-a2 + 1;
+    property <int> idx-a2-bezier: root.base-a2 + 2;
+    property <int> idx-a2-style: root.base-a2 + 3;
+    property <int> base-tail: root.base-a2 + 1 + (root.anim-fadeshadow-enabled ? 3 : 0);
+    property <int> idx-rule: root.base-tail;
+    property <int> idx-save-name: root.base-tail + 1;
+    property <int> idx-save-btn: root.base-tail + 2;
     background: transparent;
     clip: true;
 
     ScrollView {
-        property <length> focus-y: local-focus <= 3 ? local-focus * 88px : 3 * 88px + 60px;
+        // Linear estimate keeps every stop scrollable: the viewport centers
+        // on the focused stop so it is always visible (no dead stops).
+        // Clamped to [height - content, 0] so the first and last stops can
+        // never scroll into the void, whatever the inventory mix.
+        property <length> focus-y: root.local-focus * 96px;
         viewport-y: root.follow ? (root.local-focus >= 0
-            ? (0px - max(0px, self.focus-y + 48px - self.height / 2))
+            ? max(self.height - tune-col.height, min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)))
             : 0px) : root.saved-scroll-y;
         animate viewport-y { duration: 250ms; easing: ease-out; }
         changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
+        tune-col := VerticalLayout {
             padding-left: 16px;
             padding-right: 16px;
             padding-top: 16px;
             padding-bottom: 12px;
             spacing: 8px;
 
-            // Size 1-5
+            // ── Size 1-5 ──
             size-wrap := Rectangle {
                 property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-size.has-hover;
                 property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
@@ -83,78 +157,1041 @@ component BordersTunePane inherits Rectangle {
                 }
             }
 
-            // Radius 0-100
-            radius-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split + 1 && root.has-focus) || hover-radius.has-hover;
+            // ── Description: size ──
+            Text {
+                text: "Border width in pixels (1 thin, 5 thick).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // ── Angle segmented control (30 / 45 / 90) ──
+            angle-wrap := Rectangle {
+                property <bool> lit: root.local-focus == 1 && root.has-focus;
                 property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                height: self.lit ? 96px : 80px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
                 border-width: 1px;
                 border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-radius := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 1;
-                    focused: radius-wrap.lit;
-                    label: "Corner Radius";
-                    value: root.radius;
-                    min: 0;
-                    max: 100;
-                    changed(v) => { root.slider-changed(1, v); }
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "Gradient Angle";
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 4px;
+
+                        for angle-val in [30, 45, 90] : Rectangle {
+                            width: 60px;
+                            height: 32px;
+                            border-radius: SkwdTokens.radius-4;
+                            background: root.tune-angle == angle-val ? HveColors.accent-cyan : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: root.tune-angle == angle-val ? HveColors.accent-cyan : HveColors.border;
+
+                            Text {
+                                text: angle-val + "°";
+                                color: root.tune-angle == angle-val ? HveColors.bg-dark : HveColors.text-muted;
+                                font-family: SkwdTokens.font-body;
+                                font-size: 12px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.tune-angle = angle-val; }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Gap In 0-30
-            gap-in-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split + 2 && root.has-focus) || hover-gap-in.has-hover;
-                property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+            // ── Description: angle ──
+            Text {
+                text: "Direction of the active border gradient (30/45/90 degrees).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // ── Inactive color row ──
+            inactive-wrap := Rectangle {
+                property <bool> lit: root.focused-index == root.split + 2 && root.has-focus;
+                // Tall enough for title + full BorderColorSlot (label + description):
+                // padding 32 + spacing 4 + title ~18 + slot 110 = ~164.
+                height: self.lit ? 184px : 168px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
                 border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-color: self.lit ? #8fd8ff : HveColors.border;
                 border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
                 animate background { duration: 200ms; easing: ease-in-out; }
-                hover-gap-in := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 2;
-                    focused: gap-in-wrap.lit;
-                    label: "Inner Gap";
-                    value: root.gap-in;
-                    min: 0;
-                    max: 30;
-                    changed(v) => { root.slider-changed(2, v); }
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 4px;
+
+                    Text {
+                        text: "Inactive Border Color";
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+
+                    BorderColorSlot {
+                        width: 100%;
+                        slot-value: root.tune-inactive-color;
+                        slot-description: "Color of unfocused window borders.";
+                        // Readable name: strip the p:/c: encoding prefix (Slint has no
+                        // substring op, so map the known palette tokens explicitly).
+                        display-label: root.tune-inactive-color == "p:primary" ? "primary" : root.tune-inactive-color == "p:secondary" ? "secondary" : root.tune-inactive-color == "p:tertiary" ? "tertiary" : root.tune-inactive-color == "p:error" ? "error" : root.tune-inactive-color == "p:surface" ? "surface" : root.tune-inactive-color == "p:surface_lowest" ? "surface_lowest" : root.tune-inactive-color == "" ? "(none)" : root.tune-inactive-color;
+                    is-token: root.tune-inactive-color == "p:primary" || root.tune-inactive-color == "p:secondary" || root.tune-inactive-color == "p:tertiary" || root.tune-inactive-color == "p:error" || root.tune-inactive-color == "p:surface" || root.tune-inactive-color == "p:surface_lowest";
+                    is-primary: root.tune-inactive-color == "p:primary";
+                    is-secondary: root.tune-inactive-color == "p:secondary";
+                    is-tertiary: root.tune-inactive-color == "p:tertiary";
+                    is-error: root.tune-inactive-color == "p:error";
+                    is-surface: root.tune-inactive-color == "p:surface";
+                    is-surface-lowest: root.tune-inactive-color == "p:surface_lowest";
+                    }
                 }
             }
 
-            // Gap Out 0-30
-            gap-out-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split + 3 && root.has-focus) || hover-gap-out.has-hover;
-                property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+            // ── Description: inactive ──
+            Text {
+                text: "Color applied to borders of unfocused (inactive) windows.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // Separator
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // ── Dynamic color slots ──
+            if root.slot-count > 0 : Text {
+                text: "Active Border Colors (" + root.slot-count + " slots)";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-12;
+                font-weight: 600;
+                color: HveColors.text-muted;
+            }
+
+            for i in root.tune-active-colors.length : Rectangle {
+                property <bool> slot-lit: root.focused-index == root.split + root.first-slot-idx + i && root.has-focus;
+                height: 130px;
+                border-width: 1px;
+                border-color: self.slot-lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.slot-lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+
+                BorderColorSlot {
+                    width: 100%;
+                    slot-value: root.tune-active-colors[i];
+                    slot-description: "Active gradient color slot " + (i + 1) + " of " + root.slot-count + ". Tap a swatch to change.";
+                    display-label: "Slot " + (i + 1);
+                    editable: true;
+                    is-token: root.tune-active-colors[i] == "p:primary" || root.tune-active-colors[i] == "p:secondary" || root.tune-active-colors[i] == "p:tertiary" || root.tune-active-colors[i] == "p:error" || root.tune-active-colors[i] == "p:surface" || root.tune-active-colors[i] == "p:surface_lowest";
+                    is-primary: root.tune-active-colors[i] == "p:primary";
+                    is-secondary: root.tune-active-colors[i] == "p:secondary";
+                    is-tertiary: root.tune-active-colors[i] == "p:tertiary";
+                    is-error: root.tune-active-colors[i] == "p:error";
+                    is-surface: root.tune-active-colors[i] == "p:surface";
+                    is-surface-lowest: root.tune-active-colors[i] == "p:surface_lowest";
+                    slot-changed(v) => { root.slot-color-changed(i, v); }
+                }
+            }
+
+            // ── Add / Remove slot controls ──
+            if root.slot-count > 0 : HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-remove && root.has-focus;
+                    width: 36px;
+                    height: 28px;
+                    border-radius: SkwdTokens.radius-4;
+                    background: self.lit ? HveColors.bg-hover : (root.slot-count > 2 && remove-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
+                    border-width: 1px;
+                    border-color: self.lit ? #8fd8ff : (root.slot-count > 2 ? HveColors.border : HveColors.border.transparentize(0.5));
+                    opacity: root.slot-count > 2 ? 1.0 : 0.4;
+
+                    Text {
+                        text: "−";
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: 16px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    remove-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { if (root.slot-count > 2) { root.remove-color-slot(); } }
+                    }
+                }
+
+                Text {
+                    text: root.slot-count + " of 8";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-11;
+                    color: HveColors.text-muted;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-add && root.has-focus;
+                    width: 36px;
+                    height: 28px;
+                    border-radius: SkwdTokens.radius-4;
+                    background: self.lit ? HveColors.bg-hover : (root.slot-count < 8 && add-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
+                    border-width: 1px;
+                    border-color: self.lit ? #8fd8ff : (root.slot-count < 8 ? HveColors.border : HveColors.border.transparentize(0.5));
+                    opacity: root.slot-count < 8 ? 1.0 : 0.4;
+
+                    Text {
+                        text: "+";
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: 16px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    add-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { if (root.slot-count < 8) { root.add-color-slot(); } }
+                    }
+                }
+            }
+
+            // ── Description: dynamic slots ──
+            if root.slot-count > 0 : Text {
+                text: "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // Separator
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // ── Glow group ──
+            if !root.glow-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
+                height: self.lit ? 64px : 56px;
+                border-width: 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+
+                    Text {
+                        text: "Glow (shadow decoration)";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-13;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        height: 28px;
+                        border-radius: SkwdTokens.radius-4;
+                        background: glow-add-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+
+                        Text {
+                            text: "Add";
+                            color: HveColors.bg-dark;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        glow-add-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { root.glow-changed(true, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                        }
+                    }
+                }
+            }
+
+            if root.glow-enabled : VerticalLayout {
+                spacing: 8px;
+
+                // Glow header with remove button (enabled stop)
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
+                    height: self.lit ? 64px : 56px;
+                    border-width: 1px;
+                    border-color: self.lit ? #8fd8ff : HveColors.border;
+                    border-radius: SkwdTokens.radius-8;
+                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        alignment: space-between;
+                        Text {
+                            text: "Glow (shadow decoration)";
+                            color: HveColors.accent-cyan;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            border-radius: SkwdTokens.radius-4;
+                            background: glow-remove-ta.has-hover ? HveColors.accent-red.transparentize(0.2) : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+
+                        Text {
+                            text: "×";
+                            color: HveColors.text-muted;
+                            font-family: SkwdTokens.font-body;
+                            font-size: 14px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        glow-remove-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { root.glow-changed(false, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                        }
+                        }
+                    }
+                }
+
+                // Range slider
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-glow-range && root.has-focus;
+                    property <bool> grabbed: root.engaged-slider == root.idx-glow-range && root.has-focus;
+                    height: self.lit ? 64px : 56px;
+                    border-width: 1px;
+                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                    border-radius: SkwdTokens.radius-8;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                    GeometrySlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
+                        engaged: root.engaged-slider == root.idx-glow-range;
+                        focused: root.local-focus == root.idx-glow-range && root.has-focus;
+                        label: "Range";
+                        value: root.glow-range;
+                        min: 5;
+                        max: 40;
+                        changed(v) => { root.glow-changed(root.glow-enabled, v, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                    }
+                }
+
+                Text {
+                    text: "How far the shadow extends from the window edge (5 near, 40 far).";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-11;
+                    color: HveColors.text-muted;
+                    wrap: word-wrap;
+                }
+
+                // Render power slider
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-glow-power && root.has-focus;
+                    property <bool> grabbed: root.engaged-slider == root.idx-glow-power && root.has-focus;
+                    height: self.lit ? 64px : 56px;
+                    border-width: 1px;
+                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                    border-radius: SkwdTokens.radius-8;
+                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                    GeometrySlider {
+                        width: 100%;
+                        y: (parent.height - self.height) / 2;
+                        engaged: root.engaged-slider == root.idx-glow-power;
+                        focused: root.local-focus == root.idx-glow-power && root.has-focus;
+                        label: "Power";
+                        value: root.glow-render-power;
+                        min: 1;
+                        max: 8;
+                        changed(v) => { root.glow-changed(root.glow-enabled, root.glow-range, v, root.glow-color, root.glow-color-inactive); }
+                    }
+                }
+
+                Text {
+                    text: "Shadow intensity (1 subtle, 8 strong).";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-11;
+                    color: HveColors.text-muted;
+                    wrap: word-wrap;
+                }
+
+                // Glow color
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-glow-color && root.has-focus;
+                    height: self.lit ? 80px : 72px;
+                    border-width: 1px;
+                    border-color: self.lit ? #8fd8ff : HveColors.border;
+                    border-radius: SkwdTokens.radius-8;
+                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 4px;
+
+                        Text {
+                            text: "Glow Color";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: 13px;
+                            font-weight: 600;
+                        }
+
+                        BorderColorSlot {
+                            width: 100%;
+                            slot-value: root.glow-color;
+                            slot-description: "Color of the glow on focused windows.";
+                            display-label: root.glow-color;
+                            is-token: root.glow-color == "p:primary" || root.glow-color == "p:secondary" || root.glow-color == "p:tertiary" || root.glow-color == "p:error" || root.glow-color == "p:surface" || root.glow-color == "p:surface_lowest";
+                            is-primary: root.glow-color == "p:primary";
+                            is-secondary: root.glow-color == "p:secondary";
+                            is-tertiary: root.glow-color == "p:tertiary";
+                            is-error: root.glow-color == "p:error";
+                            is-surface: root.glow-color == "p:surface";
+                            is-surface-lowest: root.glow-color == "p:surface_lowest";
+                        }
+                    }
+                }
+
+                // Glow inactive color
+                Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
+                    height: self.lit ? 80px : 72px;
+                    border-width: 1px;
+                    border-color: self.lit ? #8fd8ff : HveColors.border;
+                    border-radius: SkwdTokens.radius-8;
+                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 4px;
+
+                        Text {
+                            text: "Inactive Glow Color";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: 13px;
+                            font-weight: 600;
+                        }
+
+                        BorderColorSlot {
+                            width: 100%;
+                            slot-value: root.glow-color-inactive;
+                            slot-description: "Glow color for unfocused windows.";
+                            display-label: root.glow-color-inactive;
+                            is-token: root.glow-color-inactive == "p:primary" || root.glow-color-inactive == "p:secondary" || root.glow-color-inactive == "p:tertiary" || root.glow-color-inactive == "p:error" || root.glow-color-inactive == "p:surface" || root.glow-color-inactive == "p:surface_lowest";
+                            is-primary: root.glow-color-inactive == "p:primary";
+                            is-secondary: root.glow-color-inactive == "p:secondary";
+                            is-tertiary: root.glow-color-inactive == "p:tertiary";
+                            is-error: root.glow-color-inactive == "p:error";
+                            is-surface: root.glow-color-inactive == "p:surface";
+                            is-surface-lowest: root.glow-color-inactive == "p:surface_lowest";
+                        }
+                    }
+                }
+            }
+
+            // Separator
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // ── Animation leaves ──
+            Text {
+                text: "Border Animations";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-13;
+                font-weight: 600;
+                color: HveColors.accent-cyan;
+            }
+
+            // Helper component for animation leaf
+            // borderangle leaf (enabled stop highlights the card)
+            Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a0-en && root.has-focus;
+                height: root.anim-borderangle-enabled ? 120px : 56px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Border Angle Animation";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 48px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: root.anim-borderangle-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+
+                            Rectangle {
+                                x: root.anim-borderangle-enabled ? 26px : 4px;
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: root.anim-borderangle-enabled ? HveColors.bg-dark : HveColors.text-muted;
+                                animate x { duration: 150ms; easing: ease-out; }
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.anim-changed("borderangle", !root.anim-borderangle-enabled, root.anim-borderangle-speed, root.anim-borderangle-bezier, root.anim-borderangle-style); }
+                            }
+                        }
+                    }
+
+                    if root.anim-borderangle-enabled : Text {
+                        text: "Animates the gradient direction around the border.";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    if root.anim-borderangle-enabled : Rectangle {
+                        property <bool> lit: root.local-focus == root.idx-a0-speed && root.has-focus;
+                        property <bool> grabbed: root.engaged-slider == root.idx-a0-speed && root.has-focus;
+                        height: 48px;
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-surface;
+
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == root.idx-a0-speed;
+                            focused: root.local-focus == root.idx-a0-speed && root.has-focus;
+                            label: "Speed";
+                            value: root.anim-borderangle-speed;
+                            min: 5;
+                            max: 120;
+                            changed(v) => { root.anim-changed("borderangle", root.anim-borderangle-enabled, v, root.anim-borderangle-bezier, root.anim-borderangle-style); }
+                        }
+                    }
+                }
+            }
+
+            if root.anim-borderangle-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a0-bezier && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == root.idx-a0-bezier && root.has-focus;
+                height: 48px;
                 border-width: 1px;
                 border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
                 border-radius: SkwdTokens.radius-8;
                 background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
-                hover-gap-out := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 3;
-                    focused: gap-out-wrap.lit;
-                    label: "Outer Gap";
-                    value: root.gap-out;
-                    min: 0;
-                    max: 30;
-                    changed(v) => { root.slider-changed(3, v); }
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+                    Text {
+                        text: "Bezier: " + root.anim-borderangle-bezier;
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "Curve";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.anim-borderangle-enabled : Text {
+                text: "Animation curve for the angle sweep (default plus preset curves).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+            if root.anim-borderangle-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a0-style && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == root.idx-a0-style && root.has-focus;
+                height: 48px;
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+                    Text {
+                        text: root.anim-borderangle-style == "" ? "Style: none" : "Style: " + root.anim-borderangle-style;
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "Style";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.anim-borderangle-enabled : Text {
+                text: "Loop style for the angle animation (none or loop).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // border leaf
+            Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a1-en && root.has-focus;
+                height: root.anim-border-enabled ? 120px : 56px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Border Pulse Animation";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 48px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: root.anim-border-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+
+                            Rectangle {
+                                x: root.anim-border-enabled ? 26px : 4px;
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: root.anim-border-enabled ? HveColors.bg-dark : HveColors.text-muted;
+                                animate x { duration: 150ms; easing: ease-out; }
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.anim-changed("border", !root.anim-border-enabled, root.anim-border-speed, root.anim-border-bezier, root.anim-border-style); }
+                            }
+                        }
+                    }
+
+                    if root.anim-border-enabled : Text {
+                        text: "Pulsing border thickness effect.";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    if root.anim-border-enabled : Rectangle {
+                        property <bool> lit: root.local-focus == root.idx-a1-speed && root.has-focus;
+                        property <bool> grabbed: root.engaged-slider == root.idx-a1-speed && root.has-focus;
+                        height: 48px;
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-surface;
+
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == root.idx-a1-speed;
+                            focused: root.local-focus == root.idx-a1-speed && root.has-focus;
+                            label: "Speed";
+                            value: root.anim-border-speed;
+                            min: 5;
+                            max: 120;
+                            changed(v) => { root.anim-changed("border", root.anim-border-enabled, v, root.anim-border-bezier, root.anim-border-style); }
+                        }
+                    }
+                }
+            }
+
+            if root.anim-border-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a1-bezier && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == root.idx-a1-bezier && root.has-focus;
+                height: 48px;
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+                    Text {
+                        text: "Bezier: " + root.anim-border-bezier;
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "Curve";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.anim-border-enabled : Text {
+                text: "Animation curve for the border pulse (default plus preset curves).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+            if root.anim-border-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a1-style && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == root.idx-a1-style && root.has-focus;
+                height: 48px;
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+                    Text {
+                        text: root.anim-border-style == "" ? "Style: none" : "Style: " + root.anim-border-style;
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "Style";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.anim-border-enabled : Text {
+                text: "Loop style for the border pulse (none or loop).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // fadeShadow leaf
+            Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a2-en && root.has-focus;
+                height: root.anim-fadeshadow-enabled ? 120px : 56px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Fade Shadow Animation";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 48px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: root.anim-fadeshadow-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+
+                            Rectangle {
+                                x: root.anim-fadeshadow-enabled ? 26px : 4px;
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: root.anim-fadeshadow-enabled ? HveColors.bg-dark : HveColors.text-muted;
+                                animate x { duration: 150ms; easing: ease-out; }
+                            }
+
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.anim-changed("fadeShadow", !root.anim-fadeshadow-enabled, root.anim-fadeshadow-speed, root.anim-fadeshadow-bezier, root.anim-fadeshadow-style); }
+                            }
+                        }
+                    }
+
+                    if root.anim-fadeshadow-enabled : Text {
+                        text: "Fading shadow pulse on focused windows.";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    if root.anim-fadeshadow-enabled : Rectangle {
+                        property <bool> lit: root.local-focus == root.idx-a2-speed && root.has-focus;
+                        property <bool> grabbed: root.engaged-slider == root.idx-a2-speed && root.has-focus;
+                        height: 48px;
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-surface;
+
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == root.idx-a2-speed;
+                            focused: root.local-focus == root.idx-a2-speed && root.has-focus;
+                            label: "Speed";
+                            value: root.anim-fadeshadow-speed;
+                            min: 5;
+                            max: 120;
+                            changed(v) => { root.anim-changed("fadeShadow", root.anim-fadeshadow-enabled, v, root.anim-fadeshadow-bezier, root.anim-fadeshadow-style); }
+                        }
+                    }
+                }
+            }
+
+            if root.anim-fadeshadow-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a2-bezier && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == root.idx-a2-bezier && root.has-focus;
+                height: 48px;
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+                    Text {
+                        text: "Bezier: " + root.anim-fadeshadow-bezier;
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "Curve";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.anim-fadeshadow-enabled : Text {
+                text: "Animation curve for the shadow fade (default plus preset curves).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+            if root.anim-fadeshadow-enabled : Rectangle {
+                property <bool> lit: root.local-focus == root.idx-a2-style && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == root.idx-a2-style && root.has-focus;
+                height: 48px;
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: space-between;
+                    Text {
+                        text: root.anim-fadeshadow-style == "" ? "Style: none" : "Style: " + root.anim-fadeshadow-style;
+                        color: HveColors.text;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "Style";
+                        color: HveColors.text-muted;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.anim-fadeshadow-enabled : Text {
+                text: "Loop style for the shadow fade (none or loop).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // Separator
+            Rectangle { height: 1px; background: HveColors.border; }
+
+            // ── Rule toggle ──
+            rule-wrap := Rectangle {
+                property <bool> lit: root.local-focus == root.idx-rule && root.has-focus;
+                height: self.lit ? 64px : 56px;
+                border-width: 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+
+                        Text {
+                            text: "Floating Window Rule";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                        }
+
+                        Text {
+                            text: "Adds noshadow + dim_around rules for floating windows.";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-11;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 48px;
+                        height: 24px;
+                        border-radius: 12px;
+                        background: root.tune-rule-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
+                        border-width: 1px;
+                        border-color: HveColors.border;
+
+                        Rectangle {
+                            x: root.tune-rule-enabled ? 26px : 4px;
+                            width: 16px;
+                            height: 16px;
+                            border-radius: 8px;
+                            background: root.tune-rule-enabled ? HveColors.bg-dark : HveColors.text-muted;
+                            animate x { duration: 150ms; easing: ease-out; }
+                        }
+
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { root.tune-rule-enabled = !root.tune-rule-enabled; }
+                        }
+                    }
                 }
             }
 
@@ -176,11 +1213,12 @@ component BordersTunePane inherits Rectangle {
                 height: 36px;
 
                 save-line-wrap := Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-save-name && root.has-focus;
                     horizontal-stretch: 1;
                     height: 36px;
-                    background: HveColors.bg-card;
+                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
                     border-radius: SkwdTokens.radius-8;
-                    border-width: save-input.has-focus ? 1px : 0px;
+                    border-width: save-input.has-focus || self.lit ? 1px : 0px;
                     border-color: #8fd8ff;
 
                     save-input := LineEdit {
@@ -200,10 +1238,13 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 save-btn := Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-save-btn && root.has-focus;
                     width: 84px;
                     height: 36px;
-                    background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                    background: save-ta.has-hover || self.lit ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
                     border-radius: SkwdTokens.radius-8;
+                    border-width: self.lit ? 2px : 0px;
+                    border-color: #8fd8ff;
 
                     Text {
                         text: "Save";
@@ -365,6 +1406,9 @@ export component BordersSection inherits Rectangle {
     callback save-border-preset(string);
     callback rename-border-preset(string, string);
     callback delete-border-preset(string);
+    // Slot management
+    callback add-color-slot();
+    callback remove-color-slot();
 
     // Tune layer — 4 geometry values
     in-out property <int> geom-size: 2;
@@ -373,56 +1417,130 @@ export component BordersSection inherits Rectangle {
     in-out property <int> geom-gap-out: 5;
     callback apply-geometry(int, int, int, int);
     // Tune pane — dynamic (Unit 2)
-    in-out property <string> tune-active-colors: "";
+    in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
     in-out property <int> tune-angle: 90;
     in-out property <string> tune-inactive-color: "";
     in-out property <string> tune-glow: "";
+    in-out property <bool> tune-glow-enabled: false;
+    in-out property <int> tune-glow-range: 20;
+    in-out property <int> tune-glow-render-power: 4;
+    in-out property <string> tune-glow-color: "p:primary";
+    in-out property <string> tune-glow-color-inactive: "p:surface_lowest";
     in-out property <string> tune-animations: "";
+    in-out property <bool> tune-anim-borderangle-enabled: false;
+    in-out property <int> tune-anim-borderangle-speed: 30;
+    in-out property <string> tune-anim-borderangle-bezier: "default";
+    in-out property <string> tune-anim-borderangle-style: "";
+    in-out property <bool> tune-anim-border-enabled: false;
+    in-out property <int> tune-anim-border-speed: 30;
+    in-out property <string> tune-anim-border-bezier: "default";
+    in-out property <string> tune-anim-border-style: "";
+    in-out property <bool> tune-anim-fadeshadow-enabled: false;
+    in-out property <int> tune-anim-fadeshadow-speed: 30;
+    in-out property <string> tune-anim-fadeshadow-bezier: "default";
+    in-out property <string> tune-anim-fadeshadow-style: "";
+    in-out property <[string]> tune-anim-curves: [];
     in-out property <bool> tune-rule-enabled: false;
-    callback tune-changed(string, int, string, string, string, bool);
+    callback tune-changed([string], int, string, string, string, bool);
 
     background: transparent;
     clip: true;
 
     // Responsive split from window width (ShellRoot), never root.width.
     in property <bool> two-col: false;
-    // split: sliders (4) + save form (1) = 5 items in tune pane
-    property <int> split: 5;
+    // Cards-first global sequence: 0..list-count-1 cards, then tune stops.
+    // split is the tune start; tune-count mirrors
+    // callbacks::borders_tune_stop_count (size, angle, inactive, N slots,
+    // add, remove, glow group, 3 anim leaves, rule, save name + button).
+    property <int> list-count: root.border-titles.length + root.user-preset-names.length;
+    property <int> split: root.list-count;
+    property <int> tune-n: clamp(root.tune-color-count, 0, 8);
+    out property <int> tune-count: 12 + root.tune-n + (root.tune-glow-enabled ? 4 : 0)
+        + (root.tune-anim-borderangle-enabled ? 3 : 0)
+        + (root.tune-anim-border-enabled ? 3 : 0)
+        + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
 
-    // ── Geometry debounce (R3) ──
+    function next-angle(a: int, up: bool) -> int {
+        if (up) {
+            if (a == 30) { return 45; }
+            if (a == 45) { return 90; }
+            return 30;
+        }
+        if (a == 90) { return 45; }
+        if (a == 45) { return 30; }
+        return 90;
+    }
+    function next-token(t: string, up: bool) -> string {
+        if (up) {
+            if (t == "p:primary") { return "p:secondary"; }
+            if (t == "p:secondary") { return "p:tertiary"; }
+            if (t == "p:tertiary") { return "p:error"; }
+            if (t == "p:error") { return "p:surface"; }
+            if (t == "p:surface") { return "p:surface_lowest"; }
+            return "p:primary";
+        }
+        if (t == "p:primary") { return "p:surface_lowest"; }
+        if (t == "p:surface_lowest") { return "p:surface"; }
+        if (t == "p:surface") { return "p:error"; }
+        if (t == "p:error") { return "p:tertiary"; }
+        if (t == "p:tertiary") { return "p:secondary"; }
+        return "p:primary";
+    }
+    function next-style(s: string, up: bool) -> string {
+        if (s == "") { return "loop"; }
+        return "";
+    }
+    function next-bezier(b: string, up: bool) -> string {
+        if (root.tune-anim-curves.length == 0) { return "default"; }
+        if (up) {
+            if (b == "default") { return root.tune-anim-curves[0]; }
+            if (root.tune-anim-curves.length > 1 && b == root.tune-anim-curves[0]) { return root.tune-anim-curves[1]; }
+            return "default";
+        }
+        if (b == "default") {
+            if (root.tune-anim-curves.length > 1) { return root.tune-anim-curves[1]; }
+            return root.tune-anim-curves[0];
+        }
+        if (b == root.tune-anim-curves[0]) { return "default"; }
+        return root.tune-anim-curves[0];
+    }
+    function rebuild-glow() -> string {
+        if (!root.tune-glow-enabled) { return ""; }
+        return "enabled:true|range:" + root.tune-glow-range + "|power:" + root.tune-glow-render-power + "|color:" + root.tune-glow-color + "|inactive:" + root.tune-glow-color-inactive + "|ox:0|oy:0";
+    }
+    function rebuild-anims() -> string {
+        return "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
+            + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
+            + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
+    }
+
+    // ── Geometry debounce (R3) — only size slider remains ──
     property <bool> size-init: false;
-    property <bool> radius-init: false;
-    property <bool> gap-in-init: false;
-    property <bool> gap-out-init: false;
     property <int> pending-size: root.geom-size;
-    property <int> pending-radius: root.geom-radius;
-    property <int> pending-gap-in: root.geom-gap-in;
-    property <int> pending-gap-out: root.geom-gap-out;
     property <int> last-size: root.geom-size;
-    property <int> last-radius: root.geom-radius;
-    property <int> last-gap-in: root.geom-gap-in;
-    property <int> last-gap-out: root.geom-gap-out;
     property <bool> geom-dirty: false;
 
     geom-timer := Timer {
         interval: 80ms;
         running: root.geom-dirty;
         triggered => {
-            if (root.pending-size != root.last-size || root.pending-radius != root.last-radius || root.pending-gap-in != root.last-gap-in || root.pending-gap-out != root.last-gap-out) {
-                root.apply-geometry(root.pending-size, root.pending-radius, root.pending-gap-in, root.pending-gap-out);
+            if (root.pending-size != root.last-size) {
+                root.apply-geometry(root.pending-size, 0, 0, 0);
                 root.last-size = root.pending-size;
-                root.last-radius = root.pending-radius;
-                root.last-gap-in = root.pending-gap-in;
-                root.last-gap-out = root.pending-gap-out;
             }
             root.geom-dirty = false;
         }
     }
 
-    // Slider adjust (keyboard arrows)
+    // Slider adjust (keyboard arrows) — every slider-like tune stop, clamped.
+    // Tune-local engaged index: 0=size, 1=angle, 2=inactive, slots, glow
+    // range/power/colors, anim speed/bezier/style. Toggles and actions are
+    // handled by tune-enter, never here.
     public function adjust-slider(up: bool) {
-        if (root.engaged-slider == 0) {
+        let e = root.engaged-slider;
+        let n = root.tune-n;
+        if (e == 0) {
             let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
             if (next != root.geom-size) {
                 root.geom-size = next;
@@ -432,40 +1550,172 @@ export component BordersSection inherits Rectangle {
                 root.geom-dirty = true;
                 geom-timer.restart();
             }
-        } else if (root.engaged-slider == 1) {
-            let next = up ? min(root.geom-radius + 1, 100) : max(root.geom-radius - 1, 0);
-            if (next != root.geom-radius) {
-                root.geom-radius = next;
-                if (!root.radius-init) { root.radius-init = true; return; }
-                root.pending-radius = next;
-                root.geom-dirty = false;
-                root.geom-dirty = true;
-                geom-timer.restart();
+            return;
+        }
+        if (e == 1) {
+            root.tune-angle = root.next-angle(root.tune-angle, up);
+            return;
+        }
+        if (e == 2) {
+            root.tune-inactive-color = root.next-token(root.tune-inactive-color, up);
+            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            return;
+        }
+        if (e >= 3 && e < 3 + n) {
+            let i = e - 3;
+            root.tune-active-colors[i] = root.next-token(root.tune-active-colors[i], up);
+            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            return;
+        }
+        if (root.tune-glow-enabled) {
+            if (e == 6 + n) {
+                let next = up ? min(root.tune-glow-range + 1, 40) : max(root.tune-glow-range - 1, 5);
+                if (next != root.tune-glow-range) {
+                    root.tune-glow-range = next;
+                    root.tune-glow = root.rebuild-glow();
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                return;
             }
-        } else if (root.engaged-slider == 2) {
-            let next = up ? min(root.geom-gap-in + 1, 30) : max(root.geom-gap-in - 1, 0);
-            if (next != root.geom-gap-in) {
-                root.geom-gap-in = next;
-                if (!root.gap-in-init) { root.gap-in-init = true; return; }
-                root.pending-gap-in = next;
-                root.geom-dirty = false;
-                root.geom-dirty = true;
-                geom-timer.restart();
+            if (e == 7 + n) {
+                let next = up ? min(root.tune-glow-render-power + 1, 8) : max(root.tune-glow-render-power - 1, 1);
+                if (next != root.tune-glow-render-power) {
+                    root.tune-glow-render-power = next;
+                    root.tune-glow = root.rebuild-glow();
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                return;
             }
-        } else if (root.engaged-slider == 3) {
-            let next = up ? min(root.geom-gap-out + 1, 30) : max(root.geom-gap-out - 1, 0);
-            if (next != root.geom-gap-out) {
-                root.geom-gap-out = next;
-                if (!root.gap-out-init) { root.gap-out-init = true; return; }
-                root.pending-gap-out = next;
-                root.geom-dirty = false;
-                root.geom-dirty = true;
-                geom-timer.restart();
+            if (e == 8 + n) {
+                root.tune-glow-color = root.next-token(root.tune-glow-color, up);
+                root.tune-glow = root.rebuild-glow();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == 9 + n) {
+                root.tune-glow-color-inactive = root.next-token(root.tune-glow-color-inactive, up);
+                root.tune-glow = root.rebuild-glow();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+        }
+        let base = root.tune-glow-enabled ? 10 + n : 6 + n;
+        let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
+        let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
+        if (root.tune-anim-borderangle-enabled) {
+            if (e == base + 1) {
+                let next = up ? min(root.tune-anim-borderangle-speed + 5, 120) : max(root.tune-anim-borderangle-speed - 5, 5);
+                root.tune-anim-borderangle-speed = next;
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == base + 2) {
+                root.tune-anim-borderangle-bezier = root.next-bezier(root.tune-anim-borderangle-bezier, up);
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == base + 3) {
+                root.tune-anim-borderangle-style = root.next-style(root.tune-anim-borderangle-style, up);
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+        }
+        if (root.tune-anim-border-enabled) {
+            if (e == b1 + 1) {
+                let next = up ? min(root.tune-anim-border-speed + 5, 120) : max(root.tune-anim-border-speed - 5, 5);
+                root.tune-anim-border-speed = next;
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == b1 + 2) {
+                root.tune-anim-border-bezier = root.next-bezier(root.tune-anim-border-bezier, up);
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == b1 + 3) {
+                root.tune-anim-border-style = root.next-style(root.tune-anim-border-style, up);
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+        }
+        if (root.tune-anim-fadeshadow-enabled) {
+            if (e == b2 + 1) {
+                let next = up ? min(root.tune-anim-fadeshadow-speed + 5, 120) : max(root.tune-anim-fadeshadow-speed - 5, 5);
+                root.tune-anim-fadeshadow-speed = next;
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == b2 + 2) {
+                root.tune-anim-fadeshadow-bezier = root.next-bezier(root.tune-anim-fadeshadow-bezier, up);
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
+            }
+            if (e == b2 + 3) {
+                root.tune-anim-fadeshadow-style = root.next-style(root.tune-anim-fadeshadow-style, up);
+                root.tune-animations = root.rebuild-anims();
+                root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                return;
             }
         }
     }
 
-    // Mouse-direct slider edits
+    // Enter on a tune stop: 0 = slider-like (PanelRoot engages), 1 = handled
+    // here (toggle, add/remove, save). Computed from the live tune-local
+    // focused index so hidden stops are never reachable.
+    public function tune-enter() -> int {
+        let local = root.focused-index - root.list-count;
+        let n = root.tune-n;
+        if (local == 3 + n && n < 8) { root.add-color-slot(); return 1; }
+        if (local == 4 + n && n > 2) { root.remove-color-slot(); return 1; }
+        if (local == 5 + n) {
+            root.tune-glow-enabled = !root.tune-glow-enabled;
+            root.tune-glow = root.rebuild-glow();
+            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            return 1;
+        }
+        let base = root.tune-glow-enabled ? 10 + n : 6 + n;
+        let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
+        let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
+        let tail = b2 + 1 + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
+        if (local == base) {
+            root.tune-anim-borderangle-enabled = !root.tune-anim-borderangle-enabled;
+            root.tune-animations = root.rebuild-anims();
+            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            return 1;
+        }
+        if (local == b1) {
+            root.tune-anim-border-enabled = !root.tune-anim-border-enabled;
+            root.tune-animations = root.rebuild-anims();
+            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            return 1;
+        }
+        if (local == b2) {
+            root.tune-anim-fadeshadow-enabled = !root.tune-anim-fadeshadow-enabled;
+            root.tune-animations = root.rebuild-anims();
+            root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+            return 1;
+        }
+        if (local == tail) {
+            root.tune-rule-enabled = !root.tune-rule-enabled;
+            return 1;
+        }
+        if (local == tail + 1) { return 1; }
+        if (local == tail + 2) {
+            if (root.preset-name != "") { root.save-border-preset(root.preset-name); }
+            return 1;
+        }
+        return 0;
+    }
+
+    // Mouse-direct slider edits — size only
     function slider-changed(id: int, v: int) {
         if (id == 0) {
             if (!root.size-init) { root.size-init = true; return; }
@@ -475,38 +1725,11 @@ export component BordersSection inherits Rectangle {
             root.geom-dirty = false;
             root.geom-dirty = true;
             geom-timer.restart();
-        } else if (id == 1) {
-            if (!root.radius-init) { root.radius-init = true; return; }
-            if (v == root.last-radius) { return; }
-            root.geom-radius = v;
-            root.pending-radius = v;
-            root.geom-dirty = false;
-            root.geom-dirty = true;
-            geom-timer.restart();
-        } else if (id == 2) {
-            if (!root.gap-in-init) { root.gap-in-init = true; return; }
-            if (v == root.last-gap-in) { return; }
-            root.geom-gap-in = v;
-            root.pending-gap-in = v;
-            root.geom-dirty = false;
-            root.geom-dirty = true;
-            geom-timer.restart();
-        } else if (id == 3) {
-            if (!root.gap-out-init) { root.gap-out-init = true; return; }
-            if (v == root.last-gap-out) { return; }
-            root.geom-gap-out = v;
-            root.pending-gap-out = v;
-            root.geom-dirty = false;
-            root.geom-dirty = true;
-            geom-timer.restart();
         }
     }
 
     // Sync pending/last when Rust snaps sliders
     changed geom-size => { if (!root.geom-dirty) { root.pending-size = root.geom-size; root.last-size = root.geom-size; } }
-    changed geom-radius => { if (!root.geom-dirty) { root.pending-radius = root.geom-radius; root.last-radius = root.geom-radius; } }
-    changed geom-gap-in => { if (!root.geom-dirty) { root.pending-gap-in = root.geom-gap-in; root.last-gap-in = root.geom-gap-in; } }
-    changed geom-gap-out => { if (!root.geom-dirty) { root.pending-gap-out = root.geom-gap-out; root.last-gap-out = root.geom-gap-out; } }
 
     VerticalLayout {
         spacing: 0px;
@@ -540,18 +1763,80 @@ export component BordersSection inherits Rectangle {
             BordersTunePane {
                 horizontal-stretch: 1;
                 size: root.geom-size;
-                radius: root.geom-radius;
-                gap-in: root.geom-gap-in;
-                gap-out: root.geom-gap-out;
                 focused-index: root.focused-index;
-                split: 0;
+                split: root.split;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
+                follow: root.focused-index >= root.split;
+                tune-active-colors: root.tune-active-colors;
+                tune-color-count: root.tune-color-count;
+                tune-angle: root.tune-angle;
+                tune-inactive-color: root.tune-inactive-color;
                 error-text: root.save-error;
                 preset-name <=> root.preset-name;
                 slider-changed(id, v) => { root.slider-changed(id, v); }
                 save-preset(name) => { root.save-border-preset(name); }
+                add-color-slot => { root.add-color-slot(); }
+                remove-color-slot => { root.remove-color-slot(); }
+                slot-color-changed(idx, v) => {
+                    root.tune-active-colors[idx] = v;
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                glow-enabled: root.tune-glow-enabled;
+                glow-range: root.tune-glow-range;
+                glow-render-power: root.tune-glow-render-power;
+                glow-color: root.tune-glow-color;
+                glow-color-inactive: root.tune-glow-color-inactive;
+                glow-changed(enabled, range, power, color, inactive) => {
+                    root.tune-glow-enabled = enabled;
+                    root.tune-glow-range = range;
+                    root.tune-glow-render-power = power;
+                    root.tune-glow-color = color;
+                    root.tune-glow-color-inactive = inactive;
+                    // Rebuild the encoded glow string for the tune-changed callback
+                    if enabled {
+                        root.tune-glow = "enabled:true|range:" + range + "|power:" + power + "|color:" + color + "|inactive:" + inactive + "|ox:0|oy:0";
+                    } else {
+                        root.tune-glow = "";
+                    }
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                anim-borderangle-enabled: root.tune-anim-borderangle-enabled;
+                anim-borderangle-speed: root.tune-anim-borderangle-speed;
+                anim-borderangle-bezier: root.tune-anim-borderangle-bezier;
+                anim-borderangle-style: root.tune-anim-borderangle-style;
+                anim-border-enabled: root.tune-anim-border-enabled;
+                anim-border-speed: root.tune-anim-border-speed;
+                anim-border-bezier: root.tune-anim-border-bezier;
+                anim-border-style: root.tune-anim-border-style;
+                anim-fadeshadow-enabled: root.tune-anim-fadeshadow-enabled;
+                anim-fadeshadow-speed: root.tune-anim-fadeshadow-speed;
+                anim-fadeshadow-bezier: root.tune-anim-fadeshadow-bezier;
+                anim-fadeshadow-style: root.tune-anim-fadeshadow-style;
+                anim-curves: root.tune-anim-curves;
+                tune-rule-enabled: root.tune-rule-enabled;
+                anim-changed(leaf, enabled, speed, bezier, style) => {
+                    if leaf == "borderangle" {
+                        root.tune-anim-borderangle-enabled = enabled;
+                        root.tune-anim-borderangle-speed = speed;
+                        root.tune-anim-borderangle-bezier = bezier;
+                        root.tune-anim-borderangle-style = style;
+                    } else if leaf == "border" {
+                        root.tune-anim-border-enabled = enabled;
+                        root.tune-anim-border-speed = speed;
+                        root.tune-anim-border-bezier = bezier;
+                        root.tune-anim-border-style = style;
+                    } else if leaf == "fadeShadow" {
+                        root.tune-anim-fadeshadow-enabled = enabled;
+                        root.tune-anim-fadeshadow-speed = speed;
+                        root.tune-anim-fadeshadow-bezier = bezier;
+                        root.tune-anim-fadeshadow-style = style;
+                    }
+                    root.tune-animations = "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
+                        + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
+                        + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
             }
 
             Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
@@ -563,9 +1848,9 @@ export component BordersSection inherits Rectangle {
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
                 active-index: root.active-index;
-                focused-index: root.focused-index - root.split;
+                focused-index: root.focused-index;
                 has-focus: root.has-focus;
-                follow: root.focused-index >= root.split;
+                follow: root.focused-index >= root.split; // DIAG-G
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
                 open-rename(name) => { root.rename-border-preset(name, ""); }
                 open-delete(name) => { root.delete-border-preset(name); }
@@ -579,18 +1864,79 @@ export component BordersSection inherits Rectangle {
             BordersTunePane {
                 vertical-stretch: 1;
                 size: root.geom-size;
-                radius: root.geom-radius;
-                gap-in: root.geom-gap-in;
-                gap-out: root.geom-gap-out;
                 focused-index: root.focused-index;
-                split: 0;
+                split: root.split;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
+                follow: root.focused-index >= root.split;
+                tune-active-colors: root.tune-active-colors;
+                tune-color-count: root.tune-color-count;
+                tune-angle: root.tune-angle;
+                tune-inactive-color: root.tune-inactive-color;
                 error-text: root.save-error;
                 preset-name <=> root.preset-name;
                 slider-changed(id, v) => { root.slider-changed(id, v); }
                 save-preset(name) => { root.save-border-preset(name); }
+                add-color-slot => { root.add-color-slot(); }
+                remove-color-slot => { root.remove-color-slot(); }
+                slot-color-changed(idx, v) => {
+                    root.tune-active-colors[idx] = v;
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                glow-enabled: root.tune-glow-enabled;
+                glow-range: root.tune-glow-range;
+                glow-render-power: root.tune-glow-render-power;
+                glow-color: root.tune-glow-color;
+                glow-color-inactive: root.tune-glow-color-inactive;
+                glow-changed(enabled, range, power, color, inactive) => {
+                    root.tune-glow-enabled = enabled;
+                    root.tune-glow-range = range;
+                    root.tune-glow-render-power = power;
+                    root.tune-glow-color = color;
+                    root.tune-glow-color-inactive = inactive;
+                    if enabled {
+                        root.tune-glow = "enabled:true|range:" + range + "|power:" + power + "|color:" + color + "|inactive:" + inactive + "|ox:0|oy:0";
+                    } else {
+                        root.tune-glow = "";
+                    }
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
+                anim-borderangle-enabled: root.tune-anim-borderangle-enabled;
+                anim-borderangle-speed: root.tune-anim-borderangle-speed;
+                anim-borderangle-bezier: root.tune-anim-borderangle-bezier;
+                anim-borderangle-style: root.tune-anim-borderangle-style;
+                anim-border-enabled: root.tune-anim-border-enabled;
+                anim-border-speed: root.tune-anim-border-speed;
+                anim-border-bezier: root.tune-anim-border-bezier;
+                anim-border-style: root.tune-anim-border-style;
+                anim-fadeshadow-enabled: root.tune-anim-fadeshadow-enabled;
+                anim-fadeshadow-speed: root.tune-anim-fadeshadow-speed;
+                anim-fadeshadow-bezier: root.tune-anim-fadeshadow-bezier;
+                anim-fadeshadow-style: root.tune-anim-fadeshadow-style;
+                anim-curves: root.tune-anim-curves;
+                tune-rule-enabled: root.tune-rule-enabled;
+                anim-changed(leaf, enabled, speed, bezier, style) => {
+                    if leaf == "borderangle" {
+                        root.tune-anim-borderangle-enabled = enabled;
+                        root.tune-anim-borderangle-speed = speed;
+                        root.tune-anim-borderangle-bezier = bezier;
+                        root.tune-anim-borderangle-style = style;
+                    } else if leaf == "border" {
+                        root.tune-anim-border-enabled = enabled;
+                        root.tune-anim-border-speed = speed;
+                        root.tune-anim-border-bezier = bezier;
+                        root.tune-anim-border-style = style;
+                    } else if leaf == "fadeShadow" {
+                        root.tune-anim-fadeshadow-enabled = enabled;
+                        root.tune-anim-fadeshadow-speed = speed;
+                        root.tune-anim-fadeshadow-bezier = bezier;
+                        root.tune-anim-fadeshadow-style = style;
+                    }
+                    root.tune-animations = "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
+                        + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
+                        + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
+                    root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+                }
             }
 
             Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
@@ -602,9 +1948,9 @@ export component BordersSection inherits Rectangle {
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
                 active-index: root.active-index;
-                focused-index: root.focused-index - root.split;
+                focused-index: root.focused-index;
                 has-focus: root.has-focus;
-                follow: root.focused-index >= root.split;
+                follow: root.focused-index >= root.split; // DIAG-G
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
                 open-rename(name) => { root.rename-border-preset(name, ""); }
                 open-delete(name) => { root.delete-border-preset(name); }

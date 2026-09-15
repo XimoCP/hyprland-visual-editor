@@ -32,6 +32,13 @@ export component MainWindow inherits Window {
     in-out property <color> accent-pink <=> HveColors.accent-pink;
     in-out property <color> accent-red <=> HveColors.accent-red;
     in-out property <color> border <=> HveColors.border;
+    // Palette token swatches for border preset display (A2 RESOLVED)
+    in-out property <color> token-primary <=> HveColors.token-primary;
+    in-out property <color> token-secondary <=> HveColors.token-secondary;
+    in-out property <color> token-tertiary <=> HveColors.token-tertiary;
+    in-out property <color> token-error <=> HveColors.token-error;
+    in-out property <color> token-surface <=> HveColors.token-surface;
+    in-out property <color> token-surface-lowest <=> HveColors.token-surface-lowest;
 
     // Immersive Gallery session (PR1.1): a transparent WINDOW background lets
     // the desktop show through behind the gallery's alpha-0 backdrop. Any other
@@ -115,12 +122,30 @@ export component MainWindow inherits Window {
     in property <[string]> user-border-preset-names;
     in property <[string]> user-border-preset-tags;
     // Tune pane — dynamic (Unit 2)
-    in-out property <string> tune-active-colors: "";
+    in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
     in-out property <int> tune-angle: 90;
     in-out property <string> tune-inactive-color: "";
     in-out property <string> tune-glow: "";
+    in-out property <bool> tune-glow-enabled: false;
+    in-out property <int> tune-glow-range: 20;
+    in-out property <int> tune-glow-render-power: 4;
+    in-out property <string> tune-glow-color: "p:primary";
+    in-out property <string> tune-glow-color-inactive: "p:surface_lowest";
     in-out property <string> tune-animations: "";
+    in-out property <bool> tune-anim-borderangle-enabled: false;
+    in-out property <int> tune-anim-borderangle-speed: 30;
+    in-out property <string> tune-anim-borderangle-bezier: "default";
+    in-out property <string> tune-anim-borderangle-style: "";
+    in-out property <bool> tune-anim-border-enabled: false;
+    in-out property <int> tune-anim-border-speed: 30;
+    in-out property <string> tune-anim-border-bezier: "default";
+    in-out property <string> tune-anim-border-style: "";
+    in-out property <bool> tune-anim-fadeshadow-enabled: false;
+    in-out property <int> tune-anim-fadeshadow-speed: 30;
+    in-out property <string> tune-anim-fadeshadow-bezier: "default";
+    in-out property <string> tune-anim-fadeshadow-style: "";
+    in-out property <[string]> tune-anim-curves: [];
     in-out property <bool> tune-rule-enabled: false;
     in-out property <string> animation-preset-name: "";
     in property <string> animation-save-error: "";
@@ -270,7 +295,10 @@ export component MainWindow inherits Window {
     callback panel-save-border-preset(string);
     callback panel-rename-border-preset(string, string);
     callback panel-delete-border-preset(string);
-    callback panel-tune-changed(string, int, string, string, string, bool);
+    callback panel-tune-changed([string], int, string, string, string, bool);
+    // Border slot management
+    callback panel-add-color-slot();
+    callback panel-remove-color-slot();
     callback panel-save-animation-preset(string);
     callback panel-rename-animation-preset(string, string);
     callback panel-delete-animation-preset(string);
@@ -386,6 +414,21 @@ export component MainWindow inherits Window {
         panel-border-save-error: root.border-save-error;
         panel-user-border-preset-names: root.user-border-preset-names;
         panel-user-border-preset-tags: root.user-border-preset-tags;
+        panel-tune-active-colors <=> root.tune-active-colors;
+        panel-tune-color-count <=> root.tune-color-count;
+        panel-tune-angle <=> root.tune-angle;
+        panel-tune-inactive-color <=> root.tune-inactive-color;
+        panel-tune-glow <=> root.tune-glow;
+        panel-tune-glow-enabled <=> root.tune-glow-enabled;
+        panel-tune-glow-range <=> root.tune-glow-range;
+        panel-tune-glow-render-power <=> root.tune-glow-render-power;
+        panel-tune-glow-color <=> root.tune-glow-color;
+        panel-tune-glow-color-inactive <=> root.tune-glow-color-inactive;
+        panel-tune-animations <=> root.tune-animations;
+        panel-tune-rule-enabled <=> root.tune-rule-enabled;
+        panel-tune-changed(colors, angle, inactive, glow, anims, rule) => { root.panel-tune-changed(colors, angle, inactive, glow, anims, rule); }
+        panel-add-color-slot => { root.panel-add-color-slot(); }
+        panel-remove-color-slot => { root.panel-remove-color-slot(); }
         panel-animation-preset-name <=> root.animation-preset-name;
         panel-animation-save-error: root.animation-save-error;
         panel-user-animation-preset-names: root.user-animation-preset-names;

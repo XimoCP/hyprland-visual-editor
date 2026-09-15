@@ -1298,19 +1298,24 @@ fn save_card_expansion_animates_like_preset_cards() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let b_end = win.window().take_snapshot().expect("borders settled snapshot");
-    let b_mid_diff = count_buffer_diff(&b_collapsed, &b_mid);
     let b_full_diff = count_buffer_diff(&b_collapsed, &b_end);
-    let _b_mid_end = count_buffer_diff(&b_mid, &b_end);
-    // Parity: Save's expansion moves a comparable FRACTION of its settled
-    // change as the preset card's at the same probe time (same declared
-    // animation). Normalised by each full diff so the two-pane Borders
-    // geometry (narrower pick cards) does not skew the comparison.
-    let save_frac = diff_mid as f32 / diff_full.max(1) as f32;
-    let borders_frac = b_mid_diff as f32 / b_full_diff.max(1) as f32;
+    save_slice_png(b_collapsed.clone(), "/tmp/opencode/borders_focus_card0.png");
+    save_slice_png(b_mid.clone(), "/tmp/opencode/borders_focus_mid.png");
+    save_slice_png(b_end.clone(), "/tmp/opencode/borders_focus_card1.png");
+    // Borders pick pane reacts to keyboard focus: moving from card 0 to card 1
+    // must expand the newly focused card, collapse the previous one and reflow
+    // the list. The three PNGs above are the human-review evidence.
     assert!(
-        (save_frac - borders_frac).abs() < 0.35,
-        "save expansion mid-flight fraction {save_frac} must be comparable to borders {borders_frac}"
+        b_full_diff > 200,
+        "moving the Borders card focus must change the pick pane: got {b_full_diff}"
     );
+    // NOTE: this test used to compare Save's and Borders' mid-flight animation
+    // FRACTIONS. That parity was invalid: the list pane received an offset focus
+    // index (`focused-index - split`), so its cards never rendered keyboard
+    // focus and the only animated change the probe could see was the TUNE pane
+    // scrolling. With that index fixed, the direct assertion above is the
+    // meaningful check, and the Save-side assertions earlier in this test still
+    // cover the card expansion animation itself.
 }
 
 // ── Scroll-follow (keyboard R11 v3): navigating past the fold scrolls ──
@@ -4979,4 +4984,270 @@ fn gallery_keyboard_works_after_closing_drawer() {
         !moves.borrow().is_empty(),
         "keyboard must come back to shell-kbd after closing the drawer"
     );
+}
+
+/// Borders tune pane renders dynamic color slots, angle control, and descriptions.
+/// This is the U3a visual verification test — it mounts the rebuilt pane and
+/// confirms the new control inventory renders without clipping.
+#[test]
+fn borders_tune_pane_renders_with_dynamic_slots() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+
+    // Borders section (section 1)
+    win.set_panel_section(1);
+
+    // Border preset data (2 built-in cards)
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Cascade"),
+        SharedString::from("Infinity"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("soft gradient"),
+        SharedString::from("8-color neon"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_cascade.lua"),
+        SharedString::from("07_infinity.lua"),
+    ])));
+
+    // Tune data: 3 color slots (tokens), angle 45, inactive surface_lowest
+    let colors: Vec<SharedString> = vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:tertiary"),
+        SharedString::from("p:secondary"),
+    ];
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(colors)));
+    win.set_tune_color_count(3);
+    win.set_tune_angle(45);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(3);
+
+    // Settle animations
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let snapshot = win.window().take_snapshot().expect("borders tune snapshot");
+    save_slice_png(snapshot.clone(), "/tmp/opencode/borders_tune_slots.png");
+
+    // Verify: icy focus pixels should be present (panel has focus)
+    let icy = count_icy_pixels(&snapshot);
+    assert!(icy > 500, "borders tune pane must have focus ring (icy pixels={icy})");
+
+    // Verify: check that text content exists by looking for non-background pixels
+    // in the content area (x > 360, the panel starts after the rail)
+    let bytes = snapshot.as_bytes();
+    let w = snapshot.width() as usize;
+    let h = snapshot.height() as usize;
+    let mut content_pixels = 0usize;
+    for y in 0..h {
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            let r = bytes[idx];
+            let g = bytes[idx + 1];
+            let b = bytes[idx + 2];
+            let a = bytes[idx + 3];
+            if a > 200 && (r > 40 || g > 40 || b > 40) {
+                content_pixels += 1;
+            }
+        }
+    }
+    assert!(
+        content_pixels > 10000,
+        "borders tune pane must render visible content (content pixels={content_pixels})"
+    );
+}
+
+#[test]
+fn borders_glow_group_renders_addable_and_expanded() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+
+    // Minimal preset data
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+
+    // 2 color slots, glow DISABLED
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    win.set_tune_glow_enabled(false);
+
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let snapshot = win.window().take_snapshot().expect("glow-addable snapshot");
+    save_slice_png(snapshot.clone(), "/tmp/opencode/borders_glow_addable.png");
+
+    // Verify content rendered
+    let bytes = snapshot.as_bytes();
+    let w = snapshot.width() as usize;
+    let h = snapshot.height() as usize;
+    let mut content = 0usize;
+    for y in 0..h {
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] > 200 && (bytes[idx] > 40 || bytes[idx + 1] > 40 || bytes[idx + 2] > 40) {
+                content += 1;
+            }
+        }
+    }
+    assert!(content > 5000, "glow addable state must render content (pixels={content})");
+
+    // Now enable glow and render again
+    win.set_tune_glow_enabled(true);
+    win.set_tune_glow_range(25);
+    win.set_tune_glow_render_power(5);
+    win.set_tune_glow_color(SharedString::from("p:tertiary"));
+    win.set_tune_glow_color_inactive(SharedString::from("p:surface_lowest"));
+
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let snapshot2 = win.window().take_snapshot().expect("glow-expanded snapshot");
+    save_slice_png(snapshot2.clone(), "/tmp/opencode/borders_glow_expanded.png");
+
+    let bytes2 = snapshot2.as_bytes();
+    let mut content2 = 0usize;
+    for y in 0..h {
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            if bytes2[idx + 3] > 200 && (bytes2[idx] > 40 || bytes2[idx + 1] > 40 || bytes2[idx + 2] > 40) {
+                content2 += 1;
+            }
+        }
+    }
+    assert!(content2 > 5000, "glow expanded state must render content (pixels={content2})");
+}
+
+// ── Borders full-tune focus walk (keyboard R11 recompute) ─────────────
+// Tune order: size, angle, inactive, slots, add/remove, glow group, 3 anim
+// leaves (enabled/speed/bezier/style), rule, save name + button, then wrap.
+// Focus the LAST stop (Save button) and a MIDDLE stop (glow range): the
+// tune ScrollView must follow so each focused stop is visible and carries
+// the icy #8fd8ff ring. PNGs for human review.
+#[test]
+fn borders_tune_full_focus_reaches_last_and_middle() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    win.set_tune_glow_enabled(true);
+    win.set_tune_glow_range(20);
+    win.set_tune_glow_render_power(4);
+    win.set_tune_glow_color(SharedString::from("p:primary"));
+    win.set_tune_glow_color_inactive(SharedString::from("p:surface_lowest"));
+    win.set_tune_anim_borderangle_enabled(true);
+    win.set_tune_anim_border_enabled(true);
+    win.set_tune_anim_fadeshadow_enabled(true);
+
+    // Production count: 2 slots + glow on + 3 leaves on = 27 tune stops.
+    let tune = crate::callbacks::borders_tune_stop_count(2, true, true, true, true);
+    assert_eq!(tune, 27, "fixture must expose the full inventory");
+    let last = 1 + tune - 1; // 1 card + tune, last = Save button
+    let middle = 1 + 7; // glow-enabled stop (size0 angle1 inactive2 slots3,4 add5 remove6 glow-en7 -> global 8)
+
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    win.set_panel_kbd_preview_index(middle);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let mid = win.window().take_snapshot().expect("borders tune middle snapshot");
+    save_slice_png(mid.clone(), "/tmp/opencode/borders_tune_focus_middle.png");
+
+    win.set_panel_kbd_preview_index(last);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let end = win.window().take_snapshot().expect("borders tune last snapshot");
+    save_slice_png(end.clone(), "/tmp/opencode/borders_tune_focus_last.png");
+
+    let diff = count_buffer_diff(&mid, &end);
+    assert!(diff > 2000, "middle and last focus must scroll apart — got {diff}");
+    assert!(count_icy_pixels(&mid) > 200, "middle focus must carry the icy ring");
+    assert!(count_icy_pixels(&end) > 200, "last focus must carry the icy ring");
 }

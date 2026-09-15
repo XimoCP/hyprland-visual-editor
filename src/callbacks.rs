@@ -1009,9 +1009,54 @@ mod panel_save_tests {
     }
 }
 
+/// Borders tune stop count (keyboard R11 recompute).
+/// Order: size, angle, inactive, N slots, add, remove, glow-enabled,
+/// (+range, power, color, inactive when on), per anim leaf enabled
+/// (+speed, bezier, style when on) x3, rule, save-name, save-button.
+/// N is clamped to 0..8 so empty models never yield negative counts.
+#[allow(dead_code)]
+pub fn borders_tune_stop_count(
+    slot_count: i32,
+    glow_enabled: bool,
+    anim0: bool,
+    anim1: bool,
+    anim2: bool,
+) -> i32 {
+    let n = slot_count.clamp(0, 8);
+    let mut total = 3 + n + 2 + 1;
+    if glow_enabled {
+        total += 4;
+    }
+    for enabled in [anim0, anim1, anim2] {
+        total += 1;
+        if enabled {
+            total += 3;
+        }
+    }
+    total += 1 + 2;
+    total
+}
+
+/// Borders full-sequence step (cards-first: 0..list-1 cards, then tune).
+/// Wraps circularly; empty total stays 0.
+#[allow(dead_code)]
+pub fn borders_nav_step(current: i32, delta: i32, total: usize) -> i32 {
+    if total == 0 {
+        return 0;
+    }
+    let t = total as i32;
+    if delta > 0 {
+        if current >= t - 1 { 0 } else { current + 1 }
+    } else if delta < 0 {
+        if current <= 0 { t - 1 } else { current - 1 }
+    } else {
+        current.clamp(0, t - 1)
+    }
+}
+
 #[cfg(test)]
 mod keyboard_nav_tests {
-    use super::save_nav_step;
+    use super::{borders_nav_step, borders_tune_stop_count, save_nav_step};
 
     #[test]
     fn test_save_nav_step_clamps_and_starts() {
@@ -1021,6 +1066,24 @@ mod keyboard_nav_tests {
         assert_eq!(save_nav_step(0, -1, 3), 2, "backward wraps 0 -> last (1:1 legacy)");
         assert_eq!(save_nav_step(2, -1, 3), 1, "up steps backward");
         assert_eq!(save_nav_step(1, 1, 0), -1, "empty list has no focus");
+    }
+
+    #[test]
+    fn test_borders_tune_count_covers_full_inventory() {
+        assert_eq!(borders_tune_stop_count(2, false, false, false, false), 14);
+        assert_eq!(borders_tune_stop_count(8, true, true, true, true), 33);
+        assert_eq!(borders_tune_stop_count(3, true, false, false, false), 19);
+        assert_eq!(borders_tune_stop_count(0, false, false, false, false), 12);
+        assert_eq!(borders_tune_stop_count(99, false, false, false, false), 20);
+    }
+
+    #[test]
+    fn test_borders_nav_wraps_over_full_sequence() {
+        assert_eq!(borders_nav_step(0, 1, 16), 1);
+        assert_eq!(borders_nav_step(15, 1, 16), 0, "last tune wraps to first card");
+        assert_eq!(borders_nav_step(0, -1, 16), 15, "first card wraps to last tune");
+        assert_eq!(borders_nav_step(5, -1, 16), 4);
+        assert_eq!(borders_nav_step(0, 0, 0), 0, "empty stays 0");
     }
 }
 

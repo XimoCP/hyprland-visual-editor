@@ -160,12 +160,30 @@ export component ShellRoot inherits Rectangle {
     in property <[string]> panel-user-border-preset-names;
     in property <[string]> panel-user-border-preset-tags;
     // Tune pane — dynamic (Unit 2)
-    in-out property <string> panel-tune-active-colors: "";
+    in-out property <[string]> panel-tune-active-colors: [];
     in-out property <int> panel-tune-color-count: 0;
     in-out property <int> panel-tune-angle: 90;
     in-out property <string> panel-tune-inactive-color: "";
     in-out property <string> panel-tune-glow: "";
+    in-out property <bool> panel-tune-glow-enabled: false;
+    in-out property <int> panel-tune-glow-range: 20;
+    in-out property <int> panel-tune-glow-render-power: 4;
+    in-out property <string> panel-tune-glow-color: "p:primary";
+    in-out property <string> panel-tune-glow-color-inactive: "p:surface_lowest";
     in-out property <string> panel-tune-animations: "";
+    in-out property <bool> panel-tune-anim-borderangle-enabled: false;
+    in-out property <int> panel-tune-anim-borderangle-speed: 30;
+    in-out property <string> panel-tune-anim-borderangle-bezier: "default";
+    in-out property <string> panel-tune-anim-borderangle-style: "";
+    in-out property <bool> panel-tune-anim-border-enabled: false;
+    in-out property <int> panel-tune-anim-border-speed: 30;
+    in-out property <string> panel-tune-anim-border-bezier: "default";
+    in-out property <string> panel-tune-anim-border-style: "";
+    in-out property <bool> panel-tune-anim-fadeshadow-enabled: false;
+    in-out property <int> panel-tune-anim-fadeshadow-speed: 30;
+    in-out property <string> panel-tune-anim-fadeshadow-bezier: "default";
+    in-out property <string> panel-tune-anim-fadeshadow-style: "";
+    in-out property <[string]> panel-tune-anim-curves: [];
     in-out property <bool> panel-tune-rule-enabled: false;
     // Animation preset state
     in-out property <string> panel-animation-preset-name: "";
@@ -248,7 +266,10 @@ export component ShellRoot inherits Rectangle {
     callback panel-save-border-preset(string);
     callback panel-rename-border-preset(string, string);
     callback panel-delete-border-preset(string);
-    callback panel-tune-changed(string, int, string, string, string, bool);
+    callback panel-tune-changed([string], int, string, string, string, bool);
+    // Border slot management
+    callback panel-add-color-slot();
+    callback panel-remove-color-slot();
     callback panel-save-animation-preset(string);
     callback panel-rename-animation-preset(string, string);
     callback panel-delete-animation-preset(string);
@@ -524,7 +545,25 @@ export component ShellRoot inherits Rectangle {
                     tune-angle <=> root.panel-tune-angle;
                     tune-inactive-color <=> root.panel-tune-inactive-color;
                     tune-glow <=> root.panel-tune-glow;
+                    tune-glow-enabled <=> root.panel-tune-glow-enabled;
+                    tune-glow-range <=> root.panel-tune-glow-range;
+                    tune-glow-render-power <=> root.panel-tune-glow-render-power;
+                    tune-glow-color <=> root.panel-tune-glow-color;
+                    tune-glow-color-inactive <=> root.panel-tune-glow-color-inactive;
                     tune-animations <=> root.panel-tune-animations;
+                    tune-anim-borderangle-enabled <=> root.panel-tune-anim-borderangle-enabled;
+                    tune-anim-borderangle-speed <=> root.panel-tune-anim-borderangle-speed;
+                    tune-anim-borderangle-bezier <=> root.panel-tune-anim-borderangle-bezier;
+                    tune-anim-borderangle-style <=> root.panel-tune-anim-borderangle-style;
+                    tune-anim-border-enabled <=> root.panel-tune-anim-border-enabled;
+                    tune-anim-border-speed <=> root.panel-tune-anim-border-speed;
+                    tune-anim-border-bezier <=> root.panel-tune-anim-border-bezier;
+                    tune-anim-border-style <=> root.panel-tune-anim-border-style;
+                    tune-anim-fadeshadow-enabled <=> root.panel-tune-anim-fadeshadow-enabled;
+                    tune-anim-fadeshadow-speed <=> root.panel-tune-anim-fadeshadow-speed;
+                    tune-anim-fadeshadow-bezier <=> root.panel-tune-anim-fadeshadow-bezier;
+                    tune-anim-fadeshadow-style <=> root.panel-tune-anim-fadeshadow-style;
+                    tune-anim-curves <=> root.panel-tune-anim-curves;
                     tune-rule-enabled <=> root.panel-tune-rule-enabled;
                     animation-preset-name <=> root.panel-animation-preset-name;
                     animation-save-error: root.panel-animation-save-error;
@@ -592,6 +631,8 @@ export component ShellRoot inherits Rectangle {
                     rename-border-preset(old, new) => { root.panel-rename-border-preset(old, new); }
                     delete-border-preset(name) => { root.panel-delete-border-preset(name); }
                     tune-changed(colors, angle, inactive, glow, anims, rule) => { root.panel-tune-changed(colors, angle, inactive, glow, anims, rule); }
+                    add-color-slot => { root.panel-add-color-slot(); }
+                    remove-color-slot => { root.panel-remove-color-slot(); }
                     save-animation-preset(name) => { root.panel-save-animation-preset(name); }
                     rename-animation-preset(old, new) => { root.panel-rename-animation-preset(old, new); }
                     delete-animation-preset(name) => { root.panel-delete-animation-preset(name); }

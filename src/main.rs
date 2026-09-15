@@ -2725,21 +2725,85 @@ fn main() -> Result<(), slint::PlatformError> {
                         use crate::preset_store::PresetStore;
                         let count = params.active_colors.len() as i32;
                         w.set_tune_color_count(count);
-                        w.set_tune_active_colors(slint::SharedString::from(PresetStore::encode_colors(&params.active_colors).as_str()));
+                        let color_entries: Vec<slint::SharedString> = params.active_colors.iter().map(|c| {
+                            slint::SharedString::from(PresetStore::encode_colors(&[c.clone()]).as_str())
+                        }).collect();
+                        w.set_tune_active_colors(slint::ModelRc::from(color_entries.as_slice()));
                         w.set_tune_angle(params.angle);
                         w.set_tune_inactive_color(slint::SharedString::from(PresetStore::encode_inactive(&params.inactive).as_str()));
                         w.set_tune_glow(slint::SharedString::from(PresetStore::encode_glow(params.glow.as_ref()).as_str()));
+                        // Set individual glow properties for the UI
+                        if let Some(ref glow) = params.glow {
+                            w.set_tune_glow_enabled(glow.enabled);
+                            w.set_tune_glow_range(glow.range);
+                            w.set_tune_glow_render_power(glow.render_power);
+                            w.set_tune_glow_color(slint::SharedString::from(PresetStore::encode_colors(&[glow.color.clone()]).as_str()));
+                            w.set_tune_glow_color_inactive(slint::SharedString::from(PresetStore::encode_colors(&[glow.color_inactive.clone()]).as_str()));
+                        } else {
+                            w.set_tune_glow_enabled(false);
+                            w.set_tune_glow_range(20);
+                            w.set_tune_glow_render_power(4);
+                            w.set_tune_glow_color("p:primary".into());
+                            w.set_tune_glow_color_inactive("p:surface_lowest".into());
+                        }
                         w.set_tune_rule_enabled(params.rule_enabled);
                         w.set_tune_animations(slint::SharedString::from(PresetStore::encode_animations(&params.animations).as_str()));
+                        // Set individual animation leaf properties
+                        for leaf in &params.animations {
+                            match leaf.leaf.as_str() {
+                                "borderangle" => {
+                                    w.set_tune_anim_borderangle_enabled(leaf.enabled);
+                                    w.set_tune_anim_borderangle_speed(leaf.speed.unwrap_or(30));
+                                    w.set_tune_anim_borderangle_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
+                                    w.set_tune_anim_borderangle_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                                }
+                                "border" => {
+                                    w.set_tune_anim_border_enabled(leaf.enabled);
+                                    w.set_tune_anim_border_speed(leaf.speed.unwrap_or(30));
+                                    w.set_tune_anim_border_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
+                                    w.set_tune_anim_border_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                                }
+                                "fadeShadow" => {
+                                    w.set_tune_anim_fadeshadow_enabled(leaf.enabled);
+                                    w.set_tune_anim_fadeshadow_speed(leaf.speed.unwrap_or(30));
+                                    w.set_tune_anim_fadeshadow_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
+                                    w.set_tune_anim_fadeshadow_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Set file-local curves
+                        let curve_names: Vec<slint::SharedString> = params.curves.iter()
+                            .map(|s| slint::SharedString::from(s.as_str()))
+                            .collect();
+                        w.set_tune_anim_curves(slint::ModelRc::from(curve_names.as_slice()));
                         // D3: missing border_size keeps current slider (already done via snap above)
                     }
                 } else {
                     // Deselect: clear tune properties
                     w.set_tune_color_count(0);
-                    w.set_tune_active_colors(String::new().into());
+                    w.set_tune_active_colors(slint::ModelRc::default());
                     w.set_tune_angle(90);
                     w.set_tune_inactive_color(String::new().into());
                     w.set_tune_glow(String::new().into());
+                    w.set_tune_glow_enabled(false);
+                    w.set_tune_glow_range(20);
+                    w.set_tune_glow_render_power(4);
+                    w.set_tune_glow_color("p:primary".into());
+                    w.set_tune_glow_color_inactive("p:surface_lowest".into());
+                    w.set_tune_anim_borderangle_enabled(false);
+                    w.set_tune_anim_borderangle_speed(30);
+                    w.set_tune_anim_borderangle_bezier("default".into());
+                    w.set_tune_anim_borderangle_style("".into());
+                    w.set_tune_anim_border_enabled(false);
+                    w.set_tune_anim_border_speed(30);
+                    w.set_tune_anim_border_bezier("default".into());
+                    w.set_tune_anim_border_style("".into());
+                    w.set_tune_anim_fadeshadow_enabled(false);
+                    w.set_tune_anim_fadeshadow_speed(30);
+                    w.set_tune_anim_fadeshadow_bezier("default".into());
+                    w.set_tune_anim_fadeshadow_style("".into());
+                    w.set_tune_anim_curves(slint::ModelRc::default());
                     w.set_tune_rule_enabled(false);
                     w.set_tune_animations(String::new().into());
                 }
@@ -2792,7 +2856,10 @@ fn main() -> Result<(), slint::PlatformError> {
             tracing::debug!("[borders][preset] save name={}", name_str);
             let result = if let Some(w) = weak.upgrade() {
                 // Task 2.4: build params from tune properties → generate_border_lua_full
-                let tune_colors = w.get_tune_active_colors().to_string();
+                let tune_colors: Vec<String> = {
+                    let model = w.get_tune_active_colors();
+                    (0..model.row_count()).map(|i| model.row_data(i).unwrap_or_default().to_string()).collect()
+                };
                 let tune_inactive = w.get_tune_inactive_color().to_string();
                 let tune_glow = w.get_tune_glow().to_string();
                 let tune_anims = w.get_tune_animations().to_string();
@@ -2804,7 +2871,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
                 use crate::preset_store::PresetStore;
                 let params = crate::border_preset::BorderParams {
-                    active_colors: PresetStore::decode_colors(&tune_colors),
+                    active_colors: PresetStore::decode_colors(&tune_colors.join(",")),
                     angle,
                     inactive: PresetStore::decode_colors(&tune_inactive).into_iter().next()
                         .unwrap_or(crate::border_preset::BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest)),
@@ -2925,8 +2992,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 st.cfg().border_size
             };
+            // colors is now a [string] model; join for decode_colors
+            let colors_joined: String = {
+                let mut parts = Vec::new();
+                for i in 0..colors.row_count() {
+                    if let Some(s) = colors.row_data(i) {
+                        parts.push(s.to_string());
+                    }
+                }
+                parts.join(",")
+            };
             let params = crate::border_preset::BorderParams {
-                active_colors: PresetStore::decode_colors(&colors.to_string()),
+                active_colors: PresetStore::decode_colors(&colors_joined),
                 angle,
                 inactive: PresetStore::decode_colors(&inactive.to_string()).into_iter().next()
                     .unwrap_or(crate::border_preset::BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest)),
@@ -2944,6 +3021,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Err(e) = st.engine().run_script("assemble.sh", &[]) {
                         tracing::error!("[borders][tune] assemble after draft write failed: {}", e);
                         drop(st);
+                        // Robustness fix (U3 carry-over): remove the draft fragment
+                        // so a later successful assemble cannot silently pick up
+                        // stale state from this failed attempt.
+                        PresetStore::remove_draft(&proj_c);
                         if let Some(w) = weak.upgrade() {
                             w.set_border_save_error(slint::SharedString::from(
                                 &format!("Live preview failed: {}", e),

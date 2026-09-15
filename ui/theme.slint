@@ -22,4 +22,16 @@ export global HveColors {
     in-out property <color> accent-pink: #f472b6;
     in-out property <color> accent-red: #f87171;
     in-out property <color> border: #30363d;
+    // Palette token swatches for border preset display (A2 RESOLVED).
+    // These mirror the ColorScheme values so the tune pane can resolve
+    // token names to live colors without 4-layer plumbing.
+    in-out property <color> token-primary: #38bdf8;
+    in-out property <color> token-secondary: #fbbf24;
+    in-out property <color> token-tertiary: #c084fc;
+    // token-error uses accent (A2 fallback chain: accent, else fixed alert red).
+    // The token NAME is always shown in the UI so the fallback never misleads,
+    // and saved files always re-emit the bare "error" token.
+    in-out property <color> token-error: #34d399;
+    in-out property <color> token-surface: #1e293b;
+    in-out property <color> token-surface-lowest: #0f172a;
 }

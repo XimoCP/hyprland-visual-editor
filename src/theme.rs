@@ -221,6 +221,15 @@ pub fn apply_theme(window: &crate::MainWindow, colors: &ColorScheme) {
     window.set_accent_pink(t);
     window.set_accent_red(accent_red);
     window.set_border(border);
+    // Palette token swatches for border preset display (A2 RESOLVED).
+    // token-error uses accent; the token NAME is always shown in the UI
+    // so the fallback never misleads, and saved files re-emit bare "error".
+    window.set_token_primary(p);
+    window.set_token_secondary(s);
+    window.set_token_tertiary(t);
+    window.set_token_error(acc);
+    window.set_token_surface(surf);
+    window.set_token_surface_lowest(surf_low);
 }
 
 // ─── Logo rendering ────────────────────────────────────────────

@@ -69,12 +69,30 @@ export component PanelRoot inherits Rectangle {
     in property <[string]> user-border-preset-names;
     in property <[string]> user-border-preset-tags;
     // Tune pane — dynamic (Unit 2)
-    in-out property <string> tune-active-colors: "";
+    in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
     in-out property <int> tune-angle: 90;
     in-out property <string> tune-inactive-color: "";
     in-out property <string> tune-glow: "";
+    in-out property <bool> tune-glow-enabled: false;
+    in-out property <int> tune-glow-range: 20;
+    in-out property <int> tune-glow-render-power: 4;
+    in-out property <string> tune-glow-color: "p:primary";
+    in-out property <string> tune-glow-color-inactive: "p:surface_lowest";
     in-out property <string> tune-animations: "";
+    in-out property <bool> tune-anim-borderangle-enabled: false;
+    in-out property <int> tune-anim-borderangle-speed: 30;
+    in-out property <string> tune-anim-borderangle-bezier: "default";
+    in-out property <string> tune-anim-borderangle-style: "";
+    in-out property <bool> tune-anim-border-enabled: false;
+    in-out property <int> tune-anim-border-speed: 30;
+    in-out property <string> tune-anim-border-bezier: "default";
+    in-out property <string> tune-anim-border-style: "";
+    in-out property <bool> tune-anim-fadeshadow-enabled: false;
+    in-out property <int> tune-anim-fadeshadow-speed: 30;
+    in-out property <string> tune-anim-fadeshadow-bezier: "default";
+    in-out property <string> tune-anim-fadeshadow-style: "";
+    in-out property <[string]> tune-anim-curves: [];
     in-out property <bool> tune-rule-enabled: false;
     // Animation preset state
     // Motion pick layer (R4) — 19 cards from scan("animations")
@@ -149,7 +167,10 @@ export component PanelRoot inherits Rectangle {
     callback save-border-preset(string);
     callback rename-border-preset(string, string);
     callback delete-border-preset(string);
-    callback tune-changed(string, int, string, string, string, bool);
+    callback tune-changed([string], int, string, string, string, bool);
+    // Border slot management
+    callback add-color-slot();
+    callback remove-color-slot();
     // Animation preset CRUD
     callback save-animation-preset(string);
     callback rename-animation-preset(string, string);
@@ -175,6 +196,9 @@ export component PanelRoot inherits Rectangle {
     // `in` properties. Keyboard never uses these to steal Slint focus.
     in-out property <int> borders-focused-index: 0;
     in-out property <int> borders-engaged-slider: -1;
+    // Cards-first Borders sequence: list cards then every tune stop.
+    property <int> borders-list-len: root.border-files.length + root.user-border-preset-names.length;
+    property <int> borders-total: root.borders-list-len + borders.tune-count;
     in-out property <int> motion-focused-index: 0;
     in-out property <int> motion-engaged-slider: -1;
     in-out property <int> filters-focused-index: 0;
@@ -367,8 +391,11 @@ export component PanelRoot inherits Rectangle {
                             return reject;
                         }
                         if (root.section == 1) {
-                            // Borders: Down/Up walk cards+sliders, Enter applies
-                            // or engages a slider, Left/Right adjust when engaged.
+                            // Borders: Down/Up walk cards + EVERY tune stop top to
+                            // bottom, then wrap. Return/Space engages slider-like
+                            // stops (arrows adjust, clamped); other stops act
+                            // at once. Tune order: size, angle, inactive, slots,
+                            // add/remove, glow group, 3 anim leaves, rule, save.
                             if (event.text == Key.Escape) {
                                 if (root.borders-engaged-slider >= 0) { root.borders-engaged-slider = -1; }
                                 else { root.back(); }
@@ -377,20 +404,20 @@ export component PanelRoot inherits Rectangle {
                             if (root.borders-engaged-slider >= 0) {
                                 if (event.text == Key.RightArrow) { borders.adjust-slider(true); return accept; }
                                 if (event.text == Key.LeftArrow) { borders.adjust-slider(false); return accept; }
-                                // ↑/↓ exit the engagement and move the row (same
-                                // rule as the System compound rows); Enter/Space exits.
+                                // ↑/↓ exit the engagement and move (same rule
+                                // as the System compound rows); Enter/Space exits.
                                 if (event.text == Key.DownArrow) {
                                     root.borders-engaged-slider = -1;
-                                    if (root.border-files.length + 4 > 0) {
-                                        if (root.borders-focused-index >= root.border-files.length + 3) { root.borders-focused-index = 0; }
+                                    if (root.borders-total > 0) {
+                                        if (root.borders-focused-index >= root.borders-total - 1) { root.borders-focused-index = 0; }
                                         else { root.borders-focused-index += 1; }
                                     }
                                     return accept;
                                 }
                                 if (event.text == Key.UpArrow) {
                                     root.borders-engaged-slider = -1;
-                                    if (root.border-files.length + 4 > 0) {
-                                        if (root.borders-focused-index <= 0) { root.borders-focused-index = root.border-files.length + 3; }
+                                    if (root.borders-total > 0) {
+                                        if (root.borders-focused-index <= 0) { root.borders-focused-index = root.borders-total - 1; }
                                         else { root.borders-focused-index -= 1; }
                                     }
                                     return accept;
@@ -399,29 +426,29 @@ export component PanelRoot inherits Rectangle {
                                 return accept;
                             }
                             if (event.text == Key.DownArrow) {
-                                if (root.border-files.length + 4 > 0) {
-                                    if (root.borders-focused-index >= root.border-files.length + 3) { root.borders-focused-index = 0; }
+                                if (root.borders-total > 0) {
+                                    if (root.borders-focused-index >= root.borders-total - 1) { root.borders-focused-index = 0; }
                                     else { root.borders-focused-index += 1; }
                                 }
                                 return accept;
                             }
                             if (event.text == Key.UpArrow) {
-                                if (root.border-files.length + 4 > 0) {
-                                    if (root.borders-focused-index <= 0) { root.borders-focused-index = root.border-files.length + 3; }
+                                if (root.borders-total > 0) {
+                                    if (root.borders-focused-index <= 0) { root.borders-focused-index = root.borders-total - 1; }
                                     else { root.borders-focused-index -= 1; }
                                 }
                                 return accept;
                             }
                             if (event.text == Key.RightArrow) {
                                 // Jump one panel right: pick block → tune block.
-                                if (root.border-files.length > 0 && root.borders-focused-index < root.border-files.length) {
-                                    root.borders-focused-index = root.border-files.length;
+                                if (root.borders-list-len > 0 && root.borders-focused-index < root.borders-list-len) {
+                                    root.borders-focused-index = root.borders-list-len;
                                 }
                                 return accept;
                             }
                             if (event.text == Key.LeftArrow) {
                                 // Jump one panel left: tune block → pick block → menu.
-                                if (root.border-files.length > 0 && root.borders-focused-index >= root.border-files.length) {
+                                if (root.borders-list-len > 0 && root.borders-focused-index >= root.borders-list-len) {
                                     root.borders-focused-index = 0;
                                 } else {
                                     root.menu-active = true;
@@ -429,12 +456,16 @@ export component PanelRoot inherits Rectangle {
                                 return accept;
                             }
                             if (event.text == Key.Return || event.text == Key.Space) {
-                                if (root.borders-focused-index < root.border-files.length) {
-                                    if (root.borders-focused-index >= 0 && root.border-files.length > 0) {
+                                if (root.borders-focused-index < root.borders-list-len) {
+                                    if (root.borders-focused-index < root.border-files.length && root.border-files.length > 0) {
                                         root.apply-border(root.borders-focused-index, root.border-files[root.borders-focused-index]);
+                                    } else if (root.borders-focused-index >= 0) {
+                                        root.apply-border(root.borders-focused-index, root.user-border-preset-names[root.borders-focused-index - root.border-files.length]);
                                     }
                                 } else {
-                                    root.borders-engaged-slider = root.borders-focused-index - root.border-files.length;
+                                    if (borders.tune-enter() == 0) {
+                                        root.borders-engaged-slider = root.borders-focused-index - root.borders-list-len;
+                                    }
                                 }
                                 return accept;
                             }
@@ -671,7 +702,7 @@ export component PanelRoot inherits Rectangle {
                         border-files: root.border-files;
                         active-index: root.border-active-index;
                         focused-index: root.kbd-preview-index >= 0 ? root.kbd-preview-index : root.borders-focused-index;
-                        engaged-slider: root.kbd-preview-engaged ? (root.kbd-preview-index >= root.border-files.length ? root.kbd-preview-index - root.border-files.length : 0) : root.borders-engaged-slider;
+                        engaged-slider: root.kbd-preview-engaged ? (root.kbd-preview-index >= root.border-files.length + root.user-border-preset-names.length ? root.kbd-preview-index - root.border-files.length - root.user-border-preset-names.length : 0) : root.borders-engaged-slider;
                         has-focus: (panel-kbd.has-focus && !root.menu-active) || root.kbd-preview-index >= 0;
                         geom-size <=> root.border-size;
                         geom-radius <=> root.corner-radius;
@@ -691,9 +722,29 @@ export component PanelRoot inherits Rectangle {
                         tune-angle <=> root.tune-angle;
                         tune-inactive-color <=> root.tune-inactive-color;
                         tune-glow <=> root.tune-glow;
+                        tune-glow-enabled <=> root.tune-glow-enabled;
+                        tune-glow-range <=> root.tune-glow-range;
+                        tune-glow-render-power <=> root.tune-glow-render-power;
+                        tune-glow-color <=> root.tune-glow-color;
+                        tune-glow-color-inactive <=> root.tune-glow-color-inactive;
                         tune-animations <=> root.tune-animations;
+                        tune-anim-borderangle-enabled <=> root.tune-anim-borderangle-enabled;
+                        tune-anim-borderangle-speed <=> root.tune-anim-borderangle-speed;
+                        tune-anim-borderangle-bezier <=> root.tune-anim-borderangle-bezier;
+                        tune-anim-borderangle-style <=> root.tune-anim-borderangle-style;
+                        tune-anim-border-enabled <=> root.tune-anim-border-enabled;
+                        tune-anim-border-speed <=> root.tune-anim-border-speed;
+                        tune-anim-border-bezier <=> root.tune-anim-border-bezier;
+                        tune-anim-border-style <=> root.tune-anim-border-style;
+                        tune-anim-fadeshadow-enabled <=> root.tune-anim-fadeshadow-enabled;
+                        tune-anim-fadeshadow-speed <=> root.tune-anim-fadeshadow-speed;
+                        tune-anim-fadeshadow-bezier <=> root.tune-anim-fadeshadow-bezier;
+                        tune-anim-fadeshadow-style <=> root.tune-anim-fadeshadow-style;
+                        tune-anim-curves <=> root.tune-anim-curves;
                         tune-rule-enabled <=> root.tune-rule-enabled;
                         tune-changed(colors, angle, inactive, glow, anims, rule) => { root.tune-changed(colors, angle, inactive, glow, anims, rule); }
+                        add-color-slot => { root.add-color-slot(); }
+                        remove-color-slot => { root.remove-color-slot(); }
                     }
                     motion := MotionSection {
                         visible: root.section == 2;
