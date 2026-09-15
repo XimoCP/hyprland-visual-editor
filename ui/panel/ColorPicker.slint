@@ -1,0 +1,297 @@
+// HVE 2 — HveColorPicker: HSV picker with alpha, for the border tune pane.
+//
+// ADAPTED from `NeonColorPicker` in wilmercampagna/slint-ui-system
+// (ui/components/color-picker.slint), MIT OR Apache-2.0.
+//
+//   Copyright (c) 2026 Wilmer Campagna
+//   Permission is hereby granted, free of charge, to any person obtaining a
+//   copy of this software and associated documentation files (the "Software"),
+//   to deal in the Software without restriction. THE SOFTWARE IS PROVIDED
+//   "AS IS", WITHOUT WARRANTY OF ANY KIND. The full text ships with the
+//   upstream project (LICENSE-MIT / LICENSE-APACHE).
+//
+// Changes made for HVE (see design D7):
+//   1. Added an ALPHA slider and an alpha output. Upstream is RGB-only, but
+//      border presets use alpha heavily (rgba(ffffff44), "#1a002655", ...).
+//   2. Remapped every `Theme.*` reference to the project tokens
+//      (SkwdTokens / HveColors).
+//   3. Flexible width (the pane is responsive) instead of a fixed 240px.
+//   4. Replaced the upstream `apply-rgb` push flag with a `seed` colour
+//      property + `changed seed` handler: Slint cannot parse "#rrggbbaa", so
+//      the host passes a resolved `color` and the picker re-derives HSV.
+//   5. Kept a single hex readout instead of the RGB/HSV/HEX block: the pane
+//      already shows the readable token name, and height is scarce.
+
+import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
+
+export component HveColorPicker inherits Rectangle {
+    // ── Inputs / state ────────────────────────────────────────────
+    in-out property <float> hue: 0.0;      // 0..360
+    in-out property <float> sat: 0.0;      // 0..1
+    in-out property <float> val: 1.0;      // 0..1
+    in-out property <float> alpha: 1.0;    // 0..1
+
+    // Host pushes a resolved colour in; the picker snaps to it. Bound by the
+    // caller, so it also re-seeds when the loaded preset changes.
+    in property <color> seed: #00000000;
+
+    // ── HSV → RGB (Slint has no local `let`, so these are properties) ──
+    property <float> h6: root.hue / 60.0;
+    property <int> sector: mod(floor(root.h6), 6);
+    property <float> f: root.h6 - floor(root.h6);
+    property <float> p: root.val * (1.0 - root.sat);
+    property <float> q: root.val * (1.0 - root.sat * root.f);
+    property <float> t: root.val * (1.0 - root.sat * (1.0 - root.f));
+
+    property <float> rs: root.sector == 0 ? root.val
+                       : root.sector == 1 ? root.q
+                       : root.sector == 2 ? root.p
+                       : root.sector == 3 ? root.p
+                       : root.sector == 4 ? root.t
+                       : root.val;
+    property <float> gs: root.sector == 0 ? root.t
+                       : root.sector == 1 ? root.val
+                       : root.sector == 2 ? root.val
+                       : root.sector == 3 ? root.q
+                       : root.sector == 4 ? root.p
+                       : root.p;
+    property <float> bs: root.sector == 0 ? root.p
+                       : root.sector == 1 ? root.p
+                       : root.sector == 2 ? root.t
+                       : root.sector == 3 ? root.val
+                       : root.sector == 4 ? root.val
+                       : root.q;
+
+    out property <color> actual-color: rgba(
+        root.rs * 255.0, root.gs * 255.0, root.bs * 255.0, root.alpha);
+    out property <int> red: round(root.rs * 255.0);
+    out property <int> green: round(root.gs * 255.0);
+    out property <int> blue: round(root.bs * 255.0);
+    out property <int> alpha-byte: round(root.alpha * 255.0);
+
+    /// "#rrggbbaa" — the exact `c:` payload the preset stores.
+    out property <string> hex8:
+        "#" + nibble(root.red / 16) + nibble(mod(root.red, 16))
+            + nibble(root.green / 16) + nibble(mod(root.green, 16))
+            + nibble(root.blue / 16) + nibble(mod(root.blue, 16))
+            + nibble(root.alpha-byte / 16) + nibble(mod(root.alpha-byte, 16));
+
+    /// Pure hue, used to tint the SV field and the hue knob.
+    property <float> ph-r: root.sector == 0 ? 1.0
+                         : root.sector == 1 ? 1.0 - root.f
+                         : root.sector == 2 ? 0.0
+                         : root.sector == 3 ? 0.0
+                         : root.sector == 4 ? root.f
+                         : 1.0;
+    property <float> ph-g: root.sector == 0 ? root.f
+                         : root.sector == 1 ? 1.0
+                         : root.sector == 2 ? 1.0
+                         : root.sector == 3 ? 1.0 - root.f
+                         : root.sector == 4 ? 0.0
+                         : 0.0;
+    property <float> ph-b: root.sector == 0 ? 0.0
+                         : root.sector == 1 ? 0.0
+                         : root.sector == 2 ? root.f
+                         : root.sector == 3 ? 1.0
+                         : root.sector == 4 ? 1.0
+                         : 1.0 - root.f;
+    property <color> pure-hue: rgb(
+        root.ph-r * 255.0, root.ph-g * 255.0, root.ph-b * 255.0);
+
+    function nibble(n: int) -> string {
+        return n == 0 ? "0" : n == 1 ? "1" : n == 2 ? "2" : n == 3 ? "3"
+             : n == 4 ? "4" : n == 5 ? "5" : n == 6 ? "6" : n == 7 ? "7"
+             : n == 8 ? "8" : n == 9 ? "9" : n == 10 ? "a" : n == 11 ? "b"
+             : n == 12 ? "c" : n == 13 ? "d" : n == 14 ? "e" : "f";
+    }
+
+    callback changed;
+    callback committed;
+
+    // ── Seed the picker from an external colour ───────────────────
+    // Slint exposes colour components as 0..255 floats, NOT 0..1 (verified by
+    // rendering: seeding an orange produced val=255 and alpha=255, which painted
+    // yellow). Normalise once here; hue and sat happened to survive because
+    // they are scale-invariant, which is exactly why the bug hid from tests.
+    property <float> seed-r: root.seed.red / 255.0;
+    property <float> seed-g: root.seed.green / 255.0;
+    property <float> seed-b: root.seed.blue / 255.0;
+    property <float> sd-max: max(max(root.seed-r, root.seed-g), root.seed-b);
+    property <float> sd-min: min(min(root.seed-r, root.seed-g), root.seed-b);
+    property <float> sd-delta: root.sd-max - root.sd-min;
+    property <float> sd-hue: root.sd-delta == 0 ? root.hue
+        : root.sd-max == root.seed-r
+            ? mod(60.0 * ((root.seed-g - root.seed-b) / root.sd-delta) + 360.0, 360.0)
+        : root.sd-max == root.seed-g
+            ? 60.0 * ((root.seed-b - root.seed-r) / root.sd-delta) + 120.0
+            : 60.0 * ((root.seed-r - root.seed-g) / root.sd-delta) + 240.0;
+
+    // `changed` does NOT fire for the initial binding, so a picker created with
+    // a seed would sit at its defaults (hue 0, sat 0) instead of the colour the
+    // slot actually holds. `init` covers creation; `changed` covers later
+    // external updates (loading another preset).
+    function apply-seed() {
+        // Keep hue when the seed is grey (delta == 0) so the knob does not jump.
+        root.hue = root.sd-hue;
+        root.sat = root.sd-max == 0 ? 0.0 : root.sd-delta / root.sd-max;
+        root.val = root.sd-max;
+        root.alpha = root.seed.alpha / 255.0;
+    }
+    init => { root.apply-seed(); }
+    changed seed => { root.apply-seed(); }
+
+    // ── Geometry ──────────────────────────────────────────────────
+    property <length> sv-h: 118px;
+
+    VerticalLayout {
+        spacing: SkwdTokens.spacing-8;
+
+        // Large live preview. Slint has no background-size/position, so the
+        // alpha is carried by the numeric readout below instead of a
+        // checkerboard.
+        Rectangle {
+            height: 40px;
+            border-radius: SkwdTokens.radius-8;
+            border-width: 1px;
+            border-color: HveColors.border;
+            clip: true;
+            background: HveColors.bg-dark;
+            Rectangle {
+                width: 100%; height: 100%;
+                background: root.actual-color;
+            }
+        }
+
+        // Saturation × Value field
+        sv-field := Rectangle {
+            height: root.sv-h;
+            border-radius: SkwdTokens.radius-8;
+            border-width: 1px;
+            border-color: HveColors.border;
+            clip: true;
+            background: root.pure-hue;
+            for ci in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]: Rectangle {
+                x: (sv-field.width / 10.0) * (ci - 1);
+                width: sv-field.width / 10.0;
+                height: 100%;
+                background: rgba(255, 255, 255, 1.0 - (ci - 0.5) / 10.0);
+            }
+            for bi in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]: Rectangle {
+                y: (sv-field.height / 10.0) * (bi - 1);
+                height: sv-field.height / 10.0;
+                width: 100%;
+                background: rgba(0, 0, 0, (bi - 0.5) / 10.0);
+            }
+            Rectangle {
+                x: root.sat * (sv-field.width - 14px);
+                y: (1.0 - root.val) * (sv-field.height - 14px);
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                border-width: 2px;
+                border-color: #ffffff;
+                background: root.actual-color;
+            }
+            sv-ta := TouchArea {
+                mouse-cursor: crosshair;
+                moved => {
+                    root.sat = clamp(sv-ta.mouse-x / sv-ta.width, 0.0, 1.0);
+                    root.val = clamp(1.0 - sv-ta.mouse-y / sv-ta.height, 0.0, 1.0);
+                    root.changed();
+                }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.up) { root.committed(); }
+                }
+            }
+        }
+
+        // Hue slider (48 segments; Slint expressions cannot loop a gradient)
+        hue-bar := Rectangle {
+            height: 18px;
+            border-radius: SkwdTokens.radius-8;
+            border-width: 1px;
+            border-color: HveColors.border;
+            clip: true;
+            HorizontalLayout {
+                spacing: 0;
+                for step in [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
+                             21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,
+                             37,38,39,40,41,42,43,44,45,46,47,48]: Rectangle {
+                    horizontal-stretch: 1;
+                    property <float> seg-h: ((step - 0.5) / 48.0) * 360.0;
+                    property <float> sh6: seg-h / 60.0;
+                    property <int> sec: mod(floor(sh6), 6);
+                    property <float> sf: sh6 - floor(sh6);
+                    property <float> sr: sec == 0 ? 1.0 : sec == 1 ? (1.0 - sf)
+                                       : sec == 2 ? 0.0 : sec == 3 ? 0.0
+                                       : sec == 4 ? sf  : 1.0;
+                    property <float> sg: sec == 0 ? sf  : sec == 1 ? 1.0
+                                       : sec == 2 ? 1.0 : sec == 3 ? (1.0 - sf)
+                                       : sec == 4 ? 0.0 : 0.0;
+                    property <float> sb: sec == 0 ? 0.0 : sec == 1 ? 0.0
+                                       : sec == 2 ? sf  : sec == 3 ? 1.0
+                                       : sec == 4 ? 1.0 : (1.0 - sf);
+                    background: rgb(sr * 255.0, sg * 255.0, sb * 255.0);
+                }
+            }
+            Rectangle {
+                x: (root.hue / 360.0) * (sv-field.width - 16px);
+                width: 16px;
+                height: 18px;
+                border-radius: 4px;
+                border-width: 2px;
+                border-color: #ffffff;
+                background: root.pure-hue;
+            }
+            hue-ta := TouchArea {
+                mouse-cursor: pointer;
+                moved => {
+                    root.hue = clamp(hue-ta.mouse-x / hue-ta.width, 0.0, 1.0) * 360.0;
+                    root.changed();
+                }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.up) { root.committed(); }
+                }
+            }
+        }
+
+        // Alpha slider: transparent → opaque gradient of the current hue.
+        alpha-bar := Rectangle {
+            height: 18px;
+            border-radius: SkwdTokens.radius-8;
+            border-width: 1px;
+            border-color: HveColors.border;
+            clip: true;
+            background: @linear-gradient(90deg, transparent 0%, root.pure-hue 100%);
+            Rectangle {
+                x: root.alpha * (sv-field.width - 12px);
+                width: 12px;
+                height: 18px;
+                border-radius: 3px;
+                border-width: 2px;
+                border-color: #ffffff;
+                background: root.actual-color;
+            }
+            alpha-ta := TouchArea {
+                mouse-cursor: pointer;
+                moved => {
+                    root.alpha = clamp(alpha-ta.mouse-x / alpha-ta.width, 0.0, 1.0);
+                    root.changed();
+                }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.up) { root.committed(); }
+                }
+            }
+        }
+
+        // Hex readout (the value that will be written to the preset).
+        Text {
+            text: root.hex8 + "   ·   alpha " + root.alpha-byte;
+            font-family: SkwdTokens.font-mono;
+            font-size: SkwdTokens.size-11;
+            color: HveColors.text-muted;
+            horizontal-alignment: center;
+        }
+    }
+}
