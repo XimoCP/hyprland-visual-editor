@@ -390,17 +390,6 @@ export component SaveSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            SaveFormPane {
-                horizontal-stretch: 1;
-                placeholder: root.placeholder;
-                save-label: root.save-label;
-                error-text: root.error-text;
-                theme-name <=> root.theme-name;
-                save-theme(name) => { root.save-theme(name); }
-            }
-
-            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
-
             SaveListPane {
                 horizontal-stretch: 1;
                 list-title: root.list-title;
@@ -437,6 +426,17 @@ export component SaveSection inherits Rectangle {
                 search-query-changed(q) => { root.search-query-changed(q); }
                 focus-requested(idx) => { root.focus-requested(idx); }
                 mouse-trace(reason) => { root.mouse-trace(reason); }
+            }
+
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+
+            SaveFormPane {
+                horizontal-stretch: 1;
+                placeholder: root.placeholder;
+                save-label: root.save-label;
+                error-text: root.error-text;
+                theme-name <=> root.theme-name;
+                save-theme(name) => { root.save-theme(name); }
             }
         }
         if !root.two-col : VerticalLayout {
@@ -444,17 +444,6 @@ export component SaveSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
-            SaveFormPane {
-                vertical-stretch: 1;
-                placeholder: root.placeholder;
-                save-label: root.save-label;
-                error-text: root.error-text;
-                theme-name <=> root.theme-name;
-                save-theme(name) => { root.save-theme(name); }
-            }
-
-            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
-
             SaveListPane {
                 vertical-stretch: 1;
                 list-title: root.list-title;
@@ -491,6 +480,17 @@ export component SaveSection inherits Rectangle {
                 search-query-changed(q) => { root.search-query-changed(q); }
                 focus-requested(idx) => { root.focus-requested(idx); }
                 mouse-trace(reason) => { root.mouse-trace(reason); }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+
+            SaveFormPane {
+                vertical-stretch: 1;
+                placeholder: root.placeholder;
+                save-label: root.save-label;
+                error-text: root.error-text;
+                theme-name <=> root.theme-name;
+                save-theme(name) => { root.save-theme(name); }
             }
         }
     }

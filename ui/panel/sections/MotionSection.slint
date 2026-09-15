@@ -473,6 +473,23 @@ export component MotionSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
+            MotionListPane {
+                horizontal-stretch: 1;
+                builtin-names: root.anim-titles;
+                builtin-tags: root.anim-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index - root.split;
+                has-focus: root.has-focus;
+                follow: root.focused-index >= root.split;
+                apply-preset(idx, name) => { root.apply-animation(idx, name); }
+                open-rename(name) => { root.rename-animation-preset(name, ""); }
+                open-delete(name) => { root.delete-animation-preset(name); }
+            }
+
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+
             MotionTunePane {
                 horizontal-stretch: 1;
                 bezier-a <=> root.bezier-a;
@@ -487,23 +504,6 @@ export component MotionSection inherits Rectangle {
                 error-text: root.save-error;
                 preset-name <=> root.preset-name;
                 save-preset(name) => { root.save-animation-preset(name); }
-            }
-
-            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
-
-            MotionListPane {
-                horizontal-stretch: 1;
-                builtin-names: root.anim-titles;
-                builtin-tags: root.anim-tags;
-                user-names: root.user-preset-names;
-                user-tags: root.user-preset-tags;
-                active-index: root.active-index;
-                focused-index: root.focused-index - root.split;
-                has-focus: root.has-focus;
-                follow: root.focused-index >= root.split;
-                apply-preset(idx, name) => { root.apply-animation(idx, name); }
-                open-rename(name) => { root.rename-animation-preset(name, ""); }
-                open-delete(name) => { root.delete-animation-preset(name); }
             }
         }
         if !root.two-col : VerticalLayout {
@@ -511,6 +511,23 @@ export component MotionSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
+            MotionListPane {
+                vertical-stretch: 1;
+                builtin-names: root.anim-titles;
+                builtin-tags: root.anim-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index - root.split;
+                has-focus: root.has-focus;
+                follow: root.focused-index >= root.split;
+                apply-preset(idx, name) => { root.apply-animation(idx, name); }
+                open-rename(name) => { root.rename-animation-preset(name, ""); }
+                open-delete(name) => { root.delete-animation-preset(name); }
+            }
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
+
             MotionTunePane {
                 vertical-stretch: 1;
                 bezier-a <=> root.bezier-a;
@@ -525,23 +542,6 @@ export component MotionSection inherits Rectangle {
                 error-text: root.save-error;
                 preset-name <=> root.preset-name;
                 save-preset(name) => { root.save-animation-preset(name); }
-            }
-
-            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
-
-            MotionListPane {
-                vertical-stretch: 1;
-                builtin-names: root.anim-titles;
-                builtin-tags: root.anim-tags;
-                user-names: root.user-preset-names;
-                user-tags: root.user-preset-tags;
-                active-index: root.active-index;
-                focused-index: root.focused-index - root.split;
-                has-focus: root.has-focus;
-                follow: root.focused-index >= root.split;
-                apply-preset(idx, name) => { root.apply-animation(idx, name); }
-                open-rename(name) => { root.rename-animation-preset(name, ""); }
-                open-delete(name) => { root.delete-animation-preset(name); }
             }
         }
     }

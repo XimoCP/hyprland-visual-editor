@@ -86,9 +86,28 @@ component BordersTunePane inherits Rectangle {
     in-out property <string> anim-fadeshadow-bezier: "default";
     in-out property <string> anim-fadeshadow-style: "";
     in-out property <[string]> anim-curves: [];
+    // The gradient angle travels up as a callback because the pane cannot reach
+    // the section's notify funnel. Its absence was a real defect: the angle was
+    // the one tune value with NO route to Rust, so neither the 30/45/90 buttons
+    // nor the arrow cycle could ever change the desktop border.
+    callback angle-changed(int);
+    // The floating-rule toggle has the same problem as the angle: it moved its
+    // own state and never reached Rust, so the mouse path did not apply live
+    // (only the keyboard path in `tune-enter` did).
+    callback rule-toggled(bool);
     callback anim-changed(string, bool, int, string, string);
+    // Bezier/Style rows: a click cycles the value (the section owns the
+    // next-value logic, so mouse and keyboard share one implementation).
+    callback cycle-anim-part(string, string);
     // Rule toggle
     in-out property <bool> tune-rule-enabled: false;
+
+    // ── Picker keyboard command channel (task 3.7) ────────────────
+    // Forwarded straight down to the picker, which owns the actual controls.
+    // The picker card itself is `visible`-toggled (never `if`-created) so this
+    // element exists for the whole life of the pane and can always be called.
+    in property <int> picker-cmd: 0;
+    in property <int> picker-cmd-kind: 0;
 
     property <length> saved-scroll-y: 0px;
     // Tune-local indices (cards-first global minus list split):
@@ -166,30 +185,46 @@ component BordersTunePane inherits Rectangle {
     background: transparent;
     clip: true;
 
-    ScrollView {
+    changed local-focus => { tune-scroll.follow-focus(); }
+    changed editing-slot => { tune-scroll.follow-focus(); }
+    changed follow => { tune-scroll.follow-focus(); }
+
+    tune-scroll := ScrollView {
         // Linear estimate keeps every stop scrollable: the viewport centers
         // on the focused stop so it is always visible (no dead stops).
         // Clamped to [height - content, 0] so the first and last stops can
         // never scroll into the void, whatever the inventory mix.
         property <length> focus-y: root.local-focus * 96px;
-        // Opening the picker must SHOW it: it sits at the top of the flow, so
-        // the viewport jumps there while it is open.
-        viewport-y: root.editing-slot >= 0 ? 0px : (root.follow ? (root.local-focus >= 0
-            ? max(self.height - tune-col.height, min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)))
-            : 0px) : root.saved-scroll-y);
+        // IMPERATIVE, not a binding — see the note on the list pane: a wheel
+        // writes `viewport-y`, which drops a binding and would leave the tune
+        // pane unable to follow the keyboard for the rest of the session.
+        // Opening the picker must also SHOW it: it sits at the top of the flow.
+        public function follow-focus() {
+            if (root.editing-slot >= 0) { self.viewport-y = 0px; return; }
+            if (root.follow && root.local-focus >= 0) {
+                self.viewport-y = max(self.height - tune-col.height,
+                    min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)));
+            }
+        }
         animate viewport-y { duration: 250ms; easing: ease-out; }
         changed viewport-y => { if (root.editing-slot < 0) { root.saved-scroll-y = self.viewport-y; } }
         tune-col := VerticalLayout {
             padding-left: 16px;
-            // Lives in the scroll flow: an overlay would be painted UNDER the
-            // ScrollView (later siblings do not win over it), which showed the
-            // pane content bleeding through the picker.
-            // ── Shared colour picker: an overlay, one channel at a time ──
-            // Pinned to the bottom of the pane rather than living in the scroll
-            // flow: clicking "Custom…" must SHOW the picker, and an inline picker
-            // could land off-screen in a pane that is already scrolled. Exactly one
-            // exists at a time — an inline picker per slot would add ~330px per
-            // custom colour and the pane has 2..8 of them.
+            // NOT an overlay: an overlay would be painted UNDER the ScrollView
+            // (later siblings do not win over it), which showed the pane content
+            // bleeding through the picker.
+            // ── Shared colour picker: one channel at a time, in the flow ──
+            // Clicking "Custom…" must SHOW the picker: it sits at the top of the
+            // flow and the viewport jumps there while it is open. Exactly one
+            // exists at a time — a picker per slot would add ~330px per custom
+            // colour and the pane has 2..8 of them.
+            //
+            // The conditional stays a conditional: the picker is driven by the
+            // command-channel PROPERTIES bound inside this block (which is legal
+            // — only reaching a conditional element from OUTSIDE is forbidden),
+            // so it never needs to be permanently instantiated. An earlier
+            // `visible:` variant reserved its 344px in the scroll flow and left a
+            // dead gap above the size card.
             if root.editing-slot >= 0 : Rectangle {
                 // Anchored to the TOP: the pane's own height runs a little past
                 // the visible panel, so a bottom-anchored card got its last row
@@ -251,6 +286,9 @@ component BordersTunePane inherits Rectangle {
                     col-picker := HveColorPicker {
                         width: 100%;
                         seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
+                        // Keyboard command channel from the section (task 3.7).
+                        cmd-seq: root.picker-cmd;
+                        cmd-kind: root.picker-cmd-kind;
                         // D4: never notify per drag step. `changed` only moves the
                         // local value so the preview follows; `committed` (pointer
                         // up) is what writes the live draft.
@@ -348,7 +386,13 @@ component BordersTunePane inherits Rectangle {
                             TouchArea {
                                 width: 100%;
                                 height: 100%;
-                                clicked => { root.tune-angle = angle-val; }
+                                // Was a bare `root.tune-angle = angle-val`, which
+                                // moved the segmented control and nothing else —
+                                // there was no path from the angle to Rust at all,
+                                // so neither the mouse nor the keyboard could ever
+                                // apply an angle. Travels up as a callback so the
+                                // section can notify in ONE place.
+                                clicked => { root.angle-changed(angle-val); }
                             }
                         }
                     }
@@ -920,6 +964,14 @@ component BordersTunePane inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                // Mouse path for the curve: the row had no TouchArea, so a click
+                // did nothing and only the keyboard could change it.
+                curve-a0-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => { root.cycle-anim-part("borderangle", "bezier"); }
+                }
             }
             if root.anim-borderangle-enabled : Text {
                 text: "Animation curve for the angle sweep (default plus preset curves).";
@@ -956,6 +1008,12 @@ component BordersTunePane inherits Rectangle {
                         font-size: SkwdTokens.size-11;
                         vertical-alignment: center;
                     }
+                }
+                style-a0-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => { root.cycle-anim-part("borderangle", "style"); }
                 }
             }
             if root.anim-borderangle-enabled : Text {
@@ -1079,6 +1137,12 @@ component BordersTunePane inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                curve-a1-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => { root.cycle-anim-part("border", "bezier"); }
+                }
             }
             if root.anim-border-enabled : Text {
                 text: "Animation curve for the border pulse (default plus preset curves).";
@@ -1115,6 +1179,12 @@ component BordersTunePane inherits Rectangle {
                         font-size: SkwdTokens.size-11;
                         vertical-alignment: center;
                     }
+                }
+                style-a1-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => { root.cycle-anim-part("border", "style"); }
                 }
             }
             if root.anim-border-enabled : Text {
@@ -1238,6 +1308,12 @@ component BordersTunePane inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                curve-a2-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => { root.cycle-anim-part("fadeShadow", "bezier"); }
+                }
             }
             if root.anim-fadeshadow-enabled : Text {
                 text: "Animation curve for the shadow fade (default plus preset curves).";
@@ -1274,6 +1350,12 @@ component BordersTunePane inherits Rectangle {
                         font-size: SkwdTokens.size-11;
                         vertical-alignment: center;
                     }
+                }
+                style-a2-ta := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => { root.cycle-anim-part("fadeShadow", "style"); }
                 }
             }
             if root.anim-fadeshadow-enabled : Text {
@@ -1341,7 +1423,10 @@ component BordersTunePane inherits Rectangle {
                         TouchArea {
                             width: 100%;
                             height: 100%;
-                            clicked => { root.tune-rule-enabled = !root.tune-rule-enabled; }
+                            // Was a bare local flip: it animated the switch and
+                            // never notified, so the rule never reached the live
+                            // draft from the mouse.
+                            clicked => { root.rule-toggled(!root.tune-rule-enabled); }
                         }
                     }
                 }
@@ -1463,11 +1548,24 @@ component BordersListPane inherits Rectangle {
     background: transparent;
     clip: true;
 
-    ScrollView {
+    changed focused-index => { list-scroll.follow-focus(); }
+    changed follow => { list-scroll.follow-focus(); }
+
+    list-scroll := ScrollView {
         property <length> focus-y: root.focused-index * 66px;
-        viewport-y: root.follow ? (root.focused-index >= 0
-            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
-            : 0px) : root.saved-scroll-y;
+        // Viewport control must be IMPERATIVE, never a binding. Slint DROPS a
+        // property's binding the moment code assigns it, and the ScrollView
+        // assigns `viewport-y` itself whenever the user turns the wheel. With
+        // `viewport-y: <expr>` the wheel therefore killed the binding for the
+        // rest of the session: the list stopped following the focused preset,
+        // so navigating by keyboard no longer brought the lower presets into
+        // view ("hay alguno que no se alcanza a ver"). Assigning on the events
+        // that should move the pane keeps both paths alive.
+        public function follow-focus() {
+            if (root.follow && root.focused-index >= 0) {
+                self.viewport-y = 0px - max(0px, self.focus-y + 29px - self.height / 2);
+            }
+        }
         animate viewport-y { duration: 250ms; easing: ease-out; }
         changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
         VerticalLayout {
@@ -1700,14 +1798,31 @@ export component BordersSection inherits Rectangle {
     // Single funnel for every tune edit: marks the working state as unsaved
     // (D4) and pushes the whole tune snapshot to Rust, which applies the live
     // draft. Having one place means an edit can never silently skip the notify.
+    // Argument order MUST match the declaration
+    // `tune-changed([string], int, string, string, string, bool)`, i.e.
+    // (colors, angle, inactive, glow, anims, rule). There is no count slot:
+    // slot_count is `colors.length` and is already carried by the model.
+    // Passing it here shifted every later argument by one — Rust received the
+    // slot count as the angle, the angle as the inactive colour, the inactive
+    // colour as the glow and the glow as the animations. Slint's implicit
+    // int→string coercion on the angle kept it compiling, which is exactly why
+    // no test ever caught it.
     function notify-tune-changed() {
         root.tune-dirty = true;
-        root.tune-changed(root.tune-active-colors, root.tune-color-count, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-rule-enabled);
+        root.tune-changed(root.tune-active-colors, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-animations, root.tune-rule-enabled);
     }
 
     // ── Geometry debounce (R3) — only size slider remains ──
-    property <bool> size-init: false;
-    property <int> pending-size: root.geom-size;
+    // The timer applies `geom-size` itself; `last-size` is the "already sent to
+    // Rust" marker. Two rules keep this honest:
+    //   • `geom-dirty` is raised BEFORE `geom-size` moves, so the
+    //     `changed geom-size` handler below can never mistake a user edit for a
+    //     Rust snap — and that holds under either eager or deferred handler
+    //     scheduling, which is what made the previous pending/last pair silently
+    //     never fire.
+    //   • `size-init`, which used to swallow the FIRST edit of every session
+    //     (set to true and return), is gone. That swallow is what made the very
+    //     first arrow press or drag do nothing at all.
     property <int> last-size: root.geom-size;
     property <bool> geom-dirty: false;
 
@@ -1715,10 +1830,24 @@ export component BordersSection inherits Rectangle {
         interval: 80ms;
         running: root.geom-dirty;
         triggered => {
-            if (root.pending-size != root.last-size) {
-                root.apply-geometry(root.pending-size, 0, 0, 0);
-                root.last-size = root.pending-size;
-            }
+            // Unconditional on purpose: `geom-dirty` is raised ONLY by a user
+            // edit (arrow or drag) and never by Rust snapping the slider, so if
+            // this timer fires there IS something the user changed that has to
+            // reach the desktop. The previous `pending-size != last-size`
+            // comparison could compare equal (Rust syncs `last-size` from
+            // `changed geom-size`) and silently drop the edit — which is the
+            // "changing the thickness does nothing" the maintainer reported,
+            // alongside a `size-init` flag that swallowed the session's first
+            // edit outright.
+            //
+            // Radius and gaps travel with the size: the tune pane owns the
+            // thickness, the section owns the rest of the geometry. Sending
+            // literal 0s here (as this used to) wiped the user's rounding and
+            // gaps on every thickness change — the Rust handler writes all four
+            // values, and the U3 rebuild had already removed the radius/gap
+            // controls, so there was no way back from the pane.
+            root.apply-geometry(root.geom-size, root.geom-radius, root.geom-gap-in, root.geom-gap-out);
+            root.last-size = root.geom-size;
             root.geom-dirty = false;
         }
     }
@@ -1733,17 +1862,18 @@ export component BordersSection inherits Rectangle {
         if (e == 0) {
             let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
             if (next != root.geom-size) {
-                root.geom-size = next;
-                if (!root.size-init) { root.size-init = true; return; }
-                root.pending-size = next;
-                root.geom-dirty = false;
+                // Dirty BEFORE the value moves — see the debounce note.
                 root.geom-dirty = true;
+                root.geom-size = next;
                 geom-timer.restart();
             }
             return;
         }
         if (e == 1) {
             root.tune-angle = root.next-angle(root.tune-angle, up);
+            // The angle used to stop here: it changed the value and never
+            // notified, so the arrow cycle was a no-op on the desktop.
+            root.notify-tune-changed();
             return;
         }
         if (e == 2) {
@@ -1925,21 +2055,72 @@ export component BordersSection inherits Rectangle {
         return 0;
     }
 
-    // Mouse-direct slider edits — size only
+    // ── Picker keyboard entry points (task 3.7) ───────────────────
+    // The picker lives INSIDE a pane that is created conditionally (two-col vs
+    // stacked), and Slint forbids reaching a conditional child from the
+    // component that declares the condition. So the arrows do not call the
+    // picker: they bump a small command channel that BOTH pane branches forward
+    // down to their picker, and only the mounted branch has a picker to hear it.
+    in-out property <int> picker-cmd: 0;       // monotonic sequence
+    in-out property <int> picker-cmd-kind: 0;  // 1=up 2=down 3=left 4=right
+
+    public pure function picker-open() -> bool { return root.editing-slot >= 0; }
+
+    public function picker-move(delta: int) {
+        if (root.editing-slot < 0) { return; }
+        root.picker-cmd-kind = delta > 0 ? 2 : 1;
+        root.picker-cmd += 1;
+    }
+
+    public function picker-adjust(up: bool) {
+        if (root.editing-slot < 0) { return; }
+        root.picker-cmd-kind = up ? 4 : 3;
+        root.picker-cmd += 1;
+    }
+
+    // Cycle one animation leaf's bezier or style. Mouse and keyboard share this
+    // so the two can never drift apart (the rows had no TouchArea at all, so a
+    // mouse user could not change the curve or the loop style).
+    function cycle-anim-part(leaf: string, part: string) {
+        if (leaf == "borderangle") {
+            if (part == "bezier") {
+                root.tune-anim-borderangle-bezier = root.next-bezier(root.tune-anim-borderangle-bezier, true);
+            } else {
+                root.tune-anim-borderangle-style = root.next-style(root.tune-anim-borderangle-style, true);
+            }
+        } else if (leaf == "border") {
+            if (part == "bezier") {
+                root.tune-anim-border-bezier = root.next-bezier(root.tune-anim-border-bezier, true);
+            } else {
+                root.tune-anim-border-style = root.next-style(root.tune-anim-border-style, true);
+            }
+        } else if (leaf == "fadeShadow") {
+            if (part == "bezier") {
+                root.tune-anim-fadeshadow-bezier = root.next-bezier(root.tune-anim-fadeshadow-bezier, true);
+            } else {
+                root.tune-anim-fadeshadow-style = root.next-style(root.tune-anim-fadeshadow-style, true);
+            }
+        }
+        root.tune-animations = root.rebuild-anims();
+        root.notify-tune-changed();
+    }
+
+    // Mouse-direct slider edits — size only. No first-edit swallow: `last-size`
+    // is the guard (see the geometry debounce note).
     function slider-changed(id: int, v: int) {
         if (id == 0) {
-            if (!root.size-init) { root.size-init = true; return; }
             if (v == root.last-size) { return; }
-            root.geom-size = v;
-            root.pending-size = v;
-            root.geom-dirty = false;
+            // Dirty BEFORE the value moves — see the debounce note.
             root.geom-dirty = true;
+            root.geom-size = v;
             geom-timer.restart();
         }
     }
 
-    // Sync pending/last when Rust snaps sliders
-    changed geom-size => { if (!root.geom-dirty) { root.pending-size = root.geom-size; root.last-size = root.geom-size; } }
+    // Rust snapped the slider (startup, a preset pick, or a preset whose own
+    // geometry differs). That value is already what the desktop runs, so it
+    // becomes the new "sent" marker instead of triggering another apply.
+    changed geom-size => { if (!root.geom-dirty) { root.last-size = root.geom-size; } }
 
     VerticalLayout {
         spacing: 0px;
@@ -1993,10 +2174,32 @@ export component BordersSection inherits Rectangle {
             vertical-stretch: 1;
             spacing: 0px;
 
+            BordersListPane {
+                horizontal-stretch: 1;
+                builtin-names: root.border-titles;
+                builtin-tags: root.border-tags;
+                user-names: root.user-preset-names;
+                user-tags: root.user-preset-tags;
+                active-index: root.active-index;
+                focused-index: root.focused-index;
+                has-focus: root.has-focus;
+                // The LIST pane follows only when the focus is on a CARD
+                // (focused-index < split). With `>=` it chased the tune
+                // pane's focus, so navigating the tune dragged the list.
+                follow: root.focused-index < root.split;
+                apply-preset(idx, name) => { root.apply-border(idx, name); }
+                open-rename(name) => { root.rename-border-preset(name, ""); }
+                open-delete(name) => { root.delete-border-preset(name); }
+            }
+
+            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+
             BordersTunePane {
                 horizontal-stretch: 1;
                 size: root.geom-size;
                 focused-index: root.focused-index;
+                picker-cmd: root.picker-cmd;
+                picker-cmd-kind: root.picker-cmd-kind;
                 split: root.split;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
@@ -2079,12 +2282,24 @@ export component BordersSection inherits Rectangle {
                         + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
                     root.notify-tune-changed();
                 }
+                cycle-anim-part(leaf, part) => { root.cycle-anim-part(leaf, part); }
+                angle-changed(v) => {
+                    root.tune-angle = v;
+                    root.notify-tune-changed();
+                }
+                rule-toggled(v) => {
+                    root.tune-rule-enabled = v;
+                    root.notify-tune-changed();
+                }
             }
-
-            Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
+        }
+        if !root.two-col : VerticalLayout {
+            width: 100%;
+            vertical-stretch: 1;
+            spacing: 0px;
 
             BordersListPane {
-                horizontal-stretch: 1;
+                vertical-stretch: 1;
                 builtin-names: root.border-titles;
                 builtin-tags: root.border-tags;
                 user-names: root.user-preset-names;
@@ -2100,16 +2315,15 @@ export component BordersSection inherits Rectangle {
                 open-rename(name) => { root.rename-border-preset(name, ""); }
                 open-delete(name) => { root.delete-border-preset(name); }
             }
-        }
-        if !root.two-col : VerticalLayout {
-            width: 100%;
-            vertical-stretch: 1;
-            spacing: 0px;
+
+            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
 
             BordersTunePane {
                 vertical-stretch: 1;
                 size: root.geom-size;
                 focused-index: root.focused-index;
+                picker-cmd: root.picker-cmd;
+                picker-cmd-kind: root.picker-cmd-kind;
                 split: root.split;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
@@ -2191,26 +2405,15 @@ export component BordersSection inherits Rectangle {
                         + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
                     root.notify-tune-changed();
                 }
-            }
-
-            Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
-
-            BordersListPane {
-                vertical-stretch: 1;
-                builtin-names: root.border-titles;
-                builtin-tags: root.border-tags;
-                user-names: root.user-preset-names;
-                user-tags: root.user-preset-tags;
-                active-index: root.active-index;
-                focused-index: root.focused-index;
-                has-focus: root.has-focus;
-                // The LIST pane follows only when the focus is on a CARD
-                // (focused-index < split). With `>=` it chased the tune
-                // pane's focus, so navigating the tune dragged the list.
-                follow: root.focused-index < root.split;
-                apply-preset(idx, name) => { root.apply-border(idx, name); }
-                open-rename(name) => { root.rename-border-preset(name, ""); }
-                open-delete(name) => { root.delete-border-preset(name); }
+                cycle-anim-part(leaf, part) => { root.cycle-anim-part(leaf, part); }
+                angle-changed(v) => {
+                    root.tune-angle = v;
+                    root.notify-tune-changed();
+                }
+                rule-toggled(v) => {
+                    root.tune-rule-enabled = v;
+                    root.notify-tune-changed();
+                }
             }
         }
     }

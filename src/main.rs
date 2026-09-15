@@ -141,8 +141,11 @@ fn resolve_encoded_color(w: &crate::MainWindow, v: &str) -> slint::Color {
 
 /// Fixed-size resolved-colour model so the pane can index it blindly without
 /// bounds checks: 0..7 = active gradient slots, 8 = inactive, 9 = glow colour,
-/// 10 = glow inactive colour. Rebuilt on load/add/remove only — never on every
-/// edit, or a changing seed would fight the picker the user is dragging.
+/// 10 = glow inactive colour. Rebuilt on load/add/remove and after a successful
+/// tune apply. That last one matters: the picker only commits on pointer-up (or
+/// on a discrete keypress), never per drag step, so the seed it re-reads is
+/// always the value it just wrote — it cannot fight a colour being dragged,
+/// which was the original reason this was rebuilt on load only.
 const RESOLVED_COLORS_LEN: usize = 11;
 
 fn refresh_resolved_colors(w: &crate::MainWindow) {
@@ -182,6 +185,21 @@ fn tune_params_from_window(w: &crate::MainWindow, size: i32) -> crate::border_pr
     }
 }
 
+/// Shown in the tune pane when an edit is refused because no border preset is
+/// active. The pane is fully operable in that state (every control moves, the
+/// dirty dot lights), so a silent no-op is indistinguishable from a broken
+/// knob — which is exactly how the maintainer read it. The refusal is by
+/// design (an unsaved draft must never become the desktop's border); saying so
+/// out loud is the fix.
+pub(crate) const TUNE_NEEDS_ACTIVE_BORDER: &str =
+    "Select a border preset first - tune changes apply live to the active border.";
+
+/// True when the tune pane's live draft has a border to apply to.
+fn has_active_border(state: &std::sync::Mutex<AppState>) -> bool {
+    let st = state.lock().unwrap_or_else(|e| e.into_inner());
+    !st.cfg().active_border_file.is_empty()
+}
+
 /// Write the hidden live draft and re-assemble it (D4). No-op when no border is
 /// active, so an unsaved draft can never become the desktop's border.
 fn apply_live_draft(
@@ -190,11 +208,8 @@ fn apply_live_draft(
     params: &crate::border_preset::BorderParams,
 ) -> Result<(), String> {
     use crate::preset_store::PresetStore;
-    {
-        let st = state.lock().unwrap_or_else(|e| e.into_inner());
-        if st.cfg().active_border_file.is_empty() {
-            return Ok(());
-        }
+    if !has_active_border(state) {
+        return Ok(());
     }
     let content = PresetStore::generate_border_lua_full("draft", params);
     PresetStore::write_draft(&content, proj).map_err(|e| format!("Draft write failed: {}", e))?;
@@ -222,6 +237,12 @@ fn commit_tune_slots(
     w.set_tune_active_colors(slint::ModelRc::from(model.as_slice()));
     w.set_tune_color_count(model.len() as i32);
     refresh_resolved_colors(w);
+    if !has_active_border(state) {
+        // The slot list still moved (the pane must stay coherent); only the
+        // desktop apply is refused, and now it says so.
+        w.set_border_save_error(slint::SharedString::from(TUNE_NEEDS_ACTIVE_BORDER));
+        return;
+    }
     let size = {
         let st = state.lock().unwrap_or_else(|e| e.into_inner());
         st.cfg().border_size
@@ -2868,6 +2889,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             if let Some(w) = weak.upgrade() {
                 w.set_active_border_index(if is_deact { -1 } else { idx });
+                // Picking a preset gives the tune pane its apply target, so the
+                // "select a border preset first" refusal hint no longer applies.
+                if w.get_border_save_error() == TUNE_NEEDS_ACTIVE_BORDER {
+                    w.set_border_save_error(String::new().into());
+                }
                 // snap sliders one-way (preset→tune, no reverse)
                 w.set_border_size(snap.size);
                 w.set_corner_radius(snap.radius);
@@ -3128,11 +3154,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let proj_c = proj.clone();
         window.on_panel_tune_changed(move |colors, angle, inactive, glow, anims, rule| {
             tracing::debug!("[borders][tune] tune-changed angle={} rule={}", angle, rule);
-            let is_deact = {
-                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                st.cfg().active_border_file.is_empty()
-            };
-            if is_deact { return; }
+            if !has_active_border(&state_c) {
+                tracing::debug!(
+                    "[borders][tune] refused: no active border preset (edit would have no target)"
+                );
+                if let Some(w) = weak.upgrade() {
+                    w.set_border_save_error(slint::SharedString::from(TUNE_NEEDS_ACTIVE_BORDER));
+                }
+                return;
+            }
             use crate::preset_store::PresetStore;
             let size = {
                 let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -3179,6 +3209,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     } else if let Some(w) = weak.upgrade() {
                         // Clear any previous error on successful apply
                         w.set_border_save_error(String::new().into());
+                        // Re-resolve the colour channels. `tune-colors-resolved`
+                        // is what the pane's chips and the picker's `seed` read,
+                        // and it was only rebuilt on load/add/remove — so after
+                        // committing a CUSTOM colour the chip kept showing the old
+                        // one and reopening the picker re-seeded that stale colour
+                        // instead of the value just stored.
+                        refresh_resolved_colors(&w);
                     }
                 }
                 Err(e) => {

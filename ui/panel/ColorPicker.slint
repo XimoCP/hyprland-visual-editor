@@ -109,6 +109,46 @@ export component HveColorPicker inherits Rectangle {
     callback changed;
     callback committed;
 
+    // ── Keyboard operability (task 3.7) ──────────────────────────
+    // The three controls below were mouse-only: the SV field, hue and alpha were
+    // plain TouchAreas with no key path, so a keyboard user could open the
+    // picker (Enter) and close it (Esc) but not change a single colour.
+    // The picker is a sub-MODE of an engaged colour stop, not three more stops
+    // in an already 30-plus-stop inventory: while it is open the pane hands it
+    // Up/Down (pick a control) and Left/Right (change it). `part` names the
+    // control the arrows act on and drives the visible highlight below.
+    in-out property <int> part: 0;         // 0=saturation 1=brightness 2=hue 3=alpha
+
+    public pure function part-name() -> string {
+        return root.part == 0 ? "Saturation"
+             : root.part == 1 ? "Brightness"
+             : root.part == 2 ? "Hue"
+             : "Alpha";
+    }
+
+    /// Move the arrow target. Wraps in both directions.
+    public function pick-part(delta: int) {
+        root.part = mod(mod(root.part + delta, 4) + 4, 4);
+    }
+
+    /// Change the selected control by one visible step. Every keypress is a
+    /// discrete commit (there is no pointer-up to wait for), so the live draft
+    /// follows immediately.
+    public function adjust-part(up: bool) {
+        if (root.part == 0) {
+            root.sat = clamp(root.sat + (up ? 0.02 : -0.02), 0.0, 1.0);
+        } else if (root.part == 1) {
+            root.val = clamp(root.val + (up ? 0.02 : -0.02), 0.0, 1.0);
+        } else if (root.part == 2) {
+            root.hue = mod(root.hue + (up ? 4.0 : -4.0) + 360.0, 360.0);
+        } else {
+            root.alpha = clamp(root.alpha + (up ? 0.02 : -0.02), 0.0, 1.0);
+        }
+        root.changed();
+        root.committed();
+    }
+    property <color> lit-border: #8fd8ff;
+
     // ── Seed the picker from an external colour ───────────────────
     // Slint exposes colour components as 0..255 floats, NOT 0..1 (verified by
     // rendering: seeding an orange produced val=255 and alpha=255, which painted
@@ -141,6 +181,23 @@ export component HveColorPicker inherits Rectangle {
     init => { root.apply-seed(); }
     changed seed => { root.apply-seed(); }
 
+    // ── Arrow commands pushed down by the host (task 3.7) ─────────
+    // The pane that hosts this picker is created conditionally (two-col vs
+    // stacked) and Slint forbids calling into a conditional child from the
+    // component that declares the condition. The host therefore bumps a
+    // sequence number and names the key; only a mounted picker hears it.
+    in property <int> cmd-seq: 0;
+    in property <int> cmd-kind: 0;   // 1=up 2=down 3=left 4=right
+
+    changed cmd-seq => {
+        if (self.cmd-seq > 0) {
+            if (self.cmd-kind == 1) { root.pick-part(-1); }
+            else if (self.cmd-kind == 2) { root.pick-part(1); }
+            else if (self.cmd-kind == 3) { root.adjust-part(false); }
+            else if (self.cmd-kind == 4) { root.adjust-part(true); }
+        }
+    }
+
     // ── Geometry ──────────────────────────────────────────────────
     property <length> sv-h: 118px;
 
@@ -167,8 +224,9 @@ export component HveColorPicker inherits Rectangle {
         sv-field := Rectangle {
             height: root.sv-h;
             border-radius: SkwdTokens.radius-8;
-            border-width: 1px;
-            border-color: HveColors.border;
+            // 2px + cyan when the arrows target Saturation/Brightness.
+            border-width: (root.part == 0 || root.part == 1) ? 2px : 1px;
+            border-color: (root.part == 0 || root.part == 1) ? root.lit-border : HveColors.border;
             clip: true;
             background: root.pure-hue;
             for ci in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]: Rectangle {
@@ -210,8 +268,8 @@ export component HveColorPicker inherits Rectangle {
         hue-bar := Rectangle {
             height: 18px;
             border-radius: SkwdTokens.radius-8;
-            border-width: 1px;
-            border-color: HveColors.border;
+            border-width: root.part == 2 ? 2px : 1px;
+            border-color: root.part == 2 ? root.lit-border : HveColors.border;
             clip: true;
             HorizontalLayout {
                 spacing: 0;
@@ -260,8 +318,8 @@ export component HveColorPicker inherits Rectangle {
         alpha-bar := Rectangle {
             height: 18px;
             border-radius: SkwdTokens.radius-8;
-            border-width: 1px;
-            border-color: HveColors.border;
+            border-width: root.part == 3 ? 2px : 1px;
+            border-color: root.part == 3 ? root.lit-border : HveColors.border;
             clip: true;
             background: @linear-gradient(90deg, transparent 0%, root.pure-hue 100%);
             Rectangle {
@@ -291,6 +349,17 @@ export component HveColorPicker inherits Rectangle {
             font-family: SkwdTokens.font-mono;
             font-size: SkwdTokens.size-11;
             color: HveColors.text-muted;
+            horizontal-alignment: center;
+        }
+
+        // Names the control the arrows act on, so the keyboard path is
+        // discoverable rather than secret (task 3.7).
+        Text {
+            text: "↑↓ " + root.part-name() + "   ·   ←→ change";
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-11;
+            font-weight: 600;
+            color: HveColors.accent-cyan;
             horizontal-alignment: center;
         }
     }

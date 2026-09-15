@@ -25,7 +25,7 @@ export component SavedPresetCard inherits Rectangle {
     callback open-delete(string);
     callback refocus();
 
-    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover;
+    property <bool> is-hovered: card-ta.has-hover || switch-ta.has-hover;
     property <bool> _expanded: is-active || is-hovered || keyboard-focused;
 
     height: _expanded ? 100px : 56px;
@@ -112,14 +112,37 @@ export component SavedPresetCard inherits Rectangle {
             HorizontalLayout {
                 spacing: 6px;
 
-                // Apply (always visible)
-                apply-btn := IconButton {
-                    icon: "▶";
-                    bg-color: HveColors.accent-green;
-                    tooltip-text: root.apply-text;
-                    clicked => {
-                        root.apply-preset(root.index, root.preset-name);
-                        root.refocus();
+                // Apply + active state, as ONE animated on/off switch — the same
+                // language the Filters and Motion cards already use. It reads
+                // the preset's state at a glance (grey/left = off, accent/right
+                // = on) and is itself the click target that applies the preset.
+                // It replaced a ▶ play IconButton, which read as "run this once"
+                // and said nothing about whether the border was currently on.
+                apply-switch := Rectangle {
+                    width: 40px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: root.is-active ? HveColors.accent-green : HveColors.border;
+                    animate background { duration: 250ms; easing: ease-in-out; }
+
+                    Rectangle {
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 8px;
+                        background: HveColors.bg-dark;
+                        x: root.is-active ? parent.width - self.width - 3px : 3px;
+                        y: 3px;
+                        animate x { duration: 350ms; easing: ease-in-out-back; }
+                    }
+
+                    switch-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.apply-preset(root.index, root.preset-name);
+                            root.refocus();
+                        }
                     }
                 }
 

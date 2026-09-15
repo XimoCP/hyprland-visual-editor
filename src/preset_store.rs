@@ -332,11 +332,27 @@ hl.config({{
                     _ => PaletteToken::Primary,
                 };
                 BorderColor::Token(tok)
-            } else if let Some(hex) = p.strip_prefix("c:") {
-                let hex = hex.trim();
-                let bytes: Vec<u8> = (0..hex.len()).step_by(2)
-                    .filter_map(|i| u8::from_str_radix(&hex[i..i+2], 16).ok())
-                    .collect();
+            } else if let Some(raw) = p.strip_prefix("c:") {
+                // Two encoders feed this field: `encode_colors` writes a bare
+                // "rrggbb[aa]", and the Slint colour picker writes "#rrggbbaa"
+                // (its `hex8` output). Accept both.
+                //
+                // Slicing `hex[i..i+2]` over the 9-byte "#rrggbbaa" form runs
+                // one byte past the end and panicked the whole process the
+                // first time a custom colour was committed from the running
+                // GUI. `chunks(2)` cannot overrun, and anything that is not a
+                // clean 6/8-digit payload degrades to the palette default
+                // rather than taking the app down with it.
+                let hex = raw.trim().trim_start_matches('#');
+                let bytes: Vec<u8> = if hex.len() == 6 || hex.len() == 8 {
+                    hex.as_bytes()
+                        .chunks(2)
+                        .filter_map(|c| std::str::from_utf8(c).ok())
+                        .filter_map(|c| u8::from_str_radix(c, 16).ok())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 match bytes.as_slice() {
                     [r, g, b, a] => BorderColor::Custom { r: *r, g: *g, b: *b, a: *a },
                     [r, g, b] => BorderColor::Custom { r: *r, g: *g, b: *b, a: 0xff },
@@ -581,6 +597,41 @@ mod tests {
         // Empty round-trip
         assert_eq!(PresetStore::encode_colors(&[]), "");
         assert!(PresetStore::decode_colors("").is_empty());
+    }
+
+    /// The Slint colour picker emits `#rrggbbaa` (its `hex8` output) while
+    /// `encode_colors` emits a bare `rrggbbaa`; BOTH must decode. And a
+    /// mis-sized payload must never panic: slicing `hex[i..i+2]` over a 9-byte
+    /// "#rrggbbaa" ran one byte past the end and killed the whole app the first
+    /// time a custom colour was committed from the running GUI. The render test
+    /// never caught it because its fixture fed the bare form.
+    #[test]
+    fn decode_colors_accepts_picker_hash_form_and_never_panics() {
+        use crate::border_preset::{BorderColor, PaletteToken};
+        assert_eq!(
+            PresetStore::decode_colors("c:#371e1bff"),
+            vec![BorderColor::Custom { r: 0x37, g: 0x1e, b: 0x1b, a: 0xff }]
+        );
+        assert_eq!(
+            PresetStore::decode_colors("c:ff0088cc"),
+            vec![BorderColor::Custom { r: 0xff, g: 0x00, b: 0x88, a: 0xcc }]
+        );
+        // 6-digit payloads are opaque.
+        assert_eq!(
+            PresetStore::decode_colors("c:#371e1b"),
+            vec![BorderColor::Custom { r: 0x37, g: 0x1e, b: 0x1b, a: 0xff }]
+        );
+        // Short / empty / odd payloads degrade to the palette default instead
+        // of taking the process down with them.
+        for bad in ["c:#37", "c:", "c:#", "c:#371e1bf"] {
+            let out = PresetStore::decode_colors(bad);
+            assert_eq!(out.len(), 1, "`{bad}` must still yield one colour");
+            assert!(
+                matches!(out[0], BorderColor::Token(PaletteToken::Primary)),
+                "`{bad}` must fall back to the palette default, got {:?}",
+                out[0]
+            );
+        }
     }
 
     #[test]

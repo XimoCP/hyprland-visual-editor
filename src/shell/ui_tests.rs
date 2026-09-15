@@ -945,7 +945,7 @@ fn mark_theme_applied_persists_active_across_restart() {
     }
 
     // Real startup: empty last_applied → no active anywhere.
-    let mut tm = crate::theme_manager::ThemeManager::new(&config_dir);
+    let tm = crate::theme_manager::ThemeManager::new(&config_dir);
     assert!(tm.last_applied.is_empty());
     assert!(
         tm.list().unwrap_or_default().iter().all(|t| !t.is_active),
@@ -3841,7 +3841,7 @@ fn system_rail_handoff_returns_focus_to_content() {
 /// Arrow keys keep driving System rows after the rail handoff.
 #[test]
 fn system_arrows_drive_rows_after_handoff() {
-    use slint::{ComponentHandle as _, platform::Key};
+    use slint::platform::Key;
     let win = focus_open_system_panel();
     let rows = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     win.on_toggle_auto_minimize({
@@ -3954,7 +3954,7 @@ fn system_compound_rows_engage_and_pick_with_arrows() {
 #[test]
 fn system_engaged_row_esc_disengages_before_back() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     let win = focus_open_system_panel();
     let backs = std::rc::Rc::new(std::cell::RefCell::new(0usize));
     win.on_panel_back({
@@ -4044,7 +4044,7 @@ fn system_retardo_stops_are_visually_distinct() {
 #[test]
 fn rail_arrows_preview_section_live() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     let win = focus_open_system_panel(); // starts on System (4), content mode
     assert_eq!(win.get_panel_section(), 4, "panel must start on System");
 
@@ -4081,7 +4081,7 @@ fn rail_arrows_preview_section_live() {
 #[test]
 fn engaged_borders_slider_down_exits_and_moves_row() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.set_border_titles(ModelRc::new(VecModel::from(vec![
@@ -4118,9 +4118,10 @@ fn engaged_borders_slider_down_exits_and_moves_row() {
     // ↓ exits the engagement and moves to the next slider (index 3).
     focus_press_key(&win, Key::DownArrow);
 
-    // Left from the tune block walks back to the pick block; Enter applies
-    // card 0. If ↓ had NOT disengaged, Left would adjust the slider and Enter
-    // would be swallowed — no border would be applied.
+    // Left from the tune block walks back to the presets block (it is the one
+    // rendered on the LEFT); Enter applies card 0. If ↓ had NOT disengaged,
+    // Left would adjust the slider and Enter would be swallowed — no border
+    // would be applied.
     focus_press_key(&win, Key::LeftArrow);
     focus_press_key(&win, Key::Return);
     assert_eq!(
@@ -4134,7 +4135,7 @@ fn engaged_borders_slider_down_exits_and_moves_row() {
 #[test]
 fn engaged_motion_slider_down_exits_and_moves_row() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.set_anim_titles(ModelRc::new(VecModel::from(vec![
@@ -4167,7 +4168,7 @@ fn engaged_motion_slider_down_exits_and_moves_row() {
     focus_press_key(&win, Key::DownArrow);
     focus_press_key(&win, Key::Return); // engage first bezier slider
     focus_press_key(&win, Key::DownArrow); // exit + move
-    focus_press_key(&win, Key::LeftArrow); // tune → pick
+    focus_press_key(&win, Key::LeftArrow); // tune → presets (left)
     focus_press_key(&win, Key::Return);
     assert_eq!(
         applied.borrow().as_slice(),
@@ -4327,14 +4328,14 @@ fn filters_rail_handoff_returns_focus_to_content() {
 
 /// Arrow block-jump (intuitive navigation): from the rail, Right enters the
 /// FIRST block and a second Right jumps to the SECOND block; Left reverses
-/// (second block → first block → rail). On Borders the first block is the
-/// preset cards (Enter applies) and the second is the geometry sliders
-/// (Enter engages). So jumping to the second block and pressing Enter must
-/// engage a slider, never apply a border.
+/// (presets block → tune block → rail). The preset list is the LEFT pane, next
+/// to the rail, and the keyboard sequence is cards-first — so index order and
+/// eye order agree: Right walks from the cards into the tune block. Pressing
+/// Enter there must engage a slider, never apply a border.
 #[test]
 fn arrows_jump_blocks_from_menu() {
     use slint::platform::Key;
-    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     // Load Borders presets and switch to that section.
     win.set_border_titles(ModelRc::new(VecModel::from(vec![
@@ -4368,19 +4369,17 @@ fn arrows_jump_blocks_from_menu() {
         move |idx, _file| applied.borrow_mut().push(idx)
     });
 
-    // Rail → Right (first block) → Right (second block) → Enter engages a
-    // slider: no border may be applied.
-    focus_press_key(&win, Key::LeftArrow);
-    focus_press_key(&win, Key::RightArrow);
+    // Focus starts on the first preset card (presets block, LEFT). Right
+    // reaches the tune block → Enter engages a slider: no border may be applied.
     focus_press_key(&win, Key::RightArrow);
     focus_press_key(&win, Key::Return);
     assert!(
         applied.borrow().is_empty(),
-        "Enter in the second block must engage a slider, not apply a border — got {:?}",
+        "Enter in the tune block must engage a slider, not apply a border — got {:?}",
         applied.borrow()
     );
 
-    // Escape releases the slider; Left walks back to the FIRST block; Enter
+    // Escape releases the slider; Left walks back to the presets block; Enter
     // now applies the focused preset card.
     focus_press_key(&win, Key::Escape);
     focus_press_key(&win, Key::LeftArrow);
@@ -4388,7 +4387,7 @@ fn arrows_jump_blocks_from_menu() {
     assert_eq!(
         applied.borrow().as_slice(),
         &[0],
-        "Left must return to the first block and Enter must apply its first card"
+        "Left must return to the presets block and Enter must apply its first card"
     );
 }
 
@@ -4440,7 +4439,7 @@ fn system_row_click_handlers_refocus_by_construction() {
         // These would be old focus-stealing wiring; ensure they are gone from mouse handlers
         // We check that the file does NOT contain focused-row assignment inside a clicked handler
         // (focused-row only moves via keyboard Down/Up/Return, not via mouse)
-        let count = src.matches(marker).count();
+        let _count = src.matches(marker).count();
         // Keyboard navigation still sets focused-row via arrow keys (2 places), so we just ensure
         // mouse handlers don't duplicate them — the old test was too loose. Check that clicked lines don't contain them.
     }
@@ -4880,7 +4879,7 @@ fn live_scopes_ignore_mouse_focus_by_construction() {
 #[test]
 fn gallery_keyboard_works_after_leaving_panel() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -4915,7 +4914,7 @@ fn gallery_keyboard_works_after_leaving_panel() {
 #[test]
 fn gallery_keyboard_works_after_mutating_panel_leave() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -4953,7 +4952,7 @@ fn gallery_keyboard_works_after_mutating_panel_leave() {
 #[test]
 fn gallery_keyboard_works_after_closing_drawer() {
     use slint::platform::Key;
-    use slint::ComponentHandle as _;
+    
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -5444,6 +5443,202 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
     assert!(
         count_buffer_diff(&closed, &open) > 5000,
         "opening the picker must change the pane materially"
+    );
+}
+
+// ── Borders picker keyboard affordance (task 3.7) ─────────────────────
+// /tmp/opencode/borders_tune_picker.png must show, below the hex readout, the
+// line "↑↓ Saturation · ←→ change" and a cyan 2px border on whichever of the
+// four controls it names. READING that PNG is the confirmation: the picker's
+// keyboard state (`part`) is internal and driven by the pane's command channel,
+// so it has no Rust seam to assert against. `cargo test` here proves the card
+// mounts and is not clipped; it cannot prove the arrows drive it. That part is
+// verified in the running app (up/down picks a control, left/right changes it,
+// Esc closes), which is exactly the check the previous session skipped.
+
+// ── Mouse wheel must actually scroll the Borders panes ────────────────
+// Both pane ScrollViews drive `viewport-y` from a BINDING so the keyboard focus
+// can steer them. A bound property is recomputed from its binding, so a wheel
+// write is reverted on the next evaluation and the pane does not move — the
+// "el scroll con el ratón no funciona correctamente" report from the running
+// app. This injects a real PointerScrolled event through the same path the
+// backend uses, and asserts the content actually moved.
+#[test]
+fn borders_list_pane_scrolls_with_the_mouse_wheel() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+
+    // Enough presets that the list overflows its viewport (~20 * 64px).
+    let n = 20usize;
+    let rep = |f: fn(usize) -> String| -> ModelRc<SharedString> {
+        ModelRc::new(VecModel::from(
+            (0..n).map(|i| SharedString::from(f(i))).collect::<Vec<_>>(),
+        ))
+    };
+    win.set_border_titles(rep(|i| format!("Preset {i:02}")));
+    win.set_border_descs(rep(|_| "desc".to_string()));
+    win.set_border_tags(rep(|_| String::new()));
+    win.set_border_files(rep(|i| format!("p{i:02}.lua")));
+    win.set_border_size(2);
+    win.set_tune_angle(90);
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+
+    let settle = || {
+        for _ in 0..140 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    settle();
+    let before = win.window().take_snapshot().expect("before snapshot");
+    save_slice_png(before.clone(), "/tmp/opencode/borders_wheel_before.png");
+
+    // Wheel over the LIST pane (LEFT half of the content area: the preset list
+    // sits next to the rail, the tune block on the right).
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(700.0, 620.0),
+        delta_x: 0.0,
+        delta_y: -180.0,
+    });
+    // Measure the response over the first frames. `animate viewport-y {
+    // duration: 250ms }` sits on the same property the wheel writes, so a wheel
+    // tick does not move the content 1:1 — it starts an eased 250ms animation
+    // that the next tick restarts. That is what a user feels as "the scroll is
+    // not working right".
+    let mut early = 0usize;
+    for frame in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        if frame == 1 {
+            early = count_buffer_diff(&before, &win.window().take_snapshot().unwrap());
+        }
+    }
+    let after = win.window().take_snapshot().expect("after snapshot");
+    save_slice_png(after.clone(), "/tmp/opencode/borders_wheel_after.png");
+
+    let diff = count_buffer_diff(&before, &after);
+    println!("WHEEL: 2 frames = {early} ink, settled = {diff} ink");
+    assert!(
+        diff > 20000,
+        "a wheel event over the list pane must scroll it; it moved {diff} units of ink, \
+         which is the viewport-y binding reverting the wheel"
+    );
+    assert!(
+        early * 2 >= diff,
+        "the wheel must move the pane promptly: after 2 frames only {early} of {diff} units \
+         of ink had moved, i.e. the 250ms `animate viewport-y` is animating the wheel itself"
+    );
+
+    // ── Does the wheel break the keyboard follow? ─────────────────────
+    // `viewport-y` is bound so the keyboard can steer the pane. Slint replaces
+    // a binding when code assigns the property, so a wheel write may permanently
+    // drop that binding: the list then stops following the focused preset and the
+    // lower presets can never be brought into view — "hay alguno que no se
+    // alcanza a ver". Same window, same focus, with and without a prior wheel:
+    // the two must look the same.
+    let last = (n - 1) as i32;
+    let focus = |i: i32, w: &crate::MainWindow| {
+        w.set_panel_kbd_preview_index(i);
+        for _ in 0..140 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    focus(last, &win);
+    let follow_reference = win.window().take_snapshot().expect("follow reference");
+    save_slice_png(follow_reference.clone(), "/tmp/opencode/borders_wheel_follow_reference.png");
+
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(700.0, 620.0),
+        delta_x: 0.0,
+        delta_y: -180.0,
+    });
+    for _ in 0..140 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    focus(0, &win);
+    focus(last, &win);
+    let follow_after_wheel = win.window().take_snapshot().expect("follow after wheel");
+    save_slice_png(follow_after_wheel.clone(), "/tmp/opencode/borders_wheel_follow_after.png");
+
+    let broke = count_buffer_diff(&follow_reference, &follow_after_wheel);
+    // Scaling reference (measured, not guessed): with `viewport-y` BOUND the
+    // wheel killed the follow and this same comparison measured 30550 — a
+    // content-scale shift of roughly one pane height. After the fix the
+    // residual is under 10000 and comes from the scrollbar / scroll indicator
+    // state, not the content: reading
+    // /tmp/opencode/borders_wheel_follow_{reference,after}.png shows both
+    // ending on the same focused preset (19) at the same offset.
+    assert!(
+        broke < 15000,
+        "a wheel scroll must not break the keyboard follow: focusing the last preset after a \
+         wheel landed {broke} units of ink away from the same focus without a wheel (a content \
+         shift measures ~30000), i.e. the list stopped following the focused preset"
+    );
+
+    // ── Rapid wheel ticks must not lose travel ────────────────────────
+    // `animate viewport-y { duration: 250ms }` sits on the same property the
+    // wheel writes. A tick that lands mid-animation makes the next target be
+    // computed from the interpolated value, which can silently drop the part of
+    // the previous tick that had not been travelled yet — "al hacer scroll no
+    // llegás al final". Same input, two pacings; the end states must agree.
+    let wheel = |w: &crate::MainWindow, dy: f32| {
+        w.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(700.0, 620.0),
+            delta_x: 0.0,
+            delta_y: dy,
+        });
+    };
+    let frames = |n: usize| {
+        for _ in 0..n {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    const TICKS: usize = 8;
+    const STEP: f32 = -120.0;
+
+    focus(0, &win);
+    for _ in 0..TICKS {
+        wheel(&win, STEP);
+        frames(30); // let each animation finish
+    }
+    let paced = win.window().take_snapshot().expect("paced");
+    save_slice_png(paced.clone(), "/tmp/opencode/borders_wheel_paced.png");
+
+    focus(0, &win);
+    for _ in 0..TICKS {
+        wheel(&win, STEP);
+        frames(1); // a real wheel burst arrives far faster than the 250ms
+    }
+    frames(120);
+    let rapid = win.window().take_snapshot().expect("rapid");
+    save_slice_png(rapid.clone(), "/tmp/opencode/borders_wheel_rapid.png");
+
+    let lost = count_buffer_diff(&paced, &rapid);
+    assert!(
+        lost < 15000,
+        "the wheel must accumulate the same travel however fast it arrives: {} ticks paced vs \
+         the same {} ticks back to back ended {lost} units of ink apart, i.e. the `animate \
+         viewport-y` is swallowing the distance of ticks that land mid-animation",
+        TICKS, TICKS
     );
 }
 

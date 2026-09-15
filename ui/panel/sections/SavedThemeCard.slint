@@ -37,7 +37,7 @@ export component SavedThemeCard inherits Rectangle {
     // 1:1 legacy: clicking a card must NOT steal keyboard focus.
     callback refocus();
 
-    property <bool> is-hovered: card-ta.has-hover || apply-btn.has-hover || ref-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
+    property <bool> is-hovered: card-ta.has-hover || apply-ta.has-hover || ref-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
     property <bool> _expanded: is-active || is-hovered || keyboard-focused;
 
     height: _expanded ? 100px : 56px;
@@ -122,15 +122,43 @@ export component SavedThemeCard inherits Rectangle {
             HorizontalLayout {
                 spacing: 6px;
 
-                // Apply
-                apply-btn := IconButton {
-                    icon: "▶";
-                    bg-color: HveColors.accent-green;
-                    tooltip-text: root.apply-text;
-                    disabled: root.is-busy || root.apply-in-progress;
-                    clicked => {
-                        root.apply-theme(root.theme-name);
-                        root.refocus();
+                // Apply + active state as ONE toggle button, shaped like the rest
+                // of the row: the Save card's actions are 32x32 rounded squares
+                // (`IconButton`, radius 8), so the toggle is one too. The colour
+                // change carries the on/off state, with the check mark as the
+                // second cue, instead of the sliding knob of the pill switch.
+                // Busy state preserved: dimmed, and the click is ignored.
+                apply-switch := Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 8px;
+                    background: root.is-active ? HveColors.accent-green : HveColors.bg-surface;
+                    border-width: 1px;
+                    border-color: root.is-active ? HveColors.accent-green : HveColors.border;
+                    opacity: (root.is-busy || root.apply-in-progress) ? 0.5 : 1.0;
+                    animate background { duration: 250ms; easing: ease-in-out; }
+                    animate border-color { duration: 250ms; easing: ease-in-out; }
+                    animate opacity { duration: 150ms; easing: ease-out; }
+
+                    Text {
+                        text: root.is-active ? "✓" : "";
+                        color: HveColors.bg-dark;
+                        font-size: 15px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    apply-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (!(root.is-busy || root.apply-in-progress)) {
+                                root.apply-theme(root.theme-name);
+                                root.refocus();
+                            }
+                        }
                     }
                 }
 

@@ -407,6 +407,22 @@ export component PanelRoot inherits Rectangle {
                                 else { root.back(); }
                                 return accept;
                             }
+                            // Picker open: it owns the arrows (task 3.7). Up/Down
+                            // pick one of its four controls (Saturation,
+                            // Brightness, Hue, Alpha), Left/Right change it. It is
+                            // a sub-mode of an engaged colour stop, so it must be
+                            // tested BEFORE the engaged branch below — the stop
+                            // stays engaged the whole time the picker is open, and
+                            // otherwise the arrows would cycle the palette token
+                            // behind the picker instead of the colour being edited.
+                            // Esc (above) closes the picker first.
+                            if (borders.picker-open()) {
+                                if (event.text == Key.DownArrow) { borders.picker-move(1); return accept; }
+                                if (event.text == Key.UpArrow) { borders.picker-move(-1); return accept; }
+                                if (event.text == Key.RightArrow) { borders.picker-adjust(true); return accept; }
+                                if (event.text == Key.LeftArrow) { borders.picker-adjust(false); return accept; }
+                                return accept;
+                            }
                             if (root.borders-engaged-slider >= 0) {
                                 if (event.text == Key.RightArrow) { borders.adjust-slider(true); return accept; }
                                 if (event.text == Key.LeftArrow) { borders.adjust-slider(false); return accept; }
@@ -428,7 +444,17 @@ export component PanelRoot inherits Rectangle {
                                     }
                                     return accept;
                                 }
-                                if (event.text == Key.Return || event.text == Key.Space) { root.borders-engaged-slider = -1; return accept; }
+                                // Return/Space on an engaged stop does NOT simply
+                                // un-engage: for a colour stop the section turns
+                                // it into "open the picker". That branch used to
+                                // be unreachable, because this line un-engaged
+                                // first — which is why the picker could be opened
+                                // by mouse only, however often "Enter opens the
+                                // picker" was claimed in the task list.
+                                if (event.text == Key.Return || event.text == Key.Space) {
+                                    if (borders.tune-enter() == 0) { root.borders-engaged-slider = -1; }
+                                    return accept;
+                                }
                                 return accept;
                             }
                             if (event.text == Key.DownArrow) {
@@ -446,14 +472,16 @@ export component PanelRoot inherits Rectangle {
                                 return accept;
                             }
                             if (event.text == Key.RightArrow) {
-                                // Jump one panel right: pick block → tune block.
+                                // Visual order is [rail] [preset list] [tune], which
+                                // now agrees with the cards-first index order: right
+                                // walks towards the tune block.
                                 if (root.borders-list-len > 0 && root.borders-focused-index < root.borders-list-len) {
                                     root.borders-focused-index = root.borders-list-len;
                                 }
                                 return accept;
                             }
                             if (event.text == Key.LeftArrow) {
-                                // Jump one panel left: tune block → pick block → menu.
+                                // Left walks back to the presets, then out to the rail.
                                 if (root.borders-list-len > 0 && root.borders-focused-index >= root.borders-list-len) {
                                     root.borders-focused-index = 0;
                                 } else {
@@ -523,14 +551,15 @@ export component PanelRoot inherits Rectangle {
                                 return accept;
                             }
                             if (event.text == Key.RightArrow) {
-                                // Jump one panel right: pick block → tune block.
+                                // Same as Borders: the preset list is the LEFT
+                                // pane, so right walks towards the tune block.
                                 if (root.anim-files.length > 0 && root.motion-focused-index < root.anim-files.length) {
                                     root.motion-focused-index = root.anim-files.length;
                                 }
                                 return accept;
                             }
                             if (event.text == Key.LeftArrow) {
-                                // Jump one panel left: tune block → pick block → menu.
+                                // Left walks back to the presets, then out to the rail.
                                 if (root.anim-files.length > 0 && root.motion-focused-index >= root.anim-files.length) {
                                     root.motion-focused-index = 0;
                                 } else {
