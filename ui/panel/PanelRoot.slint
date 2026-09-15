@@ -98,6 +98,7 @@ export component PanelRoot inherits Rectangle {
     in-out property <bool> tune-rule-enabled: false;
     // D4 live-vs-saved status flag (see MainWindow.tune-dirty).
     in-out property <bool> tune-dirty: false;
+    in-out property <int> tune-editing-slot: -1;
     // Animation preset state
     // Motion pick layer (R4) — 19 cards from scan("animations")
     in property <[string]> anim-titles;
@@ -401,7 +402,8 @@ export component PanelRoot inherits Rectangle {
                             // at once. Tune order: size, angle, inactive, slots,
                             // add/remove, glow group, 3 anim leaves, rule, save.
                             if (event.text == Key.Escape) {
-                                if (root.borders-engaged-slider >= 0) { root.borders-engaged-slider = -1; }
+                                if (root.tune-editing-slot >= 0) { root.tune-editing-slot = -1; }
+                                else if (root.borders-engaged-slider >= 0) { root.borders-engaged-slider = -1; }
                                 else { root.back(); }
                                 return accept;
                             }
@@ -748,6 +750,7 @@ export component PanelRoot inherits Rectangle {
                         tune-anim-curves <=> root.tune-anim-curves;
                         tune-rule-enabled <=> root.tune-rule-enabled;
                         tune-dirty <=> root.tune-dirty;
+                        editing-slot <=> root.tune-editing-slot;
                         tune-changed(colors, angle, inactive, glow, anims, rule) => { root.tune-changed(colors, angle, inactive, glow, anims, rule); }
                         add-color-slot => { root.add-color-slot(); }
                         remove-color-slot => { root.remove-color-slot(); }

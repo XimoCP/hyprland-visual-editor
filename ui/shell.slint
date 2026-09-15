@@ -189,6 +189,7 @@ export component ShellRoot inherits Rectangle {
     in-out property <bool> panel-tune-rule-enabled: false;
     // D4 live-vs-saved status flag (see MainWindow.tune-dirty).
     in-out property <bool> panel-tune-dirty: false;
+    in-out property <int> panel-tune-editing-slot: -1;
     // Animation preset state
     in-out property <string> panel-animation-preset-name: "";
     in property <string> panel-animation-save-error: "";
@@ -571,6 +572,7 @@ export component ShellRoot inherits Rectangle {
                     tune-anim-curves <=> root.panel-tune-anim-curves;
                     tune-rule-enabled <=> root.panel-tune-rule-enabled;
                     tune-dirty <=> root.panel-tune-dirty;
+                    tune-editing-slot <=> root.panel-tune-editing-slot;
                     animation-preset-name <=> root.panel-animation-preset-name;
                     animation-save-error: root.panel-animation-save-error;
                     user-animation-preset-names: root.panel-user-animation-preset-names;

@@ -155,6 +155,8 @@ export component MainWindow inherits Window {
     // loaded/saved. Slint sets it on every edit; Rust clears it on load and
     // after a successful save, so both directions stay truthful.
     in-out property <bool> tune-dirty: false;
+    // Channel whose custom colour the shared picker has open (-1 = closed).
+    in-out property <int> tune-editing-slot: -1;
     in-out property <string> animation-preset-name: "";
     in property <string> animation-save-error: "";
     in property <[string]> user-animation-preset-names;
@@ -452,6 +454,7 @@ export component MainWindow inherits Window {
         panel-tune-anim-curves <=> root.tune-anim-curves;
         panel-tune-rule-enabled <=> root.tune-rule-enabled;
         panel-tune-dirty <=> root.tune-dirty;
+        panel-tune-editing-slot <=> root.tune-editing-slot;
         panel-tune-changed(colors, angle, inactive, glow, anims, rule) => { root.panel-tune-changed(colors, angle, inactive, glow, anims, rule); }
         panel-add-color-slot => { root.panel-add-color-slot(); }
         panel-remove-color-slot => { root.panel-remove-color-slot(); }

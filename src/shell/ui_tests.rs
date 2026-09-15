@@ -5372,3 +5372,77 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     );
 }
 
+
+// ── Borders custom colour picker (task 3.6) ───────────────────────────
+// Exactly ONE picker is mounted, open for the channel being edited (index
+// space matches tune-colors-resolved: 0..7 slots, 8 inactive, 9 glow,
+// 10 glow inactive). An inline picker per slot would add ~330px per custom
+// colour and the pane has 2..8 of them.
+#[test]
+fn borders_tune_custom_picker_opens_for_one_channel() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("c:ff8800ff"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(vec![
+        slint::Color::from_rgb_u8(56, 189, 248),
+        slint::Color::from_rgb_u8(255, 136, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_argb_u8(0, 0, 0, 0),
+        slint::Color::from_rgb_u8(15, 23, 42),
+        slint::Color::from_rgb_u8(192, 132, 252),
+        slint::Color::from_rgb_u8(15, 23, 42),
+    ])));
+
+    // Closed first: the pane must NOT mount a picker (no dead 330px card).
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let closed = win.window().take_snapshot().expect("closed snapshot");
+
+    // Open it for slot 2 (index 1), then scroll the pane to the picker zone by
+    // focusing a stop just below it.
+    win.set_tune_editing_slot(1);
+    win.set_panel_kbd_preview_index(8);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let open = win.window().take_snapshot().expect("picker snapshot");
+    save_slice_png(open.clone(), "/tmp/opencode/borders_tune_picker.png");
+
+    assert!(
+        count_buffer_diff(&closed, &open) > 5000,
+        "opening the picker must change the pane materially"
+    );
+}

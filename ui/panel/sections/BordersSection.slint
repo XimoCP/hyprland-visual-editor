@@ -23,6 +23,7 @@ import { HveColors } from "../../theme.slint";
 import { GeometrySlider } from "../../components.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
 import { BorderColorSlot } from "BorderColorSlot.slint";
+import { HveColorPicker } from "../ColorPicker.slint";
 
 // ─── Tune pane: dynamic color slots + angle + inactive + size + save form. ───
 // Rebuilt in U3a: old 4-slider geometry block removed; only size 1-5 kept.
@@ -40,6 +41,15 @@ component BordersTunePane inherits Rectangle {
     // Tune pane — dynamic (Unit 2)
     in property <[string]> tune-active-colors: [];
     in property <[color]> tune-colors-resolved: [];
+    // Channel whose custom colour the shared picker is editing, in the same
+    // index space as tune-colors-resolved: 0..7 slots, 8 inactive, 9 glow,
+    // 10 glow inactive. -1 = picker closed.
+    in property <int> editing-slot: -1;
+    callback custom-color-preview(int, string);
+    // The pane cannot assign its own `in` property, so opening/closing the
+    // picker is a request the section fulfils.
+    callback request-edit-slot(int);
+    callback custom-color-changed(int, string);
     in property <int> tune-color-count: 0;
     in-out property <int> tune-angle: 90;
     in property <string> tune-inactive-color: "";
@@ -142,6 +152,17 @@ component BordersTunePane inherits Rectangle {
         if (root.is-token-color(v)) { return root.readable-color(v); }
         return "Custom";
     }
+    // Human name for the channel the picker is editing, so the picker header
+    // states exactly which colour it will change.
+    function channel-name(idx: int) -> string {
+        if (idx >= 0 && idx < root.slot-count) {
+            return "gradient colour " + (idx + 1) + " of " + root.slot-count;
+        }
+        if (idx == 8) { return "the inactive border colour"; }
+        if (idx == 9) { return "the glow colour"; }
+        if (idx == 10) { return "the inactive glow colour"; }
+        return "this colour";
+    }
     background: transparent;
     clip: true;
 
@@ -151,13 +172,94 @@ component BordersTunePane inherits Rectangle {
         // Clamped to [height - content, 0] so the first and last stops can
         // never scroll into the void, whatever the inventory mix.
         property <length> focus-y: root.local-focus * 96px;
-        viewport-y: root.follow ? (root.local-focus >= 0
+        // Opening the picker must SHOW it: it sits at the top of the flow, so
+        // the viewport jumps there while it is open.
+        viewport-y: root.editing-slot >= 0 ? 0px : (root.follow ? (root.local-focus >= 0
             ? max(self.height - tune-col.height, min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)))
-            : 0px) : root.saved-scroll-y;
+            : 0px) : root.saved-scroll-y);
         animate viewport-y { duration: 250ms; easing: ease-out; }
-        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
+        changed viewport-y => { if (root.editing-slot < 0) { root.saved-scroll-y = self.viewport-y; } }
         tune-col := VerticalLayout {
             padding-left: 16px;
+            // Lives in the scroll flow: an overlay would be painted UNDER the
+            // ScrollView (later siblings do not win over it), which showed the
+            // pane content bleeding through the picker.
+            // ── Shared colour picker: an overlay, one channel at a time ──
+            // Pinned to the bottom of the pane rather than living in the scroll
+            // flow: clicking "Custom…" must SHOW the picker, and an inline picker
+            // could land off-screen in a pane that is already scrolled. Exactly one
+            // exists at a time — an inline picker per slot would add ~330px per
+            // custom colour and the pane has 2..8 of them.
+            if root.editing-slot >= 0 : Rectangle {
+                // Anchored to the TOP: the pane's own height runs a little past
+                // the visible panel, so a bottom-anchored card got its last row
+                // clipped. The top is always on-screen, and the header names the
+                // channel being edited so the card is never ambiguous.
+                height: 344px;
+                border-width: 1px;
+                border-color: HveColors.accent-cyan;
+                border-radius: SkwdTokens.radius-8;
+                background: HveColors.bg-surface;
+                clip: true;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Custom colour — " + root.channel-name(root.editing-slot);
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        Rectangle {
+                            width: 64px;
+                            height: 22px;
+                            border-radius: SkwdTokens.radius-4;
+                            background: picker-done.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+
+                            Text {
+                                text: "Done";
+                                color: HveColors.text;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            picker-done := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => { root.request-edit-slot(-1); }
+                            }
+                        }
+                    }
+
+                    // Seeded from the resolved colour, so opening the picker on a
+                    // stored custom value shows THAT colour and not a default.
+                    col-picker := HveColorPicker {
+                        width: 100%;
+                        seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
+                        // D4: never notify per drag step. `changed` only moves the
+                        // local value so the preview follows; `committed` (pointer
+                        // up) is what writes the live draft.
+                        changed => { root.custom-color-preview(root.editing-slot, col-picker.hex8); }
+                        committed => { root.custom-color-changed(root.editing-slot, col-picker.hex8); }
+                    }
+                }
+            }
+
             padding-right: 16px;
             padding-top: 16px;
             padding-bottom: 12px;
@@ -291,6 +393,8 @@ component BordersTunePane inherits Rectangle {
                     BorderColorSlot {
                         width: 100%;
                         slot-value: root.tune-inactive-color;
+                        editing: root.editing-slot == 8;
+                        open-picker() => { root.request-edit-slot(8); }
                         resolved-color: root.tune-colors-resolved[8];
                         slot-description: "Color of unfocused window borders. Tap a swatch to change it.";
                         display-label: root.value-label(root.tune-inactive-color);
@@ -333,6 +437,8 @@ component BordersTunePane inherits Rectangle {
                 BorderColorSlot {
                     width: 100%;
                     slot-value: root.tune-active-colors[i];
+                    editing: root.editing-slot == i;
+                    open-picker() => { root.request-edit-slot(i); }
                     resolved-color: root.tune-colors-resolved[i];
                     slot-description: "Active gradient color slot " + (i + 1) + " of " + root.slot-count + ". Tap a swatch to change.";
                     // Name the current pick too, so the user reads "Slot 2 · tertiary"
@@ -627,6 +733,8 @@ component BordersTunePane inherits Rectangle {
                         BorderColorSlot {
                             width: 100%;
                             slot-value: root.glow-color;
+                            editing: root.editing-slot == 9;
+                            open-picker() => { root.request-edit-slot(9); }
                             resolved-color: root.tune-colors-resolved[9];
                             slot-description: "Color of the glow on focused windows. Tap a swatch to change it.";
                             display-label: root.value-label(root.glow-color);
@@ -663,6 +771,8 @@ component BordersTunePane inherits Rectangle {
                         BorderColorSlot {
                             width: 100%;
                             slot-value: root.glow-color-inactive;
+                            editing: root.editing-slot == 10;
+                            open-picker() => { root.request-edit-slot(10); }
                             resolved-color: root.tune-colors-resolved[10];
                             slot-description: "Glow color for unfocused windows. Tap a swatch to change it.";
                             display-label: root.value-label(root.glow-color-inactive);
@@ -1329,6 +1439,7 @@ component BordersTunePane inherits Rectangle {
             }
         }
     }
+
 }
 
 // ─── List pane: built-in + user presets. ───
@@ -1460,6 +1571,10 @@ export component BordersSection inherits Rectangle {
     // Tune pane — dynamic (Unit 2)
     in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
+    // Channel the shared colour picker is editing (same index space as
+    // tune-colors-resolved). -1 = closed. Owned here because the section
+    // owns the tune state the picker writes into.
+    in-out property <int> editing-slot: -1;
     // Resolved colours (see MainWindow.tune-colors-resolved).
     in-out property <[color]> tune-colors-resolved: [];
     in-out property <int> tune-angle: 90;
@@ -1559,6 +1674,27 @@ export component BordersSection inherits Rectangle {
         return "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
             + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
             + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
+    }
+
+    // Write a custom colour into the channel the picker is editing. `commit`
+    // false only moves the local value (drag preview); true also pushes the
+    // live draft, which D4 forbids doing on every drag step.
+    function set-custom(idx: int, hex: string, commit: bool) {
+        let v = "c:" + hex;
+        if (idx >= 0 && idx < root.tune-n) {
+            root.tune-active-colors[idx] = v;
+        } else if (idx == 8) {
+            root.tune-inactive-color = v;
+        } else if (idx == 9) {
+            root.tune-glow-color = v;
+            root.tune-glow = root.rebuild-glow();
+        } else if (idx == 10) {
+            root.tune-glow-color-inactive = v;
+            root.tune-glow = root.rebuild-glow();
+        } else {
+            return;
+        }
+        if (commit) { root.notify-tune-changed(); }
     }
 
     // Single funnel for every tune edit: marks the working state as unsaved
@@ -1727,6 +1863,23 @@ export component BordersSection inherits Rectangle {
     public function tune-enter() -> int {
         let local = root.focused-index - root.list-count;
         let n = root.tune-n;
+        // A colour stop is a slider-like stop (PanelRoot engages it, arrows
+        // cycle the palette). Pressing Enter AGAIN on an already-engaged colour
+        // opens the picker, so the custom path is reachable without a mouse.
+        // Esc closes it (handled in PanelRoot).
+        if (local == 2 && root.engaged-slider == local) { root.editing-slot = 8; return 1; }
+        if (local >= 3 && local < 3 + n && root.engaged-slider == local) {
+            root.editing-slot = local - 3;
+            return 1;
+        }
+        if (root.tune-glow-enabled && local == 8 + n && root.engaged-slider == local) {
+            root.editing-slot = 9;
+            return 1;
+        }
+        if (root.tune-glow-enabled && local == 9 + n && root.engaged-slider == local) {
+            root.editing-slot = 10;
+            return 1;
+        }
         if (local == 3 + n && n < 8) { root.add-color-slot(); return 1; }
         if (local == 4 + n && n > 2) { root.remove-color-slot(); return 1; }
         if (local == 5 + n) {
@@ -1850,6 +2003,10 @@ export component BordersSection inherits Rectangle {
                 follow: root.focused-index >= root.split;
                 tune-active-colors: root.tune-active-colors;
                 tune-colors-resolved: root.tune-colors-resolved;
+                editing-slot: root.editing-slot;
+                custom-color-preview(idx, hex) => { root.set-custom(idx, hex, false); }
+                custom-color-changed(idx, hex) => { root.set-custom(idx, hex, true); }
+                request-edit-slot(idx) => { root.editing-slot = idx; }
                 tune-color-count: root.tune-color-count;
                 tune-angle: root.tune-angle;
                 tune-inactive-color: root.tune-inactive-color;
@@ -1956,6 +2113,10 @@ export component BordersSection inherits Rectangle {
                 follow: root.focused-index >= root.split;
                 tune-active-colors: root.tune-active-colors;
                 tune-colors-resolved: root.tune-colors-resolved;
+                editing-slot: root.editing-slot;
+                custom-color-preview(idx, hex) => { root.set-custom(idx, hex, false); }
+                custom-color-changed(idx, hex) => { root.set-custom(idx, hex, true); }
+                request-edit-slot(idx) => { root.editing-slot = idx; }
                 tune-color-count: root.tune-color-count;
                 tune-angle: root.tune-angle;
                 tune-inactive-color: root.tune-inactive-color;
