@@ -8,12 +8,18 @@
 
 #![cfg(test)]
 
-use crate::shell::nav::{NavCommand, Screen};
+use super::{PANEL_FLOAT_PAUSE_MS, PANEL_HOLD_MS, PANEL_MORPH_MS};
+use crate::shell::nav::{NavCommand, PanelSection, Screen};
 use crate::shell::Shell;
 use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
+
+/// Advance the mocked clock by `ms` so due `slint::Timer`s fire.
+fn advance_ms(ms: u64) {
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
+}
 
 /// Wire the three shell callbacks (card-activated, back-activated,
 /// nav-move) exactly as `callbacks.rs` does, but without the full
@@ -249,4 +255,121 @@ fn integration_production_show_sync_restores_expanded_state() {
     assert_eq!(win.get_mounted_screen(), 1, "Gallery remains mounted");
     assert!(win.get_expanded(), "shell remains expanded");
     assert_eq!(Shell::with_nav(&shell, |nav| nav.focused_card()), 1, "focus remains on the selected card");
+}
+
+// ── 5.5: the panel morph and the window conversion are SEQUENCED ────
+//
+// The panel choreography in `ui/shell.slint` is authored against the
+// surface that covers the display (gallery tucks → beat → the central
+// card expands to 80%). Converting the window to floating at the same
+// time as the morph made the two motions fight, so the float now lands
+// only after the morph settled, plus one beat of stillness.
+
+/// The gallery expanded, ready to enter the panel.
+fn gallery_expanded_setup() -> (crate::MainWindow, Rc<RefCell<Shell>>) {
+    let (win, shell) = integration_setup();
+    win.invoke_card_activated(0);
+    drain_anim();
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1200.0, 800.0),
+        "precondition: the gallery is expanded at its authored size"
+    );
+    (win, shell)
+}
+
+/// Entering the panel must hold the fullscreen presentation for the whole
+/// morph, and only then float. Before this, the float landed on the same
+/// tick as the morph and neither motion read.
+///
+/// The clock is advanced in steps that land each timer ON its deadline:
+/// `slint::Timer::single_shot` resolves the deadline from the clock at
+/// creation, so a coarse jump would fire the hold late and shift the rest
+/// of the sequence with it — a property of the mock clock, not of the flow.
+#[test]
+fn integration_panel_entry_floats_only_after_the_morph_settles() {
+    let (_win, shell) = gallery_expanded_setup();
+
+    assert!(
+        Shell::enter_panel(&shell, PanelSection::Save),
+        "the panel enters from the expanded gallery"
+    );
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1200.0, 800.0),
+        "no window conversion on the keypress — the morph owns the first beat"
+    );
+
+    // The 350ms hold: nav flips to Open, which is what starts the morph.
+    advance_ms(PANEL_HOLD_MS);
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1200.0, 800.0),
+        "no conversion while the panel morphs"
+    );
+
+    // The choreography settles at the end of the morph...
+    advance_ms(PANEL_MORPH_MS);
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1200.0, 800.0),
+        "still fullscreen when the morph settles"
+    );
+
+    // ...and the beat before the float is still running.
+    advance_ms(PANEL_FLOAT_PAUSE_MS - 1);
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1200.0, 800.0),
+        "the beat is deliberate, not skippable"
+    );
+
+    // Beat over: the window is now the border preview surface.
+    advance_ms(1);
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1000.0, 640.0),
+        "the float lands one beat after the morph settled"
+    );
+}
+
+/// A float still in flight when the panel is left must expire: it belongs
+/// to that entry, not to whatever panel opens next. Without the epoch the
+/// stale float landed mid-morph on the NEW entry and re-resolved the size
+/// from an already-floating window.
+#[test]
+fn integration_panel_entry_expires_a_float_from_a_previous_entry() {
+    let (_win, shell) = gallery_expanded_setup();
+
+    // First entry: its morph completes and its float is scheduled.
+    assert!(Shell::enter_panel(&shell, PanelSection::Save));
+    advance_ms(PANEL_HOLD_MS + 400); // morph done, float still pending
+
+    // Abandoned before that float lands.
+    assert!(Shell::leave_panel(&shell));
+    advance_ms(PANEL_HOLD_MS); // the leave morph completes → Closed
+    assert!(!Shell::with_nav(&shell, |nav| nav.is_mutating()), "leave settled");
+
+    // Second entry: it owns the float from here on.
+    assert!(
+        Shell::enter_panel(&shell, PanelSection::Borders),
+        "a new entry starts from Closed"
+    );
+    advance_ms(PANEL_HOLD_MS); // its morph starts
+
+    // Walk past where the ABANDONED float was due.
+    advance_ms(500);
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1200.0, 800.0),
+        "the abandoned float must never land on this entry"
+    );
+
+    // The entry that is actually open floats on its own schedule.
+    advance_ms(PANEL_MORPH_MS + PANEL_FLOAT_PAUSE_MS);
+    assert_eq!(
+        Shell::current_size(&shell),
+        (1000.0, 640.0),
+        "the live entry owns the float"
+    );
 }

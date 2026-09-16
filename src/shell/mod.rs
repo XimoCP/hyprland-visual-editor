@@ -40,6 +40,22 @@ pub const ANIM_DURATION_MS: u64 = ANIM_STEPS as u64 * ANIM_STEP_MS;
 /// OutCubic easing cubic-bezier(0.215, 0.61, 0.355, 1.0) — skwd default.
 pub const ANIM_EASING: (f32, f32, f32, f32) = (0.215, 0.61, 0.355, 1.0);
 
+/// Hold between the panel keypress and the panel's own choreography
+/// (nav-shell R1 350ms morph): the nav state is `Mutating` for this long.
+pub const PANEL_HOLD_MS: u64 = 350;
+
+/// How long the panel's ENTER choreography runs once `is-panel-open` flips,
+/// before it has settled: the central card fades in (delay 640ms + 300ms)
+/// and scales from 0.62 to 1 (delay 640ms + 560ms).
+/// MUST stay in sync with the choreography in `ui/shell.slint`.
+pub const PANEL_MORPH_MS: u64 = 1200;
+
+/// The beat between the panel's morph settling and the window leaving
+/// fullscreen to float. The conversion is a window event, the morph is a
+/// content event: landing them on the same tick made the two motions fight,
+/// and the eye could read neither. One stillness first, then the conversion.
+pub const PANEL_FLOAT_PAUSE_MS: u64 = 200;
+
 /// The shell root — single mutable owner of navigation state, slot
 /// registry, window sizing and the stepped size animator (design D1, D3,
 /// D4). `slint::Timer` is `!Send + !Sync`, so the shell lives in
@@ -62,6 +78,10 @@ pub struct Shell {
     step_delta: (f32, f32),
     /// Suppress shader overlay for 3s after any Mutating completes (R5).
     suppress_until: Option<Instant>,
+    /// Which panel entry owns the deferred float. Bumped on every enter and
+    /// every leave, so a float still in flight from a previous entry expires
+    /// instead of landing on the panel that is open now.
+    float_epoch: u64,
     /// The stepped animator timer. Kept here so it dies with the shell.
     _anim_timer: slint::Timer,
 }
@@ -85,6 +105,7 @@ impl Shell {
             remaining_steps: 0,
             step_delta: (0.0, 0.0),
             suppress_until: None,
+            float_epoch: 0,
             _anim_timer: slint::Timer::default(),
         }));
         // Apply the base size immediately so the window opens at 900×680
@@ -232,12 +253,18 @@ impl Shell {
     /// Window presentation for the current navigation state (settings
     /// self-preview).
     ///
-    /// While the panel is open, HVE is presented FLOATING and CENTERED: it
+    /// While the panel is present, HVE is presented FLOATING and CENTERED: it
     /// leaves fullscreen, so the border the compositor draws around HVE
     /// itself becomes a live preview of the border values being tuned. The
     /// window is the preview surface — no second window, and no need to keep
     /// any part of the desktop on screen. Every other state (Gallery,
     /// collapsed) stays fullscreen.
+    ///
+    /// Which states float is `PanelState::floats`, and the morph directions
+    /// are deliberately asymmetrical: the float is the LAST beat of the enter
+    /// flow (the morph plays first, on the fullscreen surface it was authored
+    /// against) and the FIRST beat of the leave flow (fullscreen comes back
+    /// before the reverse morph starts). One motion at a time.
     ///
     /// The floating size is derived from the monitor rather than fixed: a
     /// margin must survive on every side, or the border sits flush against
@@ -249,7 +276,10 @@ impl Shell {
     /// are idempotent and safe to re-assert (that is how a lost event is
     /// recovered), but the size is resolved exactly once per entry: it is
     /// measured from the surface while that surface still covers the monitor,
-    /// and after the float it no longer does.
+    /// and after the float it no longer does. That is why the float is a
+    /// scheduled step with an epoch (`schedule_float`) rather than a
+    /// best-effort re-assert, and why `apply_size` is only ever true from
+    /// there: every other caller re-asserts state it did not change.
     ///
     /// A compositor refusal is non-fatal: the panel stays fully functional
     /// windowed (same contract as `enter_gallery_session`).
@@ -258,12 +288,9 @@ impl Shell {
             tracing::info!("[presentation] skip during theme fade");
             return;
         }
-        let panel_open = {
-            let s = shell.borrow();
-            !matches!(s.nav.panel_state(), crate::shell::nav::PanelState::Closed)
-        };
-        tracing::info!("[presentation] panel_open={panel_open} apply_size={apply_size}");
-        if panel_open {
+        let floats = shell.borrow().nav.panel_state().floats();
+        tracing::info!("[presentation] floats={floats} apply_size={apply_size}");
+        if floats {
             // Compositor actions FIRST, then the size animation.
             //
             // Un-setting fullscreen makes the compositor restore the window's
@@ -320,22 +347,34 @@ impl Shell {
     }
 
     /// Enter panel from Gallery (R1, as revised for the settings self-preview).
-    /// Sizes and presents the window for the panel — it leaves fullscreen and
-    /// floats centered — then starts the 350ms Timer → complete.
+    ///
+    /// The window HOLDS fullscreen while the panel morphs. The morph is
+    /// choreographed against the surface that covers the display (the
+    /// gallery tucks, then the central card expands to 80%), so converting
+    /// the window on the same tick as the keypress made the two motions
+    /// fight. The conversion is the LAST beat of the flow: `complete_morph`
+    /// hands off to `schedule_float`, which waits out the choreography plus
+    /// one stillness and only then leaves fullscreen.
+    ///
+    /// The epoch is what keeps that promise across entries: it is bumped
+    /// here, so any float still in flight from a previous entry expires.
     pub fn enter_panel(shell: &Rc<RefCell<Self>>, section: crate::shell::nav::PanelSection) -> bool {
         let entered = {
             let mut s = shell.borrow_mut();
-            s.nav.enter_panel(section)
+            let entered = s.nav.enter_panel(section);
+            if entered {
+                s.float_epoch = s.float_epoch.wrapping_add(1);
+            }
+            entered
         };
         if !entered {
             return false;
         }
         Self::mirror_panel(shell);
-        // Presentation for the open panel: size, leave fullscreen, float, center.
-        Self::apply_window_presentation(shell, true);
+        // No presentation here: the panel morph owns this beat (see above).
         let delay = {
             let s = shell.borrow();
-            s.nav.effective_duration(350)
+            s.nav.effective_duration(PANEL_HOLD_MS)
         };
         if delay == 0 {
             Shell::complete_morph(shell);
@@ -352,32 +391,50 @@ impl Shell {
 
     /// Complete the pending morph (Timer callback R1).
     fn complete_morph(shell: &Rc<RefCell<Self>>) {
-        {
+        let opened = {
             let mut s = shell.borrow_mut();
             s.nav.complete_mutation();
             // R5: suppress shader overlay for 3s after any Mutating completes
             s.suppress_until = Some(Instant::now() + Duration::from_millis(crate::shell::gallery::slot::SHADER_FLICKER_MS));
-        }
+            matches!(s.nav.panel_state(), crate::shell::nav::PanelState::Open(_))
+        };
         Self::mirror_panel(shell);
-        // Presentation after the morph settles: still open → floating
-        // preview; closed again → back to fullscreen. Re-assert only, never
-        // re-animate: the entry path already owns the size transition.
-        Self::apply_window_presentation(shell, false);
+        if opened {
+            // `mirror_panel` just flipped `is-panel-open`, which is what
+            // STARTS the panel choreography. The window conversion waits for
+            // it: it is the float step, not this one, that leaves fullscreen.
+            Self::schedule_float(shell);
+        } else {
+            // Closed again: the leave path already restored the fullscreen
+            // presentation; re-assert only (idempotent).
+            Self::apply_window_presentation(shell, false);
+        }
     }
 
     /// Leave panel (Esc reverses, R1). Starts 350ms Timer → Closed, or immediate when reduced-motion.
     pub fn leave_panel(shell: &Rc<RefCell<Self>>) -> bool {
         let started = {
             let mut s = shell.borrow_mut();
-            s.nav.leave_panel()
+            let started = s.nav.leave_panel();
+            if started {
+                // Leaving cancels a float still in flight: that float belongs
+                // to the entry being left, not to whatever opens next.
+                s.float_epoch = s.float_epoch.wrapping_add(1);
+            }
+            started
         };
         if !started {
             return false;
         }
         Self::mirror_panel(shell);
+        // Restore the fullscreen presentation FIRST, exactly as the enter
+        // flow floats LAST: the reverse choreography (panel collapses,
+        // gallery undocks) plays on the surface it was authored for, instead
+        // of fighting the window conversion mid-morph.
+        Self::apply_window_presentation(shell, false);
         let delay = {
             let s = shell.borrow();
-            s.nav.effective_duration(350)
+            s.nav.effective_duration(PANEL_HOLD_MS)
         };
         if delay == 0 {
             Shell::complete_morph(shell);
@@ -390,6 +447,38 @@ impl Shell {
             });
         }
         true
+    }
+
+    /// The last beat of the enter flow: let the panel morph settle, keep one
+    /// stillness, then leave fullscreen and float the window for the panel.
+    ///
+    /// Scheduled per entry and guarded by `float_epoch`, so exactly one live
+    /// float can resolve the size — the invariant the size resolution depends
+    /// on (it is measured off the surface while that surface still covers the
+    /// monitor).
+    fn schedule_float(shell: &Rc<RefCell<Self>>) {
+        let (epoch, delay) = {
+            let s = shell.borrow();
+            let delay = s
+                .nav
+                .effective_duration(PANEL_MORPH_MS + PANEL_FLOAT_PAUSE_MS);
+            (s.float_epoch, delay)
+        };
+        tracing::info!("[presentation] float scheduled in {delay}ms (epoch {epoch})");
+        if delay == 0 {
+            // Reduced motion: there is no morph to synchronize with.
+            Self::apply_window_presentation(shell, true);
+            return;
+        }
+        let weak = Rc::downgrade(shell);
+        slint::Timer::single_shot(Duration::from_millis(delay), move || {
+            let Some(rc) = weak.upgrade() else { return };
+            if rc.borrow().float_epoch != epoch {
+                tracing::info!("[presentation] float epoch {epoch} expired — skipped");
+                return;
+            }
+            Shell::apply_window_presentation(&rc, true);
+        });
     }
 
     /// Switch section without Gallery remount when Open (R2). No timer.

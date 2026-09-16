@@ -140,6 +140,27 @@ pub enum PanelState {
     Open(PanelSection),
 }
 
+impl PanelState {
+    /// Whether the panel is presented as a FLOATING window in this state.
+    ///
+    /// The float is the LAST beat of the enter flow and the FIRST of the leave
+    /// flow, so the transition directions are not symmetrical:
+    ///
+    /// * entering — the panel morphs first, on the fullscreen surface it was
+    ///   choreographed against, and the conversion follows; it floats.
+    /// * leaving — fullscreen is restored first, so the reverse morph also
+    ///   plays on that surface; it does not.
+    ///
+    /// A panel that is not present at all (closed) is fullscreen.
+    pub fn floats(self) -> bool {
+        match self {
+            PanelState::Open(_) => true,
+            PanelState::Mutating { direction, .. } => direction == MutDir::Enter,
+            PanelState::Closed => false,
+        }
+    }
+}
+
 /// A navigation command queued by the shell. Keyboard and mouse both emit
 /// these — activation is identical regardless of input source (spec R4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -624,5 +645,25 @@ mod tests {
         assert!(ns.process_next().is_some());
         assert!(ns.enter_panel(target), "Alt+A target must be enterable from Gallery");
         assert!(ns.is_mutating());
+    }
+
+    // ── Which panel states own the floating presentation ─────────────
+
+    /// The float is the LAST beat of the enter flow and the FIRST of the
+    /// leave flow: a panel on its way IN still floats (its morph runs before
+    /// the conversion), a panel on its way OUT does not (fullscreen is
+    /// restored before the reverse morph starts).
+    #[test]
+    fn test_panel_state_floats_only_while_the_panel_is_present() {
+        assert!(!PanelState::Closed.floats(), "closed: fullscreen");
+        assert!(
+            PanelState::Mutating { direction: MutDir::Enter, target: PanelSection::Borders }.floats(),
+            "entering: the float is the last beat"
+        );
+        assert!(PanelState::Open(PanelSection::Borders).floats(), "open: floating preview");
+        assert!(
+            !PanelState::Mutating { direction: MutDir::Leave, target: PanelSection::Borders }.floats(),
+            "leaving: fullscreen is restored first"
+        );
     }
 }
