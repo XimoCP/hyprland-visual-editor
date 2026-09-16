@@ -925,4 +925,46 @@ pub(crate) mod tests {
         );
         assert_eq!(first_count, 1, "first settle must have dispatched fullscreen exactly once");
     }
+
+    #[test]
+    fn test_settle_skips_fullscreen_while_the_settings_panel_floats() {
+        // While the settings panel is present (floating self-preview), the
+        // reveal settle must NOT re-assert fullscreen: the panel is the live
+        // border preview, and fullscreen would destroy its presentation.
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+        let shell = crate::shell::Shell::new(win.as_weak());
+        crate::shell::Shell::set_global(shell.clone());
+        crate::shell::Shell::dispatch(
+            &shell,
+            crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery),
+        );
+        assert!(
+            crate::shell::Shell::enter_panel(&shell, crate::shell::nav::PanelSection::Borders),
+            "precondition: panel entry accepted from Gallery"
+        );
+        // Drive the 350ms morph timer so the panel is Open (the real scenario).
+        for _ in 0..30 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        assert!(
+            crate::shell::Shell::with_nav(&shell, |n| n.panel_state().floats()),
+            "precondition: the settings panel floats"
+        );
+
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+        controller.set_window_hidden(true);
+        let _ = controller.toggle_tray(&win);
+        assert!(controller.confirm_focus_machine(), "confirm must transition Entering→Visible");
+        controller.run_settle(&win);
+        let fs = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.contains("set_fullscreen"))
+            .count();
+        assert_eq!(fs, 0, "settle must NOT fullscreen while the settings panel floats");
+    }
 }

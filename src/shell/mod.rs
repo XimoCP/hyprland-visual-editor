@@ -861,6 +861,44 @@ mod tests {
         assert_eq!((w, h), (900.0, 680.0), "sync_after_show restores base");
     }
 
+    #[test]
+    fn sync_after_show_keeps_the_floating_panel_geometry() {
+        let (shell, weak) = shell_with_window();
+        Shell::dispatch(&shell, NavCommand::Expand(Screen::Gallery));
+        drain_anim();
+        // Open the settings panel headlessly: floats() == true with no timers.
+        {
+            let mut s = shell.borrow_mut();
+            s.nav.enter_panel(crate::shell::nav::PanelSection::Borders);
+            s.nav.complete_mutation(); // → PanelState::Open(Borders)
+        }
+        // Resolve the float size the way the entry flow does (headless: the
+        // compositor dispatch is skipped, the shell size still resolves).
+        Shell::apply_window_presentation(&shell, true);
+        let (float_w, float_h) = Shell::current_size(&shell);
+        assert_ne!(
+            float_w, 1200.0,
+            "precondition: float size differs from the gallery expanded width"
+        );
+
+        // Simulate a hide that reset the window (compositor round-trip).
+        weak.upgrade().unwrap().window().set_size(WindowSize::Logical(
+            LogicalSize::new(1.0, 1.0),
+        ));
+        Shell::sync_after_show(&shell);
+
+        // Reveal must NOT push the gallery expanded size over the floating
+        // panel — the panel is the live border preview and its geometry is
+        // the compositor's own (preserved through the special-workspace move).
+        let (w, h) = window_logical(&weak);
+        assert_eq!((w, h), (1.0, 1.0), "floating panel keeps its geometry through hide/show");
+        assert_eq!(
+            Shell::current_size(&shell),
+            (float_w, float_h),
+            "shell float size untouched"
+        );
+    }
+
     // ── UI mirrors ────────────────────────────────────────────────────
 
     #[test]
