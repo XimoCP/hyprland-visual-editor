@@ -196,7 +196,21 @@ impl Shell {
         // monitor, which is what the resolution measures). Re-assert the
         // floating presentation and leave the geometry alone.
         if shell.borrow().nav.panel_state().floats() {
-            Self::apply_window_presentation(shell, false);
+            // TRY-ONLY controller access, NEVER the blocking fallback: this
+            // function runs inside Controller::toggle_tray while the caller
+            // still holds the controller mutex (callbacks → toggle →
+            // composer.show → sync). apply_window_presentation's
+            // or_else(global_controller) would re-lock the same mutex on
+            // this very thread and deadlock (std Mutex is not reentrant).
+            // If the try fails (always the case here) the compositor has
+            // already restored the floating geometry on the move-back, so
+            // the re-assert is belt-and-suspenders and skippable.
+            if !crate::is_theme_transitioning_flag() {
+                if let Some(ctrl) = crate::composer::try_global_controller() {
+                    let _ = ctrl.composer().set_fullscreen(false);
+                    let _ = ctrl.composer().set_settings_float(true);
+                }
+            }
             return;
         }
         let (expanded, is_gallery) = {
