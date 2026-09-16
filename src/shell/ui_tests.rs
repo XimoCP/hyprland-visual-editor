@@ -5673,7 +5673,21 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
             i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
         }
     };
+    // Park the pointer on the panel header before each snapshot: with the
+    // cursor over the list, the hover expansion grows whichever card happens to
+    // be under it — and after a wheel that is a DIFFERENT card, which moved the
+    // comparison by ~37000 ink on its own (measured). The follow is what this
+    // assertion is about, not where the cursor happens to sit.
+    let park = |w: &crate::MainWindow| {
+        w.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(1250.0, 30.0),
+        });
+        for _ in 0..20 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
     focus(last, &win);
+    park(&win);
     let follow_reference = win.window().take_snapshot().expect("follow reference");
     save_slice_png(follow_reference.clone(), "/tmp/opencode/borders_wheel_follow_reference.png");
 
@@ -5687,17 +5701,18 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     }
     focus(0, &win);
     focus(last, &win);
+    park(&win);
     let follow_after_wheel = win.window().take_snapshot().expect("follow after wheel");
     save_slice_png(follow_after_wheel.clone(), "/tmp/opencode/borders_wheel_follow_after.png");
 
     let broke = count_buffer_diff(&follow_reference, &follow_after_wheel);
     // Scaling reference (measured, not guessed): with `viewport-y` BOUND the
     // wheel killed the follow and this same comparison measured 30550 — a
-    // content-scale shift of roughly one pane height. After the fix the
-    // residual is under 10000 and comes from the scrollbar / scroll indicator
-    // state, not the content: reading
+    // content-scale shift of roughly one pane height. With the follow intact
+    // the residual is under 10000 and comes from the scrollbar / scroll
+    // indicator state, not the content: reading
     // /tmp/opencode/borders_wheel_follow_{reference,after}.png shows both
-    // ending on the same focused preset (19) at the same offset.
+    // ending on the same focused preset at the same offset.
     assert!(
         broke < 15000,
         "a wheel scroll must not break the keyboard follow: focusing the last preset after a \
@@ -5750,6 +5765,85 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
          the same {} ticks back to back ended {lost} units of ink apart, i.e. the `animate \
          viewport-y` is swallowing the distance of ticks that land mid-animation",
         TICKS, TICKS
+    );
+}
+
+/// The keeper, live: "arregla la navegación, ves que no llega al final".
+/// He was right, and the `lost < 15000` above was too loose to catch it: 80
+/// notches left the list around preset 12 of 14, and the last preset could
+/// never be reached with the wheel — only with the keyboard follow.
+///
+/// Cause: `animate viewport-y` sits on the very property the ScrollView's own
+/// wheel handling writes, so every tick landing mid-animation computed its
+/// target from the INTERPOLATED position and dropped the travel the previous
+/// tick had not completed yet.
+///
+/// Saturation is the honest assertion: once a burst has reached the end, a
+/// SECOND identical burst must change nothing. It cannot be satisfied by
+/// tuning a tolerance.
+#[test]
+fn borders_list_wheel_reaches_the_end() {
+    use slint::ComponentHandle as _;
+    use slint::{ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1280, 800));
+    win.set_panel_section(1);
+    let n = 14usize;
+    win.set_border_titles(ModelRc::new(VecModel::from(
+        (0..n).map(|i| SharedString::from(format!("Preset {i:02}"))).collect::<Vec<_>>(),
+    )));
+    win.set_border_descs(ModelRc::new(VecModel::from(
+        (0..n).map(|_| SharedString::from("desc")).collect::<Vec<_>>(),
+    )));
+    win.set_border_tags(ModelRc::new(VecModel::from(
+        (0..n).map(|_| SharedString::from("SYSTEM")).collect::<Vec<_>>(),
+    )));
+    win.set_border_files(ModelRc::new(VecModel::from(
+        (0..n).map(|i| SharedString::from(format!("p{i:02}.lua"))).collect::<Vec<_>>(),
+    )));
+    win.set_active_border_index(0);
+
+    let wheel = |dy: f32| {
+        win.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                // Over the LIST pane (left half of the content, next to the rail).
+                position: slint::LogicalPosition::new(400.0, 400.0),
+                delta_x: 0.0,
+                delta_y: dy,
+            });
+    };
+    let frames = |count: usize| {
+        for _ in 0..count {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    frames(4);
+    let top = win.window().take_snapshot().expect("top");
+
+    // A flick: notches back to back, far faster than any animation.
+    let burst = |label: &str| {
+        for _ in 0..40 {
+            wheel(-120.0);
+            frames(1);
+        }
+        frames(150); // settle fully
+        let snap = win.window().take_snapshot().expect("burst");
+        save_slice_png(snap.clone(), &format!("/tmp/opencode/borders_wheel_{label}.png"));
+        snap
+    };
+    let first = burst("burst1");
+    let second = burst("burst2");
+
+    assert!(
+        count_buffer_diff(&top, &first) > 20000,
+        "the burst must scroll the list at all"
+    );
+    let still = count_buffer_diff_region(&first, &second, 0, 0, first.width() as usize, first.height() as usize);
+    assert!(
+        still < 2000,
+        "the wheel must REACH THE END of the list: a second identical burst moved {still} units \
+         of ink, so the first one had not reached it — the pane is still swallowing travel, and \
+         the last presets cannot be brought into view with the wheel"
     );
 }
 

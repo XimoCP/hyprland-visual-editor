@@ -92,7 +92,10 @@ component MotionTunePane inherits Rectangle {
         viewport-y: root.follow ? (root.local-focus >= 0
             ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
             : 0px) : root.saved-scroll-y;
-        animate viewport-y { duration: 250ms; easing: ease-out; }
+        // NEVER animated. `viewport-y` is the property the wheel writes, so an
+        // animation on it makes any tick that lands mid-flight compute its target
+        // from the INTERPOLATED value — which drops the travel the previous tick
+        // had not finished. Exact beats smooth for a scrollable pane.
         changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
         VerticalLayout {
             padding-left: 16px;
@@ -322,7 +325,10 @@ component MotionListPane inherits Rectangle {
         viewport-y: root.follow ? (root.focused-index >= 0
             ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
             : 0px) : root.saved-scroll-y;
-        animate viewport-y { duration: 250ms; easing: ease-out; }
+        // NEVER animated. `viewport-y` is the property the wheel writes, so an
+        // animation on it makes any tick that lands mid-flight compute its target
+        // from the INTERPOLATED value — which drops the travel the previous tick
+        // had not finished. Exact beats smooth for a scrollable pane.
         changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
         VerticalLayout {
             padding-left: 16px;

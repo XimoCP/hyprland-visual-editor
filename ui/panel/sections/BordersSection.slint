@@ -206,7 +206,10 @@ component BordersTunePane inherits Rectangle {
                     min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)));
             }
         }
-        animate viewport-y { duration: 250ms; easing: ease-out; }
+        // NEVER animated. `viewport-y` is the property the wheel writes, so an
+        // animation on it makes any tick that lands mid-flight compute its target
+        // from the INTERPOLATED value — which drops the travel the previous tick
+        // had not finished. Exact beats smooth for a scrollable pane.
         changed viewport-y => { if (root.editing-slot < 0) { root.saved-scroll-y = self.viewport-y; } }
         tune-col := VerticalLayout {
             padding-left: 16px;
@@ -1548,8 +1551,32 @@ component BordersListPane inherits Rectangle {
     background: transparent;
     clip: true;
 
+    // The scroll position is OURS to own.
+    //
+    // Measured on this pane: with the pointer over the list's padding (no card
+    // under it) ten notches one frame apart land exactly on the end. With a card
+    // under the pointer the content is ~44px TALLER (the card expands on hover),
+    // so the end of the list sits below the clamp: pinned at the end you are
+    // suddenly short of it ... the keeper's "no llega al final". Own the target,
+    // clamp it against the REAL content height, and stay pinned when the content
+    // grows under the pointer.
+    property <length> scroll-target: 0px;
+    property <length> max-scroll: max(0px, column.height - list-scroll.height);
+    // True while the view sits at the end: growth under the pointer (a hover
+    // expansion) must not push that end out of reach.
+    property <bool> at-end: false;
+    function clamp-scroll(v: length) -> length {
+        return max(0px - root.max-scroll, min(0px, v));
+    }
+
     changed focused-index => { list-scroll.follow-focus(); }
     changed follow => { list-scroll.follow-focus(); }
+    changed max-scroll => {
+        if (root.at-end) {
+            root.scroll-target = 0px - root.max-scroll;
+            list-scroll.viewport-y = root.scroll-target;
+        }
+    }
 
     list-scroll := ScrollView {
         property <length> focus-y: root.focused-index * 66px;
@@ -1563,12 +1590,20 @@ component BordersListPane inherits Rectangle {
         // that should move the pane keeps both paths alive.
         public function follow-focus() {
             if (root.follow && root.focused-index >= 0) {
-                self.viewport-y = 0px - max(0px, self.focus-y + 29px - self.height / 2);
+                root.scroll-target = root.clamp-scroll(0px - max(0px, self.focus-y + 29px - self.height / 2));
+                self.viewport-y = root.scroll-target;
             }
         }
-        animate viewport-y { duration: 250ms; easing: ease-out; }
-        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
+        // NEVER animated. `viewport-y` is the property the wheel writes, so an
+        // animation on it makes any tick that lands mid-flight compute its target
+        // from the INTERPOLATED value — which drops the travel the previous tick
+        // had not finished. Exact beats smooth for a scrollable pane.
+        changed viewport-y => {
+            root.saved-scroll-y = self.viewport-y;
+            root.scroll-target = self.viewport-y;
+            root.at-end = root.scroll-target <= 0px - root.max-scroll + 1px;
+        }
+        column := VerticalLayout {
             padding-left: 16px;
             padding-right: 16px;
             padding-top: 16px;

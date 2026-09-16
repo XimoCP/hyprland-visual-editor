@@ -294,10 +294,17 @@ export component PanelRoot inherits Rectangle {
         }
         Rectangle { height: SkwdTokens.border-1; background: HveColors.border; }
 
+        // Rail | content. NOT `height: 100%`: inside a VerticalLayout that already
+        // holds the 56px header + 1px separator, `height: 100%` asks for the WHOLE
+        // panel height, so the content area overflowed by exactly those 57px. The
+        // panel clipped the overflow, but the ScrollViews inside still believed
+        // they were 57px taller than the visible area, so their clamp stopped
+        // short of the end and the last entries could never be scrolled into view
+        // ("no llega al final"). The remaining-height form keeps the sum honest:
+        // header + separator + content = the panel, with nothing to clip.
         HorizontalLayout {
             width: 100%;
-            height: 100%;
-            vertical-stretch: 1;
+            height: parent.height - 57px;
             spacing: 0px;
 
             // Left rail — presentational; PanelRoot's panel-kbd drives it.
