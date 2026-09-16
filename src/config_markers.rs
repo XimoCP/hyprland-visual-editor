@@ -4,6 +4,10 @@
 //! The shell scripts mirror these exact literals across their own process
 //! boundary; this module owns the Rust side.
 
+/// Start/end markers for the auto-generated header in the HVE settings file.
+pub(crate) const LUA_GENERATED_START: &str = "-- >>> HVE AUTO-GENERATED <<<";
+pub(crate) const LUA_GENERATED_END: &str = "-- >>> HVE AUTO-GENERATED END <<<";
+
 /// Start/end markers for the window-rules section of the HVE settings file.
 pub(crate) const LUA_WINDOW_RULES_START: &str = "-- >>> HVE WINDOW RULES <<<";
 pub(crate) const LUA_WINDOW_RULES_END: &str = "-- >>> HVE WINDOW RULES END <<<";
@@ -51,8 +55,16 @@ mod tests {
     }
 
     #[test]
+    fn lua_generated_header_markers_exact_strings() {
+        assert_eq!(LUA_GENERATED_START, "-- >>> HVE AUTO-GENERATED <<<");
+        assert_eq!(LUA_GENERATED_END, "-- >>> HVE AUTO-GENERATED END <<<");
+    }
+
+    #[test]
     fn every_marker_is_a_lua_comment() {
         let markers = [
+            LUA_GENERATED_START,
+            LUA_GENERATED_END,
             LUA_WINDOW_RULES_START,
             LUA_WINDOW_RULES_END,
             LUA_KEYBINDS_START,
