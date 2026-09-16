@@ -186,7 +186,12 @@ impl Controller {
             tracing::info!("[run_settle] skip fullscreen during theme fade");
             return;
         }
-        if crate::shell::Shell::is_gallery_expanded() {
+        // The fullscreen re-assert belongs to the immersive Gallery ONLY.
+        // While the settings panel is present (floating self-preview), the
+        // reveal must leave the window exactly where the compositor put it.
+        if crate::shell::Shell::is_gallery_expanded()
+            && !crate::shell::Shell::is_panel_floating_global()
+        {
             if self.gallery_session_active() {
                 let _ = self.composer.set_fullscreen(true);
             } else {

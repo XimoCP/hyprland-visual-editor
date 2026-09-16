@@ -145,6 +145,19 @@ impl Shell {
         })
     }
 
+    /// Whether the settings panel is currently presented FLOATING (used by
+    /// `Controller::run_settle` so the reveal settle never fullscreens a
+    /// floating panel — the panel is the live border preview).
+    pub fn is_panel_floating_global() -> bool {
+        GLOBAL_SHELL.with(|global| {
+            global
+                .borrow()
+                .as_ref()
+                .map(|rc| rc.borrow().nav.panel_state().floats())
+                .unwrap_or(false)
+        })
+    }
+
     /// Register a mountable slot. One insert per call (design D3).
     pub fn register_slot(shell: &Rc<RefCell<Self>>, slot: Box<dyn slots::Slot>) {
         shell.borrow_mut().slots.register(slot);
@@ -174,6 +187,18 @@ impl Shell {
     /// fullscreen on workspace moves (special hide/show), so the logical
     /// session is still active but the physical window is windowed.
     pub fn sync_after_show(shell: &Rc<RefCell<Self>>) {
+        // The settings panel presents as a FLOATING window: the border the
+        // compositor draws around HVE itself is the live preview of the
+        // values being tuned. A hide/show round-trip must keep it there —
+        // the compositor preserved the floating geometry through the
+        // special-workspace move, and re-resolving the float size is
+        // impossible after the hide (the surface no longer covers the
+        // monitor, which is what the resolution measures). Re-assert the
+        // floating presentation and leave the geometry alone.
+        if shell.borrow().nav.panel_state().floats() {
+            Self::apply_window_presentation(shell, false);
+            return;
+        }
         let (expanded, is_gallery) = {
             let s = shell.borrow();
             (
