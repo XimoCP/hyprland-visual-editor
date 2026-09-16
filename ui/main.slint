@@ -193,12 +193,19 @@ export component MainWindow inherits Window {
     in-out property <int> focused-card: 0;
 
     // ── Panel responsive breakpoint (two settings panes side by side) ──
-    // The settings panel is 80% of the window wide and the rail takes 160px
-    // +1px divider, so the section content width is `0.8 * window - 161px`.
-    // Switch to two panes when the section has at least ~520px to split;
-    // below that the panes stack into one column. Computed from the WINDOW
-    // width (external, not layout-derived) so it cannot loop with the panel
-    // layout. Single source of truth — tune the threshold here.
+    // The panel is FULL-BLEED (100% of the window: see the panel container in
+    // shell.slint) and the rail takes 160px +1px divider, so the section
+    // content width is `window - 161px`. Switch to two panes when the section
+    // has at least ~520px to split; below that the panes stack into one
+    // column. Computed from the WINDOW width (external, not layout-derived) so
+    // it cannot loop with the panel layout. Single source of truth — tune the
+    // threshold here.
+    //
+    // 852px is kept, deliberately: at the full-bleed width the original
+    // "~520px of content" rule would land at a 681px window, i.e. below the
+    // 800px window minimum, which would leave the stacked layout unreachable
+    // and the narrow-window renders meaningless. 852px means the panel stacks
+    // in the 800-851px band and splits from 852px up (691px of content).
     property <length> panel-two-col-min-window: 852px;
     property <bool> panel-two-col: root.width >= root.panel-two-col-min-window;
 

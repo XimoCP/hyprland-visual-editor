@@ -430,7 +430,7 @@ export component ShellRoot inherits Rectangle {
                 width: 100%;
                 height: 100%;
 
-                // Choreographed dock: tuck 500ms → tiny pause → stretch grow to 80%
+                // Choreographed dock: tuck 500ms → tiny pause → the panel fills the slot
                 gallery-layer := GalleryRoot {
                     width: 100%;
                     height: 100%;
@@ -475,20 +475,20 @@ export component ShellRoot inherits Rectangle {
                 }
 
                 if root.is-panel-open || root.is-mutating : Rectangle {
-                    // Central window expand: same Slider window expands from center with bounce — after tuck+pause
-                    // Tuck 500ms + pause 140ms = 640ms delay, then natural expand
-                    width: 80%;
-                    height: 80%;
-                    x: parent.width * 0.10;
-                    y: parent.height * 0.10;
-                    border-radius: 16px;
+                    // FULL-BLEED panel: while the panel is open it IS the HVE
+                    // surface. It used to be an inner card — 80%, radius 16,
+                    // drop shadow — floating over the faded gallery, which
+                    // read as a window inside the floating window and put a
+                    // second frame between the eye and the border being
+                    // tuned. The only frame left is the compositor's border
+                    // around HVE itself, which is the preview.
+                    width: 100%;
+                    height: 100%;
                     clip: true;
-                    drop-shadow-blur: 32px;
-                    drop-shadow-color: #000000a0;
-                    drop-shadow-offset-y: 20px;
                     opacity: root.is-panel-open ? 1.0 : 0.0;
                     animate opacity { duration: root.gallery-reduced-motion ? 0ms : 300ms; delay: root.gallery-reduced-motion ? 0ms : 640ms; easing: cubic-bezier(0.215, 0.61, 0.355, 1); }
-                    // Natural expand: start at central size (~0.62) → 1.0 with soft overshoot, centered
+                    // Entry, after the tuck (500ms) + pause (140ms) = 640ms:
+                    // the panel grows from the center and fills the slot.
                     property <float> wow-scale: root.is-panel-open ? 1.0 : 0.62;
                     transform-scale: self.wow-scale;
                     transform-origin: { x: self.width / 2, y: self.height / 2 };

@@ -1811,6 +1811,21 @@ fn count_buffer_diff(
     // Counts pixels in the mosaic band where two snapshots differ by >15
     // in any channel — proves zoom+dim makes covered pixels differ from
     // settled (fully revealed) pixels of the same tile.
+    count_buffer_diff_region(a, b, 60, 150, 1650, 800)
+}
+
+/// [`count_buffer_diff`] over an explicit region. The mosaic band above is a
+/// mosaic constant (y 150-800); a caller comparing something else — the
+/// settings panel, whose list pane sits lower than the mosaic — must name its
+/// own region instead of silently measuring nothing.
+fn count_buffer_diff_region(
+    a: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    b: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+) -> usize {
     let w = a.width() as usize;
     let h = a.height() as usize;
     assert_eq!(w, b.width() as usize);
@@ -1818,10 +1833,10 @@ fn count_buffer_diff(
     let ab = a.as_bytes();
     let bb = b.as_bytes();
     let mut count = 0usize;
-    let y0 = 150usize.min(h);
-    let y1 = 800usize.min(h);
-    let x0 = 60usize.min(w);
-    let x1 = 1650usize.min(w);
+    let y0 = y0.min(h);
+    let y1 = y1.min(h);
+    let x0 = x0.min(w);
+    let x1 = x1.min(w);
     for y in y0..y1 {
         for x in x0..x1 {
             let idx = (y * w + x) * 4;
@@ -2386,7 +2401,7 @@ fn panel_morph_midflight_renders() {
     let panel_settled = win.window().take_snapshot().expect("panel settled");
     save_slice_png(panel_settled.clone(), "/tmp/opencode/panel_morph_panel_settled.png");
 
-    // Midflight must differ from both settled extremes (dock tuck + 80% wow visible, not instant swap)
+    // Midflight must differ from both settled extremes (dock tuck + full-bleed wow visible, not instant swap)
     let diff_gallery_mid = count_buffer_diff(&settled_gallery, &mid);
     let diff_mid_panel = count_buffer_diff(&mid, &panel_settled);
     assert!(
@@ -2657,7 +2672,9 @@ fn panel_borders_pick_renders() {
     }
     let snap2 = win.window().take_snapshot().expect("panel borders pick active2");
     save_slice_png(snap2.clone(), "/tmp/opencode/panel_borders_pick_active2.png");
-    let diff = count_buffer_diff(&snap, &snap2);
+    // Full frame: the panel is full-bleed, so its preset list sits lower than
+    // the mosaic band `count_buffer_diff` was written for.
+    let diff = count_buffer_diff_region(&snap, &snap2, 0, 0, snap.width() as usize, snap.height() as usize);
     assert!(diff > 200, "active indicator must change pixels — got {diff} expected >200");
 }
 
@@ -2922,6 +2939,60 @@ fn panel_system_narrow_pane_keeps_retardo_toggle() {
     let snap = win.window().take_snapshot().expect("system narrow pane snapshot");
     save_slice_png(snap.clone(), "/tmp/opencode/panel_system_1200.png");
     assert_eq!(snap.width(), 1200, "narrow two-col width");
+}
+
+/// The panel is FULL-BLEED: it fills the slot area edge to edge, so the only
+/// frame around the surface being tuned is the compositor's border around HVE
+/// itself. It used to be an inner card — 80%, radius 16, drop shadow — over
+/// the faded gallery, which read as a second window inside the floating
+/// window. That is exactly what was reported live: "se ve la ventana flotante
+/// y dentro de esa ventana otra ventana".
+///
+/// Sampled a few pixels inside each corner of the slot area (the window minus
+/// the 56px + 1px top chrome and the 32px bottom chrome).
+#[test]
+fn panel_is_full_bleed_inside_the_slot_area() {
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let snap = win.window().take_snapshot().expect("full-bleed snapshot");
+    save_slice_png(snap.clone(), "/tmp/opencode/panel_full_bleed.png");
+    assert_eq!(snap.width(), 1920, "snapshot width");
+    assert_slot_corners_are_panel_ink(&snap);
+
+    // The size the panel is actually SHOWN at on the keeper's display: the
+    // floating window is 1000x640, so the slot is 895x551 and the two-column
+    // content is 734px wide. Full-bleed has to hold there too — it is the
+    // surface being tuned at that moment.
+    win.window().set_size(slint::PhysicalSize::new(1000, 640));
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let float_snap = win.window().take_snapshot().expect("float-size snapshot");
+    save_slice_png(float_snap.clone(), "/tmp/opencode/panel_full_bleed_float_size.png");
+    assert_eq!(float_snap.width(), 1000, "float-size snapshot width");
+    assert_slot_corners_are_panel_ink(&float_snap);
+}
+
+/// The slot area's four corners (inside the 56px + 1px top chrome and the
+/// 32px bottom chrome) must carry panel ink, not the surface behind an inset
+/// card. `#0d1117` is the panel's background and `#1c2128` its bars.
+fn assert_slot_corners_are_panel_ink(snap: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) {
+    let w = snap.width() as usize;
+    let h = snap.height() as usize;
+    let bytes = snap.as_bytes();
+    let corners = [(3usize, 61usize), (3, h - 36), (w - 4, 61), (w - 4, h - 36)];
+    for (x, y) in corners {
+        let idx = (y * w + x) * 4;
+        let (r, g, b, a) = (bytes[idx], bytes[idx + 1], bytes[idx + 2], bytes[idx + 3]);
+        assert!(
+            a >= 200 && r < 48 && g < 48 && b < 56,
+            "slot corner ({x},{y}) of {w}x{h} must be panel ink (#0d1117 / #1c2128), not the \
+             surface behind an inset card: got rgba({r},{g},{b},{a})"
+        );
+    }
 }
 
 // ── Mutating-window slice 5: Motion pick + bezier + CurvePreview (R4) ──
@@ -3395,7 +3466,8 @@ fn test_panel_layer_gated() {
         .expect("PanelRoot must follow the gate");
     assert!(
         panel_pos < 2500,
-        "PanelRoot must appear shortly after the gate (within 2500 chars, accounts for 80% morph wrapper) — got offset {panel_pos}"
+        "PanelRoot must appear shortly after the gate (within 2500 chars, accounts for the \
+         morph wrapper) — got offset {panel_pos}"
     );
     // Unconditional instantiation would keep an invisible but input-capturing layer over the gallery
     assert!(
@@ -3739,9 +3811,9 @@ fn count_icy_pixels(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> usize 
     for y in 0..h {
         for x in 0..w {
             // Content area only: these focus tests run at 1920px, where the
-            // 80%-wide panel starts at x=192 and the 160px rail runs to ~352,
-            // so x>=360 excludes the rail's own icy menu ring and keeps the
-            // content's focus signal clean.
+            // full-bleed panel starts at x=0 and its 160px rail runs to x=161,
+            // so x>=360 clears the rail's own icy menu ring with room to spare
+            // and keeps the content's focus signal clean.
             if x < 360 {
                 continue;
             }
@@ -4824,11 +4896,11 @@ fn panel_rail_single_click_switches_section() {
     assert_eq!(win.get_panel_section(), 4, "panel must start on System");
 
     // One press + release over the "Borders" rail item (index 1). The panel
-    // is 80% of the slot area (window minus the 56px top and 32px bottom
-    // chrome bars) at slot y+10%, so the rail starts at window y ≈ 213 and
-    // the items stack from there (12px padding, 36px height + 4px spacing):
-    // Borders centers at (272, 283).
-    let pos = LogicalPosition::new(272.0, 283.0);
+    // is now FULL-BLEED: it starts at the slot area's top-left (window x 0,
+    // y = 56px top chrome + 1px separator), its own header is 56px and the
+    // rail items stack from there with 12px padding, 36px height and 4px
+    // spacing: Borders centers at (80, 184).
+    let pos = LogicalPosition::new(80.0, 184.0);
     win.window().dispatch_event(WindowEvent::PointerPressed {
         position: pos,
         button: PointerEventButton::Left,

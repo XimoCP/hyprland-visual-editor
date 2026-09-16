@@ -254,7 +254,10 @@ export component PanelRoot inherits Rectangle {
     }
 
     background: HveColors.bg-dark;
-    border-radius: SkwdTokens.radius-12;
+    // Full-bleed: the panel fills the HVE slot while it is open, so it has no
+    // corners of its own to round — rounding them would show the surface
+    // behind and read as a card again (see the panel container in shell.slint).
+    border-radius: 0;
     clip: true;
 
     VerticalLayout {

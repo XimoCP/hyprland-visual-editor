@@ -260,8 +260,8 @@ fn integration_production_show_sync_restores_expanded_state() {
 // ── 5.5: the panel morph and the window conversion are SEQUENCED ────
 //
 // The panel choreography in `ui/shell.slint` is authored against the
-// surface that covers the display (gallery tucks → beat → the central
-// card expands to 80%). Converting the window to floating at the same
+// surface that covers the display (gallery tucks → beat → the panel fills
+// the slot). Converting the window to floating at the same
 // time as the morph made the two motions fight, so the float now lands
 // only after the morph settled, plus one beat of stillness.
 

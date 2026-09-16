@@ -350,7 +350,7 @@ impl Shell {
     ///
     /// The window HOLDS fullscreen while the panel morphs. The morph is
     /// choreographed against the surface that covers the display (the
-    /// gallery tucks, then the central card expands to 80%), so converting
+    /// gallery tucks, then the panel fills the slot), so converting
     /// the window on the same tick as the keypress made the two motions
     /// fight. The conversion is the LAST beat of the flow: `complete_morph`
     /// hands off to `schedule_float`, which waits out the choreography plus
