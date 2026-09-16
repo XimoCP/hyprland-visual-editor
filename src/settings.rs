@@ -338,6 +338,48 @@ hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\
     }
 }
 
+/// Path to the installed HVE binary (`~/.local/bin/hve`) when it exists and
+/// is executable.
+///
+/// The autostart block must reference a STABLE binary. The installed copy
+/// survives dev-tree moves and `cargo clean`, so it wins over `current_exe()`
+/// whenever present.
+fn installed_bin_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let path = PathBuf::from(home).join(".local").join("bin").join("hve");
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || !is_executable(&meta) {
+        return None;
+    }
+    Some(path)
+}
+
+#[cfg(unix)]
+fn is_executable(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_meta: &std::fs::Metadata) -> bool {
+    true
+}
+
+/// Resolve the executable used by the autostart block, in stability order:
+/// installed binary → runtime exe → bare `hve` (PATH lookup at exec time).
+///
+/// Fixes the persistence bug where the block baked `current_exe()` and died
+/// when the dev tree moved or `cargo clean` removed `target/`.
+fn resolve_autostart_exe() -> String {
+    if let Some(installed) = installed_bin_path() {
+        return installed.display().to_string();
+    }
+    std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("hve"))
+        .display()
+        .to_string()
+}
+
 /// Toggle HVE autostart in `hve-settings.lua`.
 ///
 /// When enabled, writes an `hl.on("hyprland.start", ...)` block with
@@ -365,10 +407,10 @@ pub(crate) fn set_autostart(enabled: bool) {
     let marker_start = LUA_AUTOSTART_START;
     let marker_end = LUA_AUTOSTART_END;
 
-    let exe = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("hve"))
-        .display()
-        .to_string();
+    // Stable path: prefer the installed binary so the block survives dev-tree
+    // moves and `cargo clean` — never bake a path that can die (see
+    // resolve_autostart_exe).
+    let exe = resolve_autostart_exe();
 
     let autostart_block: String = if enabled {
         format!(
@@ -800,6 +842,71 @@ mod tests {
         assert!(
             !content.contains("exec-once ="),
             "must never emit conf syntax"
+        );
+    }
+
+    // ── R4: autostart must point to a STABLE binary ──
+    // The block is written from the caller's current_exe(), which dies when
+    // the dev tree moves or `cargo clean` runs. The installed copy under
+    // ~/.local/bin/hve survives; prefer it, fall back to the runtime exe.
+
+    #[test]
+    fn autostart_prefers_installed_binary_over_runtime_exe() {
+        let _env = TempEnv::new();
+        let home = std::env::var("HOME").unwrap();
+        let installed = PathBuf::from(&home).join(".local/bin/hve");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::write(&installed, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = std::fs::metadata(&installed).unwrap().permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(&installed, perm).unwrap();
+        }
+
+        ensure_settings_file();
+        set_autostart(true);
+
+        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
+        let expected = format!("{} --tray", installed.display());
+        assert!(
+            content.contains(&expected),
+            "autostart must point to the installed binary, got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn autostart_falls_back_to_runtime_exe_without_installed_binary() {
+        let _env = TempEnv::new();
+        // TempEnv HOME has no ~/.local/bin/hve → must fall back to the exe
+        // that is actually running (the test binary), never to a dead path.
+        ensure_settings_file();
+        set_autostart(true);
+
+        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let expected = format!("{} --tray", exe.display());
+        assert!(
+            content.contains(&expected),
+            "autostart must fall back to the runtime exe, got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn installed_bin_path_ignores_non_executable_file() {
+        let _env = TempEnv::new();
+        let home = std::env::var("HOME").unwrap();
+        let installed = PathBuf::from(&home).join(".local/bin/hve");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::write(&installed, b"not executable\n").unwrap();
+
+        assert_eq!(
+            installed_bin_path(),
+            None,
+            "a non-executable file must NOT qualify as the installed binary"
         );
     }
 }
