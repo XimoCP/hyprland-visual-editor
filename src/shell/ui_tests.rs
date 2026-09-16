@@ -2964,16 +2964,16 @@ fn panel_is_full_bleed_inside_the_slot_area() {
     assert_slot_corners_are_panel_ink(&snap);
 
     // The size the panel is actually SHOWN at on the keeper's display: the
-    // floating window is 1200x800, so the slot is 1095x711 and the two-column
-    // content is 934px wide. Full-bleed has to hold there too — it is the
+    // floating window is 1280x800, so the slot is 1175x711 and the two-column
+    // content is 1014px wide. Full-bleed has to hold there too — it is the
     // surface being tuned at that moment.
-    win.window().set_size(slint::PhysicalSize::new(1200, 800));
+    win.window().set_size(slint::PhysicalSize::new(1280, 800));
     for _ in 0..8 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let float_snap = win.window().take_snapshot().expect("float-size snapshot");
     save_slice_png(float_snap.clone(), "/tmp/opencode/panel_full_bleed_float_size.png");
-    assert_eq!(float_snap.width(), 1200, "float-size snapshot width");
+    assert_eq!(float_snap.width(), 1280, "float-size snapshot width");
     assert_slot_corners_are_panel_ink(&float_snap);
 
     // The demanding section at the demanding size: Borders is the tuning
