@@ -324,11 +324,13 @@ fn integration_panel_entry_floats_only_after_the_morph_settles() {
         "the beat is deliberate, not skippable"
     );
 
-    // Beat over: the window is now the border preview surface.
+    // Beat over: the window is now the border preview surface. The window the
+    // test measures off IS its monitor stand-in (1200x800), so the 48px margin
+    // caps the 1200x800 preferred float to 1104x704.
     advance_ms(1);
     assert_eq!(
         Shell::current_size(&shell),
-        (1000.0, 640.0),
+        (1104.0, 704.0),
         "the float lands one beat after the morph settled"
     );
 }
@@ -365,11 +367,13 @@ fn integration_panel_entry_expires_a_float_from_a_previous_entry() {
         "the abandoned float must never land on this entry"
     );
 
-    // The entry that is actually open floats on its own schedule.
+    // The entry that is actually open floats on its own schedule (1104x704:
+    // the 1200x800 preferred float capped by the margin on this 1200x800
+    // monitor stand-in).
     advance_ms(PANEL_MORPH_MS + PANEL_FLOAT_PAUSE_MS);
     assert_eq!(
         Shell::current_size(&shell),
-        (1000.0, 640.0),
+        (1104.0, 704.0),
         "the live entry owns the float"
     );
 }

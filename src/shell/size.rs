@@ -20,10 +20,22 @@ const EXPANDED: (f32, f32) = (1200.0, 800.0);
 const SETTINGS_EXPANDED: (f32, f32) = (1300.0, 900.0);
 /// Minimum window size on any axis: 800×580.
 const MIN: (f32, f32) = (800.0, 580.0);
-/// Preferred floating Settings size: 1000×640. Comfortable for the
-/// two-column panel (list + tune) without being oversized on a large
-/// display: a form does not improve by being wider.
-const FLOAT_PREFERRED: (f32, f32) = (1000.0, 640.0);
+/// Preferred floating Settings size: 1200×800.
+///
+/// The panel is FULL-BLEED, so this is the size of the form ITSELF — not the
+/// frame of a card inside a window that frames it (that was 1000×640, and it
+/// reads small the moment the panel owns the whole surface).
+///
+/// The width comes from the panel's own pieces: the 160px rail + 1px divider
+/// plus two panes at the documented split comfort (~520px each) = 1201, so
+/// 1200 puts the two-column panel exactly at the width it was designed for.
+/// The height (800) shows the main rows of the tallest section without
+/// scrolling and still leaves the keeper's 1440×900 the margin the border
+/// preview needs (50px per side, 120px horizontally).
+///
+/// A roomier display does not get a roomier form: it gets the same form with
+/// more room around it, which is exactly what the border preview needs.
+const FLOAT_PREFERRED: (f32, f32) = (1200.0, 800.0);
 /// Gap kept between the floating Settings window and the monitor edge, on
 /// every side. The compositor draws HVE's own border around that window, so
 /// this margin is what keeps that border fully visible — and therefore what
@@ -159,9 +171,9 @@ mod tests {
         let policy = SizePolicy::new();
         // The keeper's 14" panel (1920x1200 @ scale 1.333 → 1440x900 logical),
         // the 32" 1440p (scale 1) and a 65" 4K TV all get the same window.
-        assert_eq!(policy.settings_float_size((1440.0, 900.0)), (1000.0, 640.0));
-        assert_eq!(policy.settings_float_size((2560.0, 1440.0)), (1000.0, 640.0));
-        assert_eq!(policy.settings_float_size((3840.0, 2160.0)), (1000.0, 640.0));
+        assert_eq!(policy.settings_float_size((1440.0, 900.0)), (1200.0, 800.0));
+        assert_eq!(policy.settings_float_size((2560.0, 1440.0)), (1200.0, 800.0));
+        assert_eq!(policy.settings_float_size((3840.0, 2160.0)), (1200.0, 800.0));
     }
 
     #[test]
@@ -191,7 +203,7 @@ mod tests {
         let policy = SizePolicy::new();
         // 1024x768 leaves 928x672 after the margins: wider than the 852
         // two-column threshold, so the panel keeps both panes side by side.
-        assert_eq!(policy.settings_float_size((1024.0, 768.0)), (928.0, 640.0));
+        assert_eq!(policy.settings_float_size((1024.0, 768.0)), (928.0, 672.0));
     }
 
     #[test]

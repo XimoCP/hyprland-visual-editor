@@ -2953,6 +2953,7 @@ fn panel_system_narrow_pane_keeps_retardo_toggle() {
 #[test]
 fn panel_is_full_bleed_inside_the_slot_area() {
     use slint::ComponentHandle as _;
+    use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     for _ in 0..8 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -2963,17 +2964,55 @@ fn panel_is_full_bleed_inside_the_slot_area() {
     assert_slot_corners_are_panel_ink(&snap);
 
     // The size the panel is actually SHOWN at on the keeper's display: the
-    // floating window is 1000x640, so the slot is 895x551 and the two-column
-    // content is 734px wide. Full-bleed has to hold there too — it is the
+    // floating window is 1200x800, so the slot is 1095x711 and the two-column
+    // content is 934px wide. Full-bleed has to hold there too — it is the
     // surface being tuned at that moment.
-    win.window().set_size(slint::PhysicalSize::new(1000, 640));
+    win.window().set_size(slint::PhysicalSize::new(1200, 800));
     for _ in 0..8 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let float_snap = win.window().take_snapshot().expect("float-size snapshot");
     save_slice_png(float_snap.clone(), "/tmp/opencode/panel_full_bleed_float_size.png");
-    assert_eq!(float_snap.width(), 1000, "float-size snapshot width");
+    assert_eq!(float_snap.width(), 1200, "float-size snapshot width");
     assert_slot_corners_are_panel_ink(&float_snap);
+
+    // The demanding section at the demanding size: Borders is the tuning
+    // surface this whole presentation exists for (preset list | tune block,
+    // colour slots, glow, animation rows), so render it where it will be
+    // worked on rather than trusting the roomier 1920 renders.
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Thin Rounded"),
+        SharedString::from("Sharp"),
+        SharedString::from("Thick"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Thin rounded borders"),
+        SharedString::from("Sharp square borders"),
+        SharedString::from("Thick rounded"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from("SYSTEM"),
+        SharedString::from("SYSTEM"),
+        SharedString::from("USER"),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("thin-rounded.ron"),
+        SharedString::from("sharp.ron"),
+        SharedString::from("thick.ron"),
+    ])));
+    win.set_active_border_index(0);
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let borders_snap = win.window().take_snapshot().expect("borders at float size");
+    save_slice_png(borders_snap.clone(), "/tmp/opencode/panel_full_bleed_float_borders.png");
+    assert_slot_corners_are_panel_ink(&borders_snap);
 }
 
 /// The slot area's four corners (inside the 56px + 1px top chrome and the
