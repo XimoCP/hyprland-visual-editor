@@ -6470,3 +6470,101 @@ fn borders_tune_renders_eight_slots() {
     }
     println!("eight-slot chip pitches measured from box.x0: {boxes:?}");
 }
+
+/// Regression (built-in border preset apply): a MOUSE click on a preset card
+/// must apply the preset FILE, exactly like the keyboard path already does.
+///
+/// `BordersListPane` receives the translated titles (`border-titles`) as the
+/// card's DISPLAY text, while `assets/scripts/border.sh` resolves a preset by
+/// FILE NAME only (`$HVE_BORDERS_DIR/$name.lua`, see `assets/scripts/utils.sh`).
+/// Sending the title makes the lookup fail, the script writes its generic
+/// fallback and exits 0, so the border silently changes to a flat generic one
+/// and reads as "the preset does not apply". The displayed text must stay the
+/// translated title; only the apply argument changes.
+///
+/// Click geometry (1920x1080, software renderer) — same math style as
+/// `panel_rail_single_click_switches_section`:
+///   • window top chrome 56px + 1px separator → panel top y = 57;
+///   • PanelRoot header 56px + 1px separator → section content top y = 114;
+///   • rail 160px + 1px separator → section content left x = 161;
+///   • 1920px ≥ the 852px two-col breakpoint, so the list pane owns the left
+///     half of the content: x 161..1040; the panel's 32px bottom bar puts the
+///     pane bottom at y = 1080 - 32 = 1048;
+///   • the list column's 12px bottom padding puts the card's bottom edge at
+///     y = 1036; the first card is keyboard-focused on open, so it renders
+///     expanded at 100px → top y = 936, centre y = 986;
+///   • the card's 14px right padding and its 40px-wide apply switch put the
+///     switch centre at x = 1023 - 14 - 20 = 989.
+/// The switch then spans x 969..1009 / y 975..996, comfortably around
+/// (989, 986) — the card body itself only calls `refocus()`, so the click MUST
+/// land on the switch for `apply-preset` to fire at all.
+#[test]
+fn borders_preset_card_click_applies_the_file_not_the_title() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    use slint::{ComponentHandle as _, LogicalPosition, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    // Expanded + gallery state: without them the panel stays in its translucent
+    // rail-preview state and the card never renders at full opacity.
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    // Translated title for DISPLAY, file name for APPLY.
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Cascada")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("soft gradient")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("01_cascade.lua")])));
+    // Settle the 250ms card expansion so the first card is fully grown before
+    // measuring the click target.
+    focus_settle();
+
+    let applied: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_border({
+        let applied = applied.clone();
+        move |_idx, file| applied.borrow_mut().push(file.to_string())
+    });
+
+    let pos = LogicalPosition::new(989.0, 986.0);
+    win.window().dispatch_event(WindowEvent::PointerPressed {
+        position: pos,
+        button: PointerEventButton::Left,
+    });
+    win.window().dispatch_event(WindowEvent::PointerReleased {
+        position: pos,
+        button: PointerEventButton::Left,
+    });
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let got = applied.borrow().clone();
+    assert_eq!(
+        got,
+        vec!["01_cascade.lua".to_string()],
+        "clicking the first built-in preset card must apply its FILE — got {got:?}"
+    );
+    assert!(
+        !got.iter().any(|f| f == "Cascada"),
+        "the click must never send the displayed title to border.sh — got {got:?}"
+    );
+}

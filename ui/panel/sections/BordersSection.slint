@@ -1702,6 +1702,10 @@ component BordersTunePane inherits Rectangle {
 component BordersListPane inherits Rectangle {
     in property <[string]> builtin-names;
     in property <[string]> builtin-tags;
+    // Apply values for the built-in cards: the preset FILE (NN_name.lua), not
+    // the translated title shown by the card. border.sh resolves presets by
+    // file name only, so the title would silently miss.
+    in property <[string]> builtin-files;
     in property <[string]> user-names;
     in property <[string]> user-tags;
     in property <int> active-index: -1;
@@ -1789,6 +1793,7 @@ component BordersListPane inherits Rectangle {
 
             for i in root.builtin-names.length : SavedPresetCard {
                 preset-name: root.builtin-names[i];
+                apply-value: root.builtin-files[i];
                 is-active: i == root.active-index;
                 is-user: false;
                 keyboard-focused: root.focused-index == i && root.has-focus;
@@ -2381,6 +2386,7 @@ export component BordersSection inherits Rectangle {
                 horizontal-stretch: 1;
                 builtin-names: root.border-titles;
                 builtin-tags: root.border-tags;
+                builtin-files: root.border-files;
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
                 active-index: root.active-index;
@@ -2505,6 +2511,7 @@ export component BordersSection inherits Rectangle {
                 vertical-stretch: 1;
                 builtin-names: root.border-titles;
                 builtin-tags: root.border-tags;
+                builtin-files: root.border-files;
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
                 active-index: root.active-index;

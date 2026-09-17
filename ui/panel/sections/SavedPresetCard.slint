@@ -12,6 +12,11 @@ import { HveColors } from "../../theme.slint";
 
 export component SavedPresetCard inherits Rectangle {
     in property <string> preset-name;
+    // Value sent when the card is applied: the owner decides (built-in cards
+    // send the preset FILE, because border.sh resolves presets by file name,
+    // while the card keeps DISPLAYING the translated title). Defaults to the
+    // displayed name so user presets keep their existing behaviour.
+    in property <string> apply-value: root.preset-name;
     in property <bool> is-active: false;
     in property <bool> is-user: false;
     in property <bool> keyboard-focused: false;
@@ -140,7 +145,7 @@ export component SavedPresetCard inherits Rectangle {
                         height: 100%;
                         mouse-cursor: pointer;
                         clicked => {
-                            root.apply-preset(root.index, root.preset-name);
+                            root.apply-preset(root.index, root.apply-value);
                             root.refocus();
                         }
                     }
