@@ -1016,14 +1016,14 @@ mod panel_save_tests {
 /// N is clamped to 0..8 so empty models never yield negative counts.
 #[allow(dead_code)]
 pub fn borders_tune_stop_count(
-    slot_count: i32,
+    _slot_count: i32,
     glow_enabled: bool,
     anim0: bool,
     anim1: bool,
     anim2: bool,
 ) -> i32 {
-    let n = slot_count.clamp(0, 8);
-    let mut total = 3 + n + 2 + 1;
+    // Strip = 1 stop (not N stops); _slot_count kept for API compat.
+    let mut total = 3 + 1 + 2 + 1;
     if glow_enabled {
         total += 4;
     }
@@ -1070,11 +1070,11 @@ mod keyboard_nav_tests {
 
     #[test]
     fn test_borders_tune_count_covers_full_inventory() {
-        assert_eq!(borders_tune_stop_count(2, false, false, false, false), 14);
-        assert_eq!(borders_tune_stop_count(8, true, true, true, true), 33);
-        assert_eq!(borders_tune_stop_count(3, true, false, false, false), 19);
-        assert_eq!(borders_tune_stop_count(0, false, false, false, false), 12);
-        assert_eq!(borders_tune_stop_count(99, false, false, false, false), 20);
+        assert_eq!(borders_tune_stop_count(2, false, false, false, false), 13);
+        assert_eq!(borders_tune_stop_count(8, true, true, true, true), 26);
+        assert_eq!(borders_tune_stop_count(3, true, false, false, false), 17);
+        assert_eq!(borders_tune_stop_count(0, false, false, false, false), 13);
+        assert_eq!(borders_tune_stop_count(99, false, false, false, false), 13);
     }
 
     #[test]

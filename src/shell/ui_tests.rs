@@ -5349,11 +5349,11 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     win.set_tune_anim_border_enabled(true);
     win.set_tune_anim_fadeshadow_enabled(true);
 
-    // Production count: 2 slots + glow on + 3 leaves on = 27 tune stops.
+    // Production count: 1 strip stop + glow on + 3 leaves on = 26 tune stops.
     let tune = crate::callbacks::borders_tune_stop_count(2, true, true, true, true);
-    assert_eq!(tune, 27, "fixture must expose the full inventory");
+    assert_eq!(tune, 26, "fixture must expose the full inventory");
     let last = 1 + tune - 1; // 1 card + tune, last = Save button
-    let middle = 1 + 7; // glow-enabled stop (size0 angle1 inactive2 slots3,4 add5 remove6 glow-en7 -> global 8)
+    let middle = 1 + 6; // glow-enabled stop (size0 angle1 inactive2 strip3 add4 remove5 glow-en6 -> global 7)
 
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -5442,11 +5442,11 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         slint::Color::from_rgb_u8(15, 23, 42),
     ])));
 
-    // Glow on, leaves off: 1 card + 18 tune stops. Focus the LAST glow colour
+    // Glow on, leaves off: 1 card + 17 tune stops. Focus the LAST glow colour
     // (glow-inactive) so both glow colour cards are inside the viewport.
     assert_eq!(
         crate::callbacks::borders_tune_stop_count(2, true, false, false, false),
-        18,
+        17,
         "fixture inventory"
     );
     let glow_inactive = 1 + 11; // 1 card + tune-local 11

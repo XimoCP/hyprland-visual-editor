@@ -111,10 +111,10 @@ component BordersTunePane inherits Rectangle {
 
     property <length> saved-scroll-y: 0px;
     // Tune-local indices (cards-first global minus list split):
-    // 0=size, 1=angle, 2=inactive, 3..3+N-1=slots, 3+N=add, 4+N=remove,
-    // 5+N=glow-enabled (+range, power, color, inactive when on), then per
-    // anim leaf enabled (+speed, bezier, style when on) x3, rule, save-name,
-    // save-button. Mirrors callbacks::borders_tune_stop_count.
+    // 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove,
+    // 6=glow-enabled (7..10=range, power, color, inactive when on),
+    // then per anim leaf enabled (speed, bezier, style when on) x3,
+    // rule, save-name, save-button. Mirrors callbacks::borders_tune_stop_count.
     property <int> local-focus: root.focused-index - root.split;
     property <int> slot-count: clamp(root.tune-color-count, 0, 8);
     property <int> first-slot-idx: 3;
@@ -1750,7 +1750,7 @@ export component BordersSection inherits Rectangle {
     property <int> list-count: root.border-titles.length + root.user-preset-names.length;
     property <int> split: root.list-count;
     property <int> tune-n: clamp(root.tune-color-count, 0, 8);
-    out property <int> tune-count: 12 + root.tune-n + (root.tune-glow-enabled ? 4 : 0)
+    out property <int> tune-count: 13 + (root.tune-glow-enabled ? 4 : 0)
         + (root.tune-anim-borderangle-enabled ? 3 : 0)
         + (root.tune-anim-border-enabled ? 3 : 0)
         + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
