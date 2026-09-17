@@ -5096,6 +5096,432 @@ fn gallery_keyboard_works_after_closing_drawer() {
     );
 }
 
+// ── Borders gradient chip strip (PR 2) ────────────────────────────────
+// The N × BorderColorSlot card stack is gone: the gradient colours live in
+// ONE horizontal strip of numbered chips, with one shared picker card in the
+// flow directly ABOVE it. These assertions read the RENDER — a chip is found
+// by the exact colour it paints — because "one chip per slot, all on one row,
+// with the ring on the active one" is a fact about pixels. Tests green alone
+// never closed a visual task in this project (D8).
+
+/// Distinct saturated colours for the 8 gradient slots. Chosen far from every
+/// theme token and from the icy #8fd8ff focus ring, so a chip located by colour
+/// can only be a chip.
+const CHIP_COLORS: [(u8, u8, u8); 8] = [
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+    (255, 0, 255),
+    (255, 255, 0),
+    (0, 255, 255),
+    (255, 128, 0),
+    (128, 0, 255),
+];
+
+/// Icy keyboard-focus ink (#8fd8ff) and the picker card's accent border.
+const ICY: (u8, u8, u8) = (143, 216, 255);
+const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
+/// Default structural border (`HveColors.border`), used to find card edges.
+const BORDER_INK: (u8, u8, u8) = (48, 54, 61);
+
+/// The 11-entry resolved-colour model the tune pane indexes into: 0..7 are the
+/// gradient slots, 8 the inactive colour, 9 the glow colour, 10 the inactive
+/// glow colour.
+fn borders_chip_resolved() -> Vec<slint::Color> {
+    let mut out: Vec<slint::Color> = CHIP_COLORS
+        .iter()
+        .map(|(r, g, b)| slint::Color::from_rgb_u8(*r, *g, *b))
+        .collect();
+    out.push(slint::Color::from_rgb_u8(15, 23, 42));
+    out.push(slint::Color::from_rgb_u8(192, 132, 252));
+    out.push(slint::Color::from_rgb_u8(30, 41, 59));
+    out
+}
+
+/// Mount the Borders section on its tune pane with `colors` gradient slots and
+/// the resolved-colour model above. Exactly one preset card, so the tune block
+/// starts at global focused index 1.
+fn borders_tune_pane_fixture(colors: &[&str]) -> crate::MainWindow {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    // Expanded + gallery state: without them the shell keeps the panel in its
+    // translucent rail-preview state, every content colour is alpha-blended
+    // over the background and no exact-colour assertion can read the frame.
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Cascade")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("soft gradient")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("01_cascade.lua")])));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(
+        colors
+            .iter()
+            .map(|c| SharedString::from(*c))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_tune_color_count(colors.len() as i32);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(borders_chip_resolved())));
+    focus_settle();
+    win
+}
+
+/// Frames of mock time, to let the pane's 200–250ms state animations settle
+/// before a snapshot.
+fn settle_frames(n: usize) {
+    for _ in 0..n {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+/// Opaque pixels within `tol` of an exact RGB triple, in the panel content area
+/// (x ≥ 360 keeps the rail's own ink out of the count).
+fn count_exact_color(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+) -> usize {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut count = 0usize;
+    for y in 0..h {
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Bounding box (x0, y0, x1, y1) of [`count_exact_color`]'s matches, or `None`
+/// when the colour is absent from the frame.
+fn exact_color_bbox(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+) -> Option<(usize, usize, usize, usize)> {
+    exact_color_bbox_below(buf, rgb, tol, 0)
+}
+
+/// [`exact_color_bbox`] restricted to rows at or below `y_min`. The open picker
+/// paints pure hues in its hue bar and its whole SV field carries the seeded
+/// hue, so a chip colour can only be trusted BELOW the card.
+fn exact_color_bbox_below(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    y_min: usize,
+) -> Option<(usize, usize, usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+    for y in y_min.min(h)..h {
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    if x0 == usize::MAX {
+        None
+    } else {
+        Some((x0, y0, x1, y1))
+    }
+}
+
+/// Count of `rgb` pixels inside an explicit box (used for a chip's ring).
+fn count_color_in_box(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+) -> usize {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut count = 0usize;
+    for y in y0.min(h)..y1.min(h) {
+        for x in x0..x1.min(w) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Consecutive y-rows whose `rgb` pixel count reaches `min_per_row` (x ≥ 360).
+/// A focused card paints its 1px focus border as two such bands — one per
+/// horizontal edge — so the distance between a band pair is the card's
+/// rendered height in pixels.
+fn color_row_bands(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    min_per_row: usize,
+) -> Vec<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut bands: Vec<(usize, usize)> = Vec::new();
+    let mut open: Option<(usize, usize)> = None;
+    for y in 0..h {
+        let mut row = 0usize;
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                row += 1;
+            }
+        }
+        if row >= min_per_row {
+            open = match open {
+                Some((start, _)) => Some((start, y)),
+                None => Some((y, y)),
+            };
+        } else if let Some(band) = open.take() {
+            bands.push(band);
+        }
+    }
+    if let Some(band) = open {
+        bands.push(band);
+    }
+    bands
+}
+
+/// R1/R2 — the strip renders one chip per gradient slot, numbered 1..N, all on
+/// a single horizontal row, with the icy ring on the ACTIVE chip only.
+#[test]
+fn borders_strip_renders_correct_chip_count() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
+
+    let shot = win.window().take_snapshot().expect("strip snapshot");
+    save_slice_png(shot.clone(), "/tmp/opencode/borders_strip_closed_3chips.png");
+
+    let mut boxes = Vec::new();
+    for (i, rgb) in CHIP_COLORS.iter().take(3).enumerate() {
+        let painted = count_exact_color(&shot, *rgb, 8);
+        let bbox = exact_color_bbox(&shot, *rgb, 8).unwrap_or_else(|| {
+            panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
+        });
+        assert!(
+            (100..=400).contains(&painted),
+            "chip {} must be one 16×16 swatch (colour={rgb:?}, pixels={painted})",
+            i + 1
+        );
+        boxes.push(bbox);
+    }
+
+    // One chip per slot, left to right, ALL ON ONE ROW. The old layout painted
+    // the same colours once per 130px-tall card, so the three chips sat ~130px
+    // apart vertically — the strip's whole point is that they share a line.
+    for pair in boxes.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        assert!(b.0 > a.2, "chips must sit left to right: {a:?} then {b:?}");
+        assert!(
+            a.1.abs_diff(b.1) <= 24 && a.3.abs_diff(b.3) <= 24,
+            "chips must share one horizontal row: {a:?} then {b:?}"
+        );
+    }
+
+    // R1: a colour outside slot-count must NOT render a chip.
+    assert_eq!(
+        count_exact_color(&shot, CHIP_COLORS[3], 8),
+        0,
+        "slot 4 must have no chip while slot-count is 3"
+    );
+
+    // R2: the active chip (index 0) carries the icy ring, the others do not.
+    // Tolerance is ±40 (not the ±60 the aggregate counter uses): the chip's own
+    // light-grey numeric label is ~58 away from icy on the red channel, so a
+    // loose tolerance would read text as a ring.
+    let (x0, y0, x1, y1) = boxes[0];
+    let ring = count_color_in_box(
+        &shot,
+        ICY,
+        40,
+        x0.saturating_sub(14),
+        y0.saturating_sub(14),
+        x1 + 14,
+        y1 + 14,
+    );
+    assert!(ring > 30, "the active chip must carry the icy focus ring (pixels={ring})");
+    let (fx0, fy0, fx1, fy1) = boxes[2];
+    let no_ring = count_color_in_box(
+        &shot,
+        ICY,
+        40,
+        fx0.saturating_sub(14),
+        fy0.saturating_sub(14),
+        fx1 + 14,
+        fy1 + 14,
+    );
+    assert_eq!(no_ring, 0, "only the active chip is ringed (pixels={no_ring})");
+}
+
+/// R3/R10 — the picker is a card IN THE FLOW directly above the strip, not a
+/// popover and not pinned to the top of the pane: opening it must show the
+/// card and its chips together (R10), and the card's own bottom edge must sit
+/// one layout gap above the chip row.
+#[test]
+fn borders_strip_picker_opens_above_strip() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
+    settle_frames(20);
+    let closed = win.window().take_snapshot().expect("closed snapshot");
+    assert!(
+        exact_color_bbox(&closed, CHIP_COLORS[0], 8).is_some(),
+        "the closed strip must already show its chips"
+    );
+
+    win.set_tune_editing_slot(1);
+    settle_frames(80);
+    let open = win.window().take_snapshot().expect("picker snapshot");
+    save_slice_png(open.clone(), "/tmp/opencode/borders_strip_picker_open.png");
+
+    let diff = count_buffer_diff_region(
+        &closed,
+        &open,
+        360,
+        0,
+        open.width() as usize,
+        open.height() as usize,
+    );
+    assert!(diff > 5000, "opening the picker must change the pane materially (ink={diff})");
+
+    // The picker card paints an accent-cyan 1px border across the pane width,
+    // so its top and bottom edges are full-width cyan rows — exactly two of
+    // them, and only its own. "Above the strip" is measured against them: the
+    // card's bottom edge sits one layout gap above the chip row. The old picker
+    // lived at the TOP of the pane, ~300px away from the first colour card, and
+    // pushed the strip off-screen.
+    let bands = color_row_bands(&open, ACCENT_CYAN, 40, 300);
+    assert_eq!(
+        bands.len(),
+        2,
+        "the picker card must paint exactly two full-width accent rows (bands={bands:?})"
+    );
+    let (card_top, _) = bands[0];
+    let (_, card_bottom) = bands[1];
+    assert!(
+        card_top > 40,
+        "the card must sit inside the viewport, not clipped at the panel top (top={card_top})"
+    );
+    // R10: the scroll that opens the picker lands the card at the TOP of the
+    // pane's content area — not wherever the closed flow happened to sit. The
+    // first full-width card edge below the section header IS that top (plus its
+    // 16px padding), so the card must land within one padding of it.
+    let closed_pane_top = (150..closed.height() as usize)
+        .find(|&y| {
+            count_color_in_box(&closed, BORDER_INK, 4, 360, y, closed.width() as usize, y + 1) >= 600
+        })
+        .expect("the closed pane must paint its first card edge");
+    assert!(
+        card_top <= closed_pane_top + 40,
+        "opening the picker must scroll it to the top of the pane: card top {card_top} vs pane \
+         content top {closed_pane_top}"
+    );
+    let card_h = card_bottom - card_top;
+    assert!(
+        (330..=430).contains(&card_h),
+        "the picker card must render at full height, not clipped (h={card_h})"
+    );
+    // The chip, re-located BELOW the card: the open picker's hue bar and SV
+    // field paint the seeded hue, so the strip's own green chip can only be
+    // trusted under the card.
+    let (_, chip_y, _, _) = exact_color_bbox_below(&open, CHIP_COLORS[1], 8, card_bottom + 2)
+        .expect("the strip must stay visible below the open picker card");
+    let gap = chip_y - card_bottom;
+    assert!(
+        gap <= 40,
+        "the picker card must sit directly above the strip: its bottom edge is {gap}px above the chip row"
+    );
+}
+
+/// R6/R7 — the inactive / glow / inactive-glow colour rows are COMPACT rows
+/// (48px, 56px while focused), not the 168/184px `BorderColorSlot` cards they
+/// replaced. Measured from the focused row's own icy border bands, i.e. from
+/// the render, not from the source.
+#[test]
+fn borders_strip_compact_rows_height() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    // Focus the inactive colour stop: 1 preset card + tune-local 2.
+    win.set_panel_kbd_preview_index(1 + 2);
+    settle_frames(80);
+    let shot = win.window().take_snapshot().expect("inactive row snapshot");
+    save_slice_png(shot.clone(), "/tmp/opencode/borders_strip_compact_row.png");
+
+    // A focused card paints its 1px icy border as two full-width bands, one per
+    // horizontal edge: the distance between a band pair IS the row height.
+    let bands = color_row_bands(&shot, ICY, 40, 300);
+    let pair = bands.windows(2).find_map(|w| {
+        let h = w[1].0 - w[0].0;
+        (40..=60).contains(&h).then_some((w[0].0, h))
+    });
+    let (top, height) = pair.unwrap_or_else(|| {
+        panic!("the focused inactive row must render 40–60px tall (icy bands={bands:?})")
+    });
+    println!("compact inactive row: top={top} height={height}px");
+}
+
+
 /// Borders tune pane renders dynamic color slots, angle control, and descriptions.
 /// This is the U3a visual verification test — it mounts the rebuilt pane and
 /// confirms the new control inventory renders without clipping.
@@ -5159,19 +5585,10 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
     win.set_border_size(3);
     // Fixed 11-slot layout: 0..7 slots, 8 inactive, 9 glow, 10 glow inactive.
-    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(vec![
-        slint::Color::from_rgb_u8(56, 189, 248),
-        slint::Color::from_rgb_u8(255, 136, 0),
-        slint::Color::from_rgb_u8(251, 191, 36),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_rgb_u8(15, 23, 42),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-    ])));
+    // Distinct saturated colours (CHIP_COLORS) so a chip's 16×16 swatch can be
+    // located by the exact colour it paints: while the picker is closed, those
+    // hues appear nowhere else.
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(borders_chip_resolved())));
 
     // Settle animations
     for _ in 0..20 {
@@ -5206,6 +5623,38 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     assert!(
         content_pixels > 10000,
         "borders tune pane must render visible content (content pixels={content_pixels})"
+    );
+
+    // R1 — the 3 gradient colours render as ONE horizontal strip of 16×16
+    // swatches, replacing the old vertical stack of N slot cards. The old
+    // layout painted these same hues ~130px apart on the y axis (one card per
+    // slot); the strip's whole point is that they share a single row.
+    let mut boxes = Vec::new();
+    for (i, rgb) in CHIP_COLORS.iter().take(3).enumerate() {
+        let painted = count_exact_color(&snapshot, *rgb, 8);
+        let bbox = exact_color_bbox(&snapshot, *rgb, 8).unwrap_or_else(|| {
+            panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
+        });
+        assert!(
+            (100..=400).contains(&painted),
+            "chip {} must be one 16×16 swatch (colour={rgb:?}, pixels={painted})",
+            i + 1
+        );
+        boxes.push(bbox);
+    }
+    for pair in boxes.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        assert!(b.0 > a.2, "chips must sit left to right: {a:?} then {b:?}");
+        assert!(
+            a.1.abs_diff(b.1) <= 24 && a.3.abs_diff(b.3) <= 24,
+            "chips must share one horizontal row: {a:?} then {b:?}"
+        );
+    }
+    // R1: a colour outside slot-count must NOT render a chip.
+    assert_eq!(
+        count_exact_color(&snapshot, CHIP_COLORS[3], 8),
+        0,
+        "slot 4 must have no chip while the preset has 3 slots"
     );
 }
 
@@ -5378,15 +5827,19 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     assert!(count_icy_pixels(&end) > 200, "last focus must carry the icy ring");
 }
 
-// ── Borders glow colour cards must not paint over their neighbours ─────
-// Regression guard for a real defect: the glow colour cards were 72/80px tall
-// while the swatch slot inside them is 110px, so the slot overflowed and drew
-// OVER the next title ("Inactive Glow Color", "Border Animations"). The cards
-// now match the inactive-colour card (168px / 184px focused).
-//
-// The assertion below is a proxy: a card that overflows pushes ink into the
-// gutter between cards. Reading /tmp/opencode/borders_tune_glow_colors.png is
-// the actual confirmation (D8: tests green alone never closes a visual task).
+// ── Borders glow colour rows must render inside their box ─────────────
+// Regression guard for two real defects, both about a row overflowing the
+// space the layout gave it:
+//   • the glow colour cards were 72/80px tall while the swatch slot inside
+//     them was 110px, so the slot overflowed and drew OVER the next title
+//     ("Inactive Glow Color", "Border Animations");
+//   • the fix then made every channel a 168/184px `BorderColorSlot` card.
+// R7 replaced all of that with compact 48px rows (56px while focused), so the
+// assertion is now the row HEIGHT read off the render: a focused row paints
+// its 1px icy border as two full-width bands, and the distance between them is
+// the rendered height. Reading /tmp/opencode/borders_tune_glow_colors.png is
+// the visual half of the confirmation (D8: tests green alone never closes a
+// visual task).
 #[test]
 fn borders_tune_glow_color_cards_render_inside_their_box() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -5404,6 +5857,13 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
     win.set_mounted_screen(1);
+    // Expanded + gallery state: without them the shell keeps the panel in its
+    // translucent rail-preview state and no exact-colour assertion can read the
+    // frame.
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
     win.set_gallery_reduced_motion(true);
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
@@ -5467,6 +5927,26 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         "the focused glow colour card must carry the icy ring"
     );
 
+    // R7 — the focused glow-inactive row is a COMPACT row, not a full-height
+    // card. Its icy border paints two full-width bands; the distance between a
+    // band pair IS the rendered height. The old `BorderColorSlot` card rendered
+    // 168px (184px focused): a height outside 40–60px here means the compact
+    // row regressed into an overflowing card.
+    let bands = color_row_bands(&shot, ICY, 40, 300);
+    let pair = bands.windows(2).find_map(|w| {
+        let h = w[1].0 - w[0].0;
+        (40..=60).contains(&h).then_some((w[0].0, h))
+    });
+    let (top, height) = pair.unwrap_or_else(|| {
+        panic!("the focused glow-inactive row must render 40–60px tall (icy bands={bands:?})")
+    });
+    assert!(
+        (52..=60).contains(&height),
+        "a focused compact row must render 56px tall (got {height}px at y={top}) — the \
+         168/184px `BorderColorSlot` card is the regression this guards"
+    );
+    println!("compact glow-inactive row: top={top} height={height}px");
+
     // D4 live-vs-saved header: the marker must flip to amber when the working
     // state has unsaved edits. Captured for human review + diffed against the
     // clean shot so a frozen indicator can't pass silently.
@@ -5488,6 +5968,11 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
 // space matches tune-colors-resolved: 0..7 slots, 8 inactive, 9 glow,
 // 10 glow inactive). An inline picker per slot would add ~330px per custom
 // colour and the pane has 2..8 of them.
+//
+// R3/R10: that ONE card opens IN THE FLOW directly above the chip strip it
+// edits — not a popover, and not pinned to the top of the pane away from the
+// colour it changes. This test asserts the card's position relative to the
+// strip it edits.
 #[test]
 fn borders_tune_custom_picker_opens_for_one_channel() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -5505,6 +5990,13 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
     win.set_mounted_screen(1);
+    // Expanded + gallery state: without them the shell keeps the panel in its
+    // translucent rail-preview state and no exact-colour assertion can read the
+    // frame.
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
     win.set_gallery_reduced_motion(true);
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
@@ -5521,25 +6013,19 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
     win.set_tune_angle(90);
     win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
     win.set_border_size(2);
-    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(vec![
-        slint::Color::from_rgb_u8(56, 189, 248),
-        slint::Color::from_rgb_u8(255, 136, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_argb_u8(0, 0, 0, 0),
-        slint::Color::from_rgb_u8(15, 23, 42),
-        slint::Color::from_rgb_u8(192, 132, 252),
-        slint::Color::from_rgb_u8(15, 23, 42),
-    ])));
+    // Distinct saturated colours (CHIP_COLORS) so the strip chip under the
+    // picker can be located by its exact colour.
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(borders_chip_resolved())));
 
     // Closed first: the pane must NOT mount a picker (no dead 330px card).
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let closed = win.window().take_snapshot().expect("closed snapshot");
+    assert!(
+        exact_color_bbox(&closed, CHIP_COLORS[1], 8).is_some(),
+        "the closed strip must already show its chips"
+    );
 
     // Open it for slot 2 (index 1), then scroll the pane to the picker zone by
     // focusing a stop just below it.
@@ -5554,6 +6040,35 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
     assert!(
         count_buffer_diff(&closed, &open) > 5000,
         "opening the picker must change the pane materially"
+    );
+
+    // R3/R10 — the picker card paints an accent-cyan 1px border across the pane
+    // width, so its top and bottom edges are two full-width cyan rows. The old
+    // picker lived at the top of the pane, separated from the colour cards; the
+    // new one is anchored directly above the strip.
+    let bands = color_row_bands(&open, ACCENT_CYAN, 40, 300);
+    assert_eq!(
+        bands.len(),
+        2,
+        "the picker card must paint exactly two full-width accent rows (bands={bands:?})"
+    );
+    let (card_top, _) = bands[0];
+    let (_, card_bottom) = bands[1];
+    let card_h = card_bottom - card_top;
+    assert!(
+        (360..=400).contains(&card_h),
+        "the picker card must render at full height, not clipped (h={card_h})"
+    );
+    // The edited chip, re-located BELOW the card: the open picker's hue bar and
+    // SV field paint the seeded hue, so the strip's own green chip can only be
+    // trusted under the card.
+    let (_, chip_y, _, _) = exact_color_bbox_below(&open, CHIP_COLORS[1], 8, card_bottom + 2)
+        .expect("the strip must stay visible below the open picker card");
+    let gap = chip_y - card_bottom;
+    assert!(
+        gap <= 40,
+        "the picker card must sit directly above the strip: its bottom edge is {gap}px above \
+         the chip row"
     );
 }
 
@@ -5847,9 +6362,10 @@ fn borders_list_wheel_reaches_the_end() {
     );
 }
 
-// ── Borders 8-slot case (task 3.9) ────────────────────────────────────
-// Hyprland allows 2..8 gradient colours; the pane must render the maximum
-// without clipping. The other borders render tests exercise 2 and 3.
+// ── Borders 8-slot case ──────────────────────────────────────────────
+// Hyprland allows 2..8 gradient colours; the pane must render the maximum as
+// ONE strip of 8 chips without clipping or overlap. The other borders render
+// tests exercise the strip at 2 and 3 slots.
 #[test]
 fn borders_tune_renders_eight_slots() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -5867,6 +6383,13 @@ fn borders_tune_renders_eight_slots() {
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
     win.set_mounted_screen(1);
+    // Expanded + gallery state: without them the shell keeps the panel in its
+    // translucent rail-preview state and no exact-colour assertion can read the
+    // frame.
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
     win.set_gallery_reduced_motion(true);
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
@@ -5883,18 +6406,9 @@ fn borders_tune_renders_eight_slots() {
     win.set_tune_angle(45);
     win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
     win.set_border_size(2);
-    let resolved: Vec<slint::Color> = (0..11).map(|i| {
-        match i {
-            0 => slint::Color::from_rgb_u8(56, 189, 248),
-            1 => slint::Color::from_rgb_u8(251, 191, 36),
-            2 => slint::Color::from_rgb_u8(192, 132, 252),
-            3 => slint::Color::from_rgb_u8(52, 211, 153),
-            4 => slint::Color::from_rgb_u8(30, 41, 59),
-            5 => slint::Color::from_rgb_u8(15, 23, 42),
-            _ => slint::Color::from_argb_u8(0, 0, 0, 0),
-        }
-    }).collect();
-    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(resolved)));
+    // 11-slot resolved model with 8 distinct saturated hues (CHIP_COLORS) so
+    // each chip's 16×16 swatch can be located by its exact colour.
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(borders_chip_resolved())));
 
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -5902,19 +6416,57 @@ fn borders_tune_renders_eight_slots() {
     let shot = win.window().take_snapshot().expect("eight slots snapshot");
     save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_eight_slots.png");
 
-    // The pane must actually contain 8 slot cards: count icy focus pixels is
-    // not enough, so count the token swatch row's saturated pixels instead.
-    let bytes = shot.as_bytes();
-    let w = shot.width() as usize;
-    let mut colourful = 0usize;
-    for y in 240..(shot.height() as usize) {
-        for x in 360..w {
-            let i = (y * w + x) * 4;
-            let (r, g, b) = (bytes[i] as i32, bytes[i + 1] as i32, bytes[i + 2] as i32);
-            if bytes[i + 3] > 200 && (r - g).abs() + (g - b).abs() + (r - b).abs() > 150 {
-                colourful += 1;
-            }
-        }
+    // R1 — exactly 8 chips, one per slot, all on ONE row, ordered left to right
+    // and non-overlapping. The old layout stacked 8 ~130px-tall slot cards
+    // (several screens of scroll); the strip must fit the pane in one band.
+    let mut boxes = Vec::new();
+    for (i, rgb) in CHIP_COLORS.iter().enumerate() {
+        let painted = count_exact_color(&shot, *rgb, 8);
+        let bbox = exact_color_bbox(&shot, *rgb, 8).unwrap_or_else(|| {
+            panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
+        });
+        assert!(
+            (100..=400).contains(&painted),
+            "chip {} must be one 16×16 swatch (colour={rgb:?}, pixels={painted})",
+            i + 1
+        );
+        boxes.push(bbox);
     }
-    assert!(colourful > 3000, "8 slot swatch rows must render (saturated pixels={colourful})");
+    for pair in boxes.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        assert!(
+            b.0 > a.2,
+            "8 chips must not overlap and must be ordered left to right: {a:?} then {b:?}"
+        );
+        assert!(
+            a.1.abs_diff(b.1) <= 24 && a.3.abs_diff(b.3) <= 24,
+            "all 8 chips must share one horizontal row: {a:?} then {b:?}"
+        );
+    }
+    // "No overflow": 8 × 40px chips + 7 × 6px gaps = 362px of span. A span far
+    // beyond that means the chips wrapped onto a second row or ran off the pane,
+    // and the last chip running past the 1920px window means real truncation.
+    let span = boxes[7].2 - boxes[0].0;
+    assert!(
+        span < 600,
+        "8 chips must fit one row inside the pane (span={span}px)"
+    );
+    assert!(
+        boxes[7].2 < 1900,
+        "the 8th chip must not overflow the window (right edge={})",
+        boxes[7].2
+    );
+    // Even horizontal pitch: each chip is a fixed 40px cell with a 6px gap, so
+    // consecutive 16×16 swatches sit ~46px apart. A collapsed or exploded pitch
+    // means the chips stopped being fixed 40×32 cells (e.g. they shrank to
+    // overlap, or the row wrapped and a chip jumped columns).
+    for pair in boxes.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let pitch = b.0 - a.0;
+        assert!(
+            (40..=60).contains(&pitch),
+            "chips must keep their 40px cell + 6px gap pitch (got {pitch}px: {a:?} then {b:?})"
+        );
+    }
+    println!("eight-slot chip pitches measured from box.x0: {boxes:?}");
 }

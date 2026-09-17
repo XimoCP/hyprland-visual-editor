@@ -22,8 +22,94 @@ import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { GeometrySlider } from "../../components.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
-import { BorderColorSlot } from "BorderColorSlot.slint";
 import { HveColorPicker } from "../ColorPicker.slint";
+
+// ─── Compact colour row (R6/R7) ───────────────────────────────────────
+// ONE row per non-gradient colour channel — inactive (8), glow colour (9),
+// glow inactive (10): 16×16 colour chip + label + a "Custom…" button that
+// opens the SHARED picker for that channel.
+//
+// It replaces the 110px `BorderColorSlot` card. The six token swatches that
+// card carried moved into the picker itself (R15), so what is left is a single
+// 48px line — 56px while the keyboard focus is on it, matching every other
+// compact tune control.
+component BorderCompactColorRow inherits Rectangle {
+    in property <string> label: "";
+    in property <string> value-label: "";
+    in property <color> resolved-color: transparent;
+    in property <bool> lit: false;
+    in property <bool> editing: false;
+    callback picker-requested();
+
+    height: self.lit ? 56px : 48px;
+    animate height { duration: 250ms; easing: ease-in-out-back; }
+    border-width: 1px;
+    border-color: self.lit ? #8fd8ff : HveColors.border;
+    border-radius: SkwdTokens.radius-8;
+    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+    animate background { duration: 200ms; easing: ease-in-out; }
+
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            border-radius: SkwdTokens.radius-4;
+            border-width: 1px;
+            border-color: HveColors.border;
+            background: root.resolved-color;
+        }
+
+        Text {
+            text: root.label;
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-13;
+            font-weight: 600;
+            color: HveColors.text;
+            vertical-alignment: center;
+        }
+
+        // The current value ("surface_lowest" / "Custom"): the chip says what it
+        // looks like, this says what it IS. Grows to keep the button right.
+        Text {
+            text: root.value-label;
+            font-family: SkwdTokens.font-body;
+            font-size: SkwdTokens.size-11;
+            color: HveColors.text-muted;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        Rectangle {
+            width: 84px;
+            height: 22px;
+            border-radius: SkwdTokens.radius-4;
+            border-width: 1px;
+            border-color: root.editing ? HveColors.accent-cyan : HveColors.border;
+            background: root.editing ? HveColors.accent-cyan
+                : (custom-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
+
+            Text {
+                text: root.editing ? "Editing…" : "Custom…";
+                color: root.editing ? HveColors.bg-dark : HveColors.text;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            custom-ta := TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: pointer;
+                clicked => { root.picker-requested(); }
+            }
+        }
+    }
+}
 
 // ─── Tune pane: dynamic color slots + angle + inactive + size + save form. ───
 // Rebuilt in U3a: old 4-slider geometry block removed; only size 1-5 kept.
@@ -41,6 +127,15 @@ component BordersTunePane inherits Rectangle {
     // Tune pane — dynamic (Unit 2)
     in property <[string]> tune-active-colors: [];
     in property <[color]> tune-colors-resolved: [];
+    // ── Gradient colour strip (R1/R2) ─────────────────────────────
+    // Sub-navigation state, internal to the tune pane: the chip the strip
+    // highlights when the strip stop owns the keyboard. PR 3 wires ←/→ to it.
+    in-out property <int> strip-active-chip: 0;
+    // The shared picker card (the ONE picker for every colour channel) is
+    // visible exactly while a channel is being edited (R3/R11). Derived from
+    // the single `editing-slot` index the whole pane shares, so the strip, the
+    // compact rows and the keyboard all open the same card.
+    property <bool> picker-visible: root.editing-slot >= 0;
     // Channel whose custom colour the shared picker is editing, in the same
     // index space as tune-colors-resolved: 0..7 slots, 8 inactive, 9 glow,
     // 10 glow inactive. -1 = picker closed.
@@ -182,12 +277,57 @@ component BordersTunePane inherits Rectangle {
         if (idx == 10) { return "the inactive glow colour"; }
         return "this colour";
     }
+    // The value the picker is editing ("p:primary" / "c:rrggbbaa"), in the same
+    // index space as tune-colors-resolved. Drives the token row's selection
+    // outline, so the current pick is visible instead of guessed.
+    function editing-value() -> string {
+        if (root.editing-slot >= 0 && root.editing-slot < root.slot-count) {
+            return root.tune-active-colors[root.editing-slot];
+        }
+        if (root.editing-slot == 8) { return root.tune-inactive-color; }
+        if (root.editing-slot == 9) { return root.glow-color; }
+        if (root.editing-slot == 10) { return root.glow-color-inactive; }
+        return "";
+    }
+    // A token swatch inside the picker writes the SAME value the old per-slot
+    // swatches did. The picker serves every channel, so one function routes the
+    // write: gradient slots go to slot-color-changed(i), the three compact rows
+    // to the inactive / glow / glow-inactive callbacks (R15).
+    function choose-token(idx: int, v: string) {
+        if (idx >= 0 && idx < root.slot-count) { root.slot-color-changed(idx, v); return; }
+        if (idx == 8) { root.inactive-color-changed(v); return; }
+        if (idx == 9) {
+            root.glow-changed(root.glow-enabled, root.glow-range, root.glow-render-power, v, root.glow-color-inactive);
+            return;
+        }
+        if (idx == 10) {
+            root.glow-changed(root.glow-enabled, root.glow-range, root.glow-render-power, root.glow-color, v);
+        }
+    }
     background: transparent;
     clip: true;
 
     changed local-focus => { tune-scroll.follow-focus(); }
     changed editing-slot => { tune-scroll.follow-focus(); }
     changed follow => { tune-scroll.follow-focus(); }
+
+    // The picker anchor (R10) needs the content height the card is ABOUT to
+    // have, and at the instant `picker-visible` flips the ScrollView still
+    // knows only the CLOSED height — so it clamps away exactly the scroll that
+    // would reveal the card, leaving it wherever the old flow happened to be.
+    // One zero-interval tick later the new height is known and `follow-focus()`
+    // computes the right target. A repeating 0ms timer would spin, hence the
+    // one-shot flag.
+    property <bool> picker-anchor-pending: false;
+    changed picker-visible => { root.picker-anchor-pending = root.picker-visible; }
+    Timer {
+        interval: 0ms;
+        running: root.picker-anchor-pending;
+        triggered => {
+            root.picker-anchor-pending = false;
+            tune-scroll.follow-focus();
+        }
+    }
 
     tune-scroll := ScrollView {
         // Linear estimate keeps every stop scrollable: the viewport centers
@@ -198,9 +338,17 @@ component BordersTunePane inherits Rectangle {
         // IMPERATIVE, not a binding — see the note on the list pane: a wheel
         // writes `viewport-y`, which drops a binding and would leave the tune
         // pane unable to follow the keyboard for the rest of the session.
-        // Opening the picker must also SHOW it: it sits at the top of the flow.
+        // Opening the picker must also SHOW it: the card sits in the flow right
+        // above the strip it edits (R3), so anchoring the BLOCK's top edge
+        // brings the card and its chips into view together (R10). `viewport-y =
+        // 0` was enough while the picker lived at the very top of the flow; it
+        // is not any more.
         public function follow-focus() {
-            if (root.editing-slot >= 0) { self.viewport-y = 0px; return; }
+            if (root.picker-visible) {
+                self.viewport-y = max(self.height - tune-col.height,
+                    min(0px, 0px - picker-block.y));
+                return;
+            }
             if (root.follow && root.local-focus >= 0) {
                 self.viewport-y = max(self.height - tune-col.height,
                     min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)));
@@ -213,93 +361,6 @@ component BordersTunePane inherits Rectangle {
         changed viewport-y => { if (root.editing-slot < 0) { root.saved-scroll-y = self.viewport-y; } }
         tune-col := VerticalLayout {
             padding-left: 16px;
-            // NOT an overlay: an overlay would be painted UNDER the ScrollView
-            // (later siblings do not win over it), which showed the pane content
-            // bleeding through the picker.
-            // ── Shared colour picker: one channel at a time, in the flow ──
-            // Clicking "Custom…" must SHOW the picker: it sits at the top of the
-            // flow and the viewport jumps there while it is open. Exactly one
-            // exists at a time — a picker per slot would add ~330px per custom
-            // colour and the pane has 2..8 of them.
-            //
-            // The conditional stays a conditional: the picker is driven by the
-            // command-channel PROPERTIES bound inside this block (which is legal
-            // — only reaching a conditional element from OUTSIDE is forbidden),
-            // so it never needs to be permanently instantiated. An earlier
-            // `visible:` variant reserved its 344px in the scroll flow and left a
-            // dead gap above the size card.
-            if root.editing-slot >= 0 : Rectangle {
-                // Anchored to the TOP: the pane's own height runs a little past
-                // the visible panel, so a bottom-anchored card got its last row
-                // clipped. The top is always on-screen, and the header names the
-                // channel being edited so the card is never ambiguous.
-                height: 344px;
-                border-width: 1px;
-                border-color: HveColors.accent-cyan;
-                border-radius: SkwdTokens.radius-8;
-                background: HveColors.bg-surface;
-                clip: true;
-
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 8px;
-
-                    HorizontalLayout {
-                        spacing: 8px;
-
-                        Text {
-                            text: "Custom colour — " + root.channel-name(root.editing-slot);
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-13;
-                            font-weight: 600;
-                            color: HveColors.accent-cyan;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-
-                        Rectangle {
-                            width: 64px;
-                            height: 22px;
-                            border-radius: SkwdTokens.radius-4;
-                            background: picker-done.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
-                            border-width: 1px;
-                            border-color: HveColors.border;
-
-                            Text {
-                                text: "Done";
-                                color: HveColors.text;
-                                font-family: SkwdTokens.font-body;
-                                font-size: SkwdTokens.size-11;
-                                font-weight: 600;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-
-                            picker-done := TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                mouse-cursor: pointer;
-                                clicked => { root.request-edit-slot(-1); }
-                            }
-                        }
-                    }
-
-                    // Seeded from the resolved colour, so opening the picker on a
-                    // stored custom value shows THAT colour and not a default.
-                    col-picker := HveColorPicker {
-                        width: 100%;
-                        seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
-                        // Keyboard command channel from the section (task 3.7).
-                        cmd-seq: root.picker-cmd;
-                        cmd-kind: root.picker-cmd-kind;
-                        // D4: never notify per drag step. `changed` only moves the
-                        // local value so the preview follows; `committed` (pointer
-                        // up) is what writes the live draft.
-                        changed => { root.custom-color-preview(root.editing-slot, col-picker.hex8); }
-                        committed => { root.custom-color-changed(root.editing-slot, col-picker.hex8); }
-                    }
-                }
-            }
 
             padding-right: 16px;
             padding-top: 16px;
@@ -411,44 +472,16 @@ component BordersTunePane inherits Rectangle {
                 wrap: word-wrap;
             }
 
-            // ── Inactive color row ──
-            inactive-wrap := Rectangle {
-                property <bool> lit: root.focused-index == root.split + 2 && root.has-focus;
-                // Tall enough for title + full BorderColorSlot (label + description):
-                // padding 32 + spacing 4 + title ~18 + slot 110 = ~164.
-                height: self.lit ? 184px : 168px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
-                border-radius: SkwdTokens.radius-8;
-                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
-
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 4px;
-
-                    Text {
-                        text: "Inactive Border Color";
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: 13px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
-
-                    BorderColorSlot {
-                        width: 100%;
-                        slot-value: root.tune-inactive-color;
-                        editing: root.editing-slot == 8;
-                        open-picker() => { root.request-edit-slot(8); }
-                        resolved-color: root.tune-colors-resolved[8];
-                        slot-description: "Color of unfocused window borders. Tap a swatch to change it.";
-                        display-label: root.value-label(root.tune-inactive-color);
-                        editable: true;
-                        slot-changed(v) => { root.inactive-color-changed(v); }
-                    }
-                }
+            // ── Inactive color row (R6) ──
+            // A compact single row — chip + label + "Custom…" — instead of the
+            // 110px slot card. The token swatches live in the shared picker now.
+            BorderCompactColorRow {
+                label: "Inactive";
+                value-label: root.value-label(root.tune-inactive-color);
+                resolved-color: root.tune-colors-resolved[8];
+                lit: root.focused-index == root.split + 2 && root.has-focus;
+                editing: root.editing-slot == 8;
+                picker-requested() => { root.request-edit-slot(8); }
             }
 
             // ── Description: inactive ──
@@ -463,7 +496,7 @@ component BordersTunePane inherits Rectangle {
             // Separator
             Rectangle { height: 1px; background: HveColors.border; }
 
-            // ── Dynamic color slots ──
+            // ── Dynamic gradient colours: one strip, one stop ──
             if root.slot-count > 0 : Text {
                 text: "Active Border Colors (" + root.slot-count + " slots)";
                 font-family: SkwdTokens.font-heading;
@@ -472,29 +505,207 @@ component BordersTunePane inherits Rectangle {
                 color: HveColors.text-muted;
             }
 
-            for i in root.tune-active-colors.length : Rectangle {
-                property <bool> slot-lit: root.focused-index == root.split + root.first-slot-idx + i && root.has-focus;
-                height: 130px;
-                border-width: 1px;
-                border-color: self.slot-lit ? #8fd8ff : HveColors.border;
-                border-radius: SkwdTokens.radius-8;
-                background: self.slot-lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
+            // ── Shared picker card + gradient strip (R1/R2/R3/R15) ──
+            // ONE picker for every colour channel, IN THE FLOW directly above
+            // the strip it edits: the colour and the chip it came from stay in
+            // one glance, and closing it (editing-slot = -1) leaves no dead gap
+            // behind (R4). The `if` is what gives that zero-height close.
+            //
+            // `picker-block` itself stays UNCONDITIONAL on purpose: the scroll
+            // helper anchors on its top edge to bring the card and the chips
+            // into view together (R10). Only reaching INTO a conditional from
+            // outside is forbidden by Slint, and nothing does that here.
+            picker-block := VerticalLayout {
+                spacing: 8px;
 
-                BorderColorSlot {
-                    width: 100%;
-                    slot-value: root.tune-active-colors[i];
-                    editing: root.editing-slot == i;
-                    open-picker() => { root.request-edit-slot(i); }
-                    resolved-color: root.tune-colors-resolved[i];
-                    slot-description: "Active gradient color slot " + (i + 1) + " of " + root.slot-count + ". Tap a swatch to change.";
-                    // Name the current pick too, so the user reads "Slot 2 · tertiary"
-                    // instead of having to decode which swatch is outlined.
-                    display-label: "Slot " + (i + 1) + " · " + root.value-label(root.tune-active-colors[i]);
-                    editable: true;
-                    is-token: root.is-token-color(root.tune-active-colors[i]);
-                    slot-changed(v) => { root.slot-color-changed(i, v); }
+                if root.picker-visible : Rectangle {
+                    // 380px fits header + token row + HSV area without clipping
+                    // the picker's own hint line (the 344px it had before the
+                    // token row moved in here).
+                    height: 380px;
+                    border-width: 1px;
+                    border-color: HveColors.accent-cyan;
+                    border-radius: SkwdTokens.radius-8;
+                    background: HveColors.bg-surface;
+                    clip: true;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+
+                        // Header: names the channel being edited, so the card is
+                        // never ambiguous, plus the Done button (R15.1).
+                        HorizontalLayout {
+                            spacing: 8px;
+
+                            Text {
+                                text: "Custom colour — " + root.channel-name(root.editing-slot);
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-13;
+                                font-weight: 600;
+                                color: HveColors.accent-cyan;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+
+                            Rectangle {
+                                width: 64px;
+                                height: 22px;
+                                border-radius: SkwdTokens.radius-4;
+                                background: picker-done.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
+                                border-width: 1px;
+                                border-color: HveColors.border;
+
+                                Text {
+                                    text: "Done";
+                                    color: HveColors.text;
+                                    font-family: SkwdTokens.font-body;
+                                    font-size: SkwdTokens.size-11;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                picker-done := TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.request-edit-slot(-1); }
+                                }
+                            }
+                        }
+
+                        // Six palette tokens (R15.2): the fast path. They used to
+                        // live in every BorderColorSlot card; there is now ONE
+                        // picker, so the tokens live in it and apply to whichever
+                        // channel it is editing.
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+
+                            for token-name in ["primary", "secondary", "tertiary", "error", "surface", "surface_lowest"] : Rectangle {
+                                width: 46px;
+                                height: 40px;
+                                border-radius: SkwdTokens.radius-8;
+                                background: token-name == "primary" ? HveColors.token-primary
+                                    : token-name == "secondary" ? HveColors.token-secondary
+                                    : token-name == "tertiary" ? HveColors.token-tertiary
+                                    : token-name == "error" ? HveColors.token-error
+                                    : token-name == "surface" ? HveColors.token-surface
+                                    : HveColors.token-surface-lowest;
+                                // The token the channel already holds is outlined,
+                                // so the current pick is readable, not guessed.
+                                border-width: 2px;
+                                border-color: root.editing-value() == ("p:" + token-name) ? HveColors.accent-cyan : transparent;
+
+                                Text {
+                                    text: token-name == "surface_lowest" ? "lowest" : token-name;
+                                    color: HveColors.text;
+                                    font-family: SkwdTokens.font-body;
+                                    font-size: 8px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.choose-token(root.editing-slot, "p:" + token-name); }
+                                }
+                            }
+                        }
+
+                        // HSV custom colour (R15.3). Seeded from the resolved
+                        // colour, so opening the picker on a stored custom value
+                        // shows THAT colour and not a default.
+                        col-picker := HveColorPicker {
+                            width: 100%;
+                            seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
+                            // Keyboard command channel from the section (task 3.7).
+                            cmd-seq: root.picker-cmd;
+                            cmd-kind: root.picker-cmd-kind;
+                            // D4: never notify per drag step. `changed` only moves
+                            // the local value so the preview follows; `committed`
+                            // (pointer up) is what writes the live draft.
+                            changed => { root.custom-color-preview(root.editing-slot, col-picker.hex8); }
+                            committed => { root.custom-color-changed(root.editing-slot, col-picker.hex8); }
+                        }
+                    }
                 }
+
+                // ── Gradient colour strip (R1/R2) ──
+                // ONE horizontal strip of numbered chips — one per gradient slot —
+                // replaces the N × BorderColorSlot card stack: the gradient reads
+                // as a single row at a glance, and the whole strip is ONE keyboard
+                // stop (R8) instead of N.
+                if root.slot-count > 0 : HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+
+                for i in root.slot-count : Rectangle {
+                    property <bool> is-active-chip: i == root.strip-active-chip && root.has-focus;
+                    width: 40px;
+                    height: 32px;
+                    border-radius: SkwdTokens.radius-4;
+                    border-width: self.is-active-chip ? 2px : 1px;
+                    border-color: self.is-active-chip ? #8fd8ff : HveColors.border;
+                    // R2: hover highlight, same ink as every other hoverable
+                    // control in the pane.
+                    background: self.is-active-chip || chip-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
+
+                    HorizontalLayout {
+                        spacing: 4px;
+                        alignment: center;
+
+                        // The resolved colour (token or custom — Rust resolves
+                        // both, since Slint cannot parse "#rrggbbaa").
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            border-radius: SkwdTokens.radius-4;
+                            border-width: 1px;
+                            border-color: HveColors.border;
+                            background: root.tune-colors-resolved[i];
+                        }
+
+                        // 1-indexed, matching the slot position: the chip says
+                        // WHICH colour this is, the swatch says what it looks
+                        // like.
+                        Text {
+                            text: "" + (i + 1);
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-11;
+                            font-weight: 600;
+                            color: HveColors.text;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    chip-ta := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        // A click both selects the chip and opens the shared
+                        // picker on it: one picker, always the one you clicked
+                        // (R3 — clicking another chip moves the same card).
+                        clicked => {
+                            root.strip-active-chip = i;
+                            root.request-edit-slot(i);
+                        }
+                    }
+                }
+            }
+            }
+
+            // ── Description: gradient colours ──
+            Text {
+                text: "One chip per gradient colour, in order. Click a chip to edit that colour.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
             }
 
             // ── Add / Remove slot controls ──
@@ -753,83 +964,40 @@ component BordersTunePane inherits Rectangle {
                     wrap: word-wrap;
                 }
 
-                // Glow color
-                // Height must fit title + BorderColorSlot (110px): the old 72/80px
-                // let the slot overflow and paint OVER the next title. Same sizing
-                // as the inactive-color card, which already fits.
-                Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-glow-color && root.has-focus;
-                    height: self.lit ? 184px : 168px;
-                    border-width: 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 4px;
-
-                        Text {
-                            text: "Glow Color";
-                            color: HveColors.text;
-                            font-family: SkwdTokens.font-body;
-                            font-size: 13px;
-                            font-weight: 600;
-                        }
-
-                        BorderColorSlot {
-                            width: 100%;
-                            slot-value: root.glow-color;
-                            editing: root.editing-slot == 9;
-                            open-picker() => { root.request-edit-slot(9); }
-                            resolved-color: root.tune-colors-resolved[9];
-                            slot-description: "Color of the glow on focused windows. Tap a swatch to change it.";
-                            display-label: root.value-label(root.glow-color);
-                            editable: true;
-                            is-token: root.is-token-color(root.glow-color);
-                            slot-changed(v) => {
-                                root.glow-changed(root.glow-enabled, root.glow-range, root.glow-render-power, v, root.glow-color-inactive);
-                            }
-                        }
-                    }
+                // Glow color — compact row, same pattern as the inactive row (R7).
+                BorderCompactColorRow {
+                    label: "Glow Color";
+                    value-label: root.value-label(root.glow-color);
+                    resolved-color: root.tune-colors-resolved[9];
+                    lit: root.local-focus == root.idx-glow-color && root.has-focus;
+                    editing: root.editing-slot == 9;
+                    picker-requested() => { root.request-edit-slot(9); }
                 }
 
-                // Glow inactive color
-                Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
-                    height: self.lit ? 184px : 168px;
-                    border-width: 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                Text {
+                    text: "Color of the glow on focused windows. Tap Custom… to change it.";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-11;
+                    color: HveColors.text-muted;
+                    wrap: word-wrap;
+                }
 
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 4px;
+                // Glow inactive color — compact row (R7).
+                BorderCompactColorRow {
+                    label: "Inactive Glow";
+                    value-label: root.value-label(root.glow-color-inactive);
+                    resolved-color: root.tune-colors-resolved[10];
+                    lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
+                    editing: root.editing-slot == 10;
+                    picker-requested() => { root.request-edit-slot(10); }
+                }
 
-                        Text {
-                            text: "Inactive Glow Color";
-                            color: HveColors.text;
-                            font-family: SkwdTokens.font-body;
-                            font-size: 13px;
-                            font-weight: 600;
-                        }
-
-                        BorderColorSlot {
-                            width: 100%;
-                            slot-value: root.glow-color-inactive;
-                            editing: root.editing-slot == 10;
-                            open-picker() => { root.request-edit-slot(10); }
-                            resolved-color: root.tune-colors-resolved[10];
-                            slot-description: "Glow color for unfocused windows. Tap a swatch to change it.";
-                            display-label: root.value-label(root.glow-color-inactive);
-                            editable: true;
-                            is-token: root.is-token-color(root.glow-color-inactive);
-                            slot-changed(v) => {
-                                root.glow-changed(root.glow-enabled, root.glow-range, root.glow-render-power, root.glow-color, v);
-                            }
-                        }
-                    }
+                Text {
+                    text: "Glow color for unfocused windows. Tap Custom… to change it.";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-11;
+                    color: HveColors.text-muted;
+                    wrap: word-wrap;
                 }
             }
 
