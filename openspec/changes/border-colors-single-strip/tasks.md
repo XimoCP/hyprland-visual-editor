@@ -51,9 +51,20 @@ Chain strategy: feature-branch-chain
 
 - [ ] 2.6 [GREEN] Replace `BorderColorSlot` instances in inactive-wrap (lines 440–451), glow color card (lines 780–793), and glow inactive card (lines 818–831) with compact row pattern: `Rectangle { height: self.lit ? 56px : 48px; ... HorizontalLayout { ... 16×16 chip + Text label + "Custom…" button ... } }`. Update the inactive-wrap container height from `168px/184px` to `48px/56px`. Test MUST pass. [f: `ui/panel/sections/BordersSection.slint`] [t: `cargo test borders_strip_compact_rows_height`]
 
-- [ ] 2.7 [REFACTOR] Delete `ui/panel/sections/BorderColorSlot.slint`. Remove `import { BorderColorSlot } from "BorderColorSlot.slint";` from `BordersSection.slint` line 25. Run `cargo check` — no dangling imports. [f: `ui/panel/sections/BorderColorSlot.slint`, `ui/panel/sections/BordersSection.slint`] [t: `cargo check`]
+- [x] 2.7 [REFACTOR] Delete `ui/panel/sections/BorderColorSlot.slint`. Remove `import { BorderColorSlot } from "BorderColorSlot.slint";` from `BordersSection.slint` line 25. Run `cargo check` — no dangling imports. [f: `ui/panel/sections/BorderColorSlot.slint`, `ui/panel/sections/BordersSection.slint`] [t: `cargo check`]
 
-- [ ] 2.8 Rewrite 7 existing border tests in `src/shell/ui_tests.rs` to match new layout: `borders_tune_pane_renders_with_dynamic_slots` (strip chips instead of slot cards), `borders_tune_full_focus_reaches_last_and_middle` (stop-count 27→26 already done in PR 1 — PR 2 only recalculates the `middle`/`last` focus indices if the layout shifts), `borders_tune_glow_color_cards_render_inside_their_box` (stop-count 18→17 already done in PR 1 — PR 2 only replaces the `BorderColorSlot` height assertions with compact-row height assertions), `borders_tune_custom_picker_opens_for_one_channel` (picker above strip), `borders_list_pane_scrolls_with_the_mouse_wheel` (adjust pixel bounds), `borders_list_wheel_reaches_the_end` (adjust pixel bounds), `borders_tune_renders_eight_slots` (8 chips in strip). Keep 2 unchanged: `borders_mouse_never_touches_focus_by_construction`, `panel_scopes_ignore_mouse_focus_by_construction`. [f: `src/shell/ui_tests.rs`] [t: `cargo test`]
+- [x] 2.8 (4 of 7 rewritten; 3 deferred — see the note below) Rewrite 7 existing border tests in `src/shell/ui_tests.rs` to match new layout: `borders_tune_pane_renders_with_dynamic_slots` (strip chips instead of slot cards), `borders_tune_full_focus_reaches_last_and_middle` (stop-count 27→26 already done in PR 1 — PR 2 only recalculates the `middle`/`last` focus indices if the layout shifts), `borders_tune_glow_color_cards_render_inside_their_box` (stop-count 18→17 already done in PR 1 — PR 2 only replaces the `BorderColorSlot` height assertions with compact-row height assertions), `borders_tune_custom_picker_opens_for_one_channel` (picker above strip), `borders_list_pane_scrolls_with_the_mouse_wheel` (adjust pixel bounds), `borders_list_wheel_reaches_the_end` (adjust pixel bounds), `borders_tune_renders_eight_slots` (8 chips in strip). Keep 2 unchanged: `borders_mouse_never_touches_focus_by_construction`, `panel_scopes_ignore_mouse_focus_by_construction`. [f: `src/shell/ui_tests.rs`] [t: `cargo test`]
+
+> **2.8 closure note**: four tests were genuinely strengthened and each was observed RED
+> against the old layout (`borders_tune_pane_renders_with_dynamic_slots`,
+> `borders_tune_glow_color_cards_render_inside_their_box`,
+> `borders_tune_custom_picker_opens_for_one_channel`, `borders_tune_renders_eight_slots`).
+> Three were deliberately left untouched: `borders_tune_full_focus_reaches_last_and_middle`
+> encodes the tune-local index map, which is still slot-dependent and is fixed by 3.5-3.7
+> (the test currently asserts only that *some* stop is focused, so it is green but hollow —
+> making it meaningful requires Phase 3); `borders_list_pane_scrolls_with_the_mouse_wheel` and
+> `borders_list_wheel_reaches_the_end` only exercise the list pane, which PR 2 did not change
+> (measured wheel ink identical before/after), so they had no stale tune assertion to rewrite.
 
 ## Phase 3: Keyboard Sub-Navigation (PR 3)
 
@@ -101,5 +112,16 @@ Chain strategy: feature-branch-chain
 - [ ] 4.6 VISUAL VERIFICATION: Read the PNGs saved under `/tmp/opencode/borders_strip_*.png` and confirm: chips are evenly spaced and non-overlapping at 8 slots, picker card is fully visible above the strip, compact rows are ~48–56px tall, focus ring (icy-cyan #8fd8ff) appears on focused chip. Note: software renderer does NOT support `transform-scale-x/y`, so scale assertions are omitted from render tests (GPU-only polish). [f: PNG inspection]
 
 - [ ] 4.7 Run `cargo test` — all tests green. No skipped tests. All 9 original border tests rewritten and passing. All new tests passing. [f: full test suite] [t: `cargo test`]
+
+- [ ] 4.7b Tighten three loose assertions found in the PR 2 verification (quality, not behavior):
+  (1) the `span < 600` bound in `borders_tune_renders_eight_slots` is documented as the wrap
+  guard, but wrapping *shrinks* the measured span — the real wrap guard is the shared-row
+  assertion, so either drop the loose bound or re-document it honestly;
+  (2) the picker card height is asserted as `330..=430` in one test and `360..=400` in its
+  sibling — a card 50px off passes the loose one while its message claims "full height, not
+  clipped";
+  (3) the swatch count band `100..=400` does not pin the 16×16 swatch (the measured exact-colour
+  bbox is 13×13 through the 1px border + radius), so the message overstates the precision.
+  [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_`]
 
 - [ ] 4.8 Final `cargo check` — no warnings, no dangling imports, `BorderColorSlot.slint` deleted, no references to it anywhere in the codebase. [f: full build] [t: `cargo check && grep -r BorderColorSlot src/ ui/`]
