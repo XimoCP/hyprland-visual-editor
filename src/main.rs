@@ -36,7 +36,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use tr::Tr;
-use crate::providers::shell::ShellDetector;
 
 slint::include_modules!();
 
@@ -1172,23 +1171,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
     let mut theme_manager = crate::theme_manager::ThemeManager::new(&config_dir);
-    // Detectar qué versión de Noctalia está activa y registrar el provider correspondiente
-    let noctalia_v4 = crate::providers::shell::NoctaliaV4Paths;
-    let noctalia_v5 = crate::providers::shell::NoctaliaV5Paths;
-
-    if noctalia_v5.is_active() {
-        theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV5Provider::new()));
-        tracing::info!("[shell] Noctalia v5 detectado — registrando provider v5");
-    } else if noctalia_v4.is_active() {
-        theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
-        tracing::info!("[shell] Noctalia v4 detectado — registrando provider v4");
-    } else {
-        // Fallback: registrar v4 por defecto
-        theme_manager.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
-        tracing::warn!("[shell] Noctalia no detectado — registrando provider v4 por defecto");
-    }
-    theme_manager.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new((*engine).clone())));
-    theme_manager.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
+    crate::providers::register_default_providers(&mut theme_manager, &engine);
     // Restore last applied theme from config
     if !cfg!(test) {
         theme_manager.last_applied = cfg.last_applied_theme.clone();
@@ -1218,15 +1201,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let gallery_slot = {
         {
             let mut gtm = gallery_tm.lock().unwrap();
-            if noctalia_v5.is_active() {
-                gtm.register_provider(Box::new(crate::providers::noctalia::NoctaliaV5Provider::new()));
-            } else if noctalia_v4.is_active() {
-                gtm.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
-            } else {
-                gtm.register_provider(Box::new(crate::providers::noctalia::NoctaliaV4Provider::new()));
-            }
-            gtm.register_provider(Box::new(crate::providers::hve_presets::HvePresetsProvider::new((*engine).clone())));
-            gtm.register_provider(Box::new(crate::providers::hyprland_settings::HyprlandSettingsProvider::new()));
+            crate::providers::register_default_providers(&mut gtm, &engine);
             gtm.last_applied = theme_manager.last_applied.clone();
         }
         let slot = std::sync::Arc::new(crate::shell::gallery::GallerySlot::new(gallery_tm.clone()));

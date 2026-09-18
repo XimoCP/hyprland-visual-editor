@@ -463,8 +463,7 @@ hve/
 │       ├── noctalia.rs     ← Provider Noctalia v4/v5 (colores, wallpapers, plantillas)
 │       ├── shell.rs        ← Detección de shell activo + rutas por versión
 │       ├── mpvpaper.rs     ← Fondos animados (video) para temas Noctalia v5
-│       ├── hve_presets.rs  ← Provider de presets HVE (anim/border/shader/geometría)
-│       └── hyprland_settings.rs ← Provider de reglas de ventana (hve-settings)
+│       └── hve_presets.rs  ← Provider de presets HVE (anim/border/shader/geometría)
 ├── assets/
 │   ├── hve_logo.svg        ← Icono vectorial
 │   ├── scripts/            ← 15 scripts bash (ver abajo)
@@ -515,7 +514,6 @@ hve/
 | `providers/shell.rs` | 574 | Detección de shell activo y rutas por versión (`ShellProvider`, `ShellDetector`) |
 | `providers/mpvpaper.rs` | 758 | Fondos animados (video) para temas Noctalia v5 |
 | `providers/hve_presets.rs` | 149 | Provider de presets HVE (animación, borde, shader, geometría) |
-| `providers/hyprland_settings.rs` | 344 | Provider de reglas de ventana (`hve-settings`) |
 
 ### Scripts (assets/scripts/)
 

@@ -137,7 +137,7 @@ The 32 `.conf` twins (14 borders + 18 animations) MUST be deleted; every `.lua` 
 
 ### Requirement: Tests Carry No `.conf` Fixtures
 
-The conf-locked tests in `settings.rs` and `providers/hyprland_settings.rs` MUST be rewritten to Lua fixtures, and `cargo test` MUST pass with zero conf-syntax fixtures.
+The conf-locked tests in `settings.rs` MUST be rewritten to Lua fixtures, and `cargo test` MUST pass with zero conf-syntax fixtures.
 
 #### Scenario: Suite green with Lua fixtures
 

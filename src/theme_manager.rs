@@ -12,9 +12,6 @@ bitflags! {
         const ANIMATIONS   = 0b0000_0100;
         const BORDERS      = 0b0000_1000;
         const SHADERS      = 0b0001_0000;
-        const KEYBINDS     = 0b0010_0000;
-        const AUTOSTART    = 0b0100_0000;
-        const WINDOW_RULES = 0b1000_0000;
     }
 }
 
@@ -66,6 +63,16 @@ pub trait ThemeProvider: Send + Sync {
     }
 }
 
+/// Provider ids that have been removed from the product itself.
+///
+/// A theme saved before a removal still lists the retired id in its
+/// `meta.json`. `ThemeManager::list()` hides every theme whose providers are
+/// not all registered — correct for a genuine capability mismatch (e.g.
+/// `mpvpaper` unavailable on this machine), wrong for a product removal like
+/// `hyprland-settings`. `migrate_removed_provider_ids` strips exactly these
+/// ids so a product removal is never mistaken for an unavailable provider.
+pub const REMOVED_PROVIDER_IDS: &[&str] = &["hyprland-settings"];
+
 /// Metadata persisted inside each theme directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeMeta {
@@ -94,8 +101,16 @@ pub struct ThemeManager {
 
 impl ThemeManager {
     pub fn new(config_dir: &Path) -> Self {
+        let themes_dir = config_dir.join("hve").join("themes");
+        // Migration lives in the constructor on purpose: every code path that
+        // can observe themes goes through `ThemeManager` (`list()` is a method
+        // on it), so running here guarantees the stale metas are fixed before
+        // any observer reads them. `main.rs` builds a second manager for the
+        // gallery; running the migration once per instance is harmless because
+        // it rewrites a `meta.json` only when a removed id is present.
+        Self::migrate_removed_provider_ids(&themes_dir);
         Self {
-            themes_dir: config_dir.join("hve").join("themes"),
+            themes_dir,
             providers: Vec::new(),
             last_applied: String::new(),
         }
@@ -111,6 +126,95 @@ impl ThemeManager {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
+
+    /// Strip retired provider ids from every `meta.json` under `themes_dir`.
+    ///
+    /// Idempotent: a `meta.json` is rewritten only when it actually lists a
+    /// removed id, so callers can run it unconditionally.
+    ///
+    /// The rewrite operates on the raw `serde_json::Value` instead of the
+    /// typed `ThemeMeta` so any field this code does not know about — written
+    /// by a newer HVE or by hand — survives the round-trip untouched. Only the
+    /// removed ids are dropped from `providers`; `saved_at`, `description` and
+    /// the relative order of the remaining ids are preserved because the value
+    /// is edited in place.
+    ///
+    /// The matching directory filter mirrors `list()`: names starting with `.`
+    /// (hidden) or `_` (backup) are not themes and are left alone.
+    ///
+    /// Writes are atomic (temp file + `rename` in the same directory) because
+    /// this runs automatically at startup over every user meta: a crash or a
+    /// full disk must never truncate a `meta.json`.
+    fn migrate_removed_provider_ids(themes_dir: &Path) {
+        let Ok(entries) = fs::read_dir(themes_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Same filter as `list()`: hidden / backup dirs are not themes.
+            if name.starts_with('.') || name.starts_with('_') {
+                continue;
+            }
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let meta_path = entry.path().join("meta.json");
+            let Ok(raw) = fs::read_to_string(&meta_path) else {
+                continue;
+            };
+            let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                continue;
+            };
+            let Some(providers) = value.get_mut("providers").and_then(|p| p.as_array_mut())
+            else {
+                continue;
+            };
+            let before = providers.len();
+            providers.retain(|id| {
+                !id.as_str()
+                    .map(|s| REMOVED_PROVIDER_IDS.contains(&s))
+                    .unwrap_or(false)
+            });
+            if providers.len() == before {
+                continue;
+            }
+            let Ok(json) = serde_json::to_string_pretty(&value) else {
+                continue;
+            };
+            match Self::write_atomic(&meta_path, &json) {
+                Ok(()) => tracing::info!(
+                    "[themes] Migrated '{name}': removed retired provider id(s) from meta.json"
+                ),
+                Err(e) => {
+                    tracing::warn!("[themes] Cannot migrate '{name}/meta.json': {e}")
+                }
+            }
+        }
+    }
+
+    /// Atomically replace `path` with `contents`.
+    ///
+    /// Writes a sibling temp file and `rename`s it over the target, so a
+    /// concurrent reader either sees the old bytes or the new bytes — never a
+    /// truncated file. `rename` is atomic only within one filesystem, which is
+    /// why the temp file lives in the target's own directory.
+    fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "meta.json".to_string());
+        let tmp_path = dir.join(format!(".{file_name}.tmp-{}", std::process::id()));
+        fs::write(&tmp_path, contents)?;
+        match fs::rename(&tmp_path, path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Best-effort cleanup; the original file is still intact.
+                let _ = fs::remove_file(&tmp_path);
+                Err(e)
+            }
+        }
+    }
 
     fn timestamp() -> String {
         let dur = SystemTime::now()
@@ -325,5 +429,197 @@ impl ThemeManager {
             self.last_applied = new_name;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Minimal provider used to control which ids `list()` sees as registered.
+    struct StubProvider {
+        id: &'static str,
+    }
+
+    impl ThemeProvider for StubProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn display_name_key(&self) -> &str {
+            self.id
+        }
+        fn icon(&self) -> &str {
+            self.id
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::empty()
+        }
+    }
+
+    /// Seed `{themes_dir}/{name}/meta.json` and return its path.
+    fn seed_meta(
+        themes_dir: &Path,
+        name: &str,
+        saved_at: &str,
+        description: &str,
+        ids: &[&str],
+    ) -> PathBuf {
+        let theme_dir = themes_dir.join(name);
+        fs::create_dir_all(&theme_dir).unwrap();
+        let meta = ThemeMeta {
+            saved_at: saved_at.to_string(),
+            description: description.to_string(),
+            providers: ids.iter().map(|s| s.to_string()).collect(),
+        };
+        let meta_path = theme_dir.join("meta.json");
+        fs::write(&meta_path, serde_json::to_string_pretty(&meta).unwrap()).unwrap();
+        meta_path
+    }
+
+    /// Regression: a theme saved before the `hyprland-settings` provider was
+    /// removed from the product must reappear in the gallery. The migration
+    /// strips the retired id, so the `list()` capability filter no longer
+    /// mistakes a product removal for an unavailable provider.
+    #[test]
+    fn migration_lists_a_theme_that_lists_a_removed_provider() {
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        let meta_path = seed_meta(
+            &themes_dir,
+            "RedTest",
+            "2026-09-06T22:24:00.000Z",
+            "keeper theme",
+            &["noctalia-v5", "hve-presets", "hyprland-settings"],
+        );
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(StubProvider { id: "noctalia-v5" }));
+        tm.register_provider(Box::new(StubProvider { id: "hve-presets" }));
+
+        let themes = tm.list().unwrap();
+        let theme = themes
+            .iter()
+            .find(|t| t.name == "RedTest")
+            .expect("a theme listing a removed provider id must still be listed");
+        assert_eq!(theme.saved_at, "2026-09-06T22:24:00.000Z");
+        assert_eq!(theme.providers, vec!["noctalia-v5", "hve-presets"]);
+
+        // The on-disk meta was migrated, preserving saved_at/description and
+        // the relative order of the remaining ids.
+        let meta: ThemeMeta =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        assert_eq!(meta.saved_at, "2026-09-06T22:24:00.000Z");
+        assert_eq!(meta.description, "keeper theme");
+        assert_eq!(meta.providers, vec!["noctalia-v5", "hve-presets"]);
+    }
+
+    /// Invariant: the `list()` filter still protects against a genuinely
+    /// unavailable provider. The migration must not touch such a meta.
+    #[test]
+    fn theme_with_unavailable_provider_outside_the_removed_list_stays_hidden() {
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        let meta_path = seed_meta(
+            &themes_dir,
+            "WallpaperOnly",
+            "2026-09-06T22:24:00.000Z",
+            "",
+            &["mpvpaper"],
+        );
+        let before = fs::read_to_string(&meta_path).unwrap();
+        let mtime_before = fs::metadata(&meta_path).unwrap().modified().unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(StubProvider { id: "hve-presets" }));
+
+        assert!(
+            tm.list().unwrap().is_empty(),
+            "a theme for an unavailable provider must stay hidden"
+        );
+        assert_eq!(
+            fs::read_to_string(&meta_path).unwrap(),
+            before,
+            "the migration must not rewrite a meta without a removed id"
+        );
+        // Regression guard: skipping the rewrite must mean *no write at all*.
+        // A rewrite that happens to produce identical bytes would still churn
+        // the mtime and is exactly what this catches.
+        assert_eq!(
+            fs::metadata(&meta_path).unwrap().modified().unwrap(),
+            mtime_before,
+            "the migration must not touch a meta without a removed id (mtime churn)"
+        );
+    }
+
+    /// Hardening: the migration runs at every startup over every user meta, so
+    /// a field written by a newer HVE (or by hand) must not be lost. The old
+    /// typed `ThemeMeta` round-trip silently dropped unknown keys.
+    #[test]
+    fn migration_preserves_unknown_meta_fields() {
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        let theme_dir = themes_dir.join("Future");
+        fs::create_dir_all(&theme_dir).unwrap();
+        let meta_path = theme_dir.join("meta.json");
+        fs::write(
+            &meta_path,
+            r#"{
+                "saved_at": "2026-09-06T22:24:00.000Z",
+                "description": "hand edited",
+                "providers": ["hve-presets", "hyprland-settings", "noctalia-v5"],
+                "future_field": { "nested": [1, 2, 3] }
+            }"#,
+        )
+        .unwrap();
+
+        let _tm = ThemeManager::new(config_dir.path());
+
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        assert_eq!(
+            value["future_field"]["nested"],
+            serde_json::json!([1, 2, 3]),
+            "an unknown field must survive the migration intact"
+        );
+        assert_eq!(value["saved_at"], "2026-09-06T22:24:00.000Z");
+        assert_eq!(value["description"], "hand edited");
+        assert_eq!(
+            value["providers"],
+            serde_json::json!(["hve-presets", "noctalia-v5"])
+        );
+    }
+
+    /// Hardening: the migration must scan exactly what `list()` scans. Hidden
+    /// (`.`-prefixed) and backup (`_`-prefixed) directories are not themes, so
+    /// even one listing a removed id must be left byte-identical.
+    #[test]
+    fn migration_ignores_hidden_and_backup_directories() {
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        for name in [".Hidden", "_Backup"] {
+            let meta_path = seed_meta(
+                &themes_dir,
+                name,
+                "2026-09-06T22:24:00.000Z",
+                "",
+                &["hyprland-settings"],
+            );
+            let before = fs::read_to_string(&meta_path).unwrap();
+
+            let _tm = ThemeManager::new(config_dir.path());
+
+            assert_eq!(
+                fs::read_to_string(&meta_path).unwrap(),
+                before,
+                "'{name}' must not be migrated: it is not a listed theme"
+            );
+        }
     }
 }
