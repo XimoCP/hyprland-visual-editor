@@ -2248,6 +2248,20 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 crate::shell::Shell::set_panel_section(&shell_c, target);
             }
+            // Entering Borders — by opening the panel onto it or by switching
+            // section — re-seeds the marker from what is actually persisted.
+            // The index is otherwise written only at startup and on apply, so
+            // a preset list that changed after that seed (or was not ready
+            // when it ran) left the board unmarked while a border was loaded.
+            if target == crate::shell::nav::PanelSection::Borders {
+                if let Some(w) = weak.upgrade() {
+                    let active_file = {
+                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        st.cfg().active_border_file.clone()
+                    };
+                    crate::presets::reseed_active_border_index(&w, &active_file);
+                }
+            }
         });
     }
 

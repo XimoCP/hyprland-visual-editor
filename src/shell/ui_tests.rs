@@ -119,6 +119,75 @@ fn panel_deadzone_click_reseeds_focus_by_construction() {
     }
 }
 
+/// Entering the Borders section must re-seed `active-border-index` from the
+/// persisted `active_border_file` against the CURRENT preset list. The index
+/// was seeded only at startup and on apply, so a value that predated the scan
+/// (or a list that changed afterwards) could leave the board unmarked while
+/// the app actually had a border loaded. Every panel/section entry — rail
+/// clicks, top menu, FilterBar and keyboard — flows through the single
+/// `on_panel_section_selected` handler, so the re-seed must live there.
+#[test]
+fn entering_borders_reseeds_active_index_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    assert!(
+        main.contains("reseed_active_border_index"),
+        "src/main.rs must call presets::reseed_active_border_index on section entry"
+    );
+    // Bound the search to the section-selected handler body: the next wiring
+    // block starts at `window.on_panel_back`.
+    let handler = main
+        .split("window.on_panel_section_selected")
+        .nth(1)
+        .expect("main.rs must wire on_panel_section_selected");
+    let handler = handler
+        .split("window.on_panel_back")
+        .next()
+        .unwrap_or(handler);
+    assert!(
+        handler.contains("reseed_active_border_index"),
+        "the border index re-seed must happen inside on_panel_section_selected"
+    );
+}
+
+/// Behaviour behind the construction check above: the re-seed resolves the
+/// persisted file against the CURRENT list, and when it matches nothing it
+/// writes an explicit -1 instead of leaving whatever marker was there.
+#[test]
+fn reseed_active_border_index_matches_and_clears() {
+    use slint::{ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_cascade.lua"),
+        SharedString::from("14_looper.lua"),
+        SharedString::from("05_glow.lua"),
+    ])));
+
+    // Never seeded, or seeded before the list existed: the persisted file IS in
+    // the current list, so entering Borders must mark it.
+    win.set_active_border_index(-1);
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "14_looper.lua"),
+        1,
+        "the persisted border file must resolve to its index in the current list"
+    );
+    assert_eq!(win.get_active_border_index(), 1);
+
+    // A stored file that matches no preset must clear the marker, not keep the
+    // previous one — the board must not point at a border that is not loaded.
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "vanished.lua"),
+        -1,
+        "an unmatched stored file must clear the marker"
+    );
+    assert_eq!(win.get_active_border_index(), -1);
+
+    // No active border at all.
+    win.set_active_border_index(1);
+    assert_eq!(crate::presets::reseed_active_border_index(&win, ""), -1);
+    assert_eq!(win.get_active_border_index(), -1);
+}
+
 /// Every keyboard-focus move in the panel must leave a --verbose trace:
 /// panel-kbd (the single panel scope) and shell-kbd (shell) report gain
 /// + loss with the FocusReason mapped to a string, through the generic

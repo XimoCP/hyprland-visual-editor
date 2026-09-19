@@ -16,6 +16,21 @@ fn translate_presets(items: &[PresetInfo], tr: &Tr) -> (Vec<SharedString>, Vec<S
     (titles, descs)
 }
 
+/// Resolve the active index for a stored file inside a preset list. `-1`
+/// means "nothing is active": either the stored file is empty, or it matches
+/// no entry (a renamed/removed preset — a real state, not an error). It is
+/// never `None`: callers must write an explicit index.
+fn resolve_active_index(items: &[PresetInfo], active_file: &str) -> i32 {
+    if active_file.is_empty() {
+        return -1;
+    }
+    items
+        .iter()
+        .position(|i| i.file == active_file)
+        .map(|i| i as i32)
+        .unwrap_or(-1)
+}
+
 /// Collect tags/files from presets into Slint models, and set the active index.
 fn populate_metadata(
     items: &[PresetInfo],
@@ -31,11 +46,18 @@ fn populate_metadata(
         items.iter().map(|i| SharedString::from(&i.file)).collect::<Vec<_>>().as_slice(),
     ));
 
-    if !active_file.is_empty() {
-        if let Some(idx) = items.iter().position(|i| i.file == active_file) {
-            set_active_index(idx as i32);
-        }
+    // ALWAYS write an explicit index. Skipping the write when the stored file
+    // matched nothing left a stale marker outliving its preset list: the board
+    // kept pointing at a preset that was not the loaded one, silently. `-1`
+    // plus the warning below makes the mismatch visible instead.
+    let index = resolve_active_index(items, active_file);
+    if index < 0 && !active_file.is_empty() {
+        tracing::warn!(
+            "[presets] active file '{}' matches no scanned preset — marker cleared",
+            active_file
+        );
     }
+    set_active_index(index);
 }
 
 pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Config, tr: &Tr) {
@@ -77,6 +99,41 @@ pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Confi
         .map(|_| SharedString::from("CUSTOM")).collect();
     window.set_user_animation_preset_names(ModelRc::from(user_anim_names.as_slice()));
     window.set_user_animation_preset_tags(ModelRc::from(user_anim_tags.as_slice()));
+}
+
+/// Re-seed `active-border-index` from the persisted `active_border_file`
+/// against the window's CURRENT border list. Called every time the Borders
+/// section/panel opens — not only at startup and on apply — so the marker
+/// always reflects what the app actually has loaded, including when the index
+/// was never seeded or was seeded before the preset list existed. A stored
+/// value that matches no preset becomes an explicit -1 and logs a warning: a
+/// blank board is honest, a silently blank one is not. Returns the resulting
+/// index (for tracing and tests).
+pub fn reseed_active_border_index(window: &crate::MainWindow, active_file: &str) -> i32 {
+    use slint::Model as _;
+    let files = window.get_border_files();
+    let index = if active_file.is_empty() {
+        -1
+    } else {
+        (0..files.row_count())
+            .find_map(|i| {
+                files
+                    .row_data(i)
+                    .as_ref()
+                    .map(|f| f.as_str() == active_file)
+                    .unwrap_or(false)
+                    .then_some(i as i32)
+            })
+            .unwrap_or(-1)
+    };
+    if index < 0 && !active_file.is_empty() {
+        tracing::warn!(
+            "[borders] active_border_file '{}' matches no preset — marker cleared",
+            active_file
+        );
+    }
+    window.set_active_border_index(index);
+    index
 }
 
 #[cfg(test)]
@@ -150,6 +207,8 @@ mod tests {
     #[test]
     fn test_populate_metadata_empty_input() {
         let items: Vec<PresetInfo> = vec![];
+        // 99 is a stale marker from a previous list. An empty stored file must
+        // become an EXPLICIT -1, never survive as if something were active.
         let active_idx = std::cell::RefCell::new(99);
 
         populate_metadata(
@@ -160,8 +219,7 @@ mod tests {
             |i| *active_idx.borrow_mut() = i,
         );
 
-        // active_file is empty string, so set_active_index is NOT called
-        assert_eq!(*active_idx.borrow(), 99, "index should not change when active_file is empty");
+        assert_eq!(*active_idx.borrow(), -1, "an empty stored file must clear the marker");
     }
 
     // ── populate_metadata — values propagated ─────────────────────────
@@ -234,5 +292,32 @@ mod tests {
         );
 
         assert_eq!(*active_idx.borrow(), -1, "non-matching active_file should not set index");
+    }
+
+    #[test]
+    fn test_populate_metadata_clears_stale_index_when_active_file_matches_nothing() {
+        let items = vec![
+            make_item("a.json", "A", "", "TAG"),
+            make_item("b.json", "B", "", "TAG"),
+        ];
+
+        // 0 is the marker left over from a list where index 0 WAS the active
+        // file. The stored value no longer matches any preset, so leaving 0 in
+        // place points the board at a preset that is not the loaded one.
+        let active_idx = std::cell::RefCell::new(0);
+
+        populate_metadata(
+            &items,
+            "removed.json",
+            |_| {},
+            |_| {},
+            |i| *active_idx.borrow_mut() = i,
+        );
+
+        assert_eq!(
+            *active_idx.borrow(),
+            -1,
+            "a stored file that matches no preset must clear the marker explicitly"
+        );
     }
 }
