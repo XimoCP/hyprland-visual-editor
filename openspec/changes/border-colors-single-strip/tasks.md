@@ -143,21 +143,67 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Animation + Render Verification (PR 4)
 
-- [ ] 4.1 Add entry animation bindings on the picker card in `BordersSection.slint`: `animate opacity { duration: 250ms; easing: ease-in-out-back; }`, `animate y { duration: 250ms; easing: ease-in-out-back; }`, `animate transform-scale-x { duration: 250ms; easing: ease-in-out-back; }`, `animate transform-scale-y { duration: 250ms; easing: ease-in-out-back; }`. Bind `opacity: 0→1`, `y: -8px→0px`, `scale-x/y: 0.95→1.0` on `picker-visible`. [f: `ui/panel/sections/BordersSection.slint`]
+- [x] 4.1 Add entry animation bindings on the picker card in `BordersSection.slint`: `animate opacity { duration: 250ms; easing: ease-in-out-back; }`, `animate y { duration: 250ms; easing: ease-in-out-back; }`, `animate transform-scale-x { duration: 250ms; easing: ease-in-out-back; }`, `animate transform-scale-y { duration: 250ms; easing: ease-in-out-back; }`. Bind `opacity: 0→1`, `y: -8px→0px`, `scale-x/y: 0.95→1.0` on `picker-visible`. [f: `ui/panel/sections/BordersSection.slint`]
 
-- [ ] 4.2 Add exit animation: `opacity: 1→0` at 150ms `ease-in` only (NO y-shift — prevents 8px strip jump). When picker closes, the card fades out without moving, so the strip stays in place. Document this in the component comment. [f: `ui/panel/sections/BordersSection.slint`]
+  Done 2026-09-19 with one documented deviation (same shape as PR 3's). The card is now
+  ALWAYS MOUNTED and animates its own `height` (0px↔380px) + `opacity` (0↔1) via a
+  `states [ picker-shown when root.picker-visible ]` entry/exit block — the same
+  expand/collapse idiom the rest of the pane already uses (`size-wrap`,
+  `BorderCompactColorRow`). Reason: Slint only tweens a property when it CHANGES on a live
+  element; an element created by `if root.picker-visible` comes up at its target values, so
+  both the entry AND the exit were unrenderable with the old conditional. `transform-scale-x/y`
+  (0.95→1.0, 250ms ease-in-out-back) is declared for the GPU renderer. The `y: -8px→0px`
+  binding was NOT added: the card is an in-flow layout child, so its `y` is layout-owned and a
+  y-shift cannot render — this resolves design Open Question #3. Adding a `changed height`
+  hook drives `follow-focus` on every animation step so R10's scroll-to-top survives the
+  now-animated growth.
 
-- [ ] 4.3 [RED] Add `borders_tune_stop_count_strip_single_stop` test in `src/shell/ui_tests.rs`. Verify `borders_tune_stop_count(N, ...)` returns the same value regardless of N for specific combos: 2 slots no glow → 13, 4 slots glow → 17, 8 slots glow+all anims → 26. Test MUST fail (old formula varies with N). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_tune_stop_count_strip_single_stop`]
+- [x] 4.2 Add exit animation: `opacity: 1→0` at 150ms `ease-in` only (NO y-shift — prevents 8px strip jump). When picker closes, the card fades out without moving, so the strip stays in place. Document this in the component comment. [f: `ui/panel/sections/BordersSection.slint`]
 
-- [ ] 4.4 [GREEN] Verify the formula produces consistent results across slot counts. Test MUST pass after Phase 1 formula change is in place. [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_tune_stop_count_strip_single_stop`]
+  Done 2026-09-19: the `out` transition is `opacity` 1→0 AND `height` 380→0 at 150ms
+  `ease-in`, no y-shift. Height is included so the strip does not snap 380px when the card
+  vanishes — it collapses smoothly. The full rationale (no y-shift, GPU-only scale, why the
+  card stays mounted) is in the component comment above the card.
 
-- [ ] 4.5 Add `borders_strip_flow_renders` render test (or extend `slice_focus_flow_renders`) in `src/shell/ui_tests.rs` to produce PNGs of: (1) strip closed — 3 chips visible, (2) strip open — picker above strip with `editing-slot = 1`, (3) strip with 8 chips — no overflow, (4) compact inactive row — focused. Save the PNGs to the file-test render output directory already used by the existing headless render tests (see `AGENTS.md` for that sanctioned temp render output dir — it is a runtime artifact destination, not an edit target). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_strip_flow_renders`]
+- [x] 4.3 [RED] Add `borders_tune_stop_count_strip_single_stop` test in `src/shell/ui_tests.rs`. Verify `borders_tune_stop_count(N, ...)` returns the same value regardless of N for specific combos: 2 slots no glow → 13, 4 slots glow → 17, 8 slots glow+all anims → 26. Test MUST fail (old formula varies with N). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_tune_stop_count_strip_single_stop`]
 
-- [ ] 4.6 VISUAL VERIFICATION: Read the PNGs produced by the render test above (same sanctioned render output directory; see `AGENTS.md` — runtime artifact destination, not an edit target) and confirm: chips are evenly spaced and non-overlapping at 8 slots, picker card is fully visible above the strip, compact rows are ~48–56px tall, focus ring (icy-cyan #8fd8ff) appears on focused chip. Note: software renderer does NOT support `transform-scale-x/y`, so scale assertions are omitted from render tests (GPU-only polish). [f: PNG inspection]
+  Honest deviation: NO RED was observed for this test, because PR 1 (commit `e91f269`)
+  already shipped the formula change this test exercises — the test is a REGRESSION LOCK, not
+  the driver. It is not hollow: the values it pins (13/17/26) are exactly the ones the old
+  formula fails on (2 slots no glow was 14; 8 slots all-on was 33), and the invariance loop
+  asserts N ∈ {0,2,4,8,99} all agree. `cargo test borders_tune_stop_count_strip_single_stop`
+  → 1 passed.
 
-- [ ] 4.7 Run `cargo test` — all tests green. No skipped tests. All 9 original border tests rewritten and passing. All new tests passing. [f: full test suite] [t: `cargo test`]
+- [x] 4.4 [GREEN] Verify the formula produces consistent results across slot counts. Test MUST pass after Phase 1 formula change is in place. [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_tune_stop_count_strip_single_stop`]
 
-- [ ] 4.7b Tighten three loose assertions found in the PR 2 verification (quality, not behavior):
+  Done 2026-09-19: green on first run (see 4.3). `cargo test borders_tune_stop_count_strip_single_stop` → `1 passed; 0 failed`.
+
+- [x] 4.5 Add `borders_strip_flow_renders` render test (or extend `slice_focus_flow_renders`) in `src/shell/ui_tests.rs` to produce PNGs of: (1) strip closed — 3 chips visible, (2) strip open — picker above strip with `editing-slot = 1`, (3) strip with 8 chips — no overflow, (4) compact inactive row — focused. Save the PNGs to the file-test render output directory already used by the existing headless render tests (see `AGENTS.md` for that sanctioned temp render output dir — it is a runtime artifact destination, not an edit target). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_strip_flow_renders`]
+
+  Done 2026-09-19: new `borders_strip_flow_renders` test. It asserts geometry from the render
+  where it can (chips on one row, ordered, non-overlapping and fixed-pitch at 8; card above
+  the chips) and writes FIVE PNGs to the sanctioned runtime artifact dir `/tmp/opencode/`:
+  `borders_strip_flow_closed.png`, `borders_strip_flow_picker_mid.png` (mid-flight, added to
+  prove the entry animates rather than swapping instantly), `borders_strip_flow_picker_open.png`,
+  `borders_strip_flow_eight.png`, `borders_strip_flow_compact_row.png`.
+
+- [x] 4.6 VISUAL VERIFICATION: Read the PNGs produced by the render test above (same sanctioned render output directory; see `AGENTS.md` — runtime artifact destination, not an edit target) and confirm: chips are evenly spaced and non-overlapping at 8 slots, picker card is fully visible above the strip, compact rows are ~48–56px tall, focus ring (icy-cyan #8fd8ff) appears on focused chip. Note: software renderer does NOT support `transform-scale-x/y`, so scale assertions are omitted from render tests (GPU-only polish). [f: PNG inspection]
+
+  Done 2026-09-19: all five flow PNGs READ and inspected. Confirmed: (1) closed strip shows
+  exactly 3 chips "1","2","3" on one row with the icy ring on chip 1 and no picker; (2) the
+  picker card is fully visible above the strip, header "Custom colour — gradient colour 2 of 3",
+  six token swatches, HSV area seeded green (#00ff00, slot 1's resolved colour); measured card
+  height 379px; (3) the mid-flight frame shows the card still growing over the strip (not an
+  instant swap); (4) 8 chips "1".."8" evenly spaced, non-overlapping, one row, no overflow;
+  (5) the focused Inactive row is compact with the icy ring. `slice_settled.png` re-read after
+  `slice_focus_flow_renders`: no gallery regression.
+
+- [x] 4.7 Run `cargo test` — all tests green. No skipped tests. All 9 original border tests rewritten and passing. All new tests passing. [f: full test suite] [t: `cargo test`]
+
+  Done 2026-09-19: `cargo test` → `741 passed; 0 failed; 0 ignored` (739 pre-existing + 2 new).
+  No `#[ignore]` introduced.
+
+- [x] 4.7b Tighten three loose assertions found in the PR 2 verification (quality, not behavior):
   (1) the `span < 600` bound in `borders_tune_renders_eight_slots` is documented as the wrap
   guard, but wrapping *shrinks* the measured span — the real wrap guard is the shared-row
   assertion, so either drop the loose bound or re-document it honestly;
@@ -168,4 +214,17 @@ Chain strategy: feature-branch-chain
   bbox is 13×13 through the 1px border + radius), so the message overstates the precision.
   [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_`]
 
-- [ ] 4.8 Final `cargo check` — no warnings, no dangling imports, `BorderColorSlot.slint` deleted, no references to it anywhere in the codebase. [f: full build] [t: `cargo check && grep -r BorderColorSlot src/ ui/`]
+  Done 2026-09-19: (1) span re-documented as NOT a wrap guard (wrap shrinks the span) and
+  tightened to the measured fixed-cell arithmetic `(300..=380)`; measured 335px. (2) both picker
+  height assertions unified to `(372..=392)`; measured 379px in both tests. (3) swatch band
+  tightened from `(100..=400)` to `(150..=260)` in all three chip loops; measured ~196px.
+  `cargo test borders_` → `25 passed; 0 failed`.
+
+- [x] 4.8 Final `cargo check` — no warnings, no dangling imports, `BorderColorSlot.slint` deleted, no references to it anywhere in the codebase. [f: full build] [t: `cargo check && grep -r BorderColorSlot src/ ui/`]
+
+  Done 2026-09-19: `cargo check` → `Finished` with no warnings. `grep -r BorderColorSlot src/ ui/`
+  returns nine matches, ALL in explanatory comments recording what the strip/compact rows
+  replaced (five in `ui_tests.rs`, three in `BordersSection.slint`); zero code or import
+  references — the dangling-import contract is satisfied. The comments were kept deliberately
+  as the rationale for the 48/56px row heights; per the work-unit budget rule they are not
+  deleted to make a grep cleaner.
