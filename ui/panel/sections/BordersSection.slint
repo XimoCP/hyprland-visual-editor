@@ -514,20 +514,70 @@ component BordersTunePane inherits Rectangle {
             // ONE picker for every colour channel, IN THE FLOW directly above
             // the strip it edits: the colour and the chip it came from stay in
             // one glance, and closing it (editing-slot = -1) leaves no dead gap
-            // behind (R4). The `if` is what gives that zero-height close.
+            // behind (R4).
             //
-            // `picker-block` itself stays UNCONDITIONAL on purpose: the scroll
-            // helper anchors on its top edge to bring the card and the chips
-            // into view together (R10). Only reaching INTO a conditional from
-            // outside is forbidden by Slint, and nothing does that here.
+            // `picker-block` stays UNCONDITIONAL on purpose: the scroll helper
+            // anchors on its top edge to bring the card and the chips into view
+            // together (R10).
             picker-block := VerticalLayout {
                 spacing: 8px;
 
-                if root.picker-visible : Rectangle {
-                    // 380px fits header + token row + HSV area without clipping
-                    // the picker's own hint line (the 344px it had before the
-                    // token row moved in here).
-                    height: 380px;
+                // The card is ALWAYS mounted and animates its own HEIGHT from
+                // 0px (closed) to 380px (open) — the same expand/collapse idiom
+                // every other tune control uses (`size-wrap`,
+                // `BorderCompactColorRow`). A bare `if picker-visible` CANNOT
+                // animate: Slint only tweens a property when it CHANGES on a
+                // live element, and an element created by the `if` comes up at
+                // its target values (opacity 1, full height) with no "from"
+                // frame. Keeping the card mounted is what makes the entry real
+                // and the exit possible at all.
+                //
+                // Entry (R5, 250ms ease-in-out-back): height 0→380 and opacity
+                // 0→1. Exit (150ms ease-in): height 380→0 and opacity 1→0,
+                // WITHOUT the spec's -8px y-shift. The card is an in-flow
+                // layout child, so its `y` is owned by the layout and a y-shift
+                // cannot render; the collapse is what moves the strip, and it
+                // moves it smoothly instead of jumping. `transform-scale-x/y`
+                // (0.95→1.0) is declared for the GPU renderer only — the
+                // software renderer used by the headless tests does not
+                // implement transforms, so no render assertion depends on it.
+                // 380px fits header + token row + HSV area without clipping the
+                // picker's own hint line (the 344px it had before the token row
+                // moved in here).
+                Rectangle {
+                    // Closed rest state: no flow space, no ink (R4). The state
+                    // below overrides both while the picker is open.
+                    height: 0px;
+                    opacity: 0.0;
+                    transform-scale-x: 0.95;
+                    transform-scale-y: 0.95;
+                    // R10: the card now GROWS over 250ms, so the single deferred
+                    // `follow-focus` tick the old `if` version used would run
+                    // while the content is still short, clamp against it and
+                    // strand the card mid-pane (measured: card top 444px vs the
+                    // pane top 217px). Following on every height step keeps the
+                    // card anchored at the top for the whole entry.
+                    changed height => {
+                        if (root.picker-visible) { tune-scroll.follow-focus(); }
+                    }
+                    states [
+                        picker-shown when root.picker-visible: {
+                            height: 380px;
+                            opacity: 1.0;
+                            transform-scale-x: 1.0;
+                            transform-scale-y: 1.0;
+                            in {
+                                animate height { duration: 250ms; easing: ease-in-out-back; }
+                                animate opacity { duration: 250ms; easing: ease-in-out-back; }
+                                animate transform-scale-x { duration: 250ms; easing: ease-in-out-back; }
+                                animate transform-scale-y { duration: 250ms; easing: ease-in-out-back; }
+                            }
+                            out {
+                                animate height { duration: 150ms; easing: ease-in; }
+                                animate opacity { duration: 150ms; easing: ease-in; }
+                            }
+                        }
+                    ]
                     border-width: 1px;
                     border-color: HveColors.accent-cyan;
                     border-radius: SkwdTokens.radius-8;

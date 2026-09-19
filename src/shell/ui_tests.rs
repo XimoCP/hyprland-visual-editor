@@ -5360,8 +5360,11 @@ fn borders_strip_renders_correct_chip_count() {
         let bbox = exact_color_bbox(&shot, *rgb, 8).unwrap_or_else(|| {
             panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
         });
+        // A 16×16 swatch paints ~196px through its 1px border and 4px radius
+        // (measured), NOT up to 400: the band pins the size instead of merely
+        // accepting it, so a chip that grew into a full card would fail here.
         assert!(
-            (100..=400).contains(&painted),
+            (150..=260).contains(&painted),
             "chip {} must be one 16×16 swatch (colour={rgb:?}, pixels={painted})",
             i + 1
         );
@@ -5478,9 +5481,10 @@ fn borders_strip_picker_opens_above_strip() {
          content top {closed_pane_top}"
     );
     let card_h = card_bottom - card_top;
+    println!("picker card height (strip test): {card_h}px");
     assert!(
-        (330..=430).contains(&card_h),
-        "the picker card must render at full height, not clipped (h={card_h})"
+        (372..=392).contains(&card_h),
+        "the picker card must render at its full 380px, not clipped (h={card_h})"
     );
     // The chip, re-located BELOW the card: the open picker's hue bar and SV
     // field paint the seeded hue, so the strip's own green chip can only be
@@ -5519,6 +5523,171 @@ fn borders_strip_compact_rows_height() {
         panic!("the focused inactive row must render 40–60px tall (icy bands={bands:?})")
     });
     println!("compact inactive row: top={top} height={height}px");
+}
+
+/// R8 — the strip is ONE stop whatever the slot count: `borders_tune_stop_count`
+/// must IGNORE its `slot_count` argument. The old formula added N stops (one per
+/// gradient slot), so the same call returned 14 for 2 slots and 20 for 8; the
+/// new one is flat. PR 1 shipped the formula, so this test LOCK THE BEHAVIOUR IN
+/// rather than driving a fresh RED — the values it pins (13/17/26) are exactly
+/// the ones the old formula would fail on (14/18/33).
+#[test]
+fn borders_tune_stop_count_strip_single_stop() {
+    use crate::callbacks::borders_tune_stop_count;
+
+    // 2 slots, no glow, no anims → 13: size, angle, inactive, STRIP, add,
+    // remove, glow-toggle, 3 idle anim leaves, rule, save-name, save-button.
+    assert_eq!(borders_tune_stop_count(2, false, false, false, false), 13);
+
+    // 4 slots + glow → 17, and 2 slots + glow → the same 17: the two extra
+    // slots contribute nothing, glow contributes its fixed 4.
+    assert_eq!(borders_tune_stop_count(4, true, false, false, false), 17);
+    assert_eq!(borders_tune_stop_count(2, true, false, false, false), 17);
+
+    // 8 slots, glow on, all three anims on → 26 (the old formula's 33: eight
+    // slot stops collapsed to one).
+    assert_eq!(borders_tune_stop_count(8, true, true, true, true), 26);
+
+    // The contract itself: N is ignored, so every slot count agrees.
+    for n in [0, 2, 4, 8, 99] {
+        assert_eq!(
+            borders_tune_stop_count(n, false, false, false, false),
+            13,
+            "slot_count {n} must not change the stop count — the strip is ONE stop"
+        );
+        assert_eq!(
+            borders_tune_stop_count(n, true, true, true, true),
+            26,
+            "slot_count {n} must not change the stop count — the strip is ONE stop"
+        );
+    }
+}
+
+/// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
+/// verification reads from the sanctioned runtime artifact dir (/tmp/opencode/):
+/// (1) strip closed, (2) picker open above the strip, (3) 8 chips, (4) the
+/// focused compact inactive row. The geometry is ASSERTED from the render where
+/// it can be (chips on one row, ordered and non-overlapping; the card above the
+/// chips), so the PNGs are evidence on top of a real check, not the only check.
+#[test]
+fn borders_strip_flow_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
+
+    // (1) Closed: the three chips are on one row, left to right, and the shared
+    // picker card is not in the frame.
+    let closed = win.window().take_snapshot().expect("closed strip");
+    save_slice_png(closed.clone(), "/tmp/opencode/borders_strip_flow_closed.png");
+    let closed_boxes: Vec<(usize, usize, usize, usize)> = CHIP_COLORS
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(i, rgb)| {
+            exact_color_bbox(&closed, *rgb, 8)
+                .unwrap_or_else(|| panic!("closed strip chip {} must paint {rgb:?}", i + 1))
+        })
+        .collect();
+    for pair in closed_boxes.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        assert!(b.0 > a.2, "closed chips must sit left to right: {a:?} then {b:?}");
+        assert!(
+            a.1.abs_diff(b.1) <= 24 && a.3.abs_diff(b.3) <= 24,
+            "closed chips must share one row: {a:?} then {b:?}"
+        );
+    }
+
+    // (2a) Mid-flight: the entry is a real 250ms animation, not an instant
+    // appearance. A few frames after opening, the card must differ from the
+    // settled frame (an instant `if` swap would already equal it) and must not
+    // yet be at its open height. Scale is NOT asserted — the software renderer
+    // has no transform support (GPU-only polish).
+    win.set_tune_editing_slot(1);
+    settle_frames(4);
+    let mid = win.window().take_snapshot().expect("mid-flight picker");
+    save_slice_png(mid.clone(), "/tmp/opencode/borders_strip_flow_picker_mid.png");
+    assert!(
+        count_buffer_diff(&mid, &closed) > 500,
+        "opening the picker must change the frame immediately"
+    );
+    let mid_bands = color_row_bands(&mid, ACCENT_CYAN, 40, 300);
+    let mid_h = if mid_bands.len() == 2 {
+        mid_bands[1].0 - mid_bands[0].0
+    } else {
+        0
+    };
+    assert!(
+        mid_h < 360,
+        "the card must still be growing a few frames in (mid height={mid_h}px)"
+    );
+
+    // (2) Settled open on chip 2 (index 1): the card is fully visible directly
+    // above the strip, at its full 380px.
+    settle_frames(80);
+    let open = win.window().take_snapshot().expect("open picker");
+    save_slice_png(open.clone(), "/tmp/opencode/borders_strip_flow_picker_open.png");
+    assert!(
+        count_buffer_diff(&mid, &open) > 500,
+        "the settled card must differ from the mid-flight frame — an instant \
+         appearance would make the two identical"
+    );
+    let bands = color_row_bands(&open, ACCENT_CYAN, 40, 300);
+    assert_eq!(
+        bands.len(),
+        2,
+        "the open picker card must paint exactly two full-width accent rows (bands={bands:?})"
+    );
+    let card_bottom = bands[1].1;
+    let (_, chip_y, _, _) = exact_color_bbox_below(&open, CHIP_COLORS[1], 8, card_bottom + 2)
+        .expect("the strip must stay visible below the open picker card");
+    assert!(
+        chip_y - card_bottom <= 40,
+        "the picker card must sit directly above the strip (gap={}px)",
+        chip_y - card_bottom
+    );
+
+    // (3) 8 chips, the maximum: one non-overlapping row, fixed 40px + 6px pitch.
+    win.set_tune_editing_slot(-1);
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(
+        (0..8)
+            .map(|i| SharedString::from(format!("p:slot{i}")))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_tune_color_count(8);
+    settle_frames(30);
+    let eight = win.window().take_snapshot().expect("eight chips");
+    save_slice_png(eight.clone(), "/tmp/opencode/borders_strip_flow_eight.png");
+    let mut eight_boxes = Vec::new();
+    for (i, rgb) in CHIP_COLORS.iter().enumerate() {
+        let bbox = exact_color_bbox(&eight, *rgb, 8)
+            .unwrap_or_else(|| panic!("chip {} must paint its resolved colour {rgb:?}", i + 1));
+        eight_boxes.push(bbox);
+    }
+    for pair in eight_boxes.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        assert!(b.0 > a.2, "8 chips must not overlap: {a:?} then {b:?}");
+        assert!(
+            a.1.abs_diff(b.1) <= 24 && a.3.abs_diff(b.3) <= 24,
+            "all 8 chips must share one horizontal row: {a:?} then {b:?}"
+        );
+        let pitch = b.0 - a.0;
+        assert!(
+            (40..=60).contains(&pitch),
+            "chips must keep their 40px cell + 6px gap pitch (got {pitch}px)"
+        );
+    }
+
+    // (4) The focused compact inactive row: chip + label + "Custom…" at 48–56px.
+    win.set_tune_color_count(3);
+    win.set_panel_kbd_preview_index(1 + 2);
+    settle_frames(80);
+    let compact = win.window().take_snapshot().expect("focused compact row");
+    save_slice_png(compact.clone(), "/tmp/opencode/borders_strip_flow_compact_row.png");
+    let bands = color_row_bands(&compact, ICY, 40, 300);
+    assert!(
+        bands.windows(2).any(|w| (40..=60).contains(&(w[1].0 - w[0].0))),
+        "the focused inactive row must render 40–60px tall (icy bands={bands:?})"
+    );
 }
 
 /// Which strip chip (0-based) currently carries the icy active-chip ring, if
@@ -5773,8 +5942,11 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
         let bbox = exact_color_bbox(&snapshot, *rgb, 8).unwrap_or_else(|| {
             panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
         });
+        // A 16×16 swatch paints ~196px through its 1px border and 4px radius
+        // (measured), NOT up to 400: the band pins the size instead of merely
+        // accepting it, so a chip that grew into a full card would fail here.
         assert!(
-            (100..=400).contains(&painted),
+            (150..=260).contains(&painted),
             "chip {} must be one 16×16 swatch (colour={rgb:?}, pixels={painted})",
             i + 1
         );
@@ -6193,9 +6365,10 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
     let (card_top, _) = bands[0];
     let (_, card_bottom) = bands[1];
     let card_h = card_bottom - card_top;
+    println!("picker card height (channel test): {card_h}px");
     assert!(
-        (360..=400).contains(&card_h),
-        "the picker card must render at full height, not clipped (h={card_h})"
+        (372..=392).contains(&card_h),
+        "the picker card must render at its full 380px, not clipped (h={card_h})"
     );
     // The edited chip, re-located BELOW the card: the open picker's hue bar and
     // SV field paint the seeded hue, so the strip's own green chip can only be
@@ -6563,8 +6736,11 @@ fn borders_tune_renders_eight_slots() {
         let bbox = exact_color_bbox(&shot, *rgb, 8).unwrap_or_else(|| {
             panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
         });
+        // A 16×16 swatch paints ~196px through its 1px border and 4px radius
+        // (measured), NOT up to 400: the band pins the size instead of merely
+        // accepting it, so a chip that grew into a full card would fail here.
         assert!(
-            (100..=400).contains(&painted),
+            (150..=260).contains(&painted),
             "chip {} must be one 16×16 swatch (colour={rgb:?}, pixels={painted})",
             i + 1
         );
@@ -6581,13 +6757,15 @@ fn borders_tune_renders_eight_slots() {
             "all 8 chips must share one horizontal row: {a:?} then {b:?}"
         );
     }
-    // "No overflow": 8 × 40px chips + 7 × 6px gaps = 362px of span. A span far
-    // beyond that means the chips wrapped onto a second row or ran off the pane,
-    // and the last chip running past the 1920px window means real truncation.
+    // Span cross-check — NOT a wrap guard: wrapping SHRINKS the measured span
+    // (the 8th chip would land back on a nearer column), so the real single-row
+    // guard is the shared-row assertion above. What this pins is the fixed-cell
+    // arithmetic: 7 pitches of 46px + the 14px swatch ≈ 335px (measured). A span
+    // outside the band means the chips drifted apart or ran off the pane.
     let span = boxes[7].2 - boxes[0].0;
     assert!(
-        span < 600,
-        "8 chips must fit one row inside the pane (span={span}px)"
+        (300..=380).contains(&span),
+        "8 chips must keep the fixed 46px-cell span inside the pane (span={span}px)"
     );
     assert!(
         boxes[7].2 < 1900,
