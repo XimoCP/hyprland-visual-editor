@@ -5595,11 +5595,13 @@ fn borders_strip_compact_rows_height() {
 }
 
 /// R8 — the strip is ONE stop whatever the slot count: `borders_tune_stop_count`
-/// must IGNORE its `slot_count` argument. The old formula added N stops (one per
+/// must IGNORE a POSITIVE `slot_count`. The old formula added N stops (one per
 /// gradient slot), so the same call returned 14 for 2 slots and 20 for 8; the
 /// new one is flat. PR 1 shipped the formula, so this test LOCK THE BEHAVIOUR IN
 /// rather than driving a fresh RED — the values it pins (13/17/26) are exactly
-/// the ones the old formula would fail on (14/18/33).
+/// the ones the old formula would fail on (14/18/33). ZERO slots is the one
+/// case that still moves the count: the strip / add / remove controls are not
+/// mounted, so their three stops are not counted (Q2).
 #[test]
 fn borders_tune_stop_count_strip_single_stop() {
     use crate::callbacks::borders_tune_stop_count;
@@ -5617,8 +5619,9 @@ fn borders_tune_stop_count_strip_single_stop() {
     // slot stops collapsed to one).
     assert_eq!(borders_tune_stop_count(8, true, true, true, true), 26);
 
-    // The contract itself: N is ignored, so every slot count agrees.
-    for n in [0, 2, 4, 8, 99] {
+    // The contract itself: any POSITIVE N is ignored, so those slot counts
+    // all agree.
+    for n in [2, 4, 8, 99] {
         assert_eq!(
             borders_tune_stop_count(n, false, false, false, false),
             13,
@@ -5630,6 +5633,11 @@ fn borders_tune_stop_count_strip_single_stop() {
             "slot_count {n} must not change the stop count — the strip is ONE stop"
         );
     }
+
+    // Zero colours: the three slot-management stops do not exist, so the count
+    // drops by three (10 fixed stops) instead of counting unmounted controls.
+    assert_eq!(borders_tune_stop_count(0, false, false, false, false), 10);
+    assert_eq!(borders_tune_stop_count(0, true, true, true, true), 23);
 }
 
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
@@ -5972,6 +5980,70 @@ fn borders_strip_ring_and_picker_clamp_when_slots_shrink() {
     );
 }
 
+/// Q2 — the strip, add and remove controls mount only behind
+/// `if root.slot-count > 0`, but `tune-count` counted their three stops
+/// unconditionally. With zero colours the keyboard walked three ghost
+/// positions: ←/→ were swallowed by the invisible strip (`strip-cycle` no-ops
+/// at zero colours, so PanelRoot's strip dispatch consumed both arrows for
+/// nothing) and Enter on the phantom `add` fired `add-color-slot` from a `+`
+/// that was never rendered. The counted stops must match the mounted controls.
+#[test]
+fn borders_tune_zero_colours_has_no_ghost_stops() {
+    use slint::{ComponentHandle as _, platform::Key};
+    let win = borders_tune_pane_fixture(&[]);
+
+    // Record whether the (unmounted) add control ever fires. The window is
+    // built directly, so no production handler is attached; this flag is the
+    // observable.
+    let added = std::rc::Rc::new(std::cell::Cell::new(false));
+    {
+        let added = added.clone();
+        win.on_panel_add_color_slot(move || added.set(true));
+    }
+
+    // Tune-local 4 must no longer be the unmounted `+`: Enter there must never
+    // add a slot. Before Q2 the map still counted it and this fired
+    // add-color-slot.
+    for _ in 0..5 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    focus_settle();
+    focus_press_key(&win, Key::Return);
+    focus_settle();
+    assert!(
+        !added.get(),
+        "Enter on a tune stop must never fire the unmounted add control"
+    );
+    assert_eq!(
+        win.get_tune_color_count(),
+        0,
+        "no control fired while none is mounted"
+    );
+
+    // With the slot block gone, tune-local 3 is the glow toggle: Enter there
+    // must toggle glow, proving the stop is a real, reachable control and not a
+    // phantom the arrows get stuck on.
+    focus_press_key(&win, Key::UpArrow);
+    focus_settle();
+    focus_press_key(&win, Key::Return);
+    focus_settle();
+    assert!(
+        win.get_tune_glow_enabled(),
+        "with zero colours tune-local 3 must be the glow toggle, not a phantom strip stop"
+    );
+
+    // ...and it must RENDER as a focused 64px row, so the stop the keyboard is
+    // on is the stop the eye sees (no invisible position).
+    let focused = win.window().take_snapshot().expect("zero-colour glow stop");
+    save_slice_png(
+        focused.clone(),
+        "/tmp/opencode/borders_tune_zero_colours_glow_stop.png",
+    );
+    assert!(
+        focused_row_span(&focused, 56, 68).is_some(),
+        "the zero-colour tune-local 3 stop must paint a focused 64px row"
+    );
+}
 
 /// Borders tune pane renders dynamic color slots, angle control, and descriptions.
 /// This is the U3a visual verification test — it mounts the rebuilt pane and

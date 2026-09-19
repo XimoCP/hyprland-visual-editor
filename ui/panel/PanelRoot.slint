@@ -486,8 +486,13 @@ export component PanelRoot inherits Rectangle {
                                 // ONE stop (tune-local 3, never engaged). Arrows on
                                 // it cycle chips inside the strip instead of
                                 // jumping panels.
+                                // The strip stop (tune-local 3) exists only while
+                                // colours do; with zero colours local 3 is the
+                                // glow toggle, and swallowing the arrow here
+                                // would trap the cursor on an invisible stop.
                                 if (root.borders-focused-index >= root.borders-list-len
-                                    && (root.borders-focused-index - root.borders-list-len) == 3) {
+                                    && (root.borders-focused-index - root.borders-list-len) == 3
+                                    && borders.tune-color-count > 0) {
                                     borders.strip-cycle(1);
                                     return accept;
                                 }
@@ -502,7 +507,8 @@ export component PanelRoot inherits Rectangle {
                             if (event.text == Key.LeftArrow) {
                                 // Strip sub-navigation, same as Right above.
                                 if (root.borders-focused-index >= root.borders-list-len
-                                    && (root.borders-focused-index - root.borders-list-len) == 3) {
+                                    && (root.borders-focused-index - root.borders-list-len) == 3
+                                    && borders.tune-color-count > 0) {
                                     borders.strip-cycle(-1);
                                     return accept;
                                 }

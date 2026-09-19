@@ -1010,30 +1010,32 @@ mod panel_save_tests {
 }
 
 /// Borders tune stop count (keyboard R11 recompute).
-/// Order: size, angle, inactive, N slots, add, remove, glow-enabled,
-/// (+range, power, color, inactive when on), per anim leaf enabled
-/// (+speed, bezier, style when on) x3, rule, save-name, save-button.
-/// N is clamped to 0..8 so empty models never yield negative counts.
+/// Order: size, angle, inactive, [strip, add, remove ONLY while slots exist],
+/// glow-enabled, (+range, power, color, inactive when on), per anim leaf
+/// enabled (+speed, bezier, style when on) x3, rule, save-name, save-button.
+/// `slot_count` no longer adds one stop per slot — the strip is ONE stop — but
+/// ZERO colours still removes the three slot-management stops, because the
+/// strip / add / remove controls mount only while colours do. Mirrors
+/// `BordersSection.tune-count` (and the pane's `slot-stops`).
 #[allow(dead_code)]
 pub fn borders_tune_stop_count(
-    _slot_count: i32,
+    slot_count: i32,
     glow_enabled: bool,
     anim0: bool,
     anim1: bool,
     anim2: bool,
 ) -> i32 {
-    // Strip = 1 stop (not N stops); _slot_count kept for API compat.
-    let mut total = 3 + 1 + 2 + 1;
+    // 10 fixed stops (size, angle, inactive, glow-enable, 3 anim-enable, rule,
+    // save-name, save-button) + the colour-slot block (3 while colours exist).
+    let mut total = 10 + if slot_count > 0 { 3 } else { 0 };
     if glow_enabled {
         total += 4;
     }
     for enabled in [anim0, anim1, anim2] {
-        total += 1;
         if enabled {
             total += 3;
         }
     }
-    total += 1 + 2;
     total
 }
 
@@ -1073,7 +1075,10 @@ mod keyboard_nav_tests {
         assert_eq!(borders_tune_stop_count(2, false, false, false, false), 13);
         assert_eq!(borders_tune_stop_count(8, true, true, true, true), 26);
         assert_eq!(borders_tune_stop_count(3, true, false, false, false), 17);
-        assert_eq!(borders_tune_stop_count(0, false, false, false, false), 13);
+        // Zero colours: the strip / add / remove controls are not mounted, so
+        // their three stops are not counted either.
+        assert_eq!(borders_tune_stop_count(0, false, false, false, false), 10);
+        // Above zero the count is flat: the strip is ONE stop, not N.
         assert_eq!(borders_tune_stop_count(99, false, false, false, false), 13);
     }
 

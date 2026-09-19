@@ -206,26 +206,39 @@ component BordersTunePane inherits Rectangle {
     in property <int> picker-cmd-kind: 0;
 
     property <length> saved-scroll-y: 0px;
-    // Tune-local indices (cards-first global minus list split):
-    // 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove,
-    // 6=glow-enabled (7..10=range, power, color, inactive when on),
-    // then per anim leaf enabled (speed, bezier, style when on) x3,
-    // rule, save-name, save-button. Mirrors callbacks::borders_tune_stop_count.
+    // Tune-local indices (cards-first global minus list split). WHILE COLOURS
+    // EXIST: 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove,
+    // 6=glow-enabled (7..10=range, power, color, inactive when on), then per
+    // anim leaf enabled (speed, bezier, style when on) x3, rule, save-name,
+    // save-button. WITH ZERO COLOURS the strip / add / remove block is not
+    // mounted, so it does not exist and everything after `inactive` shifts down
+    // by three (`slot-stops` below). Mirrors callbacks::borders_tune_stop_count.
     property <int> local-focus: root.focused-index - root.split;
     property <int> slot-count: clamp(root.tune-color-count, 0, 8);
-    property <int> first-slot-idx: 3;
-    // Fixed tune-local map (PR 3): the strip is ONE stop at index 3, so every
-    // stop after it is a constant — no `+ slot-count` anywhere. Downstream
+    // The strip / add / remove controls mount only behind
+    // `if root.slot-count > 0` (see the strip and the +/− row below), so with
+    // ZERO colours those three stop positions do not exist and every stop
+    // after them shifts down by three. Without the shift the keyboard walked
+    // three ghost positions that render nothing: at zero colours `strip-cycle`
+    // is a no-op, so PanelRoot's strip dispatch swallowed ←/→ on the invisible
+    // strip, and Enter fired `add-color-slot` from a `+` that was never
+    // mounted (Q2). `slot-stops` is the block's width; the map below derives
+    // from it instead of hard-coding 6..10.
+    property <int> slot-stops: root.slot-count > 0 ? 3 : 0;
+    // Fixed tune-local map (PR 3): the strip is ONE stop, so the slot block is
+    // a constant 3 wide while it exists and every stop after it derives from
+    // `idx-glow-en` — no `+ slot-count` anywhere. `-1` marks a stop that is
+    // not there, so no literal can ever match an absent control. Downstream
     // idx-a*/base-tail/idx-rule/idx-save-* recompute from `base-anim` alone.
     // Mirrors callbacks::borders_tune_stop_count and BordersSection.tune-enter.
-    property <int> idx-add: 4;
-    property <int> idx-remove: 5;
-    property <int> idx-glow-en: 6;
-    property <int> idx-glow-range: 7;
-    property <int> idx-glow-power: 8;
-    property <int> idx-glow-color: 9;
-    property <int> idx-glow-inactive: 10;
-    property <int> base-anim: root.glow-enabled ? 11 : 7;
+    property <int> idx-add: root.slot-stops > 0 ? 4 : -1;
+    property <int> idx-remove: root.slot-stops > 0 ? 5 : -1;
+    property <int> idx-glow-en: root.slot-stops + 3;
+    property <int> idx-glow-range: root.idx-glow-en + 1;
+    property <int> idx-glow-power: root.idx-glow-en + 2;
+    property <int> idx-glow-color: root.idx-glow-en + 3;
+    property <int> idx-glow-inactive: root.idx-glow-en + 4;
+    property <int> base-anim: root.idx-glow-en + (root.glow-enabled ? 5 : 1);
     property <int> idx-a0-en: root.base-anim;
     property <int> idx-a0-speed: root.base-anim + 1;
     property <int> idx-a0-bezier: root.base-anim + 2;
@@ -1986,7 +1999,21 @@ export component BordersSection inherits Rectangle {
     property <int> list-count: root.border-titles.length + root.user-preset-names.length;
     property <int> split: root.list-count;
     property <int> tune-n: clamp(root.tune-color-count, 0, 8);
-    out property <int> tune-count: 13 + (root.tune-glow-enabled ? 4 : 0)
+    // The section owns the keyboard walk, but the render map lives on the pane
+    // (instantiated twice behind conditions), so it cannot read the pane's
+    // `idx-*`. It needs only the block width and the first glow stop: the slot
+    // block is 3 wide while colours exist and 0 when they do not (the strip /
+    // add / remove controls are not mounted), and every glow / anim stop is
+    // `idx-glow-en + offset`. Mirrors the pane's map and
+    // callbacks::borders_tune_stop_count.
+    property <int> slot-stops: root.tune-n > 0 ? 3 : 0;
+    property <int> idx-glow-en: root.slot-stops + 3;
+    // 10 fixed stops (size, angle, inactive, glow-enable, 3 anim-enable, rule,
+    // save-name, save-button) plus the 3 colour-slot stops ONLY while colours
+    // exist, then the conditional leaves. Mirrors
+    // callbacks::borders_tune_stop_count, which subtracts the same 3.
+    out property <int> tune-count: 10 + root.slot-stops
+        + (root.tune-glow-enabled ? 4 : 0)
         + (root.tune-anim-borderangle-enabled ? 3 : 0)
         + (root.tune-anim-border-enabled ? 3 : 0)
         + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
@@ -2155,7 +2182,7 @@ export component BordersSection inherits Rectangle {
         // no engaged colour stop to adjust here. (Removed in PR 3; the old
         // `e >= 3 && e < 3 + n` path cycled the palette token of an engaged slot.)
         if (root.tune-glow-enabled) {
-            if (e == 7) {
+            if (e == root.idx-glow-en + 1) {
                 let next = up ? min(root.tune-glow-range + 1, 40) : max(root.tune-glow-range - 1, 5);
                 if (next != root.tune-glow-range) {
                     root.tune-glow-range = next;
@@ -2164,7 +2191,7 @@ export component BordersSection inherits Rectangle {
                 }
                 return;
             }
-            if (e == 8) {
+            if (e == root.idx-glow-en + 2) {
                 let next = up ? min(root.tune-glow-render-power + 1, 8) : max(root.tune-glow-render-power - 1, 1);
                 if (next != root.tune-glow-render-power) {
                     root.tune-glow-render-power = next;
@@ -2173,20 +2200,20 @@ export component BordersSection inherits Rectangle {
                 }
                 return;
             }
-            if (e == 9) {
+            if (e == root.idx-glow-en + 3) {
                 root.tune-glow-color = root.next-token(root.tune-glow-color, up);
                 root.tune-glow = root.rebuild-glow();
                 root.notify-tune-changed();
                 return;
             }
-            if (e == 10) {
+            if (e == root.idx-glow-en + 4) {
                 root.tune-glow-color-inactive = root.next-token(root.tune-glow-color-inactive, up);
                 root.tune-glow = root.rebuild-glow();
                 root.notify-tune-changed();
                 return;
             }
         }
-        let base = root.tune-glow-enabled ? 11 : 7;
+        let base = root.idx-glow-en + (root.tune-glow-enabled ? 5 : 1);
         let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
         let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
         if (root.tune-anim-borderangle-enabled) {
@@ -2257,9 +2284,11 @@ export component BordersSection inherits Rectangle {
     // Enter on a tune stop: 0 = slider-like (PanelRoot engages), 1 = handled
     // here (toggle, add/remove, save). Computed from the live tune-local
     // focused index so hidden stops are never reachable.
-    // Tune-local map (fixed — the strip is ONE stop, never N):
-    // 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove, 6=glow...,
-    // then anim leaves, rule, save-name, save-button.
+    // Tune-local map (the strip is ONE stop, never N). With colours:
+    // 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove, then the glow /
+    // anim / rule / save stops. With ZERO colours the strip / add / remove
+    // block does not exist (`slot-stops` = 0) and those positions shift down by
+    // three: 3=glow-enabled, and so on (`idx-glow-en` below).
     public function tune-enter() -> int {
         let local = root.focused-index - root.list-count;
         // The strip stop is NEVER engaged: Enter opens the picker for the
@@ -2277,23 +2306,29 @@ export component BordersSection inherits Rectangle {
         // opens the picker, so the custom path is reachable without a mouse.
         // Esc closes it (handled in PanelRoot).
         if (local == 2 && root.engaged-slider == local) { root.editing-slot = 8; return 1; }
-        if (root.tune-glow-enabled && local == 9 && root.engaged-slider == local) {
+        // Channel indices are the pane's fixed 0..7 slots / 8 inactive / 9 glow
+        // / 10 glow-inactive space — NOT the tune stop positions, which shift
+        // with the slot block. `editing-slot` therefore keeps its literal.
+        if (root.tune-glow-enabled && local == root.idx-glow-en + 3 && root.engaged-slider == local) {
             root.editing-slot = 9;
             return 1;
         }
-        if (root.tune-glow-enabled && local == 10 && root.engaged-slider == local) {
+        if (root.tune-glow-enabled && local == root.idx-glow-en + 4 && root.engaged-slider == local) {
             root.editing-slot = 10;
             return 1;
         }
-        if (local == 4 && root.tune-n < 8) { root.add-color-slot(); return 1; }
+        // Add / remove sit inside the slot block, which exists only while
+        // colours do: with zero colours local 4/5 are other controls, so the
+        // `tune-n` guards keep the unmounted actions unreachable.
+        if (local == 4 && root.tune-n > 0 && root.tune-n < 8) { root.add-color-slot(); return 1; }
         if (local == 5 && root.tune-n > 2) { root.remove-color-slot(); return 1; }
-        if (local == 6) {
+        if (local == root.idx-glow-en) {
             root.tune-glow-enabled = !root.tune-glow-enabled;
             root.tune-glow = root.rebuild-glow();
             root.notify-tune-changed();
             return 1;
         }
-        let base = root.tune-glow-enabled ? 11 : 7;
+        let base = root.idx-glow-en + (root.tune-glow-enabled ? 5 : 1);
         let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
         let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
         let tail = b2 + 1 + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
