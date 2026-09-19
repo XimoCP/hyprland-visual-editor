@@ -5413,6 +5413,37 @@ fn color_row_bands(
     bands
 }
 
+/// Vertical span `(top, bottom)` of the focused row: the pair of full-width icy
+/// border bands `min_gap..=max_gap` apart that are closest together. A focused
+/// row paints its 1px icy border as two such bands (one per horizontal edge),
+/// and no unfocused row paints icy at all, so the pair pinpoints the row the
+/// ring is actually on. The pair need not be adjacent in the band list: a
+/// focused slider row also paints its icy fill track BETWEEN the two edges
+/// (the knob slider's fill is the accent colour), so `windows(2)` would skip
+/// the top→bottom pair. The smallest qualifying gap wins, which is always the
+/// row's own edges. `None` when no such pair exists.
+fn focused_row_span(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    min_gap: usize,
+    max_gap: usize,
+) -> Option<(usize, usize)> {
+    let bands = color_row_bands(buf, ICY, 40, 300);
+    let mut best: Option<(usize, usize)> = None;
+    for i in 0..bands.len() {
+        for j in (i + 1)..bands.len() {
+            let gap = bands[j].0.saturating_sub(bands[i].0);
+            if (min_gap..=max_gap).contains(&gap) {
+                let candidate = (bands[i].0, bands[j].0);
+                best = Some(match best {
+                    Some((t, b)) if b - t <= gap => (t, b),
+                    _ => candidate,
+                });
+            }
+        }
+    }
+    best
+}
+
 /// R1/R2 — the strip renders one chip per gradient slot, numbered 1..N, all on
 /// a single horizontal row, with the icy ring on the ACTIVE chip only.
 #[test]
@@ -6277,11 +6308,11 @@ fn borders_glow_group_renders_addable_and_expanded() {
 }
 
 // ── Borders full-tune focus walk (keyboard R11 recompute) ─────────────
-// Tune order: size, angle, inactive, slots, add/remove, glow group, 3 anim
+// Tune order: size, angle, inactive, strip, add/remove, glow group, 3 anim
 // leaves (enabled/speed/bezier/style), rule, save name + button, then wrap.
-// Focus the LAST stop (Save button) and a MIDDLE stop (glow range): the
-// tune ScrollView must follow so each focused stop is visible and carries
-// the icy #8fd8ff ring. PNGs for human review.
+// Focus the LAST stop (Save button) and a MIDDLE stop (the glow-ENABLE
+// toggle, tune-local 6): the tune ScrollView must follow so each focused stop
+// is visible and carries the icy #8fd8ff ring. PNGs for human review.
 #[test]
 fn borders_tune_full_focus_reaches_last_and_middle() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -6299,6 +6330,13 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
     win.set_mounted_screen(1);
+    // Same opaque-panel state the other strip render tests mount: without it
+    // the shell keeps the panel translucent and no exact ink can be measured
+    // from the frame (the Q5 row signature below needs exact pixels).
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
     win.set_gallery_reduced_motion(true);
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
@@ -6339,6 +6377,74 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     }
     let mid = win.window().take_snapshot().expect("borders tune middle snapshot");
     save_slice_png(mid.clone(), "/tmp/opencode/borders_tune_focus_middle.png");
+
+    // Q5: the "middle" identity is the glow-ENABLE toggle (tune-local 6), not
+    // the Range slider one stop below it. That identity used to live only in a
+    // comment, and `count_icy_pixels > 200` passes for ANY lit row — so a ring
+    // drifting to the neighbouring glow stop went unnoticed. The glow-enable
+    // row carries no slider, so the LIT row must contain no white slider knob;
+    // the Range row's 20px knob is a pure-white disc. Measured between the lit
+    // row's own icy edges, so the Range knob just below cannot leak in.
+    let (top, bottom) = focused_row_span(&mid, 56, 68).unwrap_or_else(|| {
+        panic!(
+            "the focused middle stop must paint two icy edges ~64px apart (a 64px lit row); \
+             icy bands={:?}",
+            color_row_bands(&mid, ICY, 40, 300)
+        )
+    });
+    assert!(
+        bottom > top + 40,
+        "the focused row span must be a real 64px row (got {top}..{bottom})"
+    );
+    let knob = count_color_in_box(
+        &mid,
+        (255, 255, 255),
+        6,
+        360,
+        top + 2,
+        mid.width() as usize,
+        bottom,
+    );
+    assert!(
+        knob < 40,
+        "the middle stop must be the glow TOGGLE (a row with no slider inside the ring), but \
+         {knob} white slider-knob pixels sit inside it — the ring drifted to the neighbouring \
+         Range stop"
+    );
+
+    // Positive control: the neighbouring glow stop (Range, tune-local 7) DOES
+    // carry the white knob, so the measurement above is not vacuous.
+    win.set_panel_kbd_preview_index(middle + 1);
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let neighbour = win
+        .window()
+        .take_snapshot()
+        .expect("borders tune neighbour snapshot");
+    save_slice_png(
+        neighbour.clone(),
+        "/tmp/opencode/borders_tune_focus_neighbour.png",
+    );
+    let (n_top, n_bottom) = focused_row_span(&neighbour, 56, 68).unwrap_or_else(|| {
+        panic!(
+            "the neighbouring Range stop must paint two icy edges ~64px apart; icy bands={:?}",
+            color_row_bands(&neighbour, ICY, 40, 300)
+        )
+    });
+    let n_knob = count_color_in_box(
+        &neighbour,
+        (255, 255, 255),
+        6,
+        360,
+        n_top + 2,
+        neighbour.width() as usize,
+        n_bottom,
+    );
+    assert!(
+        n_knob > 80,
+        "the Range stop must paint its white slider knob inside the ring (pixels={n_knob})"
+    );
 
     win.set_panel_kbd_preview_index(last);
     for _ in 0..80 {
