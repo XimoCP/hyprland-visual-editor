@@ -7206,3 +7206,200 @@ fn borders_preset_card_click_applies_the_file_not_the_title() {
         "the click must never send the displayed title to border.sh — got {got:?}"
     );
 }
+
+// ── Settings panel input absorption (click-through to the gallery) ─────
+//
+// `gallery-layer` is hidden with `opacity: 0` while the panel is open. In
+// Slint an `Opacity` item still forwards pointer input (only `visible: false`
+// cuts hit-testing), and the panel is a plain `Rectangle` with no backdrop
+// `TouchArea`: its `ScrollView`s compile to a non-interactive `Flickable`
+// (which forwards presses) and `panel-kbd` has `focus-on-click: false`. So
+// every panel DEAD ZONE (padding, a title, a description, the 8px row gaps,
+// the header) used to leak the press to the centered `SliceDelegate` behind
+// it → `gallery-card-clicked` → `slot.apply_theme` + the `cfg.last_applied`
+// persist in `src/main.rs` (`on_gallery_card_clicked`). The wheel and
+// right-click channels were reachable the same way.
+//
+// These are BEHAVIOURAL tests, not source-text greps: they mount the window
+// headless, load the carousel, open the panel over it and inject real
+// pointer events at coordinates that are panel dead zones AND (for the card
+// channels) inside the centered card's parallelogram.
+
+/// Headless `MainWindow` with `count` settled carousel cards and the Borders
+/// panel open over them at 1920x1080 (wide → two-column section layout).
+fn gallery_with_cards_and_panel(count: usize, focused: usize) -> crate::MainWindow {
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_gallery_focused(focused as i32);
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        (0..count)
+            .map(|i| late_card(&format!("Theme {i}"), i == focused))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+        count, focused, 1920.0,
+    ))));
+    win.set_gallery_slice_delta_base(focused as i32);
+    win.set_gallery_slice_focus_pos(focused as f32);
+    win.set_panel_section(1);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+    focus_settle();
+    win
+}
+
+/// Press + release at one logical point through the production input path.
+fn dispatch_pointer(
+    win: &crate::MainWindow,
+    x: f32,
+    y: f32,
+    button: slint::platform::PointerEventButton,
+) {
+    use slint::ComponentHandle as _;
+    use slint::platform::WindowEvent;
+    let position = slint::LogicalPosition::new(x, y);
+    win.window().dispatch_event(WindowEvent::PointerPressed { position, button });
+    win.window().dispatch_event(WindowEvent::PointerReleased { position, button });
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+/// Live reproducer: while the Borders panel is open, a press on the tune
+/// pane's dead padding (x 1041..1057) landed on the carousel card behind it
+/// and applied that theme. The absorber between the layers must swallow it.
+///
+/// Coordinate (1049, 500): the content area starts at x=161 (160px rail + 1px
+/// separator), the list pane owns its left half (161..1040) and the tune pane
+/// 1041..1920; the tune column carries 16px of left padding, so x=1049 is
+/// structurally dead — no control can be there. The centered card at focus 3
+/// spans x 519..1387 at y=500 (expanded 924px slot at x 498, plus the 35px
+/// skew lean), so the point is inside the card's parallelogram.
+///
+/// The second half closes the panel and presses the SAME point: the card must
+/// apply then. That proves the coordinate really is over the card, so the
+/// first half cannot pass because the point missed the gallery.
+#[test]
+fn panel_dead_zone_press_never_reaches_gallery_card() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = gallery_with_cards_and_panel(8, 3);
+    let clicked: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_gallery_card_clicked({
+        let clicked = clicked.clone();
+        move |idx| clicked.borrow_mut().push(idx)
+    });
+
+    dispatch_pointer(
+        &win,
+        1049.0,
+        500.0,
+        slint::platform::PointerEventButton::Left,
+    );
+    assert!(
+        clicked.borrow().is_empty(),
+        "a press on the panel's dead padding must not reach the carousel card behind it, \
+         but gallery-card-clicked fired with {:?} (a theme was applied)",
+        clicked.borrow()
+    );
+
+    // Panel closed: the very same point IS a card click. Without this half a
+    // green assertion above could just mean the coordinate missed the gallery.
+    win.set_is_panel_open(false);
+    focus_settle();
+    dispatch_pointer(
+        &win,
+        1049.0,
+        500.0,
+        slint::platform::PointerEventButton::Left,
+    );
+    assert_eq!(
+        clicked.borrow().as_slice(),
+        [3],
+        "the coordinate sanity check must apply the centered card (index 3) with the panel closed"
+    );
+}
+
+/// Same class, wheel channel: the gallery's `wheel-zone` lies in the panel's
+/// vertical band. With the panel open the wheel must not step the carousel.
+///
+/// Coordinate (80, 500): the rail (x 0..160) is a panel dead zone at that
+/// height — the five 36px items end around y=322 — and lies inside the
+/// carousel's wheel band (y 292.5..812.5 at 1080p). Before the fix the wheel
+/// reached `SliceCarousel.wheel-zone` and stepped the ring.
+#[test]
+fn panel_dead_zone_wheel_never_scrolls_gallery() {
+    use slint::ComponentHandle as _;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = gallery_with_cards_and_panel(8, 3);
+    let steps: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_gallery_wheel_step({
+        let steps = steps.clone();
+        move |dir| steps.borrow_mut().push(dir)
+    });
+
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(80.0, 500.0),
+            delta_x: 0.0,
+            delta_y: 120.0,
+        });
+    // The wheel path commits through the 150ms debounce Timer.
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    assert!(
+        steps.borrow().is_empty(),
+        "a wheel over the panel's dead rail area must not reach the gallery wheel band, \
+         but gallery-wheel-step fired with {:?}",
+        steps.borrow()
+    );
+}
+
+/// Same class, right-click channel: `SliceDelegate` flips the card on a right
+/// press. That press leaked through the same dead zone; the absorber must
+/// grab it (a `TouchArea` grabs presses of ANY button).
+#[test]
+fn panel_dead_zone_right_click_never_flips_gallery_card() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = gallery_with_cards_and_panel(8, 3);
+    let right: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_gallery_card_right_clicked({
+        let right = right.clone();
+        move |idx| right.borrow_mut().push(idx)
+    });
+
+    dispatch_pointer(
+        &win,
+        1049.0,
+        500.0,
+        slint::platform::PointerEventButton::Right,
+    );
+    assert!(
+        right.borrow().is_empty(),
+        "a right press on the panel's dead padding must not flip the carousel card, \
+         but gallery-card-right-clicked fired with {:?}",
+        right.borrow()
+    );
+}

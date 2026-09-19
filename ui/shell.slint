@@ -474,6 +474,35 @@ export component ShellRoot inherits Rectangle {
                     }
                 }
 
+                // Input absorber for the panel layer (click-through fix): the
+                // gallery tucks by `opacity` only, and in Slint an `Opacity`
+                // item still forwards pointer input (only `visible: false`
+                // cuts hit-testing). The panel has no backdrop `TouchArea`, so
+                // its dead zones — padding, titles, descriptions, the 8px row
+                // gaps, the header — used to land on the carousel behind it
+                // and apply+persist a theme (and the wheel / right-click
+                // variants reached it too). This transparent full-size layer
+                // sits AFTER `gallery-layer` and BEFORE the panel, so the
+                // panel's real controls (declared later = in front) keep
+                // working while everything else is absorbed. It shares the
+                // panel's own condition and lives exactly as long as that
+                // layer does. `scroll-event` must accept explicitly: a
+                // TouchArea ignores a wheel it has no handler for, and the
+                // wheel would otherwise reach the gallery's wheel band.
+                if root.is-panel-open || root.is-mutating : Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    background: transparent;
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: default;
+                        // Consume without navigating — trace only.
+                        clicked => { root.panel-mouse-trace("panel-guard-click ignored — panel open"); }
+                        scroll-event(event) => { accept }
+                    }
+                }
+
                 if root.is-panel-open || root.is-mutating : Rectangle {
                     // FULL-BLEED panel: while the panel is open it IS the HVE
                     // surface. It used to be an inner card — 80%, radius 16,
