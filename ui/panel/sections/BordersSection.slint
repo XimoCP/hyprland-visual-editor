@@ -128,8 +128,9 @@ component BordersTunePane inherits Rectangle {
     in property <[string]> tune-active-colors: [];
     in property <[color]> tune-colors-resolved: [];
     // ── Gradient colour strip (R1/R2) ─────────────────────────────
-    // Sub-navigation state, internal to the tune pane: the chip the strip
-    // highlights when the strip stop owns the keyboard. PR 3 wires ←/→ to it.
+    // Sub-navigation state, MIRRORING the section's `strip-active-chip` (the
+    // instances below bind it two-way): the chip the strip highlights when the
+    // strip stop owns the keyboard. PR 3 wires ←/→ to it via `strip-cycle`.
     in-out property <int> strip-active-chip: 0;
     // The shared picker card (the ONE picker for every colour channel) is
     // visible exactly while a channel is being edited (R3/R11). Derived from
@@ -213,14 +214,18 @@ component BordersTunePane inherits Rectangle {
     property <int> local-focus: root.focused-index - root.split;
     property <int> slot-count: clamp(root.tune-color-count, 0, 8);
     property <int> first-slot-idx: 3;
-    property <int> idx-add: 3 + root.slot-count;
-    property <int> idx-remove: 4 + root.slot-count;
-    property <int> idx-glow-en: 5 + root.slot-count;
-    property <int> idx-glow-range: 6 + root.slot-count;
-    property <int> idx-glow-power: 7 + root.slot-count;
-    property <int> idx-glow-color: 8 + root.slot-count;
-    property <int> idx-glow-inactive: 9 + root.slot-count;
-    property <int> base-anim: root.glow-enabled ? 10 + root.slot-count : 6 + root.slot-count;
+    // Fixed tune-local map (PR 3): the strip is ONE stop at index 3, so every
+    // stop after it is a constant — no `+ slot-count` anywhere. Downstream
+    // idx-a*/base-tail/idx-rule/idx-save-* recompute from `base-anim` alone.
+    // Mirrors callbacks::borders_tune_stop_count and BordersSection.tune-enter.
+    property <int> idx-add: 4;
+    property <int> idx-remove: 5;
+    property <int> idx-glow-en: 6;
+    property <int> idx-glow-range: 7;
+    property <int> idx-glow-power: 8;
+    property <int> idx-glow-color: 9;
+    property <int> idx-glow-inactive: 10;
+    property <int> base-anim: root.glow-enabled ? 11 : 7;
     property <int> idx-a0-en: root.base-anim;
     property <int> idx-a0-speed: root.base-anim + 1;
     property <int> idx-a0-bezier: root.base-anim + 2;
@@ -701,7 +706,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: gradient colours ──
             Text {
-                text: "One chip per gradient colour, in order. Click a chip to edit that colour.";
+                text: "←→ select gradient colour, Enter to edit, Esc to close.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -1881,6 +1886,14 @@ export component BordersSection inherits Rectangle {
     // tune-colors-resolved). -1 = closed. Owned here because the section
     // owns the tune state the picker writes into.
     in-out property <int> editing-slot: -1;
+    // Strip sub-navigation state (R9), owned HERE — not in the pane — for the
+    // same reason as the picker command channel: the section instantiates the
+    // pane twice (two-col / stacked) behind a condition, and Slint forbids
+    // reaching into a conditional child, so per-pane state would split in two.
+    // Both panes bind this two-way; the click TouchArea and `strip-cycle`
+    // write through the binding and the two branches can never disagree.
+    // Index of the active chip within the strip (0..tune-n-1). Wraps on ←/→.
+    in-out property <int> strip-active-chip: 0;
     // Resolved colours (see MainWindow.tune-colors-resolved).
     in-out property <[color]> tune-colors-resolved: [];
     in-out property <int> tune-angle: 90;
@@ -1918,7 +1931,7 @@ export component BordersSection inherits Rectangle {
     in property <bool> two-col: false;
     // Cards-first global sequence: 0..list-count-1 cards, then tune stops.
     // split is the tune start; tune-count mirrors
-    // callbacks::borders_tune_stop_count (size, angle, inactive, N slots,
+    // callbacks::borders_tune_stop_count (size, angle, inactive, strip,
     // add, remove, glow group, 3 anim leaves, rule, save name + button).
     property <int> list-count: root.border-titles.length + root.user-preset-names.length;
     property <int> split: root.list-count;
@@ -2061,12 +2074,11 @@ export component BordersSection inherits Rectangle {
     }
 
     // Slider adjust (keyboard arrows) — every slider-like tune stop, clamped.
-    // Tune-local engaged index: 0=size, 1=angle, 2=inactive, slots, glow
-    // range/power/colors, anim speed/bezier/style. Toggles and actions are
-    // handled by tune-enter, never here.
+    // Tune-local engaged index: 0=size, 1=angle, 2=inactive, glow
+    // range/power/colors, anim speed/bezier/style. Toggles, actions and the
+    // strip are handled by tune-enter, never here.
     public function adjust-slider(up: bool) {
         let e = root.engaged-slider;
-        let n = root.tune-n;
         if (e == 0) {
             let next = up ? min(root.geom-size + 1, 5) : max(root.geom-size - 1, 1);
             if (next != root.geom-size) {
@@ -2089,14 +2101,11 @@ export component BordersSection inherits Rectangle {
             root.notify-tune-changed();
             return;
         }
-        if (e >= 3 && e < 3 + n) {
-            let i = e - 3;
-            root.tune-active-colors[i] = root.next-token(root.tune-active-colors[i], up);
-            root.notify-tune-changed();
-            return;
-        }
+        // No per-slot branch: the strip (index 3) is never engaged, so there is
+        // no engaged colour stop to adjust here. (Removed in PR 3; the old
+        // `e >= 3 && e < 3 + n` path cycled the palette token of an engaged slot.)
         if (root.tune-glow-enabled) {
-            if (e == 6 + n) {
+            if (e == 7) {
                 let next = up ? min(root.tune-glow-range + 1, 40) : max(root.tune-glow-range - 1, 5);
                 if (next != root.tune-glow-range) {
                     root.tune-glow-range = next;
@@ -2105,7 +2114,7 @@ export component BordersSection inherits Rectangle {
                 }
                 return;
             }
-            if (e == 7 + n) {
+            if (e == 8) {
                 let next = up ? min(root.tune-glow-render-power + 1, 8) : max(root.tune-glow-render-power - 1, 1);
                 if (next != root.tune-glow-render-power) {
                     root.tune-glow-render-power = next;
@@ -2114,20 +2123,20 @@ export component BordersSection inherits Rectangle {
                 }
                 return;
             }
-            if (e == 8 + n) {
+            if (e == 9) {
                 root.tune-glow-color = root.next-token(root.tune-glow-color, up);
                 root.tune-glow = root.rebuild-glow();
                 root.notify-tune-changed();
                 return;
             }
-            if (e == 9 + n) {
+            if (e == 10) {
                 root.tune-glow-color-inactive = root.next-token(root.tune-glow-color-inactive, up);
                 root.tune-glow = root.rebuild-glow();
                 root.notify-tune-changed();
                 return;
             }
         }
-        let base = root.tune-glow-enabled ? 10 + n : 6 + n;
+        let base = root.tune-glow-enabled ? 11 : 7;
         let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
         let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
         if (root.tune-anim-borderangle-enabled) {
@@ -2198,35 +2207,40 @@ export component BordersSection inherits Rectangle {
     // Enter on a tune stop: 0 = slider-like (PanelRoot engages), 1 = handled
     // here (toggle, add/remove, save). Computed from the live tune-local
     // focused index so hidden stops are never reachable.
+    // Tune-local map (fixed — the strip is ONE stop, never N):
+    // 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove, 6=glow...,
+    // then anim leaves, rule, save-name, save-button.
     public function tune-enter() -> int {
         let local = root.focused-index - root.list-count;
-        let n = root.tune-n;
+        // The strip stop is NEVER engaged: Enter opens the picker for the
+        // active chip directly (R9). PanelRoot sees the 1 and leaves
+        // engaged-slider at -1, so ←/→ keep cycling chips afterwards.
+        if (local == 3 && root.tune-n > 0) {
+            root.editing-slot = root.strip-active-chip;
+            return 1;
+        }
         // A colour stop is a slider-like stop (PanelRoot engages it, arrows
         // cycle the palette). Pressing Enter AGAIN on an already-engaged colour
         // opens the picker, so the custom path is reachable without a mouse.
         // Esc closes it (handled in PanelRoot).
         if (local == 2 && root.engaged-slider == local) { root.editing-slot = 8; return 1; }
-        if (local >= 3 && local < 3 + n && root.engaged-slider == local) {
-            root.editing-slot = local - 3;
-            return 1;
-        }
-        if (root.tune-glow-enabled && local == 8 + n && root.engaged-slider == local) {
+        if (root.tune-glow-enabled && local == 9 && root.engaged-slider == local) {
             root.editing-slot = 9;
             return 1;
         }
-        if (root.tune-glow-enabled && local == 9 + n && root.engaged-slider == local) {
+        if (root.tune-glow-enabled && local == 10 && root.engaged-slider == local) {
             root.editing-slot = 10;
             return 1;
         }
-        if (local == 3 + n && n < 8) { root.add-color-slot(); return 1; }
-        if (local == 4 + n && n > 2) { root.remove-color-slot(); return 1; }
-        if (local == 5 + n) {
+        if (local == 4 && root.tune-n < 8) { root.add-color-slot(); return 1; }
+        if (local == 5 && root.tune-n > 2) { root.remove-color-slot(); return 1; }
+        if (local == 6) {
             root.tune-glow-enabled = !root.tune-glow-enabled;
             root.tune-glow = root.rebuild-glow();
             root.notify-tune-changed();
             return 1;
         }
-        let base = root.tune-glow-enabled ? 10 + n : 6 + n;
+        let base = root.tune-glow-enabled ? 11 : 7;
         let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
         let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
         let tail = b2 + 1 + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
@@ -2284,6 +2298,18 @@ export component BordersSection inherits Rectangle {
         if (root.editing-slot < 0) { return; }
         root.picker-cmd-kind = up ? 4 : 3;
         root.picker-cmd += 1;
+    }
+
+    // ── Strip sub-navigation (R9, task 3.2) ──────────────────────────
+    // Cycles the active chip within the strip with wrap. PanelRoot calls this
+    // when ←/→ lands on the strip stop (tune-local 3); the strip is never
+    // engaged, so the arrows always mean "move the chip", never "adjust".
+    // Lives on the section — same pattern as picker-move/picker-adjust —
+    // because PanelRoot can only call section functions, and the section
+    // cannot reach into its conditional pane children.
+    public function strip-cycle(delta: int) {
+        if (root.tune-n <= 0) { return; }
+        root.strip-active-chip = mod(root.strip-active-chip + delta + root.tune-n, root.tune-n);
     }
 
     // Cycle one animation leaf's bezier or style. Mouse and keyboard share this
@@ -2416,6 +2442,7 @@ export component BordersSection inherits Rectangle {
                 tune-active-colors: root.tune-active-colors;
                 tune-colors-resolved: root.tune-colors-resolved;
                 editing-slot: root.editing-slot;
+                strip-active-chip <=> root.strip-active-chip;
                 custom-color-preview(idx, hex) => { root.set-custom(idx, hex, false); }
                 custom-color-changed(idx, hex) => { root.set-custom(idx, hex, true); }
                 request-edit-slot(idx) => { root.editing-slot = idx; }
@@ -2541,6 +2568,7 @@ export component BordersSection inherits Rectangle {
                 tune-active-colors: root.tune-active-colors;
                 tune-colors-resolved: root.tune-colors-resolved;
                 editing-slot: root.editing-slot;
+                strip-active-chip <=> root.strip-active-chip;
                 custom-color-preview(idx, hex) => { root.set-custom(idx, hex, false); }
                 custom-color-changed(idx, hex) => { root.set-custom(idx, hex, true); }
                 request-edit-slot(idx) => { root.editing-slot = idx; }

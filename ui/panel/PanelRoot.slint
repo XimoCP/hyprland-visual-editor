@@ -409,7 +409,7 @@ export component PanelRoot inherits Rectangle {
                             // Borders: Down/Up walk cards + EVERY tune stop top to
                             // bottom, then wrap. Return/Space engages slider-like
                             // stops (arrows adjust, clamped); other stops act
-                            // at once. Tune order: size, angle, inactive, slots,
+                            // at once. Tune order: size, angle, inactive, strip,
                             // add/remove, glow group, 3 anim leaves, rule, save.
                             if (event.text == Key.Escape) {
                                 if (root.tune-editing-slot >= 0) { root.tune-editing-slot = -1; }
@@ -482,6 +482,15 @@ export component PanelRoot inherits Rectangle {
                                 return accept;
                             }
                             if (event.text == Key.RightArrow) {
+                                // Strip sub-navigation (R9): the whole chip row is
+                                // ONE stop (tune-local 3, never engaged). Arrows on
+                                // it cycle chips inside the strip instead of
+                                // jumping panels.
+                                if (root.borders-focused-index >= root.borders-list-len
+                                    && (root.borders-focused-index - root.borders-list-len) == 3) {
+                                    borders.strip-cycle(1);
+                                    return accept;
+                                }
                                 // Visual order is [rail] [preset list] [tune], which
                                 // now agrees with the cards-first index order: right
                                 // walks towards the tune block.
@@ -491,6 +500,12 @@ export component PanelRoot inherits Rectangle {
                                 return accept;
                             }
                             if (event.text == Key.LeftArrow) {
+                                // Strip sub-navigation, same as Right above.
+                                if (root.borders-focused-index >= root.borders-list-len
+                                    && (root.borders-focused-index - root.borders-list-len) == 3) {
+                                    borders.strip-cycle(-1);
+                                    return accept;
+                                }
                                 // Left walks back to the presets, then out to the rail.
                                 if (root.borders-list-len > 0 && root.borders-focused-index >= root.borders-list-len) {
                                     root.borders-focused-index = 0;

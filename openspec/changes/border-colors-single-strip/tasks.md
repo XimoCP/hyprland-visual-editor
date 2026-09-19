@@ -68,9 +68,11 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Keyboard Sub-Navigation (PR 3)
 
-- [ ] 3.1 [RED] Add `borders_strip_keyboard_sub_navigation` test in `src/shell/ui_tests.rs`. Verify `strip-cycle(1)` increments `strip-active-chip` from 0→1→2→0 (wraps). Verify `strip-cycle(-1)` decrements. Verify Enter on strip sets `editing-slot`. Verify Esc closes picker. Test MUST fail (function doesn't exist). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
+- [x] 3.1 [RED] Add `borders_strip_keyboard_sub_navigation` test in `src/shell/ui_tests.rs`. Verify `strip-cycle(1)` increments `strip-active-chip` from 0→1→2→0 (wraps). Verify `strip-cycle(-1)` decrements. Verify Enter on strip sets `editing-slot`. Verify Esc closes picker. Test MUST fail (function doesn't exist). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
 
-- [ ] 3.2 [GREEN] Add `strip-cycle(delta: int)` public function to `BordersTunePane` in `BordersSection.slint`:
+  RED observed 2026-09-19: `Right must move the ring from chip 1 to chip 2 — left: Some(0), right: Some(1)`. Baseline `Some(0)` passed (4×Down reaches the strip); Right is a no-op on the tune stop without the PanelRoot forward.
+
+- [x] 3.2 [GREEN] Add `strip-cycle(delta: int)` public function to `BordersTunePane` in `BordersSection.slint`:
   ```slint
   public function strip-cycle(delta: int) {
       if (root.slot-count <= 0) { return; }
@@ -79,15 +81,44 @@ Chain strategy: feature-branch-chain
   ```
   Test MUST pass. [f: `ui/panel/sections/BordersSection.slint`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
 
-- [ ] 3.3 [RED] Verify PanelRoot forwards Left/Right to `strip-cycle` when `local-focus == 3`. Add test assertion in `borders_strip_keyboard_sub_navigation` that checks PanelRoot dispatch. Test MUST fail (PanelRoot doesn't check for strip stop). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
+  Implemented with one documented deviation: the function lives on `BordersSection`
+  (same pattern as `picker-move`/`picker-adjust`), NOT on `BordersTunePane`, and the
+  state (`strip-active-chip`) moved to section level with two-way bindings into both
+  pane instances. Reason: PanelRoot can only call section functions, and the section
+  cannot reach into its conditional (`two-col`/stacked) pane children — a pane-level
+  duplicate would be dead code, and per-pane state would split in two. Logic and
+  signature are exactly as specified (`mod` wrap, early return on empty strip).
+  `cargo check` green; behavioral test still RED (nothing calls it yet — see 3.3).
 
-- [ ] 3.4 [GREEN] Add strip sub-navigation branches in `ui/panel/PanelRoot.slint` Left/Right dispatch (lines 484–500). When `borders-focused-index >= borders-list-len` and `(borders-focused-index - borders-list-len) == 3`, forward arrows to `borders.strip-cycle(1)` (Right) or `borders.strip-cycle(-1)` (Left) instead of jumping panels. Test MUST pass. [f: `ui/panel/PanelRoot.slint`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
+- [x] 3.3 [RED] Verify PanelRoot forwards Left/Right to `strip-cycle` when `local-focus == 3`. Add test assertion in `borders_strip_keyboard_sub_navigation` that checks PanelRoot dispatch. Test MUST fail (PanelRoot doesn't check for strip stop). [f: `src/shell/ui_tests.rs`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
 
-- [ ] 3.5 Update `BordersTunePane tune-enter()` (lines 2028–2091): add strip stop handling at index 3 — when `local == 3 && root.slot-count > 0`, set `root.editing-slot = root.strip-active-chip` and return 1. Remove old per-slot engage+enter paths (`local >= 3 && local < 3 + n && root.engaged-slider == local`). The strip stop is NEVER engaged. [f: `ui/panel/sections/BordersSection.slint`]
+  RED observed 2026-09-19 (after 3.2, `cargo check` green): same failure —
+  `Right must move the ring from chip 1 to chip 2 — left: Some(0), right: Some(1)`.
+  The function exists but PanelRoot never calls it, so Right on the strip stop is
+  still a no-op. The Right/Left ring assertions in the test ARE the dispatch check.
 
-- [ ] 3.6 Update `adjust-slider()` (lines 1894–2023): remove the old per-slot branch `if (e >= 3 && e < 3 + n) { ... next-token ... }` — the strip is never engaged, so this path is dead. Update glow index references from `6 + n` / `7 + n` / `8 + n` / `9 + n` to fixed constants `7` / `8` / `9` / `10` (matching new index map). [f: `ui/panel/sections/BordersSection.slint`]
+- [x] 3.4 [GREEN] Add strip sub-navigation branches in `ui/panel/PanelRoot.slint` Left/Right dispatch (lines 484–500). When `borders-focused-index >= borders-list-len` and `(borders-focused-index - borders-list-len) == 3`, forward arrows to `borders.strip-cycle(1)` (Right) or `borders.strip-cycle(-1)` (Left) instead of jumping panels. Test MUST pass. [f: `ui/panel/PanelRoot.slint`] [t: `cargo test borders_strip_keyboard_sub_navigation`]
 
-- [ ] 3.7 Update all tune-local index properties (lines 118–146) to fixed constants:
+  GREEN observed 2026-09-19 for the dispatch half: all 7 ring assertions pass
+  (Right 0→1→2→0 wraps, Left 0→2→1→0). The test as a whole still fails on the
+  Enter assertion (`editing-slot` -1 vs 0) — that is 3.5's scope. Also updated the
+  stale tune-order comment (`slots` → `strip`).
+
+- [x] 3.5 Update `BordersTunePane tune-enter()` (lines 2028–2091): add strip stop handling at index 3 — when `local == 3 && root.slot-count > 0`, set `root.editing-slot = root.strip-active-chip` and return 1. Remove old per-slot engage+enter paths (`local >= 3 && local < 3 + n && root.engaged-slider == local`). The strip stop is NEVER engaged. [f: `ui/panel/sections/BordersSection.slint`]
+
+  Done 2026-09-19 on `BordersSection.tune-enter` (the function lives on the section,
+  same as the rest of the keyboard model): strip branch first, per-slot engage+enter
+  branch removed, glow engaged-picker paths 8+n/9+n → fixed 9/10, add/remove/glow-toggle
+  3+n/4+n/5+n → fixed 4/5/6, base 10+n/6+n → 11/7. `cargo test
+  borders_strip_keyboard_sub_navigation` green (Enter sets editing-slot 0, Esc → -1).
+
+- [x] 3.6 Update `adjust-slider()` (lines 1894–2023): remove the old per-slot branch `if (e >= 3 && e < 3 + n) { ... next-token ... }` — the strip is never engaged, so this path is dead. Update glow index references from `6 + n` / `7 + n` / `8 + n` / `9 + n` to fixed constants `7` / `8` / `9` / `10` (matching new index map). [f: `ui/panel/sections/BordersSection.slint`]
+
+  Done 2026-09-19: per-slot branch removed (with a comment noting why), glow
+  6+n/7+n/8+n/9+n → 7/8/9/10, base 10+n/6+n → 11/7, now-unused `let n` dropped,
+  doc comment updated. All `borders_` tests still green after the change.
+
+- [x] 3.7 Update all tune-local index properties (lines 118–146) to fixed constants:
   ```
   idx-add = 4, idx-remove = 5, idx-glow-en = 6, idx-glow-range = 7,
   idx-glow-power = 8, idx-glow-color = 9, idx-glow-inactive = 10,
@@ -95,7 +126,18 @@ Chain strategy: feature-branch-chain
   ```
   All downstream `idx-a0-*`, `idx-a1-*`, `idx-a2-*`, `base-tail`, `idx-rule`, `idx-save-name`, `idx-save-btn` recompute from fixed base. [f: `ui/panel/sections/BordersSection.slint`]
 
-- [ ] 3.8 Update keyboard hint text in `BordersTunePane` (if any references `N slots` or per-slot descriptions). Strip description: "←→ select gradient colour, Enter to edit, Esc to close." [f: `ui/panel/sections/BordersSection.slint`]
+  Done 2026-09-19: roots fixed as specified (downstream properties untouched —
+  they all derive from `base-anim`). This is what makes
+  `borders_tune_full_focus_reaches_last_and_middle` coherent: its middle = 1+6
+  (glow-en) and last = 1+tune-1 (save button) now match the real layout, and the
+  test passes meaningfully. Also fixed the stale `tune-count` comment
+  (`N slots` → `strip`).
+
+- [x] 3.8 Update keyboard hint text in `BordersTunePane` (if any references `N slots` or per-slot descriptions). Strip description: "←→ select gradient colour, Enter to edit, Esc to close." [f: `ui/panel/sections/BordersSection.slint`]
+
+  Done 2026-09-19: the strip description Text now reads exactly that. No other
+  per-slot hint text existed (the remaining "slots" strings are chip-count labels
+  and editing-index-space logic, both intentionally untouched).
 
 ## Phase 4: Animation + Render Verification (PR 4)
 

@@ -5521,6 +5521,144 @@ fn borders_strip_compact_rows_height() {
     println!("compact inactive row: top={top} height={height}px");
 }
 
+/// Which strip chip (0-based) currently carries the icy active-chip ring, if
+/// exactly one does. Each chip paints its resolved colour as a 16×16 swatch;
+/// the ring is the icy border around one swatch bbox (same ±40 tolerance and
+/// >30px threshold as the chip-count test, so the numeric label ink, ~58 away
+/// on red, never reads as a ring).
+fn strip_ring_chip(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    n: usize,
+) -> Option<usize> {
+    let mut found = None;
+    for i in 0..n {
+        let (x0, y0, x1, y1) = exact_color_bbox(buf, CHIP_COLORS[i], 8)?;
+        let ring = count_color_in_box(
+            buf,
+            ICY,
+            40,
+            x0.saturating_sub(14),
+            y0.saturating_sub(14),
+            x1 + 14,
+            y1 + 14,
+        );
+        if ring > 30 {
+            if found.is_some() {
+                return None; // ambiguous: more than one chip ringed
+            }
+            found = Some(i);
+        }
+    }
+    found
+}
+
+/// R8/R9 — the strip is ONE keyboard stop (tune-local 3) with internal ←/→
+/// sub-navigation: Right/Left cycle `strip-active-chip` with wrap, Enter opens
+/// the picker for the active chip, Esc closes it. Driven through the
+/// production path (real key events into PanelRoot's FocusScope), so the
+/// Left/Right assertions also prove the PanelRoot strip dispatch (3.3/3.4):
+/// without forwarding, Right on a tune stop is a no-op and the ring never moves.
+#[test]
+fn borders_strip_keyboard_sub_navigation() {
+    use slint::{ComponentHandle as _, platform::Key};
+    // 3 chips, 1 preset card: list-len 1, so the strip stop is global index 4
+    // (card 0, size 1, angle 2, inactive 3, strip 4).
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
+
+    // Walk Down from card 0 onto the strip stop.
+    for _ in 0..4 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    focus_settle();
+    let at_strip = win.window().take_snapshot().expect("strip focused snapshot");
+    save_slice_png(
+        at_strip.clone(),
+        "/tmp/opencode/borders_strip_kbd_focused.png",
+    );
+    assert_eq!(
+        strip_ring_chip(&at_strip, 3),
+        Some(0),
+        "the strip must open with the ring on chip 1 (index 0)"
+    );
+
+    // Right cycles 0 → 1 → 2 → 0 (wraps); Left cycles back.
+    focus_press_key(&win, Key::RightArrow);
+    focus_settle();
+    let right1 = win.window().take_snapshot().expect("strip right-1 snapshot");
+    assert_eq!(
+        strip_ring_chip(&right1, 3),
+        Some(1),
+        "Right must move the ring from chip 1 to chip 2"
+    );
+
+    focus_press_key(&win, Key::RightArrow);
+    focus_settle();
+    let right2 = win.window().take_snapshot().expect("strip right-2 snapshot");
+    assert_eq!(
+        strip_ring_chip(&right2, 3),
+        Some(2),
+        "Right must move the ring from chip 2 to chip 3"
+    );
+
+    focus_press_key(&win, Key::RightArrow);
+    focus_settle();
+    let wrapped = win.window().take_snapshot().expect("strip wrap snapshot");
+    save_slice_png(
+        wrapped.clone(),
+        "/tmp/opencode/borders_strip_kbd_wrapped.png",
+    );
+    assert_eq!(
+        strip_ring_chip(&wrapped, 3),
+        Some(0),
+        "Right on the last chip must wrap the ring back to chip 1"
+    );
+
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let left_wrap = win.window().take_snapshot().expect("strip left-wrap snapshot");
+    assert_eq!(
+        strip_ring_chip(&left_wrap, 3),
+        Some(2),
+        "Left on chip 1 must wrap the ring to the last chip"
+    );
+
+    // Back to chip 1: 2 →(Left)→ 1 →(Left)→ 0.
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let back = win.window().take_snapshot().expect("strip back-to-first snapshot");
+    assert_eq!(
+        strip_ring_chip(&back, 3),
+        Some(0),
+        "two more Left presses must return the ring to chip 1"
+    );
+
+    // Enter on the strip opens the picker for the active chip (index 0).
+    // The strip is NEVER engaged: tune-enter handles it internally (returns 1).
+    focus_press_key(&win, Key::Return);
+    focus_settle();
+    assert_eq!(
+        win.get_tune_editing_slot(),
+        0,
+        "Enter on the strip must open the picker for the active chip"
+    );
+    let open = win.window().take_snapshot().expect("strip picker-open snapshot");
+    save_slice_png(
+        open.clone(),
+        "/tmp/opencode/borders_strip_kbd_picker_open.png",
+    );
+
+    // Esc closes the picker; the strip stays put.
+    focus_press_key(&win, Key::Escape);
+    focus_settle();
+    assert_eq!(
+        win.get_tune_editing_slot(),
+        -1,
+        "Esc must close the picker"
+    );
+}
+
 
 /// Borders tune pane renders dynamic color slots, angle control, and descriptions.
 /// This is the U3a visual verification test — it mounts the rebuilt pane and
