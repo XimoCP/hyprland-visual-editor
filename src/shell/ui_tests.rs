@@ -5897,6 +5897,81 @@ fn borders_strip_keyboard_sub_navigation() {
     );
 }
 
+/// Q1 — `strip-active-chip` used to be kept in range only by `strip-cycle`
+/// (←/→ while the strip stop owns the cursor). Shrinking the slot count clamped
+/// nothing, so with the ring on chip 8 the ring vanished when a slot was
+/// removed and Enter on the strip still opened the picker for the stale index —
+/// a channel every write path (the `channel-name` label, `editing-value`, the
+/// token row's `choose-token`) then dropped through its bounds check, and
+/// `set-custom` ended in its silent `else { return; }`. Clamp where the count
+/// changes and bound again at the point of use; an open picker on a slot that
+/// disappears must close rather than linger on a dead channel.
+#[test]
+fn borders_strip_ring_and_picker_clamp_when_slots_shrink() {
+    use slint::{ComponentHandle as _, ModelRc, platform::Key, SharedString, VecModel};
+    let win = borders_tune_pane_fixture(&[
+        "p:primary",
+        "p:secondary",
+        "p:tertiary",
+        "p:error",
+        "p:surface",
+        "p:surface_lowest",
+        "p:primary",
+        "p:secondary",
+    ]);
+
+    // Walk onto the strip stop (1 card + tune-local 0..3) and wrap the ring
+    // from chip 1 to the LAST chip (index 7).
+    for _ in 0..4 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    focus_settle();
+    focus_press_key(&win, Key::LeftArrow);
+    focus_settle();
+    let before = win.window().take_snapshot().expect("ring on the last chip");
+    assert_eq!(
+        strip_ring_chip(&before, 8),
+        Some(7),
+        "the ring must start on the last chip"
+    );
+
+    // Shrink the slot count under the ring (remove slot / smaller preset).
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    focus_settle();
+
+    let after = win.window().take_snapshot().expect("ring clamped");
+    save_slice_png(after.clone(), "/tmp/opencode/borders_strip_ring_clamped.png");
+    assert_eq!(
+        strip_ring_chip(&after, 2),
+        Some(1),
+        "shrinking the slot count must clamp the ring onto a chip that still exists"
+    );
+
+    // Enter must open the picker for the chip the ring now holds, never for the
+    // stale index 7 that no write path accepts.
+    focus_press_key(&win, Key::Return);
+    focus_settle();
+    let slot = win.get_tune_editing_slot();
+    assert!(
+        (0..2).contains(&slot),
+        "Enter on the strip must open an existing chip's picker (slot={slot})"
+    );
+
+    // A picker already open on a slot that then disappears must close, not
+    // linger on a channel whose edits would be dropped.
+    win.set_tune_color_count(1);
+    focus_settle();
+    assert_eq!(
+        win.get_tune_editing_slot(),
+        -1,
+        "shrinking below the open chip must close the picker"
+    );
+}
+
 
 /// Borders tune pane renders dynamic color slots, angle control, and descriptions.
 /// This is the U3a visual verification test — it mounts the rebuilt pane and

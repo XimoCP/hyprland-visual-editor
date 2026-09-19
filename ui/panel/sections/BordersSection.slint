@@ -2266,7 +2266,10 @@ export component BordersSection inherits Rectangle {
         // active chip directly (R9). PanelRoot sees the 1 and leaves
         // engaged-slider at -1, so ←/→ keep cycling chips afterwards.
         if (local == 3 && root.tune-n > 0) {
-            root.editing-slot = root.strip-active-chip;
+            // Bound at the point of use too (Q1): the count can have shrunk
+            // since the ring moved, and an out-of-range chip has no picker to
+            // open, so never hand its stale index to `editing-slot`.
+            root.editing-slot = clamp(root.strip-active-chip, 0, root.tune-n - 1);
             return 1;
         }
         // A colour stop is a slider-like stop (PanelRoot engages it, arrows
@@ -2360,6 +2363,28 @@ export component BordersSection inherits Rectangle {
     public function strip-cycle(delta: int) {
         if (root.tune-n <= 0) { return; }
         root.strip-active-chip = mod(root.strip-active-chip + delta + root.tune-n, root.tune-n);
+    }
+
+    // Q1: the slot count is the only thing that can shrink the strip, and it
+    // can shrink while the ring sits on a now-gone chip (remove slot, or load
+    // a preset with fewer colours). Nothing clamped `strip-active-chip`, so
+    // the ring vanished and Enter on the strip still opened the picker for the
+    // stale index — a channel every write path then dropped (the label fell
+    // back to "this colour", `editing-value` returned "", `choose-token`
+    // matched no branch and `set-custom` hit its silent `else { return; }`).
+    // Clamp here, where the count changes; `tune-enter` bounds again at the
+    // point of use.
+    changed tune-color-count => {
+        let n = clamp(root.tune-color-count, 0, 8);
+        if (root.strip-active-chip >= n) {
+            root.strip-active-chip = n > 0 ? n - 1 : 0;
+        }
+        // A picker left open on a gradient slot that just disappeared must
+        // close: indices 8/9/10 are the inactive / glow / glow-inactive
+        // channels and are not slot-bound, so only 0..7 are affected.
+        if (root.editing-slot >= 0 && root.editing-slot < 8 && root.editing-slot >= n) {
+            root.editing-slot = -1;
+        }
     }
 
     // Cycle one animation leaf's bezier or style. Mouse and keyboard share this
