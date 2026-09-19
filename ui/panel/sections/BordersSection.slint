@@ -200,8 +200,10 @@ component BordersTunePane inherits Rectangle {
 
     // ── Picker keyboard command channel (task 3.7) ────────────────
     // Forwarded straight down to the picker, which owns the actual controls.
-    // The picker card itself is `visible`-toggled (never `if`-created) so this
-    // element exists for the whole life of the pane and can always be called.
+    // The picker card itself is ALWAYS mounted — a 0px-tall, 0-opacity
+    // Rectangle that expands through a `states`/`transitions` block, never
+    // `visible`-toggled and never `if`-created — so this element exists for
+    // the whole life of the pane and can always be called.
     in property <int> picker-cmd: 0;
     in property <int> picker-cmd-kind: 0;
 
