@@ -288,6 +288,72 @@ _hve_try_matugen() {
     return 1
 }
 
+# --- Tertiary completion (a missing tertiary must never alias the secondary) ---
+# The active scheme may expose only primary/secondary — Noctalia v5's wallpaper
+# templates render no tertiary (verified live). Aliasing the secondary painted
+# the strip with two identical chips, which reads as a render bug. Resolve the
+# third role from a REAL source of the SAME scheme, in preference order, and
+# only then fall back to a documented, distinct colour:
+#
+#   1. (already covered) the Noctalia palette path sets HVE_TERTIARY directly.
+#   2. The v4 palette file, ACCEPTED ONLY when its primary agrees with the
+#      detected primary: a v4 file left over from an older scheme must not leak
+#      its tertiary into the current one (this machine has exactly that case).
+#   3. A shell-generated terminal template of the current scheme: its color4
+#      is the palette's 4th accent — the third role after primary (color2) and
+#      secondary (color3). Verified live as the coherent violet #9e70d6.
+#   4. HVE_TERTIARY_FALLBACK (see hve_load_colors) — documented, distinct.
+_hve_tertiary_from_v4_palette() {
+    local v4="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
+    [ -f "$v4" ] || return 1
+
+    local v4_vars v4_primary v4_tertiary
+    v4_vars=$(_hve_extract_lua_vars "$v4")
+    v4_primary=$(printf '%s\n' "$v4_vars" | grep '^HVE_PRIMARY=' | head -1)
+    v4_primary="${v4_primary#HVE_PRIMARY=}"
+
+    # Coherence gate: skip a palette whose primary is a different scheme.
+    if [ -n "$v4_primary" ] && [ -n "$HVE_PRIMARY" ] && [ "$v4_primary" != "$HVE_PRIMARY" ]; then
+        echo "[HVE] Skipping stale v4 palette (primary $v4_primary != $HVE_PRIMARY)" >&2
+        return 1
+    fi
+
+    v4_tertiary=$(printf '%s\n' "$v4_vars" | grep '^HVE_TERTIARY=' | head -1)
+    v4_tertiary="${v4_tertiary#HVE_TERTIARY=}"
+    [ -n "$v4_tertiary" ] && echo "$v4_tertiary" && return 0
+    return 1
+}
+
+_hve_tertiary_from_terminal_template() {
+    local candidate hex
+    for candidate in \
+        "$HOME/.config/kitty/themes/noctalia.conf" \
+        "$HOME/.config/kitty/current-theme.conf"
+    do
+        [ -f "$candidate" ] || continue
+        hex=$(grep -E '^[[:space:]]*color4[[:space:]]+' "$candidate" 2>/dev/null \
+            | head -1 | grep -oE '[0-9a-fA-F]{6}' | head -1)
+        hex=$(_hve_normalize_color "$hex")
+        [ -n "$hex" ] && echo "$hex" && return 0
+    done
+    return 1
+}
+
+# Only fills HVE_TERTIARY when the detection chain left it empty.
+_hve_complete_tertiary() {
+    [ -n "$HVE_TERTIARY" ] && return 0
+
+    local resolved
+    resolved=$(_hve_tertiary_from_v4_palette) && HVE_TERTIARY="$resolved" && return 0
+    resolved=$(_hve_tertiary_from_terminal_template) && HVE_TERTIARY="$resolved" && return 0
+    return 1
+}
+
+# Documented fallback when no real tertiary source exists at all. Catppuccin
+# Mocha teal, deliberately distinct from the primary (#cba6f7) and secondary
+# (#89b4fa) fallbacks below, and never a silent alias of either.
+HVE_TERTIARY_FALLBACK="#94e2d5"
+
 # Manual/fallback: scan hypr config files
 _hve_try_manual() {
     echo "[HVE] Colors from: manual config scan" >&2
@@ -343,10 +409,14 @@ hve_load_colors() {
     _hve_try_matugen ||
     _hve_try_manual
 
-    # Final fallbacks
+    # A scheme with no tertiary gets one from a real same-scheme source when
+    # one exists (see _hve_complete_tertiary). Only when nothing exists do the
+    # final fallbacks run — and the tertiary fallback is its OWN documented
+    # colour, never the secondary's.
+    _hve_complete_tertiary || true
     : "${HVE_PRIMARY:=#cba6f7}"
     : "${HVE_SECONDARY:=#89b4fa}"
-    : "${HVE_TERTIARY:=${HVE_SECONDARY}}"
+    : "${HVE_TERTIARY:=${HVE_TERTIARY_FALLBACK}}"
     : "${HVE_SURFACE:=#1e1e2e}"
     : "${HVE_SURFACE_LOWEST:=${HVE_SURFACE}}"
     : "${HVE_ACCENT:=${HVE_PRIMARY}}"

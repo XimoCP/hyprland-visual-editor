@@ -271,6 +271,8 @@ HVE obtiene colores de tu herramienta de theming actual y los aplica tanto a su 
 - `$HVE_SURFACE_LOWEST`
 - `$HVE_ACCENT`
 
+**Tertiary cuando el esquema no lo declara**: los templates de Noctalia v5 pueden no renderizar un `tertiary` (caso `wallpaper`). `colors.sh` lo completa con una fuente real del MISMO esquema, en este orden: paleta Noctalia v5 → paleta v4 (solo si su `primary` coincide con el detectado; una v4 de un esquema anterior se descarta) → template de terminal generado por el shell (su `color4` es el cuarto acento). Solo si ninguna fuente existe se usa un color de reserva documentado (`#94e2d5`). `HVE_TERTIARY` **nunca** toma el valor de `HVE_SECONDARY`.
+
 **Tema de la interfaz**: El binario en Rust (theme.rs) resuelve el tema (oscuro/claro/sistema) y deriva 12 colores Slint usando luminance relativa: fondo, superficie, tarjetas, hover, texto, texto secundario, acentos (cyan, amber, verde, púrpura, rojo) y bordes.
 
 ### Sistema de presets
