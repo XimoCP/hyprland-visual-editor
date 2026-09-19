@@ -257,36 +257,56 @@ impl Controller {
         self.gallery_session
     }
 
+    /// Raise the window: show it if hidden, focus it if already visible.
+    ///
+    /// Idempotent by construction — unlike `toggle_tray`, it never runs the
+    /// hide path, so a repeated call can never hide a visible window. It is
+    /// safe at any moment: while a show is already in flight (Entering) the
+    /// state machine refuses a second `begin_show`, so no composer dispatch is
+    /// repeated. Backs the IPC `show` command and the second-launch handoff.
+    ///
+    /// Returns true when the hidden→shown fast path ran (special workspace),
+    /// false when the window was already visible or the slow path was taken.
+    pub fn show_window(&mut self, win: &crate::MainWindow) -> bool {
+        if !self.window_hidden {
+            // Already visible: bring it forward without touching the state.
+            // This is the difference from toggle_tray, which would hide it.
+            self.composer.focus();
+            return false;
+        }
+        // Show path — machine is the single owner of truth.
+        if !self.begin_show_machine() {
+            // Already Entering/Visible → treat as no-op/refresh, do NOT re-dispatch.
+            return false;
+        }
+        let win_weak = win.as_weak();
+        let fast = self.composer.show(win, self.prev_workspace.as_deref());
+        // If the composer show failed entirely (no hyprctl success and
+        // no fallback), revert machine and take the slow path. The
+        // HyprlandComposer already falls back to show_and_sync internally
+        // and returns false for the slow path, so a true failure is
+        // rare; this branch covers the edge where show reports failure.
+        // For the pure slow path (window not in special), we keep the
+        // existing prewarm/warmup extras and stay in Entering.
+        if !fast {
+            // Slow path extras — legacy prewarm/warmup removed slice 8 (R8).
+            // Panel navigation warms per-section focus via SystemSection/BordersSection FocusScope.
+        }
+        self.window_hidden = false;
+        // Defer fullscreen to settle (focus confirm or timeout). Keep
+        // sync_global_after_show as-is — it is already called inside
+        // HyprlandComposer::show via sync_after_show/show_and_sync.
+        self.schedule_entry_timeout(win_weak);
+        fast
+    }
+
     /// Toggle tray: hides if visible, shows if hidden.
     /// The show path is gated by ShowStateMachine (Hidden→Entering) and
     /// defers fullscreen to the settle path (focus confirm or 1s timeout).
     /// Returns true if the fast path was taken (special workspace transition).
     pub fn toggle_tray(&mut self, win: &crate::MainWindow) -> bool {
         if self.window_hidden {
-            // Show path — machine is the single owner of truth.
-            if !self.begin_show_machine() {
-                // Already Entering/Visible → treat as no-op/refresh, do NOT re-dispatch.
-                return false;
-            }
-            let win_weak = win.as_weak();
-            let fast = self.composer.show(win, self.prev_workspace.as_deref());
-            // If the composer show failed entirely (no hyprctl success and
-            // no fallback), revert machine and take the slow path. The
-            // HyprlandComposer already falls back to show_and_sync internally
-            // and returns false for the slow path, so a true failure is
-            // rare; this branch covers the edge where show reports failure.
-            // For the pure slow path (window not in special), we keep the
-            // existing prewarm/warmup extras and stay in Entering.
-            if !fast {
-                // Slow path extras — legacy prewarm/warmup removed slice 8 (R8).
-                // Panel navigation warms per-section focus via SystemSection/BordersSection FocusScope.
-            }
-            self.window_hidden = false;
-            // Defer fullscreen to settle (focus confirm or timeout). Keep
-            // sync_global_after_show as-is — it is already called inside
-            // HyprlandComposer::show via sync_after_show/show_and_sync.
-            self.schedule_entry_timeout(win_weak);
-            fast
+            self.show_window(win)
         } else {
             // Hide path — record where the window lives before moving it away,
             // so show() can return it to a real workspace later.
@@ -971,5 +991,101 @@ pub(crate) mod tests {
             .filter(|c| c.contains("set_fullscreen"))
             .count();
         assert_eq!(fs, 0, "settle must NOT fullscreen while the settings panel floats");
+    }
+
+    // ── show_window: idempotent raise (single-instance handoff) ────────
+
+    /// `show_window` on an ALREADY-VISIBLE window must bring it forward
+    /// without ever running the hide path. Unlike `toggle_tray`, it never
+    /// flips state, so a repeated raise can never hide a visible window.
+    #[test]
+    fn test_show_window_on_visible_window_is_idempotent_and_never_hides() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        assert!(!controller.window_hidden(), "precondition: the window is visible");
+
+        let fast = controller.show_window(&win);
+        assert!(!fast, "an already-visible show reports the no-dispatch path");
+        assert!(!controller.window_hidden(), "show must never hide a visible window");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["focus"],
+            "an already-visible show must bring the window forward via focus"
+        );
+
+        // A second raise is the same no-op refresh, never a hide.
+        let _ = controller.show_window(&win);
+        assert!(!controller.window_hidden(), "repeated show must keep the window visible");
+        let recorded = calls.lock().unwrap().clone();
+        assert!(
+            !recorded.iter().any(|c| {
+                c.contains("move_to_special") || c.contains("close_special") || c.contains("record_workspace")
+            }),
+            "show must never dispatch the hide sequence, got: {:?}",
+            recorded
+        );
+        assert_eq!(recorded, vec!["focus", "focus"], "repeated show stays a focus refresh");
+    }
+
+    /// The handoff path: a hidden window (tray mode, never mapped) must be
+    /// brought forward with the exact move-then-focus dispatch `toggle_tray`
+    /// uses, and the hidden state must clear.
+    #[test]
+    fn test_show_window_brings_a_hidden_tray_window_forward() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        // Tray mode: the autostarted instance never maps its window and the
+        // controller marks it hidden.
+        controller.set_window_hidden(true);
+        controller.set_tray_mode(true);
+
+        let fast = controller.show_window(&win);
+
+        assert!(fast, "a hidden window is in the special workspace: fast path");
+        assert!(!controller.window_hidden(), "show must clear the hidden state");
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Entering,
+            "show must enter the show state machine"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["move_to_workspace", "focus"],
+            "show must dispatch move-then-focus exactly like toggle_tray's show path"
+        );
+        assert!(controller.tray_mode(), "show must not change the tray-mode decision");
+    }
+
+    /// A show that is already in flight (Entering) must not re-dispatch the
+    /// composer: the second raise is a no-op, so a handoff during the show
+    /// transition can never double-move or double-focus.
+    #[test]
+    fn test_show_window_while_a_show_is_in_flight_does_not_redispatch() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        controller.set_window_hidden(true);
+        let _ = controller.show_window(&win);
+        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+
+        // IPC edge: the hidden flag is forced back while the show is in flight.
+        controller.set_window_hidden(true);
+        calls.lock().unwrap().clear();
+
+        let _ = controller.show_window(&win);
+
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "a show in flight must not re-dispatch, got: {:?}",
+            *calls.lock().unwrap()
+        );
     }
 }

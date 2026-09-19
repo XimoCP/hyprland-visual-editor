@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Debounce: evita que pulsaciones rápidas de SUPER+H saboteen el
 /// roundtrip de Wayland al crear el xdg_toplevel por primera vez.
@@ -58,6 +58,122 @@ fn get_socket_path() -> PathBuf {
     PathBuf::from(runtime).join("hve.sock")
 }
 
+// ─── Second-launch handoff ────────────────────────────────────────────
+//
+// HVE allows a single instance: a second launch never takes the lock and
+// never creates a window. Instead it asks the running instance to raise its
+// window over the same socket the `hve-ipc` client speaks. The wait is
+// bounded so a wedged instance can never hang the launcher.
+
+/// How long the handoff waits for the running instance to answer. Bounds
+/// the whole write/read round-trip so the launcher always terminates.
+pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Exit code when the running instance could not be reached. Never 0: the
+/// launcher reports failure while keeping its single-instance guarantee.
+pub const HANDOFF_FALLBACK_EXIT_CODE: i32 = 1;
+
+/// Result of asking a running instance to raise its window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandoffOutcome {
+    /// The running instance acknowledged the `show`.
+    Shown(String),
+    /// The socket was unreachable, refused, or did not answer in time.
+    Unreachable(String),
+}
+
+/// What the launching process must print and exit with after a lock refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffReport {
+    /// True when the running instance acknowledged the `show`.
+    pub succeeded: bool,
+    /// Process exit code: 0 on success, `HANDOFF_FALLBACK_EXIT_CODE` otherwise.
+    pub exit_code: i32,
+    /// Human message; the caller decides whether it goes to stdout or stderr.
+    pub message: String,
+}
+
+/// Human message when the running instance raised its window.
+pub fn handoff_shown_message() -> String {
+    "Another instance of HVE is already running — its window has been brought forward.".to_string()
+}
+
+/// Human message when the running instance could not be reached. Names both
+/// ways out so the user is never left at a dead end.
+pub fn handoff_fallback_message(detail: &str) -> String {
+    format!(
+        "Another instance of HVE is already running and did not answer ({detail}).\n\
+         Close it with: pkill -x hve\n\
+         Or show its window with: SUPER + H"
+    )
+}
+
+/// Ask a running instance to raise its window over the IPC socket.
+pub fn request_show(path: &Path) -> HandoffOutcome {
+    request_show_with_timeout(path, HANDOFF_TIMEOUT)
+}
+
+/// `request_show` with an explicit bound; tests use a short timeout.
+///
+/// Sends the idempotent `show` command and reads exactly one reply line. Both
+/// the write and the read are bounded by `timeout`, so the launcher always
+/// terminates even when the running instance is wedged. A missing or refusing
+/// socket, a closed connection and a timeout all map to
+/// [`HandoffOutcome::Unreachable`] — the caller keeps the single-instance
+/// guarantee either way.
+pub fn request_show_with_timeout(path: &Path, timeout: Duration) -> HandoffOutcome {
+    let mut stream = match UnixStream::connect(path) {
+        Ok(stream) => stream,
+        Err(e) => return HandoffOutcome::Unreachable(format!("connect failed: {e}")),
+    };
+    let _ = stream.set_write_timeout(Some(timeout));
+    let _ = stream.set_read_timeout(Some(timeout));
+
+    if let Err(e) = stream.write_all(b"show\n") {
+        return HandoffOutcome::Unreachable(format!("send failed: {e}"));
+    }
+
+    let mut line = String::new();
+    let mut reader = BufReader::new(&stream);
+    match reader.read_line(&mut line) {
+        Ok(0) => HandoffOutcome::Unreachable("no response from the running instance".to_string()),
+        Ok(_) => {
+            let reply = line.trim();
+            if reply.starts_with("error") {
+                HandoffOutcome::Unreachable(reply.to_string())
+            } else {
+                HandoffOutcome::Shown(reply.to_string())
+            }
+        }
+        Err(e) => HandoffOutcome::Unreachable(format!("no response: {e}")),
+    }
+}
+
+/// Attempt the handoff against `path` and describe what the launcher must do.
+///
+/// Never creates a window, never touches the lock, never calls
+/// `process::exit`: the caller owns those decisions.
+pub fn handoff_show(path: &Path) -> HandoffReport {
+    match request_show(path) {
+        HandoffOutcome::Shown(_) => HandoffReport {
+            succeeded: true,
+            exit_code: 0,
+            message: handoff_shown_message(),
+        },
+        HandoffOutcome::Unreachable(detail) => HandoffReport {
+            succeeded: false,
+            exit_code: HANDOFF_FALLBACK_EXIT_CODE,
+            message: handoff_fallback_message(&detail),
+        },
+    }
+}
+
+/// Handoff entry point for a second launch: resolve the running instance's
+/// socket and attempt the show.
+pub fn handoff_show_running() -> HandoffReport {
+    handoff_show(&get_socket_path())
+}
+
 // ─── Connection handler ──────────────────────────────────────────────
 
 fn handle_connection(
@@ -92,6 +208,7 @@ fn dispatch_command(
         "next-anim" => cmd_next_anim(window),
         "next-border" => cmd_next_border(window),
         "next-shader" => cmd_next_shader(window),
+        "show" => cmd_show(window),
         "toggle-tray" => cmd_toggle_tray(window),
         "status" => cmd_status(window),
         "quit" => cmd_quit(window),
@@ -207,6 +324,22 @@ fn cmd_next_shader(window: &slint::Weak<crate::MainWindow>) -> String {
             }
             None => "error: invalid shader index".to_string(),
         }
+    }))
+}
+
+/// Idempotent raise: show the window if it is hidden, focus it if it is
+/// already visible. Never hides — unlike `toggle-tray`, which flips state.
+/// Used by the second-launch handoff, so it must be safe at any moment,
+/// including while the instance sits in tray mode or a show is in flight.
+fn cmd_show(window: &slint::Weak<crate::MainWindow>) -> String {
+    format_response(invoke_on_main(window, |win| {
+        if let Some(mut ctrl) = crate::composer::global_controller() {
+            ctrl.show_window(&win);
+        }
+        // Released before the tray refresh, exactly like cmd_toggle_tray: the
+        // menu reads window_hidden through the controller lock.
+        crate::tray::refresh_global_menu();
+        "ok".to_string()
     }))
 }
 
@@ -388,5 +521,232 @@ mod tests {
         // This is the exact format dispatch_command returns for unmatched commands.
         // We test it directly to validate the format string is correct.
         assert_eq!(expected, "error: unknown command 'no-such-command'\n");
+    }
+
+    // ── Second-launch handoff (client side) ──────────────────────────
+    //
+    // The handoff is exercised against a scripted Unix socket server: this
+    // proves the wire contract (the launcher sends exactly `show` and reads
+    // the reply with a bounded wait) without a live Slint event loop.
+
+    /// Bind a throwaway Unix socket under a temp dir. The returned `TempDir`
+    /// must be kept alive for the socket path to stay valid.
+    fn scripted_socket() -> (tempfile::TempDir, UnixListener, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("hve.sock");
+        let listener = UnixListener::bind(&path).expect("bind scripted socket");
+        (dir, listener, path)
+    }
+
+    /// Accept one connection with a deadline. Returns `None` when nothing
+    /// connects in time, so a regressed (never-connecting) client fails the
+    /// assertion instead of hanging the test suite.
+    fn accept_bounded(listener: &UnixListener, timeout: Duration) -> Option<UnixStream> {
+        listener.set_nonblocking(true).expect("listener nonblocking");
+        let deadline = Instant::now() + timeout;
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    return Some(stream);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    /// Read one command line from a connection with a deadline.
+    fn read_command(stream: &UnixStream) -> String {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut line = String::new();
+        let mut reader = BufReader::new(stream);
+        let _ = reader.read_line(&mut line);
+        line.trim().to_string()
+    }
+
+    #[test]
+    fn test_request_show_sends_the_show_command_and_reports_success() {
+        let (_dir, listener, path) = scripted_socket();
+        let server = std::thread::spawn(move || {
+            let mut stream = accept_bounded(&listener, Duration::from_secs(2))?;
+            let command = read_command(&stream);
+            let _ = stream.write_all(b"ok\n");
+            let _ = stream.flush();
+            Some(command)
+        });
+
+        let outcome = request_show(&path);
+
+        assert_eq!(
+            outcome,
+            HandoffOutcome::Shown("ok".to_string()),
+            "a positive reply means the running window was raised"
+        );
+        assert_eq!(
+            server.join().expect("server thread"),
+            Some("show".to_string()),
+            "the handoff must connect and send the idempotent `show` command"
+        );
+    }
+
+    #[test]
+    fn test_request_show_reports_unreachable_when_no_socket_exists() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("absent.sock");
+
+        let outcome = request_show_with_timeout(&path, Duration::from_millis(200));
+
+        match outcome {
+            HandoffOutcome::Unreachable(detail) => {
+                assert!(!detail.is_empty(), "the failure detail must be reportable");
+            }
+            HandoffOutcome::Shown(msg) => panic!("expected unreachable, got Shown({msg})"),
+        }
+    }
+
+    #[test]
+    fn test_request_show_reports_unreachable_when_the_instance_refuses() {
+        let (_dir, listener, path) = scripted_socket();
+        let server = std::thread::spawn(move || {
+            let mut stream = accept_bounded(&listener, Duration::from_secs(2))?;
+            let _ = read_command(&stream);
+            let _ = stream.write_all(b"error: event loop not ready\n");
+            let _ = stream.flush();
+            Some(())
+        });
+
+        let outcome = request_show_with_timeout(&path, Duration::from_millis(500));
+
+        match outcome {
+            HandoffOutcome::Unreachable(detail) => {
+                assert!(
+                    detail.contains("error"),
+                    "the server refusal must be surfaced, got: {detail}"
+                );
+            }
+            HandoffOutcome::Shown(msg) => panic!("an error reply must not count as raised, got {msg}"),
+        }
+        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+    }
+
+    #[test]
+    fn test_request_show_reports_unreachable_when_the_instance_closes_without_reply() {
+        let (_dir, listener, path) = scripted_socket();
+        let server = std::thread::spawn(move || {
+            let stream = accept_bounded(&listener, Duration::from_secs(2))?;
+            drop(stream); // close without a reply
+            Some(())
+        });
+
+        let outcome = request_show_with_timeout(&path, Duration::from_millis(500));
+
+        assert!(
+            matches!(outcome, HandoffOutcome::Unreachable(_)),
+            "a connection closed without a reply is not a raised window, got: {outcome:?}"
+        );
+        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+    }
+
+    #[test]
+    fn test_request_show_is_bounded_when_the_instance_never_answers() {
+        let (_dir, listener, path) = scripted_socket();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let stream = accept_bounded(&listener, Duration::from_secs(2))?;
+            // Hold the connection open without answering.
+            let _ = release_rx.recv();
+            drop(stream);
+            Some(())
+        });
+
+        let started = Instant::now();
+        let outcome = request_show_with_timeout(&path, Duration::from_millis(200));
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(outcome, HandoffOutcome::Unreachable(_)),
+            "a silent instance must be reported unreachable, got: {outcome:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "the handoff must be bounded, waited {elapsed:?}"
+        );
+        let _ = release_tx.send(());
+        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+    }
+
+    #[test]
+    fn test_handoff_show_success_reports_exit_zero_and_a_forwarded_message() {
+        let (_dir, listener, path) = scripted_socket();
+        let server = std::thread::spawn(move || {
+            let mut stream = accept_bounded(&listener, Duration::from_secs(2))?;
+            let _ = read_command(&stream);
+            let _ = stream.write_all(b"ok\n");
+            let _ = stream.flush();
+            Some(())
+        });
+
+        let report = handoff_show(&path);
+
+        assert!(report.succeeded, "a positive reply reports success");
+        assert_eq!(report.exit_code, 0, "a successful handoff exits zero");
+        assert!(
+            report.message.contains("brought forward"),
+            "the message must tell the user what happened, got: {}",
+            report.message
+        );
+        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+    }
+
+    #[test]
+    fn test_handoff_show_unreachable_exits_nonzero_and_names_both_exits() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let report = handoff_show(&dir.path().join("absent.sock"));
+
+        assert!(!report.succeeded, "a missing socket is not a success");
+        assert_ne!(report.exit_code, 0, "the launcher must exit non-zero");
+        assert_eq!(report.exit_code, HANDOFF_FALLBACK_EXIT_CODE);
+        assert!(
+            report.message.contains("already running"),
+            "the message must explain the refusal, got: {}",
+            report.message
+        );
+        assert!(
+            report.message.contains("pkill -x hve"),
+            "the message must name how to close the running instance, got: {}",
+            report.message
+        );
+        assert!(
+            report.message.contains("SUPER + H"),
+            "the message must name how to show the running instance, got: {}",
+            report.message
+        );
+    }
+
+    /// `show` must be a routed command. Without a live event loop the handler
+    /// cannot run, so the observable proof is that the dispatcher reaches the
+    /// handler (event-loop error) and not the unknown-command arm.
+    #[test]
+    fn test_dispatch_routes_show_to_its_handler_not_unknown() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().expect("test window");
+        let weak = win.as_weak();
+
+        let response = dispatch_command("show", &weak, std::path::Path::new("."));
+
+        assert!(
+            !response.contains("unknown command"),
+            "`show` must have a dispatcher arm, got: {response}"
+        );
+        assert_eq!(
+            response, "error: event loop not ready\n",
+            "`show` must reach its handler (which needs the event loop), got: {response}"
+        );
     }
 }

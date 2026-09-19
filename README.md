@@ -310,6 +310,7 @@ HVE expone un **servidor Unix socket** en `$XDG_RUNTIME_DIR/hve.sock` (fallback 
 
 | Comando | Función |
 |---------|---------|
+| `show` | Mostrar la ventana principal (idempotente: nunca la oculta) |
 | `toggle-tray` | Mostrar/ocultar la ventana principal |
 | `pause-restart` | Activar/desactivar el sistema |
 | `next-anim` | Siguiente preset de animación |
@@ -605,11 +606,14 @@ hve --tray
 
 Inicia directamente en la bandeja. Todas las funciones están disponibles desde el menú contextual del icono.
 
+HVE admite una sola instancia. Si lanzas una segunda, esta no abre una ventana nueva: pide a la instancia en ejecución que traiga su ventana al frente (comando IPC `show`) y termina. Si la instancia no responde por el socket, la segunda salida falla con un mensaje que indica cómo cerrarla (`pkill -x hve`) o mostrarla (`SUPER + H`).
+
 ### Atajos de teclado (IPC)
 
 Requiere instalar `hve-ipc` durante la instalación. Una vez instalado:
 
 ```bash
+hve-ipc show             # Mostrar ventana (no la oculta)
 hve-ipc toggle-tray      # Mostrar/ocultar ventana
 hve-ipc pause-restart    # Pausar/reanudar sistema
 hve-ipc next-anim        # Siguiente animación

@@ -1071,7 +1071,20 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     if let Err(e) = rustix::fs::flock(&lock_file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
         if e.kind() == std::io::ErrorKind::WouldBlock {
-            tracing::error!("Another instance of HVE is already running.");
+            // Single-instance handoff: another instance owns the lock, so this
+            // process must create NO window and must NOT steal the lock. It
+            // asks the running instance to raise its window over the existing
+            // IPC socket (idempotent `show`) and exits with the report's code.
+            // `handoff_show_running` is bounded internally, so the launcher
+            // always terminates; when the instance cannot be reached it exits
+            // non-zero with both ways out.
+            let report = ipc::handoff_show_running();
+            if report.succeeded {
+                println!("{}", report.message);
+            } else {
+                eprintln!("{}", report.message);
+            }
+            std::process::exit(report.exit_code);
         } else {
             tracing::error!("Failed to acquire exclusive lock: {}", e);
         }
