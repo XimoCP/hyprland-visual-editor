@@ -1230,6 +1230,13 @@ fn main() -> Result<(), slint::PlatformError> {
         tracing::info!("[shell] GallerySlot registered (PR4) replacing StubSlot — i18n Gallery");
         slot
     };
+    // Late-bound SharedState for the gallery apply path: the card-click
+    // wiring below runs BEFORE `state` (AppState) is created, so the
+    // closure cannot capture it directly. Filled right after creation; the
+    // handler refreshes the in-memory preset state from disk after apply.
+    let gallery_state_slot: std::sync::Arc<
+        std::sync::Mutex<Option<crate::app_state::SharedState>>,
+    > = std::sync::Arc::new(std::sync::Mutex::new(None));
     // ── Touch gallery symbols so dead_code warnings disappear via real usage ──
     {
         // Reference every formerly dead-code symbol through a live path.
@@ -1702,6 +1709,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let shell_c = shell.clone();
             let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
+            let gallery_state_c = gallery_state_slot.clone();
             window.on_gallery_card_clicked(move |idx| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-clicked idx={idx}")));
                 if !guard_permits {
@@ -1745,10 +1753,31 @@ fn main() -> Result<(), slint::PlatformError> {
                         // holds it in memory (gallery_tm), cfg carries it on
                         // disk — both managers seed last_applied from cfg, so
                         // the gallery opens on this card instead of index 0.
-                        // (No SharedState in scope here; file-level write.)
+                        // Disk write + late-bound SharedState refresh (the
+                        // gallery_state_slot is filled once AppState exists).
                         let mut cfg = crate::config::Config::load();
                         cfg.last_applied_theme = name.clone();
                         let _ = cfg.save();
+                        // Refresh the in-memory copy from the disk the
+                        // provider apply just wrote: without this AppState.cfg
+                        // still carries the previous manual preset files, so
+                        // the Borders panel would re-seed its marker from the
+                        // manual value and any later in-memory save would
+                        // revert the disk. Lock discipline: the slot guard is
+                        // dropped before the reload, so only the state lock is
+                        // held across its brief load/save — never two locks at
+                        // once, and no engine calls while held (same policy as
+                        // every other SharedState callback).
+                        let shared = gallery_state_c
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+                        if let Some(shared) = shared {
+                            shared
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .reload_config_after_theme(&name);
+                        }
                         let new_rows = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
                             // R3.1: in-place sync — no ModelRc replacement (preserves delegates,
@@ -2202,6 +2231,10 @@ fn main() -> Result<(), slint::PlatformError> {
         (*engine).clone(),
         theme_manager,
     )));
+    // Publish SharedState to the late-bound gallery slot so the card-click
+    // handler (wired before this point) can refresh in-memory preset state
+    // from disk after a gallery apply.
+    *gallery_state_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(state.clone());
     // Re-apply System active on startup — window shows ON via set_system_active,
     // but engine must be enabled too, otherwise restart appears as "not persisted".
     if startup_system_active {

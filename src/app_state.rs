@@ -91,13 +91,19 @@ impl AppState {
     /// Reload the config from disk after a theme apply and mark the theme
     /// as last applied. Returns the freshly loaded config so callers can
     /// sync the UI preset indices against it.
-    #[allow(dead_code)]
+    ///
+    /// Disk is the source of truth here: provider apply writes (e.g. the
+    /// theme's `active_border_file`) go through each provider's own
+    /// `Config::load`/save round-trip, so the in-memory copy is stale at
+    /// this point. The active mark is mirrored into BOTH the reloaded
+    /// config and the in-memory manager before the single save.
     pub fn reload_config_after_theme(&mut self, name: &str) -> Config {
         let updated = Config::load();
-        self.cfg = updated.clone();
+        self.cfg = updated;
         self.cfg.last_applied_theme = name.to_string();
+        self.theme_manager.last_applied = name.to_string();
         let _ = self.cfg.save();
-        updated
+        self.cfg.clone()
     }
 
     /// Mark a theme as the active one after a successful apply: mirror the
@@ -105,10 +111,13 @@ impl AppState {
     /// marks via `refresh_theme_list`) and the on-disk config (seeds
     /// `last_applied` for BOTH managers on the next startup, so the gallery
     /// opens on the active card instead of falling back to index 0).
+    ///
+    /// Reload-first: saving the stale in-memory copy blindly would FULL
+    /// overwrite the disk and revert the theme's preset files (e.g.
+    /// `active_border_file`) to the previous manual values, so this
+    /// reuses `reload_config_after_theme` instead.
     pub fn mark_theme_applied(&mut self, name: &str) {
-        self.theme_manager.last_applied = name.to_string();
-        self.cfg.last_applied_theme = name.to_string();
-        let _ = self.cfg.save();
+        self.reload_config_after_theme(name);
     }
     /// Convenience wrapper: refresh every window visual that depends on the
     /// engine palette and the given theme preference.

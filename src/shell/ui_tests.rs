@@ -7440,3 +7440,79 @@ fn panel_dead_zone_right_click_never_flips_gallery_card() {
         right.borrow()
     );
 }
+
+// ── Theme-apply state sync (stale-memory disk revert) ─────────────────
+// Defect: applying a theme writes the theme's preset files (e.g.
+// `active_border_file`) to the DISK config through the provider's own
+// Config::load/save round-trip, while the in-memory AppState.cfg still
+// carries the previous MANUAL values. Recording the apply via
+// mark_theme_applied then saved that stale in-memory copy with a FULL
+// overwrite, reverting the disk to the manual border. The Borders panel
+// re-seeds its marker from the in-memory copy, so it re-marked the
+// manual border with no restart in sight.
+#[test]
+#[serial_test::serial]
+fn mark_theme_applied_never_reverts_theme_border_on_disk() {
+    let _env = crate::test_utils::TempEnv::new();
+
+    // Disk holds the theme's border (as left behind by the provider apply).
+    let mut on_disk = crate::config::Config::default();
+    on_disk.active_border_file = "theme-border.ron".to_string();
+    on_disk.save().expect("seed disk config with the theme border");
+
+    // In-memory state still carries the previous MANUAL border.
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let config_dir = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config")))
+        .expect("sandboxed config dir");
+    let tm = crate::theme_manager::ThemeManager::new(&config_dir);
+    let mut stale = crate::config::Config::default();
+    stale.active_border_file = "manual-border.ron".to_string();
+    let mut state = crate::app_state::AppState::new(stale, engine, tm);
+
+    state.mark_theme_applied("SomeTheme");
+
+    // The disk must keep the theme's border — nothing reverts it.
+    let reloaded = crate::config::Config::load();
+    assert_eq!(
+        reloaded.active_border_file, "theme-border.ron",
+        "recording the apply must not revert the disk to the stale manual border"
+    );
+    assert_eq!(
+        reloaded.last_applied_theme, "SomeTheme",
+        "the active mark must still be persisted"
+    );
+    // The in-memory copy must reflect the theme's border, so entering the
+    // Borders section marks the theme's border with no restart.
+    assert_eq!(
+        state.cfg().active_border_file, "theme-border.ron",
+        "in-memory state must refresh from disk after the apply"
+    );
+    assert_eq!(state.cfg().last_applied_theme, "SomeTheme");
+    assert_eq!(state.theme_manager().last_applied, "SomeTheme");
+}
+
+/// The gallery click handler is wired BEFORE SharedState exists, so it
+/// cannot capture it directly — but after a gallery apply the in-memory
+/// preset state is just as stale as in the panel path (same provider
+/// round-trip on disk). It must route through the same disk-first refresh.
+/// A behaviour test is not cheap here: the closure is registered inside
+/// main() and needs the live window, both managers and the slot, so the
+/// wiring is asserted by construction instead.
+#[test]
+fn gallery_apply_refreshes_shared_preset_state_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let handler = main
+        .split("window.on_gallery_card_clicked")
+        .nth(1)
+        .expect("main.rs must wire on_gallery_card_clicked");
+    let handler = handler
+        .split("window.on_gallery_style_selected")
+        .next()
+        .unwrap_or(handler);
+    assert!(
+        handler.contains("reload_config_after_theme"),
+        "the gallery apply path must refresh shared preset state from disk via reload_config_after_theme"
+    );
+}
