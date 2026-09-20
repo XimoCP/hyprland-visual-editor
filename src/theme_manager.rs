@@ -258,7 +258,7 @@ impl ThemeManager {
         if t.len() > 64 {
             return Err("name-too-long".into());
         }
-        if t.contains('/') || t.contains('\\') || t.contains('\0') {
+        if t.contains('/') || t.contains('\\') || t.contains('\0') || t == ".." {
             return Err("name-invalid".into());
         }
         Ok(t.to_string())
@@ -461,6 +461,20 @@ mod tests {
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities::empty()
         }
+    }
+
+    /// Hardening: the theme name becomes a directory name, and provider
+    /// save DELETES stale artifacts inside it — so `".."` escaping the
+    /// themes dir would delete outside the sandbox. It must be rejected;
+    /// legitimate names keep passing and blank names stay rejected.
+    #[test]
+    fn validate_name_rejects_parent_traversal() {
+        assert!(ThemeManager::validate_name("..").is_err());
+        assert!(ThemeManager::validate_name("  ").is_err());
+        assert_eq!(
+            ThemeManager::validate_name("Joker").unwrap(),
+            "Joker".to_string()
+        );
     }
 
     /// Seed `{themes_dir}/{name}/meta.json` and return its path.

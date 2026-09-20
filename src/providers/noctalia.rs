@@ -1,4 +1,5 @@
 use crate::providers::noctalia_runtime::{noctalia_config_dir, noctalia_msg, noctalia_state_dir};
+use crate::providers::wallpaper_authority::{self, SavePlan};
 use crate::providers::shell::NoctaliaV4Paths;
 use crate::providers::shell::ShellProvider;
 use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
@@ -289,6 +290,22 @@ fn generate_terminal_section(scheme: &serde_json::Map<String, serde_json::Value>
             "white": b_white,
         }
     })
+}
+
+/// Remove a stale background artifact, logging failures instead of
+/// swallowing them: a silent failure leaves the wrong background record
+/// behind and the next apply resurrects it. A missing file is the normal
+/// case (nothing stale) and stays quiet.
+fn remove_stale_artifact(path: &Path) {
+    if let Err(e) = fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                "[noctalia-v5] Could not remove stale {}: {}",
+                path.display(),
+                e
+            );
+        }
+    }
 }
 
 // ── NoctaliaV4Provider ───────────────────────────────────────────────
@@ -746,21 +763,46 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        // 3. Save default wallpaper via IPC
-        match noctalia_msg(&["msg", "wallpaper-get"]) {
-            Ok(wp) => {
-                let wp = wp.trim().to_string();
-                if !wp.is_empty() {
-                    fs::write(provider_dir.join("wallpaper.txt"), &wp)
-                        .map_err(|e| format!("Cannot write wallpaper.txt: {}", e))?;
+        // 3. Ask the compositor which background is actually on top (the
+        //    daemon is a secondary signal only), and capture ONLY that one.
+        //    Static -> wallpaper.txt only (drop any stale video manifest);
+        //    video -> manifest only (drop any stale static record).
+        //    Unknown -> keep the legacy capture-everything behaviour so a
+        //    missing/unreachable query never loses data silently.
+        let plan = match wallpaper_authority::query_active_wallpaper_kind() {
+            Ok(kind) => wallpaper_authority::plan_from_kind(Some(kind)),
+            Err(reason) => {
+                tracing::warn!(
+                    "[noctalia-v5] No wallpaper signal ({}); capturing available backgrounds",
+                    reason
+                );
+                SavePlan::Unknown
+            }
+        };
+        let capture_static = matches!(plan, SavePlan::StaticOnly | SavePlan::Unknown);
+        let capture_video = matches!(plan, SavePlan::VideoOnly | SavePlan::Unknown);
+
+        // 4. Save default wallpaper via IPC (static only, unless authority unknown)
+        if capture_static {
+            match noctalia_msg(&["msg", "wallpaper-get"]) {
+                Ok(wp) => {
+                    let wp = wp.trim().to_string();
+                    if !wp.is_empty() {
+                        fs::write(provider_dir.join("wallpaper.txt"), &wp)
+                            .map_err(|e| format!("Cannot write wallpaper.txt: {}", e))?;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[noctalia-v5] Cannot get wallpaper: {}", e);
                 }
             }
-            Err(e) => {
-                tracing::warn!("[noctalia-v5] Cannot get wallpaper: {}", e);
-            }
+        } else {
+            // Authority says video: a stale static record would resurrect the
+            // wrong background, so remove it (re-save does not wipe the dir).
+            remove_stale_artifact(&provider_dir.join("wallpaper.txt"));
         }
 
-        // 4. Save full Noctalia v5 settings (bar, OSD, widgets, layout, everything)
+        // 5. Save full Noctalia v5 settings (bar, OSD, widgets, layout, everything)
         //    v5 stores its settings in ~/.local/state/noctalia/settings.toml, NOT
         //    in ~/.config/noctalia/settings.json (which is a v4 artifact).
         let v5_settings = noctalia_state_dir().map(|d| d.join("settings.toml"));
@@ -772,11 +814,19 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        // 5. Save animated wallpaper manifest (mpvpaper plugin), reference only.
-        //    It is safe to keep going if the plugin has no live assignments.
-        match crate::providers::mpvpaper::save_manifest(&provider_dir) {
-            Ok(()) => {}
-            Err(e) => tracing::warn!("[noctalia-v5] Could not save mpvpaper manifest: {}", e),
+        // 6. Save animated wallpaper manifest (mpvpaper plugin), reference only.
+        //    Only when the authority reports video (or is unreachable): a theme
+        //    saved while static is showing must not carry a video manifest, or
+        //    apply would let the video silently win over the static image.
+        if capture_video {
+            match crate::providers::mpvpaper::save_manifest(&provider_dir) {
+                Ok(()) => {}
+                Err(e) => tracing::warn!("[noctalia-v5] Could not save mpvpaper manifest: {}", e),
+            }
+        } else {
+            // Authority says static: drop any stale manifest (re-save does not
+            // wipe the dir, and a leftover would hijack apply).
+            remove_stale_artifact(&provider_dir.join(crate::providers::mpvpaper::MANIFEST_FILE));
         }
 
         Ok(())
@@ -967,6 +1017,42 @@ mod tests {
         let caps = provider.capabilities();
         assert!(caps.contains(ProviderCapabilities::COLORS));
         assert!(caps.contains(ProviderCapabilities::WALLPAPERS));
+    }
+
+    /// Stale-artifact deletes must not swallow failures: silencing
+    /// remove_file hides a read-only dir or I/O error and the save looks
+    /// clean while the wrong background record survives. Comment lines are
+    /// stripped first so a commented-out delete cannot satisfy this
+    /// (block/trailing comments are not stripped). Needles are built with
+    /// concat() so this test's own source — it lives in the file it
+    /// inspects — can never satisfy them.
+    #[test]
+    fn stale_artifact_deletes_log_failures_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let silent_delete = ["let _", " = fs::remove", "_file"].concat();
+        assert!(
+            !code.contains(&silent_delete),
+            "stale deletes must log their failure instead of silencing it"
+        );
+        let logged_wallpaper =
+            ["remove_stale_artifact", "(&provider_dir.join(\"wallpaper"].concat();
+        let logged_manifest =
+            ["remove_stale_artifact", "(&provider_dir.join(crate"].concat();
+        let warns = ["Could not remove ", "stale"].concat();
+        assert!(
+            code.contains(&logged_wallpaper) && code.contains(&logged_manifest),
+            "both stale deletes (wallpaper.txt, mpvpaper manifest) must go through the logging helper"
+        );
+        assert!(
+            code.contains(&warns),
+            "stale deletes must warn with the path and reason"
+        );
     }
 
     #[test]
