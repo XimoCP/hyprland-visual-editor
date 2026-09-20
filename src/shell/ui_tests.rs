@@ -4750,6 +4750,43 @@ fn borders_mouse_never_touches_focus_by_construction() {
     }
 }
 
+/// The picker card's entry scale (transform-scale-x/y 0.95 -> 1.0) is
+/// GPU-only polish: the headless software renderer used by the render
+/// tests does not implement transforms, so no render test can see it.
+/// This guards the DECLARATION, not the pixels — a silent deletion of
+/// the scale would otherwise be caught by nobody. The rendered pixels
+/// of the scale remain verified by eye on the GPU desktop.
+#[test]
+fn picker_scale_animation_stays_declared_by_construction() {
+    let src = std::fs::read_to_string("ui/panel/sections/BordersSection.slint")
+        .expect("BordersSection.slint must exist");
+    // Comment lines mention transform-scale-x/y in prose (around the R5
+    // block); asserting on the raw text would pass even after the real
+    // declaration is deleted. Strip them first, like the
+    // focus-construction tests above.
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code.contains("animate transform-scale-x"),
+        "BordersSection picker card lost `animate transform-scale-x`: the GPU entry scale must stay declared"
+    );
+    assert!(
+        code.contains("animate transform-scale-y"),
+        "BordersSection picker card lost `animate transform-scale-y`: the GPU entry scale must stay declared"
+    );
+    assert!(
+        code.contains("transform-scale-x: 0.95;"),
+        "BordersSection picker card lost the closed rest value `transform-scale-x: 0.95;`"
+    );
+    assert!(
+        code.contains("transform-scale-x: 1.0;"),
+        "BordersSection picker card lost the open end value `transform-scale-x: 1.0;`"
+    );
+}
+
 /// Filters is presentational: no zone border on the root and NO focus call
 /// — the panel-kbd FocusScope owns all keyboard focus.
 #[test]

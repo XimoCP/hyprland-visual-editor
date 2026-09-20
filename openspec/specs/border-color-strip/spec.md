@@ -139,7 +139,7 @@ When `editing-slot` transitions from ≥ 0 to -1 (picker closes), the picker car
 - The animation MUST NOT animate `viewport-y` of any ScrollView.
 - The picker card MUST remain fully visible when the user scrolls while it is open.
 - The animation MUST NOT cause layout thrash or overflow the render test bounds.
-- `transform-scale-x/y` is a GPU-renderer effect: the headless software renderer used by the render tests does not implement transforms, so no render assertion depends on scale.
+- `transform-scale-x/y` is a GPU-renderer effect: the headless software renderer used by the render tests does not implement transforms (Slint documents no rotations, no scaling, no `drop-shadow-*`, and no `border-radius` with `clip: true`), so no render assertion depends on scale. Accepted 2026-09-20 (change design Open Question #1): the scale stays as GPU-only polish. The declaration is guarded by the construction test `picker_scale_animation_stays_declared_by_construction` in `src/shell/ui_tests.rs`, which fails if the declaration or either endpoint value (`0.95` / `1.0`) is removed or changed; the rendered pixels of the scale remain verified by eye on the GPU desktop.
 
 #### Scenario: Entry animation visible
 
