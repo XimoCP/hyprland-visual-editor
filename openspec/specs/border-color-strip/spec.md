@@ -120,38 +120,41 @@ When the picker closes, the viewport MUST scroll so the strip remains visible.
 
 ### R5 — Picker Entry Animation
 
+The picker card is always mounted inside the `picker-block` VerticalLayout: it collapses and expands by animating its own `height`. Because it is an in-flow layout child, its `y` is owned by the layout and MUST NOT be animated; the expanding height is what moves the strip below, smoothly instead of jumping.
+
 When `editing-slot` transitions from -1 to ≥ 0 (picker opens), the picker card MUST animate in with:
 
+- `height`: 0px → 380px, duration 250ms, easing `ease-in-out-back` (unfold)
 - `opacity`: 0 → 1, duration 250ms, easing `ease-in-out-back`
-- `y`: -8px → 0px, duration 250ms, easing `ease-in-out-back` (slide down from above)
-- `scale-x`: 0.95 → 1.0, duration 250ms, easing `ease-in-out-back`
-- `scale-y`: 0.95 → 1.0, duration 250ms, easing `ease-in-out-back`
+- `transform-scale-x`: 0.95 → 1.0, duration 250ms, easing `ease-in-out-back`
+- `transform-scale-y`: 0.95 → 1.0, duration 250ms, easing `ease-in-out-back`
 
 When `editing-slot` transitions from ≥ 0 to -1 (picker closes), the picker card MUST animate out with:
 
-- `opacity`: 1 → 0, duration 180ms, easing `ease-in`
-- `y`: 0px → -8px, duration 180ms, easing `ease-in` (slide up and fade)
+- `height`: 380px → 0px, duration 150ms, easing `ease-in`
+- `opacity`: 1 → 0, duration 150ms, easing `ease-in`
 
 **Constraints:**
 
 - The animation MUST NOT animate `viewport-y` of any ScrollView.
 - The picker card MUST remain fully visible when the user scrolls while it is open.
 - The animation MUST NOT cause layout thrash or overflow the render test bounds.
+- `transform-scale-x/y` is a GPU-renderer effect: the headless software renderer used by the render tests does not implement transforms, so no render assertion depends on scale.
 
 #### Scenario: Entry animation visible
 
 - GIVEN the picker is closed
 - WHEN the user clicks a chip
 - THEN the picker card fades in from opacity 0 to 1 over ~250ms
-- AND the card slides down from -8px to 0px
+- AND the card unfolds from height 0px to 380px
 - AND the card scales from 0.95 to 1.0 on both axes
 
 #### Scenario: Exit animation visible
 
 - GIVEN the picker is open
 - WHEN the user clicks "Done"
-- THEN the picker card fades out from opacity 1 to 0 over ~180ms
-- AND the card slides up from 0px to -8px
+- THEN the picker card fades out from opacity 1 to 0 over ~150ms
+- AND the card collapses from height 380px to 0px
 
 #### Scenario: Animation does not affect viewport-y
 
