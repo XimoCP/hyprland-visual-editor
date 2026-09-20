@@ -15,6 +15,34 @@
 //! (e.g. `mpvpaper`) is video by nature, no daemon needed. Anything else
 //! is unknown: no deletion, legacy capture, warn with namespace + pid.
 //!
+//! Background-capable levels are `"0"` (background) and `"1"` (bottom):
+//! verified live, skwd static images and mpvpaper videos paint at level 0
+//! while skwd's own video renderer (`skwd-wall-vk`) paints at level 1.
+//! Higher level wins; within a level, the later entry wins. Level 1 also
+//! carries small Noctalia desktop widgets and level 2 bars/docks, so a
+//! layer only counts as a background candidate when it is opaque AND
+//! covers essentially its whole output (see [`BG_COVERAGE_PERCENT`]):
+//! size is RELATIVE to the output — the compositor reports layers in
+//! scaled logical pixels (a 1920x1080 output at 200% paints a 960x540
+//! layer), so no absolute pixel constant can decide this. Smaller layers
+//! are furniture and can neither win nor veto. A fullscreen unknown
+//! painter where a background could be still vetoes — it is never
+//! silently ignored. When no output reference can be established
+//! (monitors unreachable, daemon silent about sizes), opaque layers are
+//! kept and the gap is logged — a real background is never excluded
+//! silently.
+//!
+//! Video identity is structural, never positional: for skwd-suite layers
+//! the daemon's `current` for the same output comes first (it names the
+//! video the suite was told to render); otherwise the media path that
+//! follows the painter argv's `*` output marker is the current video
+//! (verified for `mpvpaper` and `skwd-wall-vk`). The previous background
+//! rides behind `--transition-from`, so "last media path" would pick the
+//! old video on a video-to-video switch; an argv that stays ambiguous
+//! (no marker with several candidates, several markers) vetoes instead of
+//! guessing. mpvpaper's on-disk state file is NOT consulted: it survives the
+//! plugin's death and still names the previous video.
+//!
 //! KNOWN LIMITATION (round-3 verification): a skwd-suite layer is typed by
 //! the daemon's `type`, and that field can lag — the daemon's `current` is
 //! provably stale at times (it reported one image while the painted layer
@@ -49,6 +77,7 @@
 //! never data.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -80,6 +109,12 @@ pub struct AuthorityOutput {
     pub kind: WallpaperKind,
     pub connected: bool,
     pub current: String,
+    /// Logical size of the output as reported by the daemon
+    /// (`logical_width` / `logical_height`, falling back to
+    /// `width` / `height` when the logical fields are absent or zero).
+    /// `0` means unknown — never used as a size reference.
+    pub logical_width: u32,
+    pub logical_height: u32,
 }
 
 /// What theme save must capture for the background.
@@ -116,6 +151,16 @@ struct AuthorityEntry {
     /// dropping an output we cannot classify would silently lose data.
     #[serde(default = "connected_default")]
     connected: bool,
+    /// Second size reference for the relative-fullscreen check (D3).
+    /// Absent means unknown (0), never a guess.
+    #[serde(default)]
+    logical_width: u32,
+    #[serde(default)]
+    logical_height: u32,
+    #[serde(default)]
+    width: u32,
+    #[serde(default)]
+    height: u32,
 }
 
 fn connected_default() -> bool {
@@ -155,11 +200,25 @@ pub fn parse_authority_outputs(json: &str) -> Result<Vec<AuthorityOutput>, Strin
                 .current
                 .or(e.path)
                 .unwrap_or_default();
+            // Logical size first, physical size as fallback, zero when
+            // neither is known (never a reference then).
+            let logical_width = if e.logical_width > 0 {
+                e.logical_width
+            } else {
+                e.width
+            };
+            let logical_height = if e.logical_height > 0 {
+                e.logical_height
+            } else {
+                e.height
+            };
             Ok(AuthorityOutput {
                 name,
                 kind,
                 connected: e.connected,
                 current,
+                logical_width,
+                logical_height,
             })
         })
         .collect()
@@ -267,23 +326,83 @@ pub fn classify_painter(namespace: &str, proc_name: Option<&str>) -> Option<Wall
     }
 }
 
+/// Logical size of one output, in the compositor's (scaled logical pixel)
+/// coordinate space — the same space `hyprctl -j layers` reports `w`/`h`
+/// in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Bounded wait for one `hyprctl -j monitors` call: the primary output-size
+/// reference. Expires into the daemon-logical fallback, never a hang.
+pub const MONITORS_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// How much of the output a layer must cover in BOTH dimensions to count
+/// as a background (percent). 90% leaves slack for rounding between the
+/// compositor's scaled logical geometry and the references, while bars,
+/// docks and desktop widgets — which hug one edge and collapse on the
+/// other axis — never come close.
+pub const BG_COVERAGE_PERCENT: u32 = 90;
+
+/// True when a layer entry can be a background: opaque AND covering
+/// essentially the whole output (`reference`). Small opaque layers
+/// (desktop widgets, bars, docks) are furniture: they can neither win the
+/// decision nor veto it. With no reference (`None`) the layer is kept —
+/// excluding it would be a silent veto of a possibly real background, so
+/// the gap is logged instead and the decision stays honest downstream.
+fn is_background_candidate(alpha: f32, w: u32, h: u32, reference: Option<OutputSize>) -> bool {
+    if alpha <= 0.0 {
+        return false;
+    }
+    match reference {
+        Some(r) if r.width > 0 && r.height > 0 => {
+            (w as u64) * 100 >= (r.width as u64) * (BG_COVERAGE_PERCENT as u64)
+                && (h as u64) * 100 >= (r.height as u64) * (BG_COVERAGE_PERCENT as u64)
+        }
+        _ => {
+            tracing::warn!(
+                "[wallpaper] No output-size reference; keeping {}x{} opaque layer \
+                 instead of excluding it silently",
+                w,
+                h,
+            );
+            true
+        }
+    }
+}
+
+/// Background-capable compositor levels, lowest first: `"0"` (background)
+/// < `"1"` (bottom). Verified live on the keeper's machine: skwd static
+/// images (`skwd-paper`) and mpvpaper videos paint at 0, skwd's own video
+/// renderer (`skwd-wall-vk`) paints at 1. Levels 2 (top) and 3 (overlay)
+/// carry bars, docks and overlay UI — never backgrounds.
+const BACKGROUND_LEVELS: [&str; 2] = ["0", "1"];
+
 /// One background layer entry from `hyprctl -j layers`. Only `alpha`,
-/// `namespace` and `pid` matter here; the rest is ignored. A missing
-/// `alpha` defaults to 0.0 (transparent): unconfirmed opacity is not
-/// trusted, the entry is skipped rather than guessed.
+/// geometry (`w`, `h`), `namespace` and `pid` matter here; the rest is
+/// ignored. A missing `alpha` defaults to 0.0 (transparent) and missing
+/// geometry to 0x0: unconfirmed opacity or size is not trusted, the entry
+/// is skipped rather than guessed.
 #[derive(Debug, Deserialize)]
 struct LayerEntry {
     #[serde(default)]
     alpha: f32,
+    #[serde(default)]
+    w: u32,
+    #[serde(default)]
+    h: u32,
     #[serde(default)]
     namespace: String,
     #[serde(default)]
     pid: u32,
 }
 
-/// One monitor from `hyprctl -j layers`: `{ "levels": { "0": [...] } }`.
-/// Level `"0"` is the background level; within it, LATER entries draw ON
-/// TOP. A missing `"0"` key means no background signal for that output.
+/// One monitor from `hyprctl -j layers`: `{ "levels": { "0": [...],
+/// "1": [...] } }`. Within one level, LATER entries draw ON TOP; level
+/// `"1"` draws above level `"0"`. A missing level key means no signal at
+/// that level for that output.
 #[derive(Debug, Deserialize)]
 struct LayersOutput {
     #[serde(default)]
@@ -291,18 +410,33 @@ struct LayersOutput {
 }
 
 /// What the compositor shows on top for one output. `kind` is `None` when
-/// there is no opaque background layer or the topmost painter is unknown —
-/// both map to [`SavePlan::Unknown`] (capture everything, never guess).
-/// `top_namespace` / `top_pid` name the painter for the honest log line.
+/// there is no opaque fullscreen background layer or the topmost painter
+/// is unknown — both map to [`SavePlan::Unknown`] (capture everything,
+/// never guess). `top_namespace` / `top_pid` name the painter for the
+/// honest log line; `top_level` is the winning background level (`"0"` or
+/// `"1"`), `None` when no candidate layer exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompositorOutput {
     pub name: String,
     pub kind: Option<WallpaperKind>,
     pub top_namespace: String,
     pub top_pid: u32,
+    pub top_level: Option<u8>,
 }
 
 /// Parse the compositor's layer JSON into per-output topmost layers.
+///
+/// Scans background-capable levels `"0"` then `"1"` (higher wins); within
+/// a level the LAST opaque covering entry wins. Small opaque layers
+/// (widgets, bars) are furniture: skipped, never winners, never vetoes.
+/// A covering unknown painter still vetoes downstream — it is kept with
+/// its namespace and pid, never silently ignored.
+///
+/// No-reference wrapper: every opaque layer is kept (see
+/// [`is_background_candidate`]) — without `hyprctl -j monitors` or daemon
+/// logical sizes there is nothing truthful to compare against. Prefer
+/// [`parse_compositor_layers_with_reference`] whenever a reference map is
+/// available.
 ///
 /// Pure and fixture-driven: classification uses the namespace only. Only
 /// dedicated video painters yield a kind here; skwd-suite layers yield
@@ -313,33 +447,160 @@ pub struct CompositorOutput {
 /// the pure path, or tests would depend on the machine's live process
 /// table.
 pub fn parse_compositor_layers(json: &str) -> Result<Vec<CompositorOutput>, String> {
+    parse_compositor_layers_with_reference(json, &HashMap::new())
+}
+
+/// Reference-aware [`parse_compositor_layers`]: `reference` maps output
+/// name to its logical size (see [`output_reference_sizes`]). Outputs
+/// missing from the map are kept permissively with a log line, never
+/// excluded silently.
+pub fn parse_compositor_layers_with_reference(
+    json: &str,
+    reference: &HashMap<String, OutputSize>,
+) -> Result<Vec<CompositorOutput>, String> {
     let doc: HashMap<String, LayersOutput> =
         serde_json::from_str(json).map_err(|e| format!("Cannot parse layers JSON: {}", e))?;
     let mut outputs: Vec<CompositorOutput> = doc
         .into_iter()
         .map(|(name, out)| {
-            let top = out
-                .levels
-                .get("0")
-                .and_then(|entries| entries.iter().filter(|e| e.alpha > 0.0).last());
+            let reference_for_output = reference.get(&name).copied();
+            let mut top: Option<(&LayerEntry, u8)> = None;
+            for (level_no, level_key) in [0u8, 1u8].iter().zip(BACKGROUND_LEVELS) {
+                if let Some(entries) = out.levels.get(level_key) {
+                    if let Some(entry) = entries
+                        .iter()
+                        .filter(|e| {
+                            is_background_candidate(e.alpha, e.w, e.h, reference_for_output)
+                        })
+                        .last()
+                    {
+                        top = Some((entry, *level_no));
+                    }
+                }
+            }
             match top {
-                Some(entry) => CompositorOutput {
+                Some((entry, level_no)) => CompositorOutput {
                     name,
                     kind: classify_painter(&entry.namespace, None),
                     top_namespace: entry.namespace.clone(),
                     top_pid: entry.pid,
+                    top_level: Some(level_no),
                 },
                 None => CompositorOutput {
                     name,
                     kind: None,
                     top_namespace: String::new(),
                     top_pid: 0,
+                    top_level: None,
                 },
             }
         })
         .collect();
     outputs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(outputs)
+}
+
+/// One monitor entry from `hyprctl -j monitors`: physical `width` /
+/// `height` plus the `scale` factor. The reference size is the logical
+/// size (`physical / scale`, rounded) — the coordinate space layers use.
+/// The name is read from `name`, falling back to `output`, `monitor` and
+/// `connector`. Both a top-level array and a `{"monitors": [...]}` object
+/// are accepted; entries without usable geometry are skipped, never a
+/// guess.
+#[derive(Debug, Deserialize)]
+struct MonitorEntry {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    output: Option<String>,
+    #[serde(default)]
+    monitor: Option<String>,
+    #[serde(default)]
+    connector: Option<String>,
+    #[serde(default)]
+    width: f64,
+    #[serde(default)]
+    height: f64,
+    #[serde(default)]
+    scale: f64,
+}
+
+/// Parse `hyprctl -j monitors` into per-output logical sizes.
+pub fn parse_monitor_sizes(json: &str) -> Result<HashMap<String, OutputSize>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Cannot parse monitors JSON: {}", e))?;
+    let entries: Vec<MonitorEntry> = match &value {
+        serde_json::Value::Array(_) => serde_json::from_value(value)
+            .map_err(|e| format!("Cannot parse monitors array: {}", e))?,
+        serde_json::Value::Object(_) => {
+            let doc: HashMap<String, Vec<MonitorEntry>> = serde_json::from_value(value)
+                .map_err(|e| format!("Cannot parse monitors object: {}", e))?;
+            doc.into_values().next().unwrap_or_default()
+        }
+        _ => return Err("Monitors JSON is neither an array nor an object".to_string()),
+    };
+    let mut sizes = HashMap::new();
+    for e in entries {
+        let name = e
+            .name
+            .or(e.output)
+            .or(e.monitor)
+            .or(e.connector)
+            .unwrap_or_default();
+        if name.is_empty() || e.width <= 0.0 || e.height <= 0.0 {
+            continue;
+        }
+        let scale = if e.scale > 0.0 { e.scale } else { 1.0 };
+        sizes.insert(
+            name,
+            OutputSize {
+                width: (e.width / scale).round() as u32,
+                height: (e.height / scale).round() as u32,
+            },
+        );
+    }
+    Ok(sizes)
+}
+
+/// Build the output-size reference map: `hyprctl -j monitors` (primary —
+/// it speaks the compositor's scaled-logical coordinate space) wins on
+/// conflict; the daemon's per-output logical sizes fill outputs the
+/// monitors query missed. Outputs with no size anywhere stay absent: the
+/// parser keeps their opaque layers permissively and logs the gap.
+pub fn output_reference_sizes(
+    monitors_json: Option<&str>,
+    daemon: &[AuthorityOutput],
+) -> HashMap<String, OutputSize> {
+    let mut sizes = monitors_json
+        .and_then(|json| parse_monitor_sizes(json).ok())
+        .unwrap_or_default();
+    for o in daemon {
+        if !o.connected || o.logical_width == 0 || o.logical_height == 0 {
+            continue;
+        }
+        sizes.entry(o.name.clone()).or_insert(OutputSize {
+            width: o.logical_width,
+            height: o.logical_height,
+        });
+    }
+    sizes
+}
+
+/// Live monitors capture: one bounded `hyprctl -j monitors` query
+/// (≤250 ms). `None` (with a debug line) when unreachable — the caller
+/// degrades to the daemon logical sizes, never a hang, never a guess.
+fn query_monitors_json() -> Option<String> {
+    match run_bounded_command("hyprctl", &["-j", "monitors"], MONITORS_TIMEOUT) {
+        Ok(json) => Some(json),
+        Err(reason) => {
+            tracing::debug!(
+                "[wallpaper] Monitors reference unavailable ({}); \
+                 daemon logical sizes fill the gap",
+                reason,
+            );
+            None
+        }
+    }
 }
 
 /// Attribute one topmost skwd-suite layer to a daemon output.
@@ -409,15 +670,31 @@ pub fn decide_active_kind_from_outputs(
 /// layers (daemon missing, unparseable, or silent for that output) all
 /// yield `None` → [`SavePlan::Unknown`]. The daemon alone NEVER decides:
 /// it only types skwd-suite layers the compositor already proved are on
-/// top.
+/// top. The size reference comes from the daemon's logical sizes here;
+/// prefer [`decide_active_kind_with_monitors`] when a monitors capture is
+/// available (scaled outputs need it — see D3).
 pub fn decide_active_kind(
     compositor_json: Option<&str>,
     daemon_json: Option<&str>,
 ) -> Option<WallpaperKind> {
-    let compositor = parse_compositor_layers(compositor_json?).ok()?;
+    decide_active_kind_with_monitors(compositor_json, daemon_json, None)
+}
+
+/// Reference-aware [`decide_active_kind`]: `monitors_json` is a
+/// `hyprctl -j monitors` capture (primary size reference for scaled
+/// outputs); the daemon's logical sizes fill the gaps. `None` behaves
+/// like [`decide_active_kind`].
+pub fn decide_active_kind_with_monitors(
+    compositor_json: Option<&str>,
+    daemon_json: Option<&str>,
+    monitors_json: Option<&str>,
+) -> Option<WallpaperKind> {
+    let compositor_raw = compositor_json?;
     let daemon: Vec<AuthorityOutput> = daemon_json
         .and_then(|json| parse_authority_outputs(json).ok())
         .unwrap_or_default();
+    let reference = output_reference_sizes(monitors_json, &daemon);
+    let compositor = parse_compositor_layers_with_reference(compositor_raw, &reference).ok()?;
     decide_active_kind_from_outputs(&compositor, &daemon)
 }
 
@@ -428,6 +705,154 @@ fn proc_name_for_pid(pid: u32) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Best-effort argv for a layer pid (`/proc/<pid>/cmdline`, NUL
+/// separated). Empty on any failure — the caller treats it as "no argv
+/// signal" and moves on to the daemon fallback. A local procfs read:
+/// no external command, no timeout needed, never held across I/O locks.
+fn argv_for_pid(pid: u32) -> Vec<String> {
+    std::fs::read(format!("/proc/{}/cmdline", pid))
+        .map(|bytes| {
+            bytes
+                .split(|b| *b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Keep a candidate video path only when it names an existing absolute
+/// media file. A stale record (deleted video, daemon lag) must veto, not
+/// resurrect.
+fn existing_media_path(candidate: Option<String>) -> Option<PathBuf> {
+    candidate
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_file())
+}
+
+/// Resolve which video file is actually painted, from parsed signals plus
+/// live painter argv. Fallback order per output: for skwd-suite layers the
+/// daemon's `current` for the same output comes FIRST (it names the video
+/// the suite was told to render — verified correct on the keeper's
+/// machine), then the topmost layer's process argv (structural `*`-marker
+/// identity, works for every painter). mpvpaper's on-disk state file is
+/// deliberately never consulted: it outlives the plugin and names the
+/// previous video. Returns `None` when neither yields an existing file:
+/// the caller falls back honestly and says so.
+fn resolve_video_identity(
+    compositor: &[CompositorOutput],
+    daemon: &[AuthorityOutput],
+) -> Option<PathBuf> {
+    for o in compositor {
+        let argv = if o.top_pid == 0 {
+            Vec::new()
+        } else {
+            argv_for_pid(o.top_pid)
+        };
+        let argv_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+        // The argv's own binary name sharpens the owner check for generic
+        // namespaces (same signal as /proc comm, minus one file read).
+        let proc_hint = argv.first().and_then(|bin| {
+            Path::new(bin.as_str())
+                .file_name()
+                .and_then(|f| f.to_str())
+        });
+        let owner = layer_owner(&o.top_namespace, proc_hint);
+        let attributed_video = o.kind == Some(WallpaperKind::Video)
+            || (owner == LayerOwner::Skwd
+                && attribute_skwd_layer(&o.name, daemon) == Some(WallpaperKind::Video));
+        if !attributed_video {
+            continue;
+        }
+        if owner == LayerOwner::Skwd {
+            if let Some(path) = existing_media_path(daemon_video_current(daemon, &o.name)) {
+                return Some(path);
+            }
+        }
+        if let Some(path) = existing_media_path(extract_video_path_from_argv(&argv_refs)) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// The active background with its painter identity: kind (what the
+/// compositor shows on top), who paints it (namespace / pid / process
+/// name), and — for video — which file is actually rendered.
+#[derive(Debug, Clone)]
+pub struct ActiveBackground {
+    pub kind: WallpaperKind,
+    pub output_name: String,
+    pub top_namespace: String,
+    pub top_pid: u32,
+    pub painter_proc: Option<String>,
+    pub video_path: Option<PathBuf>,
+}
+
+/// Ask which background is active AND who paints it, so a theme can record
+/// a video exactly (kind + path + painter) and restore it through the
+/// manager in charge. Same ≤750 ms query budget as
+/// [`query_active_wallpaper_kind`]: one compositor call plus two daemon
+/// attempts. A video kind with no resolvable file keeps
+/// `video_path == None` — the caller must veto honestly, never invent one.
+pub fn query_active_background() -> Result<ActiveBackground, String> {
+    let compositor_json = run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT)
+        .map_err(|e| format!("compositor unavailable: {}", e))?;
+    let daemon_json = query_daemon_json();
+    let monitors_json = query_monitors_json();
+    let mut outputs = {
+        let daemon_outputs: Vec<AuthorityOutput> = daemon_json
+            .as_deref()
+            .and_then(|json| parse_authority_outputs(json).ok())
+            .unwrap_or_default();
+        let reference = output_reference_sizes(monitors_json.as_deref(), &daemon_outputs);
+        // Empty map behaves identically to the no-reference parse; the
+        // branch keeps the single-reference entry point in live use.
+        if reference.is_empty() {
+            parse_compositor_layers(&compositor_json)?
+        } else {
+            parse_compositor_layers_with_reference(&compositor_json, &reference)?
+        }
+    };
+    enrich_with_proc_names(&mut outputs);
+    let daemon_outputs: Vec<AuthorityOutput> = daemon_json
+        .as_deref()
+        .and_then(|json| parse_authority_outputs(json).ok())
+        .unwrap_or_default();
+    let kind = decide_active_kind_from_outputs(&outputs, &daemon_outputs).ok_or_else(|| {
+        "compositor layer stack has no attributable opaque background layer".to_string()
+    })?;
+    log_daemon_disagreement(daemon_json.as_deref(), kind);
+    // The winning output names the painter: prefer the video output when
+    // the kind is video, else the first attributed output.
+    let winner = outputs
+        .iter()
+        .find(|o| o.kind == Some(WallpaperKind::Video) && kind == WallpaperKind::Video)
+        .or_else(|| outputs.iter().find(|o| !o.top_namespace.is_empty()));
+    let video_path = if kind == WallpaperKind::Video {
+        resolve_video_identity(&outputs, &daemon_outputs)
+    } else {
+        None
+    };
+    let (output_name, top_namespace, top_pid) = match winner {
+        Some(o) => (o.name.clone(), o.top_namespace.clone(), o.top_pid),
+        None => (String::new(), String::new(), 0),
+    };
+    let painter_proc = if top_pid == 0 {
+        None
+    } else {
+        proc_name_for_pid(top_pid)
+    };
+    Ok(ActiveBackground {
+        kind,
+        output_name,
+        top_namespace,
+        top_pid,
+        painter_proc,
+        video_path,
+    })
 }
 
 /// Run one helper command with a bounded wait.
@@ -575,21 +1000,155 @@ pub fn query_active_wallpaper_kind() -> Result<WallpaperKind, String> {
     let compositor_json = run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT)
         .map_err(|e| format!("compositor unavailable: {}", e))?;
     let daemon_json = query_daemon_json();
-    if let Some(kind) = decide_active_kind(Some(&compositor_json), daemon_json.as_deref()) {
+    let monitors_json = query_monitors_json();
+    // No monitors capture degrades to the daemon-sizes-only decision; the
+    // branch keeps the single-reference entry point in live use.
+    let fast_kind = match monitors_json.as_deref() {
+        Some(monitors) => decide_active_kind_with_monitors(
+            Some(&compositor_json),
+            daemon_json.as_deref(),
+            Some(monitors),
+        ),
+        None => decide_active_kind(Some(&compositor_json), daemon_json.as_deref()),
+    };
+    if let Some(kind) = fast_kind {
         log_daemon_disagreement(daemon_json.as_deref(), kind);
         return Ok(kind);
     }
-    let mut outputs = parse_compositor_layers(&compositor_json)?;
-    enrich_with_proc_names(&mut outputs);
     let daemon_outputs: Vec<AuthorityOutput> = daemon_json
         .as_deref()
         .and_then(|json| parse_authority_outputs(json).ok())
         .unwrap_or_default();
+    let reference = output_reference_sizes(monitors_json.as_deref(), &daemon_outputs);
+    let mut outputs = if reference.is_empty() {
+        parse_compositor_layers(&compositor_json)?
+    } else {
+        parse_compositor_layers_with_reference(&compositor_json, &reference)?
+    };
+    enrich_with_proc_names(&mut outputs);
     let kind = decide_active_kind_from_outputs(&outputs, &daemon_outputs).ok_or_else(|| {
         "compositor layer stack has no attributable opaque background layer".to_string()
     })?;
     log_daemon_disagreement(daemon_json.as_deref(), kind);
     Ok(kind)
+}
+
+/// Media extensions recognised in a painter's argv. The match is on the
+/// absolute path's extension only — flags, sockets and bare names never
+/// qualify, so no path is ever invented.
+const MEDIA_EXTENSIONS: [&str; 9] = [
+    "mp4", "mkv", "webm", "avi", "mov", "m4v", "wmv", "ogv", "gif",
+];
+
+/// Derive the painted video path from a painter process argv.
+///
+/// Structural identity (D2), never "last media path": both painters render
+/// the output named right after the `*` output marker (`mpvpaper ...
+/// * <video>`, `skwd-wall-vk * <video> --transition-from <previous> ...`),
+/// while a video-to-video switch appends the PREVIOUS video behind
+/// `--transition-from` — the last media argument is then the old video.
+/// Rules:
+/// - exactly one `*`: the first absolute media path after it (or `None`
+///   when there is none — arguments before the marker are the previous
+///   background, never the identity);
+/// - several `*` (per-output painters in one argv): ambiguous, `None`;
+/// - no `*`: only a single absolute media candidate is unambiguous
+///   (`None` when there are zero or several).
+/// Existence on disk is checked by the live caller, never here, so tests
+/// stay hermetic.
+pub fn extract_video_path_from_argv(argv: &[&str]) -> Option<String> {
+    let is_media_path = |arg: &str| -> bool {
+        let path = Path::new(arg);
+        if !path.is_absolute() {
+            return false;
+        }
+        match path.extension().and_then(|e| e.to_str()) {
+            Some(ext) => MEDIA_EXTENSIONS.contains(&ext.to_lowercase().as_str()),
+            None => false,
+        }
+    };
+    let star_count = argv.iter().filter(|arg| **arg == "*").count();
+    if star_count == 1 {
+        let star = argv.iter().position(|arg| *arg == "*").unwrap_or(0);
+        return argv[star + 1..]
+            .iter()
+            .find_map(|arg| is_media_path(arg).then(|| arg.to_string()));
+    }
+    if star_count > 1 {
+        return None;
+    }
+    let mut found: Option<String> = None;
+    for arg in argv {
+        if is_media_path(arg) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(arg.to_string());
+        }
+    }
+    found
+}
+
+/// Fallback video identity for skwd-suite layers: the daemon's `current`
+/// for the same output name (connected outputs only). Returns `None` when
+/// the daemon is silent for that output — the caller then vetoes honestly
+/// instead of inventing a path.
+pub fn daemon_video_current(daemon: &[AuthorityOutput], output_name: &str) -> Option<String> {
+    daemon
+        .iter()
+        .find(|o| o.connected && o.name == output_name)
+        .map(|o| o.current.clone())
+        .filter(|s| !s.is_empty())
+}
+
+/// True when the topmost layer is painted by a dedicated video renderer
+/// (`mpvpaper` today): video by nature, no daemon signal needed. The
+/// process name is the fallback signal for generic namespaces.
+pub fn is_video_painter(namespace: &str, proc_name: Option<&str>) -> bool {
+    layer_owner(namespace, proc_name) == LayerOwner::Video
+}
+
+/// File HVE stores inside the theme provider dir for a painter-identified
+/// video (kind + path + who painted it). Owned by the noctalia-v5 save path;
+/// restoring it routes through the manager in charge, never the plugin.
+pub const PAINTER_VIDEO_FILE: &str = "video.txt";
+
+/// Serialize the painter-identified video record stored as
+/// [`PAINTER_VIDEO_FILE`]: kind (implied video) + path + who painted it
+/// (process / namespace / pid), one `key=value` per line. Only `path` is
+/// required on read; the rest is provenance for the honest log line.
+pub fn format_painter_video_record(
+    path: &Path,
+    painter_proc: Option<&str>,
+    namespace: &str,
+    pid: u32,
+) -> String {
+    format!(
+        "path={}\npainter={}\nnamespace={}\npid={}\n",
+        path.display(),
+        painter_proc.unwrap_or(""),
+        namespace,
+        pid,
+    )
+}
+
+/// Parse a [`PAINTER_VIDEO_FILE`] record back to the video path. `None`
+/// (never a guess) when no usable absolute `path=` line exists: a relative
+/// path would resolve against HVE's working directory, so it is rejected
+/// just like a missing one.
+pub fn parse_painter_video_record(text: &str) -> Option<PathBuf> {
+    text.lines().find_map(|line| {
+        let rest = line.strip_prefix("path=")?.trim();
+        if rest.is_empty() {
+            return None;
+        }
+        let path = PathBuf::from(rest);
+        if path.is_absolute() {
+            Some(path)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -736,6 +1295,10 @@ mod tests {
         assert!(
             code.contains("query_active_wallpaper_kind"),
             "noctalia.rs save must call query_active_wallpaper_kind"
+        );
+        assert!(
+            code.contains("query_active_background"),
+            "noctalia.rs save must call query_active_background for the painter video identity"
         );
         assert!(
             code.contains("SavePlan::StaticOnly") && code.contains("SavePlan::VideoOnly"),
@@ -1220,5 +1783,584 @@ mod tests {
             decide_active_kind(Some(&compositor), Some(disconnected)),
             None
         );
+    }
+
+    // ── G1/G2 real-capture tests ──
+    //
+    // Ground truth from the keeper's machine (/tmp/opencode/wall-*/):
+    // - baseline: mpvpaper video on top at level 0, daemon says static.
+    // - after: skwd static on top at level 0, daemon says static.
+    // - skwdvideo: skwd-wall-vk video at level 1, daemon says video with
+    //   the slugcat current, no mpvpaper running. Level 1 also carries
+    //   small Noctalia desktop widgets that must never win or veto.
+    // Rule under test: scan background-capable levels 0 and 1 (higher
+    // wins; later entry wins within a level), skip non-opaque and
+    // non-fullscreen (furniture) entries, attribute as before.
+
+    fn layer_geo(namespace: &str, alpha: f32, pid: u32, w: u32, h: u32) -> String {
+        format!(
+            r#"{{"address":"0x1","x":0,"y":0,"w":{},"h":{},"alpha":{},"namespace":"{}","pid":{}}}"#,
+            w, h, alpha, namespace, pid
+        )
+    }
+
+    fn widget(namespace: &str) -> String {
+        // Noctalia desktop widgets: small rectangles at level 1.
+        layer_geo(namespace, 1.0, 250289, 272, 144)
+    }
+
+    /// Keeper's skwdvideo capture (essential shape): empty level 0, level 1
+    /// mixes small widgets with one fullscreen skwd-wall-vk layer last.
+    fn skwdvideo_layers_doc() -> String {
+        format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[],"1":[{}]}}}},"DP-3":{{"levels":{{"0":[],"1":[{},{},{}]}}}}}}"#,
+            layer_geo("skwd-wall-vk", 1.0, 606866, 1440, 900),
+            widget("noctalia-desktop-widget-weather-0000000000000001"),
+            widget("noctalia-desktop-widget-sysmon-0000000000000002"),
+            layer_geo("skwd-wall-vk", 1.0, 606866, 2560, 1440),
+        )
+    }
+
+    fn skwdvideo_daemon_doc() -> String {
+        r#"{"outputs": [
+            {"name": "DP-3", "current": "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4",
+             "path": "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4",
+             "type": "video", "connected": true},
+            {"name": "HDMI-A-1", "current": "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4",
+             "path": "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4",
+             "type": "video", "connected": true}
+        ]}"#
+        .to_string()
+    }
+
+    /// Keeper's baseline capture (essential shape): mpvpaper video on top
+    /// of skwd-paper at level 0 while the daemon insists on static.
+    fn baseline_layers_doc() -> String {
+        let hdmi = format!(
+            "{},{}",
+            layer_geo("skwd-paper", 1.0, 439101, 1440, 900),
+            layer_geo("mpvpaper", 1.0, 507331, 1440, 900),
+        );
+        let dp = format!(
+            "{},{}",
+            layer_geo("skwd-paper", 1.0, 439101, 2560, 1440),
+            layer_geo("mpvpaper", 1.0, 507331, 2560, 1440),
+        );
+        format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{}],"1":[]}}}},"DP-3":{{"levels":{{"0":[{}],"1":[]}}}}}}"#,
+            hdmi, dp
+        )
+    }
+
+    /// Keeper's after capture (essential shape): skwd static repainted on
+    /// top of the still-running mpvpaper at level 0; daemon says static.
+    fn after_layers_doc() -> String {
+        let hdmi = format!(
+            "{},{}",
+            layer_geo("mpvpaper", 1.0, 507331, 1440, 900),
+            layer_geo("skwd-paper", 1.0, 588760, 1440, 900),
+        );
+        let dp = format!(
+            "{},{}",
+            layer_geo("mpvpaper", 1.0, 507331, 2560, 1440),
+            layer_geo("skwd-paper", 1.0, 588760, 2560, 1440),
+        );
+        format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{}],"1":[]}}}},"DP-3":{{"levels":{{"0":[{}],"1":[]}}}}}}"#,
+            hdmi, dp
+        )
+    }
+
+    fn static_daemon_for_both() -> String {
+        r#"{"outputs": [
+            {"name": "HDMI-A-1", "current": "/pic/joker2.png", "path": "/pic/joker2.png",
+             "type": "static", "connected": true},
+            {"name": "DP-3", "current": "/pic/joker2.png", "path": "/pic/joker2.png",
+             "type": "static", "connected": true}
+        ]}"#
+        .to_string()
+    }
+
+    #[test]
+    fn real_baseline_capture_decides_video() {
+        // mpvpaper on top at level 0; daemon static must not win.
+        let json = baseline_layers_doc();
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(&static_daemon_for_both())),
+            Some(WallpaperKind::Video)
+        );
+    }
+
+    #[test]
+    fn real_after_capture_decides_static() {
+        // skwd repainted on top at level 0; the covered video must not win.
+        let json = after_layers_doc();
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(&static_daemon_for_both())),
+            Some(WallpaperKind::Static)
+        );
+    }
+
+    #[test]
+    fn real_skwdvideo_capture_decides_video() {
+        // skwd-wall-vk paints at level 1 (not 0); widgets share the level
+        // but are not fullscreen and must be skipped. Daemon says video.
+        let json = skwdvideo_layers_doc();
+        let daemon = skwdvideo_daemon_doc();
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(&daemon)),
+            Some(WallpaperKind::Video)
+        );
+    }
+
+    #[test]
+    fn widgets_alone_never_decide() {
+        // Level 1 with ONLY small widgets (no fullscreen layer anywhere):
+        // nothing wins, nothing vetoes with a crash — just unknown.
+        let json = format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[],"1":[{}]}}}}}}"#,
+            widget("noctalia-desktop-widget-weather-0000000000000001"),
+        );
+        let daemon = daemon_kind_doc("video");
+        assert_eq!(decide_active_kind(Some(&json), Some(&daemon)), None);
+    }
+
+    #[test]
+    fn unknown_fullscreen_painter_at_level1_vetoes() {
+        // Level 0 says skwd/static but a fullscreen unknown painter sits at
+        // level 1 on top: it could be a background, so it must veto (None),
+        // never be silently skipped. Namespace + pid are kept for the log.
+        let json = format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{}],"1":[{}]}}}}}}"#,
+            layer_geo("skwd-paper", 1.0, 439101, 1440, 900),
+            layer_geo("mystery-layer", 1.0, 999, 1440, 900),
+        );
+        let outputs = parse_compositor_layers(&json).unwrap();
+        assert_eq!(outputs[0].top_namespace, "mystery-layer");
+        assert_eq!(outputs[0].top_pid, 999);
+        let daemon = daemon_kind_doc("static");
+        assert_eq!(decide_active_kind(Some(&json), Some(&daemon)), None);
+    }
+
+    #[test]
+    fn higher_level_wins_over_lower() {
+        // Video at level 0 but a skwd layer paints above it at level 1:
+        // the compositor shows what is on top, so the daemon's static
+        // report for skwd decides static.
+        let json = format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{}],"1":[{}]}}}}}}"#,
+            layer_geo("mpvpaper", 1.0, 507331, 1440, 900),
+            layer_geo("skwd-paper", 1.0, 439101, 1440, 900),
+        );
+        let daemon = daemon_kind_doc("static");
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(&daemon)),
+            Some(WallpaperKind::Static)
+        );
+    }
+
+    #[test]
+    fn transparent_level1_falls_back_to_level0() {
+        // A fading (alpha 0) level-1 layer is not visible: the opaque
+        // level-0 layer below decides.
+        let json = format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{}],"1":[{}]}}}}}}"#,
+            layer_geo("skwd-paper", 1.0, 439101, 1440, 900),
+            layer_geo("skwd-wall-vk", 0.0, 606866, 1440, 900),
+        );
+        let daemon = daemon_kind_doc("static");
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(&daemon)),
+            Some(WallpaperKind::Static)
+        );
+    }
+
+    #[test]
+    fn empty_levels_and_malformed_stay_unknown() {
+        let json = r#"{"HDMI-A-1": {"levels": {"0": [], "1": []}}}"#;
+        let daemon = daemon_kind_doc("static");
+        assert_eq!(decide_active_kind(Some(json), Some(&daemon)), None);
+        assert_eq!(decide_active_kind(Some("not json"), Some(&daemon)), None);
+    }
+
+    #[test]
+    fn multi_output_disagreement_across_levels_is_video() {
+        // HDMI shows skwd/static at level 0; DP-3 runs a skwd video at
+        // level 1 above an empty level 0. Any visible video wins.
+        let json = format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{}],"1":[]}}}},"DP-3":{{"levels":{{"0":[],"1":[{}]}}}}}}"#,
+            layer_geo("skwd-paper", 1.0, 439101, 1440, 900),
+            layer_geo("skwd-wall-vk", 1.0, 606866, 2560, 1440),
+        );
+        let daemon = r#"{"outputs": [
+            {"name": "HDMI-A-1", "current": "/pic/a.png", "path": "/pic/a.png",
+             "type": "static", "connected": true},
+            {"name": "DP-3", "current": "/vid/slugcat.mp4", "path": "/vid/slugcat.mp4",
+             "type": "video", "connected": true}
+        ]}"#;
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(daemon)),
+            Some(WallpaperKind::Video)
+        );
+    }
+
+    // ── G2 video-identity tests ──
+    //
+    // The video record must come from the process that paints the topmost
+    // layer (its argv carries the media path), falling back to the
+    // daemon's `current` for skwd-suite layers — never from mpvpaper's
+    // stale state file.
+
+    fn mpvpaper_argv() -> Vec<&'static str> {
+        // Keeper's verbatim mpvpaper command line (wall-baseline/mpvpaper.txt).
+        vec![
+            "mpvpaper",
+            "--auto-pause",
+            "--auto-mode",
+            "FULL",
+            "-o",
+            "loop-file=inf",
+            "panscan=1.0",
+            "no-audio",
+            "hwdec=auto",
+            "input-ipc-server=/home/ximo/.local/state/noctalia/mpvpaper/ipc-_.sock",
+            "*",
+            "/home/ximo/Pictures/LiveWallpapers/ellen-joe-neon-alley-zenless-zone-zero-moewalls-com.mp4",
+        ]
+    }
+
+    fn skwd_wall_vk_argv() -> Vec<&'static str> {
+        // Keeper's verified skwd-wall-vk command line shape.
+        vec![
+            "/usr/bin/skwd-wall-vk",
+            "*",
+            "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4",
+            "--transition",
+            "fade",
+        ]
+    }
+
+    #[test]
+    fn identity_comes_from_mpvpaper_argv() {
+        assert_eq!(
+            extract_video_path_from_argv(&mpvpaper_argv()),
+            Some(
+                "/home/ximo/Pictures/LiveWallpapers/ellen-joe-neon-alley-zenless-zone-zero-moewalls-com.mp4"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn identity_comes_from_skwd_wall_vk_argv() {
+        assert_eq!(
+            extract_video_path_from_argv(&skwd_wall_vk_argv()),
+            Some(
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4".to_string()
+            )
+        );
+    }
+
+    /// D2: the exact live argv from the verifier. `--transition-from`
+    /// carries the PREVIOUS background (here a static image); the identity
+    /// is the media path that follows the `*` marker — the CURRENT video —
+    /// never the last media-looking argument.
+    #[test]
+    fn identity_skwd_vk_transition_from_png_yields_current_video() {
+        let argv = vec![
+            "/usr/bin/skwd-wall-vk",
+            "*",
+            "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4",
+            "--transition-from",
+            "/home/ximo/Pictures/Wallpapers/Joker/joker2.png",
+            "--shader",
+            "random",
+        ];
+        assert_eq!(
+            extract_video_path_from_argv(&argv),
+            Some(
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4".to_string()
+            )
+        );
+    }
+
+    /// D2: on a video-to-video switch the transition argument is ANOTHER
+    /// video, so "last media path" returns the PREVIOUS one. The identity
+    /// must be structural: the media path following `*` is the current
+    /// video.
+    #[test]
+    fn identity_video_to_video_switch_yields_current_video() {
+        let argv = vec![
+            "/usr/bin/skwd-wall-vk",
+            "*",
+            "/home/ximo/Pictures/LiveWallpapers/new-video.mp4",
+            "--transition-from",
+            "/home/ximo/Pictures/LiveWallpapers/old-video.mp4",
+            "--shader",
+            "random",
+        ];
+        assert_eq!(
+            extract_video_path_from_argv(&argv),
+            Some("/home/ximo/Pictures/LiveWallpapers/new-video.mp4".to_string())
+        );
+    }
+
+    /// D2: when the identity is still ambiguous (no `*` marker with several
+    /// media candidates, or several `*` outputs in one argv), do NOT guess —
+    /// veto honestly so the caller falls back instead of recording the
+    /// wrong video.
+    #[test]
+    fn identity_ambiguous_argv_is_none() {
+        // Two videos, no `*` marker to attribute them: unresolvable.
+        assert_eq!(
+            extract_video_path_from_argv(&[
+                "/usr/bin/skwd-wall-vk",
+                "/home/ximo/Pictures/LiveWallpapers/a.mp4",
+                "--transition-from",
+                "/home/ximo/Pictures/LiveWallpapers/b.mp4",
+            ]),
+            None
+        );
+        // Two `*` outputs in one argv (per-output painters): attribution
+        // is ambiguous, never a guess.
+        assert_eq!(
+            extract_video_path_from_argv(&[
+                "/usr/bin/skwd-wall-vk",
+                "*",
+                "/home/ximo/Pictures/LiveWallpapers/a.mp4",
+                "*",
+                "/home/ximo/Pictures/LiveWallpapers/b.mp4",
+            ]),
+            None
+        );
+        // A `*` with no media after it: the paths before it are the
+        // previous background, never the identity.
+        assert_eq!(
+            extract_video_path_from_argv(&[
+                "/usr/bin/skwd-wall-vk",
+                "/home/ximo/Pictures/LiveWallpapers/old.mp4",
+                "*",
+                "--shader",
+                "random",
+            ]),
+            None
+        );
+    }
+
+    #[test]
+    fn identity_argv_without_media_path_is_none() {
+        // Flags, sockets, the "*" connector and relative names are never
+        // mistaken for a video: no path is invented.
+        assert_eq!(
+            extract_video_path_from_argv(&["skwd-wall-vk", "*", "--transition", "fade"]),
+            None
+        );
+        assert_eq!(
+            extract_video_path_from_argv(&[
+                "mpvpaper",
+                "input-ipc-server=/home/ximo/.local/state/noctalia/mpvpaper/ipc-_.sock",
+                "*",
+                "relative-video.mp4",
+            ]),
+            None
+        );
+        assert_eq!(extract_video_path_from_argv(&[]), None);
+    }
+
+    #[test]
+    fn identity_daemon_current_fallback() {
+        // Skwd-suite layer whose painter argv yields nothing: the daemon's
+        // `current` for the same output is the fallback.
+        let daemon = parse_authority_outputs(&skwdvideo_daemon_doc()).unwrap();
+        assert_eq!(
+            daemon_video_current(&daemon, "DP-3"),
+            Some(
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4".to_string()
+            )
+        );
+        assert_eq!(daemon_video_current(&daemon, "NOPE"), None);
+        let disconnected = parse_authority_outputs(
+            r#"{"outputs": [{"name": "DP-3", "current": "/vid/a.mp4", "path": "/vid/a.mp4",
+                 "type": "video", "connected": false}]}"#,
+        )
+        .unwrap();
+        assert_eq!(daemon_video_current(&disconnected, "DP-3"), None);
+    }
+
+    #[test]
+    fn identity_daemon_duplicate_names_prefer_connected() {
+        // Ground truth from the keeper's skwdvideo capture: the daemon
+        // emits a stale DISCONNECTED duplicate per output after the real
+        // CONNECTED entry. Attribution must skip the stale duplicate even
+        // when it comes first.
+        let daemon = parse_authority_outputs(
+            r#"{"outputs": [
+                {"name": "HDMI-A-1", "current": "/pic/stale.png", "path": "/pic/stale.png",
+                 "type": "static", "connected": false},
+                {"name": "HDMI-A-1", "current": "/vid/slugcat.mp4", "path": "/vid/slugcat.mp4",
+                 "type": "video", "connected": true}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            daemon_video_current(&daemon, "HDMI-A-1"),
+            Some("/vid/slugcat.mp4".to_string())
+        );
+    }
+
+    #[test]
+    fn real_baseline_level3_overlay_is_ignored() {
+        // The keeper's baseline capture also carries a fullscreen skwd-wall
+        // layer at level 3 (overlay). Levels 2+ never hold backgrounds, so
+        // the decision still comes from level 0's mpvpaper-on-top: video.
+        let level0 = format!(
+            "{},{}",
+            layer_geo("skwd-paper", 1.0, 439101, 1440, 900),
+            layer_geo("mpvpaper", 1.0, 507331, 1440, 900),
+        );
+        let json = format!(
+            r#"{{"HDMI-A-1":{{"levels":{{"0":[{level0}],"1":[],"2":[],"3":[{}]}}}}}}"#,
+            layer_geo("skwd-wall", 1.0, 572518, 1440, 900),
+        );
+        assert_eq!(
+            decide_active_kind(Some(&json), Some(&static_daemon_for_both())),
+            Some(WallpaperKind::Video)
+        );
+    }
+
+    // ── G2/G3 painter video record (video.txt) ──
+    //
+    // A painter-identified video is recorded exactly (kind + path + who
+    // painted it) so apply can restore it through the manager in charge.
+    // Format: `key=value` lines; only `path` is required on read.
+
+    #[test]
+    fn painter_video_record_roundtrips() {
+        let record = format_painter_video_record(
+            Path::new("/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4"),
+            Some("skwd-wall-vk"),
+            "skwd-wall-vk",
+            606866,
+        );
+        assert_eq!(
+            parse_painter_video_record(&record),
+            Some(PathBuf::from(
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4"
+            ))
+        );
+    }
+
+    #[test]
+    fn painter_video_record_without_path_is_none() {
+        // No path, no record: apply must fall back honestly, never invent one.
+        assert_eq!(parse_painter_video_record(""), None);
+        assert_eq!(parse_painter_video_record("painter=skwd-wall-vk\n"), None);
+        assert_eq!(parse_painter_video_record("path=\n"), None);
+        assert_eq!(parse_painter_video_record("path=relative.mp4\n"), None);
+    }
+
+    // ── D3 relative-fullscreen tests ──
+    //
+    // "Fullscreen" is relative to the output, never an absolute pixel
+    // constant: a 1920x1080 output at 200% scale reports a 960x540 layer
+    // for its real fullscreen wallpaper, which an absolute 800x600 gate
+    // excludes (540 < 600) — a silent veto that loses the background.
+
+    /// `hyprctl -j monitors` shape (array, physical size + scale): the
+    /// reference size is the logical size (physical / scale).
+    fn scaled_monitors_doc() -> String {
+        r#"[{
+            "name": "HDMI-A-1", "description": "Test Monitor",
+            "width": 1920, "height": 1080, "x": 0, "y": 0, "scale": 2.0
+        }]"#
+        .to_string()
+    }
+
+    fn scaled_layers_doc() -> String {
+        // The real fullscreen wallpaper on that output: 960x540 opaque.
+        r#"{"HDMI-A-1": {"levels": {"0": [
+            {"address":"0x1","x":0,"y":0,"w":960,"h":540,"alpha":1,
+             "namespace":"skwd-paper","pid":111}
+        ], "1": []}}}"#
+            .to_string()
+    }
+
+    #[test]
+    fn scaled_output_fullscreen_layer_is_a_background() {
+        // 1920x1080 at 200%: the 960x540 fullscreen layer must be kept and
+        // attributed (daemon says static), not vetoed by an absolute gate.
+        let daemon = daemon_kind_doc("static");
+        let monitors = scaled_monitors_doc();
+        assert_eq!(
+            decide_active_kind_with_monitors(
+                Some(&scaled_layers_doc()),
+                Some(&daemon),
+                Some(&monitors),
+            ),
+            Some(WallpaperKind::Static)
+        );
+    }
+
+    #[test]
+    fn small_output_fullscreen_layer_is_a_background() {
+        // A tiny 640x360 output: its fullscreen layer is far below any
+        // absolute gate but covers 100% of its output.
+        let json = r#"{"DP-3": {"levels": {"0": [
+            {"address":"0x1","x":0,"y":0,"w":640,"h":360,"alpha":1,
+             "namespace":"skwd-paper","pid":111}
+        ], "1": []}}}"#;
+        let monitors = r#"[{
+            "name": "DP-3", "description": "Tiny",
+            "width": 640, "height": 360, "x": 0, "y": 0, "scale": 1.0
+        }]"#;
+        let daemon = r#"{"outputs": [{"name": "DP-3", "current": "/x", "path": "/x",
+             "type": "static", "connected": true}]}"#;
+        assert_eq!(
+            decide_active_kind_with_monitors(Some(json), Some(daemon), Some(monitors)),
+            Some(WallpaperKind::Static)
+        );
+    }
+
+    #[test]
+    fn furniture_still_excluded_with_reference() {
+        // A 272x144 widget on a 2560x1440 output covers a corner, not the
+        // screen: it must be skipped (no winner, no veto crash — unknown).
+        let json = format!(
+            r#"{{"DP-3":{{"levels":{{"0":[],"1":[{}]}}}}}}"#,
+            widget("noctalia-desktop-widget-weather-0000000000000001"),
+        );
+        let monitors = r#"[{
+            "name": "DP-3", "description": "Big",
+            "width": 2560, "height": 1440, "x": 0, "y": 0, "scale": 1.0
+        }]"#;
+        assert_eq!(
+            decide_active_kind_with_monitors(Some(&json), Some(&daemon_kind_doc("video")), Some(monitors)),
+            None
+        );
+    }
+
+    #[test]
+    fn no_reference_never_silently_excludes() {
+        // Without any output reference (monitors unreachable, daemon
+        // silent about sizes) an opaque layer must NOT be size-excluded:
+        // it stays visible to the decision instead of vanishing silently.
+        let json = r#"{"HDMI-A-1": {"levels": {"0": [
+            {"address":"0x1","x":0,"y":0,"w":960,"h":540,"alpha":1,
+             "namespace":"skwd-paper","pid":111}
+        ], "1": []}}}"#;
+        let outputs =
+            parse_compositor_layers_with_reference(json, &std::collections::HashMap::new())
+                .expect("layers must parse");
+        assert_eq!(
+            outputs[0].top_namespace, "skwd-paper",
+            "no reference means no size exclusion, never a silent veto"
+        );
+    }
+
+    #[test]
+    fn monitors_parser_divides_physical_by_scale() {
+        let sizes = parse_monitor_sizes(&scaled_monitors_doc()).expect("monitors must parse");
+        let hdmi = sizes.get("HDMI-A-1").expect("HDMI-A-1 must be present");
+        assert_eq!((hdmi.width, hdmi.height), (960, 540));
     }
 }

@@ -1,5 +1,5 @@
 use crate::providers::noctalia_runtime::{noctalia_config_dir, noctalia_msg, noctalia_state_dir};
-use crate::providers::wallpaper_authority::{self, SavePlan};
+use crate::providers::wallpaper_authority::{self, SavePlan, WallpaperKind};
 use crate::providers::shell::NoctaliaV4Paths;
 use crate::providers::shell::ShellProvider;
 use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ── Wallpaper JSON parsing types ─────────────────────────────────────
 
@@ -154,8 +154,14 @@ fn is_dark_hex(hex: &str) -> bool {
 /// Best-effort delegation to skwd-walld (now skwd-wall-v2 / skwd-helm).
 ///
 /// HVE remains agnostic: if the daemon's socket is absent we do nothing.
-/// If it is present we try `skwd-helm apply <path>` (and `skwd-wall-v2 apply` as fallback)
-/// and swallow any error so theme apply never fails. Invisible, no UI.
+/// If it is present we try `skwd-helm apply <path>` (and `skwd-wall-v2 apply` as fallback).
+///
+/// D1: returns whether the wallpaper was actually applied. Only a real
+/// success reports success — every other outcome (absent socket, invalid
+/// path, failing or unreachable daemon) returns false so the caller keeps
+/// the fallback routes (manifest, static restore) instead of claiming a
+/// background that was never painted. Failures are logged (warn), never
+/// silent and never fatal to the theme apply.
 fn skwd_wall_socket_path() -> PathBuf {
     if let Ok(custom) = std::env::var("SKWD_WALL_V2_SOCK") {
         let p = PathBuf::from(&custom);
@@ -170,41 +176,74 @@ fn skwd_wall_socket_path() -> PathBuf {
     runtime.join("skwd-wall-v2").join("wall.sock")
 }
 
-fn delegate_to_skwd_walld(wallpaper_path: &Path) {
+fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     let socket = skwd_wall_socket_path();
     if !socket.exists() {
         tracing::debug!("[skwd-wall] socket absent at {:?} — skipping delegation", socket);
-        return;
+        return false;
     }
     let path_str = match wallpaper_path.to_str() {
         Some(s) if !s.is_empty() => s,
         _ => {
             tracing::warn!("[skwd-wall] invalid wallpaper path {:?}", wallpaper_path);
-            return;
+            return false;
         }
     };
     // Try skwd-helm first, then skwd-wall-v2 as fallback
     for bin in ["skwd-helm", "skwd-wall-v2"] {
-        let res = std::process::Command::new(bin)
-            .arg("apply")
-            .arg(path_str)
-            .output();
-        match res {
-            Ok(out) if out.status.success() => {
+        match run_delegate_apply(bin, path_str) {
+            Ok(()) => {
                 tracing::info!("[skwd-wall] delegated wallpaper to {}: {}", bin, path_str);
-                return;
+                return true;
             }
-            Ok(out) => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                tracing::warn!("[skwd-wall] {} apply failed: {}", bin, err.trim());
+            Err(reason) => {
+                tracing::warn!("[skwd-wall] {} apply failed: {}", bin, reason);
                 // try next bin
-            }
-            Err(e) => {
-                tracing::debug!("[skwd-wall] {} not available: {}", bin, e);
             }
         }
     }
     tracing::warn!("[skwd-wall] delegation failed for {} (daemon may be unreachable)", path_str);
+    false
+}
+
+/// Bounded wait for one delegation `apply` call, so a hung daemon helper
+/// can never freeze the theme apply (≤500 ms per binary; never held across
+/// I/O locks).
+const DELEGATE_TIMEOUT: Duration = Duration::from_millis(500);
+
+fn run_delegate_apply(bin: &str, path_str: &str) -> Result<(), String> {
+    let mut child = std::process::Command::new(bin)
+        .arg("apply")
+        .arg(path_str)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("not available: {}", e))?;
+    let start = Instant::now();
+    loop {
+        match child
+            .try_wait()
+            .map_err(|e| format!("wait failed: {}", e))?
+        {
+            Some(_) => {
+                let out = child
+                    .wait_with_output()
+                    .map_err(|e| format!("output read failed: {}", e))?;
+                if out.status.success() {
+                    return Ok(());
+                }
+                return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+            }
+            None => {
+                if start.elapsed() >= DELEGATE_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("timed out after {:?}", DELEGATE_TIMEOUT));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
 }
 
 /// Generate a `terminal` section for a Noctalia predefined scheme from M3 core colors.
@@ -304,6 +343,125 @@ fn remove_stale_artifact(path: &Path) {
                 path.display(),
                 e
             );
+        }
+    }
+}
+
+/// Read the `noctalia/mpvpaper` enabled state from a settings.toml text.
+///
+/// D4: applying a theme restores settings.toml verbatim and runs
+/// `config-reload`, which re-enables a plugin the user disabled (every
+/// saved theme carries it enabled while the keeper runs disabled). The
+/// `[plugins] enabled = [...]` list is machine state, not theme content,
+/// so only that section counts: other sections, commented lines and
+/// trailing comments never match, and a multi-line array is followed to
+/// its closing bracket. `false` for anything unparseable — the caller
+/// then treats the state as unknown, never as enabled.
+fn mpvpaper_enabled_in_settings(raw: &str) -> bool {
+    let mut in_plugins = false;
+    let mut collecting = false;
+    let mut depth: i32 = 0;
+    let mut buf = String::new();
+    let mut found = false;
+    for line in raw.lines() {
+        let stripped = line.trim();
+        if stripped.starts_with('#') || stripped.is_empty() {
+            continue;
+        }
+        // Machine-written file: no '#' inside quoted values, so a '#'
+        // always starts a trailing comment.
+        let code = stripped.split('#').next().unwrap_or("").trim();
+        if let Some(header) = code.strip_prefix('[') {
+            let header = header.split(']').next().unwrap_or("").trim();
+            in_plugins = header == "plugins";
+            collecting = false;
+            continue;
+        }
+        if !in_plugins {
+            continue;
+        }
+        let piece = if !collecting {
+            match code.strip_prefix("enabled") {
+                Some(rest) => {
+                    let rest = rest.trim_start();
+                    match rest.strip_prefix('=') {
+                        Some(value) => value,
+                        None => continue,
+                    }
+                }
+                None => continue,
+            }
+        } else {
+            code
+        };
+        if !collecting {
+            buf.clear();
+            collecting = true;
+        }
+        buf.push_str(piece);
+        depth += piece.chars().filter(|c| *c == '[').count() as i32
+            - piece.chars().filter(|c| *c == ']').count() as i32;
+        if depth <= 0 {
+            collecting = false;
+            if buf.contains("\"noctalia/mpvpaper\"") || buf.contains("'noctalia/mpvpaper'") {
+                found = true;
+            }
+            buf.clear();
+        }
+    }
+    found
+}
+
+/// What apply must do to `noctalia/mpvpaper` after `config-reload` so the
+/// theme cannot change whether the plugin is enabled (D4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluginReassert {
+    Disable,
+    Enable,
+    Leave,
+}
+
+/// Map the pre-apply snapshot to the post-reload action: a disabled plugin
+/// stays disabled (a theme carrying it enabled must not leave it
+/// enabled), an enabled one stays enabled, unknown stays untouched.
+fn plugin_reassert_action(was_enabled: Option<bool>) -> PluginReassert {
+    match was_enabled {
+        Some(false) => PluginReassert::Disable,
+        Some(true) => PluginReassert::Enable,
+        None => PluginReassert::Leave,
+    }
+}
+
+/// Snapshot whether `noctalia/mpvpaper` is enabled RIGHT NOW, before apply
+/// overwrites the live settings. Primary signal is the live settings.toml
+/// (fast, local, no IPC); fallback is the `plugins list` IPC. `None` when
+/// neither answers — the caller then leaves the reloaded plugin state
+/// alone and says so, instead of changing what it could not read.
+fn live_mpvpaper_plugin_enabled() -> Option<bool> {
+    if let Some(state_dir) = noctalia_state_dir() {
+        match fs::read_to_string(state_dir.join("settings.toml")) {
+            Ok(raw) => return Some(mpvpaper_enabled_in_settings(&raw)),
+            Err(e) => tracing::debug!(
+                "[noctalia-v5] Cannot read live settings.toml for plugin snapshot: {}",
+                e
+            ),
+        }
+    }
+    // Same predicate as mpvpaper::mpvpaper_enabled, but tri-state: an IPC
+    // failure is "unknown", never "disabled".
+    match noctalia_msg(&["msg", "plugins", "list"]) {
+        Ok(out) => Some(
+            out.lines().any(|l| {
+                l.trim_start().starts_with("noctalia/mpvpaper")
+                    && l.trim_end().ends_with("enabled")
+            }),
+        ),
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot snapshot plugin state ({}); leaving reloaded state alone",
+                e
+            );
+            None
         }
     }
 }
@@ -765,10 +923,19 @@ impl ThemeProvider for NoctaliaV5Provider {
 
         // 3. Ask the compositor which background is actually on top (the
         //    daemon is a secondary signal only), and capture ONLY that one.
-        //    Static -> wallpaper.txt only (drop any stale video manifest);
-        //    video -> manifest only (drop any stale static record).
-        //    Unknown -> keep the legacy capture-everything behaviour so a
-        //    missing/unreachable query never loses data silently.
+        //    Static -> wallpaper.txt only (drop any stale video record);
+        //    video with a resolvable painter path -> the painter record
+        //    (video.txt) only (drop the stale mpvpaper manifest, which still
+        //    names the previous video). Anything unverifiable — no signal,
+        //    or video with no resolvable path — keeps the legacy
+        //    capture-everything behaviour so a missing/unreachable query
+        //    never loses data silently, and says so.
+        //
+        //    Two-tier query: the cheap kind-only query decides the plan; the
+        //    richer background query (kind + path + painter) runs only when
+        //    a video is on top and its path is needed. A kind flip between
+        //    the two queries vetoes honestly instead of recording a video
+        //    that may no longer be showing.
         let plan = match wallpaper_authority::query_active_wallpaper_kind() {
             Ok(kind) => wallpaper_authority::plan_from_kind(Some(kind)),
             Err(reason) => {
@@ -779,8 +946,40 @@ impl ThemeProvider for NoctaliaV5Provider {
                 SavePlan::Unknown
             }
         };
-        let capture_static = matches!(plan, SavePlan::StaticOnly | SavePlan::Unknown);
-        let capture_video = matches!(plan, SavePlan::VideoOnly | SavePlan::Unknown);
+        // A video kind is exact only when the painter's path resolves:
+        // without it there is nothing truthful to record, so veto honestly
+        // (legacy capture) instead of inventing a path.
+        let video_bg: Option<wallpaper_authority::ActiveBackground> =
+            if matches!(plan, SavePlan::VideoOnly) {
+                match wallpaper_authority::query_active_background() {
+                    Ok(bg)
+                        if bg.kind == WallpaperKind::Video && bg.video_path.is_some() =>
+                    {
+                        Some(bg)
+                    }
+                    Ok(other) => {
+                        tracing::warn!(
+                            "[noctalia-v5] Video on top but painter identity unavailable ({:?}); capturing available backgrounds",
+                            other.kind
+                        );
+                        None
+                    }
+                    Err(reason) => {
+                        tracing::warn!(
+                            "[noctalia-v5] Video on top but painter identity unavailable ({}); capturing available backgrounds",
+                            reason
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+        let exact_video = video_bg.is_some();
+        let vetoed_video = matches!(plan, SavePlan::VideoOnly) && !exact_video;
+        let capture_static =
+            matches!(plan, SavePlan::StaticOnly | SavePlan::Unknown) || vetoed_video;
+        let capture_video_manifest = matches!(plan, SavePlan::Unknown) || vetoed_video;
 
         // 4. Save default wallpaper via IPC (static only, unless authority unknown)
         if capture_static {
@@ -814,18 +1013,61 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        // 6. Save animated wallpaper manifest (mpvpaper plugin), reference only.
-        //    Only when the authority reports video (or is unreachable): a theme
-        //    saved while static is showing must not carry a video manifest, or
-        //    apply would let the video silently win over the static image.
-        if capture_video {
+        // 6. Painter-identified video record (video.txt): kind + path + who
+        //    painted it, so apply can restore it exactly through the manager
+        //    in charge. Written only for an exact video; every other arm
+        //    drops a stale record (re-save does not wipe the dir, and a
+        //    leftover would hijack apply with a video no longer on top).
+        //    A video KIND with no resolvable path records nothing — the
+        //    legacy capture below stays honest instead of inventing one.
+        match video_bg.as_ref() {
+            Some(bg) => match bg.video_path.as_ref() {
+                Some(path) => {
+                    let record = wallpaper_authority::format_painter_video_record(
+                        path,
+                        bg.painter_proc.as_deref(),
+                        &bg.top_namespace,
+                        bg.top_pid,
+                    );
+                    match fs::write(
+                        provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE),
+                        &record,
+                    ) {
+                        Ok(()) => tracing::info!(
+                            "[noctalia-v5] Saved painter video record (video.txt): {}",
+                            path.display()
+                        ),
+                        Err(e) => {
+                            tracing::warn!("[noctalia-v5] Cannot write video.txt: {}", e)
+                        }
+                    }
+                }
+                // Unreachable by construction (video_bg only holds resolved
+                // paths), but honesty first: never write a record without one.
+                None => tracing::warn!(
+                    "[noctalia-v5] Exact video lost its identity; no video.txt written"
+                ),
+            },
+            None => {
+                remove_stale_artifact(&provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE));
+            }
+        }
+
+        // 7. Save animated wallpaper manifest (mpvpaper plugin), reference only.
+        //    Only for the honest legacy capture (unreachable authority, or a
+        //    vetoed video with no painter path): the manifest comes from
+        //    mpvpaper's state file, which still names the previous video, so
+        //    an exact painter record must never share a theme with it — apply
+        //    would otherwise have two videos claiming the screen.
+        if capture_video_manifest {
             match crate::providers::mpvpaper::save_manifest(&provider_dir) {
                 Ok(()) => {}
                 Err(e) => tracing::warn!("[noctalia-v5] Could not save mpvpaper manifest: {}", e),
             }
         } else {
-            // Authority says static: drop any stale manifest (re-save does not
-            // wipe the dir, and a leftover would hijack apply).
+            // Authority decided exactly (static, or video with a painter
+            // record): drop any stale manifest (re-save does not wipe the
+            // dir, and a leftover would hijack apply).
             remove_stale_artifact(&provider_dir.join(crate::providers::mpvpaper::MANIFEST_FILE));
         }
 
@@ -845,6 +1087,16 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    v5 stores settings in ~/.local/state/noctalia/settings.toml, NOT
         //    in settings.json (v4 artifact). This must happen before wallpaper/scheme
         //    so config-reload loads the complete ecosystem state first.
+        //
+        //    D4: the saved settings.toml carries its own `[plugins] enabled`
+        //    list (every saved theme has `noctalia/mpvpaper` enabled while
+        //    the keeper runs disabled), so restoring it verbatim plus
+        //    `config-reload` would re-enable a plugin the user turned off —
+        //    and its boot `applyAll()` would relaunch the stale assignments
+        //    video. Snapshot the pre-apply state first and re-assert it
+        //    after the reload; the rest of the settings restore is
+        //    untouched.
+        let plugin_was_enabled = live_mpvpaper_plugin_enabled();
         let saved_settings = provider_dir.join("settings.toml");
         if saved_settings.exists() {
             if let Some(state_dir) = noctalia_state_dir() {
@@ -856,38 +1108,117 @@ impl ThemeProvider for NoctaliaV5Provider {
                 noctalia_msg(&["msg", "config-reload"])
                     .map_err(|e| format!("Cannot reload config: {}", e))?;
                 tracing::info!("[noctalia-v5] Config reloaded — bar, OSD, widgets restored");
+
+                match plugin_reassert_action(plugin_was_enabled) {
+                    PluginReassert::Disable => {
+                        if let Err(e) =
+                            noctalia_msg(&["msg", "plugins", "disable", "noctalia/mpvpaper"])
+                        {
+                            tracing::warn!(
+                                "[noctalia-v5] Could not keep noctalia/mpvpaper disabled: {}",
+                                e
+                            );
+                        } else {
+                            tracing::info!(
+                                "[noctalia-v5] Kept noctalia/mpvpaper disabled (pre-apply state)"
+                            );
+                        }
+                    }
+                    PluginReassert::Enable => {
+                        if let Err(e) =
+                            noctalia_msg(&["msg", "plugins", "enable", "noctalia/mpvpaper"])
+                        {
+                            tracing::warn!(
+                                "[noctalia-v5] Could not keep noctalia/mpvpaper enabled: {}",
+                                e
+                            );
+                        }
+                    }
+                    PluginReassert::Leave => tracing::warn!(
+                        "[noctalia-v5] Unknown pre-apply plugin state; leaving reloaded plugins as-is"
+                    ),
+                }
             }
         }
 
-        // 1. Animated wallpaper (mpvpaper plugin).
-        //    If the theme saved animated wallpapers, resolve/download the videos
-        //    and bounce the plugin so it launches them. If the theme has NO
-        //    manifest, send clear-all FIRST: a running video would otherwise
-        //    keep hijacking the screen and the static wallpaper below could
-        //    never show. These operations are best-effort: a plugin problem
-        //    must never fail the whole theme apply.
+        // 1. Painter-identified video (video.txt): the exact record of what
+        //    was on top at save time (kind + path + who painted it).
+        //    Restored through the manager in charge (`skwd-helm apply` via
+        //    the delegation helper) — the mpvpaper plugin is never touched,
+        //    so a plugin the user disabled stays disabled (G3). When the
+        //    record is missing or unresolvable, fall through to the legacy
+        //    manifest path below; a theme without any video record still
+        //    sends clear-all first so a running video cannot hijack the
+        //    screen. Best-effort throughout: a video problem must never fail
+        //    the whole theme apply.
+        let mut animated_applied = false;
+        let painter_record = provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE);
+        if painter_record.exists() {
+            let recorded: Option<PathBuf> = fs::read_to_string(&painter_record)
+                .ok()
+                .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
+            match recorded {
+                Some(path) if path.exists() => {
+                    if delegate_to_skwd_walld(&path) {
+                        animated_applied = true;
+                        tracing::info!(
+                            "[noctalia-v5] Restored painter video (video.txt) via skwd: {}",
+                            path.display()
+                        );
+                    } else {
+                        // D1: the video is NOT back — keep every fallback
+                        // route (manifest below, static restore after it)
+                        // instead of claiming success and deleting them.
+                        tracing::warn!(
+                            "[noctalia-v5] Painter video delegation failed ({}); keeping fallback routes",
+                            path.display()
+                        );
+                    }
+                }
+                Some(path) => {
+                    tracing::warn!(
+                        "[noctalia-v5] Painter video no longer on disk ({}); falling back",
+                        path.display()
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "[noctalia-v5] Cannot parse video.txt; falling back to manifest"
+                    );
+                }
+            }
+        }
+        if animated_applied {
+            // The exact video is back with its own manager: a stale mpvpaper
+            // manifest must not bounce the plugin over it.
+            remove_stale_artifact(&provider_dir.join(crate::providers::mpvpaper::MANIFEST_FILE));
+        }
+        // 1b. Legacy animated wallpaper (mpvpaper plugin manifest).
+        //    Only when no exact painter video was restored. Refuses (never
+        //    enables) while the plugin is disabled — see mpvpaper.rs.
         let manifest_exists = provider_dir
             .join(crate::providers::mpvpaper::MANIFEST_FILE)
             .exists();
-        let mut animated_applied = false;
-        if manifest_exists {
-            // Warn the user up-front when the theme has animated wallpapers
-            // but the plugin is not available — otherwise they would apply the
-            // theme and silently lose the videos.
-            if !crate::providers::mpvpaper::mpvpaper_enabled() {
-                crate::providers::mpvpaper::notify_plugin_required();
-            }
-            match crate::providers::mpvpaper::apply_manifest(theme_dir) {
-                Ok(()) => {
-                    animated_applied = true;
-                    tracing::info!("[noctalia-v5] Animated wallpapers applied");
+        if !animated_applied {
+            if manifest_exists {
+                // Warn the user up-front when the theme has animated wallpapers
+                // but the plugin is not available — otherwise they would apply the
+                // theme and silently lose the videos.
+                if !crate::providers::mpvpaper::mpvpaper_enabled() {
+                    crate::providers::mpvpaper::notify_plugin_required();
                 }
-                Err(e) => tracing::warn!("[noctalia-v5] Animated wallpapers skipped: {}", e),
-            }
-        } else {
-            match crate::providers::mpvpaper::clear_all() {
-                Ok(()) => tracing::info!("[noctalia-v5] Stopped running video wallpapers"),
-                Err(e) => tracing::warn!("[noctalia-v5] clear-all warning: {}", e),
+                match crate::providers::mpvpaper::apply_manifest(theme_dir) {
+                    Ok(()) => {
+                        animated_applied = true;
+                        tracing::info!("[noctalia-v5] Animated wallpapers applied");
+                    }
+                    Err(e) => tracing::warn!("[noctalia-v5] Animated wallpapers skipped: {}", e),
+                }
+            } else {
+                match crate::providers::mpvpaper::clear_all() {
+                    Ok(()) => tracing::info!("[noctalia-v5] Stopped running video wallpapers"),
+                    Err(e) => tracing::warn!("[noctalia-v5] clear-all warning: {}", e),
+                }
             }
         }
 
@@ -984,6 +1315,7 @@ impl ThemeProvider for NoctaliaV5Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     #[test]
@@ -1323,6 +1655,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn delegate_noop_when_socket_absent() {
         // Task 2: delegation must be no-op when socket absent and never panic
         let tmp_runtime = TempDir::new().unwrap();
@@ -1347,21 +1680,42 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn delegate_swallow_failure_when_socket_is_not_socket() {
-        // Task 2: failure must be swallowed, not propagated
+        // Task 2: failure must be swallowed, not propagated. D1: it must
+        // also REPORT the failure. Stub binaries on PATH (both fail) keep
+        // this hermetic: no real `skwd-helm apply` may run during tests.
         let tmp_runtime = TempDir::new().unwrap();
         let sock_dir = tmp_runtime.path().join("skwd-wall-v2");
         std::fs::create_dir_all(&sock_dir).unwrap();
         let sock_path = sock_dir.join("wall.sock");
         // Create a regular file where socket should be — connect will fail
         std::fs::write(&sock_path, b"not a socket").unwrap();
+        let bin_dir = tmp_runtime.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        for bin in ["skwd-helm", "skwd-wall-v2"] {
+            let stub = bin_dir.join(bin);
+            std::fs::write(&stub, "#!/bin/sh\nexit 1\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
         let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
         let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        let orig_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
         std::env::remove_var("SKWD_WALL_V2_SOCK");
-        // Must not panic, must swallow error
-        delegate_to_skwd_walld(Path::new("/tmp/another.jpg"));
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", bin_dir.display(), orig_path),
+        );
+        // Must not panic, must swallow the error — and must report failure
+        // so the caller keeps its fallback routes.
+        assert!(!delegate_to_skwd_walld(Path::new("/tmp/another.jpg")));
         // restore
+        std::env::set_var("PATH", &orig_path);
         if let Some(v) = orig_runtime {
             std::env::set_var("XDG_RUNTIME_DIR", v);
         } else {
@@ -1372,5 +1726,157 @@ mod tests {
         } else {
             std::env::remove_var("SKWD_WALL_V2_SOCK");
         }
+    }
+
+    /// D1: the delegation must report whether it actually applied. An
+    /// absent socket (daemon unreachable) is a failed delegation, never a
+    /// silent success — the caller gates the fallback routes on this.
+    #[test]
+    #[serial]
+    fn delegate_reports_failure_when_socket_absent() {
+        let tmp_runtime = TempDir::new().unwrap();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
+        std::env::remove_var("SKWD_WALL_V2_SOCK");
+        let applied = delegate_to_skwd_walld(Path::new("/tmp/fake-wallpaper.jpg"));
+        assert!(
+            !applied,
+            "absent socket must report failure so the caller keeps the fallback routes"
+        );
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
+    }
+
+    /// D1: a failed delegation must not claim the video is back. The apply
+    /// path may only treat the painter video as restored on a real success;
+    /// otherwise the manifest must survive and the static restore must run.
+    /// Comment lines are stripped first so a commented-out gate cannot
+    /// satisfy this. Needles are built with concat() so this test's own
+    /// source — it lives in the file it inspects — can never satisfy them.
+    #[test]
+    fn v5_apply_claims_video_only_on_real_delegation_success_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let gated = ["if delegate_to_skwd", "_walld"].concat();
+        assert!(
+            code.contains(&gated),
+            "apply must gate the painter-video success on the delegation result"
+        );
+        let unconditional = ["delegate_to_skwd_walld(&path);\n", "                    animated_applied = true"].concat();
+        assert!(
+            !code.contains(&unconditional),
+            "apply must not set animated_applied unconditionally after delegating"
+        );
+    }
+
+    /// D4: the `[plugins] enabled` list in settings.toml is the machine's
+    /// plugin state. The keeper's live file has the plugin disabled while
+    /// every saved theme carries it enabled — the parser must tell both
+    /// apart, including multi-line arrays and commented lines.
+    #[test]
+    fn settings_toml_parser_detects_mpvpaper_state() {
+        let enabled = "[plugins]\nenabled = [ \"kenn/keybind-cheatsheet\", \"noctalia/mpvpaper\", \"yuuto/arch-updater\" ]\n";
+        assert!(mpvpaper_enabled_in_settings(enabled));
+        let disabled = "[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n";
+        assert!(!mpvpaper_enabled_in_settings(disabled));
+        let multiline = "[plugins]\nenabled = [\n  \"kenn/keybind-cheatsheet\",\n  \"noctalia/mpvpaper\",\n]\n";
+        assert!(mpvpaper_enabled_in_settings(multiline));
+        let commented = "[plugins]\n# enabled = [ \"noctalia/mpvpaper\" ]\nenabled = [ \"yuuto/arch-updater\" ]\n";
+        assert!(!mpvpaper_enabled_in_settings(commented));
+        let other_section = "[other]\nenabled = [ \"noctalia/mpvpaper\" ]\n[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n";
+        assert!(!mpvpaper_enabled_in_settings(other_section));
+        assert!(!mpvpaper_enabled_in_settings(""));
+    }
+
+    /// D4: the re-assert mapping is the proof a theme carrying the plugin
+    /// enabled cannot leave it enabled — a disabled pre-apply state maps
+    /// to disabling it again after the reload.
+    #[test]
+    fn plugin_reassert_keeps_pre_apply_state() {
+        assert_eq!(plugin_reassert_action(Some(false)), PluginReassert::Disable);
+        assert_eq!(plugin_reassert_action(Some(true)), PluginReassert::Enable);
+        assert_eq!(plugin_reassert_action(None), PluginReassert::Leave);
+    }
+
+    /// D4: applying a theme restores settings.toml verbatim and runs
+    /// config-reload, which would re-enable a plugin the user disabled.
+    /// Apply must therefore snapshot the pre-apply enabled state BEFORE
+    /// overwriting the live settings and re-assert it AFTER the reload —
+    /// without touching the rest of the settings restore. Comment lines
+    /// are stripped first so a commented-out snapshot cannot satisfy this.
+    /// Needles are built with concat() so this test's own source — it
+    /// lives in the file it inspects — can never satisfy them.
+    #[test]
+    fn v5_apply_preserves_mpvpaper_enabled_state_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let snapshot = ["plugin_", "was_enabled"].concat();
+        assert!(
+            code.contains(&snapshot),
+            "apply must snapshot the pre-apply mpvpaper enabled state"
+        );
+        let snapshot_at = code.find(&snapshot).expect("snapshot must exist");
+        let restore_at = code
+            .find("Cannot restore settings.toml")
+            .expect("apply must still restore settings.toml");
+        assert!(
+            snapshot_at < restore_at,
+            "the snapshot must happen before the live settings are overwritten"
+        );
+        let reload_at = code
+            .find("config-reload")
+            .expect("apply must still reload the config");
+        let reassert = ["plugins\", \"dis", "able\""].concat();
+        let reassert_at = code[reload_at..]
+            .find(&reassert)
+            .expect("apply must re-assert the plugin state after the reload");
+        let _ = reassert_at;
+    }
+
+    /// G2/G3: a painter-identified video must be recorded exactly (kind +
+    /// path + who painted it) and restored through the manager in charge
+    /// (`skwd-helm apply`, i.e. the existing delegation helper), never by
+    /// bouncing the mpvpaper plugin. Comment lines are stripped first so a
+    /// commented-out call cannot satisfy this. Needles are built with
+    /// concat() so this test's own source — it lives in the file it
+    /// inspects — can never satisfy them.
+    #[test]
+    fn v5_apply_restores_painter_video_through_skwd_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let video_record = ["vid", "eo.txt"].concat();
+        let delegator = ["delegate_to_skwd", "_walld"].concat();
+        assert!(
+            code.contains(&video_record),
+            "noctalia.rs apply must restore the painter-identified video record"
+        );
+        assert!(
+            code.contains(&delegator),
+            "noctalia.rs apply must route the recorded video through skwd delegation"
+        );
     }
 }

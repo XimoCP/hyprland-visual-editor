@@ -191,7 +191,19 @@ fn kill_all_instances() {
 
 /// Bounce the plugin so it re-reads assignments.json at boot and launches
 /// the configured mpvpaper instances (the programmatic "click").
+///
+/// G3: refused while the plugin is currently disabled — the enable step
+/// would RE-ENABLE a plugin the user turned off and resurrect its old
+/// video on the next theme apply. Callers check first; this guard is the
+/// backstop so no path can bounce a disabled plugin by accident.
 fn bounce_plugin() -> Result<(), String> {
+    if !mpvpaper_enabled() {
+        return Err(
+            "noctalia/mpvpaper plugin is not enabled; refusing to bounce \
+             (would re-enable a plugin the user disabled)"
+                .into(),
+        );
+    }
     noctalia_msg(&["msg", "plugins", "disable", "noctalia/mpvpaper"])?;
     noctalia_msg(&["msg", "plugins", "enable", "noctalia/mpvpaper"])?;
     Ok(())
@@ -442,6 +454,16 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
         ));
     }
 
+    // G3: refuse BEFORE writing any live state or killing anything. A
+    // disabled plugin must never be re-enabled by a theme apply, and no
+    // half-written assignments file may linger for its next boot.
+    if !mpvpaper_enabled() {
+        return Err(
+            "noctalia/mpvpaper plugin is not enabled; videos not launched (live state untouched)"
+                .into(),
+        );
+    }
+
     // Persist live state so the plugin picks it up at boot.
     let Some(state_file) = live_assignments_path() else {
         return Err("Cannot resolve Noctalia state dir".into());
@@ -465,10 +487,8 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
     // processes decoding the same video at full CPU.
     kill_all_instances();
 
-    // Bounce plugin ONLY if it is present and enabled.
-    if !mpvpaper_enabled() {
-        return Err("noctalia/mpvpaper plugin is not enabled; videos written but not launched".into());
-    }
+    // The plugin is present and enabled (checked above, before any write):
+    // bounce it so its boot-time applyAll() picks up the new assignments.
     bounce_plugin()?;
 
     // Give the plugin's boot-time applyAll() time to spawn the new instances
@@ -759,5 +779,46 @@ video_directory = "~/Videos"
         assert_eq!(v.filename, "movie.mp4");
         assert_eq!(v.local_path.as_deref(), Some("/a/b/movie.mp4"));
         assert_eq!(v.url.as_deref(), Some("https://example.com/movie.mp4"));
+    }
+
+    /// G3: restoring a video must never re-enable a plugin the user
+    /// disabled. The disable+enable bounce is therefore guarded by the
+    /// live enabled check, and the live assignments file is only written
+    /// after that check passes — a disabled plugin means early refusal
+    /// before any write or kill. Comment lines are stripped first so a
+    /// commented-out guard cannot satisfy this.
+    #[test]
+    fn apply_never_enables_disabled_plugin_by_construction() {
+        let src = std::fs::read_to_string("src/providers/mpvpaper.rs")
+            .expect("src/providers/mpvpaper.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bounce_at = code.find("fn bounce_plugin").expect("bounce_plugin must exist");
+        let after_bounce = &code[bounce_at..];
+        let guard_at = after_bounce
+            .find("mpvpaper_enabled")
+            .expect("bounce_plugin must consult the live enabled check");
+        let enable_at = after_bounce
+            .find("\"enable\"")
+            .expect("bounce_plugin must still contain its enable step");
+        assert!(
+            guard_at < enable_at,
+            "the enabled check must dominate the enable step inside bounce_plugin"
+        );
+        let apply_at = code.find("pub fn apply_manifest").expect("apply_manifest must exist");
+        let after_apply = &code[apply_at..];
+        let apply_guard = after_apply
+            .find("mpvpaper_enabled")
+            .expect("apply_manifest must consult the live enabled check");
+        let live_write = after_apply
+            .find("Cannot write live assignments")
+            .expect("apply_manifest must still persist the live assignments file");
+        assert!(
+            apply_guard < live_write,
+            "apply_manifest must refuse a disabled plugin before writing any live state"
+        );
     }
 }
