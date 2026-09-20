@@ -7516,3 +7516,145 @@ fn gallery_apply_refreshes_shared_preset_state_by_construction() {
         "the gallery apply path must refresh shared preset state from disk via reload_config_after_theme"
     );
 }
+
+// ── Theme-apply tune-pane sync (stale tune pane) ─────────────────────
+// Defect: a theme apply writes the theme's border to the LIVE system, but
+// the Borders tune pane (colour chips, gradient angle, inactive colour,
+// glow, geometry sliders) was only populated by the MANUAL border-apply
+// path. The keeper repro: theme jokertheme2 carries 13_the_joker.lua (3
+// colours, angle 45) while the pane kept showing the previous manual
+// border (2 chips, 40 degrees). Both theme-apply paths (gallery card
+// click, panel Save) must route through the SAME shared tune sync as the
+// manual path, so the two paths cannot drift again. Behaviour on the
+// shared function is covered below; the main() wiring itself needs the
+// live window + managers + slot, so it is asserted by construction.
+#[test]
+fn theme_apply_paths_sync_tune_pane_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    // Comment lines are stripped before asserting: a commented-out call keeps
+    // its text on disk, so a raw `contains` would still pass with the wiring
+    // disabled — the most likely way someone disables a call in a hurry.
+    let code_only = |slice: &str| -> String {
+        slice
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    // Gallery card click path: scoped to the click handler body (the next
+    // wiring block starts at `window.on_gallery_style_selected`).
+    let gallery = main
+        .split("window.on_gallery_card_clicked")
+        .nth(1)
+        .expect("main.rs must wire on_gallery_card_clicked");
+    let gallery = gallery
+        .split("window.on_gallery_style_selected")
+        .next()
+        .unwrap_or(gallery);
+    assert!(
+        code_only(gallery).contains("sync_border_tune_pane"),
+        "the gallery theme-apply path must sync the Borders tune pane via sync_border_tune_pane"
+    );
+    // Panel Save path: scoped to the apply-saved-theme handler body (the
+    // next wiring block starts at `window.on_panel_rename_saved_theme`).
+    let panel = main
+        .split("window.on_panel_apply_saved_theme")
+        .nth(1)
+        .expect("main.rs must wire on_panel_apply_saved_theme");
+    let panel = panel
+        .split("window.on_panel_rename_saved_theme")
+        .next()
+        .unwrap_or(panel);
+    assert!(
+        code_only(panel).contains("sync_border_tune_pane"),
+        "the panel Save theme-apply path must sync the Borders tune pane via sync_border_tune_pane"
+    );
+    // Anti-drift: the manual path must call the same shared function and
+    // must NOT keep its own copy of the bulk tune-prop set.
+    let manual = main
+        .split("window.on_panel_apply_border")
+        .nth(1)
+        .expect("main.rs must wire on_panel_apply_border");
+    let manual = manual
+        .split("window.on_panel_apply_animation")
+        .next()
+        .unwrap_or(manual);
+    assert!(
+        code_only(manual).contains("sync_border_tune_pane"),
+        "the manual border-apply path must use the shared sync_border_tune_pane"
+    );
+    assert!(
+        !code_only(manual).contains("set_tune_color_count"),
+        "the manual path must not duplicate the tune bulk-set (single shared sync)"
+    );
+}
+
+// ── Shared tune sync behaviour (keeper repro, headless) ─────────────
+// Fixture: the pane holds the PREVIOUS manual border's values (2 chips,
+// 40 degrees); syncing the theme's border (13_the_joker.lua: 3 colours,
+// angle 45) must replace them with exactly what a manual click on that
+// same card would show — chips, angle, inactive, glow, and the geometry
+// sliders the manual path snaps.
+#[test]
+fn theme_border_sync_replaces_stale_tune_pane_like_manual_pick() {
+    use slint::{Model, ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Stale manual state (the keeper repro: 2 chips, 40 degrees, odd sliders).
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("c:ff0000ff"),
+        SharedString::from("c:00ff00ff"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(40);
+    win.set_tune_inactive_color(SharedString::from("c:111111ff"));
+    win.set_border_size(9);
+    win.set_corner_radius(9);
+    win.set_gap_in(9);
+    win.set_gap_out(9);
+
+    crate::sync_border_tune_pane(&win, &proj, "13_the_joker.lua");
+
+    assert_eq!(win.get_tune_color_count(), 3, "joker carries 3 gradient colours");
+    assert_eq!(win.get_tune_active_colors().row_count(), 3);
+    assert_eq!(win.get_tune_angle(), 45, "joker angle is 45, not the stale 40");
+    assert!(
+        !win.get_tune_inactive_color().is_empty(),
+        "inactive colour must come from the preset"
+    );
+    assert!(!win.get_tune_glow().is_empty(), "glow must come from the preset");
+    assert!(win.get_tune_glow_enabled(), "joker shadow is enabled");
+    // Geometry sliders snap exactly like the manual path.
+    let snap = crate::callbacks::preset_geometry_for("13_the_joker.lua");
+    assert_eq!(win.get_border_size(), snap.size);
+    assert_eq!(win.get_corner_radius(), snap.radius);
+    assert_eq!(win.get_gap_in(), snap.gap_in);
+    assert_eq!(win.get_gap_out(), snap.gap_out);
+}
+
+/// Deactivated/empty border: the shared sync keeps exactly what the manual
+/// path does on deselect — clear the tune props, no invented behaviour.
+#[test]
+fn theme_empty_border_clears_tune_pane_like_manual_deselect() {
+    use slint::{ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("c:ff0000ff"),
+        SharedString::from("c:00ff00ff"),
+        SharedString::from("c:0000ffff"),
+    ])));
+    win.set_tune_color_count(3);
+    win.set_tune_angle(45);
+
+    crate::sync_border_tune_pane(&win, &proj, "");
+
+    assert_eq!(win.get_tune_color_count(), 0);
+    assert_eq!(win.get_tune_angle(), 90);
+    assert!(win.get_tune_inactive_color().is_empty());
+    assert!(win.get_tune_glow().is_empty());
+    assert!(!win.get_tune_glow_enabled());
+    assert!(!win.get_tune_dirty());
+}

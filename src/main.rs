@@ -163,6 +163,138 @@ fn refresh_resolved_colors(w: &crate::MainWindow) {
     w.set_tune_colors_resolved(slint::ModelRc::from(out.as_slice()));
 }
 
+/// Sync the Borders tune pane from a border preset file — the ONE shared
+/// path every border apply uses to populate the right-hand tune controls
+/// (colour chips, gradient angle, inactive colour, glow, animation leaves,
+/// and the geometry sliders the manual path snaps).
+///
+/// Callers: the manual card click (`on_panel_apply_border`, which the IPC
+/// `next-border` path routes through) and both theme-apply paths (gallery
+/// card click, panel Save). Sharing this body is what keeps the theme
+/// paths from drifting behind the manual one again.
+///
+/// `border_file` is the preset file name with extension (e.g.
+/// `"13_the_joker.lua"`); empty means deactivated and clears the pane,
+/// exactly like a manual deselect. This only touches the window:
+/// engine/config writes stay with the callers (the manual apply owns its
+/// toggle + geometry apply; theme applies arrive with the provider's own
+/// apply already persisted on disk, which the caller reloaded first).
+pub(crate) fn sync_border_tune_pane(
+    w: &crate::MainWindow,
+    proj: &std::path::Path,
+    border_file: &str,
+) {
+    // Picking a preset gives the tune pane its apply target, so the
+    // "select a border preset first" refusal hint no longer applies.
+    if w.get_border_save_error() == TUNE_NEEDS_ACTIVE_BORDER {
+        w.set_border_save_error(String::new().into());
+    }
+    if border_file.is_empty() {
+        // Deselect: clear tune properties
+        w.set_tune_color_count(0);
+        w.set_tune_active_colors(slint::ModelRc::default());
+        w.set_tune_angle(90);
+        w.set_tune_inactive_color(String::new().into());
+        w.set_tune_glow(String::new().into());
+        w.set_tune_glow_enabled(false);
+        w.set_tune_glow_range(20);
+        w.set_tune_glow_render_power(4);
+        w.set_tune_glow_color("p:primary".into());
+        w.set_tune_glow_color_inactive("p:surface_lowest".into());
+        w.set_tune_anim_borderangle_enabled(false);
+        w.set_tune_anim_borderangle_speed(30);
+        w.set_tune_anim_borderangle_bezier("default".into());
+        w.set_tune_anim_borderangle_style("".into());
+        w.set_tune_anim_border_enabled(false);
+        w.set_tune_anim_border_speed(30);
+        w.set_tune_anim_border_bezier("default".into());
+        w.set_tune_anim_border_style("".into());
+        w.set_tune_anim_fadeshadow_enabled(false);
+        w.set_tune_anim_fadeshadow_speed(30);
+        w.set_tune_anim_fadeshadow_bezier("default".into());
+        w.set_tune_anim_fadeshadow_style("".into());
+        w.set_tune_anim_curves(slint::ModelRc::default());
+        w.set_tune_rule_enabled(false);
+        // Nothing is selected, so there is no unsaved state to flag.
+        w.set_tune_dirty(false);
+        w.set_tune_animations(String::new().into());
+        refresh_resolved_colors(w);
+        return;
+    }
+    // snap sliders one-way (preset→tune, no reverse)
+    let snap = crate::callbacks::preset_geometry_for(border_file);
+    w.set_border_size(snap.size);
+    w.set_corner_radius(snap.radius);
+    w.set_gap_in(snap.gap_in);
+    w.set_gap_out(snap.gap_out);
+    // Task 2.2: read .lua → parse → bulk-set tune properties
+    let preset_name = border_file.strip_suffix(".lua").unwrap_or(border_file);
+    if let Ok(content) = crate::preset_store::PresetStore::read_border_file(preset_name, proj) {
+        let params = crate::border_preset::parse(&content);
+        use crate::preset_store::PresetStore;
+        let count = params.active_colors.len() as i32;
+        w.set_tune_color_count(count);
+        let color_entries: Vec<slint::SharedString> = params.active_colors.iter().map(|c| {
+            slint::SharedString::from(PresetStore::encode_colors(&[c.clone()]).as_str())
+        }).collect();
+        w.set_tune_active_colors(slint::ModelRc::from(color_entries.as_slice()));
+        w.set_tune_angle(params.angle);
+        w.set_tune_inactive_color(slint::SharedString::from(PresetStore::encode_inactive(&params.inactive).as_str()));
+        w.set_tune_glow(slint::SharedString::from(PresetStore::encode_glow(params.glow.as_ref()).as_str()));
+        // Set individual glow properties for the UI
+        if let Some(ref glow) = params.glow {
+            w.set_tune_glow_enabled(glow.enabled);
+            w.set_tune_glow_range(glow.range);
+            w.set_tune_glow_render_power(glow.render_power);
+            w.set_tune_glow_color(slint::SharedString::from(PresetStore::encode_colors(&[glow.color.clone()]).as_str()));
+            w.set_tune_glow_color_inactive(slint::SharedString::from(PresetStore::encode_colors(&[glow.color_inactive.clone()]).as_str()));
+        } else {
+            w.set_tune_glow_enabled(false);
+            w.set_tune_glow_range(20);
+            w.set_tune_glow_render_power(4);
+            w.set_tune_glow_color("p:primary".into());
+            w.set_tune_glow_color_inactive("p:surface_lowest".into());
+        }
+        w.set_tune_rule_enabled(params.rule_enabled);
+        // Freshly loaded state is the saved state: clear the
+        // D4 unsaved marker the pane shows in its header.
+        w.set_tune_dirty(false);
+        w.set_tune_animations(slint::SharedString::from(PresetStore::encode_animations(&params.animations).as_str()));
+        // Set individual animation leaf properties
+        for leaf in &params.animations {
+            match leaf.leaf.as_str() {
+                "borderangle" => {
+                    w.set_tune_anim_borderangle_enabled(leaf.enabled);
+                    w.set_tune_anim_borderangle_speed(leaf.speed.unwrap_or(30));
+                    w.set_tune_anim_borderangle_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
+                    w.set_tune_anim_borderangle_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                }
+                "border" => {
+                    w.set_tune_anim_border_enabled(leaf.enabled);
+                    w.set_tune_anim_border_speed(leaf.speed.unwrap_or(30));
+                    w.set_tune_anim_border_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
+                    w.set_tune_anim_border_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                }
+                "fadeShadow" => {
+                    w.set_tune_anim_fadeshadow_enabled(leaf.enabled);
+                    w.set_tune_anim_fadeshadow_speed(leaf.speed.unwrap_or(30));
+                    w.set_tune_anim_fadeshadow_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
+                    w.set_tune_anim_fadeshadow_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                }
+                _ => {}
+            }
+        }
+        // Set file-local curves
+        let curve_names: Vec<slint::SharedString> = params.curves.iter()
+            .map(|s| slint::SharedString::from(s.as_str()))
+            .collect();
+        w.set_tune_anim_curves(slint::ModelRc::from(curve_names.as_slice()));
+        // Real colours for the pane's previews / picker seeds.
+        refresh_resolved_colors(w);
+        // D3: missing border_size keeps current slider (already done via snap above)
+    }
+}
+
 /// Build `BorderParams` from the window's current tune state (D4 live path).
 /// `size` comes from the sealed config because the tune pane no longer owns a
 /// geometry model of its own.
@@ -1710,6 +1842,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
             let gallery_state_c = gallery_state_slot.clone();
+            let proj_c = proj.clone();
             window.on_gallery_card_clicked(move |idx| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-clicked idx={idx}")));
                 if !guard_permits {
@@ -1772,11 +1905,33 @@ fn main() -> Result<(), slint::PlatformError> {
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .clone();
-                        if let Some(shared) = shared {
+                        if let Some(ref shared) = shared {
                             shared
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .reload_config_after_theme(&name);
+                        }
+                        // The theme carried a border: populate the Borders
+                        // tune pane through the same shared sync a manual
+                        // border click uses, so the pane shows the theme's
+                        // chips/angle/glow/geometry instead of the previous
+                        // manual values. Lock discipline: the state lock is
+                        // held only for the short clone below — the sync's
+                        // file I/O runs unlocked, and the marker re-seed
+                        // reads the window only.
+                        let applied_border = shared
+                            .as_ref()
+                            .map(|s| {
+                                s.lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .cfg()
+                                    .active_border_file
+                                    .clone()
+                            })
+                            .unwrap_or_default();
+                        if let Some(w) = win.upgrade() {
+                            crate::sync_border_tune_pane(&w, &proj_c, &applied_border);
+                            crate::presets::reseed_active_border_index(&w, &applied_border);
                         }
                         let new_rows = to_gallery_cards(&tm.lock().unwrap());
                         if let Some(w) = win.upgrade() {
@@ -2561,6 +2716,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let slot_c = gallery_slot.clone();
             let refresh_mosaic_page_c = refresh_mosaic_page.clone();
             let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let proj_c = proj.clone();
             let weak = window.as_weak();
             let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
@@ -2591,6 +2747,19 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Some(w) = weak.upgrade() {
                         st.refresh_theme_list(&w);
                     }
+                }
+                // The theme carried a border: populate the Borders tune pane
+                // through the same shared sync a manual border click uses
+                // (same chips/angle/glow/geometry), so entering Borders
+                // afterwards needs no restart. Short lock for the clone
+                // only; the sync's file I/O runs unlocked.
+                let applied_border = {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.cfg().active_border_file.clone()
+                };
+                if let Some(w) = weak.upgrade() {
+                    crate::sync_border_tune_pane(&w, &proj_c, &applied_border);
+                    crate::presets::reseed_active_border_index(&w, &applied_border);
                 }
                 if let Some(w) = weak.upgrade() {
                     // In-place card sync (preserves baked thumbs, like gallery click)
@@ -2896,9 +3065,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             use crate::callbacks::{preset_geometry_for, BorderGeometry};
             let file_str = file.to_string();
-            // Strip .lua extension for preset lookup (scan may include it)
-            let preset_name = file_str.strip_suffix(".lua").unwrap_or(&file_str);
-            let (is_deact, result, snap) = {
+            let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 let is_deact = st.cfg().active_border_file == file_str;
                 let new = if is_deact { String::new() } else { file_str.clone() };
@@ -2917,120 +3084,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         let _ = st.apply_geometry();
                     }
                 }
-                (is_deact, res, snap)
+                (is_deact, res)
             };
             if let Err(e) = result {
                 tracing::error!("[HVE] Border error: {}", e);
             }
             if let Some(w) = weak.upgrade() {
                 w.set_active_border_index(if is_deact { -1 } else { idx });
-                // Picking a preset gives the tune pane its apply target, so the
-                // "select a border preset first" refusal hint no longer applies.
-                if w.get_border_save_error() == TUNE_NEEDS_ACTIVE_BORDER {
-                    w.set_border_save_error(String::new().into());
-                }
-                // snap sliders one-way (preset→tune, no reverse)
-                w.set_border_size(snap.size);
-                w.set_corner_radius(snap.radius);
-                w.set_gap_in(snap.gap_in);
-                w.set_gap_out(snap.gap_out);
-                // Task 2.2: read .lua → parse → bulk-set tune properties
-                if !is_deact {
-                    if let Ok(content) = crate::preset_store::PresetStore::read_border_file(preset_name, &proj_c) {
-                        let params = crate::border_preset::parse(&content);
-                        use crate::preset_store::PresetStore;
-                        let count = params.active_colors.len() as i32;
-                        w.set_tune_color_count(count);
-                        let color_entries: Vec<slint::SharedString> = params.active_colors.iter().map(|c| {
-                            slint::SharedString::from(PresetStore::encode_colors(&[c.clone()]).as_str())
-                        }).collect();
-                        w.set_tune_active_colors(slint::ModelRc::from(color_entries.as_slice()));
-                        w.set_tune_angle(params.angle);
-                        w.set_tune_inactive_color(slint::SharedString::from(PresetStore::encode_inactive(&params.inactive).as_str()));
-                        w.set_tune_glow(slint::SharedString::from(PresetStore::encode_glow(params.glow.as_ref()).as_str()));
-                        // Set individual glow properties for the UI
-                        if let Some(ref glow) = params.glow {
-                            w.set_tune_glow_enabled(glow.enabled);
-                            w.set_tune_glow_range(glow.range);
-                            w.set_tune_glow_render_power(glow.render_power);
-                            w.set_tune_glow_color(slint::SharedString::from(PresetStore::encode_colors(&[glow.color.clone()]).as_str()));
-                            w.set_tune_glow_color_inactive(slint::SharedString::from(PresetStore::encode_colors(&[glow.color_inactive.clone()]).as_str()));
-                        } else {
-                            w.set_tune_glow_enabled(false);
-                            w.set_tune_glow_range(20);
-                            w.set_tune_glow_render_power(4);
-                            w.set_tune_glow_color("p:primary".into());
-                            w.set_tune_glow_color_inactive("p:surface_lowest".into());
-                        }
-                        w.set_tune_rule_enabled(params.rule_enabled);
-                        // Freshly loaded state is the saved state: clear the
-                        // D4 unsaved marker the pane shows in its header.
-                        w.set_tune_dirty(false);
-                        w.set_tune_animations(slint::SharedString::from(PresetStore::encode_animations(&params.animations).as_str()));
-                        // Set individual animation leaf properties
-                        for leaf in &params.animations {
-                            match leaf.leaf.as_str() {
-                                "borderangle" => {
-                                    w.set_tune_anim_borderangle_enabled(leaf.enabled);
-                                    w.set_tune_anim_borderangle_speed(leaf.speed.unwrap_or(30));
-                                    w.set_tune_anim_borderangle_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
-                                    w.set_tune_anim_borderangle_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
-                                }
-                                "border" => {
-                                    w.set_tune_anim_border_enabled(leaf.enabled);
-                                    w.set_tune_anim_border_speed(leaf.speed.unwrap_or(30));
-                                    w.set_tune_anim_border_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
-                                    w.set_tune_anim_border_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
-                                }
-                                "fadeShadow" => {
-                                    w.set_tune_anim_fadeshadow_enabled(leaf.enabled);
-                                    w.set_tune_anim_fadeshadow_speed(leaf.speed.unwrap_or(30));
-                                    w.set_tune_anim_fadeshadow_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
-                                    w.set_tune_anim_fadeshadow_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
-                                }
-                                _ => {}
-                            }
-                        }
-                        // Set file-local curves
-                        let curve_names: Vec<slint::SharedString> = params.curves.iter()
-                            .map(|s| slint::SharedString::from(s.as_str()))
-                            .collect();
-                        w.set_tune_anim_curves(slint::ModelRc::from(curve_names.as_slice()));
-                        // Real colours for the pane's previews / picker seeds.
-                        refresh_resolved_colors(&w);
-                        // D3: missing border_size keeps current slider (already done via snap above)
-                    }
-                } else {
-                    // Deselect: clear tune properties
-                    w.set_tune_color_count(0);
-                    w.set_tune_active_colors(slint::ModelRc::default());
-                    w.set_tune_angle(90);
-                    w.set_tune_inactive_color(String::new().into());
-                    w.set_tune_glow(String::new().into());
-                    w.set_tune_glow_enabled(false);
-                    w.set_tune_glow_range(20);
-                    w.set_tune_glow_render_power(4);
-                    w.set_tune_glow_color("p:primary".into());
-                    w.set_tune_glow_color_inactive("p:surface_lowest".into());
-                    w.set_tune_anim_borderangle_enabled(false);
-                    w.set_tune_anim_borderangle_speed(30);
-                    w.set_tune_anim_borderangle_bezier("default".into());
-                    w.set_tune_anim_borderangle_style("".into());
-                    w.set_tune_anim_border_enabled(false);
-                    w.set_tune_anim_border_speed(30);
-                    w.set_tune_anim_border_bezier("default".into());
-                    w.set_tune_anim_border_style("".into());
-                    w.set_tune_anim_fadeshadow_enabled(false);
-                    w.set_tune_anim_fadeshadow_speed(30);
-                    w.set_tune_anim_fadeshadow_bezier("default".into());
-                    w.set_tune_anim_fadeshadow_style("".into());
-                    w.set_tune_anim_curves(slint::ModelRc::default());
-                    w.set_tune_rule_enabled(false);
-                    // Nothing is selected, so there is no unsaved state to flag.
-                    w.set_tune_dirty(false);
-                    w.set_tune_animations(String::new().into());
-                    refresh_resolved_colors(&w);
-                }
+                // Tune pane population lives in the single shared sync (used
+                // by the manual path and both theme-apply paths alike).
+                let file = if is_deact { String::new() } else { file_str.clone() };
+                crate::sync_border_tune_pane(&w, &proj_c, &file);
             }
         });
     }
