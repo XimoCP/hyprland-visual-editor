@@ -247,6 +247,8 @@ The `slot_count` parameter MUST still be accepted for backward compatibility but
 
 When the keyboard focus is on the strip stop (index 3), LEFT and RIGHT arrow keys MUST navigate the active chip within the strip. This is internal sub-navigation, not a PanelRoot concern — PanelRoot only sees stop index 3.
 
+**Dispatch note (2026-09-20, change design Open Question #2).** `PanelRoot` owns the keyboard map, so it is `PanelRoot` that recognises "tune-local stop 3, with colours present" and calls `strip-cycle`; the chip cycling itself stays inside the section. A `strip-engaged` boolean — letting the section decide and report whether the strip stop holds the keyboard — was considered and rejected: it would move a navigation decision into the layer that `PanelRoot.slint` declares presentational ("sections ... own no FocusScope and no key handling"). The coupling between `PanelRoot`'s literal `3` and this section's stop order is guarded end to end by `borders_strip_keyboard_sub_navigation` in `src/shell/ui_tests.rs`, which drives real key events through the production `FocusScope`. The stop number still has no named constant while the section names its other stops; that is a known minor legibility item, not a correctness gap.
+
 - LEFT arrow: move active chip index left (wraps from 0 to `slot-count - 1`).
 - RIGHT arrow: move active chip index right (wraps from `slot-count - 1` to 0).
 - `Enter`: open the picker for the currently active chip (set `editing-slot` to the active chip index).
