@@ -7658,3 +7658,225 @@ fn theme_empty_border_clears_tune_pane_like_manual_deselect() {
     assert!(!win.get_tune_glow_enabled());
     assert!(!win.get_tune_dirty());
 }
+
+// ── U6: Enter stays alive after a theme apply (gallery focus reseed) ──
+// After an apply the compositor fullscreen mutation drops Slint's internal
+// focus and `shell-kbd` (the ONE gallery keyboard owner) stays unfocused:
+// Enter does nothing and mouse clicks do not restore it
+// (`focus-on-click: false`). The reseed block in ui/shell.slint covers
+// init, mount changes, drawer and panel open/close — but nothing reseeds
+// when the theme transition ENDS, so the fix bridges `theme-transitioning`
+// into ShellRoot (like `is-panel-open`) with a `changed` handler that
+// re-focuses `shell-kbd` unless something else owns the keyboard.
+//
+// Harness limit (stated honestly): the headless backend exposes NO public
+// API to query or drop Slint focus (`take_focus_item` is crate-private in
+// i-slint-core; `WindowActiveChanged` only flips the active flag per
+// i-slint-core api.rs, it never touches focus), and the focus loss itself
+// is compositor-driven — so the lost state cannot be staged live. This
+// test therefore proves (a) BY CONSTRUCTION that the reseed handler exists
+// with all guards (fails before the fix, passes after), through (b) the
+// live Enter mechanism the handler protects, driven via the same key
+// dispatch the rail-handoff focus tests use.
+#[test]
+fn theme_transition_end_returns_focus_to_gallery() {
+    use slint::{ComponentHandle as _, platform::Key};
+    // ── (a) Construction: the reseed must exist, bridged, guarded ──
+    let shell = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
+    assert!(
+        shell.contains("in property <bool> theme-transitioning"),
+        "ShellRoot must declare theme-transitioning (bridged from MainWindow like is-panel-open)"
+    );
+    let start = shell
+        .find("changed theme-transitioning")
+        .expect("shell must reseed gallery keyboard focus when the theme transition ends (Enter went dead after apply)");
+    let line_end = shell[start..]
+        .find('\n')
+        .map(|i| start + i)
+        .unwrap_or(shell.len());
+    let handler = &shell[start..line_end];
+    // Fires only when the transition ENDS (goes false), only on the gallery
+    // screen, and never steals the keyboard from the panel or an open
+    // drawer — same guard style as the existing reseed block.
+    for guard in [
+        "!root.theme-transitioning",
+        "root.mounted-screen == 1",
+        "!root.is-panel-open",
+        "!root.is-mutating",
+        "!root.gallery-top-open",
+        "!root.gallery-bottom-open",
+        "shell-kbd.focus()",
+    ] {
+        assert!(handler.contains(guard), "transition-end handler must contain `{guard}`, got: {handler}");
+    }
+    let main = std::fs::read_to_string("ui/main.slint").expect("ui/main.slint must exist");
+    assert!(
+        main.contains("theme-transitioning: root.theme-transitioning;"),
+        "MainWindow must bridge theme-transitioning into ShellRoot or the handler never fires"
+    );
+
+    // ── (b) Mechanism: Enter on the gallery applies the focused theme ──
+    // This is the contract the reseed protects: with shell-kbd holding
+    // focus, Return reaches `gallery-card-clicked` with the focused index.
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_is_panel_open(false);
+    win.set_is_mutating(false);
+    win.set_gallery_focused(2);
+    focus_settle(); // let the mount reseed (`changed mounted-screen`) land
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    win.on_gallery_card_clicked({
+        let applied = applied.clone();
+        move |idx| applied.borrow_mut().push(idx)
+    });
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *applied.borrow(),
+        vec![2],
+        "Enter must apply the focused gallery card while shell-kbd holds focus"
+    );
+
+    // ── Guard behaviour: while the panel owns the keyboard, Enter must NOT
+    // reach the gallery — this is why the reseed keeps its panel guard.
+    win.set_is_panel_open(true);
+    focus_settle();
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *applied.borrow(),
+        vec![2],
+        "panel open → Enter belongs to the panel, the gallery must not steal it"
+    );
+}
+
+// ── U7 refresh path: overwrite invalidates only the overwritten card ──
+// End-to-end through `sync_save_gallery_ui` (headless MainWindow + a real
+// sandboxed ThemeManager): after an overwrite-style refresh for Alpha, its
+// card is blank (queued for re-bake — blank rows are exactly what the
+// thumb scheduler picks up) and its new source still resolves, while Beta
+// keeps its bakes (no mass invalidation, no flicker for unrelated cards).
+#[test]
+fn overwrite_refresh_invalidates_only_the_overwritten_card() {
+    use slint::{Model, ModelRc, SharedString, VecModel};
+    let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    init_test_platform();
+    // Sandboxed HOME so no real user config is touched.
+    let _env = crate::test_utils::TempEnv::new();
+    let config_dir = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h: String| std::path::PathBuf::from(h).join(".config")))
+        .expect("sandboxed config dir");
+    let themes_root = config_dir.join("hve").join("themes");
+    for name in ["Alpha", "Beta"] {
+        let dir = themes_root.join(name);
+        std::fs::create_dir_all(&dir).expect("theme dir");
+        std::fs::write(
+            dir.join("meta.json"),
+            r#"{"saved_at":"","description":"","providers":[]}"#,
+        )
+        .expect("meta.json");
+    }
+    // Alpha's background changed on disk: a real wallpaper the preview
+    // planner must resolve after invalidation.
+    let mut wallpaper = image::RgbaImage::new(16, 16);
+    for px in wallpaper.pixels_mut() {
+        *px = image::Rgba([200, 120, 40, 255]);
+    }
+    wallpaper
+        .save(themes_root.join("Alpha").join("changed-bg.png"))
+        .expect("wallpaper png");
+
+    let gallery_tm =
+        std::sync::Arc::new(std::sync::Mutex::new(crate::theme_manager::ThemeManager::new(&config_dir)));
+    assert_eq!(gallery_tm.lock().unwrap().list().unwrap_or_default().len(), 2);
+
+    // Both cards carry stale bakes (as after any gallery rebuild).
+    fn baked_row(name: &str) -> crate::GalleryCardData {
+        let img = slint::Image::from_rgba8(
+            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4),
+        );
+        crate::GalleryCardData {
+            name: SharedString::from(name),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(1, 2, 3),
+            primary: slint::Color::from_rgb_u8(0, 0, 0),
+            secondary: slint::Color::from_rgb_u8(0, 0, 0),
+            tertiary: slint::Color::from_rgb_u8(0, 0, 0),
+            surface: slint::Color::from_rgb_u8(0, 0, 0),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: img.clone(),
+            hero: img.clone(),
+            slat_image: img.clone(),
+            slat_expanded_image: img,
+        }
+    }
+    let win = crate::MainWindow::new().unwrap();
+    win.set_gallery_cards(ModelRc::new(VecModel::from(vec![
+        baked_row("Alpha"),
+        baked_row("Beta"),
+    ])));
+    let noop_mosaic: std::sync::Arc<dyn Fn(bool) + Send + Sync> =
+        std::sync::Arc::new(|_| {});
+    let noop_slice: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(|| {});
+    let invalidated: std::collections::HashSet<String> =
+        ["Alpha".to_string()].into_iter().collect();
+    crate::sync_save_gallery_ui(&win, &gallery_tm, &noop_mosaic, &noop_slice, &invalidated);
+
+    // Find rows by name (list order is the manager's, not ours).
+    let model = win.get_gallery_cards();
+    let mut alpha_blank = false;
+    let mut beta_baked = false;
+    for i in 0..model.row_count() {
+        let row = model.row_data(i).unwrap();
+        if row.name.as_str() == "Alpha" {
+            alpha_blank = row.thumb.size().width == 0
+                && row.hero.size().width == 0
+                && row.slat_image.size().width == 0
+                && row.slat_expanded_image.size().width == 0;
+        } else if row.name.as_str() == "Beta" {
+            beta_baked = row.thumb.size().width > 0
+                && row.hero.size().width > 0
+                && row.slat_image.size().width > 0
+                && row.slat_expanded_image.size().width > 0;
+        }
+    }
+    assert!(alpha_blank, "overwritten Alpha must be blank (queued for re-bake)");
+    assert!(beta_baked, "untouched Beta must keep its bakes (no mass invalidation)");
+    // The changed background still resolves: the scheduler will re-bake it.
+    assert!(
+        crate::shell::gallery::thumbs::plan_preview_source(&themes_root.join("Alpha")).is_some(),
+        "Alpha's new background must resolve to a bake source"
+    );
+}
+
+// ── U7 wiring: the overwrite handler invalidates its theme and re-bakes ─
+// The refresh path above only helps if the overwrite handler actually uses
+// it: it must pass its own theme name as the invalidation set and run the
+// EXISTING thumb scheduler afterwards (no second scheduler). Construction
+// check — the async bake itself is covered by the scheduler's own tests.
+#[test]
+fn overwrite_saved_theme_rebakes_its_card_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let handler = main
+        .split("window.on_panel_overwrite_saved_theme")
+        .nth(1)
+        .expect("main.rs must wire on_panel_overwrite_saved_theme");
+    let handler = handler
+        .split("window.on_panel_save_search_changed")
+        .next()
+        .unwrap_or(handler);
+    assert!(
+        handler.contains("invalidat"),
+        "the overwrite handler must pass its theme as the invalidation set"
+    );
+    assert!(
+        handler.contains("schedule_thumbs"),
+        "the overwrite handler must reuse the existing thumb scheduler to re-bake"
+    );
+}
