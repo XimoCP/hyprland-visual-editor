@@ -361,6 +361,19 @@ fn wallpaper_from_txt(theme_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Resolve the CURRENT video authority record
+/// (`providers/noctalia-v5/video.txt`, written by the noctalia-v5 save path):
+/// parse the recorded path with the existing authority parser. `None` when
+/// there is no record or it names no usable absolute path — never a guess.
+fn painter_video_record(theme_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(
+        theme_dir
+            .join("providers/noctalia-v5")
+            .join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+    )
+    .ok()?;
+    crate::providers::wallpaper_authority::parse_painter_video_record(&text)
+}
 /// Video extension allowlist (Piano 3): animated wallpaper sources served
 /// by mpvpaper.
 const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
@@ -460,6 +473,13 @@ pub fn extract_video_frame(video: &Path, cache_dir: &Path) -> Option<PathBuf> {
 /// renders its cached frame; when extraction fails we fall through to the
 /// legacy chain below — today's stale-txt fallback still beats showing a
 /// skeleton card.
+///
+/// The painter video record (`providers/noctalia-v5/video.txt`) is consulted
+/// at the SAME priority position: an assigned static image already returned
+/// above, so reaching here means no static evidence won and a recorded video
+/// resolves to its extracted frame. A record naming a missing file, a
+/// non-video path, or a video ffmpeg cannot decode warns (naming theme dir
+/// and video path) and falls through — never a bogus source.
 pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
     if let Some(assigned) = video_assignment(theme_dir) {
         if is_video_source(&assigned) {
@@ -470,6 +490,18 @@ pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
             // Image assignments win outright: they ARE the live wallpaper.
             return Some(assigned);
         }
+    }
+    if let Some(recorded) = painter_video_record(theme_dir) {
+        if recorded.exists() && is_video_source(&recorded) {
+            if let Some(frame) = extract_video_frame(&recorded, &cache_dir()) {
+                return Some(frame);
+            }
+        }
+        tracing::warn!(
+            theme = %theme_dir.display(),
+            video = %recorded.display(),
+            "painter video record unusable, falling through to static sources"
+        );
     }
     if let Some(hit) = wallpaper_from_provider_json(theme_dir) {
         return Some(hit);
@@ -1074,6 +1106,112 @@ mod tests {
             find_source_image(dir.path()),
             Some(stale),
             "failed frame extraction falls through instead of skeleton"
+        );
+    }
+
+    // ── Painter video record (noctalia-v5/video.txt) discovery ──────
+
+    /// Fixture helper: synthesize a short mp4 decodable by ffmpeg, using the
+    /// same lavfi recipe as `extract_video_frame_writes_decodable_cached_png`.
+    /// Returns None when ffmpeg cannot synthesize (caller must skip then).
+    fn synth_video_fixture(path: &Path) -> bool {
+        std::process::Command::new("ffmpeg")
+            .args(["-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=10", "-y"])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn find_source_resolves_painter_video_record_to_extracted_frame() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping painter video record test");
+            return;
+        }
+        // Hermetic thumb cache: find_source_image bakes through cache_dir().
+        let _env = crate::test_utils::TempEnv::new();
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("loop.mp4");
+        assert!(synth_video_fixture(&video), "failed to synthesize mp4 fixture");
+        // The theme carries ONLY the painter video record — no image anywhere.
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(
+            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+            crate::providers::wallpaper_authority::format_painter_video_record(
+                &video,
+                Some("skwd-wall-vk"),
+                "DP-3",
+                1234,
+            ),
+        )
+        .unwrap();
+        let source = find_source_image(dir.path()).expect(
+            "a theme whose only background evidence is video.txt must resolve to a frame",
+        );
+        assert!(source.exists(), "extracted frame artifact must exist");
+        let decoded = image::ImageReader::open(&source).unwrap().decode().unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (320, 240), "full source frame");
+    }
+
+    #[test]
+    fn find_source_ignores_painter_video_record_pointing_at_missing_file() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(
+            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+            crate::providers::wallpaper_authority::format_painter_video_record(
+                Path::new("/nonexistent/gone.mp4"),
+                Some("skwd-wall-vk"),
+                "DP-3",
+                7,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            find_source_image(dir.path()),
+            None,
+            "a video.txt pointing at a missing file falls through without a bogus source"
+        );
+    }
+
+    #[test]
+    fn find_source_prefers_assigned_image_over_painter_video_record() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping painter video priority test");
+            return;
+        }
+        let _env = crate::test_utils::TempEnv::new();
+        let dir = tempfile::tempdir().expect("tmp");
+        let assigned = dir.path().join("assigned.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255]))
+            .save(&assigned)
+            .unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        write_assignments(
+            &v5,
+            serde_json::json!({"assignments":{"*":{"filename":"a.png","local_path":assigned.to_string_lossy()}}}),
+        );
+        let video = dir.path().join("loop.mp4");
+        assert!(synth_video_fixture(&video), "failed to synthesize mp4 fixture");
+        std::fs::write(
+            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+            crate::providers::wallpaper_authority::format_painter_video_record(
+                &video,
+                Some("skwd-wall-vk"),
+                "DP-3",
+                9,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            find_source_image(dir.path()),
+            Some(assigned),
+            "an assigned static image wins over the painter video record"
         );
     }
 
