@@ -143,12 +143,44 @@ cache canonicalizes as "inside", so the delete removed the outside link entry. `
 now requires a non-symlink (`symlink_metadata`) direct child whose parent canonicalizes to exactly
 the cache dir; anything else fails closed. Both directions are covered by a test.
 
+### W6 — the keeper's two live findings (commits `5edb7a1`, `7abce76`, `85be50e`)
+
+The keeper reported, live: (a) after applying a theme, ENTER stopped applying themes; (b) after
+overwriting a theme the gallery card's image did not change.
+
+- **W6-1 (focus reseed, `7abce76`):** `shell-kbd` is the single gallery keyboard owner
+  (`ui/shell.slint:731`); a compositor fullscreen mutation drops Slint's internal focus
+  (`ui/shell.slint:299-305`) and the apply runs exactly such a cycle (`src/main.rs:822-863`, and the
+  code admits "the theme reload makes HVE lose focus for an instant" at `:2000-2005`). The reseed
+  list covered init/mount/drawer/panel but NOT the theme transition, and `focus-on-click: false`
+  means clicks never restore it either. `theme-transitioning` is now bridged into the shell root and
+  the transition END reseeds the focus, with the same guards as the existing reseeds.
+- **W6-2 (post-apply pings, `85be50e`):** the transition-end reseed alone does NOT fix the keeper's
+  case, because the palette re-assert (`f28b670`) issues `templates-apply` ~2 s AFTER the apply —
+  a second desktop mutation outside any reseed. Evidence: the keeper's Enter died after the FIRST
+  apply of the session (when the engine had just overridden the scheme, so the re-assert had to act)
+  and worked on a later apply (scheme already held ⇒ no re-assert ⇒ no late mutation). A monotonic
+  `focus-restore-nonce` is bumped from Rust at 2500/4500/6500 ms for themes that arm the re-assert
+  (custom/community palette + `palette.json` present), each bump guarded so it can never steal focus
+  from the panel, a drawer, another screen, or a mutating shell. Themes without a custom palette
+  schedule nothing.
+- **W6-3 (overwrite re-bake, `5edb7a1`):** `sync_cards` kept the old images by name and
+  `schedule_thumbs` skips rows that already have one, so a changed background was invisible until
+  restart. `sync_save_gallery_ui` now takes an invalidation set (empty for rename/delete/refresh,
+  `{name}` for overwrite), `invalidate_card_bakes` blanks exactly those rows, and the existing
+  scheduler re-bakes them; unrelated cards keep their images (no flicker). Note: the keeper's
+  specific overwrite had the SAME background (`car3.jpg`, content key `465228-9e3bc3e653e750ca`),
+  so "same image" was correct there — the mechanism was broken for a genuinely changed background.
+
+Round 3 verdict: **PASS** on all three commits. Findings were MINOR/NIT only.
+
 ## Verification rounds (independent model, read-only, never the writer)
 
 | Round | Scope | Verdict | Outcome |
 |-------|-------|---------|---------|
 | 1 | `d695941`, `747b8b3` | **FAIL** | 1 MAJOR (ffmpeg on the UI thread) + 3 MINOR (outside-file deletion via `..`, palette refcount false negatives, live palette deleted) + U3 gap → drove W2 |
 | 2 | `98e5879`, `7ea0c01`, `6bbc898`, `f28b670` | **PASS** | 868/0 reproduced, zero warnings, live desktop untouched (canary on PATH logged a single pre-existing read-only call); one MINOR symlink gap → drove W5 |
+| 3 | `5edb7a1`, `7abce76`, `85be50e` | **PASS** | 877/0 reproduced, zero warnings, no `.slint` geometry/colour change, arm-condition mirror faithful; MINOR/NIT only → recorded below, not fixed |
 
 Both rounds ran with a canary/stub harness and confirmed the keeper's real files
 (`settings.toml`, palettes, skwd config) were byte-identical before and after the suite.
@@ -169,6 +201,23 @@ Both rounds ran with a canary/stub harness and confirmed the keeper's real files
 4. **U3 (render coverage for a video-sourced card)** is still not committed as a test. The card's
    real-data path is proven by the keeper's live session plus a frame inspection of the actual
    3840×2160 artifact; the change is data-only and touches no `.slint` geometry.
+5. **Round-3 residuals (recorded, not fixed):**
+   - *Thin margin on the third ping.* Mutations land ≈+2.0–2.3 s / +4.0–4.3 s / +6.0–6.3 s and the
+     pings at +2.5 / +4.5 / +6.5 s. The observed case (mutation 1) is comfortably covered; if the
+     THIRD drop plus IPC/render latency lands past +6.5 s, Enter stays dead until the next
+     user-triggered reseed. The worker's 8 s cap bounds it (no open-ended window).
+   - *Needless pings* when the engine does not own the scheme: `apply_arms_palette_reassert` cannot
+     see `skwd_wall_owns_color_scheme()` (that lives in the provider file), so palette-carrying
+     applies always schedule the three guarded, IPC-free pings. Harmless, documented in code.
+   - *Panel Refresh does not invalidate* (`src/main.rs` refresh path passes an empty set) even though
+     it re-reads the theme list, so artwork changed OUTSIDE HVE keeps a stale bake until restart.
+     Pre-existing, not a regression of W6-3.
+   - *Focus assertions are one layer short of behavioural proof:* the headless harness cannot drop
+     Slint focus, so the tests prove the handler exists with its guards (and fail pre-change) rather
+     than staging a real focus loss. The live-observable that closes it: apply a custom-palette theme
+     and confirm Enter still applies.
+   - *Future maintenance:* a new keyboard-owning widget on the gallery screen would need its guard
+     added to the ping handler.
 
 ## Evidence log
 
