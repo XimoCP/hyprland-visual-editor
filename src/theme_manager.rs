@@ -552,18 +552,49 @@ fn remove_keyed_artifacts(cache: &Path, key: &str) {
 }
 
 /// Remove `candidate` only when it is REALLY a cached frame inside the bake
-/// cache (W2-2): the file name must end with `-frame.png` AND the
-/// canonicalized path must sit under the canonicalized cache dir.
-/// `Path::starts_with` alone is component-wise and ignores `..`, so a
-/// recorded `<cache>/../user/secret-frame.png` would otherwise delete a
-/// real user file. Canonicalization fails safe: when either side cannot be
-/// resolved the file stays. Missing files are silent no-ops.
+/// cache (W2-2): the file name must end with `-frame.png`, the candidate
+/// itself must NOT be a symlink, its parent directory must canonicalize to
+/// the canonicalized cache dir (a direct cache entry — never a user file
+/// elsewhere), AND the canonicalized path must sit under the canonicalized
+/// cache dir. `Path::starts_with` alone is component-wise and ignores `..`,
+/// so a recorded `<cache>/../user/secret-frame.png` would otherwise delete a
+/// real user file; and canonicalization follows a trailing symlink, so an
+/// outside link pointing INTO the cache would otherwise resolve as "inside"
+/// and the removal would delete the outside link entry — while a link inside
+/// the cache could redirect the removal outside. Canonicalization failure,
+/// symlink, or any parent mismatch fails safe: the file stays. Missing files
+/// are silent no-ops.
 fn remove_cached_frame(cache: &Path, candidate: &Path) {
     let is_frame_name = candidate
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.ends_with("-frame.png"));
-    if !is_frame_name || !path_inside_dir(cache, candidate) {
+    if !is_frame_name {
+        return;
+    }
+    // WHY (symlink): `candidate.canonicalize()` below follows a trailing
+    // symlink, so without this guard an outside link to a cache target reads
+    // as "inside" and `remove_file` deletes the outside entry — and an
+    // inside link would let the cache delete on someone else's behalf.
+    // `symlink_metadata` (not `metadata`) is what sees the link itself.
+    let is_regular = match candidate.symlink_metadata() {
+        Ok(meta) => !meta.file_type().is_symlink(),
+        Err(_) => false,
+    };
+    if !is_regular || !path_inside_dir(cache, candidate) {
+        return;
+    }
+    // WHY (parent): containment alone still authorizes nested or redirected
+    // paths that resolve under the cache; cache entries are direct children,
+    // so the parent must canonicalize to exactly the cache dir.
+    let Some(parent) = candidate.parent() else {
+        return;
+    };
+    let is_direct_child = match (cache.canonicalize(), parent.canonicalize()) {
+        (Ok(cache), Ok(parent)) => parent == cache,
+        _ => false,
+    };
+    if !is_direct_child {
         return;
     }
     if let Err(e) = fs::remove_file(candidate) {
@@ -1229,5 +1260,62 @@ mod tests {
             Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
             None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
         }
+    }
+
+    /// Symlink hardening: an OUTSIDE link whose target lives INSIDE the cache
+    /// canonicalizes as "inside" (canonicalization follows the trailing
+    /// symlink), so containment alone authorizes deleting the outside link
+    /// entry. Only a real non-symlink direct child of the cache may be
+    /// removed; a genuine `<key>-frame.png` cache entry still is.
+    #[test]
+    fn remove_cached_frame_keeps_outside_symlink_but_removes_genuine_entry() {
+        let dir = TempDir::new().unwrap();
+        let cache = dir.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+
+        // Outside link -> real file INSIDE the cache. The link name passes
+        // the `-frame.png` gate and canonicalizes into the cache.
+        let target = cache.join("real-frame.png");
+        fs::write(&target, b"frame").unwrap();
+        let outlink = outside.join("outlink-frame.png");
+        std::os::unix::fs::symlink(&target, &outlink).unwrap();
+
+        // Inside link -> real file OUTSIDE the cache. Removing through it
+        // would delete the link entry on the cache's behalf.
+        let user_file = outside.join("user.png");
+        fs::write(&user_file, b"user").unwrap();
+        let inlink = cache.join("inlink-frame.png");
+        std::os::unix::fs::symlink(&user_file, &inlink).unwrap();
+
+        remove_cached_frame(&cache, &outlink);
+        remove_cached_frame(&cache, &inlink);
+
+        assert!(
+            fs::symlink_metadata(&outlink).is_ok(),
+            "an outside symlink to a cache target must survive the delete"
+        );
+        assert!(
+            target.exists(),
+            "the cache target behind an outside link must survive the delete"
+        );
+        assert!(
+            fs::symlink_metadata(&inlink).is_ok(),
+            "a symlink inside the cache must survive the delete"
+        );
+        assert!(
+            user_file.exists(),
+            "the outside target of an inside link must survive the delete"
+        );
+
+        // Inverse guard: a genuine cache entry IS removed.
+        let genuine = cache.join("abc123-frame.png");
+        fs::write(&genuine, b"frame").unwrap();
+        remove_cached_frame(&cache, &genuine);
+        assert!(
+            !genuine.exists(),
+            "a genuine non-symlink cache entry named *-frame.png must be removed"
+        );
     }
 }
