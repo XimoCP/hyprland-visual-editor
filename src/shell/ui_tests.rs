@@ -7880,3 +7880,187 @@ fn overwrite_saved_theme_rebakes_its_card_by_construction() {
         "the overwrite handler must reuse the existing thumb scheduler to re-bake"
     );
 }
+
+// ── U6 extension: late palette re-assert drops focus AGAIN (~2 s later) ──
+// Live evidence: after the FIRST apply of the session Enter is dead, on a
+// LATER apply it works. The provider re-assert (noctalia.rs) only fires
+// `color-scheme-set` + `templates-apply` when the live scheme did NOT
+// already hold — first apply (engine had overridden the scheme) → late
+// desktop mutation ~2 s after apply → focus drops again, AFTER the
+// transition-end reseed already ran. The fix: after a custom-palette
+// apply, Rust bumps a focus-restore nonce on a small BOUNDED schedule
+// covering the re-assert window, and the shell re-focuses shell-kbd on
+// each bump unless something else owns the keyboard. UI side only — the
+// engine seam stays UI-free, so the arm condition is mirrored here from
+// the theme dir (source.txt names a palette + palette.json exists).
+#[test]
+fn custom_palette_apply_schedules_bounded_focus_restores() {
+    use slint::ComponentHandle as _;
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    // Sandboxed HOME so no real user config is touched.
+    let _env = crate::test_utils::TempEnv::new();
+    let config_dir = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h: String| std::path::PathBuf::from(h).join(".config")))
+        .expect("sandboxed config dir");
+    let themes_root = config_dir.join("hve").join("themes");
+    // Custom palette: source.txt names it AND palette.json exists — this is
+    // what arms the provider's late re-assert (custom or community, both
+    // restore as custom when the file is there).
+    let custom_dir = themes_root.join("CustomTheme").join("providers").join("noctalia-v5");
+    std::fs::create_dir_all(&custom_dir).expect("custom theme dir");
+    std::fs::write(custom_dir.join("source.txt"), "custom MyPal").expect("source.txt");
+    std::fs::write(custom_dir.join("palette.json"), "{}").expect("palette.json");
+    // Builtin scheme with no palette file: arms nothing.
+    let builtin_dir = themes_root.join("BuiltinTheme").join("providers").join("noctalia-v5");
+    std::fs::create_dir_all(&builtin_dir).expect("builtin theme dir");
+    std::fs::write(builtin_dir.join("source.txt"), "builtin Fancy").expect("source.txt");
+    // Wallpaper scheme: arms nothing.
+    let wall_dir = themes_root.join("WallTheme").join("providers").join("noctalia-v5");
+    std::fs::create_dir_all(&wall_dir).expect("wallpaper theme dir");
+    std::fs::write(wall_dir.join("source.txt"), "wallpaper").expect("source.txt");
+
+    // ── Decision: only the custom-palette apply arms late restores ──
+    assert!(
+        crate::apply_arms_palette_reassert(&themes_root, "CustomTheme"),
+        "custom source + palette file must arm the restore schedule"
+    );
+    assert!(
+        !crate::apply_arms_palette_reassert(&themes_root, "BuiltinTheme"),
+        "builtin scheme without a palette file must schedule nothing"
+    );
+    assert!(
+        !crate::apply_arms_palette_reassert(&themes_root, "WallTheme"),
+        "wallpaper scheme must schedule nothing"
+    );
+    assert!(
+        !crate::apply_arms_palette_reassert(&themes_root, "MissingTheme"),
+        "missing theme dir must schedule nothing"
+    );
+
+    // ── Behaviour: the custom apply bumps the nonce across the window,
+    // staged (one ping per delay); anything else schedules nothing. ──
+    fn advance_ms(ms: u64) {
+        for _ in 0..(ms / 16) {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    }
+    let win = crate::MainWindow::new().unwrap();
+    crate::schedule_post_apply_focus_restores(&win.as_weak(), "CustomTheme", &themes_root);
+    advance_ms(3000);
+    assert_eq!(win.get_focus_restore_nonce(), 1, "first ping lands after the ~2 s re-assert set");
+    advance_ms(2000);
+    assert_eq!(win.get_focus_restore_nonce(), 2, "second ping covers the ~4 s check");
+    advance_ms(2000);
+    assert_eq!(win.get_focus_restore_nonce(), 3, "third ping covers the ~6 s check");
+
+    let plain = crate::MainWindow::new().unwrap();
+    crate::schedule_post_apply_focus_restores(&plain.as_weak(), "BuiltinTheme", &themes_root);
+    advance_ms(7000);
+    assert_eq!(
+        plain.get_focus_restore_nonce(),
+        0,
+        "non-custom apply must schedule no restore pings at all"
+    );
+}
+
+// ── U6 extension guards: a restore ping never steals the keyboard ───────
+// Same ownership mechanism as the transition-end test: with the panel open,
+// Enter belongs to the panel even right after a bump; on the bare gallery
+// a bump keeps Enter applying the focused card.
+#[test]
+fn focus_restore_bump_never_steals_panel_keyboard() {
+    use slint::{ComponentHandle as _, platform::Key};
+    // ── Construction: the nonce reseed must exist, bridged, guarded ──
+    let shell = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
+    assert!(
+        shell.contains("in property <int> focus-restore-nonce"),
+        "ShellRoot must declare the focus-restore nonce (bridged from MainWindow)"
+    );
+    let start = shell.find("changed focus-restore-nonce").expect(
+        "shell must re-ping gallery keyboard focus on the restore nonce (late re-assert mutations drop it again)",
+    );
+    let line_end = shell[start..]
+        .find('\n')
+        .map(|i| start + i)
+        .unwrap_or(shell.len());
+    let handler = &shell[start..line_end];
+    for guard in [
+        "root.mounted-screen == 1",
+        "!root.is-panel-open",
+        "!root.is-mutating",
+        "!root.gallery-top-open",
+        "!root.gallery-bottom-open",
+        "shell-kbd.focus()",
+    ] {
+        assert!(handler.contains(guard), "restore-nonce handler must contain `{guard}`, got: {handler}");
+    }
+    let main = std::fs::read_to_string("ui/main.slint").expect("ui/main.slint must exist");
+    assert!(
+        main.contains("focus-restore-nonce: root.focus-restore-nonce;"),
+        "MainWindow must bridge the nonce into ShellRoot or the handler never fires"
+    );
+
+    // ── Mechanism: a bump keeps gallery Enter alive, never steals panel Enter ──
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_is_panel_open(false);
+    win.set_is_mutating(false);
+    win.set_gallery_focused(2);
+    focus_settle();
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    win.on_gallery_card_clicked({
+        let applied = applied.clone();
+        move |idx| applied.borrow_mut().push(idx)
+    });
+    focus_press_key(&win, Key::Return);
+    assert_eq!(*applied.borrow(), vec![2], "baseline: gallery Enter applies");
+
+    // A restore ping on the bare gallery: Enter keeps applying.
+    win.set_focus_restore_nonce(win.get_focus_restore_nonce() + 1);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(*applied.borrow(), vec![2, 2], "restore ping must keep gallery Enter alive");
+
+    // Same ping with the panel open: Enter belongs to the panel.
+    win.set_is_panel_open(true);
+    focus_settle();
+    win.set_focus_restore_nonce(win.get_focus_restore_nonce() + 1);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *applied.borrow(),
+        vec![2, 2],
+        "panel open → a restore ping must not steal Enter for the gallery"
+    );
+}
+
+// ── U6 extension bound: the ping sequence can never become a watcher ────
+// The re-assert worker caps at ~8 s; the restore schedule must stay a fixed
+// handful of pings inside that window — exact count so a future edit that
+// adds (or loops) pings fails loudly here instead of polling forever.
+#[test]
+fn focus_restore_bumps_are_bounded_in_count_and_time() {
+    let delays = crate::FOCUS_RESTORE_BUMP_DELAYS_MS;
+    assert_eq!(
+        delays.len(),
+        3,
+        "exactly three restore pings — a future edit must not turn this into an endless watcher"
+    );
+    assert!(
+        delays.windows(2).all(|w| w[0] < w[1]),
+        "pings spread across the re-assert window in increasing order"
+    );
+    assert!(
+        delays.iter().all(|d| (2000..=7000).contains(d)),
+        "every ping lands inside the ~2-6 s re-assert window with margin"
+    );
+}

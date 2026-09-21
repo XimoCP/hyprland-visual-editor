@@ -670,6 +670,66 @@ fn sync_save_gallery_ui(
     refresh_slice_ring();
 }
 
+/// Post-apply focus-restore bumps (U6 extension): delays in ms at which Rust
+/// re-pings the gallery keyboard after a custom-palette apply.
+///
+/// WHY: the provider re-assert worker (noctalia.rs) can issue
+/// `color-scheme-set` + `templates-apply` ~2/4/6 s after the apply when the
+/// live scheme did not already hold, and each late desktop mutation drops
+/// Slint's internal focus again — AFTER the transition-end reseed already
+/// ran. Exactly three pings, last at 6.5 s (inside the worker's 8 s cap);
+/// each ping only bumps a nonce the shell watches with guarded handlers,
+/// so a ping can never steal focus from the panel, a drawer, or another
+/// screen. A future edit must keep this a fixed handful, never a watcher.
+pub(crate) const FOCUS_RESTORE_BUMP_DELAYS_MS: &[u64] = &[2500, 4500, 6500];
+
+/// True when applying `theme_name` may trigger the provider's LATE palette
+/// re-assert (and thus late desktop mutations that drop keyboard focus).
+///
+/// Mirrors the provider arm condition without touching the engine layer
+/// (which stays UI-free): the theme's `source.txt` names a palette — the
+/// second token is non-empty, custom or community, both restore as custom
+/// when the file is there — AND its `palette.json` exists. Missing or
+/// unreadable files and palette-less schemes (builtin without a file,
+/// wallpaper) arm nothing, so those applies schedule no extra restores.
+pub(crate) fn apply_arms_palette_reassert(themes_root: &std::path::Path, theme_name: &str) -> bool {
+    let provider_dir = themes_root.join(theme_name).join("providers").join("noctalia-v5");
+    let raw = match std::fs::read_to_string(provider_dir.join("source.txt")) {
+        Ok(raw) => raw,
+        Err(_) => return false,
+    };
+    let parts: Vec<&str> = raw.trim().splitn(2, ' ').collect();
+    let name = parts.get(1).copied().unwrap_or("");
+    if name.is_empty() {
+        return false;
+    }
+    provider_dir.join("palette.json").is_file()
+}
+
+/// Schedule the bounded focus-restore bumps after an apply. Custom-palette
+/// applies (see [`apply_arms_palette_reassert`]) get one nonce bump per
+/// entry in [`FOCUS_RESTORE_BUMP_DELAYS_MS`] on the UI thread's existing
+/// single-shot timer machinery — no watcher thread, no polling, at most
+/// three timers that each fire once and die. Anything else schedules
+/// nothing (no behaviour change for those applies).
+pub(crate) fn schedule_post_apply_focus_restores(
+    weak: &slint::Weak<crate::MainWindow>,
+    theme_name: &str,
+    themes_root: &std::path::Path,
+) {
+    if !apply_arms_palette_reassert(themes_root, theme_name) {
+        return;
+    }
+    for delay_ms in FOCUS_RESTORE_BUMP_DELAYS_MS {
+        let target = weak.clone();
+        slint::Timer::single_shot(std::time::Duration::from_millis(*delay_ms), move || {
+            if let Some(w) = target.upgrade() {
+                w.set_focus_restore_nonce(w.get_focus_restore_nonce() + 1);
+            }
+        });
+    }
+}
+
 /// Debounce guard: overlapping reasserts (timed fallbacks + event-driven)
 /// must not stack multiple unset->set cycles — each cycle is a visible
 /// fullscreen drop, and five stacked retries meant five visible minimizes.
@@ -1960,6 +2020,11 @@ fn main() -> Result<(), slint::PlatformError> {
                             // keep strip position — theme apply does not re-trigger slide
                         }
                         schedule_thumbs(&win, &gallery_themes_root, &stage_dims, refresh.clone());
+                        // A restored custom palette may be re-asserted LATE
+                        // (~2 s after apply): schedule the bounded focus
+                        // restores covering that window. Non-custom applies
+                        // schedule nothing.
+                        schedule_post_apply_focus_restores(&win, &name, &gallery_themes_root);
                         // ── Theme transition: empty-workspace interlude ──
                         // While the theme reloads, the VIEW visits an empty
                         // workspace so the user watches only the new wallpaper
@@ -2725,6 +2790,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_mosaic_page_c = refresh_mosaic_page.clone();
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let proj_c = proj.clone();
+            let gallery_themes_root_c = gallery_themes_root.clone();
             let weak = window.as_weak();
             let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
@@ -2823,6 +2889,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     w.set_gallery_focused(idx);
                     refresh_mosaic_page_c(false);
                     refresh_slice_ring_c();
+                    // Same late re-assert window as a gallery-click apply: a
+                    // restored custom palette can drop focus seconds later,
+                    // after the panel-close reseed already ran.
+                    schedule_post_apply_focus_restores(&weak, &name, &gallery_themes_root_c);
                 }
             });
         }

@@ -52,6 +52,11 @@ export component MainWindow inherits Window {
     // +570ms after the return flip). Keep the Rust timers in sync with
     // these durations (src/main.rs theme transition block).
     in-out property <bool> theme-transitioning: false;
+    // Gallery focus-restore nonce (U6 extension): Rust bumps it on a small
+    // bounded schedule after a custom-palette apply, because the provider
+    // re-assert can mutate the desktop (~2 s later) and drop Slint's
+    // internal focus again after the transition-end reseed already ran.
+    in-out property <int> focus-restore-nonce: 0;
     property <float> theme-fade: 1.0;
     states [
         theme-hidden when root.theme-transitioning: {
@@ -392,6 +397,7 @@ export component MainWindow inherits Window {
         is-mutating: root.is-mutating;
         is-panel-open: root.is-panel-open;
         theme-transitioning: root.theme-transitioning;
+        focus-restore-nonce: root.focus-restore-nonce;
         panel-save-input <=> root.panel-save-input;
         panel-save-error: root.panel-save-error;
         panel-save-placeholder: root.panel-save-placeholder;

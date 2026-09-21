@@ -121,6 +121,11 @@ export component ShellRoot inherits Rectangle {
     // the apply path runs a real unset→set fullscreen cycle that drops
     // Slint's internal focus, so the transition END reseeds shell-kbd below.
     in property <bool> theme-transitioning: false;
+    // Focus-restore nonce (bridged from MainWindow): bumped on a bounded
+    // schedule after a custom-palette apply, covering the provider
+    // re-assert's late desktop mutations. Every bump re-runs the same
+    // guarded reseed — it can only restore, never steal.
+    in property <int> focus-restore-nonce: 0;
     in-out property <string> panel-save-input: "";
     in property <string> panel-save-error: "";
     in property <string> panel-save-placeholder: "Theme name…";
@@ -316,6 +321,11 @@ export component ShellRoot inherits Rectangle {
     // legitimately owns it (panel open, shell mutating, a drawer open, or a
     // screen that is not the gallery). Never steals from the panel.
     changed theme-transitioning => { if (!root.theme-transitioning && root.mounted-screen == 1 && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    // Late restore pings: the provider re-assert's templates-apply lands
+    // seconds after the transition ended, dropping focus again. Same guards
+    // as above — a ping restores the gallery keyboard but never fights a
+    // user who moved focus deliberately (panel, drawer, mutating, screen).
+    changed focus-restore-nonce => { if (root.mounted-screen == 1 && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
     changed gallery-top-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
     changed gallery-bottom-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
     changed is-panel-open => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
