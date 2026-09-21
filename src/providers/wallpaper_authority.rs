@@ -1099,6 +1099,152 @@ pub fn daemon_video_current(daemon: &[AuthorityOutput], output_name: &str) -> Op
         .filter(|s| !s.is_empty())
 }
 
+/// Daemon `current` for a STATIC entry: the suite's own record of the
+/// image it painted on `output_name` (connected outputs only).
+///
+/// Mirror of [`daemon_video_current`]: `None` for a missing entry, a
+/// disconnected one, a non-static kind, or an empty path — the caller
+/// then falls back honestly instead of recording a guess.
+pub fn daemon_static_current(daemon: &[AuthorityOutput], output_name: &str) -> Option<String> {
+    daemon
+        .iter()
+        .find(|o| o.connected && o.name == output_name && o.kind == WallpaperKind::Static)
+        .map(|o| o.current.clone())
+        .filter(|s| !s.is_empty())
+}
+
+/// Pick the single static path a theme records.
+///
+/// WHY one path: the theme model stores ONE wallpaper, but the painter
+/// keeps one per output. Rule: the lexicographically-first output whose
+/// topmost layer the compositor proved is skwd-painted, typed static by
+/// the daemon for that same output name. Sorted names keep it
+/// deterministic no matter the parse order; when every output agrees (the
+/// usual case) any choice is the same image. The gate is the combined
+/// decision ([`decide_active_kind_from_outputs`]): only a
+/// compositor-proven static scene qualifies — a video or an unknown
+/// painter anywhere vetoes to `None`, never a partial guess. Like the
+/// legacy `wallpaper-get` record, the path is stored as reported (no
+/// existence gate): whether the file survived is an apply-time concern,
+/// and gating here would make the record differ from what the painter
+/// reports.
+pub fn resolve_static_path(
+    compositor: &[CompositorOutput],
+    daemon: &[AuthorityOutput],
+) -> Option<String> {
+    if decide_active_kind_from_outputs(compositor, daemon) != Some(WallpaperKind::Static) {
+        return None;
+    }
+    let mut names: Vec<&str> = compositor
+        .iter()
+        .filter(|o| layer_owner(&o.top_namespace, None) == LayerOwner::Skwd)
+        .map(|o| o.name.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+        .into_iter()
+        .find_map(|name| daemon_static_current(daemon, name))
+}
+
+/// Live version of [`resolve_static_path`]: which static image the skwd
+/// suite actually paints, so save records the daemon's truth instead of a
+/// stale third party value.
+///
+/// Returns `Ok(Some(path))` only for a compositor-proven skwd static
+/// scene with a usable daemon `current`. `Ok(None)` means "not the
+/// suite's static scene" (another painter, a video, an unknown layer, an
+/// unreachable compositor) — the caller keeps today's behaviour, quietly
+/// at debug level (the kind query already logged its reason). `Err(reason)`
+/// means the compositor proved the suite paints but the daemon cannot
+/// complete the record (unreachable, unparseable, silent for that output,
+/// or an empty `current`): the reason names the output and the cause, so
+/// the caller can warn honestly while falling back — never an empty path,
+/// never a guess.
+///
+/// Bounded like the other live queries (one compositor call, two daemon
+/// attempts, one monitors call); reuses the existing layer and daemon
+/// parsers, never a second copy of either.
+pub fn query_active_static_path() -> Result<Option<String>, String> {
+    let compositor_json =
+        match run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT) {
+            Ok(json) => json,
+            Err(reason) => {
+                tracing::debug!(
+                    "[wallpaper] static path: compositor unavailable ({}); keeping wallpaper-get",
+                    reason,
+                );
+                return Ok(None);
+            }
+        };
+    let daemon_json = query_daemon_json();
+    let monitors_json = query_monitors_json();
+    let daemon_usable = daemon_json.is_some();
+    let daemon: Vec<AuthorityOutput> = daemon_json
+        .as_deref()
+        .and_then(|json| parse_authority_outputs(json).ok())
+        .unwrap_or_default();
+    let reference = output_reference_sizes(monitors_json.as_deref(), &daemon);
+    let compositor = match parse_compositor_layers_with_reference(&compositor_json, &reference) {
+        Ok(outputs) => outputs,
+        Err(reason) => {
+            tracing::debug!(
+                "[wallpaper] static path: layers unparseable ({}); keeping wallpaper-get",
+                reason,
+            );
+            return Ok(None);
+        }
+    };
+    // Outputs the compositor proved are skwd-painted, first sorted first
+    // (the deterministic single-path rule of `resolve_static_path`).
+    let mut skwd_names: Vec<&str> = compositor
+        .iter()
+        .filter(|o| layer_owner(&o.top_namespace, None) == LayerOwner::Skwd)
+        .map(|o| o.name.as_str())
+        .collect();
+    skwd_names.sort_unstable();
+    skwd_names.dedup();
+    let first = match skwd_names.first() {
+        Some(name) => *name,
+        None => {
+            tracing::debug!(
+                "[wallpaper] static path: no skwd layer on top; keeping wallpaper-get",
+            );
+            return Ok(None);
+        }
+    };
+    // The pure rule decides: only a compositor-proven static scene with a
+    // usable daemon current for a painted output yields a path.
+    if let Some(path) = resolve_static_path(&compositor, &daemon) {
+        return Ok(Some(path));
+    }
+    // No path: tell a missing daemon half apart from "not ours to
+    // override" (a video, an unknown painter, or a veto elsewhere keeps
+    // today's value quietly — the kind query already logged its reason).
+    let proven_static =
+        decide_active_kind_from_outputs(&compositor, &daemon) == Some(WallpaperKind::Static);
+    let all_skwd = compositor.iter().any(|o| !o.top_namespace.is_empty())
+        && compositor
+            .iter()
+            .filter(|o| !o.top_namespace.is_empty())
+            .all(|o| layer_owner(&o.top_namespace, None) == LayerOwner::Skwd);
+    if proven_static || (all_skwd && !daemon_usable) {
+        let missing_current = if daemon_usable {
+            "no connected static entry with a non-empty current for that output"
+        } else {
+            "daemon type signal unavailable"
+        };
+        return Err(format!(
+            "skwd paints '{}' but the daemon reports no usable static current ({})",
+            first, missing_current,
+        ));
+    }
+    tracing::debug!(
+        "[wallpaper] static path: scene is not a proven skwd static one; keeping wallpaper-get",
+    );
+    Ok(None)
+}
+
 /// File HVE stores inside the theme provider dir for a painter-identified
 /// video (kind + path + who painted it). Owned by the noctalia-v5 save path;
 /// restoring it routes through the manager in charge, never the plugin.
@@ -2353,5 +2499,81 @@ mod tests {
         let sizes = parse_monitor_sizes(&scaled_monitors_doc()).expect("monitors must parse");
         let hdmi = sizes.get("HDMI-A-1").expect("HDMI-A-1 must be present");
         assert_eq!((hdmi.width, hdmi.height), (960, 540));
+    }
+
+    // ── Save-side static path tests ──
+    //
+    // The static arm records the daemon's `current` when the compositor
+    // proves the skwd suite paints a static scene (the keeper's bug: a
+    // stale `wallpaper-get` was recorded instead). The theme model holds
+    // ONE path, so the rule is the lexicographically-first skwd-painted
+    // output — deterministic no matter the parse order.
+
+    #[test]
+    fn static_current_needs_a_connected_static_entry() {
+        let daemon = parse_authority_outputs(
+            r#"{"outputs": [
+                {"name": "DP-3", "current": "/pic/joker1.png", "path": "/pic/joker1.png",
+                 "type": "static", "connected": true},
+                {"name": "HDMI-A-1", "current": "/vid/loop.mp4", "path": "/vid/loop.mp4",
+                 "type": "video", "connected": true},
+                {"name": "OLD", "current": "/pic/stale.png", "path": "/pic/stale.png",
+                 "type": "static", "connected": false}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            daemon_static_current(&daemon, "DP-3"),
+            Some("/pic/joker1.png".to_string())
+        );
+        // A video kind is not a static image, even with a current.
+        assert_eq!(daemon_static_current(&daemon, "HDMI-A-1"), None);
+        // A disconnected duplicate must not decide, even when named.
+        assert_eq!(daemon_static_current(&daemon, "OLD"), None);
+        assert_eq!(daemon_static_current(&daemon, "NOPE"), None);
+    }
+
+    #[test]
+    fn static_path_picks_first_sorted_output() {
+        // Both outputs skwd-painted static with different currents: the
+        // record is DP-3's (sorted first), whatever the input order.
+        let daemon = parse_authority_outputs(
+            r#"{"outputs": [
+                {"name": "HDMI-A-1", "current": "/pic/b.png", "path": "/pic/b.png",
+                 "type": "static", "connected": true},
+                {"name": "DP-3", "current": "/pic/a.png", "path": "/pic/a.png",
+                 "type": "static", "connected": true}
+            ]}"#,
+        )
+        .unwrap();
+        let json = layers_doc(&layer("skwd-paper", 1.0, 439101), &layer("skwd-paper", 1.0, 439101));
+        let compositor = parse_compositor_layers(&json).unwrap();
+        assert_eq!(
+            resolve_static_path(&compositor, &daemon),
+            Some("/pic/a.png".to_string())
+        );
+    }
+
+    #[test]
+    fn static_path_vetoes_video_and_unknown_painters() {
+        // A video anywhere, or an unknown painter on top, vetoes: a
+        // partial static record would hide what is really showing.
+        let daemon = parse_authority_outputs(&static_daemon_for_both()).unwrap();
+        let video_json = layers_doc(
+            &layer("skwd-paper", 1.0, 439101),
+            &format!(
+                "{},{}",
+                layer("skwd-paper", 1.0, 439101),
+                layer("mpvpaper", 1.0, 507331)
+            ),
+        );
+        let video = parse_compositor_layers(&video_json).unwrap();
+        assert_eq!(resolve_static_path(&video, &daemon), None);
+        let unknown_json = layers_doc(
+            &layer("mystery-layer", 1.0, 999),
+            &layer("skwd-paper", 1.0, 439101),
+        );
+        let unknown = parse_compositor_layers(&unknown_json).unwrap();
+        assert_eq!(resolve_static_path(&unknown, &daemon), None);
     }
 }

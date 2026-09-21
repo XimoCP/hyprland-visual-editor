@@ -1164,19 +1164,62 @@ impl ThemeProvider for NoctaliaV5Provider {
             matches!(plan, SavePlan::StaticOnly | SavePlan::Unknown) || vetoed_video;
         let capture_video_manifest = matches!(plan, SavePlan::Unknown) || vetoed_video;
 
-        // 4. Save default wallpaper via IPC (static only, unless authority unknown)
+        // 4. Save default wallpaper (static only, unless authority unknown).
+        //
+        // WHY the daemon override: the suite that paints the layer keeps
+        // its own per-output truth (`skwd-helm outputs --json`), while
+        // `wallpaper-get` is a third party value that can lag it (seen
+        // live: Noctalia reported car3.jpg while the suite painted
+        // joker1.png). When the compositor proves the skwd suite paints a
+        // static scene, the recorded path is the daemon's `current` for
+        // the lexicographically-first painted output (see
+        // `resolve_static_path` for the rule); any other painter, an
+        // unreachable compositor, or an unusable daemon keeps today's
+        // `wallpaper-get` value byte-for-byte, with a warning naming the
+        // output when the suite paints but the daemon cannot complete it.
         if capture_static {
-            match noctalia_msg(&["msg", "wallpaper-get"]) {
+            let legacy: Option<String> = match noctalia_msg(&["msg", "wallpaper-get"]) {
                 Ok(wp) => {
                     let wp = wp.trim().to_string();
-                    if !wp.is_empty() {
-                        fs::write(provider_dir.join("wallpaper.txt"), &wp)
-                            .map_err(|e| format!("Cannot write wallpaper.txt: {}", e))?;
+                    if wp.is_empty() {
+                        None
+                    } else {
+                        Some(wp)
                     }
                 }
                 Err(e) => {
                     tracing::warn!("[noctalia-v5] Cannot get wallpaper: {}", e);
+                    None
                 }
+            };
+            let recorded: Option<String> = match wallpaper_authority::query_active_static_path()
+            {
+                Ok(Some(current)) => {
+                    let current = current.trim().to_string();
+                    if current.is_empty() {
+                        legacy
+                    } else {
+                        if legacy.as_deref() != Some(current.as_str()) {
+                            tracing::info!(
+                                "[noctalia-v5] Recording skwd daemon current as wallpaper (the suite paints it): {}",
+                                current
+                            );
+                        }
+                        Some(current)
+                    }
+                }
+                Ok(None) => legacy,
+                Err(reason) => {
+                    tracing::warn!(
+                        "[noctalia-v5] {} — recording wallpaper-get value instead",
+                        reason
+                    );
+                    legacy
+                }
+            };
+            if let Some(wp) = recorded {
+                fs::write(provider_dir.join("wallpaper.txt"), &wp)
+                    .map_err(|e| format!("Cannot write wallpaper.txt: {}", e))?;
             }
         } else {
             // Authority says video: a stale static record would resurrect the
@@ -2514,5 +2557,317 @@ exit 0
         // After the cap: no further attempts, ever.
         std::thread::sleep(Duration::from_millis(500));
         assert_eq!(stub.sets(), 4, "gave up at the cap: no war");
+    }
+
+    // ── Save-side static background: record what the painter shows ──
+    //
+    // WHY these exist: the keeper changed colors + background, then
+    // overwrote a theme. Save recorded `wallpaper-get` (Noctalia's stale
+    // car3.jpg) while the skwd suite actually painted joker1.png, so the
+    // gallery previewed the wrong image and a later apply would restore
+    // it. The static arm must prefer the painter's own truth when the
+    // compositor proves the skwd suite paints a static scene.
+    //
+    // Hermetic harness: stub `noctalia` / `hyprctl` / `skwd-helm` /
+    // `skwd-wall-v2` are shadowed onto PATH. A real spawn would query the
+    // keeper's live desktop (and Noctalia IPC can mutate it) — these tests
+    // must never run the real binaries.
+
+    /// Stub fleet for the v5 save path: answers `color-scheme-get`,
+    /// `wallpaper-get`, `hyprctl -j layers` / `monitors` and the daemon's
+    /// `outputs --json` from files under a private state dir.
+    struct SaveStub {
+        _env: crate::test_utils::TempEnv,
+        _tmp: TempDir,
+        state_dir: PathBuf,
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl SaveStub {
+        /// `layers` is the `hyprctl -j layers` fixture; `monitors` `None`
+        /// means the monitors query fails (the parser then stays
+        /// permissive, logging the gap). `daemon_mode` `"ok"` serves
+        /// `daemon_json`, `"garbage"` serves unparseable output, anything
+        /// else makes both daemon binaries fail.
+        fn new(
+            layers: &str,
+            monitors: Option<&str>,
+            daemon_mode: &str,
+            daemon_json: &str,
+            wallpaper_get: &str,
+        ) -> Self {
+            let env = crate::test_utils::TempEnv::new();
+            let tmp = TempDir::new().unwrap();
+            let keys = [
+                "PATH",
+                "HVE_NOCTALIA_CONFIG",
+                "NOCTALIA_STUB_STATE",
+                "SKWD_STUB_MODE",
+                "XDG_RUNTIME_DIR",
+                "SKWD_WALL_V2_SOCK",
+                "SKWD_WALL_V2_CONFIG",
+            ];
+            let saved: Vec<(&'static str, Option<String>)> = keys
+                .iter()
+                .map(|k| (*k, std::env::var(k).ok()))
+                .collect();
+            let state_dir = tmp.path().join("state");
+            let bin_dir = tmp.path().join("bin");
+            std::fs::create_dir_all(&state_dir).unwrap();
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            std::fs::write(state_dir.join("layers.json"), layers).unwrap();
+            if let Some(m) = monitors {
+                std::fs::write(state_dir.join("monitors.json"), m).unwrap();
+            }
+            std::fs::write(state_dir.join("daemon.json"), daemon_json).unwrap();
+            std::fs::write(state_dir.join("wallpaper-get"), wallpaper_get).unwrap();
+            std::fs::write(state_dir.join("log"), b"").unwrap();
+            let noctalia_stub = r#"#!/bin/sh
+STATE="${NOCTALIA_STUB_STATE:?missing stub state}"
+printf '%s\n' "$*" >> "$STATE/log"
+if [ "$1" = "msg" ] && [ "$2" = "color-scheme-get" ]; then
+  printf 'custom JokerTheme\n'
+  exit 0
+fi
+if [ "$1" = "msg" ] && [ "$2" = "wallpaper-get" ]; then
+  cat "$STATE/wallpaper-get"
+  exit 0
+fi
+exit 0
+"#;
+            let hyprctl_stub = r#"#!/bin/sh
+STATE="${NOCTALIA_STUB_STATE:?missing stub state}"
+if [ "$1" = "-j" ] && [ "$2" = "layers" ]; then
+  cat "$STATE/layers.json"
+  exit 0
+fi
+if [ "$1" = "-j" ] && [ "$2" = "monitors" ]; then
+  if [ -f "$STATE/monitors.json" ]; then
+    cat "$STATE/monitors.json"
+    exit 0
+  fi
+  exit 1
+fi
+exit 1
+"#;
+            let helm_stub = r#"#!/bin/sh
+STATE="${NOCTALIA_STUB_STATE:?missing stub state}"
+MODE="${SKWD_STUB_MODE:-ok}"
+if [ "$1" = "outputs" ] && [ "$2" = "--json" ]; then
+  case "$MODE" in
+    ok) cat "$STATE/daemon.json"; exit 0;;
+    garbage) printf 'not json at all'; exit 0;;
+    *) exit 1;;
+  esac
+fi
+exit 1
+"#;
+            for (name, content) in [
+                ("noctalia", noctalia_stub),
+                ("hyprctl", hyprctl_stub),
+                ("skwd-helm", helm_stub),
+                ("skwd-wall-v2", "#!/bin/sh\nexit 1\n"),
+            ] {
+                let p = bin_dir.join(name);
+                std::fs::write(&p, content).unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                }
+            }
+            let orig_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var(
+                "PATH",
+                format!("{}:{}", bin_dir.display(), orig_path),
+            );
+            std::env::set_var("NOCTALIA_STUB_STATE", &state_dir);
+            std::env::set_var("SKWD_STUB_MODE", daemon_mode);
+            let noct_home = tmp.path().join("noct-home");
+            std::fs::create_dir_all(&noct_home).unwrap();
+            std::env::set_var("HVE_NOCTALIA_CONFIG", &noct_home);
+            // No daemon socket in tests: delegation stays a silent no-op.
+            std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+            std::env::set_var(
+                "SKWD_WALL_V2_CONFIG",
+                tmp.path().join("no-skwd-config.json"),
+            );
+            Self {
+                _env: env,
+                _tmp: tmp,
+                state_dir,
+                saved,
+            }
+        }
+
+        fn provider_dir(&self, theme: &TempDir) -> PathBuf {
+            theme.path().join("providers").join("noctalia-v5")
+        }
+
+        fn wallpaper_txt(&self, theme: &TempDir) -> Option<String> {
+            std::fs::read_to_string(self.provider_dir(theme).join("wallpaper.txt"))
+                .ok()
+                .map(|s| s.trim().to_string())
+        }
+    }
+
+    impl Drop for SaveStub {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// Two-output layers fixture with the given topmost namespaces,
+    /// fullscreen opaque on both outputs.
+    fn save_layers_doc(dp_ns: &str, hdmi_ns: &str) -> String {
+        format!(
+            r#"{{"DP-3":{{"levels":{{"0":[{{"address":"0x1","x":0,"y":0,"w":2560,"h":1440,"alpha":1,"namespace":"{dp_ns}","pid":439101}}],"1":[]}}}},"HDMI-A-1":{{"levels":{{"0":[{{"address":"0x2","x":0,"y":0,"w":1440,"h":900,"alpha":1,"namespace":"{hdmi_ns}","pid":439102}}],"1":[]}}}}}}"#,
+        )
+    }
+
+    /// Two-output daemon fixture of one kind word with the given currents.
+    fn save_daemon_doc(kind_word: &str, dp_current: &str, hdmi_current: &str) -> String {
+        format!(
+            r#"{{"outputs": [{{"name": "DP-3", "current": "{dp_current}", "path": "{dp_current}", "type": "{kind_word}", "connected": true}},{{"name": "HDMI-A-1", "current": "{hdmi_current}", "path": "{hdmi_current}", "type": "{kind_word}", "connected": true}}]}}"#,
+        )
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_skwd_static_records_daemon_current_not_wallpaper_get() {
+        // The keeper's case: Noctalia reports the stale car3.jpg while the
+        // suite paints joker1.png on both outputs. Save must record what
+        // the painter actually has.
+        let stale = "/pictures/stale/car3.jpg";
+        let live_path = "/pictures/live/joker1.png";
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-paper", "skwd-paper"),
+            None,
+            "ok",
+            &save_daemon_doc("static", live_path, live_path),
+            stale,
+        );
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(live_path),
+            "skwd paints a static scene: wallpaper.txt must hold the daemon current, not the stale wallpaper-get"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_non_skwd_painter_keeps_wallpaper_get() {
+        // An unknown painter owns the layer: the suite has nothing to say,
+        // so save keeps today's behaviour byte-for-byte.
+        let stale = "/pictures/stale/car3.jpg";
+        let stub = SaveStub::new(
+            &save_layers_doc("mystery-layer", "mystery-layer"),
+            None,
+            "ok",
+            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            stale,
+        );
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(stale),
+            "non-skwd painter: wallpaper.txt must keep the wallpaper-get value"
+        );
+        assert!(
+            !stub.provider_dir(&theme).join("video.txt").exists(),
+            "no video on top: no painter video record may appear"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_skwd_daemon_unusable_falls_back_with_warning() {
+        // The suite paints, but its daemon answers garbage: save must fall
+        // back to wallpaper-get (never an empty or guessed path) and warn
+        // naming the output and the cause.
+        let stale = "/pictures/stale/car3.jpg";
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-paper", "skwd-paper"),
+            None,
+            "garbage",
+            "",
+            stale,
+        );
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(stale),
+            "unusable daemon: wallpaper.txt must fall back to the wallpaper-get value"
+        );
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("DP-3"),
+            "the fallback warning must name the output, got: {}",
+            text
+        );
+        assert!(
+            text.to_lowercase().contains("daemon"),
+            "the fallback warning must name the daemon as the cause, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_video_on_top_writes_no_static_record() {
+        // A skwd native video on top with a resolvable daemon path is an
+        // exact video today: video.txt only, no wallpaper.txt. The static
+        // fix must not touch the video arm.
+        let media_tmp = TempDir::new().unwrap();
+        let video = media_tmp.path().join("slugcat.mp4");
+        std::fs::write(&video, b"fake video").unwrap();
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+        assert!(
+            !stub.provider_dir(&theme).join("wallpaper.txt").exists(),
+            "exact video on top: no static record may be written"
+        );
+        let record = std::fs::read_to_string(stub.provider_dir(&theme).join("video.txt"))
+            .expect("exact video must write video.txt");
+        assert!(
+            record.contains(&video_str),
+            "video.txt must hold the resolved video path, got: {}",
+            record
+        );
     }
 }
