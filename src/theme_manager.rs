@@ -401,12 +401,26 @@ impl ThemeManager {
         if !theme_dir.exists() {
             return Err(format!("Theme '{}' not found", name));
         }
+        // Derived artifacts live outside the theme dir, so they are cleaned
+        // BEFORE it is removed — resolving the preview source needs its
+        // contents. Best-effort only: failures warn, never fail the delete.
+        Self::cleanup_derived_artifacts(&self.themes_dir, &theme_dir);
         fs::remove_dir_all(&theme_dir)
             .map_err(|e| format!("Failed to delete theme '{}': {}", name, e))?;
         if self.last_applied == name {
             self.last_applied.clear();
         }
         Ok(())
+    }
+
+    /// Best-effort removal of everything a theme derived that lives OUTSIDE
+    /// its own directory: the gallery's content-keyed bake artifacts plus,
+    /// when no surviving theme still uses it, the shared Noctalia custom
+    /// palette. Never touches anything beyond the bake cache and that one
+    /// palette file; every failure is logged and swallowed.
+    fn cleanup_derived_artifacts(themes_dir: &Path, theme_dir: &Path) {
+        cleanup_bake_cache(theme_dir);
+        cleanup_shared_palette(themes_dir, theme_dir);
     }
 
     pub fn rename(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
@@ -432,6 +446,148 @@ impl ThemeManager {
     }
 }
 
+/// Remove the gallery bake artifacts derived from a theme's preview source.
+///
+/// The key is derived with the SAME function the bake uses
+/// (`content_cache_key_from_bytes` over the source bytes), so exactly the
+/// `<key>-thumb.png` / `-hero.png` / `-slat.png` / `-slat-exp.png` (plus
+/// `-frame.png`) files the gallery wrote are removed — content addressing
+/// makes a source shared with another theme a non-event (worst case: one
+/// re-bake). A video theme's resolved source IS its extracted frame inside
+/// the cache (legacy path+mtime name, not the content key), so that file is
+/// dropped too — but only when it really sits inside the bake cache, never
+/// a user file elsewhere. Missing files are silent no-ops; other failures
+/// warn and are swallowed.
+fn cleanup_bake_cache(theme_dir: &Path) {
+    use crate::shell::gallery::thumbs;
+    let cache = thumbs::cache_dir();
+    let Some(source) = thumbs::find_source_image(theme_dir) else {
+        return;
+    };
+    let bytes = match fs::read(&source) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                theme = %theme_dir.display(),
+                source = %source.display(),
+                "theme delete: cannot read preview source for cache cleanup: {e}"
+            );
+            return;
+        }
+    };
+    let key = thumbs::content_cache_key_from_bytes(&bytes);
+    for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png", "-frame.png"] {
+        let artifact = cache.join(format!("{key}{suffix}"));
+        if let Err(e) = fs::remove_file(&artifact) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    artifact = %artifact.display(),
+                    "theme delete: cannot remove cached bake artifact: {e}"
+                );
+            }
+        }
+    }
+    let is_cached_frame = source.starts_with(&cache)
+        && source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with("-frame.png"));
+    if is_cached_frame {
+        if let Err(e) = fs::remove_file(&source) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    artifact = %source.display(),
+                    "theme delete: cannot remove cached video frame: {e}"
+                );
+            }
+        }
+    }
+}
+
+/// Remove the shared Noctalia custom palette IFF no surviving theme still
+/// references it.
+///
+/// The deleted theme's `providers/noctalia-v5/source.txt` holds
+/// `custom <PaletteName>`; the file on disk is
+/// `<noctalia>/palettes/<PaletteName>.json`. Because several themes share
+/// one palette name, the surviving theme dirs' `providers/*/source.txt`
+/// files are scanned first and any match keeps the file alive. A scan that
+/// cannot run keeps the file too — deleting a maybe-shared palette is
+/// worse than leaking it.
+fn cleanup_shared_palette(themes_dir: &Path, theme_dir: &Path) {
+    let text = match fs::read_to_string(
+        theme_dir.join("providers").join("noctalia-v5").join("source.txt"),
+    ) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let mut parts = text.trim().splitn(2, ' ');
+    if parts.next().unwrap_or("") != "custom" {
+        return;
+    }
+    let name = parts.next().unwrap_or("").trim();
+    if name.is_empty() {
+        return;
+    }
+    // Apply sanitizes `/` so the on-disk file can never contain one.
+    let safe_name = name.replace('/', "_");
+    if palette_still_referenced(themes_dir, theme_dir, &safe_name) {
+        return;
+    }
+    let palette = match crate::providers::noctalia_runtime::noctalia_config_dir() {
+        Some(dir) => dir.join("palettes").join(format!("{safe_name}.json")),
+        None => return,
+    };
+    if let Err(e) = fs::remove_file(&palette) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                palette = %palette.display(),
+                "theme delete: cannot remove unreferenced palette: {e}"
+            );
+        }
+    }
+}
+
+/// True when any theme dir other than the one being deleted still carries
+/// `custom <safe_name>` in one of its `providers/*/source.txt` records.
+/// Unreadable state fails OPEN (keep the palette): an unscannable tree
+/// proves nothing about who still references the file.
+fn palette_still_referenced(themes_dir: &Path, deleted_dir: &Path, safe_name: &str) -> bool {
+    let entries = match fs::read_dir(themes_dir) {
+        Ok(e) => e,
+        Err(_) => return true,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == deleted_dir || !path.is_dir() {
+            continue;
+        }
+        if let Some(n) = path.file_name().and_then(|n| n.to_str()) {
+            if n.starts_with('.') || n.starts_with('_') {
+                continue;
+            }
+        }
+        let Ok(prov_entries) = fs::read_dir(path.join("providers")) else {
+            continue;
+        };
+        for prov in prov_entries.flatten() {
+            if !prov.path().is_dir() {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(prov.path().join("source.txt")) else {
+                continue;
+            };
+            let mut parts = text.trim().splitn(2, ' ');
+            if parts.next().unwrap_or("") != "custom" {
+                continue;
+            }
+            if parts.next().unwrap_or("").trim().replace('/', "_") == safe_name {
+                return true;
+            }
+        }
+    }
+    false
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,6 +790,131 @@ mod tests {
                 before,
                 "'{name}' must not be migrated: it is not a listed theme"
             );
+        }
+    }
+
+    /// U2 (i): the Noctalia palette file is shared across themes, so delete
+    /// must be reference-counted. Two themes carrying `custom JokerTheme`:
+    /// deleting the first leaves the palette in place, deleting the last
+    /// removes it.
+    #[test]
+    fn delete_removes_palette_only_when_last_theme_using_it_is_deleted() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("JokerTheme.json");
+        fs::write(&palette, r#"{"name":"JokerTheme"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        for name in ["ThemeOne", "ThemeTwo"] {
+            seed_meta(&themes_dir, name, "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+            let v5 = themes_dir.join(name).join("providers").join("noctalia-v5");
+            fs::create_dir_all(&v5).unwrap();
+            fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+        }
+        let mut tm = ThemeManager::new(config_dir.path());
+
+        tm.delete("ThemeOne").expect("delete must succeed");
+        assert!(palette.exists(), "palette still referenced by ThemeTwo must stay");
+
+        tm.delete("ThemeTwo").expect("delete must succeed");
+        assert!(!palette.exists(), "palette with no surviving referrer must be removed");
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
+
+    /// U2 (ii): deleting a theme removes the cached bake PNGs derived from
+    /// ITS preview source and leaves another theme's cached PNGs untouched.
+    #[test]
+    fn delete_removes_cached_bake_artifacts_for_its_source_only() {
+        use crate::shell::gallery::thumbs;
+        let _env = crate::test_utils::TempEnv::new();
+
+        let scratch = TempDir::new().unwrap();
+        let img_a = scratch.path().join("a.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([10u8, 20, 30, 255]))
+            .save(&img_a)
+            .unwrap();
+        let img_b = scratch.path().join("b.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([40u8, 50, 60, 255]))
+            .save(&img_b)
+            .unwrap();
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        for (name, img) in [("ThemeA", &img_a), ("ThemeB", &img_b)] {
+            seed_meta(&themes_dir, name, "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+            let v5 = themes_dir.join(name).join("providers").join("noctalia-v5");
+            fs::create_dir_all(&v5).unwrap();
+            fs::write(v5.join("wallpaper.txt"), format!("{}\n", img.display())).unwrap();
+        }
+
+        let cache = thumbs::cache_dir();
+        fs::create_dir_all(&cache).unwrap();
+        let key_a =
+            thumbs::content_cache_key_from_bytes(&fs::read(&img_a).unwrap());
+        let key_b =
+            thumbs::content_cache_key_from_bytes(&fs::read(&img_b).unwrap());
+        assert_ne!(key_a, key_b, "distinct sources must key distinctly");
+        let mut files_a = Vec::new();
+        for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png", "-frame.png"] {
+            let p = cache.join(format!("{key_a}{suffix}"));
+            fs::write(&p, b"cached").unwrap();
+            files_a.push(p);
+        }
+        let mut files_b = Vec::new();
+        for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png"] {
+            let p = cache.join(format!("{key_b}{suffix}"));
+            fs::write(&p, b"cached").unwrap();
+            files_b.push(p);
+        }
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("ThemeA").expect("delete must succeed");
+
+        for p in &files_a {
+            assert!(!p.exists(), "deleted theme's cache artifact must be gone: {}", p.display());
+        }
+        for p in &files_b {
+            assert!(p.exists(), "surviving theme's cache artifact must stay: {}", p.display());
+        }
+        assert!(!themes_dir.join("ThemeA").exists(), "theme dir itself must be gone");
+        assert!(themes_dir.join("ThemeB").exists(), "other theme dir must stay");
+    }
+
+    /// U2 (iii): every cleanup step is best-effort — a palette directory that
+    /// cannot serve the removal (here a regular file, so the join is not a
+    /// directory) must never turn the delete itself into an error.
+    #[test]
+    fn delete_succeeds_when_derived_cleanup_fails() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        // `palettes` as a FILE: any palette removal beneath it fails.
+        fs::write(noct_home.path().join("palettes"), b"not a dir").unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Broken", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let v5 = themes_dir.join("Broken").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&v5).unwrap();
+        fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Broken").expect("cleanup failure must not fail the delete");
+        assert!(!themes_dir.join("Broken").exists(), "theme dir itself must be gone");
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
         }
     }
 }
