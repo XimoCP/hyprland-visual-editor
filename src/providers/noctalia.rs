@@ -834,6 +834,189 @@ fn find_palette_path(source: &str, name: &str) -> Option<PathBuf> {
     }
 }
 
+// ── skwd-wall color-authority detection + single-shot re-assert ─────
+//
+// WHY this exists: the keeper runs the skwd-wall wallpaper engine as the
+// color AUTHORITY (its config sets theme.policy == "wallpaper" and/or
+// noctalia.themeMode == "follow"). HVE hands that engine the wallpaper
+// during apply, so the engine regenerates its wallpaper-derived palette
+// asynchronously AFTER HVE's synchronous steps and re-imposes
+// `custom skwd-wall` — silently discarding the theme's custom palette for
+// over a minute. HVE's palette copy is correct; it just loses the race
+// without noticing. This section detects the ownership and re-asserts the
+// theme's palette once, bounded, off the UI thread, with honest logging.
+
+/// Path to the keeper's skwd-wall engine config.
+///
+/// No path helper existed for this file, so this follows the codebase's
+/// established seam style: `SKWD_WALL_V2_CONFIG` overrides outright (tests
+/// point it at a temp file, including a nonexistent path for the missing
+/// case); otherwise the platform config dir
+/// (`$XDG_CONFIG_HOME/skwd-wall-v2/config.json`, i.e. `~/.config/...`),
+/// which the `TempEnv` test sandbox already redirects via HOME.
+fn skwd_wall_config_path() -> PathBuf {
+    if let Ok(custom) = std::env::var("SKWD_WALL_V2_CONFIG") {
+        return PathBuf::from(custom);
+    }
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"))
+        .join("skwd-wall-v2")
+        .join("config.json")
+}
+
+/// True when the skwd-wall engine owns the color scheme and will
+/// asynchronously override whatever HVE sets: `theme.policy == "wallpaper"`
+/// (the engine derives the palette from the wallpaper it was just handed)
+/// OR `noctalia.themeMode == "follow"` (it tracks Noctalia instead of
+/// leaving the scheme alone). Missing or unparsable config is NOT
+/// ownership — HVE then behaves exactly as before. Never panics.
+fn skwd_wall_owns_color_scheme() -> bool {
+    let raw = match fs::read_to_string(skwd_wall_config_path()) {
+        Ok(raw) => raw,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+    let policy_wallpaper = parsed
+        .get("theme")
+        .and_then(|theme| theme.get("policy"))
+        .and_then(|policy| policy.as_str())
+        == Some("wallpaper");
+    let follow_mode = parsed
+        .get("noctalia")
+        .and_then(|noctalia| noctalia.get("themeMode"))
+        .and_then(|mode| mode.as_str())
+        == Some("follow");
+    policy_wallpaper || follow_mode
+}
+
+/// Bounds for the single-shot re-assert: a short settle so the engine's
+/// async regen can land first, at most 3 re-assert sets with a fixed delay
+/// between checks, and a hard cap on the whole worker. Worst case the
+/// worker lives settle + cap ≈ 10 s, then exits by itself — it can never
+/// become a "keep watching" thread or a cross-engine war.
+const COLOR_REASSERT_SETTLE: Duration = Duration::from_secs(2);
+const COLOR_REASSERT_DELAY: Duration = Duration::from_secs(2);
+const COLOR_REASSERT_MAX_SETS: u32 = 3;
+const COLOR_REASSERT_CAP: Duration = Duration::from_secs(8);
+
+/// Timing source: production constants, unless the `fast` test profile is
+/// selected (same env-seam style as the rest of the codebase) so tests can
+/// observe the full race end to end without waiting out the real delays.
+fn color_reassert_timing() -> (Duration, u32, Duration, Duration) {
+    if std::env::var("HVE_REASSERT_PROFILE").as_deref() == Ok("fast") {
+        (
+            Duration::from_millis(5),
+            COLOR_REASSERT_MAX_SETS,
+            Duration::from_millis(15),
+            Duration::from_millis(1500),
+        )
+    } else {
+        (
+            COLOR_REASSERT_SETTLE,
+            COLOR_REASSERT_MAX_SETS,
+            COLOR_REASSERT_DELAY,
+            COLOR_REASSERT_CAP,
+        )
+    }
+}
+
+/// Verify the custom palette is live and re-assert it when it is not.
+///
+/// Runs to completion on the calling thread: the apply path calls this via
+/// [`spawn_custom_scheme_reassert`] so the UI thread never blocks. Each
+/// check runs `color-scheme-get`; only a check that did NOT stick re-issues
+/// `color-scheme-set custom <name>` + `templates-apply`. Returns true when
+/// the scheme is verified live at the end. Never fails, never panics: every
+/// IPC error is logged and swallowed, and a missing `noctalia` binary means
+/// "do nothing" (the get fails, we log at debug and return).
+fn reassert_custom_scheme_blocking(
+    palette_name: &str,
+    settle: Duration,
+    max_sets: u32,
+    delay: Duration,
+    cap: Duration,
+) -> bool {
+    std::thread::sleep(settle);
+    let expected = format!("custom {}", palette_name);
+    let deadline = Instant::now() + cap;
+    let mut sets = 0u32;
+    loop {
+        if Instant::now() >= deadline {
+            tracing::warn!(
+                "[noctalia-v5] custom scheme '{}' unverified at the cap: the background engine owns the color scheme — set skwd-wall-v2/config.json theme.policy away from \"wallpaper\" / noctalia.themeMode away from \"follow\", or the theme's saved palette will not stick",
+                palette_name
+            );
+            return false;
+        }
+        match noctalia_msg(&["msg", "color-scheme-get"]) {
+            Err(e) => {
+                tracing::debug!(
+                    "[noctalia-v5] color re-assert: cannot query scheme ({}); leaving it alone",
+                    e
+                );
+                return false;
+            }
+            Ok(live) if live.trim() == expected => {
+                if sets == 0 {
+                    tracing::info!(
+                        "[noctalia-v5] custom scheme '{}' stuck on first check — no re-assert needed",
+                        palette_name
+                    );
+                } else {
+                    tracing::info!(
+                        "[noctalia-v5] custom scheme '{}' re-asserted and verified",
+                        palette_name
+                    );
+                }
+                return true;
+            }
+            Ok(live) => {
+                if sets >= max_sets {
+                    tracing::warn!(
+                        "[noctalia-v5] custom scheme '{}' still overridden (live: '{}'): the background engine owns the color scheme — set skwd-wall-v2/config.json theme.policy away from \"wallpaper\" / noctalia.themeMode away from \"follow\", or the theme's saved palette will not stick",
+                        palette_name,
+                        live.trim()
+                    );
+                    return false;
+                }
+                if let Err(e) = noctalia_msg(&["msg", "color-scheme-set", "custom", palette_name])
+                {
+                    tracing::warn!(
+                        "[noctalia-v5] color re-assert: cannot set scheme '{}': {}",
+                        palette_name,
+                        e
+                    );
+                } else if let Err(e) = noctalia_msg(&["msg", "templates-apply"]) {
+                    tracing::warn!("[noctalia-v5] color re-assert: cannot apply templates: {}", e);
+                }
+                sets += 1;
+                // Never sleep past the deadline: the cap is a hard wall time.
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::ZERO);
+                std::thread::sleep(delay.min(remaining));
+            }
+        }
+    }
+}
+
+/// Fire-and-forget the single-shot re-assert after an apply restored a
+/// custom palette while the engine owns the scheme.
+///
+/// Detached by design: the engine's regen lands after apply returns, so
+/// joining here would freeze the UI thread for up to ~10 s. The worker
+/// never touches Slint state — it only runs `noctalia msg` and logs — so
+/// detaching is safe, and it always exits by itself at the attempt cap.
+fn spawn_custom_scheme_reassert(palette_name: String) {
+    std::thread::spawn(move || {
+        let (settle, max_sets, delay, cap) = color_reassert_timing();
+        reassert_custom_scheme_blocking(&palette_name, settle, max_sets, delay, cap);
+    });
+}
+
 // ── NoctaliaV5Provider ───────────────────────────────────────────────
 //
 // Auto-contenido: todo el save/apply se hace por IPC (`noctalia msg`).
@@ -1244,6 +1427,9 @@ impl ThemeProvider for NoctaliaV5Provider {
         }
 
         // 2. Restore color scheme
+        // Tracks the custom palette actually restored below, so the
+        // ownership re-assert at the end fires only for what was set.
+        let mut custom_restored: Option<String> = None;
         if source_src.exists() {
             let raw = fs::read_to_string(&source_src)
                 .map_err(|e| format!("Cannot read source.txt: {}", e))?;
@@ -1268,6 +1454,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                     noctalia_msg(&["msg", "color-scheme-set", "custom", &safe_name])
                         .map_err(|e| format!("Cannot set color scheme: {}", e))?;
                     tracing::info!("[noctalia-v5] Set active scheme: custom {}", safe_name);
+                    custom_restored = Some(safe_name);
                 }
             } else if !name.is_empty() && matches!(source, "builtin" | "community") {
                 // Builtin or community — no palette file to copy, restore directly.
@@ -1283,6 +1470,23 @@ impl ThemeProvider for NoctaliaV5Provider {
             noctalia_msg(&["msg", "templates-apply"])
                 .map_err(|e| format!("Cannot apply templates: {}", e))?;
             tracing::info!("[noctalia-v5] Templates applied");
+
+            // 4. The keeper's wallpaper engine may own the color scheme (see
+            //    `skwd_wall_owns_color_scheme`): it then regenerates its
+            //    wallpaper palette asynchronously AFTER these synchronous
+            //    steps and re-imposes `custom skwd-wall`. Only a restored
+            //    CUSTOM palette qualifies for the re-assert — builtin,
+            //    community and wallpaper schemes keep today's behaviour
+            //    untouched. Off the UI thread, single-shot, bounded.
+            if let Some(restored) = custom_restored {
+                if skwd_wall_owns_color_scheme() {
+                    tracing::info!(
+                        "[noctalia-v5] Wallpaper engine owns the color scheme; re-asserting '{}' off-thread",
+                        restored
+                    );
+                    spawn_custom_scheme_reassert(restored);
+                }
+            }
         }
 
         Ok(())
@@ -1878,5 +2082,437 @@ mod tests {
             code.contains(&delegator),
             "noctalia.rs apply must route the recorded video through skwd delegation"
         );
+    }
+
+    // ── skwd color-authority re-assert tests ──
+    //
+    // WHY these exist: when the keeper's wallpaper engine owns the color
+    // scheme (skwd-wall-v2 config: theme.policy == "wallpaper" and/or
+    // noctalia.themeMode == "follow"), it regenerates the wallpaper palette
+    // asynchronously AFTER HVE's synchronous apply and re-imposes
+    // `custom skwd-wall`, silently discarding the theme's custom palette.
+    // HVE must detect that ownership and re-assert once, bounded, off the
+    // UI thread — never a watcher war.
+
+    const OWNER_JSON: &str =
+        r#"{"theme": {"policy": "wallpaper"}, "noctalia": {"themeMode": "follow"}}"#;
+
+    /// Hermetic harness: a stub `noctalia` shadowed onto PATH plus a
+    /// stub skwd-wall config path.
+    ///
+    /// One deliberate wrinkle: PATH shadowing is process-global, so a
+    /// concurrent suite-mate that runs `noctalia msg color-scheme-get`
+    /// (today: the v5 save test, which is not `#[serial]`) can slip one
+    /// extra get line into this log. Nothing else in the suite issues
+    /// `color-scheme-set` or `templates-apply`, so set/template counts
+    /// stay EXACT while get counts are asserted as LOWER BOUNDS.
+    ///
+    /// The stub records every invocation in `<state>/log` and answers
+    /// `color-scheme-get` from `<state>/scheme`. `NOCTALIA_YIELD_AFTER`
+    /// controls how many `color-scheme-set` calls the keeper daemon
+    /// "overrides" (ignores) before a set sticks — the async race, bottled.
+    struct ColorStub {
+        _env: crate::test_utils::TempEnv,
+        _tmp: TempDir,
+        state_dir: PathBuf,
+        skwd_cfg: PathBuf,
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl ColorStub {
+        fn new(scheme: &str, yield_after: u32, skwd_config: Option<&str>, fast: bool) -> Self {
+            let env = crate::test_utils::TempEnv::new();
+            let tmp = TempDir::new().unwrap();
+            let keys = [
+                "PATH",
+                "SKWD_WALL_V2_CONFIG",
+                "HVE_NOCTALIA_CONFIG",
+                "HVE_REASSERT_PROFILE",
+                "NOCTALIA_STUB_STATE",
+                "NOCTALIA_YIELD_AFTER",
+                "XDG_RUNTIME_DIR",
+                "SKWD_WALL_V2_SOCK",
+            ];
+            let saved: Vec<(&'static str, Option<String>)> = keys
+                .iter()
+                .map(|k| (*k, std::env::var(k).ok()))
+                .collect();
+            let state_dir = tmp.path().join("state");
+            let bin_dir = tmp.path().join("bin");
+            std::fs::create_dir_all(&state_dir).unwrap();
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            std::fs::write(state_dir.join("scheme"), scheme).unwrap();
+            std::fs::write(state_dir.join("log"), b"").unwrap();
+            let stub = r#"#!/bin/sh
+STATE="${NOCTALIA_STUB_STATE:?missing stub state}"
+YIELD_AFTER="${NOCTALIA_YIELD_AFTER:-0}"
+if [ "$1" = "msg" ] && [ "$2" = "color-scheme-get" ]; then
+  printf 'color-scheme-get\n' >> "$STATE/log"
+  cat "$STATE/scheme"
+  exit 0
+fi
+if [ "$1" = "msg" ] && [ "$2" = "color-scheme-set" ]; then
+  printf 'color-scheme-set %s %s\n' "$3" "$4" >> "$STATE/log"
+  n=$(grep -c '^color-scheme-set' "$STATE/log")
+  if [ "$n" -gt "$YIELD_AFTER" ]; then
+    printf '%s %s\n' "$3" "$4" > "$STATE/scheme"
+  fi
+  exit 0
+fi
+printf '%s\n' "$*" >> "$STATE/log"
+exit 0
+"#;
+            let noctalia = bin_dir.join("noctalia");
+            std::fs::write(&noctalia, stub).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            let orig_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var(
+                "PATH",
+                format!("{}:{}", bin_dir.display(), orig_path),
+            );
+            std::env::set_var("NOCTALIA_STUB_STATE", &state_dir);
+            std::env::set_var("NOCTALIA_YIELD_AFTER", yield_after.to_string());
+            let skwd_cfg = tmp.path().join("skwd-config.json");
+            if let Some(content) = skwd_config {
+                std::fs::write(&skwd_cfg, content).unwrap();
+            }
+            std::env::set_var("SKWD_WALL_V2_CONFIG", &skwd_cfg);
+            std::env::remove_var("HVE_NOCTALIA_CONFIG");
+            if fast {
+                std::env::set_var("HVE_REASSERT_PROFILE", "fast");
+            } else {
+                std::env::remove_var("HVE_REASSERT_PROFILE");
+            }
+            // No daemon socket in tests: delegation stays a silent no-op.
+            std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+            Self {
+                _env: env,
+                _tmp: tmp,
+                state_dir,
+                skwd_cfg,
+                saved,
+            }
+        }
+
+        /// Theme carrying (or not) a custom palette; points the palette
+        /// restore at a temp noctalia home.
+        fn custom_theme(&self, source: &str, with_palette: bool) -> TempDir {
+            let theme = TempDir::new().unwrap();
+            let dir = theme.path().join("providers").join("noctalia-v5");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("source.txt"), source).unwrap();
+            if with_palette {
+                std::fs::write(dir.join("palette.json"), r#"{"palette":"joker"}"#).unwrap();
+            }
+            let noct_home = self._tmp.path().join("noct-home");
+            std::fs::create_dir_all(&noct_home).unwrap();
+            std::env::set_var("HVE_NOCTALIA_CONFIG", &noct_home);
+            theme
+        }
+
+        fn count(&self, needle: &str) -> usize {
+            // Line shapes in the stub log: `color-scheme-set <src> <name>`
+            // (set branch), bare `color-scheme-get` (get branch), and the
+            // full argv `msg templates-apply` (generic fall-through branch).
+            std::fs::read_to_string(self.state_dir.join("log"))
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| match needle {
+                    "color-scheme-set" => l.starts_with("color-scheme-set "),
+                    "templates-apply" => l.trim() == "msg templates-apply",
+                    other => l.trim() == other,
+                })
+                .count()
+        }
+
+        fn sets(&self) -> usize {
+            self.count("color-scheme-set")
+        }
+
+        fn gets(&self) -> usize {
+            self.count("color-scheme-get")
+        }
+
+        fn templates(&self) -> usize {
+            self.count("templates-apply")
+        }
+
+        fn poll(&self, needle: &str, want: usize, timeout: Duration) -> usize {
+            let start = Instant::now();
+            loop {
+                let n = self.count(needle);
+                if n >= want || start.elapsed() >= timeout {
+                    return n;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+
+    impl Drop for ColorStub {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// In-memory tracing sink so the cap test can assert the honest
+    /// warning without a global subscriber (thread-local default only).
+    #[derive(Clone, Default)]
+    struct LogCapture {
+        buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl std::io::Write for LogCapture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.buf.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn skwd_config_missing_or_broken_never_owns_scheme() {
+        // No file at the configured path: HVE behaves exactly as today.
+        let stub = ColorStub::new("custom skwd-wall", 99, None, true);
+        assert!(
+            !skwd_wall_owns_color_scheme(),
+            "missing keeper config must not count as ownership"
+        );
+        // Garbage content: never guess ownership from what we cannot read.
+        std::fs::write(&stub.skwd_cfg, b"{{{ not json").unwrap();
+        assert!(
+            !skwd_wall_owns_color_scheme(),
+            "unparsable keeper config must not count as ownership"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn skwd_config_owner_when_policy_wallpaper_or_follow_mode() {
+        let stub = ColorStub::new("custom skwd-wall", 99, None, true);
+        // Either signal alone makes the engine the color authority.
+        std::fs::write(
+            &stub.skwd_cfg,
+            r#"{"theme": {"policy": "wallpaper"}, "noctalia": {"themeMode": "manual"}}"#,
+        )
+        .unwrap();
+        assert!(
+            skwd_wall_owns_color_scheme(),
+            "theme.policy == wallpaper must count as ownership"
+        );
+        std::fs::write(
+            &stub.skwd_cfg,
+            r#"{"theme": {"policy": "manual"}, "noctalia": {"themeMode": "follow"}}"#,
+        )
+        .unwrap();
+        assert!(
+            skwd_wall_owns_color_scheme(),
+            "noctalia.themeMode == follow must count as ownership"
+        );
+        std::fs::write(&stub.skwd_cfg, OWNER_JSON).unwrap();
+        assert!(skwd_wall_owns_color_scheme());
+        // Neither signal: not an owner, behaviour byte-identical to today.
+        std::fs::write(
+            &stub.skwd_cfg,
+            r#"{"theme": {"policy": "manual"}, "noctalia": {"themeMode": "manual"}}"#,
+        )
+        .unwrap();
+        assert!(
+            !skwd_wall_owns_color_scheme(),
+            "no ownership signal must behave exactly as today"
+        );
+        std::fs::write(&stub.skwd_cfg, r#"{}"#).unwrap();
+        assert!(!skwd_wall_owns_color_scheme());
+    }
+
+    #[test]
+    #[serial]
+    fn custom_scheme_reassert_holds_first_check_without_action() {
+        // Scheme already stuck: zero extra commands, just the honest log.
+        let stub = ColorStub::new("custom JokerTheme", 0, Some(OWNER_JSON), true);
+        let held = reassert_custom_scheme_blocking(
+            "JokerTheme",
+            Duration::from_millis(0),
+            3,
+            Duration::from_millis(10),
+            Duration::from_secs(2),
+        );
+        assert!(held, "an already-stuck scheme must report held");
+        assert_eq!(stub.sets(), 0, "held on first check must not re-issue set");
+        assert!(stub.gets() >= 1, "held on first check needs its get");
+    }
+
+    #[test]
+    #[serial]
+    fn custom_scheme_reasserts_once_then_verifies() {
+        // Daemon overrode the synchronous set, the re-assert sticks: exactly
+        // one re-assert (one set + one templates-apply), then verified held.
+        let stub = ColorStub::new("custom skwd-wall", 0, Some(OWNER_JSON), true);
+        let held = reassert_custom_scheme_blocking(
+            "JokerTheme",
+            Duration::from_millis(0),
+            3,
+            Duration::from_millis(10),
+            Duration::from_secs(2),
+        );
+        assert!(held, "scheme must be held after one re-assert");
+        assert_eq!(stub.sets(), 1, "exactly one re-assert set expected");
+        assert!(stub.gets() >= 2, "one check before and one verification after");
+        assert_eq!(stub.templates(), 1, "each re-assert re-renders templates");
+    }
+
+    #[test]
+    #[serial]
+    fn custom_scheme_reassert_gives_up_bounded_when_owner_never_yields() {
+        // The keeper never yields: attempts stay bounded and the warning
+        // names the knob — no war, no silent loss.
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let start = Instant::now();
+        let held = reassert_custom_scheme_blocking(
+            "JokerTheme",
+            Duration::from_millis(0),
+            3,
+            Duration::from_millis(20),
+            Duration::from_secs(5),
+        );
+        let elapsed = start.elapsed();
+        assert!(!held, "a never-yielding owner must report not-held");
+        assert_eq!(stub.sets(), 3, "at most 3 re-assert sets");
+        assert!(stub.gets() >= 4, "3 checks plus the final verdict get");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "re-assert must be bounded, took {:?}",
+            elapsed
+        );
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("JokerTheme"),
+            "warning must name the palette, got: {}",
+            text
+        );
+        assert!(
+            text.contains("theme.policy"),
+            "warning must name the keeper knob, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_custom_owner_reasserts_off_thread_without_blocking() {
+        // Production timing: apply must return long before the settle
+        // period ends, while the re-assert still lands afterwards.
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), false);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let start = Instant::now();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        let apply_elapsed = start.elapsed();
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        assert!(
+            apply_elapsed < Duration::from_millis(1500),
+            "apply must not block on the re-assert, took {:?}",
+            apply_elapsed
+        );
+        // The re-asserted set lands AFTER apply returned (spawned thread).
+        let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
+        assert_eq!(stub.templates(), 2, "templates re-rendered per set");
+        // Let the final verifying get finish so no thread outlives the test
+        // (it would otherwise run against a removed stub PATH).
+        std::thread::sleep(Duration::from_millis(2500));
+        assert_eq!(stub.sets(), 2, "re-assert held: no further sets");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_custom_owner_reasserts_single_shot_fast() {
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(5));
+        assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
+        let templates = stub.poll("templates-apply", 2, Duration::from_secs(5));
+        assert_eq!(templates, 2, "templates re-rendered per set");
+        // Single-shot: after the re-assert holds, nothing else may fire.
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(stub.sets(), 2, "no second re-assert: single-shot per apply");
+        assert!(stub.gets() >= 2, "one re-assert check plus its verification");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_without_owner_adds_no_scheme_commands() {
+        // Custom palette but no keeper ownership: byte-identical to today —
+        // exactly the one synchronous set, no spawned follow-up.
+        let stub = ColorStub::new("custom skwd-wall", 99, None, true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        // Fast profile would have re-asserted within ms if one were spawned.
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(stub.sets(), 1, "only the synchronous set, zero extra");
+        assert_eq!(stub.templates(), 1, "only the synchronous templates-apply");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_non_custom_palette_ignores_owner() {
+        // `wallpaper vibrant` has no saved palette: the owner's policy
+        // behaviour is untouched — zero scheme commands even with an owner.
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(stub.sets(), 0, "non-custom palette must issue no set");
+        assert_eq!(stub.templates(), 1, "templates-apply still runs once");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_owner_never_yields_gives_up_bounded() {
+        // Owner that never yields: 1 sync set + 3 re-asserts, then silence —
+        // the give-up that proves this cannot become a war.
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let sets = stub.poll("color-scheme-set", 4, Duration::from_secs(5));
+        assert_eq!(sets, 4, "one sync set plus three bounded re-asserts");
+        let templates = stub.poll("templates-apply", 4, Duration::from_secs(5));
+        assert_eq!(templates, 4, "templates re-rendered per set");
+        // After the cap: no further attempts, ever.
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(stub.sets(), 4, "gave up at the cap: no war");
     }
 }
