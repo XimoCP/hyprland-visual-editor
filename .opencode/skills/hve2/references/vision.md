@@ -19,7 +19,7 @@ HVE 2 is a complete visual rewrite of the HVE user interface (the "facade") on t
 - Monitors, HDR, display layout — belongs to hyprmod.
 - Rewriting the engine or the provider layer.
 - Copying hyprmod code (GPL). Ideas only.
-- Waiting for skwd-wall Rust rewrite — it is an app, not a library, and its rewrite is not public.
+- Waiting for skwd-wall Rust rewrite — it is an app, not a library; its v2 rewrite is public (GPL-3.0, Iced+Vulkan, beta) but there is nothing to integrate: ideas only, with credit.
 
 ## Module Tree Order (build order)
 
@@ -35,7 +35,7 @@ Each module closes (tests green, reviewed) before the next starts. User approves
 
 | Source | License | How to use |
 |--------|---------|------------|
-| [skwd-wall](https://github.com/liixini/skwd-wall) | MIT | Translate visual ideas (card gallery, 3 presentation styles, animations) to Slint with credit. Its Rust rewrite is NOT public; do not wait for it. |
+| [skwd-wall](https://github.com/liixini/skwd-wall) | GPL-3.0 (not MIT) | Translate visual ideas only (card gallery, 3 presentation styles, animations) to Slint with credit; NEVER copy its code. Its Rust rewrite (v2, Iced+Vulkan) IS public now but it is still an app, not a library; do not integrate or wait for it. |
 | [hyprmod](https://github.com/BlueManCZ/hyprmod) | GPL-3.0 | Ideas only: bezier curve editor, undo, pending changes, search. NEVER copy its code into HVE (GPL is contagious). |
 | [HyprShades](https://github.com/sijan-dev/HyprShades) | — | Future reference: shader collection (amoled, blue-light-filter, cyberpunk, matrix, retro). |
 | hyprshade | — | Future reference: shader manager with time-based scheduling. |

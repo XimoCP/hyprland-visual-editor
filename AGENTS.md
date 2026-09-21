@@ -14,7 +14,7 @@
 - User approves each phase before the next phase launches.
 - Engineered artifacts (code, specs, docs, comments, UI copy) default to ENGLISH. Chat replies follow the user's language (Spanish/rioplatense).
 - Strict TDD: write the failing test first, then implement. Test runner: `cargo test`.
-- Never copy GPL code from hyprmod; translate MIT ideas from skwd-wall with credit.
+- Never copy GPL code from hyprmod or skwd-wall (both GPL-3.0); translate visual ideas only, with credit.
 - VISUAL VERIFICATION (mandatory for any `.slint` / visual change): before reporting work done, run the headless render — `cargo test slice_focus_flow_renders` — then READ the PNGs it saves under `/tmp/opencode/` (you have vision: use the read tool on the image files) and confirm the geometry/look with your own inspection. Extend that test (or add sibling render tests) to cover any new visual state you touch. A UI change verified only by "tests green + build clean" is NOT verified.
 
 ## Model Roles
@@ -24,6 +24,16 @@
 - At session start, read the assignments and compare the writing set (implementation/phase agents) against the verification set (review, judge, verification agents). If they overlap, tell the user BEFORE starting and propose a different model for verification — preferably from another family.
 - Every delegated verification must override the model explicitly. A verification launched on the default worker model is not a verification.
 - Report which model verified each deliverable, so a missing cross-model check is visible instead of assumed.
+
+## Review Proportionality (mandatory)
+
+Verification is proportional to DANGER, never to diff size. A five-line change that deletes files is dangerous; a five-hundred-line documentation change is not.
+
+- **Tier 1 — no external verification** (orchestrator self-check: run the suite, read the diff): comments, wording, names, docs, build warnings, formatting, and new tests that change no production behaviour.
+- **Tier 2 — orchestrator review, no second model**: single-line logic changes with no outside effect, and new cases of behaviour that already exists. Queue these and run ONE batch review per agreed volume or per closed stage, instead of a round per change.
+- **Tier 3 — cross-model verification**, where the rules above apply in full: anything that deletes, moves or writes files; path and permission handling; threads and concurrency; timeouts and bounds; state machines; anything touching another subsystem (colour, wallpaper, window management); and anything the author cannot verify live.
+- The keeper's own live test is the strongest check for visible behaviour. Do not duplicate it with a ceremonial round.
+- Report the tier used for each deliverable, so an over-reviewed or under-reviewed change is visible instead of guessed.
 
 ## Context
 

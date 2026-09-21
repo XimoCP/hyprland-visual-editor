@@ -29,7 +29,7 @@ Load this skill when working on HVE 2: visual rewrite, theme gallery, curve/bord
 | Situation | Decision |
 |-----------|----------|
 | New feature idea | Add to vision doc first; implement only after user approval |
-| skwd-wall feature wanted | Translate VISUAL IDEA to Slint, credit MIT source; never copy GPL code (hyprmod) |
+| skwd-wall feature wanted | Translate VISUAL IDEA to Slint with credit; never copy GPL code (skwd-wall is GPL-3.0, same as hyprmod) |
 | Engine change needed | STOP: engine is sealed; negotiate scope with user before touching it |
 | >400 changed lines in one step | STOP: split into chained PRs or ask for explicit size exception |
 
