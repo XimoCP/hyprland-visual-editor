@@ -463,39 +463,102 @@ pub fn extract_video_frame(video: &Path, cache_dir: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-/// Find the first usable image file inside a theme directory (task 4.7
-/// source discovery). Themes currently persist provider state under their
-/// directory; the scan is depth-first over sorted entries so results are
-/// deterministic. None = theme has no image source (skeleton stays).
+/// A planned preview source (W2-1 fix: planning vs extraction split).
 ///
-/// Piano 3: mpvpaper assignments are the truth of what the desktop shows,
-/// so they are consulted BEFORE every static source. An assigned video
-/// renders its cached frame; when extraction fails we fall through to the
-/// legacy chain below — today's stale-txt fallback still beats showing a
-/// skeleton card.
+/// Planning NEVER spawns a process: it only reads small record files and
+/// probes file existence, so it is safe on the Slint UI thread. A video
+/// whose frame is already cached resolves to `Image(frame)` immediately; an
+/// uncached video defers to `Video{..}` and the background bake worker
+/// ([`bake_job_source`], called from [`preheat`] off the UI thread) runs
+/// the synchronous ffmpeg extraction there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewSpec {
+    /// Bake directly: a wallpaper image or an already-cached video frame.
+    Image(PathBuf),
+    /// Deferred video: `video` is the recorded source, `cached_frame` the
+    /// deterministic frame path (same naming as [`extract_video_frame`]),
+    /// and `theme_dir` so the worker can run the static fallback chain
+    /// off-thread when extraction fails (a video ffmpeg cannot decode must
+    /// still render the theme's static wallpaper, never a skeleton).
+    /// The worker extracts first and bakes the same four artifacts from the
+    /// frame; when extraction fails it warns (naming theme dir and video)
+    /// and falls through to the static chain below — the old fall-through
+    /// contract, just relocated off the UI thread.
+    Video {
+        video: PathBuf,
+        cached_frame: PathBuf,
+        theme_dir: PathBuf,
+    },
+}
+
+impl PreviewSpec {
+    /// Path for log lines: the image itself, or the video behind a deferred spec.
+    pub fn log_path(&self) -> &Path {
+        match self {
+            PreviewSpec::Image(p) => p,
+            PreviewSpec::Video { video, .. } => video,
+        }
+    }
+}
+
+/// Deterministic frame cache path for a video source — the SAME naming
+/// [`extract_video_frame`] writes to, derived from the record path + source
+/// mtime WITHOUT extracting (no process spawn; safe on the UI thread and
+/// in delete cleanup).
+pub fn cached_frame_path(video: &Path) -> PathBuf {
+    let mtime = source_mtime(video).unwrap_or(SystemTime::UNIX_EPOCH);
+    cache_dir().join(format!("{}-frame.png", cache_key(video, mtime)))
+}
+
+/// Resolve a video path to a spec WITHOUT spawning: an existing cached
+/// frame wins immediately (file-existence probe only); otherwise extraction
+/// is deferred to the background worker. `None` when the path is missing
+/// or not a video. `theme_dir` is carried so the worker can run the static
+/// fallback chain off-thread when extraction fails.
+fn spec_for_video(video: PathBuf, theme_dir: &Path) -> Option<PreviewSpec> {
+    if !video.exists() || !is_video_source(&video) {
+        return None;
+    }
+    let cached_frame = cached_frame_path(&video);
+    if cached_frame.exists() {
+        Some(PreviewSpec::Image(cached_frame))
+    } else {
+        Some(PreviewSpec::Video {
+            video,
+            cached_frame,
+            theme_dir: theme_dir.to_path_buf(),
+        })
+    }
+}
+
+/// Plan a theme's preview source WITHOUT spawning any process (W2-1).
 ///
-/// The painter video record (`providers/noctalia-v5/video.txt`) is consulted
-/// at the SAME priority position: an assigned static image already returned
-/// above, so reaching here means no static evidence won and a recorded video
-/// resolves to its extracted frame. A record naming a missing file, a
-/// non-video path, or a video ffmpeg cannot decode warns (naming theme dir
-/// and video path) and falls through — never a bogus source.
-pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
+/// Priority matches the old `find_source_image` chain: an assigned static
+/// image wins outright (it IS the live wallpaper); video (legacy mpvpaper
+/// assignment, then the painter `video.txt` record) defers extraction to
+/// the background worker; static records and the loose image scan stay the
+/// fallback chain. A record naming a missing/non-video file warns (naming
+/// theme dir and video path) and falls through — never a bogus source.
+///
+/// Planning never decodes: a video ffmpeg could not decode still plans to
+/// a `Video` spec (keeping video's priority position), and the WORKER runs
+/// the old fall-through to the static chain off-thread when extraction
+/// fails — so undecodable video + static fallback still renders stale,
+/// exactly as the old synchronous resolver did.
+pub fn plan_preview_source(theme_dir: &Path) -> Option<PreviewSpec> {
     if let Some(assigned) = video_assignment(theme_dir) {
         if is_video_source(&assigned) {
-            if let Some(frame) = extract_video_frame(&assigned, &cache_dir()) {
-                return Some(frame);
+            if let Some(spec) = spec_for_video(assigned, theme_dir) {
+                return Some(spec);
             }
         } else {
             // Image assignments win outright: they ARE the live wallpaper.
-            return Some(assigned);
+            return Some(PreviewSpec::Image(assigned));
         }
     }
     if let Some(recorded) = painter_video_record(theme_dir) {
-        if recorded.exists() && is_video_source(&recorded) {
-            if let Some(frame) = extract_video_frame(&recorded, &cache_dir()) {
-                return Some(frame);
-            }
+        if let Some(spec) = spec_for_video(recorded.clone(), theme_dir) {
+            return Some(spec);
         }
         tracing::warn!(
             theme = %theme_dir.display(),
@@ -503,12 +566,31 @@ pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
             "painter video record unusable, falling through to static sources"
         );
     }
+    if let Some(hit) = static_fallback_source(theme_dir) {
+        return Some(PreviewSpec::Image(hit));
+    }
+    None
+}
+
+/// The static preview chain (no process spawn, no decode): provider JSON
+/// record → legacy txt record → loose image scan. Shared by the planner
+/// and — off-thread — by the worker's undecodable-video fallback and the
+/// delete cleanup, so all three agree on what "the static wallpaper" is.
+pub fn static_fallback_source(theme_dir: &Path) -> Option<PathBuf> {
     if let Some(hit) = wallpaper_from_provider_json(theme_dir) {
         return Some(hit);
     }
     if let Some(hit) = wallpaper_from_txt(theme_dir) {
         return Some(hit);
     }
+    scan_images(theme_dir)
+}
+
+/// Pure loose image scan (extension-based discovery only — no process
+/// spawn, no decode). Themes persist provider state under their directory;
+/// the scan is depth-first over sorted entries so results are
+/// deterministic. None = theme has no image source (skeleton stays).
+fn scan_images(theme_dir: &Path) -> Option<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(theme_dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -526,11 +608,45 @@ pub fn find_source_image(theme_dir: &Path) -> Option<PathBuf> {
         return Some(hit.clone());
     }
     for dir in files.iter().filter(|p| p.is_dir()) {
-        if let Some(hit) = find_source_image(dir) {
+        if let Some(hit) = scan_images(dir) {
             return Some(hit);
         }
     }
     None
+}
+
+/// Bake one planned job into a full artifact set. Runs on the preheat
+/// worker pool, NEVER on the UI thread: images bake directly; a deferred
+/// video extracts its frame first (the single ffmpeg spawn in the gallery
+/// pipeline lives here, via the existing [`extract_video_frame`]) and then
+/// bakes the same four artifacts from that frame. When extraction fails
+/// the worker warns (naming theme dir and video) and falls back to the
+/// theme's static chain — the old synchronous fall-through, relocated
+/// off-thread so undecodable video still renders stale, never a skeleton.
+pub fn bake_job_source(spec: &PreviewSpec) -> Result<BakedSet, String> {
+    match spec {
+        PreviewSpec::Image(path) => generate_set(path, &cache_dir()),
+        PreviewSpec::Video { video, theme_dir, .. } => {
+            match extract_video_frame(video, &cache_dir()) {
+                Some(frame) => generate_set(&frame, &cache_dir()),
+                None => {
+                    tracing::warn!(
+                        theme = %theme_dir.display(),
+                        video = %video.display(),
+                        "cannot extract a preview frame, falling back to static sources"
+                    );
+                    let fallback = static_fallback_source(theme_dir).ok_or_else(|| {
+                        format!(
+                            "cannot extract a preview frame from {} and no static fallback in {}",
+                            video.display(),
+                            theme_dir.display()
+                        )
+                    })?;
+                    generate_set(&fallback, &cache_dir())
+                }
+            }
+        }
+    }
 }
 
 /// One off-thread thumbnail request (task 4.7).
@@ -540,7 +656,10 @@ pub struct PreheatJob {
     pub index: usize,
     /// Card name captured for stale-write guards on marshal.
     pub name: String,
-    pub source: PathBuf,
+    /// Planned source: an image bakes directly, a video extracts first.
+    /// The plan itself never spawned anything (W2-1), so scheduling a job
+    /// is safe on the UI thread; the ffmpeg spawn happens in the worker.
+    pub spec: PreviewSpec,
 }
 
 /// Maximum concurrent thumbnail workers (Tramo 6 corrective): bounds the
@@ -548,12 +667,12 @@ pub struct PreheatJob {
 /// thread on cold start (42 themes → 42 threads). K=3 keeps cores free for UI.
 pub const THUMBS_MAX_WORKERS: usize = 3;
 
-/// Pure planner: keep only cards that have a source image (task 4.7).
-pub fn plan_jobs(sources: Vec<(usize, String, Option<PathBuf>)>) -> Vec<PreheatJob> {
+/// Pure planner: keep only cards that have a planned source (task 4.7).
+pub fn plan_jobs(sources: Vec<(usize, String, Option<PreviewSpec>)>) -> Vec<PreheatJob> {
     sources
         .into_iter()
         .filter_map(|(index, name, source)| {
-            source.map(|source| PreheatJob { index, name, source })
+            source.map(|spec| PreheatJob { index, name, spec })
         })
         .collect()
 }
@@ -581,7 +700,7 @@ pub fn order_jobs(jobs: Vec<PreheatJob>, priority: &std::collections::HashSet<us
 
 /// Convenience: plan + priority-order in one call.
 pub fn plan_jobs_with_priority(
-    sources: Vec<(usize, String, Option<PathBuf>)>,
+    sources: Vec<(usize, String, Option<PreviewSpec>)>,
     priority: &std::collections::HashSet<usize>,
 ) -> Vec<PreheatJob> {
     order_jobs(plan_jobs(sources), priority)
@@ -652,9 +771,12 @@ pub fn preheat(
             };
             let Some(job) = job else { break };
             let t_total = Instant::now();
-            let span = tracing::info_span!("thumbs::preheat::job", source = %job.source.display());
+            let span = tracing::info_span!("thumbs::preheat::job", source = %job.spec.log_path().display());
             let _guard = span.enter();
-            match generate_set(&job.source, &cache_dir()) {
+            // The single ffmpeg spawn in the gallery pipeline lives HERE,
+            // inside bake_job_source on this worker thread — never on the
+            // UI thread that planned the job (W2-1).
+            match bake_job_source(&job.spec) {
                 Ok(set) => {
                     let idx = job.index;
                     let name: Arc<str> = Arc::from(job.name.as_str());
@@ -677,7 +799,7 @@ pub fn preheat(
                     });
                 }
                 Err(e) => {
-                    tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.source.display(), e);
+                    tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.spec.log_path().display(), e);
                     let pending2 = pending.clone();
                     let batch_start2 = batch_start.clone();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -826,24 +948,24 @@ mod tests {
         // so plain bytes are enough here.
         std::fs::write(&img, b"not-a-real-image").expect("jpg");
 
-        let found = find_source_image(dir.path()).expect("source found");
-        assert_eq!(found.file_name().unwrap(), "bg.jpg");
+        let found = plan_preview_source(dir.path()).expect("source found");
+        assert_eq!(found, PreviewSpec::Image(img));
     }
 
     #[test]
     fn find_source_none_without_images() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(dir.path().join("meta.json"), b"{}").expect("meta");
-        assert!(find_source_image(dir.path()).is_none(), "no images -> None");
-        assert!(find_source_image(&dir.path().join("missing")).is_none(), "missing dir safe");
+        assert!(plan_preview_source(dir.path()).is_none(), "no images -> None");
+        assert!(plan_preview_source(&dir.path().join("missing")).is_none(), "missing dir safe");
     }
 
     #[test]
     fn plan_jobs_keeps_only_sourced_cards() {
         let jobs = plan_jobs(vec![
-            (0, "A".into(), Some(PathBuf::from("/a.png"))),
+            (0, "A".into(), Some(PreviewSpec::Image(PathBuf::from("/a.png")))),
             (1, "B".into(), None),
-            (2, "C".into(), Some(PathBuf::from("/c.jpg"))),
+            (2, "C".into(), Some(PreviewSpec::Image(PathBuf::from("/c.jpg")))),
         ]);
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].index, 0);
@@ -867,8 +989,8 @@ mod tests {
         std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&json).unwrap()).unwrap();
         // loose file that would be found by scan but should be ignored when JSON hits
         std::fs::write(dir.path().join("loose.jpg"), b"dummy").unwrap();
-        let found = find_source_image(dir.path()).expect("json source");
-        assert_eq!(found, real);
+        let found = plan_preview_source(dir.path()).expect("json source");
+        assert_eq!(found, PreviewSpec::Image(real));
     }
 
     #[test]
@@ -883,8 +1005,8 @@ mod tests {
         std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&json).unwrap()).unwrap();
         let loose = dir.path().join("fallback.png");
         image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255])).save(&loose).unwrap();
-        let found = find_source_image(dir.path()).expect("fallback scan");
-        assert_eq!(found.file_name().unwrap(), "fallback.png");
+        let found = plan_preview_source(dir.path()).expect("fallback scan");
+        assert_eq!(found, PreviewSpec::Image(loose));
     }
 
     #[test]
@@ -895,12 +1017,12 @@ mod tests {
         let tp = dir.path().join("providers/noctalia-v5/wallpaper.txt");
         std::fs::create_dir_all(tp.parent().unwrap()).unwrap();
         std::fs::write(&tp, format!("{}\n", a.display())).unwrap();
-        assert_eq!(find_source_image(dir.path()).unwrap(), a);
+        assert_eq!(plan_preview_source(dir.path()), Some(PreviewSpec::Image(a.clone())));
         let prov = dir.path().join("providers/noctalia");
         std::fs::create_dir_all(&prov).unwrap();
         let j = serde_json::json!({"wallpapers":{"DP-3":{"dark":b.to_string_lossy()}}});
         std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&j).unwrap()).unwrap();
-        assert_eq!(find_source_image(dir.path()).unwrap(), b, "JSON priority over txt");
+        assert_eq!(plan_preview_source(dir.path()), Some(PreviewSpec::Image(b)), "JSON priority over txt");
     }
 
     // ── Piano 3 RED: mpvpaper video-assignment discovery contracts ──
@@ -1058,7 +1180,7 @@ mod tests {
         assert_eq!(extract_video_frame(&video, &out_dir), Some(frame));
     }
 
-    // ── Piano 3 WIRE: video-aware ordering inside find_source_image ──
+    // ── Piano 3 WIRE: video-aware ordering inside plan_preview_source ──
 
     #[test]
     fn find_source_prefers_assigned_image_over_full_legacy_chain() {
@@ -1080,18 +1202,25 @@ mod tests {
         );
         std::fs::write(dir.path().join("loose.png"), b"loose").unwrap();
         assert_eq!(
-            find_source_image(dir.path()),
-            Some(assigned),
+            plan_preview_source(dir.path()),
+            Some(PreviewSpec::Image(assigned)),
             "assignment beats wallpapers.json, wallpaper.txt and loose scan"
         );
     }
 
     #[test]
-    fn find_source_falls_back_to_legacy_chain_when_frame_fails() {
+    fn plan_defers_uncached_assigned_video_over_static_fallback() {
+        // W2-1 contract change (documented on `PreviewSpec::Video`): video
+        // keeps its priority position at PLAN time and defers extraction to
+        // the worker, so planning returns a Video spec WITHOUT spawning —
+        // even when ffmpeg could never decode these bytes and a static
+        // fallback exists. No ffmpeg needed: planning never decodes.
+        let _env = crate::test_utils::TempEnv::new();
+        let cache = cache_dir();
+        std::fs::create_dir_all(&cache).unwrap();
+        let before = sorted_cache_names(&cache);
         let dir = tempfile::tempdir().expect("tmp");
         let broken = dir.path().join("broken.mp4");
-        // Exists (passes discovery) but is not a decodable video: ffmpeg
-        // fails (or is absent) -> extraction None -> legacy chain answers.
         std::fs::write(&broken, b"definitely not a video").unwrap();
         let stale = dir.path().join("stale.png");
         image::RgbaImage::from_pixel(10, 10, image::Rgba([7u8, 7, 7, 255])).save(&stale).unwrap();
@@ -1102,10 +1231,15 @@ mod tests {
             &v5,
             serde_json::json!({"assignments":{"*":{"local_path":broken.to_string_lossy()}}}),
         );
+        let spec = plan_preview_source(dir.path()).expect("video assignment must plan");
+        match &spec {
+            PreviewSpec::Video { video, .. } => assert_eq!(video, &broken),
+            other => panic!("expected a Video spec, got {other:?}"),
+        }
         assert_eq!(
-            find_source_image(dir.path()),
-            Some(stale),
-            "failed frame extraction falls through instead of skeleton"
+            sorted_cache_names(&cache),
+            before,
+            "planning a broken video must not spawn ffmpeg either"
         );
     }
 
@@ -1126,39 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn find_source_resolves_painter_video_record_to_extracted_frame() {
-        if !ffmpeg_available() {
-            println!("ffmpeg not available — skipping painter video record test");
-            return;
-        }
-        // Hermetic thumb cache: find_source_image bakes through cache_dir().
-        let _env = crate::test_utils::TempEnv::new();
-        let dir = tempfile::tempdir().expect("tmp");
-        let video = dir.path().join("loop.mp4");
-        assert!(synth_video_fixture(&video), "failed to synthesize mp4 fixture");
-        // The theme carries ONLY the painter video record — no image anywhere.
-        let v5 = dir.path().join("providers/noctalia-v5");
-        std::fs::create_dir_all(&v5).unwrap();
-        std::fs::write(
-            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
-            crate::providers::wallpaper_authority::format_painter_video_record(
-                &video,
-                Some("skwd-wall-vk"),
-                "DP-3",
-                1234,
-            ),
-        )
-        .unwrap();
-        let source = find_source_image(dir.path()).expect(
-            "a theme whose only background evidence is video.txt must resolve to a frame",
-        );
-        assert!(source.exists(), "extracted frame artifact must exist");
-        let decoded = image::ImageReader::open(&source).unwrap().decode().unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (320, 240), "full source frame");
-    }
-
-    #[test]
-    fn find_source_ignores_painter_video_record_pointing_at_missing_file() {
+    fn plan_ignores_painter_video_record_pointing_at_missing_file() {
         let dir = tempfile::tempdir().expect("tmp");
         let v5 = dir.path().join("providers/noctalia-v5");
         std::fs::create_dir_all(&v5).unwrap();
@@ -1173,45 +1275,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            find_source_image(dir.path()),
+            plan_preview_source(dir.path()),
             None,
             "a video.txt pointing at a missing file falls through without a bogus source"
-        );
-    }
-
-    #[test]
-    fn find_source_prefers_assigned_image_over_painter_video_record() {
-        if !ffmpeg_available() {
-            println!("ffmpeg not available — skipping painter video priority test");
-            return;
-        }
-        let _env = crate::test_utils::TempEnv::new();
-        let dir = tempfile::tempdir().expect("tmp");
-        let assigned = dir.path().join("assigned.png");
-        image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255]))
-            .save(&assigned)
-            .unwrap();
-        let v5 = dir.path().join("providers/noctalia-v5");
-        write_assignments(
-            &v5,
-            serde_json::json!({"assignments":{"*":{"filename":"a.png","local_path":assigned.to_string_lossy()}}}),
-        );
-        let video = dir.path().join("loop.mp4");
-        assert!(synth_video_fixture(&video), "failed to synthesize mp4 fixture");
-        std::fs::write(
-            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
-            crate::providers::wallpaper_authority::format_painter_video_record(
-                &video,
-                Some("skwd-wall-vk"),
-                "DP-3",
-                9,
-            ),
-        )
-        .unwrap();
-        assert_eq!(
-            find_source_image(dir.path()),
-            Some(assigned),
-            "an assigned static image wins over the painter video record"
         );
     }
 
@@ -1580,8 +1646,8 @@ mod tests {
     fn plan_jobs_orders_priority_first() {
         use std::collections::HashSet;
         // Build 5 jobs with original order 0..5
-        let sources: Vec<(usize, String, Option<PathBuf>)> = (0..5)
-            .map(|i| (i, format!("T{i}"), Some(PathBuf::from(format!("/tmp/w-{i}.png")))))
+        let sources: Vec<(usize, String, Option<PreviewSpec>)> = (0..5)
+            .map(|i| (i, format!("T{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/w-{i}.png"))))))
             .collect();
         let jobs = plan_jobs(sources);
         assert_eq!(jobs.len(), 5);
@@ -1590,16 +1656,16 @@ mod tests {
         let indices: Vec<usize> = ordered.iter().map(|j| j.index).collect();
         assert_eq!(indices, vec![2, 4, 0, 1, 3], "priority indices must come FIRST, rest keep stable original order");
         // Empty priority → stable original order unchanged
-        let sources2: Vec<(usize, String, Option<PathBuf>)> = (0..3)
-            .map(|i| (i, format!("A{i}"), Some(PathBuf::from(format!("/p/{i}.png")))))
+        let sources2: Vec<(usize, String, Option<PreviewSpec>)> = (0..3)
+            .map(|i| (i, format!("A{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/p/{i}.png"))))))
             .collect();
         let jobs2 = plan_jobs(sources2);
         let empty: HashSet<usize> = HashSet::new();
         let ordered2 = order_jobs(jobs2, &empty);
         assert_eq!(ordered2.iter().map(|j| j.index).collect::<Vec<_>>(), vec![0,1,2]);
         // Unknown priority indices are ignored (no panic, no extra jobs)
-        let sources3: Vec<(usize, String, Option<PathBuf>)> = (0..2)
-            .map(|i| (i, format!("B{i}"), Some(PathBuf::from(format!("/p/{i}.png")))))
+        let sources3: Vec<(usize, String, Option<PreviewSpec>)> = (0..2)
+            .map(|i| (i, format!("B{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/p/{i}.png"))))))
             .collect();
         let jobs3 = plan_jobs(sources3);
         let unknown: HashSet<usize> = [99usize].into_iter().collect();
@@ -1613,8 +1679,8 @@ mod tests {
         use std::sync::Arc;
 
         // Build 42 synthetic sources (all Some) → plan_jobs must keep all 42
-        let sources: Vec<(usize, String, Option<PathBuf>)> = (0..42)
-            .map(|i| (i, format!("Theme-{i}"), Some(PathBuf::from(format!("/tmp/wall-{i}.png")))))
+        let sources: Vec<(usize, String, Option<PreviewSpec>)> = (0..42)
+            .map(|i| (i, format!("Theme-{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/wall-{i}.png"))))))
             .collect();
         let jobs = plan_jobs(sources);
         assert_eq!(jobs.len(), 42, "plan_jobs must keep all 42 sourced cards");
@@ -1641,9 +1707,9 @@ mod tests {
         );
 
         // Mixed burst with holes: 42 slots, 7 without source → 35 jobs → still 1
-        let mixed: Vec<(usize, String, Option<PathBuf>)> = (0..42)
+        let mixed: Vec<(usize, String, Option<PreviewSpec>)> = (0..42)
             .map(|i| {
-                let src = if i % 6 == 0 { None } else { Some(PathBuf::from(format!("/tmp/w-{i}.png"))) };
+                let src = if i % 6 == 0 { None } else { Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/w-{i}.png")))) };
                 (i, format!("T{i}"), src)
             })
             .collect();
@@ -1662,6 +1728,194 @@ mod tests {
             if is_last_completion(&p) { r(); }
         }
         assert_eq!(c2.load(Ordering::SeqCst), 1, "filtered burst must still coalesce to 1");
+    }
+
+    // ── W2-1: planning never spawns ffmpeg (plan vs extract split) ──
+
+    fn sorted_cache_names(cache: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(cache)
+            .map(|r| {
+                r.flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn plan_returns_video_spec_without_touching_cache() {
+        // Deterministic (no ffmpeg needed): fake .mp4 bytes are enough
+        // because planning only reads records + file existence, never
+        // decodes. Any ffmpeg spawn would write a `-frame.png` here.
+        let _env = crate::test_utils::TempEnv::new();
+        let cache = cache_dir();
+        std::fs::create_dir_all(&cache).unwrap();
+        let before = sorted_cache_names(&cache);
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("loop.mp4");
+        std::fs::write(&video, b"definitely not a video; planning must not care").unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(
+            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+            crate::providers::wallpaper_authority::format_painter_video_record(
+                &video,
+                Some("skwd-wall-vk"),
+                "DP-3",
+                1,
+            ),
+        )
+        .unwrap();
+        let spec = plan_preview_source(dir.path())
+            .expect("a video-record theme must plan to a spec");
+        match &spec {
+            PreviewSpec::Video { video: v, cached_frame, .. } => {
+                assert_eq!(v, &video);
+                assert!(
+                    cached_frame
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.ends_with("-frame.png")),
+                    "the spec must carry the deterministic frame cache path"
+                );
+            }
+            other => panic!("expected a Video spec, got {other:?}"),
+        }
+        assert_eq!(
+            sorted_cache_names(&cache),
+            before,
+            "planning must not write to the cache (no ffmpeg spawn on the planning path)"
+        );
+    }
+
+    #[test]
+    fn plan_resolves_already_cached_frame_immediately() {
+        // No regression: a frame ffmpeg already baked resolves at planning
+        // time through a file-existence check only — still no spawn.
+        let _env = crate::test_utils::TempEnv::new();
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("loop.mp4");
+        std::fs::write(&video, b"fake video bytes").unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(
+            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+            crate::providers::wallpaper_authority::format_painter_video_record(
+                &video,
+                Some("skwd-wall-vk"),
+                "DP-3",
+                2,
+            ),
+        )
+        .unwrap();
+        let frame = cached_frame_path(&video);
+        std::fs::create_dir_all(frame.parent().unwrap()).unwrap();
+        image::RgbaImage::from_pixel(16, 16, image::Rgba([5u8, 6, 7, 255]))
+            .save(&frame)
+            .unwrap();
+        assert_eq!(
+            plan_preview_source(dir.path()),
+            Some(PreviewSpec::Image(frame)),
+            "an already-cached frame must resolve at planning time"
+        );
+    }
+
+    #[test]
+    fn worker_bakes_frame_and_artifacts_from_video_spec() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping worker video bake test");
+            return;
+        }
+        let _env = crate::test_utils::TempEnv::new();
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("src.mp4");
+        assert!(synth_video_fixture(&video), "failed to synthesize mp4 fixture");
+        let spec = PreviewSpec::Video {
+            video: video.clone(),
+            cached_frame: cached_frame_path(&video),
+            theme_dir: dir.path().to_path_buf(),
+        };
+        let set = bake_job_source(&spec).expect("the worker must bake a video spec");
+        let frame = cached_frame_path(&video);
+        assert!(frame.exists(), "the worker must extract the cached frame");
+        let decoded = image::ImageReader::open(&frame).unwrap().decode().unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (320, 240), "full source frame");
+        let key = content_cache_key_from_bytes(&std::fs::read(&frame).unwrap());
+        for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png"] {
+            assert!(
+                cache_dir().join(format!("{key}{suffix}")).exists(),
+                "the worker must bake {suffix} from the extracted frame"
+            );
+        }
+        assert!(set.thumb_path.exists() && set.hero_path.exists());
+    }
+
+    #[test]
+    fn plan_prefers_assigned_image_over_painter_video_record() {
+        // An assigned static image wins outright without any video work.
+        let _env = crate::test_utils::TempEnv::new();
+        let dir = tempfile::tempdir().expect("tmp");
+        let assigned = dir.path().join("assigned.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255]))
+            .save(&assigned)
+            .unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        write_assignments(
+            &v5,
+            serde_json::json!({"assignments":{"*":{"filename":"a.png","local_path":assigned.to_string_lossy()}}}),
+        );
+        let video = dir.path().join("loop.mp4");
+        std::fs::write(&video, b"fake").unwrap();
+        std::fs::write(
+            v5.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+            crate::providers::wallpaper_authority::format_painter_video_record(
+                &video,
+                Some("skwd-wall-vk"),
+                "DP-3",
+                9,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            plan_preview_source(dir.path()),
+            Some(PreviewSpec::Image(assigned)),
+            "an assigned static image wins over the painter video record"
+        );
+    }
+
+    #[test]
+    fn worker_falls_back_to_static_when_video_undecodable() {
+        // W2-1: a video ffmpeg cannot decode must still render the theme's
+        // static wallpaper — the worker runs the old fall-through off-thread
+        // instead of dropping the card. No ffmpeg needed: bogus bytes never
+        // decode, whether ffmpeg is present or absent.
+        let _env = crate::test_utils::TempEnv::new();
+        let dir = tempfile::tempdir().expect("tmp");
+        let broken = dir.path().join("broken.mp4");
+        std::fs::write(&broken, b"definitely not a video").unwrap();
+        let stale = dir.path().join("stale.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([7u8, 7, 7, 255]))
+            .save(&stale)
+            .unwrap();
+        let v5 = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&v5).unwrap();
+        std::fs::write(v5.join("wallpaper.txt"), format!("{}\n", stale.display())).unwrap();
+        let spec = PreviewSpec::Video {
+            video: broken.clone(),
+            cached_frame: cached_frame_path(&broken),
+            theme_dir: dir.path().to_path_buf(),
+        };
+        let set = bake_job_source(&spec)
+            .expect("an undecodable video must fall back to the static source, not fail");
+        let key = content_cache_key_from_bytes(&std::fs::read(&stale).unwrap());
+        assert_eq!(
+            set.thumb_path,
+            cache_dir().join(format!("{key}-thumb.png")),
+            "the worker must bake the static fallback's artifacts"
+        );
+        assert!(set.hero_path.exists(), "fallback hero PNG written");
     }
 
 }

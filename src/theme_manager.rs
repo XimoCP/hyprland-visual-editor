@@ -448,23 +448,54 @@ impl ThemeManager {
 
 /// Remove the gallery bake artifacts derived from a theme's preview source.
 ///
-/// The key is derived with the SAME function the bake uses
-/// (`content_cache_key_from_bytes` over the source bytes), so exactly the
-/// `<key>-thumb.png` / `-hero.png` / `-slat.png` / `-slat-exp.png` (plus
-/// `-frame.png`) files the gallery wrote are removed — content addressing
-/// makes a source shared with another theme a non-event (worst case: one
-/// re-bake). A video theme's resolved source IS its extracted frame inside
-/// the cache (legacy path+mtime name, not the content key), so that file is
-/// dropped too — but only when it really sits inside the bake cache, never
-/// a user file elsewhere. Missing files are silent no-ops; other failures
-/// warn and are swallowed.
+/// Planning is probe-only (reads small records, checks existence — never
+/// spawns ffmpeg), so this is safe wherever delete runs. An `Image` plan
+/// removes the content-keyed artifacts for those bytes; a `Video` plan
+/// removes the cached frame itself plus the content-keyed artifacts baked
+/// from it (keyed by the frame bytes, read only when the frame exists —
+/// an uncached video baked nothing, so there is nothing to remove), plus
+/// the static fallback's artifacts the worker bakes when extraction fails.
+/// Content addressing makes a source shared with another theme a non-event
+/// (worst case: one re-bake). A cached frame is removed only when it is
+/// REALLY inside the bake cache (canonicalized containment, W2-2) and
+/// carries the `-frame.png` name — never a user file elsewhere. Missing
+/// files are silent no-ops; other failures warn and are swallowed.
 fn cleanup_bake_cache(theme_dir: &Path) {
     use crate::shell::gallery::thumbs;
     let cache = thumbs::cache_dir();
-    let Some(source) = thumbs::find_source_image(theme_dir) else {
+    let Some(spec) = thumbs::plan_preview_source(theme_dir) else {
         return;
     };
-    let bytes = match fs::read(&source) {
+    match spec {
+        thumbs::PreviewSpec::Image(source) => {
+            remove_content_artifacts(&cache, &source, theme_dir);
+            remove_cached_frame(&cache, &source);
+        }
+        thumbs::PreviewSpec::Video {
+            cached_frame, theme_dir, ..
+        } => {
+            remove_cached_frame(&cache, &cached_frame);
+            // Artifacts baked from the frame are content-keyed: only the
+            // frame bytes reveal the key. A frame that was never extracted
+            // baked nothing, so a missing/unreadable frame just skips.
+            if let Ok(bytes) = fs::read(&cached_frame) {
+                remove_keyed_artifacts(&cache, &thumbs::content_cache_key_from_bytes(&bytes));
+            }
+            // The worker bakes the static chain when extraction fails, so a
+            // theme whose video never decoded may still own cached PNGs.
+            if let Some(fallback) = thumbs::static_fallback_source(&theme_dir) {
+                remove_content_artifacts_quiet(&cache, &fallback);
+            }
+        }
+    }
+}
+
+/// Read `source`, key its bytes the SAME way the bake does, and remove the
+/// five artifacts for that key. Warns (naming theme and source) when the
+/// source cannot be read — the primary planned source should exist.
+fn remove_content_artifacts(cache: &Path, source: &Path, theme_dir: &Path) {
+    use crate::shell::gallery::thumbs;
+    let bytes = match fs::read(source) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(
@@ -475,7 +506,22 @@ fn cleanup_bake_cache(theme_dir: &Path) {
             return;
         }
     };
-    let key = thumbs::content_cache_key_from_bytes(&bytes);
+    remove_keyed_artifacts(cache, &thumbs::content_cache_key_from_bytes(&bytes));
+}
+
+/// Quiet variant for the secondary static-fallback cleanup: a video-only
+/// theme legitimately has no static source, so `None`/unreadable is normal.
+fn remove_content_artifacts_quiet(cache: &Path, source: &Path) {
+    use crate::shell::gallery::thumbs;
+    let Ok(bytes) = fs::read(source) else {
+        return;
+    };
+    remove_keyed_artifacts(cache, &thumbs::content_cache_key_from_bytes(&bytes));
+}
+
+/// Remove the five content-keyed artifacts for one bake key. Missing files
+/// are silent no-ops; other failures warn and are swallowed.
+fn remove_keyed_artifacts(cache: &Path, key: &str) {
     for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png", "-frame.png"] {
         let artifact = cache.join(format!("{key}{suffix}"));
         if let Err(e) = fs::remove_file(&artifact) {
@@ -487,21 +533,42 @@ fn cleanup_bake_cache(theme_dir: &Path) {
             }
         }
     }
-    let is_cached_frame = source.starts_with(&cache)
-        && source
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with("-frame.png"));
-    if is_cached_frame {
-        if let Err(e) = fs::remove_file(&source) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(
-                    artifact = %source.display(),
-                    "theme delete: cannot remove cached video frame: {e}"
-                );
-            }
+}
+
+/// Remove `candidate` only when it is REALLY a cached frame inside the bake
+/// cache (W2-2): the file name must end with `-frame.png` AND the
+/// canonicalized path must sit under the canonicalized cache dir.
+/// `Path::starts_with` alone is component-wise and ignores `..`, so a
+/// recorded `<cache>/../user/secret-frame.png` would otherwise delete a
+/// real user file. Canonicalization fails safe: when either side cannot be
+/// resolved the file stays. Missing files are silent no-ops.
+fn remove_cached_frame(cache: &Path, candidate: &Path) {
+    let is_frame_name = candidate
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with("-frame.png"));
+    if !is_frame_name || !path_inside_dir(cache, candidate) {
+        return;
+    }
+    if let Err(e) = fs::remove_file(candidate) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                artifact = %candidate.display(),
+                "theme delete: cannot remove cached video frame: {e}"
+            );
         }
     }
+}
+
+/// True only when `candidate` canonicalizes to a path under the
+/// canonicalized `dir`. Fails CLOSED (false) when either side cannot be
+/// canonicalized — e.g. the candidate does not exist (nothing to remove
+/// anyway) — so an unresolvable path is never deleted.
+fn path_inside_dir(dir: &Path, candidate: &Path) -> bool {
+    let (Ok(dir), Ok(canon)) = (dir.canonicalize(), candidate.canonicalize()) else {
+        return false;
+    };
+    canon.starts_with(dir)
 }
 
 /// Remove the shared Noctalia custom palette IFF no surviving theme still
@@ -917,4 +984,66 @@ mod tests {
             None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
         }
     }
+
+    /// W2-2: a recorded source that is LEXICALLY under the bake cache but
+    /// really lives elsewhere (`<cache>/../elsewhere/x-frame.png`) must
+    /// survive the delete. `Path::starts_with` is component-wise and ignores
+    /// `..`, so only canonicalized containment may authorize the removal.
+    #[test]
+    fn delete_keeps_user_file_outside_cache_with_dotdot_frame_name() {
+        use crate::shell::gallery::thumbs;
+        let _env = crate::test_utils::TempEnv::new();
+        let cache = thumbs::cache_dir();
+        fs::create_dir_all(&cache).unwrap();
+        // Synthetic escape: lexically `<cache>/../elsewhere/x-frame.png`
+        // (passes a naive starts_with AND the -frame.png name check) but
+        // canonically a sibling of the cache — a real user file.
+        let elsewhere = cache.join("../elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let user_file = elsewhere.join("x-frame.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255]))
+            .save(&user_file)
+            .unwrap();
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Escaper", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let v5 = themes_dir.join("Escaper").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&v5).unwrap();
+        fs::write(v5.join("wallpaper.txt"), format!("{}\n", user_file.display())).unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Escaper").expect("delete must succeed");
+        assert!(
+            user_file.exists(),
+            "a user file outside the bake cache must survive the delete, even named *-frame.png"
+        );
+        assert!(!themes_dir.join("Escaper").exists(), "theme dir itself must be gone");
+    }
+
+    /// W2-2 unit: containment itself. A `..` escape is not inside, a genuine
+    /// child is, and an unresolvable candidate fails CLOSED (false).
+    #[test]
+    fn path_inside_dir_rejects_dotdot_escape_and_fails_closed() {
+        let dir = TempDir::new().unwrap();
+        let cache = dir.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let user_file = elsewhere.join("x-frame.png");
+        fs::write(&user_file, b"user").unwrap();
+        let escaped = cache.join("../elsewhere/x-frame.png");
+        assert!(
+            !path_inside_dir(&cache, &escaped),
+            "a canonicalized-sibling path must not count as inside"
+        );
+        let child = cache.join("k-frame.png");
+        fs::write(&child, b"cached").unwrap();
+        assert!(path_inside_dir(&cache, &child), "a genuine child must count as inside");
+        assert!(
+            !path_inside_dir(&cache, &cache.join("missing-frame.png")),
+            "an unresolvable candidate must fail closed"
+        );
+    }
+
 }

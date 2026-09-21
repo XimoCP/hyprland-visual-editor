@@ -1668,13 +1668,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let Some(w) = weak.upgrade() else { return };
         let model = w.get_gallery_cards();
         let focused = w.get_gallery_focused().max(0) as usize;
-        let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
+        let mut sources: Vec<(usize, String, Option<thumbs::PreviewSpec>)> = Vec::new();
         for i in 0..model.row_count() {
             if let Some(row) = model.row_data(i) {
                 if row.thumb.size().width > 0 {
                     continue; // already marshaled — no duplicate work
                 }
-                let src = thumbs::find_source_image(&themes_root.join(row.name.as_str()));
+                let src = thumbs::plan_preview_source(&themes_root.join(row.name.as_str()));
                 sources.push((i as usize, row.name.to_string(), src));
             }
         }
@@ -2644,13 +2644,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     use crate::shell::gallery::thumbs;
                     use slint::Model;
                     let model = w.get_gallery_cards();
-                    let mut sources: Vec<(usize, String, Option<std::path::PathBuf>)> = Vec::new();
+                    let mut sources: Vec<(usize, String, Option<thumbs::PreviewSpec>)> = Vec::new();
                     for i in 0..model.row_count() {
                         if let Some(row) = model.row_data(i) {
                             if row.thumb.size().width > 0 {
                                 continue;
                             }
-                            let src = thumbs::find_source_image(&gallery_themes_root2.join(row.name.as_str()));
+                            let src = thumbs::plan_preview_source(&gallery_themes_root2.join(row.name.as_str()));
                             sources.push((i as usize, row.name.to_string(), src));
                         }
                     }
