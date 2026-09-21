@@ -1114,12 +1114,15 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    capture-everything behaviour so a missing/unreachable query
         //    never loses data silently, and says so.
         //
-        //    Two-tier query: the cheap kind-only query decides the plan; the
-        //    richer background query (kind + path + painter) runs only when
-        //    a video is on top and its path is needed. A kind flip between
-        //    the two queries vetoes honestly instead of recording a video
-        //    that may no longer be showing.
-        let plan = match wallpaper_authority::query_active_wallpaper_kind() {
+        //    Two-tier decision from one snapshot: the cheap kind-only
+        //    decision sets the plan; the richer background decision (kind +
+        //    path + painter) runs only when a video is on top and its path
+        //    is needed. Both read the same captured inputs, so the kind
+        //    cannot flip between them; a video decision without a
+        //    resolvable path still vetoes honestly instead of recording a
+        //    video that may no longer be showing.
+        let authority = wallpaper_authority::query_authority_snapshot();
+        let plan = match wallpaper_authority::snapshot_wallpaper_kind(&authority) {
             Ok(kind) => wallpaper_authority::plan_from_kind(Some(kind)),
             Err(reason) => {
                 tracing::warn!(
@@ -1134,7 +1137,7 @@ impl ThemeProvider for NoctaliaV5Provider {
         // (legacy capture) instead of inventing a path.
         let video_bg: Option<wallpaper_authority::ActiveBackground> =
             if matches!(plan, SavePlan::VideoOnly) {
-                match wallpaper_authority::query_active_background() {
+                match wallpaper_authority::snapshot_background(&authority) {
                     Ok(bg)
                         if bg.kind == WallpaperKind::Video && bg.video_path.is_some() =>
                     {
@@ -1192,8 +1195,9 @@ impl ThemeProvider for NoctaliaV5Provider {
                     None
                 }
             };
-            let recorded: Option<String> = match wallpaper_authority::query_active_static_path()
-            {
+            let recorded: Option<String> = match wallpaper_authority::snapshot_static_path(
+                &authority,
+            ) {
                 Ok(Some(current)) => {
                     let current = current.trim().to_string();
                     if current.is_empty() {
@@ -1861,8 +1865,15 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // WHY #[serial]: this test mutates process-global env vars
+    // (HVE_NOCTALIA_CONFIG / HVE_NOCTALIA_HYPR) without a TempEnv sandbox,
+    // like the stub-harness tests do under #[serial]. Unserialized, a
+    // parallel suite-mate mutating the same keys corrupts it — seen once as
+    // 883 passed / 1 failed while green alone and under --test-threads=1.
     #[test]
+    #[serial]
     fn settings_json_copied_verbatim() {
+        let _env = crate::test_utils::env_guard();
         // TDD for Task 1: apply must copy settings.json verbatim, not force wallpaper.enabled=false
         let config_dir = TempDir::new().unwrap();
         let theme_dir = TempDir::new().unwrap();
@@ -1904,6 +1915,7 @@ mod tests {
     #[test]
     #[serial]
     fn delegate_noop_when_socket_absent() {
+        let _env = crate::test_utils::env_guard();
         // Task 2: delegation must be no-op when socket absent and never panic
         let tmp_runtime = TempDir::new().unwrap();
         let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
@@ -1929,6 +1941,7 @@ mod tests {
     #[test]
     #[serial]
     fn delegate_swallow_failure_when_socket_is_not_socket() {
+        let _env = crate::test_utils::env_guard();
         // Task 2: failure must be swallowed, not propagated. D1: it must
         // also REPORT the failure. Stub binaries on PATH (both fail) keep
         // this hermetic: no real `skwd-helm apply` may run during tests.
@@ -1981,6 +1994,7 @@ mod tests {
     #[test]
     #[serial]
     fn delegate_reports_failure_when_socket_absent() {
+        let _env = crate::test_utils::env_guard();
         let tmp_runtime = TempDir::new().unwrap();
         let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
         let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
@@ -2579,7 +2593,6 @@ exit 0
     struct SaveStub {
         _env: crate::test_utils::TempEnv,
         _tmp: TempDir,
-        state_dir: PathBuf,
         saved: Vec<(&'static str, Option<String>)>,
     }
 
@@ -2697,7 +2710,6 @@ exit 1
             Self {
                 _env: env,
                 _tmp: tmp,
-                state_dir,
                 saved,
             }
         }
@@ -2763,6 +2775,91 @@ exit 1
             Some(live_path),
             "skwd paints a static scene: wallpaper.txt must hold the daemon current, not the stale wallpaper-get"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_partial_scene_records_proven_output_current() {
+        // The keeper's live partial scene: DP-3 has NO attributable
+        // background layer (only a small Noctalia widget at level 1, which
+        // the monitors reference excludes as furniture) while HDMI-A-1 is
+        // skwd-painted fullscreen static. The daemon reports static joker1
+        // for both; wallpaper-get is the stale car3. Absence is not
+        // disagreement: save must record the proven output's current.
+        let live_path = "/pictures/live/joker1.png";
+        let stale = "/pictures/stale/car3.jpg";
+        let layers = r#"{"DP-3":{"levels":{"0":[],"1":[{"address":"0x1","x":0,"y":0,"w":272,"h":144,"alpha":1,"namespace":"noctalia-desktop-widget-weather-0000000000000001","pid":250289}]}},"HDMI-A-1":{"levels":{"0":[{"address":"0x2","x":0,"y":0,"w":1440,"h":900,"alpha":1,"namespace":"skwd-paper","pid":439102}],"1":[]}}}"#;
+        let monitors = r#"[{"name":"DP-3","width":2560,"height":1440,"x":0,"y":0,"scale":1.0},{"name":"HDMI-A-1","width":1440,"height":900,"x":0,"y":0,"scale":1.0}]"#;
+        let daemon = save_daemon_doc("static", live_path, live_path);
+        let stub = SaveStub::new(layers, Some(monitors), "ok", &daemon, stale);
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(live_path),
+            "partial scene (one output absent, one proven skwd static): wallpaper.txt must hold the daemon current, not the stale wallpaper-get"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_skwd_static_vs_video_conflict_keeps_wallpaper_get() {
+        // A genuine conflict: HDMI-A-1 proven skwd-painted static but DP-3
+        // proven skwd-painted video. The static record must not claim the
+        // screen: with the video identity unresolvable (daemon names a file
+        // that does not exist) the save vetoes honestly and keeps the
+        // wallpaper-get value, writing no video record.
+        let stale = "/pictures/stale/car3.jpg";
+        let layers = save_layers_doc("skwd-wall-vk", "skwd-paper");
+        let daemon = r#"{"outputs": [{"name": "DP-3", "current": "/nonexistent/slugcat.mp4", "path": "/nonexistent/slugcat.mp4", "type": "video", "connected": true},{"name": "HDMI-A-1", "current": "/pictures/live/joker1.png", "path": "/pictures/live/joker1.png", "type": "static", "connected": true}]}"#;
+        let stub = SaveStub::new(&layers, None, "ok", daemon, stale);
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(stale),
+            "static-vs-video conflict: wallpaper.txt must keep the wallpaper-get value"
+        );
+        assert!(
+            !stub.provider_dir(&theme).join("video.txt").exists(),
+            "unresolvable video: no painter video record may appear"
+        );
+    }
+
+    /// The static save path must reuse the authority inputs the kind
+    /// decision already captured (one bounded snapshot per save), never run
+    /// the full compositor + daemon + monitors capture a second time.
+    /// Comment lines are stripped first so a commented-out call cannot
+    /// satisfy this. Needles are built with concat() so this test's own
+    /// source — it lives in the file it inspects — can never satisfy them.
+    #[test]
+    fn v5_save_shares_one_authority_snapshot_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains("query_authority_snapshot"),
+            "noctalia.rs save must capture the authority inputs once and share them"
+        );
+        for needle in [
+            ["query_active_wall", "paper_kind("].concat(),
+            ["query_active_back", "ground("].concat(),
+            ["query_active_static", "_path("].concat(),
+        ] {
+            assert!(
+                !code.contains(&needle),
+                "save must reuse the snapshot instead of re-querying via {}",
+                needle
+            );
+        }
     }
 
     #[test]

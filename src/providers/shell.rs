@@ -430,6 +430,7 @@ mod tests {
 
     #[test]
     fn test_noctalia_v5_paths_config_dir() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV5Paths;
         let cd = p.config_dir();
         assert!(cd.is_some());
@@ -439,6 +440,7 @@ mod tests {
 
     #[test]
     fn test_noctalia_v5_paths_rendered_dir_none() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV5Paths;
         assert!(p.rendered_dir().is_none());
     }

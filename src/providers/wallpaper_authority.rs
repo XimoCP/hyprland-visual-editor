@@ -63,11 +63,14 @@
 //! substrings) and keep the pure parse/decide/plan functions below
 //! unchanged.
 //!
-//! Timing budget: the AUTHORITY queries in this module (1 × compositor +
-//! 2 × daemon attempts, each bounded by ≤250 ms) block at most ~750 ms
-//! per save even with every helper hung (previously ~12 s: 2 saves ×
-//! 2 binaries × 3 s; ~1.5 s across the dual main + gallery save in that
-//! pathological case). That bound covers ONLY this module's queries: the
+//! Timing budget: the AUTHORITY snapshot this module captures per save (1 ×
+//! compositor + 2 × daemon attempts + 1 × monitors, each bounded by ≤250 ms)
+//! blocks at most ~1 s even with every helper hung (previously ~12 s:
+//! 2 saves × 2 binaries × 3 s; ~1.5 s across the dual main + gallery save in
+//! that pathological case; ~2 s while the save ran the capture once for the
+//! kind decision and again inside the static path). The save captures ONE
+//! snapshot and shares it across the kind, video-identity and static-path
+//! decisions. That bound covers ONLY this module's queries: the
 //! same `save()` additionally performs two UNBOUNDED `noctalia_msg` calls
 //! (`color-scheme-get`, `wallpaper-get` — `noctalia_runtime.rs` uses a
 //! bare `.output()` with no timeout), so a full panel save can block
@@ -441,7 +444,7 @@ pub struct CompositorOutput {
 /// Pure and fixture-driven: classification uses the namespace only. Only
 /// dedicated video painters yield a kind here; skwd-suite layers yield
 /// `None` — their kind comes from the daemon via [`decide_active_kind`],
-/// never from the name. The live query ([`query_active_wallpaper_kind`])
+/// never from the name. The live decision ([`snapshot_wallpaper_kind`])
 /// additionally resolves the pid's process name for topmost layers the
 /// namespace alone cannot classify — `/proc` access must never leak into
 /// the pure path, or tests would depend on the machine's live process
@@ -601,6 +604,20 @@ fn query_monitors_json() -> Option<String> {
             None
         }
     }
+}
+
+/// Outputs that carry a background vote: entries with no background layer
+/// at all (empty top) are ABSENCE, not disagreement — the output simply
+/// has nothing to say (e.g. a widget-only level the size reference
+/// excluded as furniture). The static-path gate ignores them; any
+/// attributable disagreement (a video, an unknown painter, an
+/// unattributable skwd layer) still vetoes downstream, never silently.
+fn voting_outputs(compositor: &[CompositorOutput]) -> Vec<CompositorOutput> {
+    compositor
+        .iter()
+        .filter(|o| !o.top_namespace.is_empty())
+        .cloned()
+        .collect()
 }
 
 /// Attribute one topmost skwd-suite layer to a daemon output.
@@ -790,17 +807,60 @@ pub struct ActiveBackground {
     pub video_path: Option<PathBuf>,
 }
 
-/// Ask which background is active AND who paints it, so a theme can record
-/// a video exactly (kind + path + painter) and restore it through the
-/// manager in charge. Same ≤750 ms query budget as
-/// [`query_active_wallpaper_kind`]: one compositor call plus two daemon
-/// attempts. A video kind with no resolvable file keeps
-/// `video_path == None` — the caller must veto honestly, never invent one.
-pub fn query_active_background() -> Result<ActiveBackground, String> {
-    let compositor_json = run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT)
-        .map_err(|e| format!("compositor unavailable: {}", e))?;
+/// One bounded capture of every authority input (compositor layers,
+/// daemon types, monitors sizes): the save captures once and shares it
+/// across the kind, video-identity and static-path decisions instead of
+/// re-running the full capture per decision. A standalone decision
+/// captures one snapshot implicitly (see the `query_*` wrappers); one
+/// snapshot never hangs past `COMPOSITOR_TIMEOUT + 2 * AUTHORITY_TIMEOUT
+/// + MONITORS_TIMEOUT` (≈1 s with every helper hung).
+#[derive(Debug, Clone)]
+pub struct AuthoritySnapshot {
+    /// `hyprctl -j layers` output; `None` when the compositor was
+    /// unreachable (the reason lives in `compositor_error`).
+    pub compositor_json: Option<String>,
+    /// Why the compositor capture failed, for the honest log line.
+    pub compositor_error: Option<String>,
+    /// Daemon `outputs --json`; `None` vetoes every skwd layer downstream.
+    pub daemon_json: Option<String>,
+    /// `hyprctl -j monitors` output; `None` degrades to the daemon sizes.
+    pub monitors_json: Option<String>,
+}
+
+/// Capture every authority input once (see [`AuthoritySnapshot`]).
+/// A failed capture yields `None` fields, never a panic — each decision
+/// falls back honestly from the same inputs.
+pub fn query_authority_snapshot() -> AuthoritySnapshot {
+    let (compositor_json, compositor_error) =
+        match run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT) {
+            Ok(json) => (Some(json), None),
+            Err(reason) => (None, Some(reason)),
+        };
     let daemon_json = query_daemon_json();
     let monitors_json = query_monitors_json();
+    AuthoritySnapshot {
+        compositor_json,
+        compositor_error,
+        daemon_json,
+        monitors_json,
+    }
+}
+
+/// Ask which background is active AND who paints it, so a theme can record
+/// a video exactly (kind + path + painter) and restore it through the
+/// manager in charge. Decides from a shared [`AuthoritySnapshot`] — the
+/// same inputs [`snapshot_wallpaper_kind`] sees, so the kind cannot flip
+/// between the two. A video kind with no resolvable file keeps
+/// `video_path == None` — the caller must veto honestly, never invent one.
+pub fn snapshot_background(snapshot: &AuthoritySnapshot) -> Result<ActiveBackground, String> {
+    let compositor_json = snapshot.compositor_json.clone().ok_or_else(|| {
+        format!(
+            "compositor unavailable: {}",
+            snapshot.compositor_error.as_deref().unwrap_or("unknown")
+        )
+    })?;
+    let daemon_json = snapshot.daemon_json.clone();
+    let monitors_json = snapshot.monitors_json.clone();
     let mut outputs = {
         let daemon_outputs: Vec<AuthorityOutput> = daemon_json
             .as_deref()
@@ -977,28 +1037,33 @@ fn log_daemon_disagreement(daemon_json: Option<&str>, kind: WallpaperKind) {
     }
 }
 
-/// Ask which background is active right now: the COMPOSITOR says which
-/// layer is on top, the daemon says the type of the skwd suite's layers
-/// (see [`decide_active_kind`]).
+/// Ask which background is active right now from a shared
+/// [`AuthoritySnapshot`]: the COMPOSITOR says which layer is on top, the
+/// daemon says the type of the skwd suite's layers (see
+/// [`decide_active_kind`]).
 ///
 /// Pure fast path first (no `/proc` touch): it decides whenever every
 /// topmost layer is a dedicated video painter or an attributable skwd
 /// layer. Only when an unknown painter vetoes that path are pid process
 /// names resolved for a second chance before giving up.
 ///
-/// If the compositor query fails, an `Err` naming the reason is returned
+/// If the compositor capture failed, an `Err` naming the reason is returned
 /// so the caller keeps the legacy capture-everything behaviour. The
 /// daemon alone NEVER decides: it is blind to other painters (verified
 /// live reporting "static" while a video covered the screen), so a
 /// compositor outage backfilled from the daemon would resurrect the very
-/// bug this module exists to kill. Never panics; this module's queries
-/// never hang past `COMPOSITOR_TIMEOUT + 2 * AUTHORITY_TIMEOUT`
-/// (≈750 ms per save).
-pub fn query_active_wallpaper_kind() -> Result<WallpaperKind, String> {
-    let compositor_json = run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT)
-        .map_err(|e| format!("compositor unavailable: {}", e))?;
-    let daemon_json = query_daemon_json();
-    let monitors_json = query_monitors_json();
+/// bug this module exists to kill. Never panics; one snapshot never hangs
+/// past `COMPOSITOR_TIMEOUT + 2 * AUTHORITY_TIMEOUT + MONITORS_TIMEOUT`
+/// (≈1 s).
+pub fn snapshot_wallpaper_kind(snapshot: &AuthoritySnapshot) -> Result<WallpaperKind, String> {
+    let compositor_json = snapshot.compositor_json.clone().ok_or_else(|| {
+        format!(
+            "compositor unavailable: {}",
+            snapshot.compositor_error.as_deref().unwrap_or("unknown")
+        )
+    })?;
+    let daemon_json = snapshot.daemon_json.clone();
+    let monitors_json = snapshot.monitors_json.clone();
     // No monitors capture degrades to the daemon-sizes-only decision; the
     // branch keeps the single-reference entry point in live use.
     let fast_kind = match monitors_json.as_deref() {
@@ -1120,10 +1185,13 @@ pub fn daemon_static_current(daemon: &[AuthorityOutput], output_name: &str) -> O
 /// topmost layer the compositor proved is skwd-painted, typed static by
 /// the daemon for that same output name. Sorted names keep it
 /// deterministic no matter the parse order; when every output agrees (the
-/// usual case) any choice is the same image. The gate is the combined
-/// decision ([`decide_active_kind_from_outputs`]): only a
-/// compositor-proven static scene qualifies — a video or an unknown
-/// painter anywhere vetoes to `None`, never a partial guess. Like the
+/// usual case) any choice is the same image.
+///
+/// Absence is not disagreement: an output with no background layer at all
+/// carries no vote and is ignored (a widget-only output must not veto the
+/// proven one). A genuine conflict still vetoes to `None`, never a partial
+/// guess: a video anywhere, an unknown painter on top, or a skwd layer the
+/// daemon cannot attribute for that output. Like the
 /// legacy `wallpaper-get` record, the path is stored as reported (no
 /// existence gate): whether the file survived is an apply-time concern,
 /// and gating here would make the record differ from what the painter
@@ -1132,10 +1200,14 @@ pub fn resolve_static_path(
     compositor: &[CompositorOutput],
     daemon: &[AuthorityOutput],
 ) -> Option<String> {
-    if decide_active_kind_from_outputs(compositor, daemon) != Some(WallpaperKind::Static) {
+    let voting = voting_outputs(compositor);
+    if voting.is_empty() {
         return None;
     }
-    let mut names: Vec<&str> = compositor
+    if decide_active_kind_from_outputs(&voting, daemon) != Some(WallpaperKind::Static) {
+        return None;
+    }
+    let mut names: Vec<&str> = voting
         .iter()
         .filter(|o| layer_owner(&o.top_namespace, None) == LayerOwner::Skwd)
         .map(|o| o.name.as_str())
@@ -1151,8 +1223,14 @@ pub fn resolve_static_path(
 /// suite actually paints, so save records the daemon's truth instead of a
 /// stale third party value.
 ///
+/// Decides from a shared [`AuthoritySnapshot`] so the save pays the
+/// capture once (see [`query_authority_snapshot`] for the bound); reuses
+/// the existing layer and daemon parsers, never a second copy of either.
+///
 /// Returns `Ok(Some(path))` only for a compositor-proven skwd static
-/// scene with a usable daemon `current`. `Ok(None)` means "not the
+/// scene with a usable daemon `current`. Outputs with no background layer
+/// at all are ignored (absence, not disagreement); an attributable
+/// disagreement (a video, an unknown painter) still yields `Ok(None)`. `Ok(None)` means "not the
 /// suite's static scene" (another painter, a video, an unknown layer, an
 /// unreachable compositor) — the caller keeps today's behaviour, quietly
 /// at debug level (the kind query already logged its reason). `Err(reason)`
@@ -1162,23 +1240,20 @@ pub fn resolve_static_path(
 /// the caller can warn honestly while falling back — never an empty path,
 /// never a guess.
 ///
-/// Bounded like the other live queries (one compositor call, two daemon
-/// attempts, one monitors call); reuses the existing layer and daemon
-/// parsers, never a second copy of either.
-pub fn query_active_static_path() -> Result<Option<String>, String> {
-    let compositor_json =
-        match run_bounded_command("hyprctl", &["-j", "layers"], COMPOSITOR_TIMEOUT) {
-            Ok(json) => json,
-            Err(reason) => {
-                tracing::debug!(
-                    "[wallpaper] static path: compositor unavailable ({}); keeping wallpaper-get",
-                    reason,
-                );
-                return Ok(None);
-            }
-        };
-    let daemon_json = query_daemon_json();
-    let monitors_json = query_monitors_json();
+/// Bounded like the other snapshot decisions (see [`query_authority_snapshot`]).
+pub fn snapshot_static_path(snapshot: &AuthoritySnapshot) -> Result<Option<String>, String> {
+    let compositor_json = match snapshot.compositor_json.clone() {
+        Some(json) => json,
+        None => {
+            tracing::debug!(
+                "[wallpaper] static path: compositor unavailable ({}); keeping wallpaper-get",
+                snapshot.compositor_error.as_deref().unwrap_or("unknown"),
+            );
+            return Ok(None);
+        }
+    };
+    let daemon_json = snapshot.daemon_json.clone();
+    let monitors_json = snapshot.monitors_json.clone();
     let daemon_usable = daemon_json.is_some();
     let daemon: Vec<AuthorityOutput> = daemon_json
         .as_deref()
@@ -1221,8 +1296,11 @@ pub fn query_active_static_path() -> Result<Option<String>, String> {
     // No path: tell a missing daemon half apart from "not ours to
     // override" (a video, an unknown painter, or a veto elsewhere keeps
     // today's value quietly — the kind query already logged its reason).
-    let proven_static =
-        decide_active_kind_from_outputs(&compositor, &daemon) == Some(WallpaperKind::Static);
+    // Absence-tolerant like the pure rule above: outputs with no
+    // background layer carry no vote, so a proven scene with a silent
+    // daemon still warns honestly instead of falling back silently.
+    let proven_static = decide_active_kind_from_outputs(&voting_outputs(&compositor), &daemon)
+        == Some(WallpaperKind::Static);
     let all_skwd = compositor.iter().any(|o| !o.top_namespace.is_empty())
         && compositor
             .iter()
@@ -1416,8 +1494,8 @@ mod tests {
         assert!(AUTHORITY_TIMEOUT <= Duration::from_millis(500));
     }
 
-    /// Save must consult the authority: the noctalia-v5 save path calls the
-    /// single query function and branches on the plan, so a future manager
+    /// Save must consult the authority: the noctalia-v5 save path captures
+    /// the single snapshot and branches on the plan, so a future manager
     /// swap stays a one-place change. Comment lines are stripped first so a
     /// commented-out call cannot satisfy this.
     #[test]
@@ -1430,12 +1508,20 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            code.contains("query_active_wallpaper_kind"),
-            "noctalia.rs save must call query_active_wallpaper_kind"
+            code.contains("query_authority_snapshot"),
+            "noctalia.rs save must capture the authority snapshot once"
         );
         assert!(
-            code.contains("query_active_background"),
-            "noctalia.rs save must call query_active_background for the painter video identity"
+            code.contains("snapshot_wallpaper_kind"),
+            "noctalia.rs save must decide the plan from the snapshot"
+        );
+        assert!(
+            code.contains("snapshot_background"),
+            "noctalia.rs save must read the painter video identity from the snapshot"
+        );
+        assert!(
+            code.contains("snapshot_static_path"),
+            "noctalia.rs save must read the static path from the snapshot"
         );
         assert!(
             code.contains("SavePlan::StaticOnly") && code.contains("SavePlan::VideoOnly"),
@@ -1677,7 +1763,7 @@ mod tests {
 
     /// The active kind comes from the COMPOSITOR's layer stack, typed by
     /// the daemon for skwd layers only: the wiring must query the
-    /// compositor (`hyprctl`) inside the single active-kind entry point
+    /// compositor (`hyprctl`) inside the single snapshot-based entry point
     /// and decide through `decide_active_kind` — and must NEVER backfill
     /// a dead compositor query from the daemon (that fallback resurrected
     /// the v1 bug). Comment lines are stripped first so a commented-out
@@ -1693,8 +1779,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            code.contains("query_active_wallpaper_kind"),
-            "wallpaper_authority must expose a single active-kind entry point"
+            code.contains("snapshot_wallpaper_kind"),
+            "wallpaper_authority must expose a single snapshot-based active-kind entry point"
         );
         assert!(
             code.contains("hyprctl"),
@@ -1715,7 +1801,7 @@ mod tests {
 
     #[test]
     fn docs_state_the_real_freeze_bound_by_construction() {
-        // D3: the authority-query budget (~750 ms) must never be sold as
+        // D3: the authority-snapshot budget (~1 s) must never be sold as
         // the whole-save bound while save() also performs unbounded
         // `noctalia_msg` calls. The module docs must name them.
         let src = std::fs::read_to_string("src/providers/wallpaper_authority.rs")
@@ -2575,5 +2661,94 @@ mod tests {
         );
         let unknown = parse_compositor_layers(&unknown_json).unwrap();
         assert_eq!(resolve_static_path(&unknown, &daemon), None);
+    }
+
+    #[test]
+    fn static_path_ignores_output_with_no_background_layer() {
+        // The keeper's partial scene: DP-3 carries no background layer at
+        // all (absence — e.g. only a small widget the reference excluded),
+        // HDMI-A-1 is skwd-painted static. Absence is not disagreement:
+        // the proven output's daemon current wins instead of the stale
+        // third party value.
+        let daemon = parse_authority_outputs(
+            r#"{"outputs": [
+                {"name": "DP-3", "current": "/pic/dp3.png", "path": "/pic/dp3.png",
+                 "type": "static", "connected": true},
+                {"name": "HDMI-A-1", "current": "/pic/hdmi.png", "path": "/pic/hdmi.png",
+                 "type": "static", "connected": true}
+            ]}"#,
+        )
+        .unwrap();
+        let compositor = vec![
+            CompositorOutput {
+                name: "DP-3".to_string(),
+                kind: None,
+                top_namespace: String::new(),
+                top_pid: 0,
+                top_level: None,
+            },
+            CompositorOutput {
+                name: "HDMI-A-1".to_string(),
+                kind: None,
+                top_namespace: "skwd-paper".to_string(),
+                top_pid: 439102,
+                top_level: Some(0),
+            },
+        ];
+        assert_eq!(
+            resolve_static_path(&compositor, &daemon),
+            Some("/pic/hdmi.png".to_string())
+        );
+    }
+
+    #[test]
+    fn static_path_vetoes_skwd_static_vs_video_conflict() {
+        // A genuine conflict: one output proven skwd-painted static, another
+        // proven skwd-painted video. A partial static record would hide the
+        // live video, so the decision vetoes to None (legacy) exactly as
+        // for an unknown painter.
+        let daemon = parse_authority_outputs(
+            r#"{"outputs": [
+                {"name": "DP-3", "current": "/pic/a.png", "path": "/pic/a.png",
+                 "type": "static", "connected": true},
+                {"name": "HDMI-A-1", "current": "/vid/b.mp4", "path": "/vid/b.mp4",
+                 "type": "video", "connected": true}
+            ]}"#,
+        )
+        .unwrap();
+        let json = layers_doc(
+            &layer("skwd-paper", 1.0, 439101),
+            &layer("skwd-wall-vk", 1.0, 606866),
+        );
+        let compositor = parse_compositor_layers(&json).unwrap();
+        assert_eq!(
+            decide_active_kind_from_outputs(&compositor, &daemon),
+            Some(WallpaperKind::Video)
+        );
+        assert_eq!(resolve_static_path(&compositor, &daemon), None);
+    }
+
+    #[test]
+    fn static_path_all_absent_is_none() {
+        // No output carries a background layer at all: nothing is proven,
+        // so there is no path — the caller keeps the legacy value quietly.
+        let daemon = parse_authority_outputs(&static_daemon_for_both()).unwrap();
+        let compositor = vec![
+            CompositorOutput {
+                name: "DP-3".to_string(),
+                kind: None,
+                top_namespace: String::new(),
+                top_pid: 0,
+                top_level: None,
+            },
+            CompositorOutput {
+                name: "HDMI-A-1".to_string(),
+                kind: None,
+                top_namespace: String::new(),
+                top_pid: 0,
+                top_level: None,
+            },
+        ];
+        assert_eq!(resolve_static_path(&compositor, &daemon), None);
     }
 }

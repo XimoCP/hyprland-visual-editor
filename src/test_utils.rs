@@ -14,6 +14,18 @@ use std::sync::{Mutex, MutexGuard};
 /// Serializes tests that mutate global env vars (`HOME`, `XDG_*`).
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+/// Hold the shared environment lock WITHOUT changing the environment.
+///
+/// WHY: `TempEnv` and the test stub harnesses mutate process-global env
+/// vars (`HOME`, `XDG_*`, `HVE_NOCTALIA_CONFIG`, `SKWD_*`). A test that
+/// merely ASSERTS on an env-derived path must take the same lock, or it can
+/// observe another test's temporary override mid-assertion — that is a
+/// real parallel-suite flake (the v5 `config_dir` suffix assertion failed
+/// only when a stub harness had its override installed).
+pub(crate) fn env_guard() -> MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// RAII guard: redirects `HOME`, `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` to a
 /// private temp directory for the duration of the test, then restores the
 /// original values on drop.
