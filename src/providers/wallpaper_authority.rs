@@ -784,7 +784,6 @@ fn resolve_video_identity(
 #[derive(Debug, Clone)]
 pub struct ActiveBackground {
     pub kind: WallpaperKind,
-    pub output_name: String,
     pub top_namespace: String,
     pub top_pid: u32,
     pub painter_proc: Option<String>,
@@ -836,9 +835,9 @@ pub fn query_active_background() -> Result<ActiveBackground, String> {
     } else {
         None
     };
-    let (output_name, top_namespace, top_pid) = match winner {
-        Some(o) => (o.name.clone(), o.top_namespace.clone(), o.top_pid),
-        None => (String::new(), String::new(), 0),
+    let (top_namespace, top_pid) = match winner {
+        Some(o) => (o.top_namespace.clone(), o.top_pid),
+        None => (String::new(), 0),
     };
     let painter_proc = if top_pid == 0 {
         None
@@ -847,7 +846,6 @@ pub fn query_active_background() -> Result<ActiveBackground, String> {
     };
     Ok(ActiveBackground {
         kind,
-        output_name,
         top_namespace,
         top_pid,
         painter_proc,
@@ -1099,13 +1097,6 @@ pub fn daemon_video_current(daemon: &[AuthorityOutput], output_name: &str) -> Op
         .find(|o| o.connected && o.name == output_name)
         .map(|o| o.current.clone())
         .filter(|s| !s.is_empty())
-}
-
-/// True when the topmost layer is painted by a dedicated video renderer
-/// (`mpvpaper` today): video by nature, no daemon signal needed. The
-/// process name is the fallback signal for generic namespaces.
-pub fn is_video_painter(namespace: &str, proc_name: Option<&str>) -> bool {
-    layer_owner(namespace, proc_name) == LayerOwner::Video
 }
 
 /// File HVE stores inside the theme provider dir for a painter-identified
