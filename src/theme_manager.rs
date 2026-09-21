@@ -404,7 +404,7 @@ impl ThemeManager {
         // Derived artifacts live outside the theme dir, so they are cleaned
         // BEFORE it is removed — resolving the preview source needs its
         // contents. Best-effort only: failures warn, never fail the delete.
-        Self::cleanup_derived_artifacts(&self.themes_dir, &theme_dir);
+        Self::cleanup_derived_artifacts(&self.themes_dir, &theme_dir, name, &self.last_applied);
         fs::remove_dir_all(&theme_dir)
             .map_err(|e| format!("Failed to delete theme '{}': {}", name, e))?;
         if self.last_applied == name {
@@ -418,8 +418,24 @@ impl ThemeManager {
     /// when no surviving theme still uses it, the shared Noctalia custom
     /// palette. Never touches anything beyond the bake cache and that one
     /// palette file; every failure is logged and swallowed.
-    fn cleanup_derived_artifacts(themes_dir: &Path, theme_dir: &Path) {
+    fn cleanup_derived_artifacts(
+        themes_dir: &Path,
+        theme_dir: &Path,
+        deleted_name: &str,
+        last_applied: &str,
+    ) {
         cleanup_bake_cache(theme_dir);
+        // W2-4: the deleted theme's palette may be the LIVE one — the
+        // desktop is currently rendering from it. Removing it would pull the
+        // colors out from under the running session, so it stays (a later
+        // delete or apply reaps it once it is no longer live).
+        if !last_applied.is_empty() && deleted_name == last_applied {
+            tracing::info!(
+                theme = %theme_dir.display(),
+                "theme delete: keeping shared palette — the deleted theme is currently applied and its palette is live"
+            );
+            return;
+        }
         cleanup_shared_palette(themes_dir, theme_dir);
     }
 
@@ -581,6 +597,23 @@ fn path_inside_dir(dir: &Path, candidate: &Path) -> bool {
 /// files are scanned first and any match keeps the file alive. A scan that
 /// cannot run keeps the file too — deleting a maybe-shared palette is
 /// worse than leaking it.
+/// Parse `custom <PaletteName>` from a `source.txt` body. Splits on ANY
+/// whitespace (space, tab, …): HVE's own Save UI accepts names the old
+/// space-only split misread, and a misread referrer is a palette deleted
+/// while a surviving theme still needs it. `None` for non-custom records.
+fn parse_custom_palette_name(text: &str) -> Option<String> {
+    let mut parts = text.split_whitespace();
+    if parts.next()? != "custom" {
+        return None;
+    }
+    let name: String = parts.collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return None;
+    }
+    // Apply sanitizes `/` so the on-disk file can never contain one.
+    Some(name.replace('/', "_"))
+}
+
 fn cleanup_shared_palette(themes_dir: &Path, theme_dir: &Path) {
     let text = match fs::read_to_string(
         theme_dir.join("providers").join("noctalia-v5").join("source.txt"),
@@ -588,16 +621,9 @@ fn cleanup_shared_palette(themes_dir: &Path, theme_dir: &Path) {
         Ok(t) => t,
         Err(_) => return,
     };
-    let mut parts = text.trim().splitn(2, ' ');
-    if parts.next().unwrap_or("") != "custom" {
+    let Some(safe_name) = parse_custom_palette_name(&text) else {
         return;
-    }
-    let name = parts.next().unwrap_or("").trim();
-    if name.is_empty() {
-        return;
-    }
-    // Apply sanitizes `/` so the on-disk file can never contain one.
-    let safe_name = name.replace('/', "_");
+    };
     if palette_still_referenced(themes_dir, theme_dir, &safe_name) {
         return;
     }
@@ -617,8 +643,12 @@ fn cleanup_shared_palette(themes_dir: &Path, theme_dir: &Path) {
 
 /// True when any theme dir other than the one being deleted still carries
 /// `custom <safe_name>` in one of its `providers/*/source.txt` records.
-/// Unreadable state fails OPEN (keep the palette): an unscannable tree
-/// proves nothing about who still references the file.
+/// Every directory except the deleted one is scanned — HVE's own Save UI
+/// accepts names starting with `_` or `.`, so skipping those hid real
+/// referrers and deleted palettes survivors still needed. Unreadable state
+/// fails OPEN (keep the palette): an unscannable tree proves nothing about
+/// who still references the file — including a survivor whose `providers`
+/// dir cannot even be listed.
 fn palette_still_referenced(themes_dir: &Path, deleted_dir: &Path, safe_name: &str) -> bool {
     let entries = match fs::read_dir(themes_dir) {
         Ok(e) => e,
@@ -629,13 +659,10 @@ fn palette_still_referenced(themes_dir: &Path, deleted_dir: &Path, safe_name: &s
         if path == deleted_dir || !path.is_dir() {
             continue;
         }
-        if let Some(n) = path.file_name().and_then(|n| n.to_str()) {
-            if n.starts_with('.') || n.starts_with('_') {
-                continue;
-            }
-        }
         let Ok(prov_entries) = fs::read_dir(path.join("providers")) else {
-            continue;
+            // Fail open: this survivor might reference the palette and we
+            // cannot prove otherwise — keep the file (leak beats breakage).
+            return true;
         };
         for prov in prov_entries.flatten() {
             if !prov.path().is_dir() {
@@ -644,11 +671,7 @@ fn palette_still_referenced(themes_dir: &Path, deleted_dir: &Path, safe_name: &s
             let Ok(text) = fs::read_to_string(prov.path().join("source.txt")) else {
                 continue;
             };
-            let mut parts = text.trim().splitn(2, ' ');
-            if parts.next().unwrap_or("") != "custom" {
-                continue;
-            }
-            if parts.next().unwrap_or("").trim().replace('/', "_") == safe_name {
+            if parse_custom_palette_name(&text).as_deref() == Some(safe_name) {
                 return true;
             }
         }
@@ -1046,4 +1069,165 @@ mod tests {
         );
     }
 
+    /// W2-3a: a survivor whose `source.txt` separates `custom` from the name
+    /// with a TAB still references the palette — deleting the other theme
+    /// must keep the file.
+    #[test]
+    fn delete_keeps_palette_when_survivor_uses_tab_separator() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("JokerTheme.json");
+        fs::write(&palette, r#"{"name":"JokerTheme"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&gone_v5).unwrap();
+        fs::write(gone_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+        seed_meta(&themes_dir, "Stays", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let stays_v5 = themes_dir.join("Stays").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&stays_v5).unwrap();
+        fs::write(stays_v5.join("source.txt"), "custom\tJokerTheme\n").unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Gone").expect("delete must succeed");
+        assert!(
+            palette.exists(),
+            "a survivor separating with TAB still references the palette — it must stay"
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
+
+    /// W2-3b: a survivor living in a `_`-prefixed dir (which HVE's own Save
+    /// UI can create) still references the palette — it must be scanned.
+    #[test]
+    fn delete_keeps_palette_when_survivor_dir_starts_with_underscore() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("JokerTheme.json");
+        fs::write(&palette, r#"{"name":"JokerTheme"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&gone_v5).unwrap();
+        fs::write(gone_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+        seed_meta(&themes_dir, "_Backup", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let stays_v5 = themes_dir.join("_Backup").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&stays_v5).unwrap();
+        fs::write(stays_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Gone").expect("delete must succeed");
+        assert!(
+            palette.exists(),
+            "a survivor in a `_`-prefixed dir still references the palette — it must stay"
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
+
+    /// W2-3c: a survivor whose `providers` dir cannot be listed might still
+    /// reference the palette — the scan fails OPEN and keeps the file.
+    #[test]
+    fn delete_keeps_palette_when_survivor_providers_dir_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("JokerTheme.json");
+        fs::write(&palette, r#"{"name":"JokerTheme"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&gone_v5).unwrap();
+        fs::write(gone_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+        seed_meta(&themes_dir, "Locked", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let locked_prov = themes_dir.join("Locked").join("providers");
+        fs::create_dir_all(locked_prov.join("noctalia-v5")).unwrap();
+        fs::write(locked_prov.join("noctalia-v5").join("source.txt"), "custom JokerTheme\n").unwrap();
+        fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(&locked_prov).is_ok() {
+            // Permissive environment (e.g. running as root): the fixture
+            // cannot be made unreadable, so there is nothing to prove here.
+            fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o755)).unwrap();
+            match old_noctalia {
+                Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+                None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+            }
+            println!("unreadable-dir fixture impossible here — skipping");
+            return;
+        }
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Gone").expect("delete must succeed");
+        fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            palette.exists(),
+            "an unscannable survivor fails OPEN — the palette must stay"
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
+
+    /// W2-4: deleting the CURRENTLY APPLIED theme must not remove the LIVE
+    /// palette the desktop is rendering from — it stays with a log line.
+    #[test]
+    fn delete_applied_theme_keeps_live_palette() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("JokerTheme.json");
+        fs::write(&palette, r#"{"name":"JokerTheme"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Live", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let v5 = themes_dir.join("Live").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&v5).unwrap();
+        fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.last_applied = "Live".to_string();
+        tm.delete("Live").expect("delete must succeed");
+        assert!(
+            palette.exists(),
+            "the live palette of the applied theme must survive its delete"
+        );
+        assert!(!themes_dir.join("Live").exists(), "theme dir itself must be gone");
+        assert!(tm.last_applied.is_empty(), "last_applied still clears");
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
 }
