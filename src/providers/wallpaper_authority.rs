@@ -609,7 +609,7 @@ fn query_monitors_json() -> Option<String> {
 /// Outputs that carry a background vote: entries with no background layer
 /// at all (empty top) are ABSENCE, not disagreement — the output simply
 /// has nothing to say (e.g. a widget-only level the size reference
-/// excluded as furniture). The static-path gate ignores them; any
+/// excluded as furniture). Every decision ignores them; any
 /// attributable disagreement (a video, an unknown painter, an
 /// unattributable skwd layer) still vetoes downstream, never silently.
 fn voting_outputs(compositor: &[CompositorOutput]) -> Vec<CompositorOutput> {
@@ -646,8 +646,10 @@ fn attribute_skwd_layer(output_name: &str, daemon: &[AuthorityOutput]) -> Option
 /// - skwd suite → the daemon's `type` for the same output name;
 /// - anything else (unknown painter, no opaque layer) → veto (`None`).
 ///
-/// Multi-output rule: any video wins; any veto sinks the whole decision.
-/// No outputs at all yields `None`.
+/// Multi-output rule: any video wins; any ATTRIBUTABLE veto (unknown
+/// painter, unattributable skwd layer) sinks the whole decision, while an
+/// output with no background layer at all carries no vote (absence is not
+/// disagreement — see [`voting_outputs`]). No outputs at all yields `None`.
 pub fn decide_active_kind_from_outputs(
     compositor: &[CompositorOutput],
     daemon: &[AuthorityOutput],
@@ -661,7 +663,15 @@ pub fn decide_active_kind_from_outputs(
             return Some(WallpaperKind::Video);
         }
         if o.top_namespace.is_empty() {
-            return None;
+            // Absence is not disagreement (same rule as `voting_outputs`):
+            // an output with NO background layer has nothing to say — e.g.
+            // a furniture/widget layer the size reference excluded — and
+            // must not sink a kind another output proves. An ATTRIBUTABLE
+            // disagreement (unknown painter, unattributable skwd layer)
+            // still vetoes below. Vetoing on absence sent the save to
+            // `SavePlan::Unknown`, which captured a stale video manifest
+            // next to the static record.
+            continue;
         }
         match layer_owner(&o.top_namespace, None) {
             LayerOwner::Video => return Some(WallpaperKind::Video),
@@ -1593,6 +1603,53 @@ mod tests {
         assert_eq!(
             decide_active_kind(Some(&json), Some(daemon)),
             Some(WallpaperKind::Static)
+        );
+    }
+
+    #[test]
+    fn partial_scene_decides_static_when_an_output_has_no_background_layer() {
+        // The keeper's live partial scene: HDMI-A-1 is skwd-painted static
+        // while DP-3 carries NO background layer at all (absence, e.g. its
+        // furniture layer was excluded by the size reference). Absence is
+        // not disagreement, so the kind must come from the proven output.
+        // Vetoing here would send the save to `SavePlan::Unknown`, which
+        // also re-captures a stale video manifest next to the static
+        // record — how a theme could restore an old video.
+        let json = layers_doc(&layer("skwd-paper", 1.0, 439101), "");
+        let daemon = r#"{"outputs": [
+            {"name": "HDMI-A-1", "current": "/pic/a.png", "path": "/pic/a.png",
+             "type": "static", "connected": true},
+            {"name": "DP-3", "current": "/pic/a.png", "path": "/pic/a.png",
+             "type": "static", "connected": true}
+        ]}"#;
+        let kind = decide_active_kind(Some(&json), Some(daemon));
+        assert_eq!(kind, Some(WallpaperKind::Static));
+        assert_eq!(
+            plan_from_kind(kind),
+            SavePlan::StaticOnly,
+            "a proven static scene must not fall back to capture-everything"
+        );
+    }
+
+    #[test]
+    fn every_output_without_a_background_layer_decides_nothing() {
+        // All absence: nothing proves a background, so no kind is invented.
+        let json = layers_doc("", "");
+        let daemon = r#"{"outputs": [
+            {"name": "HDMI-A-1", "current": "/pic/a.png", "path": "/pic/a.png",
+             "type": "static", "connected": true}
+        ]}"#;
+        assert_eq!(decide_active_kind(Some(&json), Some(daemon)), None);
+    }
+
+    #[test]
+    fn absent_output_does_not_mask_video_on_the_other_output() {
+        // Absence must not dilute a PROVEN kind: a video on one output
+        // still wins while the other has no background layer.
+        let json = layers_doc(&layer("mpvpaper", 1.0, 507331), "");
+        assert_eq!(
+            decide_active_kind(Some(&json), None),
+            Some(WallpaperKind::Video)
         );
     }
 
