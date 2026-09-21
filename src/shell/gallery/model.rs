@@ -442,6 +442,38 @@ pub fn sync_cards(model: &slint::VecModel<crate::GalleryCardData>, new_rows: Vec
     }
 }
 
+/// Blank the baked images of the named cards so they re-bake (U7 preview
+/// refresh). `sync_cards` deliberately keeps old bakes (S5 flicker fix),
+/// and the thumb scheduler skips rows that already carry images — so after
+/// an overwrite the card would show stale pixels forever with no
+/// invalidation path. Call AFTER `sync_cards`: the merge must run first so
+/// fresh non-image fields land, then only the affected rows drop their
+/// four image fields and the existing scheduler re-resolves + re-bakes
+/// them. Untouched rows keep their bakes (no mass invalidation, no
+/// flicker). Invalidation is unconditional for the affected theme — a
+/// content-keyed warm cache makes an unchanged source cheap, which is
+/// simpler and always correct versus comparing before/after.
+pub fn invalidate_card_bakes(
+    model: &slint::VecModel<crate::GalleryCardData>,
+    names: &std::collections::HashSet<String>,
+) {
+    use slint::Model as _;
+    if names.is_empty() {
+        return;
+    }
+    for i in 0..model.row_count() {
+        if let Some(mut row) = model.row_data(i) {
+            if names.contains(row.name.as_str()) {
+                row.thumb = slint::Image::default();
+                row.hero = slint::Image::default();
+                row.slat_image = slint::Image::default();
+                row.slat_expanded_image = slint::Image::default();
+                model.set_row_data(i, row);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,5 +775,51 @@ mod tests {
         crate::shell::gallery::model::sync_cards(&model3, vec![card("A", false)]);
         assert_eq!(model3.row_count(), 1);
         assert_eq!(model3.row_data(0).unwrap().name, "A");
+    }
+
+    // ── U7 RED: overwrite invalidation (stale preview refresh) ──────
+    // `sync_cards` deliberately keeps old bakes (S5 flicker fix above), so
+    // after an overwrite the card shows stale pixels forever: nothing
+    // blanks it and `schedule_thumbs` skips rows that already carry images.
+    // The refresh path must blank ONLY the overwritten theme's four image
+    // fields AFTER the merge, so the existing scheduler re-resolves and
+    // re-bakes it (a content-keyed warm cache makes an unchanged source
+    // cheap — unconditional invalidation of the affected theme is the
+    // simple, always-correct choice over before/after comparison).
+    #[test]
+    fn overwrite_invalidation_blanks_only_the_overwritten_card() {
+        use slint::{Model, VecModel};
+        use std::collections::HashSet;
+        // Overwrite-style refresh: both cards still carry their stale bakes.
+        let model = VecModel::from(vec![card("Alpha", true), card("Beta", true)]);
+        let names: HashSet<String> = ["Alpha".to_string()].into_iter().collect();
+        crate::shell::gallery::model::invalidate_card_bakes(&model, &names);
+        // The overwritten card drops all four baked images: blank rows are
+        // exactly what the thumb scheduler picks up for re-bake.
+        let alpha = model.row_data(0).unwrap();
+        assert_eq!(alpha.thumb.size().width, 0, "overwritten thumb must be blank for re-bake");
+        assert_eq!(alpha.hero.size().width, 0, "overwritten hero must be blank for re-bake");
+        assert_eq!(alpha.slat_image.size().width, 0, "overwritten slat must be blank for re-bake");
+        assert_eq!(
+            alpha.slat_expanded_image.size().width, 0,
+            "overwritten expanded slat must be blank for re-bake"
+        );
+        // The untouched card keeps its bakes: no mass invalidation, no
+        // visible flicker for unrelated cards.
+        let beta = model.row_data(1).unwrap();
+        assert!(has_bakes(&beta), "untouched card must keep its bakes");
+    }
+
+    // ── U7 control: empty invalidation set keeps every bake ──────────
+    // Delete/rename/refresh-only paths pass an empty set: no row may drop
+    // its images (the wall must not flicker on unrelated refreshes).
+    #[test]
+    fn invalidation_with_empty_set_keeps_all_bakes() {
+        use slint::{Model, VecModel};
+        use std::collections::HashSet;
+        let model = VecModel::from(vec![card("Alpha", true), card("Beta", true)]);
+        crate::shell::gallery::model::invalidate_card_bakes(&model, &HashSet::new());
+        assert!(has_bakes(&model.row_data(0).unwrap()), "empty set must not blank Alpha");
+        assert!(has_bakes(&model.row_data(1).unwrap()), "empty set must not blank Beta");
     }
 }

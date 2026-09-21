@@ -612,12 +612,16 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
 
 /// Rebuild window gallery cards from gallery_tm in place (keeps baked thumbs)
 /// then refresh mosaic + slice ring. Shared by Save rename/delete/refresh/
-/// overwrite so the Gallery follows without restart.
+/// overwrite so the Gallery follows without restart. `invalidate` names the
+/// themes whose background changed on disk (the overwrite set): their cards
+/// are blanked AFTER the carry-over merge so the thumb scheduler re-bakes
+/// them — empty for paths that change no artwork (rename/delete/refresh).
 fn sync_save_gallery_ui(
     w: &crate::MainWindow,
     gallery_tm: &std::sync::Arc<std::sync::Mutex<crate::theme_manager::ThemeManager>>,
     refresh_mosaic_page: &std::sync::Arc<dyn Fn(bool) + Send + Sync>,
     refresh_slice_ring: &std::sync::Arc<dyn Fn() + Send + Sync>,
+    invalidate: &std::collections::HashSet<String>,
 ) {
     let new_rows: Vec<crate::GalleryCardData> = {
         let gtm = gallery_tm.lock().unwrap();
@@ -652,6 +656,10 @@ fn sync_save_gallery_ui(
     let model_rc = w.get_gallery_cards();
     if let Some(model) = model_rc.as_any().downcast_ref::<slint::VecModel<crate::GalleryCardData>>() {
         crate::shell::gallery::model::sync_cards(model, new_rows);
+        // Overwritten artwork would otherwise keep its stale bake (the
+        // merge above preserves old images, and the scheduler skips painted
+        // rows): blank the affected rows so they re-resolve and re-bake.
+        crate::shell::gallery::model::invalidate_card_bakes(model, invalidate);
     } else {
         w.set_gallery_cards(slint::ModelRc::new(slint::VecModel::from(new_rows)));
     }
@@ -2856,7 +2864,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.refresh_theme_list(&w);
                 }
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+                // Rename changes no artwork: empty invalidation set keeps
+                // every bake (no flicker for unrelated cards).
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &std::collections::HashSet::new());
             });
         }
         {
@@ -2897,7 +2907,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.refresh_theme_list(&w);
                 }
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &std::collections::HashSet::new());
                 // Focus the neighbor that takes the deleted slot (next, or previous if last)
                 let new_len = gallery_tm_c.lock().unwrap().list().unwrap_or_default().len();
                 w.set_panel_save_focused_index(callbacks::focus_after_delete(del_idx, new_len));
@@ -2929,7 +2939,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.refresh_theme_list(&w);
                 }
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &std::collections::HashSet::new());
             });
         }
         {
@@ -2937,6 +2947,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let gallery_tm_c = gallery_tm.clone();
             let refresh_mosaic_page_c = refresh_mosaic_page.clone();
             let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let gallery_themes_root_c = gallery_themes_root.clone();
+            let stage_dims_c = stage_dims.clone();
             let weak = window.as_weak();
             window.on_panel_overwrite_saved_theme(move |name| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("overwrite-saved-theme name={name}")));
@@ -2960,7 +2972,17 @@ fn main() -> Result<(), slint::PlatformError> {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.refresh_theme_list(&w);
                 }
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c);
+                // The overwrite changed this theme's artwork on disk:
+                // invalidate its card AFTER the carry-over merge (stale bake
+                // would otherwise win) and re-run the existing thumb
+                // scheduler so the blank row re-resolves and re-bakes.
+                // Unconditional for the affected theme only — a content-keyed
+                // warm cache makes an unchanged source cheap, and unrelated
+                // cards keep their bakes (no mass invalidation, no flicker).
+                let mut invalidated = std::collections::HashSet::new();
+                invalidated.insert(name_str.clone());
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &invalidated);
+                schedule_thumbs(&weak, &gallery_themes_root_c, &stage_dims_c, refresh_mosaic_page_c.clone());
             });
         }
         {
