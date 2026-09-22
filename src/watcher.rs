@@ -290,4 +290,145 @@ mod tests {
         // Cleanup: terminate + reap the first instance so the suite never hangs.
         drop(first);
     }
+
+    /// Mirror every executable on the system PATH except `flock`, so a child
+    /// can run the real script with `command -v flock` failing while every
+    /// other command it needs (`bash`, `md5sum`, `sort`, `wc`, `cut`, `date`,
+    /// `dirname`) keeps resolving. Mirrored targets are absolute symlinks, so
+    /// the child's lookup never consults the original directories.
+    fn system_path_without_flock(root: &std::path::Path, original: &str) -> String {
+        let no_flock = root.join("no-flock-bin");
+        std::fs::create_dir_all(&no_flock).unwrap();
+        for dir in original.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(dir) else { continue; };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy() == "flock" {
+                    continue;
+                }
+                // Skip broken symlinks: a command that cannot resolve would
+                // not work anyway, and its absence must not fail the test.
+                let Ok(target) = std::fs::canonicalize(entry.path()) else {
+                    continue;
+                };
+                let _ = std::os::unix::fs::symlink(target, no_flock.join(&name));
+            }
+        }
+        no_flock.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn sandboxed_watcher_fails_open_when_flock_is_missing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Same sandbox as the singleton test: HOME + HVE_CACHE_DIR point at
+        // the temp tree so the real script never touches the keeper's live
+        // session, and every external dependency is a stub.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(home.join(".cache/wal")).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(
+            home.join(".cache/wal/colors.json"),
+            r#"{"wallpaper": "/dev/null"}"#,
+        )
+        .unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
+        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
+            .unwrap();
+        std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+
+        let assemble_marker = cache.join("assemble_runs");
+        std::fs::write(
+            scripts.join("assemble.sh"),
+            format!("#!/bin/bash\necho run >> {}\n", assemble_marker.display()),
+        )
+        .unwrap();
+        std::fs::write(scripts.join("get_colors.sh"), "#!/bin/bash\nexit 0\n").unwrap();
+        std::fs::write(scripts.join("hve-ipc"), "#!/bin/bash\nexit 0\n").unwrap();
+        for name in ["assemble.sh", "get_colors.sh", "hve-ipc"] {
+            let path = scripts.join(name);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nsleep 2\n").unwrap();
+        std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
+        for name in ["inotifywait", "noctalia"] {
+            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+
+        // PATH WITHOUT flock: the stubs come first, then the mirrored system
+        // binaries. This is the fail-open scenario — the singleton guarantee
+        // is unavailable, so losing it must not disable the watcher.
+        let path_without_flock = format!(
+            "{}:{}",
+            stubs.display(),
+            system_path_without_flock(root, &std::env::var("PATH").unwrap_or_default())
+        );
+
+        let watcher = scripts.join("color_watcher.sh");
+        let child = Command::new("bash")
+            .arg(&watcher)
+            .env("HOME", &home)
+            .env("HVE_CACHE_DIR", &cache)
+            .env("PATH", &path_without_flock)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // RAII cleanup: on panic the guard kills + reaps and the TempDir
+        // removes the tree — a failure can never hang or leak a process.
+        let _guard = KillOnDrop::new(child);
+
+        // The unguarded watcher must reach normal operation: it logs its
+        // start and performs the initial refresh (the assemble marker).
+        let log_file = home.join(".cache/hve/color_watcher.log");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+            let refreshed = std::fs::read_to_string(&assemble_marker)
+                .map(|s| s.lines().count() > 0)
+                .unwrap_or(false);
+            if refreshed && log.contains("Starting watcher") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watcher did not continue unguarded (no start + initial refresh within 30s); \
+                 missing flock must fail OPEN, log so far:\n{log}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let log = std::fs::read_to_string(&log_file).unwrap();
+        assert!(
+            log.contains("Singleton guard unavailable"),
+            "missing flock must log a distinct guard-unavailable warning, got:\n{log}"
+        );
+        assert!(
+            log.contains("UNGUARDED"),
+            "the warning must state the watcher continues unguarded, got:\n{log}"
+        );
+        assert!(
+            !log.contains("another color watcher holds"),
+            "no other instance is running here — the log must NOT claim one holds \
+             the lock (that message means a false self-rejection), got:\n{log}"
+        );
+        let runs = std::fs::read_to_string(&assemble_marker).unwrap_or_default();
+        assert!(
+            runs.lines().count() > 0,
+            "the unguarded watcher must still perform the initial refresh (work happened)"
+        );
+    }
 }

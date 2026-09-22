@@ -138,6 +138,7 @@ Observed evidence (writer model, TDD runs):
 - GREEN W1: `cargo test --bin hve watcher::tests` — 5 passed (2 new: `color_watcher_guard_kills_and_reaps_the_child_on_drop`, `sandboxed_second_watcher_instance_is_rejected_while_first_holds_the_lock`).
 - GREEN W2: `cargo test --bin hve 'composer::'` — 53 passed (7 new parser/plan tests), then full suite `cargo test`: **902 passed / 0 failed** (baseline 893 + 9 new).
 - Full-suite command: `cargo test` (result: 902 passed, 0 failed, ~32s).
+- Cross-model independent verification (read-only) reproduced a fail-closed edge: with `flock` missing from PATH the guard rejected the FIRST instance too ("another color watcher holds …", `exit 0`, zero work). Fixed with a real capability check (`command -v flock`) that FAILS OPEN — one distinct "guard unavailable / continuing UNGUARDED" warning line, watcher keeps running. Covered by the sandboxed `sandboxed_watcher_fails_open_when_flock_is_missing` (work-unit commit `fix(scripts): fail open when flock is missing so a missing dep never disables the watcher`).
 
 ### W1 — one colour watcher per machine
 - [x] Script guard (flock) + guard log line — `assets/scripts/color_watcher.sh` (flock on `HVE_SAFE_DIR/color_watcher.lock`, acquired before the first `_log "Starting watcher"`)

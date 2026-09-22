@@ -97,12 +97,21 @@ mkdir -p "$(dirname "$LOG_FILE")"
 # exclusive flock on a long-lived fd, held for the whole process lifetime.
 # A rejected second instance logs one line and exits 0 — it is a no-op, not
 # an error: exactly one instance keeps running assemble.sh / templates-apply.
+# If flock itself is missing, FAIL OPEN: the guard cannot run, so losing the
+# singleton guarantee must never silently disable the colour sync — log one
+# distinct warning line and continue unguarded. The capability check is real
+# (`command -v`), not an exit-code guess, so a missing dependency and a
+# genuine lock contention stay distinguishable.
 mkdir -p "$HVE_SAFE_DIR"
 LOCK_FILE="$HVE_SAFE_DIR/color_watcher.lock"
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-    _log "Singleton guard: another color watcher holds $LOCK_FILE — exiting without starting"
-    exit 0
+if ! command -v flock >/dev/null 2>&1; then
+    _log "Singleton guard unavailable: flock not found in PATH — continuing UNGUARDED (duplicate watchers will not be prevented)"
+else
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        _log "Singleton guard: another color watcher holds $LOCK_FILE — exiting without starting"
+        exit 0
+    fi
 fi
 
 _log "Starting watcher"
