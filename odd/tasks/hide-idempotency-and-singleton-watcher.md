@@ -3,9 +3,9 @@
 **Locator**: `odd/tasks/hide-idempotency-and-singleton-watcher.md`
 **Engram mirror**: topic `odd/hide-idempotency-and-singleton-watcher/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches)
-**Status**: IMPLEMENTED (W1 `88c10b1`, W2 `ab932a7`) — cross-model independent verification pending (`glm-5.3-flash`, read-only)
+**Status**: IMPLEMENTED + VERIFIED — AWAITING KEEPER REVIEW (W1 `88c10b1`, W2 `ab932a7`, doc `098ed20`, flock fail-open `8a17f2c`). The live confirmation is deliberately NOT run: asking the keeper for his review is the first action of the next session.
 **TDD**: strict — runner `cargo test`
-**Delivery budget forecast**: ~300-400 authored changed lines (additions + deletions). Forecast is under the 400-line review budget, so the expectation is one PR. If the running count crosses 400, stop and ask the keeper (strategy `ask-on-risk`).
+**Delivery budget forecast**: ~300-400 authored changed lines was the forecast; the ACTUAL authored total is 781 across the four commits (W1 237, W2 234, doc 159, flock fail-open 159). The code+tests part alone is **621** (598 added, 23 deleted; `src/` + `assets/`), i.e. OVER the ~400 review budget; the remaining 160 lines are this document. Not padding: the bulk is the test code this document mandates (the sandboxed integration test plus the parser/plan tests). Decision open for the keeper at PR time: `size:exception` vs two chained PRs (strategy `ask-on-risk`).
 
 ## Source (verified evidence, 2026-09-22 — read-only investigation, keeper's live session)
 
@@ -147,6 +147,7 @@ Observed evidence (writer model, TDD runs):
 - [x] RED test: guard kills and reaps a placeholder child — observed (E0422 before the type existed), green after
 - [x] RED test: sandboxed second real-script instance is rejected — observed (guard missing), green after
 - [x] Work-unit commit — `88c10b1 fix(scripts): make the colour watcher a singleton and kill+reap it on exit`
+- [x] Cross-model finding closed: a missing `flock` must FAIL OPEN, never reject the first instance — real `command -v flock` capability check + `sandboxed_watcher_fails_open_when_flock_is_missing` (commit `8a17f2c`)
 
 ### W2 — idempotent verified hide
 - [x] Pure scratchpad-open parser + fixtures — `scratchpad_open()` over `hyprctl monitors -j` (`{id:0,name:""}` = closed, verified live)
@@ -155,6 +156,28 @@ Observed evidence (writer model, TDD runs):
 - [x] RED tests for parser and plan — observed (E0425), green after (7 tests)
 - [x] Work-unit commit — `ab932a7 fix(composer): make hide idempotent and verify the scratchpad ends closed`
 
-## Next step
+## Verification record (2026-09-22)
 
-Request cross-model independent verification of the finished diff (`glm-5.3-flash`, read-only, per the Verification section above); then the keeper restarts HVE and repeats the 2-3 applies to confirm the live fix.
+| Check | Who | Result |
+|---|---|---|
+| Full suite | orchestrator (re-ran it, did not trust the writer's report) | `cargo test` → **903 passed / 0 failed** (~32 s) |
+| Cross-model independent verification (read-only, adversarial) | **GLM 5.3 Flash** — writer ran on **DeepSeek V4 Flash** | **PASS WITH FINDINGS**: confirmed the suite count, no existing test weakened or deleted (`git diff -- '*test*'` empty), scope exactly as authorized, and that the new tests are not passing for the wrong reason (both false-approval paths checked and discarded). |
+| Both guard branches, end-to-end on the REAL script | orchestrator, own sandbox probe (`/tmp/opencode/probe_guard_branches.sh`) | **flock present**: second instance rejected with exit 0, exactly 1 "Starting watcher", 1 rejection line, 0 unguarded warnings, exactly 1 `assemble.sh` run, lock file present. **flock absent** (`flock` stripped from PATH): distinct "continuing UNGUARDED" warning, 0 false rejections, exactly 1 `assemble.sh` run, first instance alive. Both as designed. |
+| Visible behaviour / live | **NOT RUN — deliberately** | Requires the keeper: restart HVE and repeat the 2-3 applies. This is the first thing to ask at the next session. |
+
+Proportionality note: the two work-unit commits got the full cross-model round above. The small flock fail-open delta (one capability check plus one test) got orchestrator review plus the two-branch end-to-end probe, not a second cross-model round — said plainly rather than implied.
+
+## Residuals (known, recorded, NOT fixed here)
+
+1. **Per-monitor scratchpad semantics (MINOR).** The scratchpad state is per monitor, but the close dispatch acts on the monitor that currently has focus. With a dual-monitor setup, if focus has already moved to the other monitor when the countdown decides to hide, the *query* and the *dispatch* can talk about different monitors — and the corrective close could close the wrong one. Pre-existing semantics (the show path has the same ambiguity), not worsened by this change, and not closable without a live dual-monitor test.
+2. **Corrective-close window (MINOR).** If an external agent (a Hyprland keybind) opens the scratchpad between the close and the verification, the single corrective close can re-open it; there is no second verification, only a log line. Milliseconds-wide; the next `hide()` self-repairs with the `[Close]` plan.
+3. **The most plausible residual path to the keeper's original symptom** is the external interleaving in (1)/(2) rather than the pure logic, which is now total for the tested cases.
+4. **Out of scope, unchanged:** `assemble.sh:92-94` still runs `hyprctl reload` unconditionally (the reload loop that feeds the extra focus flaps, see S4), and HVE's `tracing` output still goes to `/dev/null` (S7) so the app's own diagnostic log remains unreadable.
+5. **V4 fallback arm** still blind-toggles `togglespecialworkspace` in the `abandoned_v5` and pure-V4 paths — authorized by this document ("keep the V4 arm's semantics intact"), only reachable when the Lua (V5) dispatch fails or on a conf-based Hyprland.
+
+## Next step (keeper)
+
+1. **FIRST: the keeper's review of this change** (pending by explicit instruction; also pinned in Engram as `hve2/pending/keeper-review-hide-idempotency`).
+2. If approved, the live confirmation: reinstall the binary, restart HVE, repeat the 2-3 applies, confirm the noctalia bar no longer rises above HVE and the desktop is no longer dimmed. NOTE: a plain machine restart also retires the two pre-guard orphan watchers.
+3. At PR time, decide `size:exception` vs two chained PRs (621 authored code+test lines vs the ~400 budget).
+
