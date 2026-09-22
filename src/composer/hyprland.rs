@@ -145,6 +145,16 @@ impl HyprlandComposer {
         String::from_utf8(out.stdout).ok()
     }
 
+    /// Fetch `hyprctl monitors -j` stdout. Query path for the verified-hide
+    /// scratchpad-open check (odd/hide-idempotency-and-singleton-watcher W2).
+    fn monitors_json(&self) -> Option<String> {
+        let out = std::process::Command::new("hyprctl")
+            .args(["monitors", "-j"])
+            .output()
+            .ok()?;
+        String::from_utf8(out.stdout).ok()
+    }
+
     fn active_workspace(&self) -> Option<String> {
         let out = std::process::Command::new("hyprctl")
             .args(["activeworkspace", "-j"])
@@ -169,21 +179,46 @@ impl Composer for HyprlandComposer {
     fn hide(&self, win: &crate::MainWindow) -> bool {
         match self.hypr_mode() {
             HyprMode::V5 => {
-                // Apuntar el move EXPLÍCITAMENTE a HVE por título. Sin `window=`,
-                // `hl.dsp.window.move` actúa sobre la ventana con foco: si el
-                // usuario está clickeando otra ventana en el mismo instante del
-                // SUPER+H, el move secuestra ESA ventana y la manda al special.
-                let s1 = v5_move_to_special();
-                let did_move = self.hypr_dispatch_v5(&s1);
-                if did_move {
-                    // Mover al special lo "abre" como overlay visible. Hay que cerrar
-                    // el scratchpad tras mover para que la ventana quede oculta, no
-                    // flotando encima del workspace activo (era la regresión de "no
-                    // minimiza").
-                    let s2 = v5_toggle_special();
-                    let _ = self.hypr_dispatch_v5(&s2);
-                    true
-                } else {
+                // Idempotent verified hide (odd/hide-idempotency-and-singleton-watcher
+                // W2): query the live state, derive the plan purely, dispatch it,
+                // then VERIFY the scratchpad ended closed. The plan never emits a
+                // toggle while the scratchpad is closed — the old blind toggle
+                // re-opened the overlay and HVE became visible inside it.
+                let parked = self.hve_in_special();
+                let open = self
+                    .monitors_json()
+                    .is_some_and(|text| scratchpad_open(&text));
+                let plan = hide_plan(parked, open);
+                if plan.is_empty() {
+                    // Already parked with the scratchpad closed: dispatch NOTHING
+                    // (no toggle, no move) and report success — the regression case.
+                    return true;
+                }
+                let mut abandoned_v5 = false;
+                for step in &plan {
+                    match step {
+                        HideStep::MoveToSpecial => {
+                            // Apuntar el move EXPLÍCITAMENTE a HVE por título. Sin `window=`,
+                            // `hl.dsp.window.move` actúa sobre la ventana con foco: si el
+                            // usuario está clickeando otra ventana en el mismo instante del
+                            // SUPER+H, el move secuestra ESA ventana y la manda al special.
+                            if !self.hypr_dispatch_v5(&v5_move_to_special()) {
+                                // Abandon the v5 plan before any close: the move is the
+                                // foundation the close builds on. The v4 fallback below
+                                // re-runs move + close with the classic syntax.
+                                abandoned_v5 = true;
+                                break;
+                            }
+                        }
+                        HideStep::CloseScratchpad => {
+                            // Mover al special lo "abre" como overlay visible: cerrar tras
+                            // mover deja la ventana oculta, no flotando encima del workspace
+                            // activo (era la regresión de "no minimiza").
+                            let _ = self.hypr_dispatch_v5(&v5_toggle_special());
+                        }
+                    }
+                }
+                if abandoned_v5 {
                     // Si el move por lua falló, intentamos mover con la sintaxis
                     // clásica (comunmente "special:minimized" acepta move).
                     // V4/conf fallback: Hyprland V4 dispatch has NO window targeting
@@ -194,12 +229,23 @@ impl Composer for HyprlandComposer {
                         self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
                     if did_focus && did_move4 {
                         let _ = self.hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
-                        true
-                    } else {
-                        let _ = win.window().hide();
-                        false
+                        return true;
                     }
+                    let _ = win.window().hide();
+                    return false;
                 }
+                // Verify with a FRESH query that the scratchpad ended closed — never
+                // trust the toggle blindly. Still open: exactly ONE bounded corrective
+                // close (never a loop), then log the outcome.
+                if self.monitors_json().is_some_and(|text| scratchpad_open(&text)) {
+                    let _ = self.hypr_dispatch_v5(&v5_toggle_special());
+                    let still_open = self.monitors_json().is_some_and(|text| scratchpad_open(&text));
+                    tracing::warn!(
+                        still_open,
+                        "[hide] scratchpad still open after planned close — corrective close dispatched"
+                    );
+                }
+                true
             }
             HyprMode::V4 => {
                 // V4/conf fallback: Hyprland V4 dispatch has NO window targeting
@@ -670,6 +716,65 @@ fn safe_workspace_target(target: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' '))
 }
 
+// ── Idempotent verified hide (odd/hide-idempotency-and-singleton-watcher W2) ──
+
+/// Hide steps for the V5 arm, in execution order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HideStep {
+    /// Move HVE (by title) into the special workspace. Opens the overlay if
+    /// it was closed, which is why a close always follows in the same plan.
+    MoveToSpecial,
+    /// Close the scratchpad. Only ever dispatched when the state says OPEN —
+    /// a blind toggle is the regression this change removes.
+    CloseScratchpad,
+}
+
+/// Whether the scratchpad (`special:minimized`) is OPEN on any monitor, parsed
+/// from a `hyprctl monitors -j` snapshot. `{id: 0, name: ""}` is the CLOSED
+/// state (verified live 2026-09-22); a non-empty `name` or a non-zero `id`
+/// means open. Malformed or absent monitor data parses as CLOSED, so hide
+/// degrades to the legacy path instead of panicking on compositor output.
+pub(crate) fn scratchpad_open(monitors_json: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(monitors_json) else {
+        return false;
+    };
+    v.as_array().into_iter().flatten().any(|m| {
+        let Some(sw) = m.get("specialWorkspace") else {
+            return false;
+        };
+        let name_open = sw
+            .get("name")
+            .and_then(|n| n.as_str())
+            .is_some_and(|n| !n.is_empty());
+        let id_open = sw.get("id").and_then(|i| i.as_i64()).unwrap_or(0) != 0;
+        name_open || id_open
+    })
+}
+
+/// Pure hide plan for the V5 arm.
+///
+/// - `parked`: HVE already lives in the special workspace (the existing
+///   `hve_in_special` semantics).
+/// - `scratchpad_open`: live `hyprctl monitors -j` state (see `scratchpad_open`).
+///
+/// The regression case — parked with the scratchpad closed — yields an EMPTY
+/// plan: the old code blind-toggled there, re-opening the overlay so HVE
+/// became visible inside it (the 2nd/3rd apply bug). A toggle is only ever
+/// emitted when the state says the scratchpad is open.
+pub(crate) fn hide_plan(parked: bool, scratchpad_open: bool) -> Vec<HideStep> {
+    if parked && !scratchpad_open {
+        return Vec::new();
+    }
+    let mut plan = Vec::new();
+    if !parked {
+        // Moving to the special workspace opens the overlay, so the close
+        // must follow in the same plan (comment at `hyprland.rs` hide, V5).
+        plan.push(HideStep::MoveToSpecial);
+    }
+    plan.push(HideStep::CloseScratchpad);
+    plan
+}
+
 
 
 // ── Tests (gallery-immersive-redesign 1.4) ─────────────────────────────
@@ -776,6 +881,97 @@ mod tests {
         assert_eq!(parse_hve_seen(r#"[]"#), HveSeen::default());
         assert_eq!(parse_hve_seen("not json"), HveSeen::default());
         assert_eq!(parse_hve_seen(r#"{"not": "an array"}"#), HveSeen::default());
+    }
+
+    // ── Idempotent verified hide (odd/hide-idempotency-and-singleton-watcher W2) ──
+
+    /// The healthy live state (verified 2026-09-22): `{id: 0, name: ""}` on
+    /// every monitor means the scratchpad is CLOSED.
+    #[test]
+    fn scratchpad_closed_state_parses_to_false() {
+        let closed = r#"[
+            {"name": "DP-1", "specialWorkspace": {"id": 0, "name": ""}},
+            {"name": "HDMI-A-1", "specialWorkspace": {"id": 0, "name": ""}}
+        ]"#;
+        assert!(
+            !scratchpad_open(closed),
+            "both monitors closed ({{id:0, name:\"\"}}) must parse as closed"
+        );
+    }
+
+    /// An open scratchpad (`special:minimized`) on a monitor means OPEN.
+    #[test]
+    fn scratchpad_open_state_parses_to_true() {
+        let open = r#"[
+            {"name": "DP-1", "specialWorkspace": {"id": 2, "name": "special:minimized"}}
+        ]"#;
+        assert!(
+            scratchpad_open(open),
+            "a monitor carrying special:minimized must parse as open"
+        );
+    }
+
+    /// The scratchpad is open when ANY monitor reports it open.
+    #[test]
+    fn scratchpad_open_on_any_monitor_parses_to_true() {
+        let mixed = r#"[
+            {"name": "DP-1", "specialWorkspace": {"id": 0, "name": ""}},
+            {"name": "HDMI-A-1", "specialWorkspace": {"id": 4, "name": "special:minimized"}}
+        ]"#;
+        assert!(
+            scratchpad_open(mixed),
+            "one open monitor is enough — hiding must not blind-toggle while visible"
+        );
+    }
+
+    /// Malformed or absent monitor data parses as CLOSED: hide degrades to the
+    /// legacy move+close path instead of panicking on compositor output.
+    #[test]
+    fn scratchpad_garbage_or_absent_parses_to_closed() {
+        assert!(!scratchpad_open("not json"));
+        assert!(!scratchpad_open(r#"[]"#));
+        assert!(!scratchpad_open(r#"{"not": "an array"}"#));
+        assert!(!scratchpad_open(r#"[{"name": "DP-1"}]"#));
+    }
+
+    /// THE regression case: already parked with the scratchpad closed, a
+    /// repeated hide() must dispatch NOTHING — the old blind toggle re-opened
+    /// the overlay and HVE became visible inside it (the 2nd/3rd apply bug).
+    #[test]
+    fn hide_plan_parked_with_closed_scratchpad_is_empty() {
+        let plan = hide_plan(true, false);
+        assert!(
+            plan.is_empty(),
+            "parked + closed must never emit a toggle or a move, got: {:?}",
+            plan
+        );
+    }
+
+    /// Parked with the scratchpad open: close only — no move, no toggle while
+    /// the window is already in the special workspace.
+    #[test]
+    fn hide_plan_parked_with_open_scratchpad_closes_only() {
+        assert_eq!(
+            hide_plan(true, true),
+            vec![HideStep::CloseScratchpad],
+            "parked + open must emit exactly one close"
+        );
+    }
+
+    /// Not parked: move to special FIRST (the move opens the overlay), then
+    /// close — regardless of whether the scratchpad was open or closed before.
+    #[test]
+    fn hide_plan_not_parked_moves_then_closes() {
+        assert_eq!(
+            hide_plan(false, true),
+            vec![HideStep::MoveToSpecial, HideStep::CloseScratchpad],
+            "not parked + open must move then close"
+        );
+        assert_eq!(
+            hide_plan(false, false),
+            vec![HideStep::MoveToSpecial, HideStep::CloseScratchpad],
+            "not parked + closed: the move opens the overlay, so the close must follow"
+        );
     }
 }
 
