@@ -92,6 +92,19 @@ find_watch_files() {
 # Ensure log directory exists
 mkdir -p "$(dirname "$LOG_FILE")"
 
+# Singleton guard: only one color watcher per machine
+# (odd/hide-idempotency-and-singleton-watcher W1). The lock is a non-blocking
+# exclusive flock on a long-lived fd, held for the whole process lifetime.
+# A rejected second instance logs one line and exits 0 — it is a no-op, not
+# an error: exactly one instance keeps running assemble.sh / templates-apply.
+mkdir -p "$HVE_SAFE_DIR"
+LOCK_FILE="$HVE_SAFE_DIR/color_watcher.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    _log "Singleton guard: another color watcher holds $LOCK_FILE — exiting without starting"
+    exit 0
+fi
+
 _log "Starting watcher"
 
 WATCH_FILES=$(find_watch_files)

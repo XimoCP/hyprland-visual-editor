@@ -3585,6 +3585,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Start color watcher (bash inotify) ──
     // The bash-based watcher uses inotify for efficient file monitoring.
+    // The binding is an owned ColorWatcher guard: dropping it at exit (below)
+    // kills AND reaps the child — a raw Child drop would orphan the watcher
+    // (odd/hide-idempotency-and-singleton-watcher W1).
     let _color_watcher = watcher::spawn_color_watcher(&proj);
 
     // ── Composer controller (composition root) ──
@@ -3686,6 +3689,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // Clean up IPC socket after the event loop stops
     ipc::cleanup();
 
+    // Real teardown of the color watcher: the guard's Drop kills + reaps the
+    // child script. (A raw `std::process::Child` drop would NOT kill it — the
+    // orphaned watchers that predate the guard are out of scope here.)
     drop(_color_watcher);
     Ok(())
 }

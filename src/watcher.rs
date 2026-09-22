@@ -1,7 +1,33 @@
 use std::path::PathBuf;
 
-/// Spawn the color_watcher.sh bash script and return the child process handle.
-pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<std::process::Child> {
+/// Owned handle to the spawned color watcher process.
+///
+/// Dropping a raw `std::process::Child` NEVER kills the child (its `Drop`
+/// only closes the stdin handle), so an unguarded watcher is orphaned and
+/// keeps running forever — the S5 defect of odd/hide-idempotency-and-singleton-watcher.
+/// This guard terminates the watcher on drop AND reaps it (`wait`), so the
+/// pid is fully released and no zombie is left under `/proc`.
+pub struct ColorWatcher {
+    child: std::process::Child,
+}
+
+impl ColorWatcher {
+    /// Kill the watcher (best-effort) and reap it. Idempotent: a child that
+    /// already exited makes `kill` fail harmlessly and `wait` still reaps it.
+    fn terminate(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ColorWatcher {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+/// Spawn the color_watcher.sh bash script and return the owned guard handle.
+pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<ColorWatcher> {
     let watcher_script = proj.join("assets").join("scripts").join("color_watcher.sh");
     let watcher_log = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -29,7 +55,7 @@ pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<std::process::Child
             Ok(child) => {
                 tracing::info!("[HVE] Color watcher started (pid: {})", child.id());
                 tracing::info!("[HVE] Watcher log: {}", watcher_log.display());
-                Some(child)
+                Some(ColorWatcher { child })
             }
             Err(e) => {
                 tracing::error!("[HVE] Could not start color watcher: {}", e);
@@ -48,6 +74,26 @@ pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<std::process::Child
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    /// Kills and reaps its child on drop, so a panicking test can never
+    /// leave a watcher process behind. `std::process::Child`'s own `Drop`
+    /// does NOT kill the process — the explicit kill + wait is required.
+    struct KillOnDrop(Option<std::process::Child>);
+    impl KillOnDrop {
+        fn new(child: std::process::Child) -> Self {
+            Self(Some(child))
+        }
+    }
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.0.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
 
     #[test]
     fn test_spawn_color_watcher_script_not_found_returns_none() {
@@ -79,5 +125,169 @@ mod tests {
             assert!(log.to_string_lossy().contains("color_watcher.log"));
         }
     }
-}
 
+    #[test]
+    fn color_watcher_guard_kills_and_reaps_the_child_on_drop() {
+        // Dropping a raw std::process::Child NEVER kills the child: it would
+        // be orphaned and keep running (the S5 defect). The owned guard must
+        // kill AND reap, so no /proc/<pid> entry survives the drop — a zombie
+        // (killed but unreaped) would still appear there.
+        let child = Command::new("sleep").arg("86400").spawn().unwrap();
+        let pid = child.id();
+        assert!(
+            PathBuf::from(format!("/proc/{pid}")).exists(),
+            "precondition: the placeholder child is alive"
+        );
+        let guard = ColorWatcher { child };
+        drop(guard);
+        assert!(
+            !PathBuf::from(format!("/proc/{pid}")).exists(),
+            "guard drop must kill and reap the child (no /proc/{pid} entry)"
+        );
+    }
+
+    #[test]
+    fn sandboxed_second_watcher_instance_is_rejected_while_first_holds_the_lock() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // ── Sandboxed temp tree: HOME + HVE_CACHE_DIR point at it, so the
+        // real script can never touch the keeper's live session. ──
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(home.join(".cache/wal")).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        // Minimal watched file so `find_watch_files` is non-empty (pywal slot).
+        std::fs::write(
+            home.join(".cache/wal/colors.json"),
+            r#"{"wallpaper": "/dev/null"}"#,
+        )
+        .unwrap();
+
+        // Real scripts copied into the temp tree.
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
+        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
+            .unwrap();
+        std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+
+        // Stubs beside the real scripts so utils.sh resolves HVE_SCRIPTS_DIR
+        // into the temp tree: assemble.sh (counts its own runs), get_colors.sh
+        // and hve-ipc are harmless no-ops. hve-ipc needs +x for the `-x` guard.
+        let assemble_marker = cache.join("assemble_runs");
+        std::fs::write(
+            scripts.join("assemble.sh"),
+            format!("#!/bin/bash\necho run >> {}\n", assemble_marker.display()),
+        )
+        .unwrap();
+        std::fs::write(scripts.join("get_colors.sh"), "#!/bin/bash\nexit 0\n").unwrap();
+        std::fs::write(scripts.join("hve-ipc"), "#!/bin/bash\nexit 0\n").unwrap();
+        for name in ["assemble.sh", "get_colors.sh", "hve-ipc"] {
+            let path = scripts.join(name);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // inotifywait (sleeping stub — keeps the watch loop alive without
+        // touching the real inotify) and a noctalia stub, both on PATH.
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nsleep 2\n").unwrap();
+        std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
+        for name in ["inotifywait", "noctalia"] {
+            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        let path_with_stubs =
+            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+
+        let script_path = scripts.join("color_watcher.sh");
+        let spawn_instance = || {
+            Command::new("bash")
+                .arg(&script_path)
+                .env("HOME", &home)
+                .env("HVE_CACHE_DIR", &cache)
+                .env("PATH", &path_with_stubs)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+
+        // ── Instance 1 must acquire the singleton lock and start ──
+        let first = KillOnDrop::new(spawn_instance());
+
+        let log_file = home.join(".cache/hve/color_watcher.log");
+        let lock_file = cache.join("color_watcher.lock");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let locked = lock_file.exists();
+            let started = std::fs::read_to_string(&log_file)
+                .map(|s| s.contains("Starting watcher"))
+                .unwrap_or(false);
+            let refreshed = std::fs::read_to_string(&assemble_marker)
+                .map(|s| s.lines().count() > 0)
+                .unwrap_or(false);
+            if locked && started && refreshed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "first instance never acquired the singleton lock — flock guard missing?"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // ── Instance 2 must be rejected: exit 0, guard log, no work ──
+        let mut second = spawn_instance();
+        let second_deadline = Instant::now() + Duration::from_secs(10);
+        // Hard timeout: a missing guard would make instance 2 loop forever,
+        // hanging the suite — bounded here and cleaned up on panic.
+        let status = loop {
+            match second.try_wait() {
+                Ok(Some(st)) => break st,
+                Ok(None) => {}
+                Err(_) => {}
+            }
+            assert!(
+                Instant::now() < second_deadline,
+                "second instance did not exit — singleton guard missing?"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            status.success(),
+            "a rejected second instance must exit 0, got {status:?}"
+        );
+
+        // ── Assertions on the observable evidence ──
+        let log = std::fs::read_to_string(&log_file).unwrap();
+        assert!(
+            log.contains("Starting watcher"),
+            "the first instance logs its start"
+        );
+        assert_eq!(
+            log.matches("Starting watcher").count(),
+            1,
+            "exactly one instance may start (the second must be rejected before doing work)"
+        );
+        assert!(
+            log.contains("Singleton guard"),
+            "the rejected instance must log the guard message, got:\n{log}"
+        );
+        assert!(
+            lock_file.exists(),
+            "the singleton lock file must exist under HVE_CACHE_DIR"
+        );
+        let runs = std::fs::read_to_string(&assemble_marker).unwrap_or_default();
+        assert_eq!(
+            runs.lines().count(),
+            1,
+            "exactly one instance performs assemble.sh (the first's initial refresh)"
+        );
+
+        // Cleanup: terminate + reap the first instance so the suite never hangs.
+        drop(first);
+    }
+}
