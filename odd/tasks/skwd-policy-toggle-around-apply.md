@@ -106,9 +106,24 @@ Flip before the wallpaper hand-off; restore when the palette is verified (or at 
 | Full suite | orchestrator (re-ran it, did not trust the writer's report) | `cargo test` → **918 passed / 0 failed** (~33 s), 0 build warnings. Baseline before W1: 903. |
 | RED first (strict TDD) | writer, observed before implementing | 14 of the 15 new tests failed against `todo!()` stubs; the single green was the mechanical seam test, as expected. |
 | Cross-model independent verification (read-only, adversarial) | **GLM 5.3 Flash** — the writer ran on **DeepSeek V4 Flash** | **PASS WITH FINDINGS** — no BLOCKING, no MAJOR, three MINOR (below). Independently confirmed: the keeper's real config is unreachable from production code (the `SKWD_WALL_V2_CONFIG` seam is the only redirect, and every test uses it); the marker never lands in the engine's config directory; the ambiguity refusal is total (all planning is pure and happens before any write, so there can be no partial write and no stray marker); byte preservation holds for every shape tested, including the dotted `"theme.policy"` profile keys; zero panics in the production half; no existing test weakened or deleted. |
-| Live behaviour | **NOT RUN** | This is a primitive with no call site yet — W2 wires it. The keeper's live check comes after W2. |
+| Full suite (W2) | orchestrator (re-ran it, did not trust the writer's report) | `cargo test` → **934 passed / 0 failed** (~34 s), 0 build warnings. Baseline before W2: 918. |
+| RED first (W2, strict TDD) | writer, observed before implementing | Three staged RED runs, **regenerated** because the first writer session was interrupted mid-flight and left uncommitted work: (1) primitives inert → 12 failed in `skwd_policy` + 3 in `noctalia` + 1 in `main`; (2) yield active but the guard's `Drop` disabled → 3 failed, proving the guard is what restores; (3) ownership evaluated AFTER the yield → 1 failed against the new trap fixture, proving the documented trap is really exercised. |
+| Cross-model independent verification (W2, read-only, adversarial) | **GLM 5.3 Flash** — the writer ran on **DeepSeek V4 Flash** | **PASS WITH FINDINGS** — no BLOCKING, no MAJOR, two MINOR and two NIT (below). Independently confirmed: no reachable path leaves the switch `off` (every branch either restores through the guard's `Drop` or hands ownership to the worker, which restores on all of its exits); the ownership snapshot really is taken before the flip, and the trap fixture pins that regression; the marker-first ordering is correct and startup repair runs only in the lock-owning instance, so it can never repair under a live yield; all three W1 findings are closed; no test weakened or deleted; no panics in the production halves. |
+| Live behaviour | **NOT RUN** | Needs the keeper: apply a theme with the engine owning colours and watch for the flash. This is also what tunes the 250 ms observe wait — the elapsed time is logged for exactly that. |
 
-Findings to close in W2 (all MINOR — folded into the next work unit rather than opening a separate correction round):
+## Findings from the W2 verification (open)
+
+1. **MINOR — the observe wait blocks the UI thread.** The 250 ms wait between the flip and the wallpaper hand-off uses `std::thread::sleep` on HVE's event-loop thread (`noctalia.rs:946-956`), once per apply while the engine owns colours. It is bounded and lands during a theme transition, so it is not a regression to be scared of — but the cleaner shape is to perform the wait inside the spawned worker. To be judged against the keeper's live feel.
+2. **MINOR — the repair can clear the marker without repairing.** `recover_crashed_yield` clears the marker even when `plan_restore` refuses (it needs a unique anchor). The switch would then stay `off` with no retry, and the log line ("value already restored, or changed by the keeper") would be inaccurate. Narrow — it requires the anchor to become ambiguous between the yield and the restore — but the marker exists precisely to retry.
+
+NIT: `src/providers/skwd_policy.rs` ends without a trailing newline.
+NIT: the delivery forecast was badly missed — the document predicted ~150-250 authored lines; W2 alone is ~800, mostly tests. See the delivery note below.
+
+## Delivery note (open)
+
+W1 + W2 together are far past the ~400 authored-lines-per-slice budget (the W1 module alone is 816 lines; W2 adds ~824 across three files). The repository has **no remote configured** and the branch is hundreds of commits ahead of `master`, so the vehicle for delivery is a separate, later decision — recorded here so it is not discovered at PR time.
+
+Findings from the W1 verification — **all three closed by W2** (all MINOR; folded into the next work unit rather than opening a separate correction round):
 
 1. `write_atomic` leaves its `.tmp` file behind when the write or the sync fails; only the rename-failure path cleans up. A later write truncates it, but a failed write should leave nothing.
 2. The temp file name is fixed, so two concurrent invocations would collide. Not reachable while W2 keeps a single caller, but it should be unique.
