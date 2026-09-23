@@ -99,6 +99,23 @@ Flip before the wallpaper hand-off; restore when the palette is verified (or at 
 3. **The engine writing while we hold `off`** (keeper touching its settings mid-apply) could race our restore; mitigated by re-reading before restoring, and the window is milliseconds wide.
 4. **The engine's reload is tick-based**, not instant: the flip needs a moment to be observed before the wallpaper is handed over. The wait must be measured, not guessed.
 
+## Verification record
+
+| Check | Who | Result |
+|---|---|---|
+| Full suite | orchestrator (re-ran it, did not trust the writer's report) | `cargo test` → **918 passed / 0 failed** (~33 s), 0 build warnings. Baseline before W1: 903. |
+| RED first (strict TDD) | writer, observed before implementing | 14 of the 15 new tests failed against `todo!()` stubs; the single green was the mechanical seam test, as expected. |
+| Cross-model independent verification (read-only, adversarial) | **GLM 5.3 Flash** — the writer ran on **DeepSeek V4 Flash** | **PASS WITH FINDINGS** — no BLOCKING, no MAJOR, three MINOR (below). Independently confirmed: the keeper's real config is unreachable from production code (the `SKWD_WALL_V2_CONFIG` seam is the only redirect, and every test uses it); the marker never lands in the engine's config directory; the ambiguity refusal is total (all planning is pure and happens before any write, so there can be no partial write and no stray marker); byte preservation holds for every shape tested, including the dotted `"theme.policy"` profile keys; zero panics in the production half; no existing test weakened or deleted. |
+| Live behaviour | **NOT RUN** | This is a primitive with no call site yet — W2 wires it. The keeper's live check comes after W2. |
+
+Findings to close in W2 (all MINOR — folded into the next work unit rather than opening a separate correction round):
+
+1. `write_atomic` leaves its `.tmp` file behind when the write or the sync fails; only the rename-failure path cleans up. A later write truncates it, but a failed write should leave nothing.
+2. The temp file name is fixed, so two concurrent invocations would collide. Not reachable while W2 keeps a single caller, but it should be unique.
+3. `write_marker` does not `sync_all`, unlike the config write. A power cut at that instant could leave a corrupt marker, and recovery refuses to clear a marker it cannot parse — so the switch could stay off until a later startup repairs it. The marker exists precisely to prevent that state, so it must be as durable as the write it protects.
+
+Coverage gaps (NIT): no test for the `"policy" : "wallpaper"` spacing variant, and none for a bare `"policy"` nested in another object. The logic covers both; the coverage is unexercised.
+
 ## Progress
 
 - [x] W1 — yield/restore the value (pure plan + impure write) — shipped as a
@@ -110,5 +127,5 @@ Flip before the wallpaper hand-off; restore when the palette is verified (or at 
   mode preserved, marker-first protocol), and `recover_crashed_yield`.
   The path resolver is now exactly one: `noctalia::skwd_wall_config_path`
   delegates to `skwd_policy::config_path`.
-- [ ] W2 — wire around the apply + crash recovery
+- [ ] W2 — wire around the apply + crash recovery (**includes closing the three W1 findings above**)
 - [ ] Live confirmation (keeper)
