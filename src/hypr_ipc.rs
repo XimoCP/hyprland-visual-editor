@@ -176,11 +176,18 @@ where
 /// thread, so the restore hops to the UI thread — its step-2 timer uses
 /// `slint::Timer`, and timers are thread-local (a timer created on the
 /// listener thread never fires; verified in i-slint-core 1.17.0
-/// `timers.rs::single_shot`). Best-effort: before the event loop runs the
-/// hop errors and is ignored — the masks still apply directly.
+/// `timers.rs::single_shot`). Best-effort and bounded: before the event
+/// loop runs the hop errors and is ignored — the masks still apply
+/// directly and the restore waits for the next reload line. The failure is
+/// logged honestly (never silently dropped; nothing is aborted).
 fn on_configreloaded_line() {
     crate::reapply_theme_masks();
-    let _ = slint::invoke_from_event_loop(crate::reassert_fullscreen_after_reload);
+    if let Err(e) = slint::invoke_from_event_loop(crate::reassert_fullscreen_after_reload) {
+        tracing::debug!(
+            "[reassert] fullscreen restore UI-thread hop failed (pre-loop): {}",
+            e
+        );
+    }
 }
 
 /// Start the IPC listener that auto-refreshes colors on config reload.
@@ -401,5 +408,45 @@ mod tests {
         assert!(ran3, "a line after the 3s window reloads again");
         assert_eq!(on_line, 3);
         assert_eq!(heavy, 2);
+    }
+
+    /// The line-level `configreloaded` handler must log a failed UI-thread
+    /// hop honestly (bounded and best-effort) instead of silently
+    /// discarding the error — the unit's logging contract. The check is
+    /// scoped to the `on_configreloaded_line` body (comment-stripped), so
+    /// neither the test's own assertion text nor a commented-out call can
+    /// satisfy it (house precedent).
+    #[test]
+    fn configreloaded_hop_failure_is_logged_not_silently_dropped() {
+        let src = std::fs::read_to_string("src/hypr_ipc.rs").expect("src/hypr_ipc.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Scope to the on_configreloaded_line body (up to the next fn).
+        let start = code
+            .find("fn on_configreloaded_line")
+            .expect("on_configreloaded_line must exist");
+        let body = &code[start..];
+        let end = body
+            .find("\npub fn ")
+            .or_else(|| body.find("\nfn "))
+            .unwrap_or(body.len());
+        let body = &body[..end];
+        // The restore must still hop to the UI thread.
+        assert!(
+            body.contains("invoke_from_event_loop(crate::reassert_fullscreen_after_reload)"),
+            "the fullscreen restore must hop to the UI thread"
+        );
+        // The hop result must be inspected and logged — never `let _ =`.
+        assert!(
+            !body.contains("let _ = slint::invoke_from_event_loop"),
+            "a silent hop failure contradicts the unit's logging contract"
+        );
+        assert!(
+            body.contains("tracing::debug!") || body.contains("tracing::warn!"),
+            "the hop failure must be logged at debug or warn"
+        );
     }
 }

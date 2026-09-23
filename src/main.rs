@@ -734,6 +734,14 @@ pub(crate) fn schedule_post_apply_focus_restores(
 /// must not stack multiple unset->set cycles — each cycle is a visible
 /// fullscreen drop, and five stacked retries meant five visible minimizes.
 static LAST_REASSERT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+/// The single pending reload re-consult: Some(deadline) = a delayed
+/// re-consult is already armed to fire at that instant. One per refused
+/// decision — a second Debounced refusal while Some arms nothing (the
+/// pending re-consult re-checks the LIVE state, which already includes the
+/// later re-float); the timer clears it on fire so a later burst can arm
+/// again. Impure-shell bookkeeping, never a decision input.
+static PENDING_RECONSULT_AT: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
 /// Theme cycle generation: exactly one invisible unset->set per theme apply.
 /// The first path to fire (event-driven configreloaded OR 4.8s fallback)
 /// wins; the other becomes a no-op for that generation.
@@ -1097,21 +1105,97 @@ fn run_fullscreen_cycle(step2_gate: impl Fn() -> bool + 'static) {
 /// listener thread would never fire (hypr_ipc hops via
 /// invoke_from_event_loop).
 pub(crate) fn reassert_fullscreen_after_reload() {
-    let action = reload_fs_action(
-        is_theme_transitioning_flag(),
-        hve_supposed_visible(),
-        immersive_expected(),
-        crate::composer::hyprland::query_hve_seen().fullscreen,
-        last_reassert_elapsed(),
-    );
+    let action = reload_restore_action();
     match action {
         ReloadFsAction::Cycle => {
             apply_reload_fs_action(action, run_reload_cycle);
+        }
+        ReloadFsAction::Nothing(ReloadFsSkip::Debounced) => {
+            // The last reload of a burst can refuse inside the shared
+            // debounce window: reload A cycled (stamped LAST_REASSERT),
+            // reload B re-floated HVE 1.4s later and is refused. If B is
+            // the LAST line, nothing else would ever restore the
+            // fullscreen — HVE would stay windowed below the bar. Arm the
+            // single delayed re-consult: once the window expires it re-runs
+            // this same decision against the live state. Bounded: one
+            // pending per refused decision, the tick never re-arms.
+            tracing::debug!(
+                "[reassert] reload restore debounced — arming the single delayed re-consult"
+            );
+            arm_reload_reconsult(reload_reconsult_tick);
         }
         ReloadFsAction::Nothing(skip) => {
             tracing::debug!("[reassert] reload restore skipped: {:?}", skip);
         }
     }
+}
+
+/// Gather the live state and consult the pure decision — shared by the
+/// configreloaded-line entry and the delayed re-consult. The re-consult
+/// must re-gather (not reuse the stale refusal inputs): that is the
+/// verifier's "re-run the decision once against the live state".
+fn reload_restore_action() -> ReloadFsAction {
+    reload_fs_action(
+        is_theme_transitioning_flag(),
+        hve_supposed_visible(),
+        immersive_expected(),
+        crate::composer::hyprland::query_hve_seen().fullscreen,
+        last_reassert_elapsed(),
+    )
+}
+
+/// The single delayed re-consult, fired once the debounce window expired:
+/// re-run the FULL decision against the live state. Cycle → the shared
+/// unset→set cycle (which re-claims the debounce atomically at fire time);
+/// any refusal — including a fresh Debounced if another cycle ran in the
+/// meantime — does nothing. NEVER re-arms: one delayed re-consult per
+/// refused decision, never a self-perpetuating timer.
+fn reload_reconsult_tick() {
+    let action = reload_restore_action();
+    match action {
+        ReloadFsAction::Cycle => {
+            apply_reload_fs_action(action, run_reload_cycle);
+        }
+        ReloadFsAction::Nothing(skip) => {
+            tracing::debug!("[reassert] reload re-consult declined: {:?}", skip);
+        }
+    }
+}
+
+/// Pure timing for the single delayed re-consult: how long until the
+/// shared debounce window expires, measured from the last cycle. A
+/// Debounced refusal guarantees elapsed < window, so the re-consult fires
+/// exactly when the window expires, never inside it (a timer can only be
+/// late). Defensive: never cycled (None) or elapsed ≥ window → after one
+/// full window (the refusal cannot have happened in those states, but the
+/// delay stays bounded and never underflows).
+fn reload_reconsult_delay(since_last_cycle: Option<std::time::Duration>) -> std::time::Duration {
+    let window = std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS);
+    since_last_cycle
+        .map(|elapsed| window.saturating_sub(elapsed))
+        .unwrap_or(window)
+}
+
+/// Arm the single delayed re-consult after the debounce window (the
+/// last-reload-of-a-burst fix). ONE single-shot `slint::Timer` on the UI
+/// thread (thread-local timers — the caller already hopped); a second
+/// Debounced refusal while one is pending arms nothing (the pending one
+/// re-checks the live state, which already includes the later re-float —
+/// single owner, no stacked timers/cycles). Returns whether THIS call
+/// armed it.
+fn arm_reload_reconsult(tick: impl FnOnce() + 'static) -> bool {
+    let mut pending = PENDING_RECONSULT_AT.lock().unwrap_or_else(|e| e.into_inner());
+    if pending.is_some() {
+        tracing::debug!("[reassert] reload re-consult already pending — no second timer");
+        return false;
+    }
+    let delay = reload_reconsult_delay(last_reassert_elapsed());
+    *pending = Some(std::time::Instant::now() + delay);
+    slint::Timer::single_shot(delay, move || {
+        *PENDING_RECONSULT_AT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        tick();
+    });
+    true
 }
 
 // ── Fresh-launch fullscreen settle (floating-startup fix) ─────────────
@@ -4365,6 +4449,257 @@ mod tests {
         assert!(
             code.contains("handle_configreloaded_line"),
             "the restore must live in the line-level (always-run) handler"
+        );
+    }
+
+    // ── W3 correction (cross-model FAIL, re-verified): a Debounced refusal
+    // must not be terminal. Reload A drops fullscreen → the restore cycles
+    // and stamps LAST_REASSERT. Reload B re-floats HVE 1.4s later (burst) →
+    // `Debounced` → refused. If B is the LAST reload of the burst, HVE
+    // stays windowed below the bar FOREVER. Fix: one delayed re-consult
+    // (single-shot timer) after the debounce window re-runs the FULL
+    // decision against the live state; bounded — the tick never re-arms,
+    // and one pending re-consult per refused decision (no second timer).
+
+    /// BLOCKING CASE: a reload inside the debounce window that is the last
+    /// of the burst must still end with HVE immersive — the delayed
+    /// re-consult runs the cycle once the window expires.
+    #[test]
+    fn debounced_last_reload_of_a_burst_still_ends_immersive_via_delayed_reconsult() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+
+        // Reload A already cycled: the shared debounce stamp is 1.4s old,
+        // so a reload B arriving NOW is refused (inside the 1.5s window).
+        *LAST_REASSERT.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
+        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+
+        // The re-consult tick (the real one re-gathers live state; here the
+        // decision inputs are injected headlessly): once the window has
+        // expired, HVE is STILL supposed to be immersive and STILL
+        // re-floated (last reload of the burst) → Cycle → cycle runs.
+        let cycles = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        {
+            let cycles = std::sync::Arc::clone(&cycles);
+            let armed = arm_reload_reconsult(move || {
+                let action = reload_fs_action(
+                    false, // no transition in flight
+                    true,  // HVE still Visible
+                    true,  // still immersive (gallery session, panel docked)
+                    false, // STILL windowed: reload B re-floated it
+                    Some(std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS + 100)), // window expired
+                );
+                assert_eq!(
+                    action,
+                    ReloadFsAction::Cycle,
+                    "once the debounce window expired, the decision must cycle"
+                );
+                apply_reload_fs_action(action, move || *cycles.lock().unwrap() += 1);
+            });
+            assert!(
+                armed,
+                "a Debounced refusal must arm the single delayed re-consult"
+            );
+        }
+
+        // Nothing runs before the window expires…
+        assert_eq!(*cycles.lock().unwrap(), 0, "no cycle before the window expires");
+
+        // …and once the mock clock passes the remaining window (1.4s old
+        // stamp → ~100ms left), the single-shot fires exactly once and the
+        // cycle runs: the last reload of the burst ends immersive.
+        for _ in 0..20 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        assert_eq!(
+            *cycles.lock().unwrap(),
+            1,
+            "the delayed re-consult must run the cycle once the window expires — \
+             the last reload of a burst must not leave HVE stuck windowed below the bar"
+        );
+        let _ = &win; // platform guard
+    }
+
+    /// The re-consult finds HVE ALREADY fullscreen → do nothing (there is
+    /// nothing to restore; the decision says so).
+    #[test]
+    fn delayed_reconsult_finds_hve_fullscreen_and_does_nothing() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+
+        *LAST_REASSERT.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
+        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+
+        let cycles = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        {
+            let cycles = std::sync::Arc::clone(&cycles);
+            let armed = arm_reload_reconsult(move || {
+                let action = reload_fs_action(
+                    false,
+                    true,
+                    true,
+                    true, // HVE already immersive fullscreen by re-consult time
+                    Some(std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS + 100)),
+                );
+                assert_eq!(
+                    action,
+                    ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen),
+                    "a re-consult that finds HVE fullscreen must refuse"
+                );
+                apply_reload_fs_action(action, move || *cycles.lock().unwrap() += 1);
+            });
+            assert!(armed);
+        }
+
+        for _ in 0..20 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        assert_eq!(
+            *cycles.lock().unwrap(),
+            0,
+            "already fullscreen needs no cycle — the re-consult must do nothing"
+        );
+        let _ = &win;
+    }
+
+    /// The re-consult finds HVE parked/hidden → do nothing (never fire
+    /// while hidden — a re-consult is no exception).
+    #[test]
+    fn delayed_reconsult_finds_hve_hidden_and_does_nothing() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+
+        *LAST_REASSERT.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
+        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+
+        let cycles = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        {
+            let cycles = std::sync::Arc::clone(&cycles);
+            let armed = arm_reload_reconsult(move || {
+                let action = reload_fs_action(
+                    false,
+                    false, // HVE parked in the scratchpad by re-consult time
+                    true,
+                    false,
+                    Some(std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS + 100)),
+                );
+                assert_eq!(
+                    action,
+                    ReloadFsAction::Nothing(ReloadFsSkip::HveHidden),
+                    "a re-consult that finds HVE hidden must refuse"
+                );
+                apply_reload_fs_action(action, move || *cycles.lock().unwrap() += 1);
+            });
+            assert!(armed);
+        }
+
+        for _ in 0..20 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        assert_eq!(
+            *cycles.lock().unwrap(),
+            0,
+            "firing the cycle while HVE is parked/hidden is the parked-window bug — \
+             a re-consult must not reintroduce it"
+        );
+        let _ = &win;
+    }
+
+    /// The retry does not stack: a second Debounced refusal while one
+    /// re-consult is already pending does NOT create a second timer — the
+    /// pending one re-checks the live state, which already includes the
+    /// later re-float (single owner, debounced, no stacked cycles).
+    #[test]
+    fn second_debounced_refusal_does_not_create_a_second_timer() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+
+        *LAST_REASSERT.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
+        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+
+        let ticks = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        {
+            let ticks_first = std::sync::Arc::clone(&ticks);
+            let first = arm_reload_reconsult(move || *ticks_first.lock().unwrap() += 1);
+            assert!(first, "the first refusal arms the re-consult");
+
+            let ticks_second = std::sync::Arc::clone(&ticks);
+            let second = arm_reload_reconsult(move || *ticks_second.lock().unwrap() += 1);
+            assert!(
+                !second,
+                "a second refusal while one re-consult is pending must NOT create a second timer"
+            );
+        }
+
+        // Advance well past the window: the tick must have run exactly ONCE.
+        for _ in 0..100 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        assert_eq!(
+            *ticks.lock().unwrap(),
+            1,
+            "one delayed re-consult per refused decision — two refusals in one window \
+             fire exactly one re-consult"
+        );
+        // The pending marker is cleared once the timer fires: a later burst
+        // can arm again (bounded, not wedged).
+        assert!(
+            PENDING_RECONSULT_AT.lock().unwrap().is_none(),
+            "the pending marker must clear once the re-consult fires"
+        );
+        let _ = &win;
+    }
+
+    /// Wiring + boundedness pins (comment-stripped, house precedent): the
+    /// entry arms the single re-consult on a Debounced refusal; the tick
+    /// itself never re-arms (one delayed re-consult per refused decision,
+    /// never a self-perpetuating timer); the arm uses exactly one
+    /// single-shot slint timer.
+    #[test]
+    fn reload_reconsult_wiring_and_boundedness_pins() {
+        let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            code.contains("arm_reload_reconsult"),
+            "the Debounced refusal must arm the delayed re-consult"
+        );
+
+        let tick_start = code.find("fn reload_reconsult_tick").expect("re-consult tick must exist");
+        let tick_end = code[tick_start..].find("\n}").expect("tick body must close") + tick_start;
+        let tick_body = &code[tick_start..tick_end];
+        assert!(
+            !tick_body.contains("arm_reload_reconsult"),
+            "the re-consult tick must never re-arm — bounded, no retry loop"
+        );
+        assert!(
+            !tick_body.contains("Timer::"),
+            "the tick must not schedule any timer — one re-consult per refused decision"
+        );
+
+        let arm_start = code.find("fn arm_reload_reconsult").expect("arm must exist");
+        let arm_end = code[arm_start..].find("\n}").expect("arm body must close") + arm_start;
+        let arm_body = &code[arm_start..arm_end];
+        assert_eq!(
+            arm_body.matches("Timer::single_shot").count(),
+            1,
+            "exactly ONE single-shot timer per refused decision"
+        );
+        assert!(
+            code.contains("PENDING_RECONSULT_AT"),
+            "the one-pending-re-consult guard must exist (no stacked timers)"
         );
     }
 

@@ -163,7 +163,12 @@ test set below.
    fullscreen force would destroy them.
 5. The same while HVE is already immersive fullscreen → nothing (there is
    nothing to restore).
-6. A second reload inside the 1.5s debounce window → no second cycle.
+6. A second reload inside the 1.5s debounce window → no second cycle
+   inside the window; the refusal arms at most ONE pending re-consult
+   (never a second timer — the pending one re-checks the live state,
+   which already includes the later re-float), and that single re-consult
+   runs the full decision once the window expires (correction C1; see
+   Risks 2 and the Verification record).
 7. The cycle is the SAME mechanics as `reassert_gallery_fullscreen`'s (shared
    `run_fullscreen_cycle`); the reload restore never re-implements a second
    cycle and never consults the gallery expansion.
@@ -187,9 +192,24 @@ test set below.
    SAME visible event the gallery reassert already produces, and a far
    better default than the stuck windowed state. The root cause (reload
    frequency) is a separate, later decision.
-2. **The shared 1.5s debounce couples the two reasserts.** A gallery expand
-   within 1.5s of a reload restore is skipped (and vice versa) — that is the
-   documented one-visible-cycle contract, accepted.
+2. **The shared 1.5s debounce couples the two reasserts, but a debounced
+   refusal is NO LONGER terminal — it is retried once after the window.**
+   A gallery expand within 1.5s of a reload restore is skipped by the
+   shared claim (and vice versa) — that part is the documented
+   one-visible-cycle contract and stays. What changed after the
+   cross-model FAIL: a reload restore refused as `Debounced` (the last
+   reload of a burst landing inside the window) used to be dropped
+   forever, leaving HVE stuck windowed below the bar. It now arms ONE
+   single-shot re-consult that fires exactly when the shared window
+   expires and re-runs the FULL decision against the live state. The
+   retry is bounded, per the verifier's remedy shape: one re-consult per
+   refused decision, the tick NEVER re-arms (no self-perpetuating
+   timer), and a second refusal while one is pending arms nothing (the
+   pending re-consult re-checks live state, which already includes the
+   later re-float — single owner, no stacked timers/cycles). The retry
+   re-consults every gate, so it never fires while HVE is hidden and
+   never inside the theme-transition window (the finale still owns those
+   cycles).
 3. **The immersive gate is a design decision the brief did not settle.**
    The brief's pure-input list has four items; the implementation adds
    `immersive_expected` (gallery session active && panel not floating).
@@ -222,10 +242,15 @@ test set below.
 
 | Check | Who | Result |
 |---|---|---|
-| Suite baseline | writer, before any change | `cargo test` → **934 passed / 0 failed** (~35 s), 0 build warnings. |
+| Suite baseline (W1) | writer, before any change | `cargo test` → **934 passed / 0 failed** (~35 s), 0 build warnings. |
 | RED first (strict TDD) | writer, observed before implementing | 7 new tests failed against `todo!()` stubs; the refreshed decision signature (added the `immersive_expected` gate, see Risks 3) failed to compile before its implementation — both REDs captured. |
 | Full suite (W1) | writer, after implementing | `cargo test` → **941 passed / 0 failed** (~34 s), 0 build warnings. |
-| Cross-model independent verification (read-only, adversarial) | a DIFFERENT model than the writer (per AGENTS.md model roles) | **PENDING** — Tier 3 (state machine + timers + compositor subsystem). |
+| Cross-model independent verification (read-only, adversarial) | a DIFFERENT model than the writer (per AGENTS.md model roles), GLM 5.3 Flash reviewing `c6ddf9f` | **FAIL** — one BLOCKING finding: `reload_fs_action` returns `Nothing(Debounced)` when `since_last_cycle < 1.5s` and the restore runs ONLY on a `configreloaded` line — no retry. Reload A cycles + stamps `LAST_REASSERT`; reload B re-floats HVE 1.4s later → refused → if B is the LAST reload of a burst, HVE stays windowed below the bar permanently (the exact stuck state this feature exists to prevent). |
+| Correction (bounded, single work unit) | writer, after FAIL | Added the delayed re-consult per the verifier's remedy shape (single-shot timer, never re-armed, no second timer while pending) + logged the silent UI-thread hop failure (unit logging contract). Correction commit separate from `c6ddf9f`, not amended. See **Correction C1** below. |
+| Suite baseline (correction) | writer, before the change | `cargo test` → **941 passed / 0 failed**, 0 build warnings. |
+| RED first (correction) | writer, observed before implementing | 5 new `main.rs` tests referencing the not-yet-existing arm/seam (`arm_reload_reconsult`, `PENDING_RECONSULT_AT`, `reload_reconsult_tick`) failed to compile; the `hypr_ipc.rs` hop-logging test failed the `let _ =` pin until the fix landed. RED captured before implementation. |
+| Full suite (correction) | writer, after implementing | `cargo test` → **947 passed / 0 failed** (~36 s), 0 build warnings. |
+| Re-verification of the correction | a DIFFERENT model than the writer (per AGENTS.md model roles) | **PENDING** — Tier 3 (state machine + timers + compositor subsystem). |
 | Live behaviour | **NOT RUN** | Needs the keeper: reload while HVE is fullscreen and watch the border/blur/bar survive. |
 
 ## Progress
@@ -245,5 +270,17 @@ test set below.
   `src/hypr_ipc.rs`: every `configreloaded` line runs masks + the restore
   (UI-thread hop — thread-local timers) before the 3s throttle, via the
   headless-testable `handle_configreloaded_line`.
-- [ ] Cross-model verification.
+- [x] C1 — bounded delayed re-consult after a debounced refusal (correction
+  of the cross-model FAIL, 2026-09-23). One single-shot timer per refused
+  decision: on `Nothing(Debounced)` the impure shell arms a re-consult that
+  fires exactly when the shared window expires (`reload_reconsult_delay` =
+  `REASSERT_DEBOUNCE_MS − since_last_cycle`) and re-runs the FULL decision
+  against the live state (`reload_restore_action` shared by the line entry
+  and the tick). The tick never re-arms; `PENDING_RECONSULT_AT` enforces
+  one pending re-consult max, so a burst inside the window fires exactly
+  one timer and no stacked cycles. The cycle itself still re-claims the
+  shared debounce at fire time (single owner, `run_reload_cycle`). Also
+  fixed in C1: the `hypr_ipc.rs` UI-thread hop now logs its failure at
+  debug instead of a silent `let _ =` (unit logging contract).
+- [ ] Re-verification (cross-model) of C1.
 - [ ] Live confirmation (keeper).
