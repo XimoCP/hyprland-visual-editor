@@ -4,6 +4,8 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/utils.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/reload_coalescer.sh"
 
 # Lua-only assembler: the config format is never detected at runtime.
 FINAL_FILE="$HVE_SAFE_DIR/overlay.lua"
@@ -89,8 +91,10 @@ rm -f "$UNIVERSAL_OVERLAY"
 ln -s "$FINAL_FILE" "$UNIVERSAL_OVERLAY"
 
 # --- APPLICATION ---
+# One reload per change-burst, never lost: hve_reload_queue coalesces via
+# reload_coalescer.sh (marker + drainer). Disable with HVE_RELOAD_COALESCE=0.
 if pgrep -x "Hyprland" > /dev/null; then
-    hyprctl reload > /dev/null 2>&1
+    hve_reload_queue
 fi
 
 echo "✅ [HVE SUCCESS] Overlay verified. Universal 'overlay.current' symlink updated."

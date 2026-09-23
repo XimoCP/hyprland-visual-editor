@@ -137,6 +137,7 @@ fn core_scripts_have_no_format_detection() {
         "geometry.sh",
         "colors.sh",
         "color_watcher.sh",
+        "reload_coalescer.sh",
     ] {
         let src = read_script(name);
         assert!(!src.contains("HVE_FORMAT"), "{name} must not read HVE_FORMAT");

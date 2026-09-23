@@ -24,6 +24,8 @@ mod watcher;
 #[cfg(test)]
 mod scripts_contract;
 #[cfg(test)]
+mod reload_coalescer;
+#[cfg(test)]
 mod test_utils;
 
 use app_state::AppState;
