@@ -3,6 +3,7 @@ pub mod mpvpaper;
 pub mod noctalia;
 pub mod noctalia_runtime;
 pub mod shell;
+pub mod skwd_policy;
 pub mod wallpaper_authority;
 
 use crate::engine::Engine;

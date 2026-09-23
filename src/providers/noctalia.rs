@@ -854,14 +854,13 @@ fn find_palette_path(source: &str, name: &str) -> Option<PathBuf> {
 /// case); otherwise the platform config dir
 /// (`$XDG_CONFIG_HOME/skwd-wall-v2/config.json`, i.e. `~/.config/...`),
 /// which the `TempEnv` test sandbox already redirects via HOME.
+///
+/// Single-resolver rule: the path logic lives ONLY in
+/// [`crate::providers::skwd_policy::config_path`] (the W1 yield/restore
+/// module needs the exact same seam); this accessor delegates to it so a
+/// future change cannot fork the two copies.
 fn skwd_wall_config_path() -> PathBuf {
-    if let Ok(custom) = std::env::var("SKWD_WALL_V2_CONFIG") {
-        return PathBuf::from(custom);
-    }
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"))
-        .join("skwd-wall-v2")
-        .join("config.json")
+    crate::providers::skwd_policy::config_path()
 }
 
 /// True when the skwd-wall engine owns the color scheme and will
@@ -2344,6 +2343,36 @@ exit 0
         type Writer = LogCapture;
         fn make_writer(&'a self) -> Self::Writer {
             self.clone()
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn skwd_wall_config_path_matches_the_shared_skwd_policy_resolver() {
+        // Single-resolver rule: the seam lives in exactly one place
+        // (skwd_policy::config_path); this accessor delegates to it. Both
+        // seam states must agree: env override set, and env override unset
+        // (platform config dir under the TempEnv-redirected HOME).
+        use crate::providers::skwd_policy::config_path;
+        let _env = crate::test_utils::TempEnv::new();
+        let saved = std::env::var("SKWD_WALL_V2_CONFIG").ok();
+        std::env::remove_var("SKWD_WALL_V2_CONFIG");
+        assert_eq!(
+            skwd_wall_config_path(),
+            config_path(),
+            "both resolvers must agree on the config-dir fallback"
+        );
+        let override_path = std::env::temp_dir().join("hve-skwd-delegation-check.json");
+        std::env::set_var("SKWD_WALL_V2_CONFIG", &override_path);
+        assert_eq!(
+            skwd_wall_config_path(),
+            config_path(),
+            "both resolvers must agree on the env override"
+        );
+        assert_eq!(config_path(), override_path);
+        match &saved {
+            Some(v) => std::env::set_var("SKWD_WALL_V2_CONFIG", v),
+            None => std::env::remove_var("SKWD_WALL_V2_CONFIG"),
         }
     }
 

@@ -101,6 +101,14 @@ Flip before the wallpaper hand-off; restore when the palette is verified (or at 
 
 ## Progress
 
-- [ ] W1 — yield/restore the value (pure plan + impure write)
+- [x] W1 — yield/restore the value (pure plan + impure write) — shipped as a
+  work-unit commit on 2026-09-23 (hash reported by the orchestrator, not
+  self-referential on purpose). Primitives live in
+  `src/providers/skwd_policy.rs`: pure `plan_yield`/`plan_restore` (single
+  bare `"policy"` anchor, refuses ambiguity, byte-preserving), impure
+  `yield_color_authority`/`restore_color_authority` (same-dir atomic write,
+  mode preserved, marker-first protocol), and `recover_crashed_yield`.
+  The path resolver is now exactly one: `noctalia::skwd_wall_config_path`
+  delegates to `skwd_policy::config_path`.
 - [ ] W2 — wire around the apply + crash recovery
 - [ ] Live confirmation (keeper)
