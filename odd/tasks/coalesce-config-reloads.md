@@ -135,11 +135,16 @@ and the next request consumes it. Disable with one env var. Tidy seams:
   fires. The drainer loops forever; a marker or claim is fired by the
   drainer that owns the lock (or by the next spawn if that one died). The
   ONLY way a reload never arrives is a kill of the drainer AND no further
-  request ever — which the 30 s watcher re-check and any later apply/click
-  rule out, and which the kill-then-request tests pin anyway. (W5 correction:
-  the original protocol removed the marker BEFORE the drain window, so a kill
-  inside that window lost the reload despite the "never lost" claim — see the
-  correction record below.)
+  request ever: the claim then sits on disk until something else touches the
+  desktop (any later apply, click, colour event, or a fresh drainer spawned
+  by the next request). Nothing sweeps it periodically — the colour watcher's
+  30 s timer only re-arms `inotifywait`, it does **not** re-run the queue, and
+  `assemble.sh` does not scan for a claim when sourced. So the honest bound is
+  **delayed, never lost while any future request arrives**, and the
+  kill-then-request tests pin exactly that. (W5 correction: the original
+  protocol removed the marker BEFORE the drain window, so a kill inside that
+  window lost the reload despite the "never lost" claim — see the correction
+  record below.)
 - **Preserved semantics**: the "is Hyprland running" guard runs at request
   time (exactly where it runs today) AND at fire time (the drainer re-checks,
   because Hyprland may have died during the window). Hyprland down at request
