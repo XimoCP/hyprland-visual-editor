@@ -250,8 +250,14 @@ test set below.
 | Suite baseline (correction) | writer, before the change | `cargo test` → **941 passed / 0 failed**, 0 build warnings. |
 | RED first (correction) | writer, observed before implementing | 5 new `main.rs` tests referencing the not-yet-existing arm/seam (`arm_reload_reconsult`, `PENDING_RECONSULT_AT`, `reload_reconsult_tick`) failed to compile; the `hypr_ipc.rs` hop-logging test failed the `let _ =` pin until the fix landed. RED captured before implementation. |
 | Full suite (correction) | writer, after implementing | `cargo test` → **947 passed / 0 failed** (~36 s), 0 build warnings. |
-| Re-verification of the correction | a DIFFERENT model than the writer (per AGENTS.md model roles) | **PENDING** — Tier 3 (state machine + timers + compositor subsystem). |
+| Re-verification of the correction | a DIFFERENT model than the writer (per AGENTS.md model roles), GLM 5.3 Flash reviewing `9488448` | **PASS WITH FINDINGS — the previously BLOCKING finding is CLOSED.** Traced end to end: `Nothing(Debounced)` arms one single-shot timer at exactly the window remainder (`reload_reconsult_delay = window − elapsed > 0`, so it cannot fire early), the tick re-gathers live state and re-runs all five gates, and the last-reload-of-a-burst case now ends in `Cycle`. Boundedness confirmed: the tick never re-arms, a second refusal with one pending arms nothing, and a burst fires exactly one re-consult. The `run_fullscreen_cycle` refactor preserved the gallery path verbatim. Three findings below, none blocking. |
 | Live behaviour | **NOT RUN** | Needs the keeper: reload while HVE is fullscreen and watch the border/blur/bar survive. |
+
+## Findings from the re-verification (open, none blocking)
+
+1. **MEDIUM — the wiring pin is weak.** The test that pins the arming asserts the substring `arm_reload_reconsult` appears *anywhere* in `src/main.rs`, without stripping test code or scoping it to `reassert_fullscreen_after_reload`. Four other new tests call that function directly, so the substring survives even if the production arm call is deleted: a future regression that removes the arming would keep the entire suite green. The behaviour is correct today (verified by reading the code); it is the pin that is weak. To tighten in a later unit.
+2. **MINOR — the hop failure logs at `debug`.** `src/hypr_ipc.rs` now inspects and logs the UI-thread hop failure instead of discarding it, but at `debug`, which is invisible at the default `info` level. It aborts nothing and the anti-`let _ =` test is sound; only the level is arguably too quiet for the unit's own "logged honestly" contract.
+3. **MINOR — the pending guard's narrow window.** `PENDING_RECONSULT_AT` is set before `Timer::single_shot` and cleared inside the closure. The only paths where it could stay set with no timer are the event loop closing before the fire (the app is exiting — harmless) or a panic inside `single_shot`. No silent-wedge path was found in production.
 
 ## Progress
 
@@ -282,5 +288,5 @@ test set below.
   shared debounce at fire time (single owner, `run_reload_cycle`). Also
   fixed in C1: the `hypr_ipc.rs` UI-thread hop now logs its failure at
   debug instead of a silent `let _ =` (unit logging contract).
-- [ ] Re-verification (cross-model) of C1.
+- [x] Re-verification (cross-model) of C1 — **PASS WITH FINDINGS, the BLOCKING finding closed**; three open findings recorded above (none blocking).
 - [ ] Live confirmation (keeper).
