@@ -145,6 +145,22 @@ Findings from the W1 verification — **all three closed by W2** (all MINOR; fol
 
 Coverage gaps (NIT): no test for the `"policy" : "wallpaper"` spacing variant, and none for a bare `"policy"` nested in another object. The logic covers both; the coverage is unexercised.
 
+## Verification record — W4 (hoisting the yield over the animated hand-off)
+
+| Check | Who | Result |
+|---|---|---|
+| Full suite (W4) | orchestrator (re-ran it, did not trust the writer's report) | `cargo test` -> **955 passed / 0 failed** (~47 s), 0 build warnings. Baseline before W4: 947. |
+| RED first (W4, strict TDD) | writer, observed before implementing | 4 of the 8 new tests failed against the untouched code, exactly the gap: the animated hand-off saw `policy: wallpaper` (no yield at all), and the animated exit paths had no guard log because there was never a yield on that route. |
+| Cross-model independent verification (read-only, adversarial) | **GLM 5.3 Flash** - the writer ran on **DeepSeek V4 Flash** | **PASS WITH FINDINGS** - no BLOCKING, two MINOR (below). Independently confirmed: the flip precedes the first hand-off on every path that hands a wallpaper to the engine; exactly ONE yield per apply even when both branches run (the old block was moved, not duplicated); every exit path still restores and no reachable path leaves the engine at `off`; nothing is written when there is nothing to yield; the observe wait is not doubled; the ownership snapshot is still taken before the flip; the ordering evidence is genuine (the stub really runs and greps the same config the production flip mutates, so it observes rather than assumes); no test weakened or deleted; no panics in the production half. |
+| Live behaviour | **NOT RUN** | The keeper's check. The animated case is now the one to watch. |
+
+Findings from the W4 verification (open, none blocking):
+
+1. **MINOR - the yield predicate skips the legacy `mpvpaper` manifest hand-off.** A theme with an `mpvpaper.json` manifest but neither `video.txt` nor a non-empty `wallpaper.txt` hands the wallpaper to the plugin without yielding. Measured against the keeper's real themes: **none of them uses that manifest** (only `Animation` carries `video.txt`), so the gap is theoretical for him - but it is real and unproven-harmless. Either include the manifest in the predicate or keep it recorded here; it is recorded.
+2. **MINOR - the yield fires even when nothing will be handed over** (a `video.txt` naming a path that no longer exists): a config write plus the 250 ms wait for an apply that delivers nothing. Safe - the guard restores - but wasteful, and it contradicts the spirit (not the letter) of acceptance criterion 5.
+
+Also confirmed by the same round: the two W2 MINORs remain open (the observe wait blocks the UI thread; the repair can clear its marker without repairing). W4 does not touch them.
+
 ## Progress
 
 - [x] W1 — yield/restore the value (pure plan + impure write) — shipped as a
