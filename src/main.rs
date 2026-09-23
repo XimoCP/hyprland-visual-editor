@@ -870,7 +870,7 @@ pub(crate) fn reapply_theme_masks() {
 fn reassert_debounce_ok() -> bool {
     let mut last = LAST_REASSERT.lock().unwrap();
     let now = std::time::Instant::now();
-    if last.is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(1500)) {
+    if last.is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS)) {
         return false; // a cycle ran (or is running) very recently — skip
     }
     *last = Some(now);
@@ -908,6 +908,167 @@ pub(crate) fn reassert_gallery_fullscreen() {
     } else if !reassert_debounce_ok() {
         return;
     }
+    // The shared unset->set mechanics (same dispatch the reload restore
+    // uses); the gallery expansion stays THIS caller's gate, re-checked at
+    // step 2 so a gallery close mid-cycle cancels the set.
+    run_fullscreen_cycle(|| crate::shell::Shell::is_gallery_expanded());
+}
+
+/// Timed safety net after a theme apply: REMOVED — the single unset->set
+/// cycle now runs inside the transparent fade window (event-driven path in
+/// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
+/// visible flashes after fade-in.
+
+// ── Fullscreen survives a config reload ────────────────────────────────
+// Every `hyprctl reload` resets the runtime keyword overrides AND
+// re-floats HVE, dropping its immersive fullscreen. The reload path must
+// put it back: one pure decision + a thin impure shell, debounced with the
+// shared reassert window, and never while a theme transition is in flight
+// (the finale owns that cycle). See
+// odd/tasks/fullscreen-survives-config-reload.md.
+
+/// Shared debounce window for visible fullscreen cycles (gallery reassert
+/// AND reload restore): at most one visible unset->set cycle per window.
+pub(crate) const REASSERT_DEBOUNCE_MS: u64 = 1500;
+
+/// Why the reload restore declined. Logged at debug; each variant is its
+/// own unit test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReloadFsSkip {
+    /// A theme transition is in flight — the finale owns the cycle.
+    ThemeTransitionInFlight,
+    /// HVE is not supposed to be showing (ShowStateMachine not Visible).
+    HveHidden,
+    /// HVE is not inside the immersive presentation (no gallery session,
+    /// or the settings panel floats — the window is the live border
+    /// preview there, fullscreen would destroy it).
+    NotImmersive,
+    /// HVE is already immersive fullscreen — nothing to restore.
+    AlreadyFullscreen,
+    /// A fullscreen cycle ran inside the shared debounce window.
+    Debounced,
+}
+
+/// The pure decision for the reload restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReloadFsAction {
+    /// Run the unset->set fullscreen cycle now.
+    Cycle,
+    /// Do nothing, for a recorded reason.
+    Nothing(ReloadFsSkip),
+}
+
+/// Pure decision (no I/O): given the state a config reload leaves, decide
+/// whether to restore immersive fullscreen. Every branch is headless-tested.
+///
+/// - `transition_in_flight`: THEME_TRANSITIONING_FLAG — the finale owns the
+///   cycle inside a theme transition, so the restore must refuse.
+/// - `hve_supposed_visible`: ShowStateMachine == Visible (Hidden/Entering
+///   never restore — the settle owns fullscreen during a show).
+/// - `immersive_expected`: the app believes HVE should HOLD immersive
+///   fullscreen right now — gallery session active and the settings panel
+///   NOT floating (the floating panel is a deliberate windowed
+///   presentation; the window IS the live border preview there).
+/// - `hve_fullscreen`: `hyprctl clients -j` snapshot of the HVE client.
+/// - `since_last_cycle`: time since LAST_REASSERT (None = never cycled).
+pub(crate) fn reload_fs_action(
+    transition_in_flight: bool,
+    hve_supposed_visible: bool,
+    immersive_expected: bool,
+    hve_fullscreen: bool,
+    since_last_cycle: Option<std::time::Duration>,
+) -> ReloadFsAction {
+    if transition_in_flight {
+        return ReloadFsAction::Nothing(ReloadFsSkip::ThemeTransitionInFlight);
+    }
+    if !hve_supposed_visible {
+        return ReloadFsAction::Nothing(ReloadFsSkip::HveHidden);
+    }
+    if !immersive_expected {
+        return ReloadFsAction::Nothing(ReloadFsSkip::NotImmersive);
+    }
+    if hve_fullscreen {
+        return ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen);
+    }
+    if since_last_cycle.is_some_and(|d| d < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS)) {
+        return ReloadFsAction::Nothing(ReloadFsSkip::Debounced);
+    }
+    ReloadFsAction::Cycle
+}
+
+/// Decision wiring: run the cycle exactly when the pure decision says so.
+/// Split from the entry so the reload path is headless-testable (tests
+/// inject a recording runner). Returns the action that was consulted.
+pub(crate) fn apply_reload_fs_action(
+    action: ReloadFsAction,
+    run_cycle: impl FnOnce(),
+) -> ReloadFsAction {
+    if matches!(action, ReloadFsAction::Cycle) {
+        run_cycle();
+    }
+    action
+}
+
+/// The reload restore's impure runner: claim the shared debounce, then run
+/// the shared unset->set cycle. The claim is atomic at fire time — two
+/// parallel reload lines cannot both win the 1.5s window (the 4-actor race
+/// the unconditional event-path cycle caused).
+fn run_reload_cycle() {
+    if reassert_debounce_ok() {
+        run_fullscreen_cycle(reload_cycle_step2_ok);
+    } else {
+        tracing::debug!(
+            "[reassert] reload restore lost the debounce claim (parallel cycle)"
+        );
+    }
+}
+
+/// Step-2 gate of the reload restore cycle: between the unset and the set
+/// (150ms) HVE may have been hidden, a transition may have started, or the
+/// user may have left the immersive presentation (closed the gallery /
+/// opened the floating panel) — either way the set must not land (the
+/// unset alone is the state the reload already left, so cancelling is
+/// harmless).
+fn reload_cycle_step2_ok() -> bool {
+    !is_theme_transitioning_flag() && hve_supposed_visible() && immersive_expected()
+}
+
+/// Whether HVE is supposed to be showing: reuse the ShowStateMachine as the
+/// single source of truth — Visible only. Hidden = parked in the
+/// scratchpad (tray); Entering = a show in flight whose settle owns
+/// fullscreen. No new visibility flag.
+fn hve_supposed_visible() -> bool {
+    crate::composer::global_controller()
+        .is_some_and(|c| c.show_state() == crate::show_state::ShowState::Visible)
+}
+
+/// Whether the app believes HVE should HOLD immersive fullscreen right now:
+/// the immersive Gallery session is active AND the settings panel is not
+/// floating. The panel float is a deliberate windowed presentation (the
+/// window IS the live border preview — shell/mod.rs schedule_float), so a
+/// fullscreen force there would destroy what the user is tuning. Same gate
+/// `run_settle` uses before its fullscreen dispatch.
+fn immersive_expected() -> bool {
+    crate::composer::global_controller().is_some_and(|c| c.gallery_session_active())
+        && !crate::shell::Shell::is_panel_floating_global()
+}
+
+/// Elapsed since the last fullscreen cycle (LAST_REASSERT), if any.
+fn last_reassert_elapsed() -> Option<std::time::Duration> {
+    LAST_REASSERT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .map(|t| t.elapsed())
+}
+
+/// Shared unset->set fullscreen cycle (the reassert mechanics). Step 1
+/// drops fullscreen (fires a real state change — a bare `set` on a window
+/// Hyprland already believes is fullscreen is a compositor NO-OP, see the
+/// root-cause note on `reassert_gallery_fullscreen`); step 2 re-enters
+/// fullscreen after the compositor settles, gated on `step2_gate()`
+/// re-checked at fire time so a hide/close/transition mid-cycle cancels
+/// the set.
+fn run_fullscreen_cycle(step2_gate: impl Fn() -> bool + 'static) {
     if let Some(mut ctrl) = crate::composer::global_controller() {
         // Step 1 of the cycle: drop fullscreen (fires a real state change).
         let _ = ctrl.composer().set_fullscreen(false);
@@ -916,8 +1077,8 @@ pub(crate) fn reassert_gallery_fullscreen() {
         }
     }
     // Step 2: re-enter fullscreen after the compositor settles the unset.
-    slint::Timer::single_shot(std::time::Duration::from_millis(150), || {
-        if !crate::shell::Shell::is_gallery_expanded() {
+    slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
+        if !step2_gate() {
             return;
         }
         if let Some(mut ctrl) = crate::composer::global_controller() {
@@ -930,10 +1091,28 @@ pub(crate) fn reassert_gallery_fullscreen() {
     });
 }
 
-/// Timed safety net after a theme apply: REMOVED — the single unset->set
-/// cycle now runs inside the transparent fade window (event-driven path in
-/// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
-/// visible flashes after fade-in.
+/// Reload-path entry (configreloaded line, UI thread): gather the live
+/// state, consult the pure decision, act. Runs on the UI thread only —
+/// `slint::Timer` is thread-local, so a step-2 timer created on the IPC
+/// listener thread would never fire (hypr_ipc hops via
+/// invoke_from_event_loop).
+pub(crate) fn reassert_fullscreen_after_reload() {
+    let action = reload_fs_action(
+        is_theme_transitioning_flag(),
+        hve_supposed_visible(),
+        immersive_expected(),
+        crate::composer::hyprland::query_hve_seen().fullscreen,
+        last_reassert_elapsed(),
+    );
+    match action {
+        ReloadFsAction::Cycle => {
+            apply_reload_fs_action(action, run_reload_cycle);
+        }
+        ReloadFsAction::Nothing(skip) => {
+            tracing::debug!("[reassert] reload restore skipped: {:?}", skip);
+        }
+    }
+}
 
 // ── Fresh-launch fullscreen settle (floating-startup fix) ─────────────
 // The old eager path mapped the window first (small floating Home frame)
@@ -3953,6 +4132,239 @@ mod tests {
         assert!(
             call_at > lock_at,
             "the repair must run only after the owning instance holds the lock"
+        );
+    }
+
+    // ── W3: immersive fullscreen survives a config reload ──────────────
+    // Every `hyprctl reload` resets the runtime keyword overrides AND
+    // re-floats HVE, dropping its immersive fullscreen. The reload path
+    // must restore it: pure decision (reload_fs_action) + thin impure
+    // shell, debounced with the shared reassert window, and never while a
+    // theme transition is in flight (the finale owns that cycle).
+
+    /// (a) reload + immersive + visible + not fullscreen + no transition +
+    /// no recent cycle → run the unset→set cycle.
+    #[test]
+    fn reload_fs_restore_cycles_when_reload_took_fullscreen_away() {
+        use std::time::Duration;
+        assert_eq!(
+            reload_fs_action(false, true, true, false, None),
+            ReloadFsAction::Cycle,
+            "a reload wiped fullscreen while HVE is in the immersive presentation: restore it"
+        );
+        // Never cycled (None) is not "inside the debounce window".
+        assert_eq!(
+            reload_fs_action(false, true, true, false, Some(Duration::from_millis(REASSERT_DEBOUNCE_MS))),
+            ReloadFsAction::Cycle,
+            "a cycle exactly at the debounce boundary is allowed"
+        );
+    }
+
+    /// (b) Each blocking reason alone → do nothing.
+    #[test]
+    fn reload_fs_restore_does_nothing_for_each_blocking_reason() {
+        use std::time::Duration;
+        // A theme transition is in flight — the finale owns the cycle.
+        assert_eq!(
+            reload_fs_action(true, true, true, false, None),
+            ReloadFsAction::Nothing(ReloadFsSkip::ThemeTransitionInFlight)
+        );
+        // HVE parked/hidden — never fire while hidden.
+        assert_eq!(
+            reload_fs_action(false, false, true, false, None),
+            ReloadFsAction::Nothing(ReloadFsSkip::HveHidden)
+        );
+        // HVE is not inside the immersive presentation (collapsed Home, or
+        // the settings panel floats — the window is the live border preview
+        // there, fullscreen would destroy it). The brief did not settle
+        // this gate; the app's own presentation code (shell/mod.rs float
+        // path, run_settle) demands it.
+        assert_eq!(
+            reload_fs_action(false, true, false, false, None),
+            ReloadFsAction::Nothing(ReloadFsSkip::NotImmersive)
+        );
+        // Already immersive fullscreen — nothing to restore.
+        assert_eq!(
+            reload_fs_action(false, true, true, true, None),
+            ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen)
+        );
+        // A cycle ran inside the debounce window — one visible cycle max
+        // per 1.5s (the shared reassert contract).
+        assert_eq!(
+            reload_fs_action(false, true, true, false, Some(Duration::from_millis(REASSERT_DEBOUNCE_MS - 1))),
+            ReloadFsAction::Nothing(ReloadFsSkip::Debounced)
+        );
+    }
+
+    /// (c) The reload path must run the cycle EXACTLY when the pure
+    /// decision says Cycle. A runner invoked on any refusal (or not
+    /// invoked on Cycle) fails this test.
+    #[test]
+    fn reload_restore_runs_the_cycle_exactly_when_the_decision_says_cycle() {
+        use std::time::Duration;
+
+        let mut cycles = 0;
+        let action = apply_reload_fs_action(
+            reload_fs_action(false, true, true, false, None),
+            || cycles += 1,
+        );
+        assert_eq!(action, ReloadFsAction::Cycle);
+        assert_eq!(cycles, 1, "Cycle must run the shared cycle runner");
+
+        let mut cycles = 0;
+        let hidden = apply_reload_fs_action(
+            reload_fs_action(false, false, true, false, None),
+            || cycles += 1,
+        );
+        assert!(matches!(hidden, ReloadFsAction::Nothing(ReloadFsSkip::HveHidden)));
+        assert_eq!(cycles, 0, "firing while HVE is hidden is the parked-window bug");
+
+        let mut cycles = 0;
+        let not_immersive = apply_reload_fs_action(
+            reload_fs_action(false, true, false, false, None),
+            || cycles += 1,
+        );
+        assert!(matches!(
+            not_immersive,
+            ReloadFsAction::Nothing(ReloadFsSkip::NotImmersive)
+        ));
+        assert_eq!(cycles, 0, "the floating panel / collapsed Home must never be fullscreened");
+
+        let mut cycles = 0;
+        let transitioning = apply_reload_fs_action(
+            reload_fs_action(true, true, true, false, None),
+            || cycles += 1,
+        );
+        assert!(matches!(
+            transitioning,
+            ReloadFsAction::Nothing(ReloadFsSkip::ThemeTransitionInFlight)
+        ));
+        assert_eq!(cycles, 0, "the finale owns the cycle inside a theme transition");
+
+        let mut cycles = 0;
+        let fullscreen = apply_reload_fs_action(
+            reload_fs_action(false, true, true, true, None),
+            || cycles += 1,
+        );
+        assert!(matches!(fullscreen, ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen)));
+        assert_eq!(cycles, 0, "already fullscreen needs no cycle");
+
+        let mut cycles = 0;
+        let debounced = apply_reload_fs_action(
+            reload_fs_action(false, true, true, false, Some(Duration::from_millis(100))),
+            || cycles += 1,
+        );
+        assert!(matches!(debounced, ReloadFsAction::Nothing(ReloadFsSkip::Debounced)));
+        assert_eq!(cycles, 0, "a cycle inside the debounce window must not stack");
+    }
+
+    /// (d) The existing transition finale ownership is unchanged: no cycle
+    /// can be fired while a theme transition is in flight, whatever else
+    /// the state says.
+    #[test]
+    fn transition_finale_ownership_unchanged_no_reload_cycle_in_flight() {
+        let mut cycles = 0;
+        let action = apply_reload_fs_action(
+            reload_fs_action(true, true, true, false, None),
+            || cycles += 1,
+        );
+        assert!(matches!(
+            action,
+            ReloadFsAction::Nothing(ReloadFsSkip::ThemeTransitionInFlight)
+        ));
+        assert_eq!(cycles, 0, "no reload restore may fire while the finale owns the cycle");
+        // The gallery finale keeps its generation single-fire claim: the
+        // transition branch of reassert_gallery_fullscreen must still be
+        // present and consult the generation (comment-stripped source pin).
+        let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let claim = "THEME_CYCLE_FIRED_GEN";
+        assert!(code.contains(claim), "the finale single-fire claim must survive");
+        assert!(
+            code.contains("fired.is_some_and(|g| g == gen)"),
+            "the finale single-fire check must survive"
+        );
+    }
+
+    /// The reload restore reuses the gallery reassert's cycle mechanics:
+    /// with HVE Visible and fullscreen dropped by the reload, the shared
+    /// cycle dispatches set_fullscreen(false) first and set_fullscreen(true)
+    /// after the settle gap — nothing else.
+    #[test]
+    fn reload_restore_shared_cycle_dispatches_unset_then_set_on_the_composer() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().unwrap();
+        win.show().unwrap();
+
+        let (fake, calls) = composer::tests::FakeComposer::new();
+        let mut ctrl = composer::Controller::new(Box::new(fake));
+        // "HVE is supposed to be showing": the ShowStateMachine must say
+        // Visible (Hidden/Entering never restore).
+        assert!(ctrl.begin_show_machine());
+        assert!(ctrl.confirm_focus_machine());
+        assert_eq!(ctrl.show_state(), crate::show_state::ShowState::Visible);
+        composer::init_global(ctrl);
+
+        // Prime the shared debounce to the past so the claim is granted.
+        *LAST_REASSERT.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
+
+        let action = apply_reload_fs_action(
+            reload_fs_action(false, true, true, false, None),
+            run_reload_cycle,
+        );
+        assert_eq!(action, ReloadFsAction::Cycle);
+
+        {
+            let recorded = calls.lock().unwrap().clone();
+            assert!(
+                recorded.iter().any(|c| c == "set_fullscreen(false)"),
+                "step 1 must drop fullscreen to force a real transition, got: {:?}",
+                recorded
+            );
+        }
+
+        // Advance the mock clock past the 150ms settle gap: step 2 must
+        // re-enter fullscreen (gate passes: still visible, no transition).
+        for _ in 0..20 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        {
+            let recorded = calls.lock().unwrap().clone();
+            assert!(
+                recorded.iter().any(|c| c == "set_fullscreen(true)"),
+                "step 2 must re-enter fullscreen once the compositor settles, got: {:?}",
+                recorded
+            );
+        }
+        let _ = &win; // platform guard
+    }
+
+    /// (c) The reload path wiring: the configreloaded handler in
+    /// hypr_ipc.rs must consult the fullscreen restore on the line path.
+    /// Comment-stripped read so a commented-out call cannot satisfy it
+    /// (house precedent: startup_repairs_a_crashed_colour_authority_yield).
+    #[test]
+    fn configreloaded_path_consults_the_fullscreen_restore() {
+        let src = std::fs::read_to_string("src/hypr_ipc.rs").expect("src/hypr_ipc.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains("reassert_fullscreen_after_reload"),
+            "the configreloaded line path must consult the fullscreen restore"
+        );
+        // The restore must run on EVERY line, before the 3s throttle: it is
+        // wired through the line-level handler, not the throttled callback.
+        assert!(
+            code.contains("handle_configreloaded_line"),
+            "the restore must live in the line-level (always-run) handler"
         );
     }
 

@@ -110,17 +110,18 @@ impl HyprIpc {
                 Ok(line) => {
                     // Events come as: "eventname>>data"
                     if line.starts_with("configreloaded") {
-                        // Re-apply transition masks BEFORE the throttle: every
-                        // reload (assemble, noctalia, watcher) wipes the runtime
-                        // animations/blur overrides mid-fade. Cheap + idempotent.
-                        crate::reapply_theme_masks();
-                        let mut last = last_reload.lock().unwrap_or_else(|e| e.into_inner());
-                        let now = Instant::now();
-                        if last.is_none_or(|t| now.duration_since(t) > Duration::from_secs(3)) {
-                            *last = Some(now);
-                            tracing::info!("[HVE] Config reloaded, regenerating overlay...");
-                            on_config_reload();
-                        }
+                        // Line-level handling, BEFORE the throttle: masks +
+                        // fullscreen restore always run; the heavy reload at
+                        // most once per 3s. See on_configreloaded_line.
+                        handle_configreloaded_line(
+                            &last_reload,
+                            Instant::now(),
+                            on_configreloaded_line,
+                            || {
+                                tracing::info!("[HVE] Config reloaded, regenerating overlay...");
+                                on_config_reload();
+                            },
+                        );
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
@@ -137,6 +138,49 @@ impl HyprIpc {
 
         Ok(())
     }
+}
+
+/// One `configreloaded` line, headless-testable: the line-level actions
+/// (masks + fullscreen restore) ALWAYS run; the heavy regenerating reload
+/// runs at most once per 3s window. Returns whether the throttled callback
+/// ran.
+fn handle_configreloaded_line<F, G>(
+    last_reload: &Mutex<Option<Instant>>,
+    now: Instant,
+    mut on_line: F,
+    mut throttled: G,
+) -> bool
+where
+    F: FnMut(),
+    G: FnMut(),
+{
+    // Masks + fullscreen restore run BEFORE the throttle: every reload
+    // (assemble, noctalia, watcher) wipes the runtime animations/blur
+    // overrides mid-fade and re-floats HVE, dropping its immersive
+    // fullscreen. Both are cheap and idempotent, and a reload that never
+    // reaches the throttled callback (assemble re-trigger) still needs its
+    // masks back and its fullscreen back.
+    on_line();
+    let mut last = last_reload.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_none_or(|t| now.duration_since(t) > Duration::from_secs(3)) {
+        *last = Some(now);
+        throttled();
+        true
+    } else {
+        false
+    }
+}
+
+/// Line-level `configreloaded` actions: re-apply the transition masks and
+/// consult the fullscreen-restore decision. Runs on the IPC listener
+/// thread, so the restore hops to the UI thread — its step-2 timer uses
+/// `slint::Timer`, and timers are thread-local (a timer created on the
+/// listener thread never fires; verified in i-slint-core 1.17.0
+/// `timers.rs::single_shot`). Best-effort: before the event loop runs the
+/// hop errors and is ignored — the masks still apply directly.
+fn on_configreloaded_line() {
+    crate::reapply_theme_masks();
+    let _ = slint::invoke_from_event_loop(crate::reassert_fullscreen_after_reload);
 }
 
 /// Start the IPC listener that auto-refreshes colors on config reload.
@@ -172,13 +216,17 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
                 });
             }
 
-            // 3. Theme transition masks only. The reload-emitted configreloaded
-            //    events no longer move HVE or run the fullscreen cycle — that
-            //    caused a 4-actor race (event return vs step1/step2 timers,
-            //    incl. an animated move AFTER fade-in). The single-owner finale
-            //    lives in main.rs (1500ms timer); this path only re-applies the
-            //    animation/blur masks that each reload wipes. Line-level
-            //    re-masking happens in connect_and_listen (bypasses throttle).
+            // 3. Line-level masks + fullscreen restore only: the restore is
+            //    consultation-gated and debounced, so it cannot re-arm the
+            //    4-actor race the UNCONDITIONAL event-path cycle caused
+            //    (event return vs step1/step2 timers, incl. an animated move
+            //    AFTER fade-in). The single-owner finale still owns every
+            //    cycle inside a theme transition; this path only re-applies
+            //    the masks each reload wipes and restores the immersive
+            //    fullscreen a reload dropped (visible + not fullscreen +
+            //    outside a transition + outside the 1.5s debounce window).
+            //    Line-level handling happens in connect_and_listen
+            //    (bypasses the 3s throttle) via on_configreloaded_line.
             let _ = ();
         });
         tracing::info!("[HVE] Hyprland IPC listener started");
@@ -307,4 +355,51 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── configreloaded line handling (fullscreen survives a reload) ────
+
+    /// The line-level handler must run its actions (masks + fullscreen
+    /// restore) on EVERY `configreloaded` line, while the heavy throttled
+    /// reload runs at most once per 3s window.
+    #[test]
+    fn configreloaded_line_always_runs_restore_before_the_throttle() {
+        let last_reload: Mutex<Option<Instant>> = Mutex::new(None);
+        let mut on_line = 0;
+        let mut heavy = 0;
+
+        let ran = handle_configreloaded_line(
+            &last_reload,
+            Instant::now(),
+            || on_line += 1,
+            || heavy += 1,
+        );
+        assert!(ran, "the first line inside a 3s window runs the throttled reload");
+        assert_eq!(on_line, 1, "line actions (masks + restore) run on EVERY line");
+        assert_eq!(heavy, 1);
+
+        let ran2 = handle_configreloaded_line(
+            &last_reload,
+            Instant::now(),
+            || on_line += 1,
+            || heavy += 1,
+        );
+        assert!(!ran2, "a second line inside the 3s window is throttled");
+        assert_eq!(on_line, 2, "line actions still run on the throttled line");
+        assert_eq!(heavy, 1, "the heavy reload does not run again inside the window");
+
+        let ran3 = handle_configreloaded_line(
+            &last_reload,
+            Instant::now() + Duration::from_secs(4),
+            || on_line += 1,
+            || heavy += 1,
+        );
+        assert!(ran3, "a line after the 3s window reloads again");
+        assert_eq!(on_line, 3);
+        assert_eq!(heavy, 2);
+    }
 }
