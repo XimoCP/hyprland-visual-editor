@@ -3,7 +3,7 @@
 **Locator**: `odd/tasks/hide-idempotency-and-singleton-watcher.md`
 **Engram mirror**: topic `odd/hide-idempotency-and-singleton-watcher/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches)
-**Status**: IMPLEMENTED + VERIFIED — LIVE CONFIRMED 2026-09-22, AWAITING KEEPER SIGN-OFF (W1 `88c10b1`, W2 `ab932a7`, doc `098ed20`, flock fail-open `8a17f2c`). The binary was built and installed from this branch on 2026-09-22 and the keeper ran the live confirmation himself: four consecutive applies, no bar above HVE, no dimmed desktop.
+**Status**: IMPLEMENTED + VERIFIED — LIVE CONFIRMED 2026-09-22 — **KEEPER SIGN-OFF 2026-09-23** (W1 `88c10b1`, W2 `ab932a7`, doc `098ed20`, flock fail-open `8a17f2c`). The binary was built and installed from this branch on 2026-09-22 and the keeper ran the live confirmation himself: four consecutive applies, no bar above HVE, no dimmed desktop. The residuals below are accepted as known follow-ups; the only open item is the PR-size decision.
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~300-400 authored changed lines was the forecast; the ACTUAL authored total is 781 across the four commits (W1 237, W2 234, doc 159, flock fail-open 159). The code+tests part alone is **621** (598 added, 23 deleted; `src/` + `assets/`), i.e. OVER the ~400 review budget; the remaining 160 lines are this document. Not padding: the bulk is the test code this document mandates (the sandboxed integration test plus the parser/plan tests). Decision open for the keeper at PR time: `size:exception` vs two chained PRs (strategy `ask-on-risk`).
 
@@ -164,6 +164,7 @@ Observed evidence (writer model, TDD runs):
 | Cross-model independent verification (read-only, adversarial) | **GLM 5.3 Flash** — writer ran on **DeepSeek V4 Flash** | **PASS WITH FINDINGS**: confirmed the suite count, no existing test weakened or deleted (`git diff -- '*test*'` empty), scope exactly as authorized, and that the new tests are not passing for the wrong reason (both false-approval paths checked and discarded). |
 | Both guard branches, end-to-end on the REAL script | orchestrator, own sandbox probe (`/tmp/opencode/probe_guard_branches.sh`) | **flock present**: second instance rejected with exit 0, exactly 1 "Starting watcher", 1 rejection line, 0 unguarded warnings, exactly 1 `assemble.sh` run, lock file present. **flock absent** (`flock` stripped from PATH): distinct "continuing UNGUARDED" warning, 0 false rejections, exactly 1 `assemble.sh` run, first instance alive. Both as designed. |
 | Visible behaviour / live | **the keeper, on his own desktop** (the only valid check for compositor state) | **PASS**. Binary built from this branch and installed 2026-09-22 (hash-verified atomic replace); HVE relaunched with its stdout captured to `/tmp/opencode/hve-live.log`. Four consecutive theme applies logged (generations 1-4, 16:41:30-16:41:51 local). The keeper's own verdict: *"el blur ya no está y la barra queda siempre por debajo de HVE"*. Zero WARN or ERROR lines in the whole log. Side-evidence for W1: the pre-fix watcher survived the old binary's IPC `quit` (the orphan defect reproduced on demand) and was retired by hand; the new instance runs exactly one guarded watcher with its lock file present. |
+| Keeper sign-off | **the keeper**, in conversation, 2026-09-23 | **APPROVED.** The change is accepted with the residuals below as known follow-ups rather than blockers. Nothing is installed, pushed or merged by this sign-off. The only open item is the PR-size decision (621 authored code+test lines vs the ~400 budget). |
 
 Proportionality note: the two work-unit commits got the full cross-model round above. The small flock fail-open delta (one capability check plus one test) got orchestrator review plus the two-branch end-to-end probe, not a second cross-model round — said plainly rather than implied.
 
@@ -177,6 +178,6 @@ Proportionality note: the two work-unit commits got the full cross-model round a
 
 ## Next step (keeper)
 
-1. **The keeper's sign-off on this change** (still pending by his own instruction; pinned in Engram as `hve2/pending/keeper-review-hide-idempotency`). The live confirmation he asked for is now DONE and PASSED — see the verification record.
-2. At PR time, decide `size:exception` vs two chained PRs (621 authored code+test lines vs the ~400 budget).
+1. ~~The keeper's sign-off on this change~~ — **CLOSED 2026-09-23: the keeper approved this change in conversation.** The live confirmation he asked for was DONE and PASSED on 2026-09-22 — see the verification record. The Engram pin `hve2/pending/keeper-review-hide-idempotency` is retired.
+2. **OPEN — the only remaining item.** At PR time, decide `size:exception` vs two chained PRs (621 authored code+test lines vs the ~400 budget).
 
