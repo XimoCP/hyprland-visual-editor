@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/coalesce-config-reloads/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches)
 **Checkpoint before this work (save point)**: `f0d77b485755665e4757790cddb5055795ed24b3` — clean tree; roll back here and this patch leaves no trace
-**Status**: W1 IMPLEMENTED 2026-09-23 — cross-model verification and live confirmation pending
+**Status**: W1 IMPLEMENTED 2026-09-23 — W5 correction (cross-model MAJOR finding) SHIPPED — re-verification pending
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~250-400 authored changed lines (source + tests +
 this document). NOTE: earlier units have systematically missed their forecasts
@@ -24,8 +24,10 @@ are the amplifier behind the flash and the stuck window.
 
 **NEVER lose a reload — only coalesce it.** The worst acceptable outcome if
 the mechanism fails is that a reload arrives LATER, never that it never
-arrives. This is proven by a test (`sandboxed_killed_drainer_loses_nothing`),
-not promised in prose.
+arrives. Encoded as the protocol invariant: **an extra reload is safe, a lost
+one never is** — a crash may cost at most ONE redundant reload, never a
+missing one. Proven by the kill-window, post-fire-crash and Hyprland-down
+tests in `src/reload_coalescer.rs`, not promised in prose.
 
 ## Problem, with the measured evidence (Task 1, 2026-09-23)
 
@@ -126,16 +128,25 @@ and the next request consumes it. Disable with one env var. Tidy seams:
 - **Coalescing, not deleting**: one marker generation = one reload; requests
   inside the drain window fold into one; independent changes (separated by
   more than the window) each get their own reload.
-- **Never lost**: the marker is the durable memory of "a reload is owed".
-  The drainer loops forever; a marker is consumed by the drainer that owns
-  the lock (or by the next spawn if that one died). The ONLY way a reload
-  never arrives is a kill of the drainer AND no further request ever — which
-  the 30 s watcher re-check and any later apply/click rule out, and which the
-  kill-then-request test pins anyway.
+- **Never lost**: the pending evidence is the durable memory of "a reload is
+  owed". The drainer CLAIMS it (`mv` → `reload.claimed`, atomic) before the
+  drain window and consumes it only AFTER a successful fire — so a drainer
+  killed at any point before the fire leaves evidence the next drainer pass
+  fires. The drainer loops forever; a marker or claim is fired by the
+  drainer that owns the lock (or by the next spawn if that one died). The
+  ONLY way a reload never arrives is a kill of the drainer AND no further
+  request ever — which the 30 s watcher re-check and any later apply/click
+  rule out, and which the kill-then-request tests pin anyway. (W5 correction:
+  the original protocol removed the marker BEFORE the drain window, so a kill
+  inside that window lost the reload despite the "never lost" claim — see the
+  correction record below.)
 - **Preserved semantics**: the "is Hyprland running" guard runs at request
   time (exactly where it runs today) AND at fire time (the drainer re-checks,
-  because Hyprland may have died during the window). Hyprland down → no
-  reload, exactly like today.
+  because Hyprland may have died during the window). Hyprland down at request
+  time → nothing is even queued, exactly like today. Hyprland down at FIRE
+  time → no reload now, but the pending claim survives and fires when the
+  compositor is back — a delayed reload, never a lost one (W5 correction,
+  replacing the old consume-without-firing skip).
 - **Fail open / disable**: `flock` missing → reload immediately (the watcher's
   fail-open precedent); `HVE_RELOAD_COALESCE=0` → the queue performs today's
   exact inline reload. One obvious switch.
@@ -144,7 +155,11 @@ and the next request consumes it. Disable with one env var. Tidy seams:
 
 State under `HVE_SAFE_DIR`:
 - `reload.requested` — atomic marker ("a reload is owed"); written by
-  `hve_reload_queue`, removed by the drainer right before its fire.
+  `hve_reload_queue`, CLAIMED by the drainer (`mv`, atomic) before the drain
+  window.
+- `reload.claimed` — the durable in-flight claim: the owed reload's memory
+  from the claim until AFTER a successful fire; consumed (`rm`) only then.
+  Survives a killed drainer and a down Hyprland (retry loop).
 - `reload.drain.lock` — `flock` held for the drainer's whole life; only one
   drainer per machine. Spawned losers exit immediately.
 - `reload.drain.pid` — the live drainer's PID (diagnosis + the
@@ -165,14 +180,21 @@ The drainer (`reload_coalescer.sh drain`):
 acquire flock -n on reload.drain.lock  (loser: exit 0)
 write $$ to reload.drain.pid
 loop:
-  if marker exists:
-      rm marker
-      sleep DRAIN                      # graceful folding window
-      if marker exists: continue       # a request landed during grace → re-drain
-      if pgrep -x Hyprland: hyprctl reload
+  if marker OR claim exists:
+      if marker exists: mv marker claim   # claim/fold, atomic
+      sleep DRAIN                         # graceful folding window
+      if marker exists: continue          # a request landed during grace → re-drain
+      if pgrep -x Hyprland:               # fire, then consume — and only then
+          if hyprctl reload: rm claim
+      # Hyprland down or fire failed: claim STAYS, retry next pass
   else:
       sleep DRAIN
 ```
+Invariant: the claim is consumed (`rm`) only AFTER a successful fire, so the
+pending evidence survives every failure point (kill inside the window, kill
+during the fire, Hyprland down, failed hyprctl). A crash after the fire
+leaves a claim the next drainer pass fires — at most ONE redundant reload,
+the intended trade. Consumption never precedes a fire.
 Fire latency after the last request of a burst: ≤ 2 × `HVE_RELOAD_DRAIN_MS`
 (default 600 ms → ≤ 1.2 s). The echo reload observed in the measurement
 (nr. 5) lands ~0.7 s after the last fragment script — outside the 600 ms
@@ -283,6 +305,62 @@ feature, active one apply earlier than planned. Tests never touched the real
 hyprctl: every suite test runs sandboxed HOME + stub PATH, and the sandbox
 paths were cross-checked against this process's environment.
 
+## W5 correction record (cross-model verification, 2026-09-23)
+
+Commit `f9a5e71` (W1) was reviewed by an independent verifier (different
+model, per AGENTS.md model roles) and returned **PASS WITH FINDINGS**, one
+**MAJOR**:
+
+> **The drainer consumes the marker BEFORE firing.** `reload_coalescer.sh:75-77`
+> (`rm -f "$HVE_SAFE_DIR/reload.requested"` → `sleep "$drain_secs"` → pgrep →
+> `hyprctl reload`). If the drainer dies during that ~600 ms window after the
+> removal, the marker is gone, the reload never happens, and nothing recovers
+> it (the next drainer sees no marker). The test
+> `sandboxed_killed_drainer_loses_nothing` kills the drainer as soon as the
+> pid appears — before it consumes the marker — so it does **not** cover this
+> path. So the unit's absolute guarantee ("never lost, only delayed") is
+> contradicted by a reachable path.
+
+**Honest note**: the "NEVER LOST" claim (task doc + commit message) was simply
+wrong in that window. The marker survived a drainer killed BEFORE it consumed
+it, but not one killed in the ~600 ms between the removal and the fire — the
+exact range the acceptance criterion cares about. The verifier also flagged as
+MINOR the sibling case: a down Hyprland at fire time consumed the marker
+without firing, losing the owed reload. Both are fixed here; nothing else was
+touched.
+
+**Corrected protocol** (shipped in this correction, see Design details
+above): the drainer CLAIMS the marker (`mv` → `reload.claimed`, atomic)
+before the drain window and consumes it (`rm`) only AFTER a successful
+`hyprctl reload`. Every failure point keeps the pending evidence: a kill
+inside the window, a kill during the fire, a down Hyprland, or a failed
+hyprctl — the next drainer pass (or the same drainer's next pass, for the
+down/retry case) fires the reload. Consumption never precedes a fire.
+
+**The invariant**, encoded in the script's header and the tests: **an extra
+reload is safe, a lost one never is.** The trade: a crash right after a
+successful fire leaves a claim that the next drainer pass fires — at most ONE
+redundant reload (in the normal fold path, zero extra: the leftover claim
+merges into the next request's single fire). Never a missing one.
+
+**New coverage** (RED first, kept):
+- `sandboxed_killed_drainer_inside_window_recovers_reload` — kills the
+  drainer AFTER the claim, BEFORE the fire (wide 1.5 s window), proves zero
+  fires, the surviving claim, and the recovered reload via the next request.
+- `sandboxed_post_fire_crash_costs_at_most_redundant_reload` — stub-hyprctl
+  fire in flight (log then 3 s block), drainer killed inside the fire: the
+  in-flight fire completes, the claim survives the crash, the next pass folds
+  it — exactly two fires total, stable; never zero, never runaway.
+- `sandboxed_hyprland_down_keeps_pending_and_fires_when_back` — up at
+  request, down at fire time: no fire, claim kept; the SAME drainer's next
+  pass fires once the (stub, file-flipped) compositor is back.
+- `sandboxed_hyprland_down_fires_nothing` strengthened in intent (comment)
+  but unchanged in behaviour: the request-time guard still swallows the queue,
+  exactly like today.
+
+All pre-existing tests untouched and green; suite total 963 → **966 passed /
+0 failed, 0 build warnings**.
+
 ## Progress
 
 - [x] Task 1 — measurement (this document, above): 7 reloads per theme apply,
@@ -297,6 +375,12 @@ paths were cross-checked against this process's environment.
   (new, `#![cfg(test)]`, wired with one `#[cfg(test)] mod` line in main.rs —
   test scaffolding only; zero production Rust changes).
 - [ ] Cross-model independent verification.
+- [x] W5 correction — the cross-model MAJOR finding (consume-before-fire) and
+  the MINOR sibling (down-Hyprland consume-without-fire) fixed via the
+  claim-then-fire protocol; new RED-first coverage; re-verification pending.
 - [ ] Live confirmation (keeper). Note: the coalescer is ALREADY live on the
   keeper's running stack via his repo-cwd HVE (see the unplanned live
-  observation) — his next apply is a live confirmation in itself.
+  observation) — his next apply is a live confirmation in itself. His live
+  drainer (PID 202160, started 19:22:27, BEFORE this correction) still runs
+  the OLD protocol until it exits; the fix takes over for drainers spawned
+  after it dies. Nothing in this correction kills or restarts it.

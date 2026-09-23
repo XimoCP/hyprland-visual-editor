@@ -6,14 +6,19 @@
 #   `drain`  — runs the single-owner background drainer loop
 #
 # Protocol (see odd/tasks/coalesce-config-reloads.md):
-#   - `reload.requested` (atomic) is the "a reload is owed" marker. It is
-#     written BEFORE the drainer spawn, so a losing spawn exits knowing the
-#     winning drainer will pick it up.
+#   - `reload.requested` (atomic) is "a reload is owed". It is written BEFORE
+#     the drainer spawn, so a losing spawn exits knowing the winning drainer
+#     will pick it up.
 #   - Only ONE drainer runs (flock on `reload.drain.lock`); it fires once the
 #     burst has been quiet for the drain window, then loops forever.
-#   - NEVER LOST: a marker survives a killed drainer; the next request's
-#     drainer consumes it. The worst acceptable failure is a reload that
-#     arrives LATER, never one that never arrives.
+#   - Invariant: an EXTRA reload is always safe, a LOST one never is. The
+#     pending evidence must not disappear before a reload has actually fired:
+#     the drainer CLAIMS the marker (`mv` → `reload.claimed`, atomic) before
+#     the drain window and consumes it (`rm`) only AFTER a successful fire.
+#     A drainer killed inside the window — or facing a down Hyprland — leaves
+#     the claim behind, and the next drainer pass fires it. Worst outcomes:
+#     a reload that arrives LATER, or (a crash right after a successful fire)
+#     ONE redundant reload on the next pass — the intended trade.
 #   - Disable: HVE_RELOAD_COALESCE=0 → the queue performs today's exact
 #     inline reload. Fail open: a missing `flock` → same immediate reload,
 #     with one warning line (precedent: color_watcher.sh).
@@ -73,8 +78,14 @@ hve_reload_drain() {
     drain_secs=$(awk -v ms="$HVE_RELOAD_DRAIN_MS" 'BEGIN { printf "%.3f", ms / 1000 }')
 
     while true; do
-        if [ -f "$HVE_SAFE_DIR/reload.requested" ]; then
-            rm -f "$HVE_SAFE_DIR/reload.requested"
+        if [ -f "$HVE_SAFE_DIR/reload.requested" ] || [ -f "$HVE_SAFE_DIR/reload.claimed" ]; then
+            # Claim: fold any new marker into the in-flight claim with an
+            # atomic mv. From this point until AFTER a successful fire the
+            # claim is the durable memory of the owed reload — a kill at ANY
+            # point in between leaves evidence the next drainer pass fires.
+            if [ -f "$HVE_SAFE_DIR/reload.requested" ]; then
+                mv -f "$HVE_SAFE_DIR/reload.requested" "$HVE_SAFE_DIR/reload.claimed"
+            fi
             sleep "$drain_secs"
             # A request that landed during the grace period gets its own
             # drain (this is the burst-folding window: quiet-then-fire).
@@ -83,8 +94,16 @@ hve_reload_drain() {
             fi
             # Fire-time guard: Hyprland may have died during the window —
             # same skip semantics as the request-time guard (today's code).
+            # While it is down the claim STAYS pending and retries next pass:
+            # a delayed reload is harmless, a lost one never is.
             if pgrep -x "Hyprland" > /dev/null 2>&1; then
-                hyprctl reload > /dev/null 2>&1
+                if hyprctl reload > /dev/null 2>&1; then
+                    # Consume ONLY after a successful fire. A crash between
+                    # the fire and this removal leaves the claim: the next
+                    # drainer pass fires one redundant reload — the intended
+                    # trade (an extra reload is safe, a lost one never is).
+                    rm -f "$HVE_SAFE_DIR/reload.claimed"
+                fi
             fi
         else
             sleep "$drain_secs"
