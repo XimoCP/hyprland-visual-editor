@@ -1292,6 +1292,15 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     let lock = Arc::new(std::sync::Mutex::new(Some(lock_file)));
 
+    // ── Crash repair for the colour-authority yield (W2) ──────────────
+    // If a previous HVE died between the yield flip and the restore, the
+    // engine's colour scheme would stay off until a manual fix. Replay the
+    // repair once, now (only the owning instance runs it — the handoff
+    // path above exits first): restore the previous value when a marker
+    // says we left it off and log the outcome either way. A failure never
+    // aborts startup.
+    crate::providers::skwd_policy::startup_recover_crashed_yield();
+
     let tray_mode = cli.tray;
 
     let proj = project_dir();
@@ -3917,6 +3926,34 @@ mod tests {
         let last = STARTUP_FULLSCREEN_RETRIES_MS.len();
         assert_eq!(startup_fs_action(false, false, last), StartupFsAction::Done);
         assert_eq!(startup_fs_action(true, false, last), StartupFsAction::Done);
+    }
+
+    // ── W2: startup crash repair for the colour-authority yield ───────
+    // The keeper's design requires that a crash between the yield flip and
+    // the restore is repaired on the NEXT start: main() must invoke the
+    // repair once at startup, after logging is up. Comment lines are
+    // stripped so a commented-out call cannot satisfy this.
+    #[test]
+    fn startup_repairs_a_crashed_colour_authority_yield() {
+        let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let repair = ["startup_recover_crashed_yield", "()"].concat();
+        assert!(
+            code.contains(&repair),
+            "main() must run the startup crash repair for the yield"
+        );
+        let call_at = code.find(&repair).expect("call must exist");
+        let lock_at = code
+            .find("Arc::new(std::sync::Mutex::new(Some(lock_file)))")
+            .expect("the single-instance lock must still exist");
+        assert!(
+            call_at > lock_at,
+            "the repair must run only after the owning instance holds the lock"
+        );
     }
 
 }

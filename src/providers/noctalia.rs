@@ -901,6 +901,21 @@ const COLOR_REASSERT_DELAY: Duration = Duration::from_secs(2);
 const COLOR_REASSERT_MAX_SETS: u32 = 3;
 const COLOR_REASSERT_CAP: Duration = Duration::from_secs(8);
 
+/// Bounded wait for the skwd-wall daemon to OBSERVE the config flip before
+/// the wallpaper hand-off. The engine reloads its config on change, not on
+/// write: measured from `~/Proyectos/skwd-deck` (2026-09-23) —
+/// `skwd-walld` native-watches the config dir and calls `reload_config()`
+/// inline on the config-file event
+/// (`crates/skwd-walld/src/infrastructure/watcher.rs:688`), every
+/// `wall.apply` RPC reloads at the handler top
+/// (`crates/skwd-walld/src/infrastructure/rpc/wallpaper.rs:321`), and the
+/// periodic fallbacks tick at ≥50 ms while playlist assignments exist
+/// (`crates/skwd-walld/src/composition/runtime/playlist.rs:15`
+/// MIN_TICK_WAIT). One 250 ms sleep covers the worst scheduling jitter of
+/// those paths with a wide margin, costs once per apply, and the measured
+/// elapsed time is logged so the keeper's live test can tune it.
+const COLOR_YIELD_OBSERVE_WAIT: Duration = Duration::from_millis(250);
+
 /// Timing source: production constants, unless the `fast` test profile is
 /// selected (same env-seam style as the rest of the codebase) so tests can
 /// observe the full race end to end without waiting out the real delays.
@@ -920,6 +935,22 @@ fn color_reassert_timing() -> (Duration, u32, Duration, Duration) {
             COLOR_REASSERT_CAP,
         )
     }
+}
+
+/// Sleep the bounded observe wait so the engine's config watcher sees the
+/// flip before the wallpaper hand-off; returns the elapsed time so the
+/// keeper's live test can tune `COLOR_YIELD_OBSERVE_WAIT`. The fast test
+/// profile (`HVE_REASSERT_PROFILE=fast`) shortens the wait so tests observe
+/// the whole race without real delays.
+fn wait_for_engine_to_observe_flip() -> Duration {
+    let wait = if std::env::var("HVE_REASSERT_PROFILE").as_deref() == Ok("fast") {
+        Duration::from_millis(5)
+    } else {
+        COLOR_YIELD_OBSERVE_WAIT
+    };
+    let start = Instant::now();
+    std::thread::sleep(wait);
+    start.elapsed()
 }
 
 /// Verify the custom palette is live and re-assert it when it is not.
@@ -1009,10 +1040,31 @@ fn reassert_custom_scheme_blocking(
 /// joining here would freeze the UI thread for up to ~10 s. The worker
 /// never touches Slint state — it only runs `noctalia msg` and logs — so
 /// detaching is safe, and it always exits by itself at the attempt cap.
-fn spawn_custom_scheme_reassert(palette_name: String) {
+///
+/// `previous_value`: when the apply yielded the engine's colour authority
+/// (W2), the worker restores it once the palette is verified (or at the
+/// bounded cap); `None` keeps today's behaviour byte-for-byte.
+fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<String>) {
     std::thread::spawn(move || {
         let (settle, max_sets, delay, cap) = color_reassert_timing();
         reassert_custom_scheme_blocking(&palette_name, settle, max_sets, delay, cap);
+        // The palette is now verified live (or the bounded cap was hit, or
+        // the IPC hardened): put the engine's colour authority back EXACTLY
+        // as it was. Runs on every worker exit path, so the restore is
+        // never lost — the guard disarmed itself in favour of this thread.
+        if let Some(previous) = previous_value {
+            match crate::providers::skwd_policy::restore_color_authority(&previous) {
+                Ok(wrote) => tracing::info!(
+                    "[noctalia-v5] engine colour authority restored (theme.policy -> \"{}\", wrote={})",
+                    previous,
+                    wrote
+                ),
+                Err(e) => tracing::warn!(
+                    "[noctalia-v5] could not restore engine colour authority: {}",
+                    e
+                ),
+            }
+        }
     });
 }
 
@@ -1459,17 +1511,66 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    re-setting the static image here would cover the running video.
         //    If the animated apply failed, fall back to the static wallpaper.
         let wp_path = provider_dir.join("wallpaper.txt");
+        // ── Colour-authority yield (W2) ─────────────────────────────────
+        // The keeper's wallpaper engine owns the colour scheme
+        // (`theme.policy == "wallpaper"`): if the wallpaper is handed over
+        // with the policy still on, the engine regenerates its wallpaper
+        // palette asynchronously AFTER these synchronous steps and
+        // re-imposes it — the ~4 s flash the keeper measured. So: flip the
+        // policy to `off` BEFORE the hand-off, give the engine's config
+        // reload a bounded moment to observe the flip, and hold the
+        // authority off until the theme palette is verified. The previous
+        // value comes back EXACTLY as it was, and a failed write never
+        // aborts the apply (`skwd_policy`).
+        //
+        // Ownership decision BEFORE the flip: after the flip the config
+        // reads `off`, and `skwd_wall_owns_color_scheme()` would answer
+        // FALSE — denying the very re-assert that must run. This snapshot
+        // powers the spawn decision below, and the yielded value rides
+        // along to the worker explicitly so the restore is never lost.
+        let owner_snapshot: Option<bool>;
+        let mut authority_guard: Option<crate::providers::skwd_policy::YieldGuard> = None;
         if !animated_applied && wp_path.exists() {
             let wp = fs::read_to_string(&wp_path)
                 .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
             let wp = wp.trim();
             if !wp.is_empty() {
+                owner_snapshot = Some(skwd_wall_owns_color_scheme());
+                match crate::providers::skwd_policy::yield_color_authority() {
+                    Ok(Some(previous)) => {
+                        let observed_in = wait_for_engine_to_observe_flip();
+                        tracing::info!(
+                            "[noctalia-v5] engine colour authority yielded for the apply \
+                             (theme.policy -> off); flip observed in {:.0} ms",
+                            observed_in.as_millis()
+                        );
+                        authority_guard =
+                            Some(crate::providers::skwd_policy::YieldGuard::new(previous));
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            "[noctalia-v5] no engine colour authority to yield; behaving \
+                             exactly as today"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[noctalia-v5] cannot yield engine colour authority ({}); \
+                             proceeding as today",
+                            e
+                        );
+                    }
+                }
                 noctalia_msg(&["msg", "wallpaper-set", "", wp])
                     .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
                 tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
                 // Best-effort delegation to skwd-walld (agnostic, silent if absent)
                 delegate_to_skwd_walld(Path::new(wp));
+            } else {
+                owner_snapshot = None;
             }
+        } else {
+            owner_snapshot = None;
         }
 
         // 2. Restore color scheme
@@ -1524,13 +1625,24 @@ impl ThemeProvider for NoctaliaV5Provider {
             //    CUSTOM palette qualifies for the re-assert — builtin,
             //    community and wallpaper schemes keep today's behaviour
             //    untouched. Off the UI thread, single-shot, bounded.
+            //
+            //    The ownership decision comes from the PRE-yield snapshot:
+            //    the flip set theme.policy to "off", so re-evaluating here
+            //    would deny the re-assert (the W2 trap). When the authority
+            //    was yielded, the worker restores the previous value once
+            //    the palette is verified (or at the bounded cap); the guard
+            //    is disarmed ONLY when the worker takes ownership, so every
+            //    other exit path (early error, no custom palette) still
+            //    restores.
             if let Some(restored) = custom_restored {
-                if skwd_wall_owns_color_scheme() {
+                let owned = owner_snapshot.unwrap_or_else(skwd_wall_owns_color_scheme);
+                if owned {
                     tracing::info!(
                         "[noctalia-v5] Wallpaper engine owns the color scheme; re-asserting '{}' off-thread",
                         restored
                     );
-                    spawn_custom_scheme_reassert(restored);
+                    let previous = authority_guard.as_mut().and_then(|guard| guard.disarm());
+                    spawn_custom_scheme_reassert(restored, previous);
                 }
             }
         }
@@ -2153,6 +2265,15 @@ mod tests {
     const OWNER_JSON: &str =
         r#"{"theme": {"policy": "wallpaper"}, "noctalia": {"themeMode": "follow"}}"#;
 
+    /// Variant WITHOUT `noctalia.themeMode == "follow"`: the only thing
+    /// that made ownership true was `theme.policy == "wallpaper"`, so after
+    /// the yield flip the config reads `off` and a POST-yield ownership
+    /// re-evaluation answers FALSE — the exact W2 trap. The re-assert must
+    /// be decided from the PRE-yield snapshot alone, or the palette is
+    /// never re-asserted (and the flash returns, just later).
+    const OWNER_TRAP_JSON: &str =
+        r#"{"theme": {"policy": "wallpaper"}, "noctalia": {"themeMode": "manual"}}"#;
+
     /// Hermetic harness: a stub `noctalia` shadowed onto PATH plus a
     /// stub skwd-wall config path.
     ///
@@ -2600,6 +2721,214 @@ exit 0
         // After the cap: no further attempts, ever.
         std::thread::sleep(Duration::from_millis(500));
         assert_eq!(stub.sets(), 4, "gave up at the cap: no war");
+    }
+
+    // ── W2: yield the engine's colour authority around the apply ──────
+    //
+    // WHY these exist: before W2, applying a theme showed the engine's
+    // auto-derived colours for ~4 s — the keeper's engine owns the colour
+    // scheme (`theme.policy == "wallpaper"`), regenerates the wallpaper
+    // palette asynchronously AFTER HVE's synchronous apply steps, and
+    // re-imposes it. W2 flips the policy to `off` BEFORE the wallpaper
+    // hand-off, holds it through the apply, and restores the previous
+    // value once the theme palette is verified (or at the bounded cap);
+    // any exit path before the worker hand-off must still restore.
+
+    #[test]
+    #[serial]
+    fn v5_apply_yields_before_handoff_and_restores_after_verification() {
+        // (a) The ownership decision is taken BEFORE the flip: the fixture
+        // is OWNER_TRAP_JSON (policy wallpaper, NO themeMode follow), so
+        // after the flip the config reads `off` and re-evaluating ownership
+        // there would answer FALSE — denying the very re-assert that must
+        // run (the W2 trap). The wallet of proof: apply returns with the
+        // authority still held off, the worker still re-asserts (2 sets),
+        // and the value comes back to EXACTLY its original bytes only after
+        // the palette is verified.
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_TRAP_JSON), false);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let held = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert!(
+            held.contains("\"policy\": \"off\""),
+            "the authority must be held off through the apply, got: {}",
+            held
+        );
+        // The worker verifies the palette (2 s settle), then restores.
+        let deadline = Instant::now() + Duration::from_secs(12);
+        loop {
+            let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+            if cfg == OWNER_TRAP_JSON {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "colour authority must come back exactly, still: {}",
+                cfg
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let final_cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert_eq!(final_cfg, OWNER_TRAP_JSON, "restored byte-for-byte");
+        assert!(
+            !crate::providers::skwd_policy::marker_path().exists(),
+            "the worker's restore must clear the marker"
+        );
+        let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
+        // Let the worker's final verifying get and thread teardown finish so
+        // no detached thread outlives this test into the next serial one.
+        std::thread::sleep(Duration::from_millis(1500));
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_early_error_after_yield_still_restores() {
+        // (b) Early return: apply fails AFTER the yield (the palette target
+        // dir cannot be created) — the guard's Drop must restore and log.
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        // Break the palette target: a FILE where the palettes dir must be
+        // created inside. `noctalia_config_dir()` honours the env var only
+        // when the path EXISTS, so the env var must name the file itself —
+        // `create_dir_all(<file>/palettes)` then fails deterministically
+        // AFTER the wallpaper hand-off.
+        let broken = std::env::temp_dir().join(format!("hve-noct-broken-{}", std::process::id()));
+        std::fs::write(&broken, b"file, not a dir").unwrap();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", &broken);
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let _tracing = tracing::subscriber::set_default(subscriber);
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_err(), "the broken palette target must fail apply");
+        let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert_eq!(
+            cfg, OWNER_JSON,
+            "an early error must still restore the authority: {}",
+            cfg
+        );
+        assert!(
+            !crate::providers::skwd_policy::marker_path().exists(),
+            "restore clears the marker"
+        );
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("yield guard"),
+            "the guard's scope-exit restore must be logged, got: {}",
+            text
+        );
+        let _ = std::fs::remove_file(&broken);
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_without_custom_palette_restores_synchronously() {
+        // (b) No-palette branch: a wallpaper is handed over (yield fires)
+        // but there is no custom palette to verify — no worker is spawned,
+        // so the guard must restore synchronously at the end of apply.
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let _tracing = tracing::subscriber::set_default(subscriber);
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert_eq!(
+            cfg, OWNER_JSON,
+            "the no-palette branch must restore synchronously: {}",
+            cfg
+        );
+        assert!(!crate::providers::skwd_policy::marker_path().exists());
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("yield guard"),
+            "the guard's scope-exit restore must be logged, got: {}",
+            text
+        );
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(stub.sets(), 0, "non-custom palette must issue no set");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_without_ownership_writes_nothing_and_behaves_as_today() {
+        // (c) Missing engine config: no yield, nothing written anywhere,
+        // and the scheme commands stay exactly today's.
+        let stub = ColorStub::new("custom skwd-wall", 99, None, true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        assert!(
+            !stub.skwd_cfg.exists(),
+            "no config file must mean no yield and no write"
+        );
+        assert!(
+            !crate::providers::skwd_policy::marker_path().exists(),
+            "no yield must leave no marker"
+        );
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(stub.sets(), 1, "only the synchronous set, zero extra");
+        assert_eq!(stub.templates(), 1, "only the synchronous templates-apply");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_fixed_policy_writes_nothing_and_behaves_as_today() {
+        // (c) `fixed` policy: no ownership, no yield — the engine config
+        // bytes must stay exactly as they were, marker absent, re-assert
+        // behaviour unchanged (no worker: no spawn without ownership).
+        let fixed = r#"{"theme": {"policy": "fixed"}, "noctalia": {"themeMode": "manual"}}"#;
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(fixed), true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert_eq!(
+            cfg, fixed,
+            "a fixed policy must leave the engine config byte-identical: {}",
+            cfg
+        );
+        assert!(!crate::providers::skwd_policy::marker_path().exists());
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(stub.sets(), 1, "only the synchronous set, zero extra");
+        assert_eq!(stub.templates(), 1, "only the synchronous templates-apply");
     }
 
     // ── Save-side static background: record what the painter shows ──

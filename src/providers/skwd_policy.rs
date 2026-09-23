@@ -57,11 +57,10 @@
 //! the keeper's live `/home/ximo/.config/skwd-wall-v2/config.json` is never
 //! read, written or probed by any code in this module or its tests.
 
-// W1 primitives are dormant until W2 wires them into the apply path: the
-// binary build would flag everything as dead code. House pattern from
-// `preset_store.rs` ("used by upcoming feature") — the allow is a promise
-// that the wiring lands in W2, not a private admission of unused code.
-#![allow(dead_code)]
+// W2 wires `yield_color_authority` / `restore_color_authority` /
+// `recover_crashed_yield` and the RAII `YieldGuard` into the apply path;
+// everything here is reachable from `main` via the apply wiring and the
+// startup repair.
 
 use crate::config::hve_cache_dir;
 use serde::{Deserialize, Serialize};
@@ -69,6 +68,7 @@ use std::fs;
 use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Pure plan of ONE yield: the exact edited document text plus the value
 /// that must be put back by the matching restore.
@@ -117,6 +117,154 @@ pub(crate) fn config_path() -> PathBuf {
 /// Crash marker location: HVE cache dir + explicit, documented name.
 pub(crate) fn marker_path() -> PathBuf {
     hve_cache_dir().join("skwd-policy-yield.json")
+}
+
+// ── W2: RAII restore guard + atomic-write hardening ──────────────────
+
+/// Temp-file stem for the engine-config writes.
+const TEMP_STEM: &str = "skwd-policy-yield";
+/// Temp-file stem for the marker writes.
+const MARKER_TEMP_STEM: &str = "skwd-policy-yield-marker";
+
+/// RAII arm for a colour-authority yield: restores the previous value when
+/// dropped while armed, so NO exit path between the flip and the worker
+/// hand-off can lose the restore. Best-effort and honest: failures are
+/// logged, never panicked (a Drop must never panic).
+pub(crate) struct YieldGuard {
+    previous_value: Option<String>,
+    armed: bool,
+}
+
+impl YieldGuard {
+    pub(crate) fn new(previous_value: String) -> Self {
+        Self {
+            previous_value: Some(previous_value),
+            armed: true,
+        }
+    }
+
+    /// Detach the restore from this scope: the async re-assert worker takes
+    /// ownership and restores once the palette is verified (or at the cap).
+    /// Returns the previous value the worker must put back.
+    pub(crate) fn disarm(&mut self) -> Option<String> {
+        self.armed = false;
+        self.previous_value.take()
+    }
+}
+
+impl Drop for YieldGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Some(previous) = self.previous_value.take() {
+            match restore_color_authority(&previous) {
+                Ok(wrote) => tracing::warn!(
+                    "[skwd-policy] yield guard restoring engine colour authority on scope \
+                     exit (theme.policy -> \"{}\", wrote={})",
+                    previous,
+                    wrote
+                ),
+                Err(e) => tracing::warn!(
+                    "[skwd-policy] yield guard could NOT restore engine colour authority: {}",
+                    e
+                ),
+            }
+        }
+    }
+}
+
+/// Removes its temp file on drop unless disarmed — the ONE cleanup path
+/// for every failure between temp creation and the atomic rename, so a
+/// write or sync failure cannot leave a temp behind (W1 finding 1).
+struct TempFileGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TempFileGuard {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Unique temp-file sibling of `path`: same dir (same filesystem → the
+/// rename swap stays atomic), distinct per invocation (pid + monotonic
+/// counter) so two concurrent writers can never collide (W1 finding 2).
+fn temp_sibling(path: &Path, stem: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let dir = path.parent().unwrap_or_else(|| Path::new("/"));
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!(".{stem}.{}.{}.tmp", std::process::id(), seq))
+}
+
+/// Best-effort sweep of temp siblings left by a CRASHED process (a hard
+/// kill between create and rename is the only way a temp survives — a
+/// failure path never leaves one). Unique names mean the next write can no
+/// longer "truncate" the old fixed name, so the sweep keeps the old
+/// promise: the next write leaves the directory clean.
+fn sweep_orphaned_temps(dir: &Path, stem: &str) {
+    let our_pid = std::process::id();
+    let prefix = format!(".{stem}.");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(rest) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if !rest.ends_with(".tmp") {
+            continue;
+        }
+        let Some(pid) = rest.split('.').next().and_then(|p| p.parse::<u32>().ok()) else {
+            continue;
+        };
+        if pid != our_pid {
+            if let Err(e) = fs::remove_file(entry.path()) {
+                tracing::debug!(
+                    "[skwd-policy] cannot sweep stale temp {}: {}",
+                    entry.path().display(),
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// One-shot startup repair: replay a yield a previous process died between
+/// flip and restore, and log the outcome (repaired / nothing / failed).
+/// Never panics and never aborts startup.
+pub(crate) fn startup_recover_crashed_yield() {
+    match recover_crashed_yield() {
+        Ok(true) => tracing::warn!(
+            "[skwd-policy] startup repair: found a crashed yield; engine colour authority \
+             restored (theme.policy put back)"
+        ),
+        Ok(false) => {
+            tracing::info!("[skwd-policy] startup repair: nothing to repair");
+        }
+        Err(e) => {
+            tracing::warn!("[skwd-policy] startup repair FAILED: {}", e);
+        }
+    }
 }
 
 // ── Pure planners ────────────────────────────────────────────────────
@@ -250,14 +398,21 @@ pub(crate) fn plan_restore(text: &str, previous_value: &str) -> Option<RestorePl
 /// is a same-filesystem atomic swap: the engine can never observe a
 /// half-written config. The target's current permissions (the keeper's live
 /// config is `0600`) are read BEFORE the swap and re-applied to the temp
-/// file; on non-unix platforms the mode step is skipped. A crash may leave
-/// a stray temp file behind — the next write truncates it.
+/// file; on non-unix platforms the mode step is skipped. The temp name is
+/// unique per invocation (W1 finding 2), the cleanup guard covers EVERY
+/// failure path so a failed write leaves nothing behind (W1 finding 1),
+/// and crash orphans from another pid are swept before writing.
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     let dir = path
         .parent()
         .ok_or_else(|| format!("[skwd-policy] cannot atomically write {}: no parent dir", path.display()))?;
-    let tmp = dir.join(".skwd-policy-yield.tmp");
+    sweep_orphaned_temps(dir, TEMP_STEM);
+    let tmp = temp_sibling(path, TEMP_STEM);
     let mode = fs::metadata(path).ok().map(|m| m.permissions());
+    // Arm the cleanup BEFORE the first fallible op: create, write, sync and
+    // mode failures all share this one removal; only the successful atomic
+    // rename disarms it.
+    let mut cleanup = TempFileGuard::new(&tmp);
     {
         let mut f = fs::File::create(&tmp)
             .map_err(|e| format!("[skwd-policy] cannot create {}: {}", tmp.display(), e))?;
@@ -273,7 +428,6 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
         })?;
     }
     fs::rename(&tmp, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
         format!(
             "[skwd-policy] atomic rename {} -> {} failed: {}",
             tmp.display(),
@@ -281,6 +435,7 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
             e
         )
     })?;
+    cleanup.disarm();
     Ok(())
 }
 
@@ -297,17 +452,28 @@ fn write_marker(config_path: &Path, previous_value: &str) -> Result<(), String> 
         .ok_or_else(|| format!("[skwd-policy] marker {} has no parent dir", path.display()))?;
     fs::create_dir_all(dir)
         .map_err(|e| format!("[skwd-policy] cannot create cache dir {}: {}", dir.display(), e))?;
-    let tmp = dir.join(".skwd-policy-yield-marker.tmp");
-    fs::write(&tmp, raw)
-        .map_err(|e| format!("[skwd-policy] cannot write marker {}: {}", tmp.display(), e))?;
+    sweep_orphaned_temps(dir, MARKER_TEMP_STEM);
+    let tmp = temp_sibling(&path, MARKER_TEMP_STEM);
+    let mut cleanup = TempFileGuard::new(&tmp);
+    {
+        let mut f = fs::File::create(&tmp)
+            .map_err(|e| format!("[skwd-policy] cannot create marker {}: {}", tmp.display(), e))?;
+        f.write_all(raw.as_bytes())
+            .map_err(|e| format!("[skwd-policy] cannot write marker {}: {}", tmp.display(), e))?;
+        // As durable as the config write it protects: a power cut must not
+        // leave a corrupt marker that recovery refuses to clear (W1
+        // finding 3) — the marker exists precisely to survive that.
+        f.sync_all()
+            .map_err(|e| format!("[skwd-policy] cannot sync marker {}: {}", tmp.display(), e))?;
+    }
     fs::rename(&tmp, &path).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
         format!(
             "[skwd-policy] cannot install marker {}: {}",
             path.display(),
             e
         )
     })?;
+    cleanup.disarm();
     Ok(())
 }
 
@@ -813,5 +979,265 @@ mod tests {
         assert!(!wrote, "restore must not rewrite a foreign value");
         assert_eq!(env.read(), foreign, "the keeper's value must survive");
         assert!(!env.marker().exists(), "marker cleared: we are no longer yielding");
+    }
+
+    // ── W2: findings closure ──────────────────────────────────────────
+
+    /// In-memory tracing sink so startup-repair logs can be asserted
+    /// without a global subscriber (thread-local default only).
+    #[derive(Clone, Default)]
+    struct LogCapture {
+        buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl std::io::Write for LogCapture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.buf.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn temp_siblings_are_unique_per_invocation() {
+        // W1 finding 2: the temp name was fixed, so two concurrent writers
+        // would collide in the same directory. Each invocation must get its
+        // own name, still a hidden dotfile next to the target (the rename
+        // swap must stay same-directory and atomic).
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("config.json");
+        let a = temp_sibling(&target, "skwd-policy-yield");
+        let b = temp_sibling(&target, "skwd-policy-yield");
+        assert_ne!(a, b, "two invocations must never collide on the temp name");
+        assert_eq!(a.parent(), Some(tmp.path()), "temp must live beside the target");
+        let name = a.file_name().and_then(|n| n.to_str()).expect("utf8 temp name");
+        assert!(name.starts_with(".skwd-policy-yield."), "hidden dotfile, stem prefixed: {}", name);
+        assert!(name.ends_with(".tmp"), "dotfile suffix: {}", name);
+    }
+
+    #[test]
+    fn write_atomic_failure_leaves_no_temp_behind() {
+        // W1 finding 1, behavioral proof on the hard-to-fake arm: when the
+        // rename itself fails (target is a directory), the temp that was
+        // fully written and synced must be removed. The write/sync arms use
+        // the same cleanup guard (pinned by construction below), so one
+        // live failure covers the shared mechanism.
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("victim");
+        fs::create_dir_all(&target).unwrap();
+        let err = write_atomic(&target, "{}")
+            .expect_err("renaming a file onto a directory must fail");
+        assert!(err.contains("[skwd-policy]"), "honest error: {}", err);
+        let leftovers: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(".skwd-policy-yield.")
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "a failed write must leave nothing behind: {:?}",
+            leftovers
+        );
+    }
+
+    #[test]
+    fn write_atomic_all_failure_paths_share_one_cleanup_guard() {
+        // W1 finding 1, by construction: the cleanup guard must be armed
+        // BEFORE the first fallible op (File::create) and disarmed only
+        // after the atomic rename succeeds — so write and sync failures are
+        // covered by exactly the same removal as the rename failure.
+        let src = std::fs::read_to_string("src/providers/skwd_policy.rs")
+            .expect("src/providers/skwd_policy.rs must exist");
+        let start = src.find("fn write_atomic").expect("write_atomic must exist");
+        let end = src.find("fn write_marker").expect("write_marker must exist");
+        let body = &src[start..end];
+        let guard_at = body.find("TempFileGuard::new").expect("guard must arm");
+        let create_at = body.find("File::create").expect("temp creation must exist");
+        assert!(
+            guard_at < create_at,
+            "the cleanup guard must arm before the first fallible op"
+        );
+        let rename_at = body.find("fs::rename").expect("the swap must exist");
+        let disarm_at = body[rename_at..].find("disarm").expect("guard must disarm") + rename_at;
+        assert!(
+            disarm_at > rename_at,
+            "the guard must disarm only after the atomic rename"
+        );
+    }
+
+    #[test]
+    fn stale_temp_from_a_crashed_process_is_swept_on_the_next_write() {
+        // Unique temp names mean the next write can no longer "truncate" a
+        // crash orphan (the old fixed-name promise), so the next write must
+        // sweep leftovers whose pid differs from ours.
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("config.json");
+        let stale = tmp
+            .path()
+            .join(".skwd-policy-yield.999999.0.tmp");
+        fs::write(&stale, b"orphan").unwrap();
+        write_atomic(&target, r#"{"theme": {"policy": "off"}}"#).unwrap();
+        assert!(
+            !stale.exists(),
+            "a crash orphan from another pid must be swept by the next write"
+        );
+        let leftovers: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".skwd-policy-yield."))
+            .collect();
+        assert!(leftovers.is_empty(), "no temp may survive a write: {:?}", leftovers);
+    }
+
+    #[test]
+    fn marker_write_is_as_durable_as_the_config_write() {
+        // W1 finding 3, by construction: the marker exists precisely to
+        // survive a power cut, so it must fsync before the rename exactly
+        // like the config write — a corrupt marker that recovery refuses to
+        // clear would leave the switch off until a later startup.
+        let src = std::fs::read_to_string("src/providers/skwd_policy.rs")
+            .expect("src/providers/skwd_policy.rs must exist");
+        let start = src.find("fn write_marker").expect("write_marker must exist");
+        let end = src.find("fn clear_marker").expect("clear_marker must exist");
+        let body = &src[start..end];
+        assert!(
+            body.contains("sync_all"),
+            "the marker must fsync before the rename, like the config write"
+        );
+    }
+
+    // ── W2: the yield guard (RAII restore) ────────────────────────────
+
+    #[test]
+    fn yield_guard_drop_restores_when_armed() {
+        let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
+        let previous = yield_color_authority()
+            .unwrap()
+            .expect("wallpaper policy must yield");
+        let after_yield = env.read();
+        assert!(after_yield.contains("\"policy\": \"off\""));
+        {
+            let guard = YieldGuard::new(previous);
+            drop(guard); // armed: the Drop must restore on scope exit
+        }
+        assert_eq!(
+            env.read(),
+            FIXTURE,
+            "an armed guard must restore the yield on scope exit"
+        );
+        assert_eq!(env.mode(), 0o600, "restore keeps the file's permissions");
+        assert!(!env.marker().exists(), "restore clears the marker");
+    }
+
+    #[test]
+    fn yield_guard_drop_does_nothing_when_disarmed() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        let previous = yield_color_authority()
+            .unwrap()
+            .expect("wallpaper policy must yield");
+        let mut guard = YieldGuard::new(previous);
+        let handed = guard.disarm();
+        assert_eq!(handed.as_deref(), Some("wallpaper"));
+        drop(guard); // disarmed: Drop must NOT restore
+        assert!(
+            env.read().contains("\"policy\": \"off\""),
+            "a disarmed guard must not restore (the worker owns it now)"
+        );
+        assert!(
+            env.marker().exists(),
+            "marker stays: the worker's restore clears it, not the guard"
+        );
+    }
+
+    // ── W2: startup crash repair ──────────────────────────────────────
+
+    #[test]
+    fn startup_repair_finds_a_crashed_yield_repairs_and_logs() {
+        let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
+        assert_eq!(yield_color_authority().unwrap().as_deref(), Some("wallpaper"));
+        // "Crash": the restore never ran; the config stays off, the marker
+        // survives. The next start replays the repair and logs the outcome.
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        startup_recover_crashed_yield();
+        assert_eq!(env.read(), FIXTURE, "startup repair must restore the bytes");
+        assert_eq!(env.mode(), 0o600);
+        assert!(!env.marker().exists(), "startup repair clears the marker");
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("startup repair") && text.contains("restored"),
+            "must log the repaired outcome, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn startup_repair_with_nothing_pending_logs_nothing_to_repair() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        assert!(!env.marker().exists());
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        startup_recover_crashed_yield();
+        assert_eq!(env.read(), FIXTURE, "nothing to repair: config untouched");
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("nothing to repair"),
+            "must log the nothing-to-repair outcome, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn startup_repair_logs_a_failed_recovery() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        // Marker whose recorded config path is a DIRECTORY: recovery cannot
+        // read it, so the repair fails honestly instead of guessing.
+        let target = env._tmp.path().join("adir");
+        fs::create_dir_all(&target).unwrap();
+        write_marker(&target, "wallpaper").unwrap();
+        assert!(env.marker().exists(), "precondition: pending marker");
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        startup_recover_crashed_yield();
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("FAILED"),
+            "a failed recovery must be logged honestly, got: {}",
+            text
+        );
+        // The marker stays (recovery refused to clear what it could not
+        // repair) so the next startup retries — the temp sandbox cleans up.
+        assert!(env.marker().exists(), "unrepaired marker must survive for retry");
     }
 }
