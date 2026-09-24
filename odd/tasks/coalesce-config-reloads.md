@@ -284,7 +284,7 @@ line in `src/main.rs` — test scaffolding only, no production Rust change).
 | RED first (strict TDD) | writer, observed before implementing | **Two staged REDs.** RED-1 (module file absent): `cargo test --bin hve reload_coalescer` → **0 passed / 8 failed** — every test fails staging `reload_coalescer.sh` (`No such file or directory`). RED-2 (behavioural, after wiring `assemble.sh` to a no-op `hve_reload_queue`): **1 passed / 7 failed** — the burst never fires a reload, the killed-drainer test finds no drainer pid, the disable switch fires nothing; the 1 pass is `sandboxed_hyprland_down_fires_nothing`, which pins the Hyprland-down guard and is expected to pass at every stage. Both RED outputs kept. |
 | Full suite (W1) | writer, after implementing | `cargo test` → **963 passed / 0 failed** (48.9 s: 955 baseline + 8 new), **0 build warnings** (verified with an explicit warning grep after `touch src/main.rs` + `cargo test --no-run`) |
 | End-to-end probe (real repo scripts, stub hyprctl, sandbox HOME) | writer | `/tmp/opencode/coalesce-probe.sh`: 4 fragment scripts → **1 reload** (was 4), marker consumed, independent second burst fires its own (2 total), `HVE_RELOAD_COALESCE=0` → immediate reload |
-| Live behaviour | **NOT RUN BY DESIGN — one unplanned live observation, see below** | the keeper's live check on his next apply |
+| Live behaviour (keeper) | **the keeper, on his own desktop** (the only valid check for compositor state) | **PASS** — the keeper ran his own visual verification on 2026-09-24 and reported it as a complete success (his words: *"ha sido todo un exito"*), across the three checks he was asked to run. The reload storm is gone: a theme apply no longer fires the seven-reload burst the measurement attributed. |
 | Cross-model independent verification | a DIFFERENT model than the writer (AGENTS.md model roles) | — |
 
 ### Unplanned live observation (2026-09-23, must be reported)
@@ -383,7 +383,7 @@ All pre-existing tests untouched and green; suite total 963 → **966 passed /
 - [x] W5 correction — the cross-model MAJOR finding (consume-before-fire) and
   the MINOR sibling (down-Hyprland consume-without-fire) fixed via the
   claim-then-fire protocol; new RED-first coverage; re-verification pending.
-- [ ] Live confirmation (keeper). Note: the coalescer is ALREADY live on the
+- [x] Live confirmation (keeper) — **PASS 2026-09-24** (see the verification record).. Note: the coalescer is ALREADY live on the
   keeper's running stack via his repo-cwd HVE (see the unplanned live
   observation) — his next apply is a live confirmation in itself. His live
   drainer (PID 202160, started 19:22:27, BEFORE this correction) still runs

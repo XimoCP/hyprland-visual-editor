@@ -251,7 +251,7 @@ test set below.
 | RED first (correction) | writer, observed before implementing | 5 new `main.rs` tests referencing the not-yet-existing arm/seam (`arm_reload_reconsult`, `PENDING_RECONSULT_AT`, `reload_reconsult_tick`) failed to compile; the `hypr_ipc.rs` hop-logging test failed the `let _ =` pin until the fix landed. RED captured before implementation. |
 | Full suite (correction) | writer, after implementing | `cargo test` → **947 passed / 0 failed** (~36 s), 0 build warnings. |
 | Re-verification of the correction | a DIFFERENT model than the writer (per AGENTS.md model roles), GLM 5.3 Flash reviewing `9488448` | **PASS WITH FINDINGS — the previously BLOCKING finding is CLOSED.** Traced end to end: `Nothing(Debounced)` arms one single-shot timer at exactly the window remainder (`reload_reconsult_delay = window − elapsed > 0`, so it cannot fire early), the tick re-gathers live state and re-runs all five gates, and the last-reload-of-a-burst case now ends in `Cycle`. Boundedness confirmed: the tick never re-arms, a second refusal with one pending arms nothing, and a burst fires exactly one re-consult. The `run_fullscreen_cycle` refactor preserved the gallery path verbatim. Three findings below, none blocking. |
-| Live behaviour | **NOT RUN** | Needs the keeper: reload while HVE is fullscreen and watch the border/blur/bar survive. |
+| Live behaviour (keeper) | **the keeper, on his own desktop** (the only valid check for compositor state) | **PASS** — the keeper ran his own visual verification on 2026-09-24 and reported it as a complete success (his words: *"ha sido todo un exito"*), across the three checks he was asked to run. Provoking reloads no longer leaves the HVE window carrying its border with the desktop blurred and the bar above it; the immersive fullscreen comes back on its own. |
 
 ## Findings from the re-verification (open, none blocking)
 
@@ -289,4 +289,4 @@ test set below.
   fixed in C1: the `hypr_ipc.rs` UI-thread hop now logs its failure at
   debug instead of a silent `let _ =` (unit logging contract).
 - [x] Re-verification (cross-model) of C1 — **PASS WITH FINDINGS, the BLOCKING finding closed**; three open findings recorded above (none blocking).
-- [ ] Live confirmation (keeper).
+- [x] Live confirmation (keeper) — **PASS 2026-09-24** (see the verification record)..
