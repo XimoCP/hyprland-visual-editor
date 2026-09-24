@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/watcher-startup-resilience/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase, do NOT push)
 **Checkpoint before this work (save point)**: `1ab296e` — clean tree; roll back here and this patch leaves no trace
-**Status**: W6 IMPLEMENTED 2026-09-24 (writer: deepseek-v4-flash) — TDD RED->GREEN per layer, whole suite green, committed. PENDING: cross-model verification (glm-5.3-flash) and keeper live confirmation.
+**Status**: W6 IMPLEMENTED (writer: deepseek-v4-flash) and CROSS-MODEL VERIFIED (verifier: glm-5.3-flash, 2026-09-24) — TDD RED->GREEN per layer, whole suite green, all non-blocking findings recorded. PENDING: keeper live confirmation (AC 7) only.
 **TDD**: strict — runner `cargo test`
 **Delivery strategy**: `ask-on-risk` (no remote configured: delivery is local commits, no PRs)
 **Delivery budget forecast**: ~300-450 authored changed lines (script + Rust + tests +
@@ -236,8 +236,35 @@ staged RED output, the GREEN output, and the final full-suite count.
 | Targeted watcher tests | writer | `cargo test --bin hve watcher::tests`: **12 passed; 0 failed** (0.50 s) |
 | Stray-process audit | writer | watcher module ×3 + full suite: `NO-STRAYS`; required one test-infra fix: the long-lived stub must `exec sleep` (without it bash forks `sleep` as a child, the marker pid dies, and the sleep leaks past a by-pid kill) |
 | Work-unit commit (code + tests) | writer | commit `b8becbe` (this table is the `docs(odd)` follow-up) |
-| Cross-model verification | PENDING — glm-5.3-flash | |
+| Cross-model verification | verifier (glm-5.3-flash, independent) | Full suite **972 passed; 0 failed** (48.72 s) reproduced; `cargo build --release` 0 warnings; `bash -n` SYNTAX-OK; `watcher::tests` **12/0** (0.50 s); stray audit NO-STRAYS — all reproduced. Every new test **falsified by mutants**: prctl stripped → the e2e parent-death test RED with the exact recorded panic; group-kill stripped → `guard_termination` RED at 5.05 s; `MAX_START_ATTEMPTS=1` → 2 of 3 `core_*` RED. Causal A/B (sole variable `prctl`, plain child and the real sandboxed script): without prctl both survive their parent ≥3 s orphaned; with prctl both die. Layer 1 confirmed with an independent external `flock` probe: stripped → HELD (orphan fds `0 1 2 9`); fixed → FREE (fds `0 1 2`). Fail-open re-verified live. Verdict: acceptance criteria 1-6 satisfied; AC 7 pending. |
 | Live confirmation (keeper, mandatory) | PENDING | normal start → watcher present; `kill -9` HVE → watcher gone within ~1 s and the lock free; start HVE again → watcher starts on the first attempt |
+
+## Findings from the verification (open, none blocking)
+
+- **MINOR** — `src/watcher.rs` layer-2 e2e test env block: the helper resolves the
+  watcher log through `dirs::cache_dir()`, which honours `XDG_CACHE_HOME`, but the
+  test pins only `HOME`. With `XDG_CACHE_HOME` exported, a helper-run watcher could
+  append stderr to the real `~/.cache/hve/color_watcher.log`. No consequence in this
+  environment (no `XDG_CACHE_HOME`; real cache mtimes predate every run). Test
+  robustness only: pin `XDG_CACHE_HOME` in the sandbox too.
+- **MINOR (theoretical residual)** — `src/watcher.rs:27-29`: `kill(-pgid)` would hit
+  an unrelated group only if the child died, its group fully dissolved, and its pid
+  were recycled to a new group leader before `terminate()` runs. The structural
+  guarantee holds (`pgid: Some` is set only right after `process_group(0)`); the
+  stale-pid window is inherent, unproven as reachable, left as documented residual.
+- **NIT** — `core_retries_an_immediately_exiting_child...`: under pathological load a
+  `sh -c exit 7` taking >250 ms would end the grace "alive" and flake. Not observed
+  in repeated runs.
+- **NIT** — the e2e test can leak a respawned `sleep 2` stub for ≤2 s after PDEATHSIG
+  kills the watcher bash (group members are not pdeathsig'd). Audit found none.
+- **Unverifiable here** — the pre-change baseline `966 passed`: reproducing it needs
+  a checkout of `1ab296e`, which the read-only verification contract forbids. Plausible:
+  972 − 966 = exactly the six new tests.
+- **Pre-existing, out of scope** — the stray `reload_coalescer.sh drain` (PPID 1)
+  observed again during verification, alive 88 min. Documented as a separate unit.
+- **Delivery-size overage** — ~764 authored lines vs the ~400 advisory budget (tests
+  dominate). Recorded; no artificial split, no minification. Awaits the keeper's
+  explicit `size:exception` decision or a split decision.
 
 ## Progress
 
@@ -246,5 +273,5 @@ staged RED output, the GREEN output, and the final full-suite count.
 - [x] W6 layer 3 — grace check, bounded retry, honest failure log (`src/watcher.rs`)
 - [x] Tests: the three acceptance tests above, RED first
 - [x] Whole suite green, committed as one work unit (commit `b8becbe`)
-- [ ] Cross-model verification (glm-5.3-flash)
-- [ ] Live confirmation by the keeper
+- [x] Cross-model verification (glm-5.3-flash) — 2026-09-24, verdict: AC 1-6 satisfied, all tests falsified by mutants, no blocking findings
+- [ ] Live confirmation by the keeper (AC 7)
