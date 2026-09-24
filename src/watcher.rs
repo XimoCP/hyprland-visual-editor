@@ -630,6 +630,11 @@ mod tests {
             .env("HVE_PDEATH_PID_FILE", &pid_file)
             .env("HOME", &home)
             .env("HVE_CACHE_DIR", &cache)
+            // `dirs::cache_dir()` honours XDG_CACHE_HOME, so pinning HOME alone
+            // is not enough: without this, a helper-run watcher would redirect
+            // its stderr into the keeper's real ~/.cache/hve (verification
+            // finding MINOR, W6). Keep the whole tree inside the sandbox.
+            .env("XDG_CACHE_HOME", &cache)
             .env("PATH", &path_with_stubs)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
