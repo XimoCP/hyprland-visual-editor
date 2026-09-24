@@ -21,6 +21,7 @@ tiny-skia = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 usvg = "0.45"
+libc = "0.2.189"
 
 [build-dependencies]
 slint-build = "1.17"

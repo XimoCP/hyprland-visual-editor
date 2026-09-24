@@ -102,6 +102,15 @@ mkdir -p "$(dirname "$LOG_FILE")"
 # distinct warning line and continue unguarded. The capability check is real
 # (`command -v`), not an exit-code guess, so a missing dependency and a
 # genuine lock contention stay distinguishable.
+# Guard invariant: the singleton lock lives on fd 9. `exec 9>` does NOT set
+# close-on-exec, so every child would inherit fd 9 — and a `flock` rides the
+# open file description, not the process, so a killed watcher whose orphaned
+# child still holds fd 9 keeps the lock held (the exact defect reproduced in
+# odd/watcher-startup-resilience: the orphaned inotifywait rejected every new
+# watcher for up to 30 s — or forever after an ungraceful HVE death).
+# THEREFORE: any long-lived child MUST close fd 9 on its own invocation
+# (9>&-); closing it in this shell would release the lock. Per-command 9>&-
+# is a harmless no-op when fd 9 was never opened (the fail-open path below).
 mkdir -p "$HVE_SAFE_DIR"
 LOCK_FILE="$HVE_SAFE_DIR/color_watcher.lock"
 if ! command -v flock >/dev/null 2>&1; then
@@ -140,20 +149,20 @@ done <<< "$WATCH_FILES"
 # Helper: write current colors for HVE UI signal file
 _write_color_signal() {
     if [ -f "$GET_COLORS_SCRIPT" ]; then
-        bash "$GET_COLORS_SCRIPT" > "$COLOR_SIGNAL" 2>/dev/null
+        bash "$GET_COLORS_SCRIPT" 9>&- > "$COLOR_SIGNAL" 2>/dev/null
     fi
 }
 
 # Notify the running HVE app to refresh its in-memory theme
 _notify_hve() {
     if [ -x "$HVE_SCRIPTS_DIR/hve-ipc" ]; then
-        "$HVE_SCRIPTS_DIR/hve-ipc" refresh-theme 2>/dev/null
+        "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- refresh-theme 2>/dev/null
     fi
 }
 
 # Force initial refresh: ensure overlay is up-to-date when watcher starts
 _log "Initial overlay refresh..."
-if bash "$ASSEMBLE_SCRIPT" >> "$LOG_FILE" 2>&1; then
+if bash "$ASSEMBLE_SCRIPT" 9>&- >> "$LOG_FILE" 2>&1; then
     _log "Initial overlay refresh OK"
     _write_color_signal
     _notify_hve
@@ -167,7 +176,7 @@ while true; do
     # Using close_write instead of modify — fires AFTER the file is fully written
     # Using inotifywait directly (without xargs pipe which mangles exit codes)
     # shellcheck disable=SC2086
-    inotifywait -q -e close_write -t 30 $WATCH_FILES 2>/dev/null
+    inotifywait -q -e close_write -t 30 $WATCH_FILES 9>&- 2>/dev/null
 
     # Inner loop: keep processing while rapid changes are detected, so events
     # that happen during processing don't get lost (inotifywait is one-shot).
@@ -201,7 +210,7 @@ while true; do
         # templates-apply.
         if [ "$noctalia_settings_changed" = true ] && [ -f "$NOCTALIA_V5_SETTINGS" ] && command -v noctalia &>/dev/null; then
             _log "Noctalia v5 settings changed — applying templates..."
-            if noctalia msg templates-apply >> "$LOG_FILE" 2>&1; then
+            if noctalia msg templates-apply 9>&- >> "$LOG_FILE" 2>&1; then
                 _log "Templates applied"
                 # Update hashes of rendered files so they don't trigger a second pass
                 # v4: noctalia/noctalia-colors.lua
@@ -218,7 +227,7 @@ while true; do
 
         _log "Regenerating overlay..."
         # Run assemble.sh — stderr goes to log so we can see if it fails
-        if bash "$ASSEMBLE_SCRIPT" >> "$LOG_FILE" 2>&1; then
+        if bash "$ASSEMBLE_SCRIPT" 9>&- >> "$LOG_FILE" 2>&1; then
             _log "Overlay regenerated OK"
             _write_color_signal
             _notify_hve
