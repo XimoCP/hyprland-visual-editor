@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/watcher-startup-resilience/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase, do NOT push)
 **Checkpoint before this work (save point)**: `1ab296e` — clean tree; roll back here and this patch leaves no trace
-**Status**: W6 IMPLEMENTED (writer: deepseek-v4-flash) and CROSS-MODEL VERIFIED (verifier: glm-5.3-flash, 2026-09-24) — TDD RED->GREEN per layer, whole suite green, all non-blocking findings recorded, keeper `size:exception` granted for the ~764-line overage. PENDING: keeper live confirmation (AC 7) only.
+**Status**: W6 CLOSED 2026-09-24 — implemented (deepseek-v4-flash), cross-model verified (glm-5.3-flash), findings fixed, and **live-confirmed by the keeper (13 PASS / 0 FAIL)**. Accepted residuals are listed in the findings section.
 **TDD**: strict — runner `cargo test`
 **Delivery strategy**: `ask-on-risk` (no remote configured: delivery is local commits, no PRs)
 **Delivery budget forecast**: ~300-450 authored changed lines (script + Rust + tests +
@@ -237,7 +237,7 @@ staged RED output, the GREEN output, and the final full-suite count.
 | Stray-process audit | writer | watcher module ×3 + full suite: `NO-STRAYS`; required one test-infra fix: the long-lived stub must `exec sleep` (without it bash forks `sleep` as a child, the marker pid dies, and the sleep leaks past a by-pid kill) |
 | Work-unit commit (code + tests) | writer | commit `b8becbe` (this table is the `docs(odd)` follow-up) |
 | Cross-model verification | verifier (glm-5.3-flash, independent) | Full suite **972 passed; 0 failed** (48.72 s) reproduced; `cargo build --release` 0 warnings; `bash -n` SYNTAX-OK; `watcher::tests` **12/0** (0.50 s); stray audit NO-STRAYS — all reproduced. Every new test **falsified by mutants**: prctl stripped → the e2e parent-death test RED with the exact recorded panic; group-kill stripped → `guard_termination` RED at 5.05 s; `MAX_START_ATTEMPTS=1` → 2 of 3 `core_*` RED. Causal A/B (sole variable `prctl`, plain child and the real sandboxed script): without prctl both survive their parent ≥3 s orphaned; with prctl both die. Layer 1 confirmed with an independent external `flock` probe: stripped → HELD (orphan fds `0 1 2 9`); fixed → FREE (fds `0 1 2`). Fail-open re-verified live. Verdict: acceptance criteria 1-6 satisfied; AC 7 pending. |
-| Live confirmation (keeper, mandatory) | PENDING | normal start → watcher present; `kill -9` HVE → watcher gone within ~1 s and the lock free; start HVE again → watcher starts on the first attempt |
+| Live confirmation (keeper, mandatory) | the keeper, on his own desktop (2026-09-24 20:38) | **PASS 13 / FAIL 0** via `odd/tools/hve-live-verify.sh` (dev binary `4fe4b7a9`, repo tree). W6-specific: exactly ONE watcher alive, **not rejected** by the singleton guard; `kill -9` on HVE (pid 948759) → the watcher **died within ~5 s** and the singleton lock was **FREE** (PDEATHSIG + the fd no longer leaking, working on the real compositor, not just in sandboxes); restart → exactly ONE watcher again with **no failed-start error** in the HVE log. The same run also confirmed W7 (a burst's drainer spawned, consumed the owed reload, and exited on its own). The run first removed a stale pre-fix drainer (0 left, nothing owed). |
 
 ## Findings from the verification (open, none blocking)
 
@@ -275,4 +275,4 @@ staged RED output, the GREEN output, and the final full-suite count.
 - [x] Tests: the three acceptance tests above, RED first
 - [x] Whole suite green, committed as one work unit (commit `b8becbe`)
 - [x] Cross-model verification (glm-5.3-flash) — 2026-09-24, verdict: AC 1-6 satisfied, all tests falsified by mutants, no blocking findings
-- [ ] Live confirmation by the keeper (AC 7)
+- [x] Live confirmation by the keeper (AC 7) — 2026-09-24 20:38: 13 PASS / 0 FAIL on the real desktop (`odd/tools/hve-live-verify.sh`); the `kill -9` case is the one this unit was opened for

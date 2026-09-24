@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/reload-drainer-idle-exit/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase, do NOT push)
 **Checkpoint before this work (save point)**: `d66f395` — clean tree; roll back here and this patch leaves no trace
-**Status**: W7 IMPLEMENTED 2026-09-24 — code + tests shipped (`5eb9afc`), CROSS-MODEL VERIFIED (glm-5.3-flash) with both MINOR findings fixed in the harness-correction commit on `hve2-visual-rewrite` (2026-09-24); pending: keeper live confirmation (criterion 7) only
+**Status**: W7 CLOSED 2026-09-24 — implemented (deepseek-v4-flash), cross-model verified (glm-5.3-flash) with both MINOR findings fixed, and **live-confirmed by the keeper (13 PASS / 0 FAIL)**.
 **TDD**: strict — runner `cargo test`
 **Delivery strategy**: `ask-on-risk` (no remote configured: delivery is local commits, no PRs)
 **Delivery budget forecast**: ~200-350 authored changed lines (script + Rust tests + this document)
@@ -175,7 +175,7 @@ Why every interleaving is safe:
 | Interleaving coverage | writer | Queue-first: exercised by `sandboxed_request_pending_keeps_drainer_alive_and_fires` (marker written through the queue while the drainer is idle; the same drainer re-checks under the lock and serves it) and statistically by the stress test. Drainer-first: `sandboxed_idle_drainer_exits_and_removes_pidfile` continuation (a request AFTER the exit spawns a fresh drainer that wins the now-free drain lock). No-race: every pre-existing test. No-deadlock: the full suite completes without a hang (a deadlock would stall the blocking `flock 8` and every queue-dependent test would time out loudly). The blind window of a race is microseconds — the stress test is the statistical net, the two deterministic tests pin the counter rules that make the exit safe |
 | Cross-model independent verification | verifier (glm-5.3-flash — a DIFFERENT model than the writer, per AGENTS.md model roles) | **PASS WITH FINDINGS.** Every claim re-run: `bash -n` OK; unit suite **15/0 ×4** identical; full suite **976/0** (and one 975/1 flake, finding 1 below); `cargo check` 0 warnings; stray audit clean; the keeper's live pre-fix drainer left untouched. The verifier FALSIFIED the core by experiment, not by reading: queue-first (blocked queue + 1-tick drainer → the drainer stays, re-checks under the lock, serves the marker, fires once, exits); drainer-first (4 blocked-queue rounds → exactly 1 fire each, nothing left); the fd-inheritance claim confirmed with its own probe (plain `nohup` child keeps the lock; the `exec 8>&-` wrapper drops it); the idle counter confirmed never to count a marker/claim tick (2.0 s alive with a pending claim, then one fire, then exit); no deadlock or stall found. Mutants: no-handshake → the marker stranded with **0 fires** (the exact predator interleaving) while the real code served the same race in all 14 rounds; naive claim counting → abandons a pending claim deterministically. Unreproducible from the repo state (not contradicted, event history predates the single commit): the writer's baseline 972, RED-1/RED-2 discrimination, and the stress-test spacing correction. |
 | Correction 2026-09-24 (post-verification) | orchestrator | The verifier's two MINOR findings were fixed and the suite re-run: full suite **976/0 twice** (50.68 s / 49.77 s), `cargo check` 0 warnings/errors. See the findings below. |
-| Live confirmation | the keeper, on his own desktop | **pending** (criterion 7; note the observed pre-fix live drainer 809166 above — the fix takes over for drainers spawned after it dies) |
+| Live confirmation | the keeper, on his own desktop (2026-09-24 20:38) | **PASS 13 / FAIL 0** via `odd/tools/hve-live-verify.sh` (dev binary `4fe4b7a9`, repo tree). W7-specific: a reload burst spawned a drainer; the owed reload was **consumed** (no marker left behind); the drainer then **exited on its own** after the idle bound — no immortal child. The same run first removed a stale pre-fix drainer (0 left, nothing owed) and confirmed W6's `kill -9` case. |
 
 ## Findings from the cross-model verification (2026-09-24)
 
@@ -230,4 +230,4 @@ Why every interleaving is safe:
 - [x] Tests: idle exit, claim-pending no-exit, request-pending no-exit, no-loss stress
 - [x] Whole suite green, committed as one work unit — `5eb9afc` (code + tests) and the doc commit on `hve2-visual-rewrite` 2026-09-24
 - [x] Cross-model verification (glm-5.3-flash) — 2026-09-24: PASS WITH FINDINGS, both MINOR findings fixed, suite 976/0 twice
-- [ ] Live confirmation by the keeper
+- [x] Live confirmation by the keeper — 2026-09-24 20:38: 13 PASS / 0 FAIL; the burst's drainer consumed the reload and exited on its own (the pre-fix immortal child is gone)
