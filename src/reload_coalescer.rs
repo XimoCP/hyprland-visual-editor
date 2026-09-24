@@ -253,9 +253,15 @@ impl Drop for Sandbox {
     fn drop(&mut self) {
         // The drainer is not our direct child (it was spawned by the apply
         // script's bash), so a plain reap is impossible — a bounded SIGKILL
-        // poll keeps parallel tests from leaking sleeping drainers.
+        // poll keeps parallel tests from leaking sleeping drainers. A
+        // drainer that exited on its own (the W7 idle exit) removes its
+        // pidfile via the script's EXIT trap; a SIGKILLed one leaves a STALE
+        // pidfile, so liveness is verified BEFORE signalling — a pid file
+        // pointing at a dead (or recycled) pid must never be signalled.
         if let Some(pid) = self.drainer_pid() {
-            let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline
                 && std::path::Path::new(&format!("/proc/{pid}")).exists()
@@ -320,10 +326,14 @@ fn run_apply_with_env(
 }
 
 /// SIGKILL the live drainer (via its pid file) and wait, bounded, until it is
-/// gone. Probe-only: the drainer is never our direct child.
+/// gone. Probe-only: the drainer is never our direct child. Liveness is
+/// verified BEFORE signalling, so a stale pid file can never lead to
+/// signalling a dead (or recycled) pid.
 fn kill_drainer(sb: &Sandbox) {
     let pid = sb.drainer_pid().expect("a drainer pid must exist");
-    let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+    if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+    }
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline && std::path::Path::new(&format!("/proc/{pid}")).exists() {
         std::thread::sleep(Duration::from_millis(20));
@@ -622,6 +632,175 @@ fn sandboxed_missing_flock_fails_open() {
     sb.wait_until(|| sb.reload_count() >= 1, "at least one reload without flock", Duration::from_secs(8));
     // Fail-open fires per assemble (immediate path) — four scripts, four reloads.
     sb.assert_stable(4, Duration::from_millis(1200));
+}
+
+// ── W7: the drainer stops outliving its usefulness ────────────────────────
+// (see odd/tasks/reload-drainer-idle-exit.md). The drainer must not run
+// forever doing nothing, and it must never buy that with the one thing that
+// is forbidden: losing a reload. The idle bound counts ONLY ticks in which
+// NEITHER the marker NOR a claim exists (a claim is owed work — a
+// Hyprland-down reload must never be abandoned), and the exit races marker
+// writes via the `reload.request.lock` handshake.
+
+// ── Idle exit: a drainer that owes nothing exits within the idle bound ───
+// and removes its pidfile (the EXIT trap). The bound is a fixed TICK COUNT
+// (HVE_RELOAD_IDLE_TICKS, independent of the drain window) so tests can set
+// it small.
+
+#[test]
+fn sandboxed_idle_drainer_exits_and_removes_pidfile() {
+    let sb = Sandbox::build();
+    // Small drain window + a 2-tick idle bound: the drainer fires the first
+    // request, then has ~2 ticks of quiet before it must exit on its own.
+    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", "100", &[
+        ("HVE_RELOAD_IDLE_TICKS", "2"),
+    ]);
+    sb.wait_until(|| sb.reload_count() == 1, "the first request to fire", Duration::from_secs(8));
+    assert!(!sb.claim_path().exists(), "the claim must be consumed by the fire");
+    assert!(!sb.marker_path().exists(), "no marker may remain");
+
+    // Capture the pid while the drainer is still alive, then watch it exit
+    // and remove its pidfile — the process must not outlive its pidfile.
+    let pid = sb.drainer_pid().expect("drainer must be alive after the fire");
+    sb.wait_until(
+        || std::fs::read_to_string(sb.cache.join("reload.drain.pid")).is_err(),
+        "the idle drainer to exit and remove reload.drain.pid",
+        Duration::from_secs(8),
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "the exited drainer's process must be gone, not just its pidfile"
+    );
+
+    // Drainer-first interleaving: a request AFTER the exit spawns a FRESH
+    // drainer that wins the now-free drain lock and fires — nothing lost.
+    sb.run_apply("border.sh", &["test"], true, "1", "100");
+    sb.wait_until(|| sb.reload_count() == 2, "a fresh drainer to serve the new request", Duration::from_secs(8));
+    sb.assert_stable(2, Duration::from_millis(1200));
+    assert!(!sb.marker_path().exists(), "no marker may remain");
+}
+
+// ── A pending CLAIM is owed work: it must keep the drainer alive past the ─
+// idle bound (counting it as idle would abandon a Hyprland-down reload), and
+// only after the claim is fired and consumed does the drainer exit on its
+// own idle bound.
+
+#[test]
+fn sandboxed_claim_pending_never_exits_and_fires_when_back() {
+    let sb = Sandbox::build();
+    const WIDE_DRAIN: &str = "1000"; // 1 s per tick — coarse, noise-proof walls
+    let state_file = sb.root.join("hyprland.state");
+    std::fs::write(&state_file, "1\n").unwrap();
+
+    // Hyprland is UP at request time, so the reload is queued…
+    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", WIDE_DRAIN, &[
+        ("HVE_SIM_STATE_FILE", state_file.to_str().unwrap()),
+        ("HVE_RELOAD_IDLE_TICKS", "2"),
+    ]);
+    sb.wait_until(|| sb.claim_path().exists(), "drainer to claim the marker", Duration::from_secs(3));
+    let pid = sb.drainer_pid().expect("a live drainer must exist");
+
+    // …then Hyprland DIES inside the drain window: the pending claim is owed
+    // work. The drainer must outlive far more than the 2-tick idle bound
+    // (2 × 1 s) while it retries — a Hyprland-down reload waits, never lost.
+    std::fs::write(&state_file, "0\n").unwrap();
+    std::thread::sleep(Duration::from_millis(3200)); // > the whole idle bound
+    assert!(
+        std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "a pending claim (Hyprland down) must keep the drainer alive past the idle bound"
+    );
+    assert_eq!(sb.reload_count(), 0, "Hyprland down must fire nothing");
+
+    // Hyprland returns: the SAME drainer fires exactly once and consumes the
+    // claim, then exits only after a fresh idle bound.
+    std::fs::write(&state_file, "1\n").unwrap();
+    sb.wait_until(|| sb.reload_count() == 1, "the pending reload once Hyprland is back", Duration::from_secs(10));
+    assert!(!sb.claim_path().exists(), "the claim must be consumed by the fire");
+    assert!(!sb.marker_path().exists(), "no marker may remain");
+    sb.wait_until(
+        || std::fs::read_to_string(sb.cache.join("reload.drain.pid")).is_err(),
+        "the drainer to exit once idle after the fire",
+        Duration::from_secs(10),
+    );
+}
+
+// ── A pending REQUEST is owed work too: a request landing while the ───────
+// drainer is idle must reset the idle budget, keep the drainer alive, and be
+// fired by THE SAME drainer (its own spawn lost the drain lock). Only after
+// the fresh budget does the drainer exit.
+
+#[test]
+fn sandboxed_request_pending_keeps_drainer_alive_and_fires() {
+    let sb = Sandbox::build();
+    const WIDE_DRAIN: &str = "1500"; // 1.5 s per tick — wide, noise-proof walls
+
+    // Burst 1 fires; the drainer then goes idle with a tiny 2-tick bound.
+    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", WIDE_DRAIN, &[
+        ("HVE_RELOAD_IDLE_TICKS", "2"),
+    ]);
+    sb.wait_until(|| sb.reload_count() == 1, "first burst reload", Duration::from_secs(10));
+
+    // Burst 2 lands while the drainer is idle-but-alive (300 ms in, ~1.2 s
+    // of bound left). Its spawn loses the drain lock, so the SAME drainer
+    // must stay alive and fire it — exiting now would strand the request.
+    std::thread::sleep(Duration::from_millis(300));
+    let pid = sb.drainer_pid().expect("drainer must still be alive mid-idle");
+    sb.run_apply("border.sh", &["test"], true, "1", WIDE_DRAIN);
+    sb.wait_until(|| sb.reload_count() == 2, "the pending request to fire", Duration::from_secs(10));
+    assert!(!sb.marker_path().exists(), "no marker may remain");
+    assert!(!sb.claim_path().exists(), "no claim may remain");
+    assert!(
+        std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "the drainer that served burst 1 must be the one serving burst 2 (it may not exit while a request is owed)"
+    );
+
+    // …and only after a FRESH idle budget (the reset) does it exit: leftover
+    // pre-fire ticks must not shorten the post-fire bound. Without the reset
+    // the drainer exits the tick after the fire.
+    std::thread::sleep(Duration::from_millis(300)); // well inside the fresh bound
+    assert!(
+        std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "after owed work the drainer must live out a full idle bound before exiting"
+    );
+    sb.wait_until(
+        || std::fs::read_to_string(sb.cache.join("reload.drain.pid")).is_err(),
+        "the drainer to exit once idle again",
+        Duration::from_secs(10),
+    );
+}
+
+// ── No loss under stress: with a one-or-two-tick idle bound the drainer is ─
+// always close to exiting, so requests race exit decisions. Bursts are
+// INDEPENDENT (spacing ≥ fraction of the drain window, so coalescing never
+// legitimately folds two bursts into one fire) and the absolute invariant
+// holds: every burst fires (reload_count == bursts), no marker or claim is
+// left behind. The failure mode this test hunts is a LOST reload, never a
+// folded one.
+
+#[test]
+fn sandboxed_no_loss_under_idle_exit_stress() {
+    let sb = Sandbox::build();
+    const BURSTS: usize = 12;
+    for i in 0..BURSTS {
+        // Alternate one/two-tick idle bounds so drainer lifecycles vary
+        // while the queue keeps racing their exit decisions.
+        let idle_ticks = if i % 2 == 0 { "1" } else { "2" };
+        run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", "100", &[
+            ("HVE_RELOAD_IDLE_TICKS", idle_ticks),
+        ]);
+        // ≥ 2 drain windows between bursts: independent bursts (each must
+        // fire its own reload), with jitter so requests sweep across the
+        // drainers' phases.
+        std::thread::sleep(Duration::from_millis((220 + (i % 3) * 30) as u64));
+    }
+    sb.wait_until(|| sb.reload_count() == BURSTS, "every burst to fire", Duration::from_secs(25));
+    sb.assert_stable(BURSTS, Duration::from_millis(1500));
+    assert!(!sb.marker_path().exists(), "no marker may be left behind");
+    assert!(!sb.claim_path().exists(), "no claim may be left behind");
 }
 
 fn apply_four_fragments_with_path(sb: &Sandbox, path: &str) -> Vec<String> {
