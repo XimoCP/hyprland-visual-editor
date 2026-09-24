@@ -241,12 +241,13 @@ staged RED output, the GREEN output, and the final full-suite count.
 
 ## Findings from the verification (open, none blocking)
 
-- **MINOR** — `src/watcher.rs` layer-2 e2e test env block: the helper resolves the
-  watcher log through `dirs::cache_dir()`, which honours `XDG_CACHE_HOME`, but the
-  test pins only `HOME`. With `XDG_CACHE_HOME` exported, a helper-run watcher could
-  append stderr to the real `~/.cache/hve/color_watcher.log`. No consequence in this
-  environment (no `XDG_CACHE_HOME`; real cache mtimes predate every run). Test
-  robustness only: pin `XDG_CACHE_HOME` in the sandbox too.
+- **MINOR — RESOLVED (`da94564`)** — `src/watcher.rs` layer-2 e2e test env block: the
+  helper resolves the watcher log through `dirs::cache_dir()`, which honours
+  `XDG_CACHE_HOME`, but the test pinned only `HOME`. With `XDG_CACHE_HOME` exported,
+  a helper-run watcher could append stderr to the real
+  `~/.cache/hve/color_watcher.log`. Fixed by pinning `XDG_CACHE_HOME` into the
+  sandbox with a comment stating why; `watcher::tests` green (12/0) and the real
+  log's mtime unchanged across the run.
 - **MINOR (theoretical residual)** — `src/watcher.rs:27-29`: `kill(-pgid)` would hit
   an unrelated group only if the child died, its group fully dissolved, and its pid
   were recycled to a new group leader before `terminate()` runs. The structural
