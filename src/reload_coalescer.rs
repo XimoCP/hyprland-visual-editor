@@ -256,10 +256,11 @@ impl Drop for Sandbox {
         // poll keeps parallel tests from leaking sleeping drainers. A
         // drainer that exited on its own (the W7 idle exit) removes its
         // pidfile via the script's EXIT trap; a SIGKILLed one leaves a STALE
-        // pidfile, so liveness is verified BEFORE signalling — a pid file
-        // pointing at a dead (or recycled) pid must never be signalled.
+        // pidfile, so identity AND liveness are verified BEFORE signalling —
+        // a pid file pointing at a dead (or recycled) pid must never be
+        // signalled.
         if let Some(pid) = self.drainer_pid() {
-            if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            if is_live_drainer(pid) {
                 let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
             }
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -269,6 +270,21 @@ impl Drop for Sandbox {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
+    }
+}
+
+/// True only when `pid` is alive AND is the drainer we expect. `/proc/<pid>`
+/// existence alone is not identity: a stale pidfile can name a pid the kernel
+/// later recycled, and signalling a stranger is the hazard this guards
+/// (cross-model verification finding MINOR, 2026-09-24). The drainer's final
+/// process image is always `bash …/reload_coalescer.sh drain`.
+fn is_live_drainer(pid: i32) -> bool {
+    match std::fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(raw) => {
+            let cmdline = String::from_utf8_lossy(&raw).replace('\0', " ");
+            cmdline.contains("reload_coalescer.sh") && cmdline.contains("drain")
+        }
+        Err(_) => false,
     }
 }
 
@@ -331,7 +347,7 @@ fn run_apply_with_env(
 /// signalling a dead (or recycled) pid.
 fn kill_drainer(sb: &Sandbox) {
     let pid = sb.drainer_pid().expect("a drainer pid must exist");
-    if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+    if is_live_drainer(pid) {
         let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
     }
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -719,8 +735,21 @@ fn sandboxed_claim_pending_never_exits_and_fires_when_back() {
     // claim, then exits only after a fresh idle bound.
     std::fs::write(&state_file, "1\n").unwrap();
     sb.wait_until(|| sb.reload_count() == 1, "the pending reload once Hyprland is back", Duration::from_secs(10));
-    assert!(!sb.claim_path().exists(), "the claim must be consumed by the fire");
-    assert!(!sb.marker_path().exists(), "no marker may remain");
+    // The claim is consumed only AFTER a successful fire, so its absence is
+    // POLLED, never asserted immediately: the stub's `rm` follows its
+    // `hyprctl reload` return by a window a fast poller can straddle — an
+    // immediate assert flaked once in three full-suite runs (cross-model
+    // verification finding MINOR, 2026-09-24).
+    sb.wait_until(
+        || !sb.claim_path().exists(),
+        "the claim to be consumed by the fire",
+        Duration::from_secs(3),
+    );
+    sb.wait_until(
+        || !sb.marker_path().exists(),
+        "no marker left behind",
+        Duration::from_secs(3),
+    );
     sb.wait_until(
         || std::fs::read_to_string(sb.cache.join("reload.drain.pid")).is_err(),
         "the drainer to exit once idle after the fire",
