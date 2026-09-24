@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/reload-drainer-idle-exit/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase, do NOT push)
 **Checkpoint before this work (save point)**: `d66f395` — clean tree; roll back here and this patch leaves no trace
-**Status**: PLANNED 2026-09-24 — nothing implemented yet
+**Status**: W7 IMPLEMENTED 2026-09-24 — code + tests shipped (`5eb9afc`, plus the doc commit), cross-model verification and live confirmation pending
 **TDD**: strict — runner `cargo test`
 **Delivery strategy**: `ask-on-risk` (no remote configured: delivery is local commits, no PRs)
 **Delivery budget forecast**: ~200-350 authored changed lines (script + Rust tests + this document)
@@ -164,14 +164,43 @@ Why every interleaving is safe:
 
 | What | Who | Evidence |
 | --- | --- | --- |
-| (pending) | | |
+| Suite baseline (before any change) | writer | `cargo test` → **972 passed / 0 failed** (~46 s), 0 build warnings |
+| RED-1 (strict TDD: the 4 new W7 tests against the UNMODIFIED script) | writer | `cargo test --bin hve reload_coalescer` → **11 passed / 4 failed** — all four new tests fail because the drainer never exits: `sandboxed_idle_drainer_exits_and_removes_pidfile` (pidfile never removed), `sandboxed_claim_pending_never_exits_and_fires_when_back` (final exit wait times out), `sandboxed_request_pending_keeps_drainer_alive_and_fires` (same), `sandboxed_no_loss_under_idle_exit_stress` (fires never settle). 11 pre-existing tests pass untouched |
+| RED-2 (staged NAIVE fix: exit after N passes counting claim ticks as idle, no handshake, no trap) | writer | `cargo test --bin hve reload_coalescer` → **11 passed / 4 failed** — each new test pins one forbidden failure: claim test abandons the Hyprland-down claim deterministically (`a pending claim ... must keep the drainer alive past the idle bound`), request test exits with owed work (`must be the one serving burst 2`), idle test catches the missing pidfile trap, stress test LOSES reloads (`timed out waiting for every burst to fire`). The `kill:` ESRCH noise in that run also demonstrated why consumers must liveness-check before signalling |
+| Unit suite (after implementing) | writer | `cargo test --bin hve reload_coalescer` → **15 passed / 0 failed** (6.17 s) — run TWICE, identical (timing-based tests are stable; the second run used an over-broad filter catching the whole module) |
+| Full suite | writer | `cargo test` → **976 passed / 0 failed** (49.93 s: 972 baseline + 4 new), 0 build warnings |
+| Script syntax | writer | `bash -n assets/scripts/reload_coalescer.sh` → OK |
+| Build warnings | writer | `touch src/main.rs && cargo check` → exit 0, **0 warning/error lines** in the forced full recompile |
+| Stray audit (after the full suite) | writer | No drainer/stub of this unit left standing (every live pid confirmed before any kill, per the new discipline). One pre-existing LIVE-STACK drainer observed mid-session (PID 809166: repo path, cwd = repo, `HVE_CACHE_DIR` unset → the REAL `~/.cache/hve`): spawned by the keeper's running HVE stack (the documented repo-cwd live stack) executing the pre-fix immortal script — deliberately left untouched for the keeper's live check. My own diagnostic stray (sandboxed `HVE_CACHE_DIR`, original immortal script) was removed with a liveness-confirmed SIGKILL and its temp tree deleted |
+| Interleaving coverage | writer | Queue-first: exercised by `sandboxed_request_pending_keeps_drainer_alive_and_fires` (marker written through the queue while the drainer is idle; the same drainer re-checks under the lock and serves it) and statistically by the stress test. Drainer-first: `sandboxed_idle_drainer_exits_and_removes_pidfile` continuation (a request AFTER the exit spawns a fresh drainer that wins the now-free drain lock). No-race: every pre-existing test. No-deadlock: the full suite completes without a hang (a deadlock would stall the blocking `flock 8` and every queue-dependent test would time out loudly). The blind window of a race is microseconds — the stress test is the statistical net, the two deterministic tests pin the counter rules that make the exit safe |
+| Cross-model independent verification | a DIFFERENT model than the writer (AGENTS.md model roles) | **pending** |
+| Live confirmation | the keeper, on his own desktop | **pending** (criterion 7; note the observed pre-fix live drainer 809166 above — the fix takes over for drainers spawned after it dies) |
+
+## Implementation notes (writer, 2026-09-24)
+
+- **The spawn inherits the handshake lock** (empirically confirmed: a `bash -c`
+  child spawned while the parent holds `flock` keeps the lock alive through
+  its inherited descriptor — the queue would deadlock every later request).
+  The spawn wrapper (`bash -c 'exec 8>&-; exec bash "$1" drain'`) drops the
+  inherited descriptor before exec'ing the drainer; the drainer also closes
+  fd 8 defensively at start (verified silent no-op on a closed fd).
+- **Strict-TDD honesty**: the stress test as first drafted spaced bursts
+  INSIDE the drain window (80-160 ms vs 80 ms), which legitimately FOLDS
+  bursts — `reload_count < bursts` is coalescing, not loss (the immortal
+  script produced 7 fires for 12 requests with zero stray markers). The test
+  was corrected to independent bursts (spacing ≥ 2 × drain window) so
+  `reload_count == bursts` is the right invariant; no assertion was weakened.
+- **SIGKILL/kill noise**: before the liveness fix the harness printed
+  `kill: no existe el proceso` when dropping dead drainers; after the fix the
+  suite is silent — the liveness check is verified by the absence of that
+  noise and by inspection of `Sandbox::drop`/`kill_drainer`.
 
 ## Progress
 
-- [ ] `HVE_RELOAD_IDLE_TICKS` idle counter that never counts owed work
-- [ ] `reload.request.lock` handshake in the queue and in the drainer's exit path
-- [ ] pidfile removed on normal exit + liveness check before signalling in the harness
-- [ ] Tests: idle exit, claim-pending no-exit, request-pending no-exit, no-loss stress
-- [ ] Whole suite green, committed as one work unit
+- [x] `HVE_RELOAD_IDLE_TICKS` idle counter that never counts owed work
+- [x] `reload.request.lock` handshake in the queue and in the drainer's exit path
+- [x] pidfile removed on normal exit + liveness check before signalling in the harness
+- [x] Tests: idle exit, claim-pending no-exit, request-pending no-exit, no-loss stress
+- [x] Whole suite green, committed as one work unit — `5eb9afc` (code + tests) and the doc commit on `hve2-visual-rewrite` 2026-09-24
 - [ ] Cross-model verification (glm-5.3-flash)
 - [ ] Live confirmation by the keeper
