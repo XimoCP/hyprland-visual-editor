@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/watcher-startup-resilience/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase, do NOT push)
 **Checkpoint before this work (save point)**: `1ab296e` — clean tree; roll back here and this patch leaves no trace
-**Status**: W6 IMPLEMENTED (writer: deepseek-v4-flash) and CROSS-MODEL VERIFIED (verifier: glm-5.3-flash, 2026-09-24) — TDD RED->GREEN per layer, whole suite green, all non-blocking findings recorded. PENDING: keeper live confirmation (AC 7) only.
+**Status**: W6 IMPLEMENTED (writer: deepseek-v4-flash) and CROSS-MODEL VERIFIED (verifier: glm-5.3-flash, 2026-09-24) — TDD RED->GREEN per layer, whole suite green, all non-blocking findings recorded, keeper `size:exception` granted for the ~764-line overage. PENDING: keeper live confirmation (AC 7) only.
 **TDD**: strict — runner `cargo test`
 **Delivery strategy**: `ask-on-risk` (no remote configured: delivery is local commits, no PRs)
 **Delivery budget forecast**: ~300-450 authored changed lines (script + Rust + tests +
@@ -263,8 +263,8 @@ staged RED output, the GREEN output, and the final full-suite count.
 - **Pre-existing, out of scope** — the stray `reload_coalescer.sh drain` (PPID 1)
   observed again during verification, alive 88 min. Documented as a separate unit.
 - **Delivery-size overage** — ~764 authored lines vs the ~400 advisory budget (tests
-  dominate). Recorded; no artificial split, no minification. Awaits the keeper's
-  explicit `size:exception` decision or a split decision.
+  dominate). **`size:exception` GRANTED by the keeper (2026-09-24)**; no artificial
+  split, no minification.
 
 ## Progress
 
