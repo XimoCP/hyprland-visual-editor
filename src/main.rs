@@ -1052,15 +1052,26 @@ fn log_mask_failures(failures: &[String]) {
     }
 }
 
-pub(crate) fn restore_theme_masks() {
-    let originals = std::mem::take(&mut *THEME_MASK_ORIGINALS.lock().unwrap());
+/// Restore through an injected runner. The originals are cleared ONLY on
+/// success, so a failed restore can be retried — the transition watchdog calls
+/// this path a second time.
+fn restore_theme_masks_with(runner: impl Fn(&str) -> Result<(), String>) -> Vec<String> {
+    let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
     if originals.is_empty() {
-        return;
+        return Vec::new();
     }
-    let failures = write_mask_payload(false, &originals, hypr_eval);
+    let failures = write_mask_payload(false, &originals, runner);
+    if failures.is_empty() {
+        THEME_MASK_ORIGINALS.lock().unwrap().clear();
+    }
+    failures
+}
+
+pub(crate) fn restore_theme_masks() {
+    let failures = restore_theme_masks_with(hypr_eval);
     log_mask_failures(&failures);
     if failures.is_empty() {
-        tracing::info!("[theme] masks restored: {:?}", originals);
+        tracing::info!("[theme] masks restored after the transition");
     }
 }
 
@@ -4268,6 +4279,33 @@ mod tests {
         originals.insert("shadow", "1".to_string());
         let failures = write_mask_payload(true, &originals, |_lua| Ok(()));
         assert!(failures.is_empty(), "got {:?}", failures);
+    }
+
+    #[test]
+    fn a_failed_restore_keeps_the_originals_for_a_retry() {
+        // The transition watchdog calls the restore path a second time, so a
+        // failed restore must NOT discard what it would need to retry with.
+        let mut originals = std::collections::BTreeMap::new();
+        originals.insert("blur", "1".to_string());
+        originals.insert("border", "2".to_string());
+        originals.insert("shadow", "1".to_string());
+        *THEME_MASK_ORIGINALS.lock().unwrap() = originals;
+
+        let failures = restore_theme_masks_with(|_lua| Err("boom".to_string()));
+        assert_eq!(failures.len(), 1, "the failure must be reported");
+        assert_eq!(
+            THEME_MASK_ORIGINALS.lock().unwrap().len(),
+            3,
+            "a failed restore must keep the originals so the watchdog can retry"
+        );
+
+        // A successful retry does clear the store.
+        let failures = restore_theme_masks_with(|_lua| Ok(()));
+        assert!(failures.is_empty(), "got {:?}", failures);
+        assert!(
+            THEME_MASK_ORIGINALS.lock().unwrap().is_empty(),
+            "a successful restore must clear the store"
+        );
     }
 
     // ── Startup Gallery expand wiring (gallery-immersive-redesign PR1.1) ──
