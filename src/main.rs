@@ -1112,15 +1112,25 @@ pub(crate) fn mask_marker_path() -> std::path::PathBuf {
     crate::config::hve_cache_dir().join("theme-masks.json")
 }
 
-fn write_mask_marker(originals: &std::collections::BTreeMap<&'static str, String>) {
-    match serde_json::to_string(originals) {
-        Ok(text) => {
-            if let Err(e) = std::fs::write(mask_marker_path(), text) {
-                tracing::warn!("[theme] could not write the mask marker: {}", e);
-            }
-        }
-        Err(e) => tracing::warn!("[theme] could not serialise the mask marker: {}", e),
+/// Persist the marker atomically (temp + sync + rename), like the mirror
+/// protocol in `skwd_policy`: a torn marker must never be observed, and a
+/// marker we cannot persist must be reported to the caller.
+fn write_mask_marker(
+    originals: &std::collections::BTreeMap<&'static str, String>,
+) -> Result<(), String> {
+    let text = serde_json::to_string(originals).map_err(|e| format!("serialise marker: {e}"))?;
+    let path = mask_marker_path();
+    let tmp = path.with_extension("tmp");
+    {
+        use std::io::Write;
+        let mut file =
+            std::fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+        file.write_all(text.as_bytes())
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("sync {}: {e}", tmp.display()))?;
     }
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename to {}: {e}", path.display()))
 }
 
 fn clear_mask_marker() {
@@ -1154,35 +1164,40 @@ fn read_mask_marker() -> Option<std::collections::BTreeMap<&'static str, String>
     marker_from_json(&std::fs::read_to_string(mask_marker_path()).ok()?)
 }
 
-/// FIRST WRITER WINS. A second theme apply during the first transition must NOT
-/// re-capture: the compositor already holds the masked values, so a re-capture
-/// would record them as the originals and every later restore would write the
-/// masked values back — leaving the desktop without blur, border and shadow for
-/// good. The interlude view state uses this same guard.
+/// FIRST WRITER WINS, AND FAIL CLOSED. A second theme apply during the first
+/// transition must NOT re-capture: the compositor already holds the masked
+/// values, so a re-capture would record them as the originals and every later
+/// restore would write the masked values back — leaving the desktop without
+/// blur, border and shadow for good. The interlude view state uses this same
+/// guard.
+///
+/// The originals are adopted only if `persist` could record them: a mask whose
+/// crash marker we could not write is a mask we refuse to place, because a mask
+/// without a marker is unrecoverable (the colour-authority mirror refuses in
+/// the same situation). Refusing degrades to "no masking this transition",
+/// which is cosmetic; masking an unprotected desktop is not.
 ///
 /// Returns the originals this apply must mask with, and whether this call did
-/// the capturing (only then is the marker written).
+/// the capturing.
 pub(crate) fn mask_plan(
     store: &mut std::collections::BTreeMap<&'static str, String>,
+    persist: impl FnOnce(&std::collections::BTreeMap<&'static str, String>) -> Result<(), String>,
     captured: impl FnOnce() -> std::collections::BTreeMap<&'static str, String>,
-) -> (std::collections::BTreeMap<&'static str, String>, bool) {
-    let first = store.is_empty();
-    if first {
-        *store = captured();
+) -> Result<(std::collections::BTreeMap<&'static str, String>, bool), String> {
+    if !store.is_empty() {
+        return Ok((store.clone(), false));
     }
-    (store.clone(), first)
+    let fresh = captured();
+    persist(&fresh)?;
+    *store = fresh;
+    Ok((store.clone(), true))
 }
 
-/// Capture (first writer only) and persist the marker before the mask lands.
-fn begin_mask() -> std::collections::BTreeMap<&'static str, String> {
-    let (originals, first) = {
-        let mut store = THEME_MASK_ORIGINALS.lock().unwrap();
-        mask_plan(&mut store, capture_mask_originals)
-    };
-    if first {
-        write_mask_marker(&originals);
-    }
-    originals
+/// Capture (first writer only) and persist the marker BEFORE the mask lands.
+fn begin_mask() -> Result<std::collections::BTreeMap<&'static str, String>, String> {
+    let mut store = THEME_MASK_ORIGINALS.lock().unwrap();
+    let (originals, _first) = mask_plan(&mut store, write_mask_marker, capture_mask_originals)?;
+    Ok(originals)
 }
 
 /// Startup repair: replay a mask a previous process died between masking and
@@ -2739,14 +2754,21 @@ fn main() -> Result<(), slint::PlatformError> {
                         // on every configreloaded line.
                         {
                             let _serial = MASK_WRITE_SERIAL.lock().unwrap();
-                            let originals = begin_mask();
-                            let failures = write_mask_payload(true, &originals, hypr_eval);
-                            log_mask_failures(&failures);
-                            tracing::info!(
-                                "[theme] masked {:?} ({} write failure(s))",
-                                originals,
-                                failures.len()
-                            );
+                            match begin_mask() {
+                                Err(e) => tracing::warn!(
+                                    "[theme] masking SKIPPED (no crash marker): {}",
+                                    e
+                                ),
+                                Ok(originals) => {
+                                    let failures = write_mask_payload(true, &originals, hypr_eval);
+                                    log_mask_failures(&failures);
+                                    tracing::info!(
+                                        "[theme] masked {:?} ({} write failure(s))",
+                                        originals,
+                                        failures.len()
+                                    );
+                                }
+                            }
                         }
                         if let Some(w) = win.upgrade() {
                             w.set_theme_transitioning(true);
@@ -4487,7 +4509,7 @@ mod tests {
             m.insert("blur", "1".to_string());
             m
         };
-        let (plan, first) = mask_plan(&mut store, originals);
+        let (plan, first) = mask_plan(&mut store, |_| Ok(()), originals).expect("marker persisted");
         assert!(first, "the first apply captures");
         assert_eq!(plan.get("blur").map(String::as_str), Some("1"));
 
@@ -4496,7 +4518,8 @@ mod tests {
             m.insert("blur", "false".to_string());
             m
         };
-        let (plan, first) = mask_plan(&mut store, already_masked);
+        let (plan, first) =
+            mask_plan(&mut store, |_| Ok(()), already_masked).expect("already captured");
         assert!(!first, "a newer apply must NOT capture");
         assert_eq!(
             plan.get("blur").map(String::as_str),
@@ -4504,6 +4527,28 @@ mod tests {
             "the true original must survive the second apply"
         );
         assert_eq!(store.get("blur").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn a_mask_is_refused_when_its_crash_marker_cannot_be_written() {
+        // Documented invariant: a mask without a marker is unrecoverable, so a
+        // marker we cannot persist means we must NOT mask (cosmetic degrade)
+        // rather than mask an unprotected desktop. The colour-authority mirror
+        // refuses in the same situation (skwd_policy.rs propagates the marker
+        // error and the yield never happens).
+        let mut store = std::collections::BTreeMap::new();
+        let captured = || {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("blur", "1".to_string());
+            m
+        };
+        let outcome = mask_plan(&mut store, |_| Err("disk full".to_string()), captured);
+        assert!(outcome.is_err(), "the marker failure must propagate");
+        assert!(outcome.unwrap_err().contains("disk full"));
+        assert!(
+            store.is_empty(),
+            "nothing may be adopted when the crash marker could not be written"
+        );
     }
 
     #[test]

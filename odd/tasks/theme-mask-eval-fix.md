@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/theme-mask-eval-fix/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase)
 **Checkpoint before this work**: `79ca9df` (clean tree; roll back here and this patch leaves no trace)
-**Status**: W1 IMPLEMENTED — cross-model verification round 1 found one CRITICAL defect, fixed; round 2 pending; live acceptance pending
+**Status**: W1 IMPLEMENTED — cross-model verification round 1 found one CRITICAL (fixed) and round 2 one MAJOR (fixed); round 3 and live acceptance pending
 **TDD**: strict — runner `cargo test`
 **Delivery forecast**: MISSED. Recorded honestly: ~420 authored lines in `src/main.rs` (source + 15 tests + comments) plus this document. The overshoot is the second pass: cross-model review found that making the masks REAL created crash/double-apply failure modes the dead code never had, and those could not be fixed in fewer lines without shipping a new way to break the desktop permanently.
 
@@ -20,6 +20,35 @@ Round 1 (GLM 5.3 Flash, cross-model, falsification brief): verdict FALSIFIED. On
 | F4 a semantically failed `eval` could still answer `ok` | MINOR (residual) | not falsifiable without mutating the live compositor; the three paths are pinned against the project's own Lua assets. Accepted residual: a future option rename would answer `ok` and silently no-op. Candidate mitigation (readback after the first mask of a process) recorded, not built |
 | F5 the builder accepted paths/literals that render invalid Lua | MINOR | `is_lua_ident` + `is_lua_literal`; pinned by `the_builder_refuses_anything_it_cannot_render_as_valid_lua` |
 | F7 stderr noise next to a successful `eval` turned success into a reported failure | MINOR | success is decided by the answer, via the pure `eval_outcome` |
+
+### Round 2 (GLM 5.3 Flash, cross-model, falsification brief)
+
+Verdict FALSIFIED again: one MAJOR. F1, F3, F5 and F7 confirmed CLOSED. The
+marker protocol was NOT fail-closed: when the marker write failed the code logged
+a warning and masked anyway — exactly the "a mask without a marker is
+unrecoverable" invariant this document claims, while the mirror protocol in
+`skwd_policy` propagates the error and refuses the yield. Fixed:
+
+- the marker is now written ATOMICALLY (temp + `sync_all` + rename), like the
+  mirror, so a torn marker cannot be observed;
+- `mask_plan` is fail-closed: the originals are adopted only when the marker
+  could be persisted, so a marker failure degrades to "no masking this
+  transition" (cosmetic) instead of masking an unprotected desktop. Pinned by
+  `a_mask_is_refused_when_its_crash_marker_cannot_be_written`.
+
+Correction to my own claim: the commit message for the serial lock says the
+critical section is "a single hyprctl call". That holds for the restore, reapply
+and startup-repair paths, but the APPLY path also holds it across the three
+`getoption` captures plus the `eval` (about four subprocess spawns). Bounded by
+hyprctl's own socket timeout, so no hang — but the wording was wrong.
+
+Honest gap: `startup_recover_crashed_masks` has NO test, neither branch, because
+`mask_marker_path` is not injectable. The pure `marker_from_json` and the
+fail-closed decision are covered; the wiring is not.
+
+Noted, not repeated because genuinely closed: the round-2 reviewer also confirmed
+the apply-#2-during-apply-#1 trace ends in a CORRECT final state (the mask may be
+merely missing during the overlap, which is cosmetic).
 
 Also: one transient suite failure was observed in one run (991 tests) and NOT reproduced in three consecutive full runs plus 15 individual runs; it was not in this unit's tests and remains unidentified.
 
