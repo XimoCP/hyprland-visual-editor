@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/theme-mask-eval-fix/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase)
 **Checkpoint before this work**: `79ca9df` (clean tree; roll back here and this patch leaves no trace)
-**Status**: W1 IMPLEMENTED — cross-model verification round 1 found one CRITICAL (fixed) and round 2 one MAJOR (fixed); round 3 and live acceptance pending
+**Status**: W1 IMPLEMENTED — three cross-model verification rounds (1 CRITICAL + 2 MAJOR, all fixed); live acceptance pending
 **TDD**: strict — runner `cargo test`
 **Delivery forecast**: MISSED. Recorded honestly: ~420 authored lines in `src/main.rs` (source + 15 tests + comments) plus this document. The overshoot is the second pass: cross-model review found that making the masks REAL created crash/double-apply failure modes the dead code never had, and those could not be fixed in fewer lines without shipping a new way to break the desktop permanently.
 
@@ -49,6 +49,38 @@ fail-closed decision are covered; the wiring is not.
 Noted, not repeated because genuinely closed: the round-2 reviewer also confirmed
 the apply-#2-during-apply-#1 trace ends in a CORRECT final state (the mask may be
 merely missing during the overlap, which is cosmetic).
+
+### Round 3 (GLM 5.3 Flash, cross-model, falsification brief)
+
+Verdict FALSIFIED: the fail-closed fix held, but the review found a PRE-EXISTING
+MAJOR on the marker protocol's other leg. If a crash left the compositor masked
+AND the startup repair failed once (e.g. Hyprland's socket not ready during
+autostart), the in-memory store was empty while the live values were already the
+MASKED ones. The next apply captured them as "originals", overwrote the true
+marker with them, and then restored the masked values — permanent, with no
+marker left to recover from. Fixed:
+
+- a surviving marker now WINS over capturing the live values (`choose_originals`),
+  so the real originals are adopted and the desktop heals on the next apply;
+- the restore no longer clears a marker it did not earn (an empty store means
+  nothing was masked in this process);
+- the marker's temp file is removed when the atomic write fails (the mirror
+  protocol sweeps orphans; this is the small version);
+- two tests: the precedence itself, and a house-style wiring pin (`read_to_string`
+  source scan, same shape as the `write_marker` body pin in `skwd_policy`)
+  proving the mask write lives only in the `Ok` arm.
+
+Also identified: the transient full-suite failure seen earlier is
+`reload_coalescer::sandboxed_request_pending_keeps_drainer_alive_and_fires`
+(1 failure in 1 of 994 runs). It passes 3/3 in isolation, predates this unit and
+is untouched by it — a sandboxed rotation-script test that races under full-suite
+parallel load.
+
+Accepted residuals, recorded and not built: a `getoption` failure falls back to
+compositor defaults during capture (non-permanent; the next healthy apply
+re-captures correctly), and there is no parent-directory fsync after the marker
+rename (same as the mirror; the window needs a power cut that also kills the
+compositor, so the runtime values are gone anyway).
 
 Also: one transient suite failure was observed in one run (991 tests) and NOT reproduced in three consecutive full runs plus 15 individual runs; it was not in this unit's tests and remains unidentified.
 

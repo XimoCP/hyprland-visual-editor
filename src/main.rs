@@ -1121,16 +1121,20 @@ fn write_mask_marker(
     let text = serde_json::to_string(originals).map_err(|e| format!("serialise marker: {e}"))?;
     let path = mask_marker_path();
     let tmp = path.with_extension("tmp");
-    {
+    let attempt = (|| -> std::io::Result<()> {
         use std::io::Write;
-        let mut file =
-            std::fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
-        file.write_all(text.as_bytes())
-            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        file.sync_all()
-            .map_err(|e| format!("sync {}: {e}", tmp.display()))?;
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, &path)
+    })();
+    if let Err(e) = attempt {
+        // Never leave a stray temp behind: the mirror protocol sweeps orphans,
+        // this is the small version of it.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("write marker {}: {e}", path.display()));
     }
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename to {}: {e}", path.display()))
+    Ok(())
 }
 
 fn clear_mask_marker() {
@@ -1193,10 +1197,23 @@ pub(crate) fn mask_plan(
     Ok((store.clone(), true))
 }
 
+/// Which originals an apply must adopt. A surviving marker IS the truth: the
+/// live values may be the ones a previous transition left masked, and capturing
+/// those would bake the masked values in as "originals" and lose the real ones
+/// for good — the marker is the only remaining copy.
+pub(crate) fn choose_originals(
+    marker: Option<std::collections::BTreeMap<&'static str, String>>,
+    live: impl FnOnce() -> std::collections::BTreeMap<&'static str, String>,
+) -> std::collections::BTreeMap<&'static str, String> {
+    marker.unwrap_or_else(live)
+}
+
 /// Capture (first writer only) and persist the marker BEFORE the mask lands.
 fn begin_mask() -> Result<std::collections::BTreeMap<&'static str, String>, String> {
     let mut store = THEME_MASK_ORIGINALS.lock().unwrap();
-    let (originals, _first) = mask_plan(&mut store, write_mask_marker, capture_mask_originals)?;
+    let (originals, _first) = mask_plan(&mut store, write_mask_marker, || {
+        choose_originals(read_mask_marker(), capture_mask_originals)
+    })?;
     Ok(originals)
 }
 
@@ -1237,6 +1254,12 @@ fn restore_theme_masks_with(runner: impl Fn(&str) -> Result<(), String>) -> Vec<
 
 pub(crate) fn restore_theme_masks() {
     let _serial = MASK_WRITE_SERIAL.lock().unwrap();
+    if THEME_MASK_ORIGINALS.lock().unwrap().is_empty() {
+        // Nothing was masked in this process. Do NOT clear a surviving marker:
+        // it may be the last copy of the real originals after a crashed
+        // transition, and the next apply or startup heals from it.
+        return;
+    }
     let failures = restore_theme_masks_with(hypr_eval);
     log_mask_failures(&failures);
     if failures.is_empty() {
@@ -4550,6 +4573,56 @@ mod tests {
             "nothing may be adopted when the crash marker could not be written"
         );
     }
+
+    #[test]
+    fn a_surviving_marker_beats_capturing_the_live_values() {
+        // A crashed transition can leave the compositor masked with the store
+        // gone but the marker alive. Capturing the live values then would read
+        // the MASKED ones and bake them in as "originals". The marker wins.
+        let marker = || {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("blur", "1".to_string());
+            m
+        };
+        let live = || {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("blur", "false".to_string());
+            m
+        };
+        let chosen = choose_originals(Some(marker()), live);
+        assert_eq!(
+            chosen.get("blur").map(String::as_str),
+            Some("1"),
+            "the surviving marker must win over the masked live values"
+        );
+
+        let chosen = choose_originals(None, live);
+        assert_eq!(chosen.get("blur").map(String::as_str), Some("false"));
+    }
+
+    #[test]
+    fn the_apply_block_masks_only_in_the_ok_arm_of_begin_mask() {
+        // House-style driving pin (same idea as the write_marker body pin in
+        // providers/skwd_policy.rs): the pure `mask_plan` test above would still
+        // pass if the apply block regressed to masking after a refused
+        // begin_mask, so pin the wiring itself.
+        let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+        let anchor = src
+            .find("match begin_mask()")
+            .expect("the apply block must match on begin_mask()");
+        let after = &src[anchor..];
+        let err_arm = after.find("Err(e) =>").expect("an Err arm");
+        let ok_arm = after.find("Ok(originals) =>").expect("an Ok arm");
+        let write = after
+            .find("write_mask_payload(true")
+            .expect("the mask write must exist");
+        assert!(err_arm < ok_arm, "Err must be handled before Ok");
+        assert!(
+            write > ok_arm,
+            "the mask write must live in the Ok arm: a refused begin_mask must never mask"
+        );
+    }
+
 
     #[test]
     fn a_late_reapply_refuses_when_no_originals_are_left() {
