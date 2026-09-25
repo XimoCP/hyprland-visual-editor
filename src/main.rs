@@ -756,6 +756,18 @@ pub(crate) static THEME_TRANSITIONING_FLAG: std::sync::atomic::AtomicBool =
 /// follows it, and `animations` is deliberately NOT in that set.
 static THEME_MASK_ORIGINALS: std::sync::Mutex<std::collections::BTreeMap<&'static str, String>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Serialises every path that WRITES a mask to the compositor: the transition's
+/// apply, its finale restore, a reload-driven reapply and the startup repair.
+///
+/// Without it, a reapply whose guard passed while the originals still existed
+/// could land AFTER the finale had restored and cleared them: the compositor
+/// would stay masked with the in-memory store and the marker both gone, and the
+/// next apply would then capture the masked values as if they were the
+/// originals — the permanent damage this unit exists to prevent. The critical
+/// section is one `hyprctl eval` and nothing else takes this lock, so it cannot
+/// deadlock. Lock order is always serial -> store, never the reverse.
+static MASK_WRITE_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Interlude view state: the workspace the view must RETURN to and whether
 /// the view was actually staged away. See `InterludeState` for the rules.
 static THEME_INTERLUDE: std::sync::Mutex<InterludeState> =
@@ -1176,6 +1188,7 @@ fn begin_mask() -> std::collections::BTreeMap<&'static str, String> {
 /// Startup repair: replay a mask a previous process died between masking and
 /// restoring. Never panics and never aborts startup.
 pub(crate) fn startup_recover_crashed_masks() {
+    let _serial = MASK_WRITE_SERIAL.lock().unwrap();
     let Some(originals) = read_mask_marker() else {
         tracing::info!("[theme] mask startup repair: nothing to repair");
         return;
@@ -1208,6 +1221,7 @@ fn restore_theme_masks_with(runner: impl Fn(&str) -> Result<(), String>) -> Vec<
 }
 
 pub(crate) fn restore_theme_masks() {
+    let _serial = MASK_WRITE_SERIAL.lock().unwrap();
     let failures = restore_theme_masks_with(hypr_eval);
     log_mask_failures(&failures);
     if failures.is_empty() {
@@ -1228,6 +1242,7 @@ pub(crate) fn should_reapply(transitioning: bool, have_originals: bool) -> bool 
 /// un-masks the transition mid-flight. Called on EVERY configreloaded line
 /// during a theme transition — bypasses the 3s throttle (cheap, idempotent).
 pub(crate) fn reapply_theme_masks() {
+    let _serial = MASK_WRITE_SERIAL.lock().unwrap();
     let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
     if !should_reapply(is_theme_transitioning_flag(), !originals.is_empty()) {
         return;
@@ -2723,6 +2738,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // Reloads wipe runtime options — hypr_ipc re-applies them
                         // on every configreloaded line.
                         {
+                            let _serial = MASK_WRITE_SERIAL.lock().unwrap();
                             let originals = begin_mask();
                             let failures = write_mask_payload(true, &originals, hypr_eval);
                             log_mask_failures(&failures);
