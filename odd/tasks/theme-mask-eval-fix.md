@@ -4,7 +4,7 @@
 **Engram mirror**: topic `odd/theme-mask-eval-fix/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase)
 **Checkpoint before this work**: `79ca9df` (clean tree; roll back here and this patch leaves no trace)
-**Status**: W1 IMPLEMENTED — three cross-model verification rounds (1 CRITICAL + 2 MAJOR, all fixed); live acceptance pending
+**Status**: W1 CLOSED — live acceptance PASSED (keeper, 2026-09-26); three cross-model verification rounds (1 CRITICAL + 2 MAJOR, all fixed)
 **TDD**: strict — runner `cargo test`
 **Delivery forecast**: MISSED. Recorded honestly: ~420 authored lines in `src/main.rs` (source + 15 tests + comments) plus this document. The overshoot is the second pass: cross-model review found that making the masks REAL created crash/double-apply failure modes the dead code never had, and those could not be fixed in fewer lines without shipping a new way to break the desktop permanently.
 
@@ -84,6 +84,52 @@ compositor, so the runtime values are gone anyway).
 
 Also: one transient suite failure was observed in one run (991 tests) and NOT reproduced in three consecutive full runs plus 15 individual runs; it was not in this unit's tests and remains unidentified.
 
+### Live acceptance (keeper, 2026-09-26) — PASSED
+
+Binary `3d86abdf9df03168d88d8ad3385ede31`, built and installed with
+`./install.sh` (the installed file matches the built one by md5); HVE restarted
+on it. The probe (`/tmp/opencode/hve-burst-listener.py`) recorded 2025 state
+samples and 926 compositor events while the owner applied themes from the
+gallery by hand.
+
+Acceptance criterion 5 (`the probe observes the masked keys at 0`) is met, and
+the number is the point — the same section that reported `0 / 443` before the
+fix now reports:
+
+| keyword | samples at 0 | before | 
+| --- | --- | --- |
+| `blur` | 109 / 2025 | 0 / 443 |
+| `border` | 110 / 2025 | 0 / 443 |
+| `shadow` | 110 / 2025 | 0 / 443 |
+| `anims` | **0 / 2025** | 0 / 443 |
+
+`anims` staying at zero is the product decision working as designed: the
+ANIMATED reveal is the effect the owner wants, so `animations` is never masked.
+
+Thirteen masked windows were observed (~2.16-2.43 s each, matching the design's
+T=0 to T=2470 ms mask span) and after every one of them the real values came
+back (`blur=1 shadow=1`, and `border=3` or `border=2` — where the applied
+theme's own config sets 2, that value legitimately owns the option). No stranded
+mask, and `~/.cache/hve/theme-masks.json` does not exist afterwards, so no
+transition died between masking and restoring.
+
+Two honest notes about the INSTRUMENT, not about the fix:
+
+- the report was not printed by the script itself: the run was stopped with
+  SIGTERM instead of Ctrl+C, so `report()` never ran. The figures above are
+  reconstructed from the line-buffered CSV and event log with the same analysis
+  (`/tmp/opencode/w1-report.py`);
+- one sample reads `blur=1 border=0 shadow=0`. A partial apply is impossible —
+  `write_mask_payload` builds ONE payload and runs it in ONE `hyprctl eval`.
+  That row is a sampling artifact: each row is assembled from four separate
+  `getoption` subprocess calls, so a restore landing mid-sequence yields a
+  mixed row. The same artifact explains the two short windows (0.56 s and
+  1.08 s), which are one transition split by a slow sample during a reload
+  burst.
+
+Keeper's judgement, recorded verbatim as acceptance criterion 6 asks:
+"Perfecto... todo a salido perfecto... muy bien la verdad..."
+
 ## Tasks
 
 - [x] **T1 — pure Lua builder** (+ identifier/literal validation).
@@ -91,8 +137,8 @@ Also: one transient suite failure was observed in one run (991 tests) and NOT re
 - [x] **T3 — honest I/O**: `hypr_eval` + pure `eval_outcome`; mask writes report failures through an injected runner.
 - [x] **T4 — rewire**: `restore_theme_masks`, `reapply_theme_masks` and the apply block use the table; `animations` gone end to end.
 - [x] **T4b — crash safety** (found by review): first-writer-wins capture, mask marker + startup replay, reapply guard.
-- [ ] **T5 — cross-model verification round 2** on the fixes.
-- [ ] **T6 — live acceptance (keeper)**: run the listener and apply a theme; the probe section that reported `blur=0: 0/443` must now see the masked keys at 0, and the owner judges the look.
+- [x] **T5 — cross-model verification rounds 2 and 3** on the fixes.
+- [x] **T6 — live acceptance (keeper)**: the probe's section reported `0/443` before; it now reports `blur=0: 109/2025`, `border=0: 110/2025`, `shadow=0: 110/2025`, `anims=0: 0/2025` over 13 masked windows, and the owner judged the look a hit.
 
 ## Objective
 
@@ -168,8 +214,8 @@ T5 cross-model verification round 2, T6 live acceptance by the owner.
 3. A failing `hyprctl eval` is REPORTED (test with an injected failing runner);
    no silent `let _ =`.
 4. `animations` is not captured, not masked and not restored.
-5. Live: the probe observes the masked keys at 0 during a transition.
-6. The owner's visual judgement of the transition, recorded in this document.
+5. ✅ Live: the probe observes the masked keys at 0 during a transition (109 / 110 / 110 samples; see the live acceptance record).
+6. ✅ The owner's visual judgement of the transition, recorded in this document.
 
 ## Checks
 
