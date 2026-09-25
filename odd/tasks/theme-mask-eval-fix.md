@@ -130,6 +130,31 @@ Two honest notes about the INSTRUMENT, not about the fix:
 Keeper's judgement, recorded verbatim as acceptance criterion 6 asks:
 "Perfecto... todo a salido perfecto... muy bien la verdad..."
 
+### W3 — which masks earn their place (settled 2026-09-26)
+
+The original design masked four options, but NONE of that code had ever run (the
+masks were dead until W1), so `border` and `shadow` had never been observed
+doing anything. The A/B was run live instead of argued:
+
+- the experimental build masked `blur` only. The owner applied themes on the
+  monitors and reported NO visible difference: "No aprecio nada ... funciona a
+  las mil maravillas. Por mi todo oj";
+- the probe measured the variant: `blur=0` 63/1804 (still masked), and
+  `border=0` / `shadow=0` at 0/1804 (untouched). `border` was observed at 2, 3
+  and 4 — its real values — throughout;
+- the clean rebuild with the reduced set (variant removed, `MaskKind::Number`
+  deleted, 6 tests retargeted) then passed the same measurement: `blur=0`
+  45/424, `border=0` 0/424, `shadow=0` 0/424, and the owner applied themes
+  repeatedly on BOTH monitors: "Todo OK".
+
+Decision: the mask set is `blur` alone. Only the documented complaint (the
+blurred desktop) stays masked; `animations` stays out because the animated
+reveal is wanted; `border`/`shadow` were dropped by evidence, not by taste.
+
+Unrelated finding, filed for later: the theme apply cycle logs
+`[skwd-wall] skwd-helm apply failed: timed out after 500ms` repeatedly — the
+wallpaper engine delegation is missing its own 500 ms budget. Not part of W1/W3.
+
 ## Tasks
 
 - [x] **T1 — pure Lua builder** (+ identifier/literal validation).

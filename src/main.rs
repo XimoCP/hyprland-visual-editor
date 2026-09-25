@@ -856,13 +856,13 @@ fn hypr_getoption_int(option: &str, fallback: &str) -> String {
 // compositor (measured: 0/443 samples with blur=0 across 10 theme applies).
 // Runtime options are set through Lua now, via `hyprctl eval 'hl.config(...)'`.
 
-/// One compositor option the theme transition masks.
+/// How a masked option is written as a Lua literal. `Flag` is the only kind the
+/// current mask set needs (a boolean `getoption`); the type is kept as the
+/// explicit extension point for the mask table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MaskKind {
     /// `true`/`false` option.
     Flag,
-    /// Integer option.
-    Number,
 }
 
 pub(crate) struct MaskSpec {
@@ -875,37 +875,28 @@ pub(crate) struct MaskSpec {
     pub(crate) kind: MaskKind,
 }
 
-/// The options masked while a theme transition runs. An explicit table so the
-/// A/B (does `border` / `shadow` earn its place?) is a one-line change.
-/// `animations` is deliberately ABSENT: its original intent was an instant cut,
-/// but the ANIMATED reveal is the effect the owner wants, so masking it would
-/// degrade the product.
-pub(crate) const THEME_MASKS: &[MaskSpec] = &[
-    MaskSpec {
-        key: "blur",
-        option: "decoration:blur:enabled",
-        lua_path: "decoration.blur.enabled",
-        kind: MaskKind::Flag,
-    },
-    MaskSpec {
-        key: "border",
-        option: "general:border_size",
-        lua_path: "general.border_size",
-        kind: MaskKind::Number,
-    },
-    MaskSpec {
-        key: "shadow",
-        option: "decoration:shadow:enabled",
-        lua_path: "decoration.shadow.enabled",
-        kind: MaskKind::Flag,
-    },
-];
+/// The options masked while a theme transition runs.
+///
+/// W3 settled this set at one entry. `animations`, `border` and `shadow` were
+/// all masked by the original design, but that code never ran (the masks were
+/// dead until W1), so none of them had ever been observed doing anything. The
+/// A/B was then run live: with `border` and `shadow` out the owner saw no
+/// difference in the reveal, and the probe measured `border` at its real values
+/// (2-4) throughout instead of 0. `animations` stays out for a product reason:
+/// the ANIMATED reveal is the effect the owner wants, so masking it would
+/// degrade it. The only documented complaint — the blurred desktop — is what
+/// remains masked.
+pub(crate) const THEME_MASKS: &[MaskSpec] = &[MaskSpec {
+    key: "blur",
+    option: "decoration:blur:enabled",
+    lua_path: "decoration.blur.enabled",
+    kind: MaskKind::Flag,
+}];
 
 /// The value written while masking.
 fn masked_literal(kind: MaskKind) -> &'static str {
     match kind {
         MaskKind::Flag => "false",
-        MaskKind::Number => "0",
     }
 }
 
@@ -913,7 +904,6 @@ fn masked_literal(kind: MaskKind) -> &'static str {
 fn default_literal(kind: MaskKind) -> &'static str {
     match kind {
         MaskKind::Flag => "1",
-        MaskKind::Number => "2",
     }
 }
 
@@ -927,7 +917,6 @@ pub(crate) fn lua_literal(kind: MaskKind, raw: &str) -> Option<String> {
             "0" | "false" => Some("false".to_string()),
             _ => None,
         },
-        MaskKind::Number => t.parse::<i64>().ok().map(|n| n.to_string()),
     }
 }
 
@@ -1099,8 +1088,8 @@ fn log_mask_failures(failures: &[String]) {
 }
 
 // ── Crash safety: the mask marker ─────────────────────────────────────
-// A crash between masking and restoring would leave the desktop without blur,
-// border and shadow, and an in-memory store dies with the process — worse, the
+// A crash between masking and restoring would leave the desktop without its
+// blur, and an in-memory store dies with the process — worse, the
 // NEXT apply would then capture the masked values as if they were the originals
 // and make the damage permanent. Same protocol as the engine's colour-authority
 // yield marker (src/providers/skwd_policy.rs): written BEFORE the mask lands (a
@@ -4401,8 +4390,10 @@ mod tests {
     // `hyprctl eval 'hl.config(...)'` and the honest failure path.
 
     #[test]
-    fn theme_masks_exclude_animations() {
-        // Product decision: the animated reveal is the effect the owner wants.
+    fn theme_masks_are_exactly_the_decided_set() {
+        // W3 settled this: only the blurred desktop is masked. `animations` is
+        // out for a product reason (the owner wants the animated reveal), and
+        // `border`/`shadow` were dropped by the live A/B.
         for spec in THEME_MASKS {
             assert!(
                 !spec.option.contains("animations") && !spec.lua_path.contains("animations"),
@@ -4411,7 +4402,7 @@ mod tests {
             );
         }
         let keys: Vec<&str> = THEME_MASKS.iter().map(|s| s.key).collect();
-        assert_eq!(keys, vec!["blur", "border", "shadow"]);
+        assert_eq!(keys, vec!["blur"]);
     }
 
     #[test]
@@ -4420,9 +4411,6 @@ mod tests {
         assert_eq!(lua_literal(MaskKind::Flag, "true").as_deref(), Some("true"));
         assert_eq!(lua_literal(MaskKind::Flag, "0").as_deref(), Some("false"));
         assert_eq!(lua_literal(MaskKind::Flag, "false").as_deref(), Some("false"));
-        assert_eq!(lua_literal(MaskKind::Number, "2").as_deref(), Some("2"));
-        assert_eq!(lua_literal(MaskKind::Number, " 3 ").as_deref(), Some("3"));
-        assert_eq!(lua_literal(MaskKind::Number, "[EMPTY]"), None);
         assert_eq!(lua_literal(MaskKind::Flag, "[EMPTY]"), None);
     }
 
@@ -4432,7 +4420,7 @@ mod tests {
             .expect("the masked set must build");
         assert_eq!(
             payload,
-            "hl.config({ decoration = { blur = { enabled = false }, shadow = { enabled = false } }, general = { border_size = 0 } })"
+            "hl.config({ decoration = { blur = { enabled = false } } })"
         );
     }
 
@@ -4440,20 +4428,17 @@ mod tests {
     fn lua_payload_restores_the_captured_originals() {
         let mut originals = std::collections::BTreeMap::new();
         originals.insert("blur", "1".to_string());
+        // Unknown keys in the store are ignored: only the mask set is written.
         originals.insert("border", "2".to_string());
         originals.insert("shadow", "true".to_string());
         let payload = theme_mask_payload(false, &originals).expect("restore must build");
-        assert_eq!(
-            payload,
-            "hl.config({ decoration = { blur = { enabled = true }, shadow = { enabled = true } }, general = { border_size = 2 } })"
-        );
+        assert_eq!(payload, "hl.config({ decoration = { blur = { enabled = true } } })");
     }
 
     #[test]
     fn a_missing_original_refuses_the_restore_payload() {
-        // Never write a half-restore: two of the three originals are missing.
-        let mut originals = std::collections::BTreeMap::new();
-        originals.insert("blur", "1".to_string());
+        // Never write a half-restore: the masked option has no captured original.
+        let originals = std::collections::BTreeMap::new();
         assert_eq!(theme_mask_payload(false, &originals), None);
     }
 
@@ -4676,9 +4661,7 @@ mod tests {
     #[test]
     fn one_unusable_original_refuses_the_whole_restore() {
         let mut originals = std::collections::BTreeMap::new();
-        originals.insert("blur", "1".to_string());
-        originals.insert("border", "2".to_string());
-        originals.insert("shadow", "[EMPTY]".to_string());
+        originals.insert("blur", "[EMPTY]".to_string());
         assert_eq!(theme_mask_payload(false, &originals), None);
         let failures = write_mask_payload(false, &originals, |_lua| Ok(()));
         assert_eq!(failures.len(), 1);
@@ -4690,8 +4673,7 @@ mod tests {
         let text = r#"{"blur":"1","border":"2","shadow":"true","future_option":"9"}"#;
         let map = marker_from_json(text).expect("a usable marker");
         assert_eq!(map.get("blur").map(String::as_str), Some("1"));
-        assert_eq!(map.get("shadow").map(String::as_str), Some("true"));
-        assert_eq!(map.len(), 3, "unknown keys are ignored");
+        assert_eq!(map.len(), 1, "only masked keys are kept; unknown/legacy keys are ignored");
         assert!(marker_from_json("not json").is_none());
         assert!(marker_from_json(r#"{"unrelated":"1"}"#).is_none());
     }
