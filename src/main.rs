@@ -751,10 +751,11 @@ pub(crate) static THEME_GEN: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
 pub(crate) static THEME_CYCLE_FIRED_GEN: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
 pub(crate) static THEME_TRANSITIONING_FLAG: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-static THEME_ORIG_ANIM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-static THEME_ORIG_BLUR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-static THEME_ORIG_BORDER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-static THEME_ORIG_SHADOW: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Captured originals of the masked options, keyed by `MaskSpec::key`. One map
+/// replaced four loose globals (W1): the masked set is a table now, so the store
+/// follows it, and `animations` is deliberately NOT in that set.
+static THEME_MASK_ORIGINALS: std::sync::Mutex<std::collections::BTreeMap<&'static str, String>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
 /// Interlude view state: the workspace the view must RETURN to and whether
 /// the view was actually staged away. See `InterludeState` for the rules.
 static THEME_INTERLUDE: std::sync::Mutex<InterludeState> =
@@ -836,45 +837,247 @@ fn hypr_getoption_int(option: &str, fallback: &str) -> String {
     fallback.to_string()
 }
 
-fn hypr_set(option: &str, value: &str) {
-    let _ = std::process::Command::new("hyprctl")
-        .args(["keyword", option, value])
-        .output();
+// ── Theme transition masks (W1) ─────────────────────────────────────────
+// `hyprctl keyword` is REJECTED by Hyprland's non-legacy (Lua) parser: it
+// prints "keyword can't work with non-legacy parsers. Use eval." and exits 0.
+// The old `hypr_set` discarded that output, so the masks never reached the
+// compositor (measured: 0/443 samples with blur=0 across 10 theme applies).
+// Runtime options are set through Lua now, via `hyprctl eval 'hl.config(...)'`.
+
+/// One compositor option the theme transition masks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum MaskKind {
+    /// `true`/`false` option.
+    Flag,
+    /// Integer option.
+    Number,
+}
+
+pub(crate) struct MaskSpec {
+    /// Short id used in logs and as the originals-store key.
+    pub(crate) key: &'static str,
+    /// `hyprctl getoption` name (colon form), used to capture the original.
+    pub(crate) option: &'static str,
+    /// Dotted path understood by `hl.config` in the Lua parser.
+    pub(crate) lua_path: &'static str,
+    pub(crate) kind: MaskKind,
+}
+
+/// The options masked while a theme transition runs. An explicit table so the
+/// A/B (does `border` / `shadow` earn its place?) is a one-line change.
+/// `animations` is deliberately ABSENT: its original intent was an instant cut,
+/// but the ANIMATED reveal is the effect the owner wants, so masking it would
+/// degrade the product.
+pub(crate) const THEME_MASKS: &[MaskSpec] = &[
+    MaskSpec {
+        key: "blur",
+        option: "decoration:blur:enabled",
+        lua_path: "decoration.blur.enabled",
+        kind: MaskKind::Flag,
+    },
+    MaskSpec {
+        key: "border",
+        option: "general:border_size",
+        lua_path: "general.border_size",
+        kind: MaskKind::Number,
+    },
+    MaskSpec {
+        key: "shadow",
+        option: "decoration:shadow:enabled",
+        lua_path: "decoration.shadow.enabled",
+        kind: MaskKind::Flag,
+    },
+];
+
+/// The value written while masking.
+fn masked_literal(kind: MaskKind) -> &'static str {
+    match kind {
+        MaskKind::Flag => "false",
+        MaskKind::Number => "0",
+    }
+}
+
+/// Fallback when `getoption` cannot answer: the compositor's own defaults.
+fn default_literal(kind: MaskKind) -> &'static str {
+    match kind {
+        MaskKind::Flag => "1",
+        MaskKind::Number => "2",
+    }
+}
+
+/// Normalise a captured original into a Lua literal for its kind. `None` means
+/// the value is unusable and the caller must NOT write a partial payload.
+pub(crate) fn lua_literal(kind: MaskKind, raw: &str) -> Option<String> {
+    let t = raw.trim();
+    match kind {
+        MaskKind::Flag => match t {
+            "1" | "true" => Some("true".to_string()),
+            "0" | "false" => Some("false".to_string()),
+            _ => None,
+        },
+        MaskKind::Number => t.parse::<i64>().ok().map(|n| n.to_string()),
+    }
+}
+
+/// Nested Lua table under construction.
+enum LuaNode {
+    Leaf(String),
+    Table(std::collections::BTreeMap<String, LuaNode>),
+}
+
+fn lua_render(node: &LuaNode) -> String {
+    match node {
+        LuaNode::Leaf(v) => v.clone(),
+        LuaNode::Table(map) => {
+            let inner: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{} = {}", k, lua_render(v)))
+                .collect();
+            format!("{{ {} }}", inner.join(", "))
+        }
+    }
+}
+
+/// Build ONE merged `hl.config({...})` chunk for the given (dotted path, Lua
+/// literal) pairs. Pure and deterministic (keys sorted), so the exact string is
+/// assertable in tests. `None` on an empty set or a self-contradicting path.
+pub(crate) fn lua_config_payload(entries: &[(String, String)]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut root: std::collections::BTreeMap<String, LuaNode> = std::collections::BTreeMap::new();
+    for (path, literal) in entries {
+        let segments: Vec<&str> = path.split('.').collect();
+        if segments.iter().any(|s| s.is_empty()) {
+            return None;
+        }
+        let mut cursor = &mut root;
+        for segment in &segments[..segments.len() - 1] {
+            let node = cursor
+                .entry((*segment).to_string())
+                .or_insert_with(|| LuaNode::Table(std::collections::BTreeMap::new()));
+            match node {
+                LuaNode::Table(next) => cursor = next,
+                LuaNode::Leaf(_) => return None, // path is both leaf and table
+            }
+        }
+        let last = segments[segments.len() - 1].to_string();
+        if cursor.contains_key(&last) {
+            return None;
+        }
+        cursor.insert(last, LuaNode::Leaf(literal.clone()));
+    }
+    Some(format!("hl.config({})", lua_render(&LuaNode::Table(root))))
+}
+
+/// Build the payload for the whole mask set: the masked values, or the captured
+/// originals. `None` when restoring and any original is missing or unusable.
+pub(crate) fn theme_mask_payload(
+    masked: bool,
+    originals: &std::collections::BTreeMap<&'static str, String>,
+) -> Option<String> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for spec in THEME_MASKS {
+        let literal = if masked {
+            masked_literal(spec.kind).to_string()
+        } else {
+            lua_literal(spec.kind, originals.get(spec.key)?)?
+        };
+        entries.push((spec.lua_path.to_string(), literal));
+    }
+    lua_config_payload(&entries)
+}
+
+/// Apply the mask payload through an injected runner, returning one message per
+/// failure. Split from the I/O so the failure path is testable without spawning
+/// processes — the whole bug was a failure nobody ever saw.
+pub(crate) fn write_mask_payload(
+    masked: bool,
+    originals: &std::collections::BTreeMap<&'static str, String>,
+    runner: impl Fn(&str) -> Result<(), String>,
+) -> Vec<String> {
+    let Some(payload) = theme_mask_payload(masked, originals) else {
+        return vec![format!(
+            "no usable mask payload (masked={masked}): a captured original is missing or unparseable"
+        )];
+    };
+    match runner(&payload) {
+        Ok(()) => Vec::new(),
+        Err(e) => vec![e],
+    }
+}
+
+/// Run one `hyprctl eval` Lua chunk.
+///
+/// Hyprland answers `ok` on success but ALSO exits 0 when it rejects the
+/// request (measured: `keyword can't work with non-legacy parsers` exits 0), so
+/// a zero exit status alone proves nothing. Both are checked — this is the
+/// check whose absence hid the bug for months.
+fn hypr_eval(lua: &str) -> Result<(), String> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["eval", lua])
+        .output()
+        .map_err(|e| format!("hyprctl eval could not run: {e}"))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let trimmed = text.trim();
+    if !out.status.success() {
+        return Err(format!(
+            "hyprctl eval exited {:?}: {trimmed}",
+            out.status.code()
+        ));
+    }
+    if trimmed != "ok" {
+        return Err(format!("hyprctl eval did not answer ok: {trimmed}"));
+    }
+    Ok(())
+}
+
+/// Capture the current value of every masked option.
+fn capture_mask_originals() -> std::collections::BTreeMap<&'static str, String> {
+    let mut map = std::collections::BTreeMap::new();
+    for spec in THEME_MASKS {
+        let value = hypr_getoption_int(spec.option, default_literal(spec.kind));
+        map.insert(spec.key, value);
+    }
+    map
+}
+
+fn log_mask_failures(failures: &[String]) {
+    for failure in failures {
+        tracing::warn!("[theme] mask write FAILED: {}", failure);
+    }
 }
 
 pub(crate) fn restore_theme_masks() {
-    if let Some(orig) = THEME_ORIG_ANIM.lock().unwrap().take() {
-        hypr_set("animations:enabled", &orig);
-        tracing::info!("[theme] animations restored to {}", orig);
+    let originals = std::mem::take(&mut *THEME_MASK_ORIGINALS.lock().unwrap());
+    if originals.is_empty() {
+        return;
     }
-    if let Some(orig) = THEME_ORIG_BLUR.lock().unwrap().take() {
-        hypr_set("decoration:blur:enabled", &orig);
-        tracing::info!("[theme] blur restored to {}", orig);
-    }
-    if let Some(orig) = THEME_ORIG_BORDER.lock().unwrap().take() {
-        hypr_set("general:border_size", &orig);
-        tracing::info!("[theme] border_size restored to {}", orig);
-    }
-    if let Some(orig) = THEME_ORIG_SHADOW.lock().unwrap().take() {
-        hypr_set("decoration:shadow:enabled", &orig);
-        tracing::info!("[theme] shadow restored to {}", orig);
+    let failures = write_mask_payload(false, &originals, hypr_eval);
+    log_mask_failures(&failures);
+    if failures.is_empty() {
+        tracing::info!("[theme] masks restored: {:?}", originals);
     }
 }
 
-/// Re-apply the transition masks after a config reload. Every `hyprctl
-/// reload` resets runtime keyword overrides to the config values (animations
-/// and blur back ON), which un-masks the transition mid-flight and re-floats
-/// HVE visibly. Called on EVERY configreloaded line during a theme
-/// transition — bypasses the 3s throttle (cheap, idempotent).
+/// Re-apply the transition masks after a config reload. Every `hyprctl reload`
+/// resets runtime keyword overrides to the config values (verified live), which
+/// un-masks the transition mid-flight. Called on EVERY configreloaded line
+/// during a theme transition — bypasses the 3s throttle (cheap, idempotent).
 pub(crate) fn reapply_theme_masks() {
     if !is_theme_transitioning_flag() {
         return;
     }
-    hypr_set("animations:enabled", "0");
-    hypr_set("decoration:blur:enabled", "0");
-    hypr_set("general:border_size", "0");
-    hypr_set("decoration:shadow:enabled", "0");
-    tracing::info!("[theme] masks re-applied after reload wipe");
+    let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
+    let failures = write_mask_payload(true, &originals, hypr_eval);
+    log_mask_failures(&failures);
+    if failures.is_empty() {
+        tracing::info!("[theme] masks re-applied after reload wipe");
+    }
 }
 
 fn reassert_debounce_ok() -> bool {
@@ -2350,27 +2553,21 @@ fn main() -> Result<(), slint::PlatformError> {
                         // hide") parked HVE in special:minimized — the floating
                         // window + blurred bar-less special the user saw.
                         crate::countdown::suppress_auto_minimize(std::time::Duration::from_millis(6000));
-                        // Mask outer Hyprland animations + blur + border + shadow
-                        // for the whole transition, so the drop/re-assert fullscreen
-                        // flips are instant and frameless. Reloads wipe runtime
-                        // keywords — hypr_ipc re-applies them on every
-                        // configreloaded line.
+                        // Mask blur + border + shadow for the whole transition,
+                        // so the reveal has no blurred desktop and no window
+                        // frame. `animations` is deliberately NOT masked: the
+                        // ANIMATED reveal is the effect the owner wants.
+                        // Reloads wipe runtime options — hypr_ipc re-applies them
+                        // on every configreloaded line.
                         {
-                            let anim_orig = hypr_getoption_int("animations:enabled", "1");
-                            *THEME_ORIG_ANIM.lock().unwrap() = Some(anim_orig.clone());
-                            hypr_set("animations:enabled", "0");
-                            let blur_orig = hypr_getoption_int("decoration:blur:enabled", "1");
-                            *THEME_ORIG_BLUR.lock().unwrap() = Some(blur_orig.clone());
-                            hypr_set("decoration:blur:enabled", "0");
-                            let border_orig = hypr_getoption_int("general:border_size", "2");
-                            *THEME_ORIG_BORDER.lock().unwrap() = Some(border_orig.clone());
-                            hypr_set("general:border_size", "0");
-                            let shadow_orig = hypr_getoption_int("decoration:shadow:enabled", "1");
-                            *THEME_ORIG_SHADOW.lock().unwrap() = Some(shadow_orig.clone());
-                            hypr_set("decoration:shadow:enabled", "0");
+                            let originals = capture_mask_originals();
+                            *THEME_MASK_ORIGINALS.lock().unwrap() = originals.clone();
+                            let failures = write_mask_payload(true, &originals, hypr_eval);
+                            log_mask_failures(&failures);
                             tracing::info!(
-                                "[theme] masked animations ({}), blur ({}), border ({}), shadow ({})",
-                                anim_orig, blur_orig, border_orig, shadow_orig
+                                "[theme] masked {:?} ({} write failure(s))",
+                                originals,
+                                failures.len()
                             );
                         }
                         if let Some(w) = win.upgrade() {
@@ -3973,6 +4170,105 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── W1: the transition masks must actually reach the compositor ──
+    // `hyprctl keyword` is rejected by Hyprland's non-legacy (Lua) parser, so
+    // the old `hypr_set` silently did nothing: measured 0/443 samples with
+    // blur=0 across 10 theme applies. These pin the payload built for
+    // `hyprctl eval 'hl.config(...)'` and the honest failure path.
+
+    #[test]
+    fn theme_masks_exclude_animations() {
+        // Product decision: the animated reveal is the effect the owner wants.
+        for spec in THEME_MASKS {
+            assert!(
+                !spec.option.contains("animations") && !spec.lua_path.contains("animations"),
+                "animations must NOT be masked, found option {:?}",
+                spec.option
+            );
+        }
+        let keys: Vec<&str> = THEME_MASKS.iter().map(|s| s.key).collect();
+        assert_eq!(keys, vec!["blur", "border", "shadow"]);
+    }
+
+    #[test]
+    fn lua_literal_normalises_captured_originals() {
+        assert_eq!(lua_literal(MaskKind::Flag, "1").as_deref(), Some("true"));
+        assert_eq!(lua_literal(MaskKind::Flag, "true").as_deref(), Some("true"));
+        assert_eq!(lua_literal(MaskKind::Flag, "0").as_deref(), Some("false"));
+        assert_eq!(lua_literal(MaskKind::Flag, "false").as_deref(), Some("false"));
+        assert_eq!(lua_literal(MaskKind::Number, "2").as_deref(), Some("2"));
+        assert_eq!(lua_literal(MaskKind::Number, " 3 ").as_deref(), Some("3"));
+        assert_eq!(lua_literal(MaskKind::Number, "[EMPTY]"), None);
+        assert_eq!(lua_literal(MaskKind::Flag, "[EMPTY]"), None);
+    }
+
+    #[test]
+    fn lua_payload_pins_the_exact_masked_set() {
+        let payload = theme_mask_payload(true, &std::collections::BTreeMap::new())
+            .expect("the masked set must build");
+        assert_eq!(
+            payload,
+            "hl.config({ decoration = { blur = { enabled = false }, shadow = { enabled = false } }, general = { border_size = 0 } })"
+        );
+    }
+
+    #[test]
+    fn lua_payload_restores_the_captured_originals() {
+        let mut originals = std::collections::BTreeMap::new();
+        originals.insert("blur", "1".to_string());
+        originals.insert("border", "2".to_string());
+        originals.insert("shadow", "true".to_string());
+        let payload = theme_mask_payload(false, &originals).expect("restore must build");
+        assert_eq!(
+            payload,
+            "hl.config({ decoration = { blur = { enabled = true }, shadow = { enabled = true } }, general = { border_size = 2 } })"
+        );
+    }
+
+    #[test]
+    fn a_missing_original_refuses_the_restore_payload() {
+        // Never write a half-restore: two of the three originals are missing.
+        let mut originals = std::collections::BTreeMap::new();
+        originals.insert("blur", "1".to_string());
+        assert_eq!(theme_mask_payload(false, &originals), None);
+    }
+
+    #[test]
+    fn lua_payload_refuses_a_path_that_is_both_leaf_and_table() {
+        let entries = vec![
+            ("a.b".to_string(), "1".to_string()),
+            ("a.b.c".to_string(), "2".to_string()),
+        ];
+        assert_eq!(lua_config_payload(&entries), None);
+    }
+
+    #[test]
+    fn a_rejected_eval_is_reported_not_swallowed() {
+        let mut originals = std::collections::BTreeMap::new();
+        originals.insert("blur", "1".to_string());
+        originals.insert("border", "2".to_string());
+        originals.insert("shadow", "1".to_string());
+        let failures = write_mask_payload(true, &originals, |_lua| {
+            Err("keyword can't work with non-legacy parsers".to_string())
+        });
+        assert_eq!(failures.len(), 1, "one payload, one reported failure");
+        assert!(
+            failures[0].contains("non-legacy"),
+            "the reason must survive, got {:?}",
+            failures[0]
+        );
+    }
+
+    #[test]
+    fn a_successful_eval_reports_no_failure() {
+        let mut originals = std::collections::BTreeMap::new();
+        originals.insert("blur", "1".to_string());
+        originals.insert("border", "2".to_string());
+        originals.insert("shadow", "1".to_string());
+        let failures = write_mask_payload(true, &originals, |_lua| Ok(()));
+        assert!(failures.is_empty(), "got {:?}", failures);
+    }
 
     // ── Startup Gallery expand wiring (gallery-immersive-redesign PR1.1) ──
     // The initial Expand(Gallery) must exist as a named helper so the
