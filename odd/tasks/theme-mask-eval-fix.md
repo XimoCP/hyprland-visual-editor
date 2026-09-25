@@ -4,9 +4,34 @@
 **Engram mirror**: topic `odd/theme-mask-eval-fix/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite` (do NOT switch branches, do NOT rebase)
 **Checkpoint before this work**: `79ca9df` (clean tree; roll back here and this patch leaves no trace)
-**Status**: IN PROGRESS — implementation
+**Status**: W1 IMPLEMENTED — cross-model verification round 1 found one CRITICAL defect, fixed; round 2 pending; live acceptance pending
 **TDD**: strict — runner `cargo test`
-**Delivery forecast**: well under the 400-line heuristic (one production function + one pure builder + a spec table + tests). Single PR, `single-pr` preferred; no chain needed.
+**Delivery forecast**: MISSED. Recorded honestly: ~420 authored lines in `src/main.rs` (source + 15 tests + comments) plus this document. The overshoot is the second pass: cross-model review found that making the masks REAL created crash/double-apply failure modes the dead code never had, and those could not be fixed in fewer lines without shipping a new way to break the desktop permanently.
+
+## Verification record
+
+Round 1 (GLM 5.3 Flash, cross-model, falsification brief): verdict FALSIFIED. One CRITICAL (F1) and two MAJOR findings, all now addressed:
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| F1 a second apply during the transition re-captured the already-masked values, so every later restore wrote the masked values back (`permanent` loss of blur/border/shadow) | CRITICAL | capture is first-writer-wins (`mask_plan`), the same guard the interlude view state already used; pinned by `a_second_apply_does_not_recapture_the_masked_values` |
+| F2 a crash between masking and restoring left the compositor masked with no in-process net | MAJOR | crash marker written BEFORE the mask lands, cleared after a successful restore, replayed by `startup_recover_crashed_masks` (same protocol as `skwd_policy`'s yield marker) |
+| F3 a late `configreloaded` landing after the finale cleared the store masked with nothing able to restore it | MAJOR | `should_reapply(transitioning, have_originals)`; a reapply with an empty store refuses |
+| F4 a semantically failed `eval` could still answer `ok` | MINOR (residual) | not falsifiable without mutating the live compositor; the three paths are pinned against the project's own Lua assets. Accepted residual: a future option rename would answer `ok` and silently no-op. Candidate mitigation (readback after the first mask of a process) recorded, not built |
+| F5 the builder accepted paths/literals that render invalid Lua | MINOR | `is_lua_ident` + `is_lua_literal`; pinned by `the_builder_refuses_anything_it_cannot_render_as_valid_lua` |
+| F7 stderr noise next to a successful `eval` turned success into a reported failure | MINOR | success is decided by the answer, via the pure `eval_outcome` |
+
+Also: one transient suite failure was observed in one run (991 tests) and NOT reproduced in three consecutive full runs plus 15 individual runs; it was not in this unit's tests and remains unidentified.
+
+## Tasks
+
+- [x] **T1 — pure Lua builder** (+ identifier/literal validation).
+- [x] **T2 — mask spec table + one originals store** replacing the four `THEME_ORIG_*` globals.
+- [x] **T3 — honest I/O**: `hypr_eval` + pure `eval_outcome`; mask writes report failures through an injected runner.
+- [x] **T4 — rewire**: `restore_theme_masks`, `reapply_theme_masks` and the apply block use the table; `animations` gone end to end.
+- [x] **T4b — crash safety** (found by review): first-writer-wins capture, mask marker + startup replay, reapply guard.
+- [ ] **T5 — cross-model verification round 2** on the fixes.
+- [ ] **T6 — live acceptance (keeper)**: run the listener and apply a theme; the probe section that reported `blur=0: 0/443` must now see the masked keys at 0, and the owner judges the look.
 
 ## Objective
 
@@ -66,30 +91,13 @@ OUT: the transition timing architecture (W2-W5), the engine modules
 (`src/engine.rs`, `config.rs`, `settings.rs`, `theme_manager.rs`, `app_state.rs`,
 `watcher.rs`, `utils.rs`, `src/providers/*`), anything visual in `.slint`.
 
-## Tasks
+## Planned scope of this unit
 
-- [ ] **T1 — pure Lua builder.** `lua_config_payload(&[(&str, String)]) -> Option<String>`
-      builds a single merged `hl.config({ a = { b = { c = V } } })` with keys in
-      sorted order; `lua_literal(kind, raw)` normalises a captured original into
-      a Lua literal (`"1"`/`"true"` -> `true`, numeric -> as-is, anything else ->
-      `None`). Tests FIRST.
-- [ ] **T2 — mask spec table + originals store.** `THEME_MASKS` (3 entries:
-      blur/border/shadow, with `key`, `option`, `lua_path`, `kind`); one
-      `THEME_MASK_ORIGINALS: Mutex<BTreeMap<&'static str, String>>` replacing the
-      four `THEME_ORIG_*` statics.
-- [ ] **T3 — honest I/O.** `hypr_eval(lua) -> Result<(), String>`: nonzero exit ->
-      Err; stdout/stderr not exactly `ok` -> Err (a zero exit alone proves
-      nothing, as the `keyword` bug proved). A mask writer that reports failures
-      through an injected runner so the decision is testable without spawning
-      processes.
-- [ ] **T4 — rewire.** `restore_theme_masks`, `reapply_theme_masks` and the apply
-      block use the spec table; `animations` disappears from the mask path end to
-      end; failures are logged at `warn` with the option name.
-- [ ] **T5 — cross-model verification** of the diff by a DIFFERENT model
-      (verification is never the writing model).
-- [ ] **T6 — live acceptance (keeper).** Run the listener and apply a theme: the
-      section that reported `blur=0: 0/443` must now report the masked keys
-      observed as 0, and the owner judges the look.
+The task list and its live status are recorded in the status block at the top of
+this document; the original plan is superseded there. Summary: T1 pure Lua
+builder, T2 mask spec table + one originals store, T3 honest I/O, T4 rewire
+(`animations` out end to end), T4b crash safety (added after cross-model review),
+T5 cross-model verification round 2, T6 live acceptance by the owner.
 
 ## Acceptance criteria
 

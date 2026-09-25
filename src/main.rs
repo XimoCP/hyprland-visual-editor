@@ -938,6 +938,22 @@ fn lua_render(node: &LuaNode) -> String {
     }
 }
 
+/// A Lua identifier, so a dotted path can never inject arbitrary code.
+fn is_lua_ident(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A literal the builder may emit: a boolean or an integer. Anything else (an
+/// empty string, `[EMPTY]`) is refused rather than rendered into invalid Lua.
+fn is_lua_literal(literal: &str) -> bool {
+    matches!(literal, "true" | "false") || literal.parse::<i64>().is_ok()
+}
+
 /// Build ONE merged `hl.config({...})` chunk for the given (dotted path, Lua
 /// literal) pairs. Pure and deterministic (keys sorted), so the exact string is
 /// assertable in tests. `None` on an empty set or a self-contradicting path.
@@ -948,7 +964,10 @@ pub(crate) fn lua_config_payload(entries: &[(String, String)]) -> Option<String>
     let mut root: std::collections::BTreeMap<String, LuaNode> = std::collections::BTreeMap::new();
     for (path, literal) in entries {
         let segments: Vec<&str> = path.split('.').collect();
-        if segments.iter().any(|s| s.is_empty()) {
+        if segments.iter().any(|s| !is_lua_ident(s)) {
+            return None;
+        }
+        if !is_lua_literal(literal) {
             return None;
         }
         let mut cursor = &mut root;
@@ -1007,33 +1026,48 @@ pub(crate) fn write_mask_payload(
     }
 }
 
-/// Run one `hyprctl eval` Lua chunk.
+/// Decide the outcome of one `hyprctl eval` from what it actually reported.
 ///
-/// Hyprland answers `ok` on success but ALSO exits 0 when it rejects the
-/// request (measured: `keyword can't work with non-legacy parsers` exits 0), so
-/// a zero exit status alone proves nothing. Both are checked — this is the
-/// check whose absence hid the bug for months.
+/// Hyprland answers exactly `ok` on stdout when the chunk ran, but it ALSO
+/// exits 0 when it REJECTS the request (measured: `keyword can't work with
+/// non-legacy parsers` exits 0). So a zero exit status alone proves nothing,
+/// and the answer is what decides. Noise on stderr alongside an `ok` answer is
+/// not a failure.
+pub(crate) fn eval_outcome(
+    exit_ok: bool,
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<(), String> {
+    let out = stdout.trim();
+    let err = stderr.trim();
+    let detail = match (out.is_empty(), err.is_empty()) {
+        (_, true) => out.to_string(),
+        (true, false) => err.to_string(),
+        (false, false) => format!("{out} | {err}"),
+    };
+    if !exit_ok {
+        return Err(format!("hyprctl eval exited {code:?}: {detail}"));
+    }
+    if out != "ok" {
+        return Err(format!("hyprctl eval did not answer ok: {detail}"));
+    }
+    Ok(())
+}
+
+/// Run one `hyprctl eval` Lua chunk. See `eval_outcome` for why the exit status
+/// is not enough — this is the check whose absence hid the bug for months.
 fn hypr_eval(lua: &str) -> Result<(), String> {
     let out = std::process::Command::new("hyprctl")
         .args(["eval", lua])
         .output()
         .map_err(|e| format!("hyprctl eval could not run: {e}"))?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let trimmed = text.trim();
-    if !out.status.success() {
-        return Err(format!(
-            "hyprctl eval exited {:?}: {trimmed}",
-            out.status.code()
-        ));
-    }
-    if trimmed != "ok" {
-        return Err(format!("hyprctl eval did not answer ok: {trimmed}"));
-    }
-    Ok(())
+    eval_outcome(
+        out.status.success(),
+        out.status.code(),
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
 }
 
 /// Capture the current value of every masked option.
@@ -1049,6 +1083,112 @@ fn capture_mask_originals() -> std::collections::BTreeMap<&'static str, String> 
 fn log_mask_failures(failures: &[String]) {
     for failure in failures {
         tracing::warn!("[theme] mask write FAILED: {}", failure);
+    }
+}
+
+// ── Crash safety: the mask marker ─────────────────────────────────────
+// A crash between masking and restoring would leave the desktop without blur,
+// border and shadow, and an in-memory store dies with the process — worse, the
+// NEXT apply would then capture the masked values as if they were the originals
+// and make the damage permanent. Same protocol as the engine's colour-authority
+// yield marker (src/providers/skwd_policy.rs): written BEFORE the mask lands (a
+// marker without a mask is a harmless no-op for recovery; a mask without a
+// marker would be unrecoverable) and cleared only after a successful restore.
+
+/// Crash marker location: HVE cache dir + documented name.
+pub(crate) fn mask_marker_path() -> std::path::PathBuf {
+    crate::config::hve_cache_dir().join("theme-masks.json")
+}
+
+fn write_mask_marker(originals: &std::collections::BTreeMap<&'static str, String>) {
+    match serde_json::to_string(originals) {
+        Ok(text) => {
+            if let Err(e) = std::fs::write(mask_marker_path(), text) {
+                tracing::warn!("[theme] could not write the mask marker: {}", e);
+            }
+        }
+        Err(e) => tracing::warn!("[theme] could not serialise the mask marker: {}", e),
+    }
+}
+
+fn clear_mask_marker() {
+    if let Err(e) = std::fs::remove_file(mask_marker_path()) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("[theme] could not clear the mask marker: {}", e);
+        }
+    }
+}
+
+/// Parse a mask marker. Pure, so the protocol is testable without touching the
+/// cache dir. Unknown keys are ignored; an empty result means nothing to do.
+pub(crate) fn marker_from_json(
+    text: &str,
+) -> Option<std::collections::BTreeMap<&'static str, String>> {
+    let parsed: std::collections::BTreeMap<String, String> = serde_json::from_str(text).ok()?;
+    let mut out = std::collections::BTreeMap::new();
+    for spec in THEME_MASKS {
+        if let Some(value) = parsed.get(spec.key) {
+            out.insert(spec.key, value.clone());
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn read_mask_marker() -> Option<std::collections::BTreeMap<&'static str, String>> {
+    marker_from_json(&std::fs::read_to_string(mask_marker_path()).ok()?)
+}
+
+/// FIRST WRITER WINS. A second theme apply during the first transition must NOT
+/// re-capture: the compositor already holds the masked values, so a re-capture
+/// would record them as the originals and every later restore would write the
+/// masked values back — leaving the desktop without blur, border and shadow for
+/// good. The interlude view state uses this same guard.
+///
+/// Returns the originals this apply must mask with, and whether this call did
+/// the capturing (only then is the marker written).
+pub(crate) fn mask_plan(
+    store: &mut std::collections::BTreeMap<&'static str, String>,
+    captured: impl FnOnce() -> std::collections::BTreeMap<&'static str, String>,
+) -> (std::collections::BTreeMap<&'static str, String>, bool) {
+    let first = store.is_empty();
+    if first {
+        *store = captured();
+    }
+    (store.clone(), first)
+}
+
+/// Capture (first writer only) and persist the marker before the mask lands.
+fn begin_mask() -> std::collections::BTreeMap<&'static str, String> {
+    let (originals, first) = {
+        let mut store = THEME_MASK_ORIGINALS.lock().unwrap();
+        mask_plan(&mut store, capture_mask_originals)
+    };
+    if first {
+        write_mask_marker(&originals);
+    }
+    originals
+}
+
+/// Startup repair: replay a mask a previous process died between masking and
+/// restoring. Never panics and never aborts startup.
+pub(crate) fn startup_recover_crashed_masks() {
+    let Some(originals) = read_mask_marker() else {
+        tracing::info!("[theme] mask startup repair: nothing to repair");
+        return;
+    };
+    let failures = write_mask_payload(false, &originals, hypr_eval);
+    log_mask_failures(&failures);
+    if failures.is_empty() {
+        clear_mask_marker();
+        tracing::warn!(
+            "[theme] mask startup repair: a crashed transition had left the compositor masked; \
+             restored {:?}",
+            originals
+        );
     }
 }
 
@@ -1071,8 +1211,16 @@ pub(crate) fn restore_theme_masks() {
     let failures = restore_theme_masks_with(hypr_eval);
     log_mask_failures(&failures);
     if failures.is_empty() {
+        clear_mask_marker();
         tracing::info!("[theme] masks restored after the transition");
     }
+}
+
+/// A late `configreloaded` can arrive AFTER the finale cleared the store. With
+/// no originals there is nothing that could ever restore the mask, so writing
+/// it would strand the desktop masked. Refuse.
+pub(crate) fn should_reapply(transitioning: bool, have_originals: bool) -> bool {
+    transitioning && have_originals
 }
 
 /// Re-apply the transition masks after a config reload. Every `hyprctl reload`
@@ -1080,10 +1228,10 @@ pub(crate) fn restore_theme_masks() {
 /// un-masks the transition mid-flight. Called on EVERY configreloaded line
 /// during a theme transition — bypasses the 3s throttle (cheap, idempotent).
 pub(crate) fn reapply_theme_masks() {
-    if !is_theme_transitioning_flag() {
+    let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
+    if !should_reapply(is_theme_transitioning_flag(), !originals.is_empty()) {
         return;
     }
-    let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
     let failures = write_mask_payload(true, &originals, hypr_eval);
     log_mask_failures(&failures);
     if failures.is_empty() {
@@ -1779,6 +1927,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // says we left it off and log the outcome either way. A failure never
     // aborts startup.
     crate::providers::skwd_policy::startup_recover_crashed_yield();
+    // A crash between masking and restoring would leave the desktop without
+    // blur, border and shadow (and the next apply would make it permanent).
+    // Replay it before anything else touches the compositor.
+    startup_recover_crashed_masks();
 
     let tray_mode = cli.tray;
 
@@ -2571,8 +2723,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // Reloads wipe runtime options — hypr_ipc re-applies them
                         // on every configreloaded line.
                         {
-                            let originals = capture_mask_originals();
-                            *THEME_MASK_ORIGINALS.lock().unwrap() = originals.clone();
+                            let originals = begin_mask();
                             let failures = write_mask_payload(true, &originals, hypr_eval);
                             log_mask_failures(&failures);
                             tracing::info!(
@@ -4306,6 +4457,109 @@ mod tests {
             THEME_MASK_ORIGINALS.lock().unwrap().is_empty(),
             "a successful restore must clear the store"
         );
+    }
+
+    #[test]
+    fn a_second_apply_does_not_recapture_the_masked_values() {
+        // The critical case: the first apply captures the TRUE originals; a
+        // second apply during the transition must NOT capture the values the
+        // first one just wrote, or every later restore would write the MASKED
+        // values back and break the desktop for good.
+        let mut store = std::collections::BTreeMap::new();
+        let originals = || {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("blur", "1".to_string());
+            m
+        };
+        let (plan, first) = mask_plan(&mut store, originals);
+        assert!(first, "the first apply captures");
+        assert_eq!(plan.get("blur").map(String::as_str), Some("1"));
+
+        let already_masked = || {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("blur", "false".to_string());
+            m
+        };
+        let (plan, first) = mask_plan(&mut store, already_masked);
+        assert!(!first, "a newer apply must NOT capture");
+        assert_eq!(
+            plan.get("blur").map(String::as_str),
+            Some("1"),
+            "the true original must survive the second apply"
+        );
+        assert_eq!(store.get("blur").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn a_late_reapply_refuses_when_no_originals_are_left() {
+        assert!(should_reapply(true, true));
+        assert!(
+            !should_reapply(true, false),
+            "no originals -> nothing could ever restore it, so do not mask"
+        );
+        assert!(!should_reapply(false, true), "not transitioning -> do not mask");
+    }
+
+    #[test]
+    fn the_eval_answer_decides_not_the_exit_code() {
+        // `hyprctl keyword` printed an error and STILL exited 0 — the bug class
+        // this must never let through again.
+        assert!(eval_outcome(true, Some(0), "ok\n", "").is_ok());
+        assert!(
+            eval_outcome(true, Some(0), "ok", "some warning\n").is_ok(),
+            "stderr noise alongside ok is not a failure"
+        );
+        let rejected = eval_outcome(
+            true,
+            Some(0),
+            "keyword can't work with non-legacy parsers. Use eval.\n",
+            "",
+        );
+        assert!(rejected.is_err(), "a zero exit with a rejection must fail");
+        assert!(rejected.unwrap_err().contains("non-legacy"));
+        assert!(eval_outcome(false, Some(1), "", "boom").is_err());
+    }
+
+    #[test]
+    fn the_builder_refuses_anything_it_cannot_render_as_valid_lua() {
+        fn build(entries: &[(&str, &str)]) -> Option<String> {
+            let v: Vec<(String, String)> = entries
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect();
+            lua_config_payload(&v)
+        }
+        assert!(build(&[("a.b", "1")]).is_some());
+        assert!(build(&[]).is_none(), "empty set");
+        assert!(build(&[("a.b.", "1")]).is_none(), "trailing dot");
+        assert!(build(&[(".a", "1")]).is_none(), "leading dot");
+        assert!(build(&[("a b", "1")]).is_none(), "not an identifier");
+        assert!(build(&[("a", "")]).is_none(), "empty literal");
+        assert!(build(&[("a", "1abc")]).is_none(), "not a literal");
+        assert!(build(&[("a", "-3")]).is_some(), "negative integers are fine");
+    }
+
+    #[test]
+    fn one_unusable_original_refuses_the_whole_restore() {
+        let mut originals = std::collections::BTreeMap::new();
+        originals.insert("blur", "1".to_string());
+        originals.insert("border", "2".to_string());
+        originals.insert("shadow", "[EMPTY]".to_string());
+        assert_eq!(theme_mask_payload(false, &originals), None);
+        let failures = write_mask_payload(false, &originals, |_lua| Ok(()));
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("no usable mask payload"));
+    }
+
+    #[test]
+    fn the_marker_survives_a_round_trip_and_ignores_unknown_keys() {
+        let text = r#"{"blur":"1","border":"2","shadow":"true","future_option":"9"}"#;
+        let map = marker_from_json(text).expect("a usable marker");
+        assert_eq!(map.get("blur").map(String::as_str), Some("1"));
+        assert_eq!(map.get("shadow").map(String::as_str), Some("true"));
+        assert_eq!(map.len(), 3, "unknown keys are ignored");
+        assert!(marker_from_json("not json").is_none());
+        assert!(marker_from_json(r#"{"unrelated":"1"}"#).is_none());
     }
 
     // ── Startup Gallery expand wiring (gallery-immersive-redesign PR1.1) ──
