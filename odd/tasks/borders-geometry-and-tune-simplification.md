@@ -80,7 +80,7 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   coincide today only because Hyprland's default is 2); and the coalescer tests assert a value
   that is in practice irrelevant (the drain re-reads the config). The writer's "1010 passed /
   0 failed" holds, but the suite is non-deterministic under parallelism (see B6).
-- [ ] **B5 — close the 400 ms durability window (candidate-caused).** `arm_geometry_persist`
+- [x] **B5 — close the 400 ms durability window (candidate-caused).** `arm_geometry_persist`
   (`src/main.rs:1449-1454`) only writes when the timer fires: if HVE exits inside those 400 ms
   (window close, IPC quit, crash) the whole drag never reaches disk and the next `hyprctl reload`
   reverts it. The commit message's "deferred, never dropped" is false in that case. Mitigation:
@@ -130,6 +130,19 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   and verified (2/32/5/5, fragment + overlay md5 matched baseline). No `.slint` change was
   needed: the timer already forwards the live `root.geom-*` values, so the "radius and gaps
   travel with the size" line at BordersSection.slint:2149 is correct as-is and was left intact.
+- 2026-09-27: **B5 done** (this commit). The 400 ms window is closed with two halves that
+  together leave no exit path uncovered: the config is saved PER TICK in the hot callback
+  (measured 0.031 ms per `Config::save()` over 200 writes — the millisecond budget holds), and
+  the coalesced fragment/assemble drain is FLUSHED on the way out when
+  `run_event_loop_until_quit()` returns. That return covers window close, IPC quit and the
+  restart callback (which quits the event loop after spawning the new instance), so all three
+  clean exits write the drag. `drain_geometry_persist` is now the single drain shared by the
+  idle timer and the flush, so both paths cannot drift; the flush stops the timer first, so it
+  can never fire twice. Test `flush_on_shutdown_writes_the_last_geometry` was RED first (the
+  flush did not exist) and is GREEN after: it stages a drag, runs the flush with a stub
+  `geometry.sh` that records its four arguments, and asserts the durable path saw the LAST
+  value, the persisted config carries it, and a second flush with nothing owed is a no-op. No
+  Hyprland and no real `hyprctl` are involved.
 
 ## Next step
 

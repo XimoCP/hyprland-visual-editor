@@ -1441,20 +1441,50 @@ fn arm_geometry_persist(
     timer.start(
         slint::TimerMode::SingleShot,
         std::time::Duration::from_millis(GEOMETRY_PERSIST_IDLE_MS),
-        move || {
-            // Nothing owed: a stale fire must not rewrite the fragment.
-            if pending.borrow_mut().take().is_none() {
-                return;
-            }
-            let result = {
-                let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                st.apply_geometry()
-            };
-            if let Err(e) = result {
-                tracing::error!("[HVE] Geometry persist error: {}", e);
-            }
-        },
+        move || drain_geometry_persist(&pending, &state),
     );
+}
+
+/// Run the coalesced geometry persist ONCE if anything is owed.
+///
+/// Shared by the idle timer and the shutdown flush, so both paths have the
+/// same meaning: consume the owe, then run the durable path. Nothing owed is
+/// a no-op (a stale timer fire must never rewrite the fragment). The drain
+/// reads the config — already updated by the hot path — so the value saved is
+/// the drag's final one whatever order the timer and the ticks land in.
+fn drain_geometry_persist(
+    pending: &std::rc::Rc<std::cell::RefCell<callbacks::GeometryPersistCoalescer>>,
+    state: &Arc<std::sync::Mutex<AppState>>,
+) {
+    if pending.borrow_mut().take().is_none() {
+        return;
+    }
+    let result = {
+        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+        st.apply_geometry()
+    };
+    if let Err(e) = result {
+        tracing::error!("[HVE] Geometry persist error: {}", e);
+    }
+}
+
+/// Flush any owed geometry persist RIGHT NOW, on the way out.
+///
+/// `arm_geometry_persist` is a trailing-edge coalescer: it only writes once the
+/// drag goes quiet. If the process exits inside `GEOMETRY_PERSIST_IDLE_MS`
+/// (window close, IPC quit, tray quit), that timer never fires and the whole
+/// drag is lost — the persisted config and the fragment stay at the previous
+/// value and the next `hyprctl reload` reverts what the user just saw. This is
+/// the closing half of "deferred, never dropped": on shutdown the idle timer is
+/// stopped (it can never fire again) and the same drain runs synchronously.
+/// Safe with nothing owed — it is then a pure no-op.
+fn flush_geometry_persist(
+    timer: &slint::Timer,
+    pending: &std::rc::Rc<std::cell::RefCell<callbacks::GeometryPersistCoalescer>>,
+    state: &Arc<std::sync::Mutex<AppState>>,
+) {
+    timer.stop();
+    drain_geometry_persist(pending, state);
 }
 
 /// Capture the current value of every masked option.
@@ -4148,15 +4178,21 @@ fn main() -> Result<(), slint::PlatformError> {
     //     what `dofile` reads back on reload. It is coalesced behind
     //     `arm_geometry_persist`, so a drag writes ONCE instead of per 80 ms
     //     tick. The config value written by the hot path is what gets saved.
+    //
+    // The coalescer and its timer are declared OUTSIDE the wiring block so the
+    // shutdown flush below can still drain an owed persist after the event loop
+    // returns (B5): a quit inside the 400 ms idle window must not drop the drag.
+    let geometry_persist_pending = std::rc::Rc::new(std::cell::RefCell::new(
+        callbacks::GeometryPersistCoalescer::default(),
+    ));
+    let geometry_persist_timer = std::rc::Rc::new(slint::Timer::default());
     {
         let state_c = state.clone();
         let weak = window.as_weak();
         let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
-        let persist_pending = std::rc::Rc::new(std::cell::RefCell::new(
-            callbacks::GeometryPersistCoalescer::default(),
-        ));
-        let persist_timer = std::rc::Rc::new(slint::Timer::default());
+        let persist_pending = geometry_persist_pending.clone();
+        let persist_timer = geometry_persist_timer.clone();
         window.on_panel_apply_geometry(move |size, radius, gap_in, gap_out| {
             tracing::debug!("[borders][mouse|kbd] apply-geometry size={} radius={} gap_in={} gap_out={}", size, radius, gap_in, gap_out);
             if !guard_permits {
@@ -4188,6 +4224,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 st.cfg_mut().border_radius = radius;
                 st.cfg_mut().gaps_in = gap_in;
                 st.cfg_mut().gaps_out = gap_out;
+                // B5: the config must not lag 400 ms behind the desktop. A
+                // crash inside the idle window would otherwise lose the whole
+                // drag from disk. This is a small JSON write (~ms), so the hot
+                // path keeps its millisecond budget; only the fragment/assemble
+                // half stays coalesced. A config write failure is not fatal
+                // here (best-effort hardening) — the drain below retries it.
+                let _ = st.cfg().save();
             }
             // Durable: one write once the drag goes quiet (restart = trailing).
             persist_pending.borrow_mut().request(next);
@@ -4745,6 +4788,18 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Global event loop (decoupled from window lifecycle) ──
     slint::run_event_loop_until_quit()?;
+
+    // ── Flush a geometry drag a quit interrupted (B5) ──
+    // The durable persist is coalesced behind a 400 ms idle timer; quitting
+    // inside that window (window close, IPC quit, tray quit) would drop the
+    // whole drag and the next `hyprctl reload` would revert the value the user
+    // just saw. The idle timer can never fire again, so stop it and run the
+    // same drain synchronously before the process leaves.
+    flush_geometry_persist(
+        &geometry_persist_timer,
+        &geometry_persist_pending,
+        &state,
+    );
 
     // Clean up IPC socket after the event loop stops
     ipc::cleanup();
@@ -5306,6 +5361,97 @@ mod tests {
         assert_eq!(preset_geometry_for("sharp.ron"), BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 });
         assert_eq!(preset_geometry_for("thick.ron"), BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 });
         assert_eq!(preset_geometry_for("unknown.ron"), BorderGeometry::default());
+    }
+
+    // ── B5: the deferred persist must not be dropped on shutdown ─────────
+    // `arm_geometry_persist` only writes when its 400 ms idle timer fires. A
+    // quit inside that window (window close, IPC, tray quit) would drop the
+    // whole drag: the config and the fragment keep the previous value and the
+    // next `hyprctl reload` reverts what the user just saw. The flush closes
+    // that window by running the same drain on the way out, before the process
+    // leaves. These tests pin the drain itself, not the real compositor.
+
+    /// Temp project whose `geometry.sh` records its four arguments instead of
+    /// writing a fragment and firing a reload. No Hyprland, no `hyprctl`.
+    fn temp_geometry_engine() -> (crate::engine::Engine, tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let scripts = dir.path().join("assets").join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let record = dir.path().join("geometry-record.txt");
+        let script = format!(
+            "#!/bin/bash\necho \"$1 $2 $3 $4\" > \"{}\"\nexit 0\n",
+            record.display()
+        );
+        let path = scripts.join("geometry.sh");
+        std::fs::write(&path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = std::fs::metadata(&path).unwrap().permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(&path, perm).unwrap();
+        }
+        let engine = crate::engine::Engine::new(dir.path());
+        (engine, dir, record)
+    }
+
+    /// The shutdown path must persist the drag even when the idle timer never
+    /// fired. RED before the fix: there is no flush, so quitting inside the
+    /// 400 ms window leaves both the config and the fragment at the old value.
+    #[test]
+    fn flush_on_shutdown_writes_the_last_geometry() {
+        let _env = crate::test_utils::TempEnv::new();
+        let (engine, proj, record) = temp_geometry_engine();
+
+        let mut cfg = crate::config::Config::default();
+        cfg.border_size = 2;
+        cfg.border_radius = 32;
+        cfg.gaps_in = 5;
+        cfg.gaps_out = 5;
+        let tm = crate::theme_manager::ThemeManager::new(proj.path());
+        let state = Arc::new(std::sync::Mutex::new(AppState::new(cfg, engine, tm)));
+
+        // The hot path already moved the in-memory config and staged the
+        // durable write; the 400 ms timer has NOT fired (the process exits now).
+        {
+            let mut st = state.lock().unwrap();
+            st.cfg_mut().border_size = 5;
+            st.cfg_mut().border_radius = 44;
+            st.cfg_mut().gaps_in = 8;
+            st.cfg_mut().gaps_out = 10;
+        }
+        let pending = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::callbacks::GeometryPersistCoalescer::default(),
+        ));
+        pending.borrow_mut().request(crate::callbacks::BorderGeometry {
+            size: 5,
+            radius: 44,
+            gap_in: 8,
+            gap_out: 10,
+        });
+        let timer = slint::Timer::default();
+
+        // Shutdown: no timer fire, just the flush.
+        flush_geometry_persist(&timer, &pending, &state);
+
+        // The durable path ran once, with the drag's LAST value.
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap().trim(),
+            "5 44 8 10",
+            "the shutdown flush must run geometry.sh with the last value"
+        );
+        // The persisted config carries the last value too.
+        let on_disk = crate::config::Config::load();
+        assert_eq!(on_disk.border_size, 5);
+        assert_eq!(on_disk.border_radius, 44);
+        assert_eq!(on_disk.gaps_in, 8);
+        assert_eq!(on_disk.gaps_out, 10);
+        assert!(!pending.borrow().has_pending(), "the flush consumed the owe");
+
+        // A second flush owes nothing and must not run the durable path again.
+        std::fs::remove_file(&record).unwrap();
+        flush_geometry_persist(&timer, &pending, &state);
+        assert!(!record.exists(), "a flush with nothing owed must not write");
     }
 
     // ── Theme interlude view switch (strict TDD) ─────────────────────────
