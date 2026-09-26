@@ -1420,6 +1420,43 @@ fn hypr_eval(lua: &str) -> Result<(), String> {
     )
 }
 
+/// Geometry persist idle window (ms): how long the drag must stay quiet before
+/// the ONE durable write lands. The hot apply is already on the desktop; this
+/// only decides when the expensive file path (`geometry.sh` + `assemble.sh`,
+/// ~175 ms measured) is allowed to run. `Timer::start` restarts a running
+/// timer, so every tick pushes the deadline out and a whole drag writes once.
+const GEOMETRY_PERSIST_IDLE_MS: u64 = 400;
+
+/// (Re)arm the single deferred geometry persist. The coalescer holds the
+/// latest geometry; this drains it exactly once after the burst goes quiet.
+/// The drain reads the config (already updated by the hot path), so the saved
+/// value is the drag's final one whatever order the timer and ticks land in.
+fn arm_geometry_persist(
+    timer: &slint::Timer,
+    pending: &std::rc::Rc<std::cell::RefCell<callbacks::GeometryPersistCoalescer>>,
+    state: &Arc<std::sync::Mutex<AppState>>,
+) {
+    let pending = pending.clone();
+    let state = state.clone();
+    timer.start(
+        slint::TimerMode::SingleShot,
+        std::time::Duration::from_millis(GEOMETRY_PERSIST_IDLE_MS),
+        move || {
+            // Nothing owed: a stale fire must not rewrite the fragment.
+            if pending.borrow_mut().take().is_none() {
+                return;
+            }
+            let result = {
+                let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+                st.apply_geometry()
+            };
+            if let Err(e) = result {
+                tracing::error!("[HVE] Geometry persist error: {}", e);
+            }
+        },
+    );
+}
+
 /// Capture the current value of every masked option.
 fn capture_mask_originals() -> std::collections::BTreeMap<&'static str, String> {
     let mut map = std::collections::BTreeMap::new();
@@ -4101,12 +4138,25 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_panel_save_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
     }
 
-    // ── Panel Borders tune: debounced geometry + snap-on-pick (slice 4, COLOR GATED) ──
+    // ── Panel Borders tune: INSTANT hot geometry + ONE deferred persist ──
+    // The tick must be felt at once, and the value must still survive a reload.
+    // Those are two different writes:
+    //   • HOT — only the options that changed, as one `hl.config({...})` chunk
+    //     through `hyprctl eval` (~5 ms measured live). It reaches the running
+    //     compositor immediately but does NOT survive `hyprctl reload`.
+    //   • DURABLE — the fragment + `assemble.sh` path (~175 ms measured) writes
+    //     what `dofile` reads back on reload. It is coalesced behind
+    //     `arm_geometry_persist`, so a drag writes ONCE instead of per 80 ms
+    //     tick. The config value written by the hot path is what gets saved.
     {
         let state_c = state.clone();
         let weak = window.as_weak();
         let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
+        let persist_pending = std::rc::Rc::new(std::cell::RefCell::new(
+            callbacks::GeometryPersistCoalescer::default(),
+        ));
+        let persist_timer = std::rc::Rc::new(slint::Timer::default());
         window.on_panel_apply_geometry(move |size, radius, gap_in, gap_out| {
             tracing::debug!("[borders][mouse|kbd] apply-geometry size={} radius={} gap_in={} gap_out={}", size, radius, gap_in, gap_out);
             if !guard_permits {
@@ -4116,20 +4166,32 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            let result = {
+            let next = callbacks::BorderGeometry { size, radius, gap_in, gap_out };
+            {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                if size == st.cfg().border_size && radius == st.cfg().border_radius && gap_in == st.cfg().gaps_in && gap_out == st.cfg().gaps_out {
+                let prev = callbacks::BorderGeometry {
+                    size: st.cfg().border_size,
+                    radius: st.cfg().border_radius,
+                    gap_in: st.cfg().gaps_in,
+                    gap_out: st.cfg().gaps_out,
+                };
+                if next == prev {
                     return;
+                }
+                // Hot: push ONLY what changed, right now.
+                if let Some(chunk) = callbacks::geometry_lua_chunk(&prev, &next) {
+                    if let Err(e) = hypr_eval(&chunk) {
+                        tracing::error!("[HVE] Hot geometry apply failed: {}", e);
+                    }
                 }
                 st.cfg_mut().border_size = size;
                 st.cfg_mut().border_radius = radius;
                 st.cfg_mut().gaps_in = gap_in;
                 st.cfg_mut().gaps_out = gap_out;
-                st.apply_geometry()
-            };
-            if let Err(e) = result {
-                tracing::error!("[HVE] Geometry error: {}", e);
             }
+            // Durable: one write once the drag goes quiet (restart = trailing).
+            persist_pending.borrow_mut().request(next);
+            arm_geometry_persist(&persist_timer, &persist_pending, &state_c);
             if let Some(w) = weak.upgrade() {
                 w.set_border_size(size);
                 w.set_corner_radius(radius);

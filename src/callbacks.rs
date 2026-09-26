@@ -907,6 +907,64 @@ pub fn should_apply_geometry(current: &BorderGeometry, pending: &BorderGeometry)
     current != pending
 }
 
+/// Build the ONE Lua chunk for the geometry options that actually changed.
+///
+/// The live path is `hyprctl eval 'hl.config({...})'` (~5 ms, measured) instead
+/// of `geometry.sh` + `assemble.sh` (~175 ms). Only changed options may travel:
+/// re-sending unchanged ones is a needless write, and a stale value for an
+/// option the user did not touch (the old literal-0 gaps/radius) would wipe it.
+/// `None` when nothing changed — the caller must push nothing then.
+///
+/// Paths mirror `assets/scripts/geometry.sh` exactly: `general.border_size`,
+/// `general.gaps_in`, `general.gaps_out` and `decoration.rounding`.
+pub fn geometry_lua_chunk(prev: &BorderGeometry, next: &BorderGeometry) -> Option<String> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    if next.size != prev.size {
+        entries.push(("general.border_size".to_string(), next.size.to_string()));
+    }
+    if next.gap_in != prev.gap_in {
+        entries.push(("general.gaps_in".to_string(), next.gap_in.to_string()));
+    }
+    if next.gap_out != prev.gap_out {
+        entries.push(("general.gaps_out".to_string(), next.gap_out.to_string()));
+    }
+    if next.radius != prev.radius {
+        entries.push(("decoration.rounding".to_string(), next.radius.to_string()));
+    }
+    crate::lua_config_payload(&entries)
+}
+
+/// Last-wins slot for the DEFERRED geometry persist.
+///
+/// The hot apply is immediate; the persistent write (`geometry.sh` +
+/// `assemble.sh`) is expensive, so it is coalesced behind a timer instead of
+/// running per tick. Every request overwrites the single slot with the latest
+/// value; the timer drains it ONCE when the drag goes quiet. N rapid requests
+/// therefore cost one persist, never N — and a value can never be stranded:
+/// the slot only empties on `take`, and any request after that re-fills it.
+#[derive(Debug, Default)]
+pub struct GeometryPersistCoalescer {
+    pending: Option<BorderGeometry>,
+}
+
+impl GeometryPersistCoalescer {
+    /// Record the latest geometry the persistent path owes. Overwrites any
+    /// previous value (last-wins); the caller (re)arms the drain timer.
+    pub fn request(&mut self, geo: BorderGeometry) {
+        self.pending = Some(geo);
+    }
+
+    /// Consume the owed persist, if any. `None` means nothing is owed — the
+    /// timer fired with no fresh work and must do nothing.
+    pub fn take(&mut self) -> Option<BorderGeometry> {
+        self.pending.take()
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+}
+
 #[cfg(test)]
 mod panel_save_tests {
     use super::handle_panel_save;
@@ -1354,7 +1412,91 @@ exit 0
 
 #[cfg(test)]
 mod geometry_tune_tests {
-    use super::{preset_geometry_for, BorderGeometry, GeometryDebouncer, should_apply_geometry};
+    use super::{
+        geometry_lua_chunk, preset_geometry_for, BorderGeometry, GeometryDebouncer,
+        GeometryPersistCoalescer, should_apply_geometry,
+    };
+
+    // ── B1: hot apply pushes ONLY the options that actually changed ──────
+    // The live path is one `hl.config({...})` chunk through `hyprctl eval`;
+    // re-sending unchanged options would be a needless write, and sending the
+    // wrong ones (the old literal-0 gaps/radius) is the bug that wiped the
+    // user's rounding. The exact string is the contract, so it is asserted.
+
+    #[test]
+    fn hot_chunk_size_only() {
+        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let next = BorderGeometry { size: 3, radius: 32, gap_in: 5, gap_out: 5 };
+        assert_eq!(
+            geometry_lua_chunk(&prev, &next).as_deref(),
+            Some("hl.config({ general = { border_size = 3 } })")
+        );
+    }
+
+    #[test]
+    fn hot_chunk_radius_only() {
+        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let next = BorderGeometry { size: 2, radius: 40, gap_in: 5, gap_out: 5 };
+        assert_eq!(
+            geometry_lua_chunk(&prev, &next).as_deref(),
+            Some("hl.config({ decoration = { rounding = 40 } })")
+        );
+    }
+
+    #[test]
+    fn hot_chunk_gaps_only() {
+        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let next = BorderGeometry { size: 2, radius: 32, gap_in: 8, gap_out: 10 };
+        assert_eq!(
+            geometry_lua_chunk(&prev, &next).as_deref(),
+            Some("hl.config({ general = { gaps_in = 8, gaps_out = 10 } })")
+        );
+    }
+
+    #[test]
+    fn hot_chunk_nothing_changed_is_no_call() {
+        let same = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        assert_eq!(geometry_lua_chunk(&same, &same), None, "no change must not push");
+    }
+
+    #[test]
+    fn hot_chunk_mixed_fields_one_merged_call() {
+        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let next = BorderGeometry { size: 4, radius: 40, gap_in: 5, gap_out: 5 };
+        assert_eq!(
+            geometry_lua_chunk(&prev, &next).as_deref(),
+            Some("hl.config({ decoration = { rounding = 40 }, general = { border_size = 4 } })")
+        );
+    }
+
+    // ── B1: the persistent apply is coalesced ────────────────────────────
+    // A drag fires one tick per 80 ms; each tick would otherwise run
+    // geometry.sh + assemble.sh (~175 ms measured live). The coalescer keeps
+    // the LAST requested value in one slot, so N rapid requests drain as ONE
+    // persist.
+
+    #[test]
+    fn persist_burst_drains_once() {
+        let mut c = GeometryPersistCoalescer::default();
+        for size in [3, 4, 5, 5, 4] {
+            c.request(BorderGeometry { size, radius: 32, gap_in: 5, gap_out: 5 });
+        }
+        assert!(c.has_pending(), "a burst owes exactly one persist");
+        let drained = c.take().expect("one persist for the whole burst");
+        assert_eq!(drained.size, 4, "last-wins: the drag's final value persists");
+        assert_eq!(c.take(), None, "the burst must not drain a second time");
+        assert!(!c.has_pending());
+    }
+
+    #[test]
+    fn persist_second_burst_drains_again() {
+        let mut c = GeometryPersistCoalescer::default();
+        c.request(BorderGeometry { size: 3, radius: 32, gap_in: 5, gap_out: 5 });
+        assert_eq!(c.take().map(|g| g.size), Some(3));
+        // Draining clears the slot; a later drag must still be owed a persist.
+        c.request(BorderGeometry { size: 5, radius: 32, gap_in: 5, gap_out: 5 });
+        assert_eq!(c.take().map(|g| g.size), Some(5), "a second burst is not swallowed");
+    }
 
     #[test]
     fn test_geometry_debounce_last_wins() {
