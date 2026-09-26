@@ -476,11 +476,24 @@ mod tests {
             2,
             "the dead instance (1) and the new instance (2) must both have started, got:\n{log}"
         );
-        let runs = std::fs::read_to_string(&assemble_marker).unwrap_or_default();
-        assert!(
-            runs.lines().count() >= 2,
-            "the new instance must perform its own initial refresh, got {runs:?}"
-        );
+        // "Starting watcher" is logged BEFORE the initial refresh runs
+        // (color_watcher.sh: the start line precedes the `assemble.sh` call), so
+        // instance 2's marker may not exist yet when its start line appears.
+        // Under load that gap widens, so POLL for the refresh with a bound
+        // instead of asserting the instant the start line shows — the same
+        // bounded wait the lock-of-instance-2 check above already uses.
+        let refresh_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let runs = std::fs::read_to_string(&assemble_marker).unwrap_or_default();
+            if runs.lines().count() >= 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < refresh_deadline,
+                "the new instance must perform its own initial refresh, got {runs:?}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
 
         // Cleanup: group-kill instance 2 (bash + its own stub), reap, then
         // the KillPidOnDrop guard kills instance 1's orphan.

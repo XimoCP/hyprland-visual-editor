@@ -86,7 +86,7 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   reverts it. The commit message's "deferred, never dropped" is false in that case. Mitigation:
   save the config per tick (cheap) and defer only the fragment/assemble, or flush on event-loop
   exit.
-- [ ] **B6 — stop `cargo test` from touching the real environment (pre-existing, found here).**
+- [x] **B6 — stop `cargo test` from touching the real environment (pre-existing, found here).**
   `src/shell/ui_tests.rs:3319` (`test_system_minimize_10s`) does not use `TempEnv` and calls
   `state.toggle_system(true)` -> `init.sh enable` against the real HOME: it copies the watchdog
   into `~/.cache/hve/`, rewrites `~/.config/hve/config.json` and fires a `hyprctl reload`. A test
@@ -143,6 +143,50 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   `geometry.sh` that records its four arguments, and asserts the durable path saw the LAST
   value, the persisted config carries it, and a second flush with nothing owed is a no-op. No
   Hyprland and no real `hyprctl` are involved.
+- 2026-09-27: **B6 done** (this commit). Root cause established with evidence BEFORE choosing fixes,
+  and the task's shared-root-cause hypothesis was TESTED and refuted: the three flakes are ONE
+  class of harness race (asserting an eventual side effect immediately after an earlier signal
+  instead of polling for it with a bound), and the leak is a separate hermeticity gap. It is not
+  global env state: the three tests already pass a temp HOME/PATH to their subprocesses. The
+  races only WIN under CPU contention, which is why they looked random: on this host (loaded by
+  a game) the watcher failed 6/11 full runs at `src/watcher.rs:480` and the reload test 1/11 at
+  `src/reload_coalescer.rs:784`; the noctalia failure was proven by code order (below).
+  - `watcher`: `color_watcher.sh` logs "Starting watcher" at line 126 and only THEN runs the
+    initial `assemble.sh` at line 165; the test waited on the log line and asserted the assemble
+    marker immediately. Now it polls the marker with a 10 s bound.
+  - `reload_coalescer`: the claim/marker are `rm`-ed by the drainer AFTER the fire returns; the
+    test asserted their absence right after `reload_count()==2`. Now polled with a 3 s bound —
+    the sibling test above already documented this exact window.
+  - `noctalia`: `poll("color-scheme-set", 2)` returns when the set line lands, but
+    `templates-apply` is a SEPARATE subprocess issued right after it, so the direct
+    `stub.templates()==2` read raced; now polled, exactly like the single-shot sibling test.
+  - leak: `test_system_minimize_10s` now runs inside `TempEnv` against a temp project whose
+    `init.sh` only records its call; its assertions were kept and extended (persisted flag +
+    engine call), never weakened. `init.sh enable` against the real HOME was copying the
+    watchdog into `~/.cache/hve`, rewriting `~/.config/hve/config.json`, editing the real
+    `hyprland.lua` and firing a real `hyprctl reload`.
+  - the 10 real `hyprctl reload`s that remained came from `settings.rs`
+    (`set_keybinds`/`set_autostart`/`set_tiling_window_rules`); they now go through
+    `reload_hyprland()`, a no-op under `cfg(test)` — the file write it follows is untouched and
+    no test observes the reload.
+  - Measurement with a delegating `hyprctl` wrapper prepended to PATH: full suite went from 14
+    real calls to 2, both read-only `-j layers` / `-j monitors` JSON queries (`-j` = "Output in
+    JSON"; they cannot dispatch or set keywords), and 0 reloads. The keeper's compositor is
+    never reloaded by the suite again.
+  - Acceptance: 5 consecutive full suites, 1011 passed / 0 failed each (was 1010 before this
+    commit: B5 added one test), 0 reloads per run, and SHA-256 of `~/.config/hve/config.json`,
+    every file under `~/.cache/hve` (including the generated `overlay.lua`),
+    `assets/fragments/*.lua` and `~/.config/hypr/hyprland.lua` identical after every run. The
+    three named tests also went 8/8 each in a targeted stress pass.
+  - NOTE for the keeper: `~/.config/hve/config.json` was ALREADY the test's output when this
+    task started (`Config::default()` + `is_system_active=true` + `minimize_seconds=10`) — the
+    B1 verifier's suite run had overwritten it. A stale `config.json.bak-1789510200` from
+    2026-09-16 (with `active_border_file: 04_tri.lua`, `last_applied_theme: Cars`) survives next
+    to it. This fence stops the damage from recurring; it cannot restore what was already lost,
+    so the keeper should re-pick the theme/border if the current config looks wrong.
+  - Pre-existing, NOT introduced here: `cargo build` (bin profile) warns
+    `method has_pending is never used`; the identical warning appears in a clean HEAD worktree
+    build, and `cargo test` builds are warning-free.
 
 ## Next step
 

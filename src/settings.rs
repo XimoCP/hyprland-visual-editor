@@ -5,6 +5,30 @@ use crate::config_markers::{
 };
 use std::path::PathBuf;
 
+/// Reload Hyprland after a settings write.
+///
+/// Production shells out to `hyprctl reload`: a settings change is only
+/// meaningful once the compositor re-reads the file.
+///
+/// Under `cfg(test)` this is a deliberate no-op. The suite has no compositor
+/// to reload, and a real `hyprctl reload` from a test drives the developer's
+/// LIVE desktop — it re-reads their real config, re-floats HVE and drops a
+/// pending fullscreen launch. The file write that precedes it (the behaviour
+/// these settings functions are actually about) is untouched, and no test
+/// observes the reload: it is unobservable in-process by construction, so
+/// skipping it removes a harmful outside-the-repo side effect without
+/// weakening any assertion.
+fn reload_hyprland() {
+    #[cfg(not(test))]
+    if let Err(e) = std::process::Command::new("hyprctl")
+        .arg("reload")
+        .output()
+        .map(|_| ())
+    {
+        tracing::warn!("[hve] hyprctl reload failed: {}", e);
+    }
+}
+
 /// Pure: the auto-generated header block that sits at the top of every HVE
 /// settings file. Tells Hyprland (and any human peeking at the file) that it is
 /// machine-owned and derived from `~/.config/hve/config.json`.
@@ -151,13 +175,7 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
                 if tiling { "TILING" } else { "FLOATING" },
                 tiling,
             );
-            if let Err(e) = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .output()
-                .map(|_| ())
-            {
-                tracing::warn!("[hve] hyprctl reload failed: {}", e);
-            }
+            reload_hyprland();
             true
         }
         Err(e) => {
@@ -324,13 +342,7 @@ hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\
                 "[keybinds] {}",
                 if enabled { "WRITTEN" } else { "REMOVED" }
             );
-            if let Err(e) = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .output()
-                .map(|_| ())
-            {
-                tracing::warn!("[hve] hyprctl reload failed: {}", e);
-            }
+            reload_hyprland();
         }
         Err(e) => {
             tracing::error!("[keybinds] Failed to write: {}", e);
@@ -522,13 +534,7 @@ end)
                 "[autostart] {} in hve-settings.lua",
                 if enabled { "Enabled" } else { "Disabled" }
             );
-            if let Err(e) = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .output()
-                .map(|_| ())
-            {
-                tracing::warn!("[hve] hyprctl reload failed: {}", e);
-            }
+            reload_hyprland();
         }
         Err(e) => tracing::error!("[autostart] Failed to write hve-settings: {}", e),
     }

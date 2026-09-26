@@ -3319,6 +3319,15 @@ fn panel_filters_renders() {
 fn test_system_minimize_10s() {
     // RED: SystemSection must exist and expose timer 10s row + toggle_system ON/OFF
     // This test fails until SystemSection.slint is created with required rows.
+    //
+    // HERMETIC: `toggle_system` persists the config AND runs the engine's
+    // `init.sh enable`. Against a real HOME that copies the watchdog into
+    // ~/.cache/hve, rewrites ~/.config/hve/config.json, edits the real
+    // hyprland.lua and fires a real `hyprctl reload` — a test suite must never
+    // touch the keeper's desktop. `TempEnv` points HOME/XDG at a throwaway dir
+    // and the engine points at a temp project whose `init.sh` only records its
+    // call, so the SAME semantics are asserted with zero outside effects.
+    let _env = crate::test_utils::TempEnv::new();
     let path = "ui/panel/sections/SystemSection.slint";
     let content = std::fs::read_to_string(path).expect("SystemSection.slint must exist for slice 7");
     assert!(content.contains("10"), "timer 10s row must be present — got content without \"10\"");
@@ -3330,15 +3339,46 @@ fn test_system_minimize_10s() {
     let mut cfg = crate::config::Config::default();
     cfg.minimize_seconds = 10;
     assert_eq!(cfg.minimize_seconds, 10, "minimize_seconds 10s via toggle_system path");
+
+    // Temp project whose `init.sh` records its argument instead of running the
+    // real enable path (which would touch the real cache/config/hyprland.lua
+    // and fire a real `hyprctl reload`).
+    let proj = tempfile::TempDir::new().unwrap();
+    let scripts = proj.path().join("assets").join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let record = proj.path().join("init-called.txt");
+    let init = scripts.join("init.sh");
+    std::fs::write(
+        &init,
+        format!("#!/bin/bash\necho \"$1\" >> \"{}\"\nexit 0\n", record.display()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&init).unwrap().permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&init, perm).unwrap();
+    }
+
     // Verify AppState toggle_system can be called (existing on_toggle_system reused)
-    // We check the method exists and toggles is_system_active without panicking
-    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let engine = crate::engine::Engine::new(&proj);
+    // We check the method exists, sets is_system_active, persists it and runs
+    // the engine enable path — without panicking.
+    let engine = crate::engine::Engine::new(proj.path());
     let cfg2 = crate::config::Config::default();
-    let tm = crate::theme_manager::ThemeManager::new(&proj);
+    let tm = crate::theme_manager::ThemeManager::new(proj.path());
     let mut state = crate::app_state::AppState::new(cfg2, engine, tm);
     let _ = state.toggle_system(true);
     assert!(state.cfg().is_system_active, "toggle_system(true) must set active");
+    assert!(
+        crate::config::Config::load().is_system_active,
+        "toggle_system(true) must persist the flag to the sandboxed config"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap().trim(),
+        "enable",
+        "toggle_system(true) must run the engine's init.sh enable"
+    );
     let mut st2 = state;
     st2.update_cfg(|c| c.minimize_seconds = 10);
     assert_eq!(st2.cfg().minimize_seconds, 10);

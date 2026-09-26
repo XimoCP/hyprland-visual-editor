@@ -780,8 +780,21 @@ fn sandboxed_request_pending_keeps_drainer_alive_and_fires() {
     let pid = sb.drainer_pid().expect("drainer must still be alive mid-idle");
     sb.run_apply("border.sh", &["test"], true, "1", WIDE_DRAIN);
     sb.wait_until(|| sb.reload_count() == 2, "the pending request to fire", Duration::from_secs(10));
-    assert!(!sb.marker_path().exists(), "no marker may remain");
-    assert!(!sb.claim_path().exists(), "no claim may remain");
+    // The claim and marker are removed by the drainer AFTER the fire returns,
+    // so their absence must be POLLED, never asserted immediately: the stub's
+    // `rm` follows its `hyprctl reload` return by a window a fast poller can
+    // straddle (the same discipline the sibling test above documents). An
+    // immediate assert here failed at random under a loaded parallel suite.
+    sb.wait_until(
+        || !sb.marker_path().exists(),
+        "no marker may remain",
+        Duration::from_secs(3),
+    );
+    sb.wait_until(
+        || !sb.claim_path().exists(),
+        "no claim may remain",
+        Duration::from_secs(3),
+    );
     assert!(
         std::path::Path::new(&format!("/proc/{pid}")).exists(),
         "the drainer that served burst 1 must be the one serving burst 2 (it may not exit while a request is owed)"

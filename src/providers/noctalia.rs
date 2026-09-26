@@ -2717,7 +2717,13 @@ exit 0
         // The re-asserted set lands AFTER apply returned (spawned thread).
         let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
         assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
-        assert_eq!(stub.templates(), 2, "templates re-rendered per set");
+        // `templates-apply` is a SEPARATE subprocess issued right after the set
+        // (production: set then templates), so the second one may not have
+        // landed when the set line appears. Poll for it, like the single-shot
+        // sibling test does, instead of asserting on the instant — under a
+        // loaded parallel suite that gap widens and the direct read raced.
+        let templates = stub.poll("templates-apply", 2, Duration::from_secs(10));
+        assert_eq!(templates, 2, "templates re-rendered per set");
         // Let the final verifying get finish so no thread outlives the test
         // (it would otherwise run against a removed stub PATH).
         std::thread::sleep(Duration::from_millis(2500));
