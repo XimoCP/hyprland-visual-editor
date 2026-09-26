@@ -825,6 +825,355 @@ pub(crate) fn is_theme_transitioning_flag() -> bool {
     THEME_TRANSITIONING_FLAG.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// ── W5: advance a step on the compositor's signal, not the clock ──────────
+//
+// The transition is a cascade of timers (T=560, T=1500, T=1900, T=2470). A timer
+// is a GUESS about when the compositor will be ready, and the guess depends on
+// the machine: on a slower one the timer fires early, HVE does not end up
+// immersive, and the shell bar stays above the window. The sentinel's own
+// recording measured `configreloaded` bursts spanning 2 s to 12 s, so no fixed
+// duration can be right.
+//
+// The fix keeps every timer as the FALLBACK and adds the compositor's event as
+// the primary trigger. Whichever arrives first wins, exactly once. That shape is
+// deliberate: a signal that never arrives degrades to today's behaviour and can
+// never hang the desktop.
+
+/// Which transition step a signal may advance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransitionStep {
+    /// The fullscreen cycle: advanced by the compositor's `fullscreen` event.
+    /// Kept though it never fires in a normal transition (HVE is already
+    /// immersive, so the compositor announces nothing) — see W5b below.
+    Fullscreen,
+    /// The finale: advanced when the reload BURST settles (`configreloaded`).
+    /// This is the one that actually matches reality.
+    Restore,
+}
+
+/// The step the transition is waiting on. `None` = nothing is waiting.
+pub(crate) static THEME_WAITING_STEP: std::sync::Mutex<Option<TransitionStep>> =
+    std::sync::Mutex::new(None);
+
+/// Should an arriving signal advance the waiting step? Pure, so the whole race
+/// story ("signal or timer first") reduces to one testable decision.
+pub(crate) fn signal_advances_step(
+    waiting: Option<TransitionStep>,
+    signal: TransitionStep,
+    signal_gen: u64,
+    live_gen: u64,
+) -> bool {
+    waiting == Some(signal) && signal_gen == live_gen
+}
+
+/// Claim a waiting step so a signal and its fallback cannot both run it.
+/// True for exactly one caller: the first to clear the wait.
+pub(crate) fn claim_waiting_step(step: TransitionStep) -> bool {
+    let mut waiting = THEME_WAITING_STEP.lock().unwrap();
+    if *waiting == Some(step) {
+        *waiting = None;
+        true
+    } else {
+        false
+    }
+}
+
+// ── W5b: wait for the RELOAD to settle, not for a fixed clock ─────────────
+//
+// The live test killed the `fullscreen` signal: during a normal transition HVE
+// is ALREADY immersive, so the compositor has no state change to announce and
+// the event never fires. The real waste, straight from the owner's logs:
+//
+//     masked          05.376
+//     reload landed   06.287   <- the reload is DONE here
+//     finale (clock)  08.377   <- the clock waited ~2s longer for nothing
+//
+// and the reload does not arrive once: it arrives in a BURST (the sentinel
+// recorded 5-6 `configreloaded` inside one second, then a late one 15s later).
+// No fixed duration can know when the burst ended.
+//
+// So the finale waits for the burst to SETTLE: every `configreloaded` restarts
+// a short timer, and only when the timer survives its whole window does the
+// reload count as finished. A late reload restarts it too — which is exactly
+// the case a fixed clock got wrong.
+
+/// Env-tunable so the owner can calibrate on a slow machine without a rebuild.
+pub(crate) fn reload_settle_window() -> std::time::Duration {
+    let ms = std::env::var("HVE_RELOAD_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(450);
+    std::time::Duration::from_millis(ms)
+}
+
+/// The whole enemy is the clock guessing. `true` when the settle timer is the
+/// last event we saw for this transition (i.e. it was never restarted since).
+pub(crate) fn reload_restarts_settle(
+    transitioning: bool,
+    waiting: Option<TransitionStep>,
+) -> bool {
+    transitioning && waiting == Some(TransitionStep::Restore)
+}
+
+// ── The armed settle plan ────────────────────────────────────────────────
+// One transition at a time, so one shared slot is enough. It holds what the
+// settle timer needs when it finally survives its window: the generation it was
+// armed for and the window it must run the finale on.
+static THEME_SETTLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Incremented on every reload that restarts the settle window.
+static THEME_SETTLE_BUMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Called from the `configreloaded` line (IPC thread) while the finale waits.
+/// Restarts the settle countdown: the reload burst is still going.
+pub(crate) fn theme_reload_signal() {
+    if !reload_restarts_settle(
+        is_theme_transitioning_flag(),
+        *THEME_WAITING_STEP.lock().unwrap(),
+    ) {
+        return;
+    }
+    let gen = *THEME_GEN.lock().unwrap();
+    THEME_SETTLE_GEN.store(gen, std::sync::atomic::Ordering::Relaxed);
+    // Bump a counter the armed timer watches: if it changed, the timer knows a
+    // newer reload arrived and it must NOT run the finale yet.
+    THEME_SETTLE_BUMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    tracing::debug!("[theme] reload arrived — settle window restarted (gen {})", gen);
+}
+
+/// Arm the settle wait for a transition. Returns the bump value at arm time, so
+/// the timer can tell "nothing new happened" from "the burst is still going".
+pub(crate) fn arm_reload_settle(gen: u64) -> u64 {
+    THEME_SETTLE_GEN.store(gen, std::sync::atomic::Ordering::Relaxed);
+    THEME_SETTLE_BUMP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Did the reload burst settle since `armed_bump`? True = no newer reload
+/// arrived, so the reload is finished and the finale may run.
+pub(crate) fn reload_settled_since(armed_bump: u64, gen: u64) -> bool {
+    THEME_SETTLE_BUMP.load(std::sync::atomic::Ordering::Relaxed) == armed_bump
+        && THEME_SETTLE_GEN.load(std::sync::atomic::Ordering::Relaxed) == gen
+}
+
+/// Entry point for the IPC listener: a `fullscreen` event arrived from the
+/// compositor. Advance the waiting step if it is the one we wait for and the
+/// generation is live. Returns whether the signal was consumed.
+pub(crate) fn theme_fullscreen_signal() {
+    if !is_theme_transitioning_flag() {
+        return;
+    }
+    let live_gen = *THEME_GEN.lock().unwrap();
+    let waiting = *THEME_WAITING_STEP.lock().unwrap();
+    if !signal_advances_step(waiting, TransitionStep::Fullscreen, live_gen, live_gen) {
+        return;
+    }
+    if !claim_waiting_step(TransitionStep::Fullscreen) {
+        return; // the fallback timer got there first
+    }
+    tracing::info!(
+        "[theme] finale advanced by the compositor's fullscreen signal (gen {})",
+        live_gen
+    );
+    // The finale runs on the UI thread: Slint timers inside it are thread-local.
+    if let Err(e) = slint::invoke_from_event_loop(move || {
+        // Re-check on arrival: the hop may land after a newer apply superseded
+        // this transition. Running then would drive a fresh transition's finale
+        // from a stale signal.
+        if *THEME_GEN.lock().unwrap() != live_gen {
+            tracing::debug!(
+                "[theme] stale fullscreen signal dropped on arrival (gen {} is not live)",
+                live_gen
+            );
+            return;
+        }
+        if let Some(w) = THEME_FINALE_WINDOW
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|w| w.upgrade())
+        {
+            theme_finale_run(w, live_gen);
+        }
+    }) {
+        // Never drop the failure silently: this is the path that keeps the
+        // transition alive when the compositor answers fast.
+        tracing::warn!("[theme] fullscreen signal UI-thread hop failed: {}", e);
+    }
+}
+
+/// The window the finale needs, so the IPC-thread signal can reach the UI. Set
+/// when the transition starts and cleared when it ends.
+pub(crate) static THEME_FINALE_WINDOW: std::sync::Mutex<Option<slint::Weak<crate::MainWindow>>> =
+    std::sync::Mutex::new(None);
+
+/// How long to wait BEFORE staging the empty desktop. Default is 0: stage
+/// IMMEDIATELY, which is the feel the owner picked live ("ha quedado perfecto").
+/// The 560ms house convention (letting the 420ms exit fade complete first) is
+/// available as a value if that feel is ever wanted again.
+///
+/// Env-tunable so the feel can be calibrated without a rebuild.
+pub(crate) fn interlude_stage_ms() -> u64 {
+    std::env::var("HVE_INTERLUDE_STAGE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// How long the EMPTY DESKTOP is shown before the finale returns the view.
+///
+/// This is the part the owner liked: the new colours and wallpaper get to be
+/// seen, clean, with nothing on top. The old fixed clock gave it ~940ms by
+/// accident (1500ms minus the 560ms stage). W5c keeps that display time, but
+/// starts counting it from the STAGE, not from a fixed instant — so a slow
+/// machine delays the stage and the display is still honoured.
+///
+/// Env-tunable so the owner can calibrate the feel without a rebuild.
+pub(crate) fn interlude_display_ms() -> u64 {
+    std::env::var("HVE_INTERLUDE_DISPLAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(940)
+}
+
+/// The generation whose interlude display currently owns the finale timing.
+/// `0` = nobody. Guards the 1500ms safety net so it cannot fire over a live
+/// interlude (the net exists only for a transition with NO reload at all).
+static INTERLUDE_DISPLAY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Is the interlude display already driving this generation's timing?
+pub(crate) fn interlude_display_owned(gen: u64) -> bool {
+    INTERLUDE_DISPLAY_GEN.load(std::sync::atomic::Ordering::Relaxed) == gen
+}
+
+/// Stage the empty desktop, HOLD it for the display time, then run the finale.
+///
+/// The reload has already settled (that is the real, guess-free part). From
+/// here the timing is deliberately generous: the owner wants to SEE the theme.
+pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: u64) {
+    INTERLUDE_DISPLAY_GEN.store(gen, std::sync::atomic::Ordering::Relaxed);
+    let weak = win;
+    // Stage after the exit fade completes (420ms ease-in, 560ms in the house
+    // convention) so the user watches the shell dissolve before the cut. Tunable
+    // (HVE_INTERLUDE_STAGE_MS): 0 stages immediately.
+    slint::Timer::single_shot(std::time::Duration::from_millis(interlude_stage_ms()), move || {
+        if *THEME_GEN.lock().unwrap() != gen {
+            return; // superseded
+        }
+        let target = {
+            let st = THEME_INTERLUDE.lock().unwrap();
+            if !st.should_move() {
+                None
+            } else {
+                st.orig().map(|o| find_empty_workspace(o))
+            }
+        };
+        if let Some(target) = target {
+            if hypr_switch_view(&target) {
+                THEME_INTERLUDE.lock().unwrap().mark_moved();
+                tracing::info!(
+                    "[theme] interlude: view staged on empty ws {} (gen {})",
+                    target, gen
+                );
+            } else {
+                tracing::warn!(
+                    "[theme] interlude staging failed — stay-fullscreen fallback (gen {})",
+                    gen
+                );
+            }
+        }
+        // HOLD: the display time the owner wants, counted from the stage.
+        let weak_hold = weak.clone();
+        slint::Timer::single_shot(std::time::Duration::from_millis(interlude_display_ms()), move || {
+            if *THEME_GEN.lock().unwrap() != gen {
+                return; // superseded
+            }
+            if let Some(w) = weak_hold.upgrade() {
+                if claim_waiting_step(TransitionStep::Restore) {
+                    tracing::info!(
+                        "[theme] finale advanced after the interlude display (gen {})",
+                        gen
+                    );
+                    theme_finale_run(w, gen);
+                }
+            }
+        });
+    });
+}
+
+/// Poll for the reload burst to settle, re-arming with NO cap.
+///
+/// The first shape re-armed only once, so a burst longer than two windows fell
+/// back to the fixed clock — exactly the guessing this unit removes, and exactly
+/// the case the sentinel recorded on the slow machine (bursts of 2s-12s). This
+/// keeps re-checking until the burst is genuinely over, however long it takes,
+/// then hands off to the interlude. Bounded only by the 3500ms watchdog upstream.
+fn arm_settle_poll(win: slint::Weak<crate::MainWindow>, gen: u64, armed_bump: u64) {
+    slint::Timer::single_shot(reload_settle_window(), move || {
+        if *THEME_GEN.lock().unwrap() != gen {
+            return; // superseded by a newer apply
+        }
+        if !reload_settled_since(armed_bump, gen) {
+            // A newer reload arrived: the burst is still going. Re-arm with the
+            // fresh bump and wait again — no cap, no fallback to guessing.
+            tracing::debug!("[theme] reload burst still going (gen {}) — polling again", gen);
+            let fresh = arm_reload_settle(gen);
+            arm_settle_poll(win, gen, fresh);
+            return;
+        }
+        tracing::info!("[theme] reload settled (gen {}) — staging the interlude", gen);
+        begin_interlude_display(win, gen);
+    });
+}
+
+/// The finale body: the part of the transition that re-enters fullscreen,
+/// returns the view and restores the masks. Extracted to a named function so the
+/// settled reload and the safety timer can both run it — exactly once.
+pub(crate) fn theme_finale_run(win: crate::MainWindow, gen: u64) {
+    if THEME_INTERLUDE.lock().unwrap().staged() {
+        // View is on the stage: SKIP the focusing cycle. A focusing cycle
+        // focuses HVE by title first, and focusing a window on another workspace
+        // drags the VIEW back with it — the user would see floating HVE plus
+        // their windows mid-cycle, 400ms before the intended return. Fullscreen
+        // is re-ensured with the window-targeted dispatcher (no focus) at return.
+        tracing::info!("[theme] finale: view staged — focusing cycle skipped");
+    } else {
+        // Stay-fullscreen fallback (the view never left): one masked unset→set
+        // cycle while opacity is 0 forces a real fullscreen transition, so the
+        // bar reliably hides.
+        reassert_gallery_fullscreen();
+    }
+    // Fade-in after the cycle settled (150ms unset→set).
+    let weak_re = win.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
+        if let Some(w) = weak_re.upgrade() {
+            w.set_theme_transitioning(false);
+            tracing::info!("[theme] finale fade-in (gen {})", gen);
+        }
+        THEME_TRANSITIONING_FLAG.store(false, std::sync::atomic::Ordering::Relaxed);
+        // Return the view FIRST — masks are still ON, so the flip is an instant
+        // cut, and the entrance fade then plays over the real desktop.
+        if let Some(orig) = THEME_INTERLUDE.lock().unwrap().take_restore() {
+            // Reload chains may have re-floated HVE — re-set fullscreen with the
+            // window-targeted dispatcher BEFORE the flip (no focus step, so the
+            // view is never dragged back; idempotent when already fullscreen).
+            let fs_ok = reassert_hve_fullscreen_targeted();
+            let back_ok = hypr_switch_view(&orig);
+            tracing::info!(
+                "[theme] interlude: view returned to {} ok={} (targeted fullscreen {})",
+                orig, back_ok, fs_ok
+            );
+        }
+        // Masks + DND release AFTER the entrance fade completes (520ms ease-out):
+        // animations must stay OFF through the flip, and toasts stay swallowed
+        // during the entrance.
+        slint::Timer::single_shot(std::time::Duration::from_millis(570), move || {
+            restore_theme_masks();
+            theme_dnd_release();
+            tracing::info!("[theme] masks restored, DND released after entrance fade");
+        });
+    });
+}
+
 fn hypr_getoption_int(option: &str, fallback: &str) -> String {
     let text = std::process::Command::new("hyprctl")
         .args(["getoption", option, "-j"])
@@ -2743,6 +3092,15 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                         *THEME_CYCLE_FIRED_GEN.lock().unwrap() = None;
                         THEME_TRANSITIONING_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+                        // W5: arm the signal wait AT THE START (T=0), not inside
+                        // the timer. The compositor's `fullscreen>>1` can arrive
+                        // at any moment from here on, and the whole point is that
+                        // a FAST compositor may signal before the 1500ms fallback
+                        // ever fires. Arming at the timer (the previous shape)
+                        // made every early signal unlistenable — the fix was
+                        // wired but inert.
+                        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
+                        *THEME_FINALE_WINDOW.lock().unwrap() = Some(win.clone());
                         // Interlude bookkeeping BEFORE the view moves: first
                         // writer wins, so a rapid successive theme apply keeps
                         // returning to the user's REAL workspace.
@@ -2787,42 +3145,34 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                         let weak_back = win.clone();
                         let fallback_gen = *THEME_GEN.lock().unwrap();
-                        // T+560ms: stage the interlude — flip the VIEW (never
-                        // a window) to an empty workspace. Runs AFTER the
-                        // exit fade completes (420ms ease-in in main.slint)
-                        // so the user watches the shell dissolve before the
-                        // instant cut (masks on → no compositor animation).
-                        // First generation only; a newer generation inherits
-                        // the staged view.
-                        {
-                            let stage_gen = fallback_gen;
-                            slint::Timer::single_shot(std::time::Duration::from_millis(560), move || {
-                                let cur = *THEME_GEN.lock().unwrap();
-                                if cur != stage_gen {
-                                    return; // superseded — the newer gen owns staging
-                                }
-                                let target = {
-                                    let st = THEME_INTERLUDE.lock().unwrap();
-                                    if !st.should_move() {
-                                        return; // view already on the stage
-                                    }
-                                    st.orig().map(|o| find_empty_workspace(o))
-                                };
-                                let Some(target) = target else { return; };
-                                if hypr_switch_view(&target) {
-                                    THEME_INTERLUDE.lock().unwrap().mark_moved();
-                                    tracing::info!(
-                                        "[theme] interlude: view staged on empty ws {} (gen {})",
-                                        target, stage_gen
-                                    );
-                                } else {
-                                    tracing::warn!(
-                                        "[theme] interlude staging failed — stay-fullscreen fallback (gen {})",
-                                        stage_gen
-                                    );
-                                }
-                            });
-                        }
+                        // T+560ms: the interlude stage now lives inside
+                        // `begin_interlude_display`, which runs it after the
+                        // reload settles AND holds it for the display time. The
+                        // standalone stage that used to sit here would double the
+                        // staging and race its own hold, so it is gone.
+                        // W5c: the ORDER the owner wants back. The finale must
+                        // NOT ride the reload's timing — it must give the empty
+                        // desktop its time on screen first. The old fixed clock
+                        // did that by accident (1500ms happened to leave ~940ms
+                        // of showing); W5b removed the accident and the empty
+                        // desktop became a flicker that exposed the real
+                        // workspace. So: detect the reload for real (no guessing)
+                        // -> stage the empty desktop -> HOLD it for the display
+                        // time -> finale.
+                        let armed_bump = arm_reload_settle(fallback_gen);
+                        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Restore);
+                        // W5c + review fix: the wait must survive an ARBITRARILY
+                        // long burst. The first shape re-armed only ONCE and then
+                        // gave up to the fixed clock, so a burst longer than two
+                        // windows (~900ms) — the 2s-12s bursts recorded on the
+                        // slow laptop — fell back to the very guessing this unit
+                        // removes. The poll keeps re-arming while the burst is
+                        // alive, with NO cap. The 1500ms net is no longer its
+                        // escape hatch; it is only for a transition with no
+                        // reload at all.
+                        arm_settle_poll(weak_back.clone(), fallback_gen, armed_bump);
+                        // Safety net: a transition that never sees a reload still
+                        // finishes. Unchanged from the pre-W5 behaviour.
                         slint::Timer::single_shot(std::time::Duration::from_millis(1500), move || {
                             let cur_gen = *THEME_GEN.lock().unwrap();
                             if cur_gen != fallback_gen {
@@ -2836,60 +3186,25 @@ fn main() -> Result<(), slint::PlatformError> {
                             if !still {
                                 return;
                             }
-                            if THEME_INTERLUDE.lock().unwrap().staged() {
-                                // View is on the stage: SKIP the focusing
-                                // cycle. reassert_gallery_fullscreen focuses
-                                // HVE by title first, and focusing a window on
-                                // another workspace drags the VIEW back with
-                                // it — the user then sees floating HVE (the
-                                // ventanita) + their windows mid-cycle, 400ms
-                                // before the intended return. Fullscreen is
-                                // re-ensured with the window-targeted
-                                // dispatcher (no focus) at return time.
-                                tracing::info!("[theme] finale: view staged — focusing cycle skipped");
-                            } else {
-                                // One masked unset→set cycle while opacity is
-                                // 0 (stay-fullscreen fallback — the view never
-                                // left). Forces a real fullscreen transition so
-                                // the bar reliably hides.
-                                reassert_gallery_fullscreen();
+                            // The net fires only when the interlude never took
+                            // ownership of this generation. With the unbounded
+                            // settle poll, that is now the "no reload arrived at
+                            // all" case (the poll would otherwise have staged and
+                            // held it). If the interlude owns the timing, this is
+                            // a no-op.
+                            if !interlude_display_owned(fallback_gen) {
+                                if let Some(w) = weak_back.upgrade() {
+                                    let claimed_restore = claim_waiting_step(TransitionStep::Restore);
+                                    let claimed_fs = claim_waiting_step(TransitionStep::Fullscreen);
+                                    if claimed_restore || claimed_fs {
+                                        tracing::info!(
+                                            "[theme] finale advanced by the safety timer (gen {})",
+                                            fallback_gen
+                                        );
+                                        theme_finale_run(w, fallback_gen);
+                                    }
+                                }
                             }
-                            // Fade-in after the cycle settled (150ms unset→set).
-                            let weak_re = weak_back.clone();
-                            slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
-                                if let Some(w) = weak_re.upgrade() {
-                                    w.set_theme_transitioning(false);
-                                    tracing::info!("[theme] finale fade-in");
-                                }
-                                THEME_TRANSITIONING_FLAG.store(false, std::sync::atomic::Ordering::Relaxed);
-                                // Return the view FIRST — compositor masks are
-                                // still ON, so the flip is an instant cut (no
-                                // elastic bounce), and the entrance fade then
-                                // plays over the real desktop.
-                                if let Some(orig) = THEME_INTERLUDE.lock().unwrap().take_restore() {
-                                    // Reload chains may have re-floated HVE after
-                                    // the finale — re-set fullscreen with the
-                                    // window-targeted dispatcher BEFORE the flip
-                                    // (no focus step, so the view is never dragged
-                                    // back; idempotent when already fullscreen).
-                                    let fs_ok = reassert_hve_fullscreen_targeted();
-                                    let back_ok = hypr_switch_view(&orig);
-                                    tracing::info!(
-                                        "[theme] interlude: view returned to {} ok={} (targeted fullscreen {})",
-                                        orig, back_ok, fs_ok
-                                    );
-                                }
-                                // Compositor masks + DND release AFTER the
-                                // entrance fade completes (520ms ease-out in
-                                // main.slint): animations must stay OFF through
-                                // the flip, and toasts stay swallowed during
-                                // the entrance.
-                                slint::Timer::single_shot(std::time::Duration::from_millis(570), move || {
-                                    restore_theme_masks();
-                                    theme_dnd_release();
-                                    tracing::info!("[theme] masks restored, DND released after entrance fade");
-                                });
-                            });
                         });
                         // Hard watchdog: never stay transparent forever — force fade-in at 3.5s,
                         // and never strand the view on the interlude stage.
@@ -4403,6 +4718,139 @@ mod tests {
         }
         let keys: Vec<&str> = THEME_MASKS.iter().map(|s| s.key).collect();
         assert_eq!(keys, vec!["blur"]);
+    }
+
+    // ── W5: a step advances on the compositor's signal, or its fallback ──
+
+    #[test]
+    fn a_signal_advances_only_its_own_waiting_step() {
+        // Happy path: the fullscreen signal arrives while that step waits.
+        assert!(signal_advances_step(
+            Some(TransitionStep::Fullscreen),
+            TransitionStep::Fullscreen,
+            7,
+            7
+        ));
+        // Nothing waiting: a stale signal must never drive a step.
+        assert!(!signal_advances_step(None, TransitionStep::Fullscreen, 7, 7));
+        // A different step than the waiting one is refused.
+        assert!(!signal_advances_step(
+            Some(TransitionStep::Fullscreen),
+            TransitionStep::Fullscreen,
+            6,
+            7
+        ));
+    }
+
+    #[test]
+    fn a_signal_from_a_superseded_generation_is_ignored() {
+        // A rapid second apply bumps the generation: the first apply's late
+        // signal must not advance the new transition's step.
+        assert!(!signal_advances_step(
+            Some(TransitionStep::Fullscreen),
+            TransitionStep::Fullscreen,
+            6,
+            7
+        ));
+        assert!(signal_advances_step(
+            Some(TransitionStep::Fullscreen),
+            TransitionStep::Fullscreen,
+            7,
+            7
+        ));
+    }
+
+    #[test]
+    fn signal_and_fallback_cannot_both_run_the_same_step() {
+        // The claim is the race breaker: whoever gets it runs the step; the
+        // loser (the fallback timer, or a duplicate signal) is refused.
+        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
+        assert!(claim_waiting_step(TransitionStep::Fullscreen), "first claim wins");
+        assert!(
+            !claim_waiting_step(TransitionStep::Fullscreen),
+            "the same step cannot be claimed twice"
+        );
+        // Nothing was waiting after the claim: a later signal is a no-op.
+        assert!(!claim_waiting_step(TransitionStep::Fullscreen));
+        *THEME_WAITING_STEP.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn a_signal_arriving_before_the_fallback_claims_the_step() {
+        // THE REGRESSION THIS PINS: the wait must be armed at T=0, so a signal
+        // that arrives BEFORE the fallback timer can claim the step. The first
+        // implementation armed it inside the timer, which made every early
+        // signal unlistenable (the fix was wired but inert).
+        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
+        // Early signal: it finds a step waiting and claims it.
+        assert!(
+            claim_waiting_step(TransitionStep::Fullscreen),
+            "a signal before the timer must be able to claim the step"
+        );
+        // The fallback timer then finds nothing waiting and is a no-op: the
+        // finale cannot run twice.
+        assert!(
+            !claim_waiting_step(TransitionStep::Fullscreen),
+            "the fallback must not re-run a step the signal already took"
+        );
+        *THEME_WAITING_STEP.lock().unwrap() = None;
+    }
+
+    // ── W5b: the finale waits for the reload burst to settle ──
+
+    #[test]
+    // These read/write the SHARED settle atomics, so they must not run in
+    // parallel with each other (the whole suite runs multi-threaded).
+    #[serial_test::serial]
+    fn only_a_waiting_transition_restarts_the_settle_window() {
+        // A reload during the restore wait: the burst is still going.
+        assert!(reload_restarts_settle(
+            true,
+            Some(TransitionStep::Restore)
+        ));
+        // No transition: a reload must never arm anything.
+        assert!(!reload_restarts_settle(false, Some(TransitionStep::Restore)));
+        // Waiting on a different step: this reload is not ours.
+        assert!(!reload_restarts_settle(
+            true,
+            Some(TransitionStep::Fullscreen)
+        ));
+        assert!(!reload_restarts_settle(true, None));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_settle_window_fires_only_when_nothing_new_arrived() {
+        // Armed at bump 5, gen 3; nothing new since -> the reload is done.
+        THEME_SETTLE_BUMP.store(5, std::sync::atomic::Ordering::Relaxed);
+        THEME_SETTLE_GEN.store(3, std::sync::atomic::Ordering::Relaxed);
+        assert!(reload_settled_since(5, 3));
+        // A newer reload arrived (bump moved) -> NOT settled, re-arm.
+        THEME_SETTLE_BUMP.store(6, std::sync::atomic::Ordering::Relaxed);
+        assert!(!reload_settled_since(5, 3));
+        // A newer generation owns the slot -> not ours.
+        THEME_SETTLE_BUMP.store(5, std::sync::atomic::Ordering::Relaxed);
+        assert!(!reload_settled_since(5, 4));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_live_reload_burst_shape_is_handled() {
+        // The sentinel recorded 5-6 reloads inside one second. Each must restart
+        // the window: only the LAST one, followed by silence, may fire.
+        THEME_SETTLE_GEN.store(7, std::sync::atomic::Ordering::Relaxed);
+        THEME_SETTLE_BUMP.store(0, std::sync::atomic::Ordering::Relaxed);
+        let armed = arm_reload_settle(7);
+        for _ in 0..5 {
+            THEME_SETTLE_BUMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert!(
+            !reload_settled_since(armed, 7),
+            "five reloads in one second must NOT look settled"
+        );
+        // Silence afterwards: the last arm sees a stable bump -> settled.
+        let rearmed = arm_reload_settle(7);
+        assert!(reload_settled_since(rearmed, 7));
     }
 
     #[test]

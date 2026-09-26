@@ -122,6 +122,22 @@ impl HyprIpc {
                                 on_config_reload();
                             },
                         );
+                    } else if let Some(payload) = line.strip_prefix("fullscreen") {
+                        // W5: the compositor telling us HVE became immersive is
+                        // the signal the transition waits for, instead of
+                        // guessing with a timer. Listening is free: it takes no
+                        // focus away (see the sentinel's root-cause note).
+                        //
+                        // Polarity matters: the event is `fullscreen>>1` on
+                        // ENTER and `>>0` on LEAVE, and it is broadcast for ANY
+                        // window. Only `>>1` means "HVE is immersive now"; a
+                        // `>>0` (e.g. the un-float a reload triggers) would
+                        // advance the finale mid-reload. The payload is
+                        // `>>1`, so the first char after the name is `>`
+                        // followed by `1`.
+                        if payload.trim_start_matches('>').starts_with('1') {
+                            crate::theme_fullscreen_signal();
+                        }
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
@@ -182,6 +198,9 @@ where
 /// logged honestly (never silently dropped; nothing is aborted).
 fn on_configreloaded_line() {
     crate::reapply_theme_masks();
+    // W5b: a reload landed while the finale waits -> restart the settle window.
+    // The burst is still going; running the finale now would land mid-reload.
+    crate::theme_reload_signal();
     if let Err(e) = slint::invoke_from_event_loop(crate::reassert_fullscreen_after_reload) {
         tracing::debug!(
             "[reassert] fullscreen restore UI-thread hop failed (pre-loop): {}",
