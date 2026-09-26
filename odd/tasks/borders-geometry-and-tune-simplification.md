@@ -71,6 +71,31 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
     once per tick.
   - Tests: a failing test first for "only changed options are pushed hot", plus coverage for
     the coalesced persist.
+- [x] **B1 verification — cross-model (GLM 5.3-flash), commit `c29fd35`.** Verdict: **PASS** on
+  AC1 (hot in the millisecond range) and AC2 (durability after reload). All four writer claims
+  CONFIRMED with adversarial probes; 0 warnings. Two warnings came out of it (B5, B6 below) plus
+  three suggestions: the hot chunk does not clamp negatives while `geometry.sh` does
+  (unreachable through the UI today, which clamps 1..5); the hot chunk never sends
+  `decoration.rounding_power` and the persisted fragment writes it only when radius > 0 (they
+  coincide today only because Hyprland's default is 2); and the coalescer tests assert a value
+  that is in practice irrelevant (the drain re-reads the config). The writer's "1010 passed /
+  0 failed" holds, but the suite is non-deterministic under parallelism (see B6).
+- [ ] **B5 — close the 400 ms durability window (candidate-caused).** `arm_geometry_persist`
+  (`src/main.rs:1449-1454`) only writes when the timer fires: if HVE exits inside those 400 ms
+  (window close, IPC quit, crash) the whole drag never reaches disk and the next `hyprctl reload`
+  reverts it. The commit message's "deferred, never dropped" is false in that case. Mitigation:
+  save the config per tick (cheap) and defer only the fragment/assemble, or flush on event-loop
+  exit.
+- [ ] **B6 — stop `cargo test` from touching the real environment (pre-existing, found here).**
+  `src/shell/ui_tests.rs:3319` (`test_system_minimize_10s`) does not use `TempEnv` and calls
+  `state.toggle_system(true)` -> `init.sh enable` against the real HOME: it copies the watchdog
+  into `~/.cache/hve/`, rewrites `~/.config/hve/config.json` and fires a `hyprctl reload`. A test
+  run also regenerates `overlay.lua`; when `assets/fragments/` is empty (gitignored) that overlay
+  loses its modules and the reload arbiter changes. Separately, three pre-existing sandbox tests
+  fail at random under parallelism (reproduced on the parent commit `9d9e631`):
+  `watcher::tests::sandboxed_lock_is_released_when_the_watcher_is_killed_with_a_live_child`,
+  `reload_coalescer::sandboxed_request_pending_keeps_drainer_alive_and_fires`,
+  `providers::noctalia::tests::v5_apply_custom_owner_reasserts_off_thread_without_blocking`.
 - [ ] **B2 — recover the radius / gap_in / gap_out sliders** at the top of Borders, as a
   "Geometry" block next to size, with the keeper's personal comment. Watch the engaged-slider
   seat numbers left free by U3a.
@@ -108,5 +133,7 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 
 ## Next step
 
+B1 is done and verified. Decide between (a) the keeper's live test with a rebuilt binary
+(then B2) and (b) closing B5's durability window and B6's test isolation first.
 B2: recover the radius / gap_in / gap_out sliders at the top of Borders as a "Geometry" block
 next to size, with the keeper's personal comment.
