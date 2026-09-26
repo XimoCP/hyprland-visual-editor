@@ -149,7 +149,7 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   instead of polling for it with a bound), and the leak is a separate hermeticity gap. It is not
   global env state: the three tests already pass a temp HOME/PATH to their subprocesses. The
   races only WIN under CPU contention, which is why they looked random: on this host (loaded by
-  a game) the watcher failed 6/11 full runs at `src/watcher.rs:480` and the reload test 1/11 at
+  a game) the watcher failed 7/10 full runs at `src/watcher.rs:480` and the reload test 1/10 at
   `src/reload_coalescer.rs:784`; the noctalia failure was proven by code order (below).
   - `watcher`: `color_watcher.sh` logs "Starting watcher" at line 126 and only THEN runs the
     initial `assemble.sh` at line 165; the test waited on the log line and asserted the assemble
