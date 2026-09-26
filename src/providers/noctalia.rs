@@ -189,8 +189,26 @@ fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
             return false;
         }
     };
-    // Try skwd-helm first, then skwd-wall-v2 as fallback
-    for bin in ["skwd-helm", "skwd-wall-v2"] {
+    // PICK THE RIGHT ENGINE FOR THE JOB, the other as fallback.
+    //
+    // Measured on this machine (2026-09-26), and the numbers are NOT a
+    // fastest-first ordering — each engine is fast at its own thing:
+    //   still image: skwd-wall-v2 ~3ms   | skwd-helm ~616ms
+    //   video:       skwd-wall-v2 ~472ms | skwd-helm ~90ms
+    // Both accept both, so either order "works"; the order decides who does the
+    // work. Sending a video to the still-image path wastes ~380ms, and sending a
+    // still to the video engine wastes ~525ms — and the theme apply runs on the
+    // UI thread, so those are milliseconds the window cannot repaint.
+    //
+    // The old code always tried `skwd-helm` first under a 500ms cap, so the
+    // still-image case logged "timed out after 500ms" and killed the helper
+    // mid-work before falling through. The log lied and the path was wasteful.
+    let order: [&str; 2] = if is_video_path(wallpaper_path) {
+        ["skwd-helm", "skwd-wall-v2"]
+    } else {
+        ["skwd-wall-v2", "skwd-helm"]
+    };
+    for bin in order {
         match run_delegate_apply(bin, path_str) {
             Ok(()) => {
                 tracing::info!("[skwd-wall] delegated wallpaper to {}: {}", bin, path_str);
@@ -206,10 +224,29 @@ fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     false
 }
 
-/// Bounded wait for one delegation `apply` call, so a hung daemon helper
-/// can never freeze the theme apply (≤500 ms per binary; never held across
-/// I/O locks).
-const DELEGATE_TIMEOUT: Duration = Duration::from_millis(500);
+/// Whether the wallpaper is an animated video, which decides the engine order.
+/// Extension-based on purpose: it only selects a PREFERENCE (the other engine
+/// still runs as fallback), so a surprising name costs time, never correctness.
+fn is_video_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "mp4" | "webm" | "mkv" | "mov" | "gif" | "avi"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Bounded wait for one delegation `apply` call, so a hung daemon helper can
+/// never freeze the theme apply (never held across I/O locks).
+///
+/// This runs on the UI thread, so the number is milliseconds the window cannot
+/// repaint. Measured worst case for a single engine is ~616ms (`skwd-helm` on a
+/// still image), so 700ms covers a healthy helper with margin while still
+/// capping a genuinely hung one.
+const DELEGATE_TIMEOUT: Duration = Duration::from_millis(700);
 
 fn run_delegate_apply(bin: &str, path_str: &str) -> Result<(), String> {
     let mut child = std::process::Command::new(bin)
@@ -3107,11 +3144,16 @@ exit 0
 
     #[test]
     #[serial]
-    fn v5_apply_static_yields_before_the_static_hand_off_unchanged() {
+    fn v5_apply_static_yields_before_the_static_hand_off() {
         // (b) A static-only apply: W4 moves the yield earlier, it must not
         // alter the static path's guarantees — the yield still precedes the
         // static hand-off, the re-assert still fires, and the authority
         // comes back byte-for-byte.
+        //
+        // Engine order (2026-09-26): a STILL image now goes to the fast engine
+        // first (`skwd-wall-v2` ~3ms vs `skwd-helm` ~616ms), the other staying
+        // as fallback. The guarantee under test is untouched: whichever engine
+        // does the hand-off, the yield must already have happened.
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
         enable_delegation(&stub, "0");
         let theme = stub.custom_theme("custom JokerTheme", true);
@@ -3123,8 +3165,8 @@ exit 0
         let res = NoctaliaV5Provider::new().apply(theme.path());
         assert!(res.is_ok(), "apply must succeed: {:?}", res);
         assert!(
-            count_prefix(&stub, "skwd-helm apply") >= 1,
-            "the static hand-off still runs"
+            count_prefix(&stub, "skwd-wall-v2 apply") >= 1,
+            "a still image must be handed to the fast engine"
         );
         assert_eq!(
             count_prefix(&stub, "delegation saw no yield"),
