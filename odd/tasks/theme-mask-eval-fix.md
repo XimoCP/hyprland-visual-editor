@@ -154,7 +154,6 @@ reveal is wanted; `border`/`shadow` were dropped by evidence, not by taste.
 Unrelated finding, filed for later: the theme apply cycle logs
 `[skwd-wall] skwd-helm apply failed: timed out after 500ms` repeatedly — the
 wallpaper engine delegation is missing its own 500 ms budget. Not part of W1/W3.
-
 ## Tasks
 
 - [x] **T1 — pure Lua builder** (+ identifier/literal validation).

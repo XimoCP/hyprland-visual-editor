@@ -34,6 +34,27 @@ That split is the whole lesson: **state changes are decided by reality; the wait
 - `HVE_INTERLUDE_DISPLAY_MS` (default **940**) — how long the empty desktop is shown.
 - `HVE_RELOAD_SETTLE_MS` (default **450**) — the silence that means "the reload burst ended".
 
+## Related fix: the wallpaper engine hand-off (same day)
+
+While reading the live logs the owner spotted a repeated
+`[skwd-wall] skwd-helm apply failed: timed out after 500ms`. Root cause, measured:
+
+| | `skwd-wall-v2` | `skwd-helm` |
+| --- | --- | --- |
+| still image | ~3 ms | ~616 ms |
+| video | ~472 ms | ~90 ms |
+
+Each engine is fast at its own thing, and the old code sent EVERYTHING to
+`skwd-helm` under a 500 ms cap: a still image timed out, the helper was killed
+mid-work, and the fallback then succeeded — right outcome, lying log, ~0.5 s of
+UI-thread time wasted every apply (the apply runs on the UI thread).
+
+Fixed in `src/providers/noctalia.rs`: the path picks the engine by wallpaper
+type (`is_video_path`), the other stays as fallback, and the cap is 700 ms so a
+healthy helper is never cut off. A "fastest-first for everything" attempt was
+REJECTED BY THE TESTS — sending a video to the still-image engine adds ~380 ms —
+so the type decides, never a global speed ranking.
+
 
 ## Objective
 
