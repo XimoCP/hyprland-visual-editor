@@ -380,6 +380,40 @@ fn resolve_autostart_exe() -> String {
         .to_string()
 }
 
+/// The autostart line for the bar-above sentinel, or empty when the script is
+/// not where it should be.
+///
+/// The sentinel (`assets/scripts/hve-sentinel.py`) is a project instrument: it
+/// listens to Hyprland's event socket and records the moments the shell bar
+/// overlaps HVE. It is meant to live only while the HVE 2 rewrite is in
+/// progress, so it rides the autostart switch instead of owning a setting of its
+/// own — one toggle, no residue, nothing to remember.
+///
+/// Gated on the file existing so a future cleanup cannot leave a Lua line that
+/// silently fails at every session start.
+fn sentinel_autostart_line() -> String {
+    let script = sentinel_script_path();
+    if !script.exists() {
+        return String::new();
+    }
+    format!("\n    hl.exec_cmd(\"python3 {}\")", script.display())
+}
+
+/// Where the sentinel script is expected: next to the installed assets, so it
+/// survives `cargo clean` and dev-tree moves exactly like the binary does.
+fn sentinel_script_path() -> PathBuf {
+    if let Some(installed) = installed_bin_path() {
+        if let Some(dir) = installed.parent() {
+            return dir.join("assets").join("scripts").join("hve-sentinel.py");
+        }
+    }
+    // Dev fallback: the tracked asset next to the source tree.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("scripts")
+        .join("hve-sentinel.py")
+}
+
 /// Toggle HVE autostart in `hve-settings.lua`.
 ///
 /// When enabled, writes an `hl.on("hyprland.start", ...)` block with
@@ -413,10 +447,16 @@ pub(crate) fn set_autostart(enabled: bool) {
     let exe = resolve_autostart_exe();
 
     let autostart_block: String = if enabled {
+        // While the HVE 2 project is open, the session also brings up the
+        // bar-above sentinel (assets/scripts/hve-sentinel.py). It is GATED on the
+        // script existing, so removing the script cannot leave a dead line, and
+        // it lives inside this same block so ONE switch turns both on and off —
+        // turning autostart off removes every line added here (verified by test).
+        let sentinel_line = sentinel_autostart_line();
         format!(
             r#"{marker_start}
 hl.on("hyprland.start", function()
-    hl.exec_cmd("{exe} --tray")
+    hl.exec_cmd("{exe} --tray"){sentinel_line}
 end)
 {marker_end}"#
         )
@@ -842,6 +882,46 @@ mod tests {
         assert!(
             !content.contains("exec-once ="),
             "must never emit conf syntax"
+        );
+    }
+
+    #[test]
+    fn autostart_starts_the_sentinel_when_its_script_is_present() {
+        // The bar-above sentinel must come up with the session while the project
+        // is open, and go away cleanly when autostart is turned off. It is
+        // gated on the script EXISTING so a future removal cannot leave a line
+        // pointing at nothing.
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        // Mirror the installed layout the real code looks at: <HOME>/.local/bin.
+        let home = std::env::var("HOME").unwrap();
+        let bin_dir = PathBuf::from(&home).join(".local/bin");
+        let script = bin_dir.join("assets/scripts/hve-sentinel.py");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&script, b"#!/usr/bin/env python3\n").unwrap();
+        set_autostart(true);
+        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
+        assert!(
+            content.contains("hve-sentinel.py"),
+            "the sentinel must autostart with the session, got:\n{}",
+            content
+        );
+        assert!(
+            content.contains("python3"),
+            "it runs through the interpreter, not as an executable"
+        );
+    }
+
+    #[test]
+    fn autostart_removes_the_sentinel_line_when_disabled() {
+        let _env = TempEnv::new();
+        ensure_settings_file();
+        set_autostart(true);
+        set_autostart(false);
+        let content = std::fs::read_to_string(hve_settings_path()).unwrap();
+        assert!(
+            !content.contains("hve-sentinel"),
+            "disabling autostart must remove every line it added"
         );
     }
 
