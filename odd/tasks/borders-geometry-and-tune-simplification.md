@@ -117,16 +117,31 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   thickness slider responds instantly, and changing the thickness and closing HVE immediately
   followed by `hyprctl reload` keeps the value. The unverified half of B5 is now closed by the
   strongest available check (the keeper's own live test).
-- [ ] **B7 — make the shutdown flush test protect the REAL wiring (CRITICAL, candidate-caused).**
+- [x] **B7 — make the shutdown flush test protect the REAL wiring (CRITICAL, candidate-caused).**
   `flush_on_shutdown_writes_the_last_geometry` calls `flush_geometry_persist` directly
-  (`src/main.rs:4802`), so it never exercises the call site right after
-  `run_event_loop_until_quit()` (`src/main.rs:5435/5453`). Proof it is a false safety net: in a
-  disposable worktree the reviewer deleted the production call and ran `cargo clean -p hve`; the
-  test still passed, printing `warning: function flush_geometry_persist is never used`. The
-  acceptance criterion for the replacement is self-validating: **the new test must FAIL when the
-  production flush call is removed** — demonstrate that empirically before claiming it done. Also
-  correct the task note claiming a plain "RED first" for B7's subject (the original RED only ever
-  proved the function did not exist, not that the call was wired).
+  (`src/main.rs:4802`), so it never exercised the call site right after
+  `run_event_loop_until_quit()`. Proof it was a false safety net: in a disposable worktree the
+  reviewer deleted the production call and ran `cargo clean -p hve`; the test still passed.
+  **Done in `84fbde3`.** The replacement is
+  `shutdown_flushes_the_deferred_geometry_before_teardown`, which parses `src/main.rs` into a
+  Rust AST (`syn`, dev-dependency) and asserts `main` calls the flush **exactly once**, as a
+  plain **top-level** statement, **after** `run_event_loop_until_quit()` returns and **before**
+  `ipc::cleanup()`. The old drain test is kept (it pins last-value-wins and the no-op-without-owe
+  semantics — a distinct property) and its doc comment now says so.
+  Design note: an end-to-end binary run (`env!("CARGO_BIN_EXE_hve")` + IPC quit) would need a live
+  Wayland/XRandR session and a real compositor, which B6 forbids the suite from touching; the AST
+  check is the strongest hermetic option, and the keeper's own live test is the complementary
+  real-binary check. **The "RED first" note above was wrong** and is corrected here: the original
+  RED only proved the function did not exist, never that the call was wired — which is exactly
+  why the B5 test could stay green with the call deleted.
+  Self-validating proof (disposable worktree at `84fbde3`, `cargo clean -p hve`, same method as
+  the reviewer): removing the production call → test **FAILED** (`main must call
+  flush_geometry_persist exactly once; left: 0, right: 1`); nesting it in `if false { ... }` →
+  **FAILED** (`must be a plain top-level call, never nested in a branch or loop`); moving it
+  before the event loop → **FAILED** (`flush at statement 128, quit at 129`); restored to HEAD →
+  **passed**. Worktree removed with `git worktree remove --force`. Full suite 1012 passed /
+  0 failed, 0 warnings; B6 fence intact (only 2 read-only `hyprctl -j` calls, 0 reloads) and the
+  environment hashes were byte-identical after two full suites.
 - [ ] **B2 — recover the radius / gap_in / gap_out sliders** at the top of Borders, as a
   "Geometry" block next to size, with the keeper's personal comment. Watch the engaged-slider
   seat numbers left free by U3a.
@@ -218,10 +233,19 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   - Pre-existing, NOT introduced here: `cargo build` (bin profile) warns
     `method has_pending is never used`; the identical warning appears in a clean HEAD worktree
     build, and `cargo test` builds are warning-free.
+- 2026-09-27: **B7 done** (this commit, `84fbde3`). Replaced the false safety net with
+  `shutdown_flushes_the_deferred_geometry_before_teardown`, an AST-level test over `main`'s
+  shutdown sequence (`syn` dev-dependency; no new runtime dependency). It asserts the flush is
+  called exactly once, as a plain top-level statement, after `run_event_loop_until_quit()` and
+  before `ipc::cleanup()`, so it fails on all three plausible regressions. The old direct-call
+  test is kept and re-documented: it still pins the drain semantics (last value wins, nothing
+  owed is a no-op). Verified self-validating in a disposable worktree: call removed -> FAILED,
+  nested in a branch -> FAILED, called before the loop -> FAILED, restored -> passed; worktree
+  removed. Full suite 1012 passed / 0 failed, 0 warnings; environment hashes byte-identical
+  after two suites; B6 fence intact (2 read-only `hyprctl -j`, 0 reloads).
 
 ## Next step
 
-B1, B5 and B6 are done, verified and accepted live. **B7 is next**: the B5 shutdown test is a
-false safety net and must be replaced by one that fails when the production flush call is removed.
-Then B2: recover the radius / gap_in / gap_out sliders at the top of Borders as a "Geometry" block
-next to size, with the keeper's personal comment.
+B1, B5, B6 and B7 are done, verified and accepted live. **B2 is next**: recover the radius /
+gap_in / gap_out sliders at the top of Borders as a "Geometry" block next to size, with the
+keeper's personal comment.
