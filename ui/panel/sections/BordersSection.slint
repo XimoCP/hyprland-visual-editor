@@ -1,11 +1,11 @@
 // HVE 2 — BordersSection (tune + preset list, two-pane).
 //
 // Two INDEPENDENT scroll regions:
-//   • Tune pane  — size slider (1-5) → 80ms debounce → apply_geometry,
-//     angle segmented control (30/45/90), inactive color row, dynamic
-//     color slots (2..8) from tune-active-colors model with interactive
-//     token swatches, add/remove controls, plus save form
-//     (LineEdit + Save button) at the bottom.
+//   • Tune pane  — Geometry block (size 1-5, radius 0-100, gap_in/out 0-30)
+//     → 80ms debounce → apply_geometry, angle segmented control (30/45/90),
+//     inactive color row, dynamic color slots (2..8) from
+//     tune-active-colors model with interactive token swatches, add/remove
+//     controls, plus save form (LineEdit + Save button) at the bottom.
 //   • List pane  — Built-in presets (apply only) + user presets (apply,
 //     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
 // Wide section → panes side by side; narrow section → stacked. Each pane owns
@@ -111,14 +111,17 @@ component BorderCompactColorRow inherits Rectangle {
     }
 }
 
-// ─── Tune pane: dynamic color slots + angle + inactive + size + save form. ───
-// Rebuilt in U3a: old 4-slider geometry block removed; only size 1-5 kept.
-// Dynamic color slots (2..8) rendered from tune-active-colors model.
-// Angle segmented control (30/45/90).
-// Inactive color row.
+// ─── Tune pane: Geometry block + angle + inactive + colors + save form. ───
+// Recovered in B2: the 4-slider Geometry block (thickness, radius, gap_in,
+// gap_out) is back at the top, next to the size slider, after U3a had removed
+// it and left only the thickness. Then: dynamic color slots (2..8), angle
+// segmented control (30/45/90), inactive color row, glow / animation groups.
 // Every control carries a plain-language description (frozen requirement).
 component BordersTunePane inherits Rectangle {
     in property <int> size: 2;
+    in property <int> radius: 32;
+    in property <int> gap-in: 5;
+    in property <int> gap-out: 5;
     in property <int> focused-index: 0;
     in property <int> split: 0;
     in property <bool> has-focus: false;
@@ -208,13 +211,15 @@ component BordersTunePane inherits Rectangle {
     in property <int> picker-cmd-kind: 0;
 
     property <length> saved-scroll-y: 0px;
-    // Tune-local indices (cards-first global minus list split). WHILE COLOURS
-    // EXIST: 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove,
-    // 6=glow-enabled (7..10=range, power, color, inactive when on), then per
-    // anim leaf enabled (speed, bezier, style when on) x3, rule, save-name,
-    // save-button. WITH ZERO COLOURS the strip / add / remove block is not
-    // mounted, so it does not exist and everything after `inactive` shifts down
-    // by three (`slot-stops` below). Mirrors callbacks::borders_tune_stop_count.
+    // Tune-local indices (cards-first global minus list split). The six fixed
+    // stops at the top are 0=size, 1=radius, 2=gap-in, 3=gap-out, 4=angle,
+    // 5=inactive. WHILE COLOURS EXIST the slot block follows:
+    // 6=strip, 7=add, 8=remove, 9=glow-enabled (10..13=range, power, color,
+    // inactive when on), then per anim leaf enabled (speed, bezier, style when
+    // on) x3, rule, save-name, save-button. WITH ZERO COLOURS the strip / add /
+    // remove block is not mounted, so it does not exist and everything after
+    // `inactive` shifts down by three (`slot-stops` below). Mirrors
+    // callbacks::borders_tune_stop_count.
     property <int> local-focus: root.focused-index - root.split;
     property <int> slot-count: clamp(root.tune-color-count, 0, 8);
     // The strip / add / remove controls mount only behind
@@ -225,17 +230,19 @@ component BordersTunePane inherits Rectangle {
     // is a no-op, so PanelRoot's strip dispatch swallowed ←/→ on the invisible
     // strip, and Enter fired `add-color-slot` from a `+` that was never
     // mounted (Q2). `slot-stops` is the block's width; the map below derives
-    // from it instead of hard-coding 6..10.
+    // from it instead of hard-coding 7..9.
     property <int> slot-stops: root.slot-count > 0 ? 3 : 0;
-    // Fixed tune-local map (PR 3): the strip is ONE stop, so the slot block is
-    // a constant 3 wide while it exists and every stop after it derives from
-    // `idx-glow-en` — no `+ slot-count` anywhere. `-1` marks a stop that is
-    // not there, so no literal can ever match an absent control. Downstream
-    // idx-a*/base-tail/idx-rule/idx-save-* recompute from `base-anim` alone.
-    // Mirrors callbacks::borders_tune_stop_count and BordersSection.tune-enter.
-    property <int> idx-add: root.slot-stops > 0 ? 4 : -1;
-    property <int> idx-remove: root.slot-stops > 0 ? 5 : -1;
-    property <int> idx-glow-en: root.slot-stops + 3;
+    // Fixed tune-local map (PR 3, shifted by three in B2): the six geometry /
+    // colour stops precede the slot block, the strip is ONE stop, so the slot
+    // block is a constant 3 wide while it exists and every stop after it
+    // derives from `idx-glow-en` — no `+ slot-count` anywhere. `-1` marks a
+    // stop that is not there, so no literal can ever match an absent control.
+    // Downstream idx-a*/base-tail/idx-rule/idx-save-* recompute from
+    // `base-anim` alone. Mirrors callbacks::borders_tune_stop_count and
+    // BordersSection.tune-enter.
+    property <int> idx-add: root.slot-stops > 0 ? 7 : -1;
+    property <int> idx-remove: root.slot-stops > 0 ? 8 : -1;
+    property <int> idx-glow-en: root.slot-stops + 6;
     property <int> idx-glow-range: root.idx-glow-en + 1;
     property <int> idx-glow-power: root.idx-glow-en + 2;
     property <int> idx-glow-color: root.idx-glow-en + 3;
@@ -387,6 +394,18 @@ component BordersTunePane inherits Rectangle {
             padding-bottom: 12px;
             spacing: 8px;
 
+            // ── Geometry ─────────────────────────────────────────────────
+            // The keeper asked to keep these four together at the top of
+            // Borders: he put them there because he did not know where else
+            // they belonged, and this is home for them now.
+            Text {
+                text: "Geometry";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-12;
+                font-weight: 600;
+                color: HveColors.accent-cyan;
+            }
+
             // ── Size 1-5 ──
             size-wrap := Rectangle {
                 property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-size.has-hover;
@@ -421,10 +440,115 @@ component BordersTunePane inherits Rectangle {
                 wrap: word-wrap;
             }
 
+            // ── Radius 0-100 ──
+            radius-wrap := Rectangle {
+                property <bool> lit: (root.local-focus == 1 && root.has-focus) || hover-radius.has-hover;
+                property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-radius := TouchArea { width: 100%; height: 100%; clicked => { } }
+                GeometrySlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 1;
+                    focused: radius-wrap.lit;
+                    label: "Corner Radius";
+                    value: root.radius;
+                    min: 0;
+                    max: 100;
+                    changed(v) => { root.slider-changed(1, v); }
+                }
+            }
+
+            // ── Description: radius ──
+            Text {
+                text: "Corner rounding in pixels (0 square, 100 fully round).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // ── Gap In 0-30 ──
+            gap-in-wrap := Rectangle {
+                property <bool> lit: (root.local-focus == 2 && root.has-focus) || hover-gap-in.has-hover;
+                property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-gap-in := TouchArea { width: 100%; height: 100%; clicked => { } }
+                GeometrySlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 2;
+                    focused: gap-in-wrap.lit;
+                    label: "Inner Gap";
+                    value: root.gap-in;
+                    min: 0;
+                    max: 30;
+                    changed(v) => { root.slider-changed(2, v); }
+                }
+            }
+
+            // ── Description: gap-in ──
+            Text {
+                text: "Space between a window and its neighbors (inner gap).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // ── Gap Out 0-30 ──
+            gap-out-wrap := Rectangle {
+                property <bool> lit: (root.local-focus == 3 && root.has-focus) || hover-gap-out.has-hover;
+                property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-gap-out := TouchArea { width: 100%; height: 100%; clicked => { } }
+                GeometrySlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 3;
+                    focused: gap-out-wrap.lit;
+                    label: "Outer Gap";
+                    value: root.gap-out;
+                    min: 0;
+                    max: 30;
+                    changed(v) => { root.slider-changed(3, v); }
+                }
+            }
+
+            // ── Description: gap-out ──
+            Text {
+                text: "Space between windows and the screen edge (outer gap).";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                color: HveColors.text-muted;
+                wrap: word-wrap;
+            }
+
+            // ── Separator: geometry ends, colours begin ──
+            Rectangle { height: 1px; background: HveColors.border; }
+
             // ── Angle segmented control (30 / 45 / 90) ──
             angle-wrap := Rectangle {
-                property <bool> lit: root.local-focus == 1 && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
+                property <bool> lit: root.local-focus == 4 && root.has-focus;
+                property <bool> grabbed: root.engaged-slider == 4 && root.has-focus;
                 height: self.lit ? 96px : 80px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
                 border-width: 1px;
@@ -499,7 +623,7 @@ component BordersTunePane inherits Rectangle {
                 label: "Inactive";
                 value-label: root.value-label(root.tune-inactive-color);
                 resolved-color: root.tune-colors-resolved[8];
-                lit: root.focused-index == root.split + 2 && root.has-focus;
+                lit: root.focused-index == root.split + 5 && root.has-focus;
                 editing: root.editing-slot == 8;
                 picker-requested() => { root.request-edit-slot(8); }
             }
@@ -1996,25 +2120,30 @@ export component BordersSection inherits Rectangle {
     in property <bool> two-col: false;
     // Cards-first global sequence: 0..list-count-1 cards, then tune stops.
     // split is the tune start; tune-count mirrors
-    // callbacks::borders_tune_stop_count (size, angle, inactive, strip,
-    // add, remove, glow group, 3 anim leaves, rule, save name + button).
+    // callbacks::borders_tune_stop_count (size, radius, gap-in, gap-out,
+    // angle, inactive, strip, add, remove, glow group, 3 anim leaves, rule,
+    // save name + button).
     property <int> list-count: root.border-titles.length + root.user-preset-names.length;
     property <int> split: root.list-count;
     property <int> tune-n: clamp(root.tune-color-count, 0, 8);
     // The section owns the keyboard walk, but the render map lives on the pane
     // (instantiated twice behind conditions), so it cannot read the pane's
-    // `idx-*`. It needs only the block width and the first glow stop: the slot
-    // block is 3 wide while colours exist and 0 when they do not (the strip /
-    // add / remove controls are not mounted), and every glow / anim stop is
-    // `idx-glow-en + offset`. Mirrors the pane's map and
+    // `idx-*`. It needs only the block width, the first glow stop and the strip
+    // stop: the slot block is 3 wide while colours exist and 0 when they do not
+    // (the strip / add / remove controls are not mounted), and every glow /
+    // anim stop is `idx-glow-en + offset`. Mirrors the pane's map and
     // callbacks::borders_tune_stop_count.
     property <int> slot-stops: root.tune-n > 0 ? 3 : 0;
-    property <int> idx-glow-en: root.slot-stops + 3;
-    // 10 fixed stops (size, angle, inactive, glow-enable, 3 anim-enable, rule,
-    // save-name, save-button) plus the 3 colour-slot stops ONLY while colours
-    // exist, then the conditional leaves. Mirrors
-    // callbacks::borders_tune_stop_count, which subtracts the same 3.
-    out property <int> tune-count: 10 + root.slot-stops
+    // The strip is the ONE stop after the six geometry / colour stops; PanelRoot
+    // reads this instead of hard-coding the local index, so the ←/→ sub-cycle
+    // dispatch can never drift from the map again.
+    out property <int> idx-strip: root.slot-stops > 0 ? 6 : -1;
+    property <int> idx-glow-en: root.slot-stops + 6;
+    // 13 fixed stops (size, radius, gap-in, gap-out, angle, inactive,
+    // glow-enable, 3 anim-enable, rule, save-name, save-button) plus the 3
+    // colour-slot stops ONLY while colours exist, then the conditional leaves.
+    // Mirrors callbacks::borders_tune_stop_count, which subtracts the same 3.
+    out property <int> tune-count: 13 + root.slot-stops
         + (root.tune-glow-enabled ? 4 : 0)
         + (root.tune-anim-borderangle-enabled ? 3 : 0)
         + (root.tune-anim-border-enabled ? 3 : 0)
@@ -2112,10 +2241,10 @@ export component BordersSection inherits Rectangle {
         root.tune-changed(root.tune-active-colors, root.tune-angle, root.tune-inactive-color, root.tune-glow, root.tune-animations, root.tune-rule-enabled);
     }
 
-    // ── Geometry debounce (R3) — only size slider remains ──
-    // The timer applies `geom-size` itself; `last-size` is the "already sent to
-    // Rust" marker. Two rules keep this honest:
-    //   • `geom-dirty` is raised BEFORE `geom-size` moves, so the
+    // ── Geometry debounce (R3) — the four Geometry sliders feed it ──
+    // The timer applies all four values; `last-size` is the size slider's
+    // "already sent to Rust" marker. Two rules keep this honest:
+    //   • `geom-dirty` is raised BEFORE a geometry value moves, so the
     //     `changed geom-size` handler below can never mistake a user edit for a
     //     Rust snap — and that holds under either eager or deferred handler
     //     scheduling, which is what made the previous pending/last pair silently
@@ -2131,7 +2260,7 @@ export component BordersSection inherits Rectangle {
         running: root.geom-dirty;
         triggered => {
             // Unconditional on purpose: `geom-dirty` is raised ONLY by a user
-            // edit (arrow or drag) and never by Rust snapping the slider, so if
+            // edit (arrow or drag) and never by Rust snapping a slider, so if
             // this timer fires there IS something the user changed that has to
             // reach the desktop. The previous `pending-size != last-size`
             // comparison could compare equal (Rust syncs `last-size` from
@@ -2140,12 +2269,12 @@ export component BordersSection inherits Rectangle {
             // alongside a `size-init` flag that swallowed the session's first
             // edit outright.
             //
-            // Radius and gaps travel with the size: the tune pane owns the
-            // thickness, the section owns the rest of the geometry. Sending
-            // literal 0s here (as this used to) wiped the user's rounding and
-            // gaps on every thickness change — the Rust handler writes all four
-            // values, and the U3 rebuild had already removed the radius/gap
-            // controls, so there was no way back from the pane.
+            // Radius and gaps travel with the size: the tune pane owns all four
+            // sliders now, the section owns the values, and ONE timer sends the
+            // whole geometry so editing any one of them can never wipe the
+            // other three. Sending literal 0s here (as this used to) wiped the
+            // user's rounding and gaps on every thickness change — the Rust
+            // handler writes all four values.
             root.apply-geometry(root.geom-size, root.geom-radius, root.geom-gap-in, root.geom-gap-out);
             root.last-size = root.geom-size;
             root.geom-dirty = false;
@@ -2153,9 +2282,9 @@ export component BordersSection inherits Rectangle {
     }
 
     // Slider adjust (keyboard arrows) — every slider-like tune stop, clamped.
-    // Tune-local engaged index: 0=size, 1=angle, 2=inactive, glow
-    // range/power/colors, anim speed/bezier/style. Toggles, actions and the
-    // strip are handled by tune-enter, never here.
+    // Tune-local engaged index: 0=size, 1=radius, 2=gap-in, 3=gap-out,
+    // 4=angle, 5=inactive, glow range/power/colors, anim speed/bezier/style.
+    // Toggles, actions and the strip are handled by tune-enter, never here.
     public function adjust-slider(up: bool) {
         let e = root.engaged-slider;
         if (e == 0) {
@@ -2169,20 +2298,48 @@ export component BordersSection inherits Rectangle {
             return;
         }
         if (e == 1) {
+            let next = up ? min(root.geom-radius + 1, 100) : max(root.geom-radius - 1, 0);
+            if (next != root.geom-radius) {
+                root.geom-dirty = true;
+                root.geom-radius = next;
+                geom-timer.restart();
+            }
+            return;
+        }
+        if (e == 2) {
+            let next = up ? min(root.geom-gap-in + 1, 30) : max(root.geom-gap-in - 1, 0);
+            if (next != root.geom-gap-in) {
+                root.geom-dirty = true;
+                root.geom-gap-in = next;
+                geom-timer.restart();
+            }
+            return;
+        }
+        if (e == 3) {
+            let next = up ? min(root.geom-gap-out + 1, 30) : max(root.geom-gap-out - 1, 0);
+            if (next != root.geom-gap-out) {
+                root.geom-dirty = true;
+                root.geom-gap-out = next;
+                geom-timer.restart();
+            }
+            return;
+        }
+        if (e == 4) {
             root.tune-angle = root.next-angle(root.tune-angle, up);
             // The angle used to stop here: it changed the value and never
             // notified, so the arrow cycle was a no-op on the desktop.
             root.notify-tune-changed();
             return;
         }
-        if (e == 2) {
+        if (e == 5) {
             root.tune-inactive-color = root.next-token(root.tune-inactive-color, up);
             root.notify-tune-changed();
             return;
         }
-        // No per-slot branch: the strip (index 3) is never engaged, so there is
-        // no engaged colour stop to adjust here. (Removed in PR 3; the old
-        // `e >= 3 && e < 3 + n` path cycled the palette token of an engaged slot.)
+        // No per-slot branch: the strip (tune-local 6) is never engaged, so
+        // there is no engaged colour stop to adjust here. (Removed in PR 3; the
+        // old `e >= 3 && e < 3 + n` path cycled the palette token of an engaged
+        // slot.)
         if (root.tune-glow-enabled) {
             if (e == root.idx-glow-en + 1) {
                 let next = up ? min(root.tune-glow-range + 1, 40) : max(root.tune-glow-range - 1, 5);
@@ -2287,16 +2444,17 @@ export component BordersSection inherits Rectangle {
     // here (toggle, add/remove, save). Computed from the live tune-local
     // focused index so hidden stops are never reachable.
     // Tune-local map (the strip is ONE stop, never N). With colours:
-    // 0=size, 1=angle, 2=inactive, 3=strip, 4=add, 5=remove, then the glow /
-    // anim / rule / save stops. With ZERO colours the strip / add / remove
-    // block does not exist (`slot-stops` = 0) and those positions shift down by
-    // three: 3=glow-enabled, and so on (`idx-glow-en` below).
+    // 0=size, 1=radius, 2=gap-in, 3=gap-out, 4=angle, 5=inactive, 6=strip,
+    // 7=add, 8=remove, then the glow / anim / rule / save stops. With ZERO
+    // colours the strip / add / remove block does not exist (`slot-stops` = 0)
+    // and those positions shift down by three: 6=glow-enabled, and so on
+    // (`idx-glow-en` below).
     public function tune-enter() -> int {
         let local = root.focused-index - root.list-count;
         // The strip stop is NEVER engaged: Enter opens the picker for the
         // active chip directly (R9). PanelRoot sees the 1 and leaves
         // engaged-slider at -1, so ←/→ keep cycling chips afterwards.
-        if (local == 3 && root.tune-n > 0) {
+        if (local == 6 && root.tune-n > 0) {
             // Bound at the point of use too (Q1): the count can have shrunk
             // since the ring moved, and an out-of-range chip has no picker to
             // open, so never hand its stale index to `editing-slot`.
@@ -2307,7 +2465,7 @@ export component BordersSection inherits Rectangle {
         // cycle the palette). Pressing Enter AGAIN on an already-engaged colour
         // opens the picker, so the custom path is reachable without a mouse.
         // Esc closes it (handled in PanelRoot).
-        if (local == 2 && root.engaged-slider == local) { root.editing-slot = 8; return 1; }
+        if (local == 5 && root.engaged-slider == local) { root.editing-slot = 8; return 1; }
         // Channel indices are the pane's fixed 0..7 slots / 8 inactive / 9 glow
         // / 10 glow-inactive space — NOT the tune stop positions, which shift
         // with the slot block. `editing-slot` therefore keeps its literal.
@@ -2320,10 +2478,10 @@ export component BordersSection inherits Rectangle {
             return 1;
         }
         // Add / remove sit inside the slot block, which exists only while
-        // colours do: with zero colours local 4/5 are other controls, so the
+        // colours do: with zero colours local 7/8 are other controls, so the
         // `tune-n` guards keep the unmounted actions unreachable.
-        if (local == 4 && root.tune-n > 0 && root.tune-n < 8) { root.add-color-slot(); return 1; }
-        if (local == 5 && root.tune-n > 2) { root.remove-color-slot(); return 1; }
+        if (local == 7 && root.tune-n > 0 && root.tune-n < 8) { root.add-color-slot(); return 1; }
+        if (local == 8 && root.tune-n > 2) { root.remove-color-slot(); return 1; }
         if (local == root.idx-glow-en) {
             root.tune-glow-enabled = !root.tune-glow-enabled;
             root.tune-glow = root.rebuild-glow();
@@ -2392,8 +2550,9 @@ export component BordersSection inherits Rectangle {
 
     // ── Strip sub-navigation (R9, task 3.2) ──────────────────────────
     // Cycles the active chip within the strip with wrap. PanelRoot calls this
-    // when ←/→ lands on the strip stop (tune-local 3); the strip is never
-    // engaged, so the arrows always mean "move the chip", never "adjust".
+    // when ←/→ lands on the strip stop (tune-local 6, exposed as `idx-strip`);
+    // the strip is never engaged, so the arrows always mean "move the chip",
+    // never "adjust".
     // Lives on the section — same pattern as picker-move/picker-adjust —
     // because PanelRoot can only call section functions, and the section
     // cannot reach into its conditional pane children.
@@ -2451,8 +2610,11 @@ export component BordersSection inherits Rectangle {
         root.notify-tune-changed();
     }
 
-    // Mouse-direct slider edits — size only. No first-edit swallow: `last-size`
-    // is the guard (see the geometry debounce note).
+    // Mouse-direct slider edits for the four Geometry sliders. No first-edit
+    // swallow: `last-size` is the size guard (see the geometry debounce note);
+    // the other three compare against their own live value. Every branch marks
+    // the geometry dirty and restarts the ONE debounce timer, which sends all
+    // four values, so editing one slider can never wipe the others.
     function slider-changed(id: int, v: int) {
         if (id == 0) {
             if (v == root.last-size) { return; }
@@ -2460,11 +2622,32 @@ export component BordersSection inherits Rectangle {
             root.geom-dirty = true;
             root.geom-size = v;
             geom-timer.restart();
+            return;
+        }
+        if (id == 1) {
+            if (v == root.geom-radius) { return; }
+            root.geom-dirty = true;
+            root.geom-radius = v;
+            geom-timer.restart();
+            return;
+        }
+        if (id == 2) {
+            if (v == root.geom-gap-in) { return; }
+            root.geom-dirty = true;
+            root.geom-gap-in = v;
+            geom-timer.restart();
+            return;
+        }
+        if (id == 3) {
+            if (v == root.geom-gap-out) { return; }
+            root.geom-dirty = true;
+            root.geom-gap-out = v;
+            geom-timer.restart();
         }
     }
 
-    // Rust snapped the slider (startup, a preset pick, or a preset whose own
-    // geometry differs). That value is already what the desktop runs, so it
+    // Rust snapped the size slider (startup, a preset pick, or a preset whose
+    // own geometry differs). That value is already what the desktop runs, so it
     // becomes the new "sent" marker instead of triggering another apply.
     changed geom-size => { if (!root.geom-dirty) { root.last-size = root.geom-size; } }
 
@@ -2544,6 +2727,9 @@ export component BordersSection inherits Rectangle {
             BordersTunePane {
                 horizontal-stretch: 1;
                 size: root.geom-size;
+                radius: root.geom-radius;
+                gap-in: root.geom-gap-in;
+                gap-out: root.geom-gap-out;
                 focused-index: root.focused-index;
                 picker-cmd: root.picker-cmd;
                 picker-cmd-kind: root.picker-cmd-kind;
@@ -2670,6 +2856,9 @@ export component BordersSection inherits Rectangle {
             BordersTunePane {
                 vertical-stretch: 1;
                 size: root.geom-size;
+                radius: root.geom-radius;
+                gap-in: root.geom-gap-in;
+                gap-out: root.geom-gap-out;
                 focused-index: root.focused-index;
                 picker-cmd: root.picker-cmd;
                 picker-cmd-kind: root.picker-cmd-kind;

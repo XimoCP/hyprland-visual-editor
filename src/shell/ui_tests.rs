@@ -5683,8 +5683,8 @@ fn borders_strip_picker_opens_above_strip() {
 fn borders_strip_compact_rows_height() {
     use slint::ComponentHandle as _;
     let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
-    // Focus the inactive colour stop: 1 preset card + tune-local 2.
-    win.set_panel_kbd_preview_index(1 + 2);
+    // Focus the inactive colour stop: 1 preset card + tune-local 5.
+    win.set_panel_kbd_preview_index(1 + 5);
     settle_frames(80);
     let shot = win.window().take_snapshot().expect("inactive row snapshot");
     save_slice_png(shot.clone(), "/tmp/opencode/borders_strip_compact_row.png");
@@ -5706,46 +5706,178 @@ fn borders_strip_compact_rows_height() {
 /// must IGNORE a POSITIVE `slot_count`. The old formula added N stops (one per
 /// gradient slot), so the same call returned 14 for 2 slots and 20 for 8; the
 /// new one is flat. PR 1 shipped the formula, so this test LOCK THE BEHAVIOUR IN
-/// rather than driving a fresh RED — the values it pins (13/17/26) are exactly
-/// the ones the old formula would fail on (14/18/33). ZERO slots is the one
-/// case that still moves the count: the strip / add / remove controls are not
-/// mounted, so their three stops are not counted (Q2).
+/// rather than driving a fresh RED. The values grew by three in B2, when the
+/// radius / inner-gap / outer-gap sliders rejoined the Borders tune pane as the
+/// "Geometry" block: the fixed stops are now size, radius, gap-in, gap-out,
+/// angle and inactive (16 with colours, 13 without). ZERO slots still moves the
+/// count: the strip / add / remove controls are not mounted, so their three
+/// stops are not counted (Q2).
 #[test]
 fn borders_tune_stop_count_strip_single_stop() {
     use crate::callbacks::borders_tune_stop_count;
 
-    // 2 slots, no glow, no anims → 13: size, angle, inactive, STRIP, add,
-    // remove, glow-toggle, 3 idle anim leaves, rule, save-name, save-button.
-    assert_eq!(borders_tune_stop_count(2, false, false, false, false), 13);
+    // 2 slots, no glow, no anims → 16: size, radius, gap-in, gap-out, angle,
+    // inactive, STRIP, add, remove, glow-toggle, 3 idle anim leaves, rule,
+    // save-name, save-button.
+    assert_eq!(borders_tune_stop_count(2, false, false, false, false), 16);
 
-    // 4 slots + glow → 17, and 2 slots + glow → the same 17: the two extra
+    // 4 slots + glow → 20, and 2 slots + glow → the same 20: the two extra
     // slots contribute nothing, glow contributes its fixed 4.
-    assert_eq!(borders_tune_stop_count(4, true, false, false, false), 17);
-    assert_eq!(borders_tune_stop_count(2, true, false, false, false), 17);
+    assert_eq!(borders_tune_stop_count(4, true, false, false, false), 20);
+    assert_eq!(borders_tune_stop_count(2, true, false, false, false), 20);
 
-    // 8 slots, glow on, all three anims on → 26 (the old formula's 33: eight
-    // slot stops collapsed to one).
-    assert_eq!(borders_tune_stop_count(8, true, true, true, true), 26);
+    // 8 slots, glow on, all three anims on → 29.
+    assert_eq!(borders_tune_stop_count(8, true, true, true, true), 29);
 
     // The contract itself: any POSITIVE N is ignored, so those slot counts
     // all agree.
     for n in [2, 4, 8, 99] {
         assert_eq!(
             borders_tune_stop_count(n, false, false, false, false),
-            13,
+            16,
             "slot_count {n} must not change the stop count — the strip is ONE stop"
         );
         assert_eq!(
             borders_tune_stop_count(n, true, true, true, true),
-            26,
+            29,
             "slot_count {n} must not change the stop count — the strip is ONE stop"
         );
     }
 
     // Zero colours: the three slot-management stops do not exist, so the count
-    // drops by three (10 fixed stops) instead of counting unmounted controls.
-    assert_eq!(borders_tune_stop_count(0, false, false, false, false), 10);
-    assert_eq!(borders_tune_stop_count(0, true, true, true, true), 23);
+    // drops by three (13 fixed stops) instead of counting unmounted controls.
+    assert_eq!(borders_tune_stop_count(0, false, false, false, false), 13);
+    assert_eq!(borders_tune_stop_count(0, true, true, true, true), 26);
+}
+
+/// A focused, non-grabbed GeometrySlider row renders as a 96px card whose icy
+/// border paints two full-width bands, with the slider's white knob inside.
+/// Measured from the render, so a seat that lands on a non-slider (or a missing
+/// row) fails instead of passing on an unrelated lit frame.
+fn assert_geometry_slider_row(shot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, label: &str) {
+    let (top, bottom) = focused_row_span(shot, 88, 100).unwrap_or_else(|| {
+        panic!(
+            "{label}: a focused geometry slider must paint two icy edges ~96px apart; \
+             icy bands={:?}",
+            color_row_bands(shot, ICY, 40, 300)
+        )
+    });
+    let knob = count_color_in_box(
+        shot,
+        (255, 255, 255),
+        6,
+        360,
+        top + 2,
+        shot.width() as usize,
+        bottom,
+    );
+    assert!(
+        knob > 40,
+        "{label}: the focused row must carry its white slider knob (pixels={knob})"
+    );
+}
+
+/// B2 — the Geometry block (thickness, radius, inner gap, outer gap) sits at
+/// the top of the Borders tune pane, and each of the four is its own keyboard
+/// stop. Editing ONE value must reach the compositor with the other three
+/// intact. Drives the REAL production path — key events into PanelRoot's
+/// FocusScope plus the real `panel-apply-geometry` callback — so a seat
+/// renumbering that drops or shadows a slider fails here.
+#[test]
+fn borders_geometry_block_edits_one_value_and_keeps_the_rest() {
+    use slint::platform::Key;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    // One preset card, so the tune stops start at global 1: 1=size, 2=radius,
+    // 3=gap-in, 4=gap-out.
+    win.set_border_size(2);
+    win.set_corner_radius(10);
+    win.set_gap_in(5);
+    win.set_gap_out(6);
+    focus_settle();
+
+    let applied: std::rc::Rc<std::cell::RefCell<Vec<(i32, i32, i32, i32)>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    {
+        let applied = applied.clone();
+        win.on_panel_apply_geometry(move |s, r, gi, go| {
+            applied.borrow_mut().push((s, r, gi, go));
+        });
+    }
+
+    // Focus card 0 → stop, engage it, bump one step right, let the 80ms
+    // geometry debounce fire.
+    let edit = |win: &crate::MainWindow, down: usize| {
+        for _ in 0..down {
+            focus_press_key(win, Key::DownArrow);
+        }
+        focus_press_key(win, Key::Return);
+        focus_press_key(win, Key::RightArrow);
+        settle_frames(8);
+    };
+
+    edit(&win, 1); // size
+    assert_eq!(
+        applied.borrow().last().copied(),
+        Some((3, 10, 5, 6)),
+        "thickness alone must move; radius and both gaps stay put"
+    );
+    edit(&win, 1); // down into radius
+    assert_eq!(
+        applied.borrow().last().copied(),
+        Some((3, 11, 5, 6)),
+        "radius alone must move; size and both gaps stay put"
+    );
+    edit(&win, 1); // down into gap-in
+    assert_eq!(
+        applied.borrow().last().copied(),
+        Some((3, 11, 6, 6)),
+        "the inner gap alone must move; size, radius and the outer gap stay put"
+    );
+    edit(&win, 1); // down into gap-out
+    assert_eq!(
+        applied.borrow().last().copied(),
+        Some((3, 11, 6, 7)),
+        "the outer gap alone must move; the other three stay put"
+    );
+    assert_eq!(applied.borrow().len(), 4, "exactly one apply per edit");
+}
+
+/// B2 render half — each recovered geometry slider renders as a real slider
+/// row at its new seat (radius, inner gap, outer gap). The PNGs are the
+/// human-review evidence the repo requires for a `.slint` change.
+#[test]
+fn borders_geometry_block_renders_each_slider() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    win.set_border_size(2);
+    win.set_corner_radius(10);
+    win.set_gap_in(5);
+    win.set_gap_out(6);
+    focus_settle();
+
+    let block = win.window().take_snapshot().expect("geometry block snapshot");
+    save_slice_png(block.clone(), "/tmp/opencode/borders_geometry_block.png");
+
+    // card 0 → Down → size → Down → radius.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::DownArrow);
+    focus_settle();
+    let radius = win.window().take_snapshot().expect("radius focus snapshot");
+    save_slice_png(radius.clone(), "/tmp/opencode/borders_geometry_radius_focus.png");
+    assert_geometry_slider_row(&radius, "radius");
+
+    focus_press_key(&win, Key::DownArrow);
+    focus_settle();
+    let gap_in = win.window().take_snapshot().expect("gap-in focus snapshot");
+    save_slice_png(gap_in.clone(), "/tmp/opencode/borders_geometry_gapin_focus.png");
+    assert_geometry_slider_row(&gap_in, "gap-in");
+
+    focus_press_key(&win, Key::DownArrow);
+    focus_settle();
+    let gap_out = win.window().take_snapshot().expect("gap-out focus snapshot");
+    save_slice_png(gap_out.clone(), "/tmp/opencode/borders_geometry_gapout_focus.png");
+    assert_geometry_slider_row(&gap_out, "gap-out");
 }
 
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
@@ -5864,7 +5996,7 @@ fn borders_strip_flow_renders() {
 
     // (4) The focused compact inactive row: chip + label + "Custom…" at 48–56px.
     win.set_tune_color_count(3);
-    win.set_panel_kbd_preview_index(1 + 2);
+    win.set_panel_kbd_preview_index(1 + 5);
     settle_frames(80);
     let compact = win.window().take_snapshot().expect("focused compact row");
     save_slice_png(compact.clone(), "/tmp/opencode/borders_strip_flow_compact_row.png");
@@ -5906,21 +6038,23 @@ fn strip_ring_chip(
     found
 }
 
-/// R8/R9 — the strip is ONE keyboard stop (tune-local 3) with internal ←/→
-/// sub-navigation: Right/Left cycle `strip-active-chip` with wrap, Enter opens
-/// the picker for the active chip, Esc closes it. Driven through the
-/// production path (real key events into PanelRoot's FocusScope), so the
-/// Left/Right assertions also prove the PanelRoot strip dispatch (3.3/3.4):
-/// without forwarding, Right on a tune stop is a no-op and the ring never moves.
+/// R8/R9 — the strip is ONE keyboard stop (tune-local 6, `borders.idx-strip`)
+/// with internal ←/→ sub-navigation: Right/Left cycle `strip-active-chip` with
+/// wrap, Enter opens the picker for the active chip, Esc closes it. Driven
+/// through the production path (real key events into PanelRoot's FocusScope),
+/// so the Left/Right assertions also prove the PanelRoot strip dispatch
+/// (3.3/3.4): without forwarding, Right on a tune stop is a no-op and the ring
+/// never moves.
 #[test]
 fn borders_strip_keyboard_sub_navigation() {
     use slint::{ComponentHandle as _, platform::Key};
-    // 3 chips, 1 preset card: list-len 1, so the strip stop is global index 4
-    // (card 0, size 1, angle 2, inactive 3, strip 4).
+    // 3 chips, 1 preset card: list-len 1, so the strip stop is global index 7
+    // (card 0, size 1, radius 2, gap-in 3, gap-out 4, angle 5, inactive 6,
+    // strip 7).
     let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
 
     // Walk Down from card 0 onto the strip stop.
-    for _ in 0..4 {
+    for _ in 0..7 {
         focus_press_key(&win, Key::DownArrow);
     }
     focus_settle();
@@ -6036,9 +6170,9 @@ fn borders_strip_ring_and_picker_clamp_when_slots_shrink() {
         "p:secondary",
     ]);
 
-    // Walk onto the strip stop (1 card + tune-local 0..3) and wrap the ring
+    // Walk onto the strip stop (1 card + tune-local 0..6) and wrap the ring
     // from chip 1 to the LAST chip (index 7).
-    for _ in 0..4 {
+    for _ in 0..7 {
         focus_press_key(&win, Key::DownArrow);
     }
     focus_settle();
@@ -6109,39 +6243,38 @@ fn borders_tune_zero_colours_has_no_ghost_stops() {
         win.on_panel_add_color_slot(move || added.set(true));
     }
 
-    // Tune-local 4 must no longer be the unmounted `+`: Enter there must never
-    // add a slot. Before Q2 the map still counted it and this fired
-    // add-color-slot.
-    for _ in 0..5 {
+    // No tune stop may ever fire the unmounted `+`: walk every mounted stop
+    // with Enter and assert the add control never fires. Before Q2 the map
+    // counted the unmounted strip / add / remove stops and Enter on the
+    // phantom `add` fired `add-color-slot`.
+    for _ in 0..13 {
         focus_press_key(&win, Key::DownArrow);
+        focus_press_key(&win, Key::Return);
+        focus_settle();
+        assert!(
+            !added.get(),
+            "Enter on a tune stop must never fire the unmounted add control"
+        );
+        assert_eq!(
+            win.get_tune_color_count(),
+            0,
+            "no control fired while none is mounted"
+        );
     }
-    focus_settle();
-    focus_press_key(&win, Key::Return);
-    focus_settle();
-    assert!(
-        !added.get(),
-        "Enter on a tune stop must never fire the unmounted add control"
-    );
-    assert_eq!(
-        win.get_tune_color_count(),
-        0,
-        "no control fired while none is mounted"
-    );
 
-    // With the slot block gone, tune-local 3 is the glow toggle: Enter there
-    // must toggle glow, proving the stop is a real, reachable control and not a
-    // phantom the arrows get stuck on.
-    focus_press_key(&win, Key::UpArrow);
-    focus_settle();
-    focus_press_key(&win, Key::Return);
-    focus_settle();
+    // With the slot block gone, tune-local 6 is the glow toggle: the walk above
+    // pressed Enter on it, so glow is now on. If slot-local 6 were still a
+    // phantom strip stop, `strip-cycle` would have swallowed the press.
     assert!(
         win.get_tune_glow_enabled(),
-        "with zero colours tune-local 3 must be the glow toggle, not a phantom strip stop"
+        "with zero colours tune-local 6 must be the glow toggle, not a phantom strip stop"
     );
 
     // ...and it must RENDER as a focused 64px row, so the stop the keyboard is
-    // on is the stop the eye sees (no invisible position).
+    // on is the stop the eye sees (no invisible position). 1 preset card, so
+    // the glow toggle is global index 1 + 6.
+    win.set_panel_kbd_preview_index(1 + 6);
+    focus_settle();
     let focused = win.window().take_snapshot().expect("zero-colour glow stop");
     save_slice_png(
         focused.clone(),
@@ -6149,7 +6282,7 @@ fn borders_tune_zero_colours_has_no_ghost_stops() {
     );
     assert!(
         focused_row_span(&focused, 56, 68).is_some(),
-        "the zero-colour tune-local 3 stop must paint a focused 64px row"
+        "the zero-colour glow-toggle stop must paint a focused 64px row"
     );
 }
 
@@ -6439,11 +6572,11 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     win.set_tune_anim_border_enabled(true);
     win.set_tune_anim_fadeshadow_enabled(true);
 
-    // Production count: 1 strip stop + glow on + 3 leaves on = 26 tune stops.
+    // Production count: 1 strip stop + glow on + 3 leaves on = 29 tune stops.
     let tune = crate::callbacks::borders_tune_stop_count(2, true, true, true, true);
-    assert_eq!(tune, 26, "fixture must expose the full inventory");
+    assert_eq!(tune, 29, "fixture must expose the full inventory");
     let last = 1 + tune - 1; // 1 card + tune, last = Save button
-    let middle = 1 + 6; // glow-enabled stop (size0 angle1 inactive2 strip3 add4 remove5 glow-en6 -> global 7)
+    let middle = 1 + 9; // glow-enabled stop (size0 radius1 gap-in2 gap-out3 angle4 inactive5 strip6 add7 remove8 glow-en9 -> global 10)
 
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -6611,14 +6744,14 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         slint::Color::from_rgb_u8(15, 23, 42),
     ])));
 
-    // Glow on, leaves off: 1 card + 17 tune stops. Focus the LAST glow colour
+    // Glow on, leaves off: 1 card + 20 tune stops. Focus the LAST glow colour
     // (glow-inactive) so both glow colour cards are inside the viewport.
     assert_eq!(
         crate::callbacks::borders_tune_stop_count(2, true, false, false, false),
-        17,
+        20,
         "fixture inventory"
     );
-    let glow_inactive = 1 + 11; // 1 card + tune-local 11
+    let glow_inactive = 1 + 13; // 1 card + tune-local 13
 
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));

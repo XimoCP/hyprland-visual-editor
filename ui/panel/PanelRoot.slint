@@ -409,8 +409,9 @@ export component PanelRoot inherits Rectangle {
                             // Borders: Down/Up walk cards + EVERY tune stop top to
                             // bottom, then wrap. Return/Space engages slider-like
                             // stops (arrows adjust, clamped); other stops act
-                            // at once. Tune order: size, angle, inactive, strip,
-                            // add/remove, glow group, 3 anim leaves, rule, save.
+                            // at once. Tune order: size, radius, gap-in, gap-out,
+                            // angle, inactive, strip, add/remove, glow group,
+                            // 3 anim leaves, rule, save.
                             if (event.text == Key.Escape) {
                                 if (root.tune-editing-slot >= 0) { root.tune-editing-slot = -1; }
                                 else if (root.borders-engaged-slider >= 0) { root.borders-engaged-slider = -1; }
@@ -483,15 +484,15 @@ export component PanelRoot inherits Rectangle {
                             }
                             if (event.text == Key.RightArrow) {
                                 // Strip sub-navigation (R9): the whole chip row is
-                                // ONE stop (tune-local 3, never engaged). Arrows on
-                                // it cycle chips inside the strip instead of
-                                // jumping panels.
-                                // The strip stop (tune-local 3) exists only while
-                                // colours do; with zero colours local 3 is the
-                                // glow toggle, and swallowing the arrow here
-                                // would trap the cursor on an invisible stop.
+                                // ONE stop (tune-local `borders.idx-strip`, never
+                                // engaged). Arrows on it cycle chips inside the
+                                // strip instead of jumping panels.
+                                // The strip stop exists only while colours do;
+                                // with zero colours `idx-strip` is -1 and no
+                                // literal can match, so the arrow is not trapped
+                                // on an invisible stop.
                                 if (root.borders-focused-index >= root.borders-list-len
-                                    && (root.borders-focused-index - root.borders-list-len) == 3
+                                    && (root.borders-focused-index - root.borders-list-len) == borders.idx-strip
                                     && borders.tune-color-count > 0) {
                                     borders.strip-cycle(1);
                                     return accept;
@@ -507,7 +508,7 @@ export component PanelRoot inherits Rectangle {
                             if (event.text == Key.LeftArrow) {
                                 // Strip sub-navigation, same as Right above.
                                 if (root.borders-focused-index >= root.borders-list-len
-                                    && (root.borders-focused-index - root.borders-list-len) == 3
+                                    && (root.borders-focused-index - root.borders-list-len) == borders.idx-strip
                                     && borders.tune-color-count > 0) {
                                     borders.strip-cycle(-1);
                                     return accept;
