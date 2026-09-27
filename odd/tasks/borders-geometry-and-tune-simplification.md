@@ -96,6 +96,37 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   `watcher::tests::sandboxed_lock_is_released_when_the_watcher_is_killed_with_a_live_child`,
   `reload_coalescer::sandboxed_request_pending_keeps_drainer_alive_and_fires`,
   `providers::noctalia::tests::v5_apply_custom_owner_reasserts_off_thread_without_blocking`.
+  Implemented in `81173cd`; see the verification block below.
+- [x] **B5/B6 implementation — commits `c65ce01` (B5) and `81173cd` (B6).** B5 ships both halves:
+  a per-tick `Config::save()` in the hot path (measured 0.031 ms per save, so the millisecond
+  budget holds) and `flush_geometry_persist`, which stops the idle timer and drains the owed
+  persist synchronously right after `run_event_loop_until_quit()` returns. B6 sandboxes
+  `test_system_minimize_10s` under `TempEnv` against a temp project, turns the three flaky
+  assertions into bounded polls (the flakes were a shared class: asserting an eventual side
+  effect immediately after an earlier signal), and routes the three `settings.rs` reloads through
+  `reload_hyprland()`, a no-op under `cfg(test)`. Real `hyprctl` calls during a full suite went
+  from 14 to 2, both read-only `-j` queries, zero reloads.
+- [x] **B5/B6 verification — cross-model (GLM 5.3-flash).** **B6: PASS.** Independently measured
+  over 4 full suites: environment byte-identical before and after (`~/.config/hve/config.json`,
+  `~/.config/hypr/hyprland.lua`, all of `~/.cache/hve/`, `assets/fragments/*.lua`), 2 read-only
+  `hyprctl -j` invocations per suite and zero reloads, and the full diff of `watcher.rs`,
+  `reload_coalescer.rs`, `noctalia.rs`, `settings.rs` and `ui_tests.rs` reviewed for weakened
+  assertions: none deleted, none `#[ignore]`d, none relaxed. **B5: FAIL on its test, not on its
+  code** — see B7. The 400 ms live claim stayed unverified by the reviewer.
+- [x] **B5 live acceptance — the keeper, 2026-09-27.** Rebuilt and installed binary (08:07), the
+  thickness slider responds instantly, and changing the thickness and closing HVE immediately
+  followed by `hyprctl reload` keeps the value. The unverified half of B5 is now closed by the
+  strongest available check (the keeper's own live test).
+- [ ] **B7 — make the shutdown flush test protect the REAL wiring (CRITICAL, candidate-caused).**
+  `flush_on_shutdown_writes_the_last_geometry` calls `flush_geometry_persist` directly
+  (`src/main.rs:4802`), so it never exercises the call site right after
+  `run_event_loop_until_quit()` (`src/main.rs:5435/5453`). Proof it is a false safety net: in a
+  disposable worktree the reviewer deleted the production call and ran `cargo clean -p hve`; the
+  test still passed, printing `warning: function flush_geometry_persist is never used`. The
+  acceptance criterion for the replacement is self-validating: **the new test must FAIL when the
+  production flush call is removed** — demonstrate that empirically before claiming it done. Also
+  correct the task note claiming a plain "RED first" for B7's subject (the original RED only ever
+  proved the function did not exist, not that the call was wired).
 - [ ] **B2 — recover the radius / gap_in / gap_out sliders** at the top of Borders, as a
   "Geometry" block next to size, with the keeper's personal comment. Watch the engaged-slider
   seat numbers left free by U3a.
@@ -190,7 +221,7 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 
 ## Next step
 
-B1 is done and verified. Decide between (a) the keeper's live test with a rebuilt binary
-(then B2) and (b) closing B5's durability window and B6's test isolation first.
-B2: recover the radius / gap_in / gap_out sliders at the top of Borders as a "Geometry" block
+B1, B5 and B6 are done, verified and accepted live. **B7 is next**: the B5 shutdown test is a
+false safety net and must be replaced by one that fails when the production flush call is removed.
+Then B2: recover the radius / gap_in / gap_out sliders at the top of Borders as a "Geometry" block
 next to size, with the keeper's personal comment.
