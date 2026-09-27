@@ -554,8 +554,8 @@ mod tests {
         // active_id will be None (no process running in tests)
         // or Some("noctalia") (if one of the detectors returns true)
         match registry.active_id() {
-            None => {} // ninguno activo — OK
-            Some(id) => assert_eq!(id, "noctalia"), // uno activo — OK
+            None => {} // none active — OK
+            Some(id) => assert_eq!(id, "noctalia"), // one active — OK
         }
     }
 

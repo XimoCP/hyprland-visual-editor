@@ -1017,7 +1017,7 @@ export component NavCard inherits Rectangle {
     VerticalLayout {
         padding-top: 14px;
         padding-bottom: 14px;
-        spacing: 6px; // Más aire entre icono, label y count
+        spacing: 6px; // More breathing room between icon, label and count
         alignment: center;
 
         Rectangle {
@@ -1034,15 +1034,15 @@ export component NavCard inherits Rectangle {
 
         Text {
             text: root.label;
-            font-size: 14px;       // 12→14px: más píxeles para rasterizar sin hinting
+            font-size: 14px;       // 12→14px: more pixels to rasterise without hinting
             font-weight: 600;
-            color: HveColors.text; // Siempre blanco, contraste ~7.8:1 contra bg-card
+            color: HveColors.text; // Always white, ~7.8:1 contrast against bg-card
             horizontal-alignment: center;
         }
 
         Text {
             text: root.count-text;
-            font-size: 11px;       // 10→11px: mejora legibilidad sin hinting
+            font-size: 11px;       // 10→11px: better legibility without hinting
             color: HveColors.text-muted;
             horizontal-alignment: center;
         }
