@@ -142,9 +142,42 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   **passed**. Worktree removed with `git worktree remove --force`. Full suite 1012 passed /
   0 failed, 0 warnings; B6 fence intact (only 2 read-only `hyprctl -j` calls, 0 reloads) and the
   environment hashes were byte-identical after two full suites.
-- [ ] **B2 — recover the radius / gap_in / gap_out sliders** at the top of Borders, as a
+- [x] **B2 — recover the radius / gap_in / gap_out sliders** at the top of Borders, as a
   "Geometry" block next to size, with the keeper's personal comment. Watch the engaged-slider
-  seat numbers left free by U3a.
+  seat numbers left free by U3a. **Done in `d39c585`.**
+  - Ranges recovered from history, not invented: the U3a commit `ef68106` shows the removed
+    4-slider block as size 1-5, radius 0-100, gap_in 0-30, gap_out 0-30, all step 1
+    (`GeometrySlider` rounds its float to `int`). The block now renders under a "Geometry"
+    heading with the keeper's note (English, intent not literal translation) and four plain
+    descriptions.
+  - New keyboard seat map (tune-local = global minus the preset-card count):
+    0=size, 1=radius, 2=gap-in, 3=gap-out, 4=angle, 5=inactive, 6=strip (colours only),
+    7=add (colours only), 8=remove (colours only), then 9=glow-enabled
+    (+range/power/colour/inactive when on), the three anim leaves (enabled +speed/bezier/style
+    when on), rule, save-name, save-button. Zero colours drops the three slot stops, so
+    glow-enabled is 6 and the strip/add/remove positions do not exist. `borders_tune_stop_count`
+    went 10→13 fixed (16 with colours, 13 without; 29 with everything on).
+  - The slot-block shift is centralised: the pane derives `idx-add`/`idx-remove`/`idx-glow-en`
+    from `slot-stops`, the section exposes `out property idx-strip` and `PanelRoot` reads it
+    instead of the old literal `3`, so the ←/→ strip dispatch can never drift from the map again.
+  - Plumbing untouched by design: `slider-changed` writes the edited `geom-*` value and restarts
+    the SAME 80ms timer, which sends all four through the existing `apply-geometry`; the B1 hot
+    apply and the B5 coalesced durable write are unchanged, so a change to one slider cannot wipe
+    the other three and durability still holds.
+  - Verification: `cargo test` full suite **1014 passed / 0 failed, 0 warnings**; suite sandbox
+    intact (SHA-256 of `~/.config/hve/config.json`, `~/.config/hypr/hyprland.lua`,
+    `assets/fragments/*.lua` and all of `~/.cache/hve` byte-identical before/after).
+  - New tests, RED first: `borders_geometry_block_edits_one_value_and_keeps_the_rest` drives real
+    key events into PanelRoot and the real `panel-apply-geometry` callback, then asserts each of
+    the four seats moves exactly one value and leaves the other three intact (one apply per edit);
+    `borders_geometry_block_renders_each_slider` renders the radius / gap-in / gap-out rows and
+    asserts each focused row is a 96px slider carrying its white knob. The tune-count and
+    zero-colour ghost-stop tests were re-pinned to the shifted map.
+  - Render PNGs read with vision: `borders_geometry_block.png` shows the "Geometry" heading and
+    Border Thickness 2px / Corner Radius 10px / Inner Gap 5px / Outer Gap 6px above Gradient
+    Angle; `borders_geometry_radius_focus.png`, `borders_geometry_gapin_focus.png` and
+    `borders_geometry_gapout_focus.png` each show the corresponding row with the icy focus ring
+    and white knob.
 - [ ] **B3 — simplify the tune pane** to Colors, Angle, Inactive color, Halo/Shadow, Save.
   Delicate: touches the save path. Do it last.
 - [ ] **B4 — i18n** for everything added (preset `@Title`/`@Desc` are English-only today and not
@@ -243,9 +276,14 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   nested in a branch -> FAILED, called before the loop -> FAILED, restored -> passed; worktree
   removed. Full suite 1012 passed / 0 failed, 0 warnings; environment hashes byte-identical
   after two suites; B6 fence intact (2 read-only `hyprctl -j`, 0 reloads).
+- 2026-09-27: **B2 done** (this commit, `d39c585`). See the B2 checkbox above for the full record:
+  ranges recovered from `ef68106`, the new seat map, the `idx-strip` de-duplication, and the two
+  new tests (behaviour through the real keyboard path + per-slider render). Full suite 1014
+  passed / 0 failed, 0 warnings; environment hashes byte-identical before/after.
 
 ## Next step
 
-B1, B5, B6 and B7 are done, verified and accepted live. **B2 is next**: recover the radius /
-gap_in / gap_out sliders at the top of Borders as a "Geometry" block next to size, with the
-keeper's personal comment.
+B1, B5, B6, B7 and B2 are done, verified and accepted live. **B3 is next**: simplify the tune
+pane to Colors, Angle, Inactive color, Halo/Shadow, Save (animations, curves and rules gone).
+B4 (i18n for everything added) follows. B3 is delicate — it touches the save path — so do it
+last among the code changes.
