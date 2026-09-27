@@ -47,6 +47,24 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 - Visual verification is mandatory for any `.slint` change: run the headless render test, READ
   the PNGs it writes under `/tmp/opencode/`, and extend/add a render test for any new state.
 
+## Delivery strategy (size exception)
+
+The keeper explicitly approved a **`size:exception`** for this change on
+2026-09-27 (XimoCP, in session). `single-pr` is the chosen strategy: the change
+ships as one PR. Two of its work units exceed the ~400-authored-line review
+budget:
+
+- **B3** (`64d4e09`) — ~1208 authored lines (+278 / -930). Does not split: the
+  seat map, the stop count and the removed blocks move together, so a slice
+  would not compile.
+- **B4** (`e348cbb`) — ~1340 authored lines (+1221 / -119). ~560 lines are the
+  new test block and ~237 the two new files; the wiring and its tests are one
+  behaviour.
+
+Both are accepted as a **size:exception and carried into the PR as-is**, not
+split into chained PRs: the keeper accepted the larger diff over a broken slice.
+No code was shrunk to reach the budget.
+
 ## Acceptance criteria
 
 1. Dragging the thickness slider reaches the compositor in the millisecond range (hot apply),
@@ -186,6 +204,13 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   see the B4 record in Progress below. **B4-correction:** the preset DESCRIPTIONS never
   reached the picker (the `border-descs` channel was dead end to end) and 13 of the 14 EN
   values were invented fragments; fixed — see the B4-correction record in Progress below.
+- [x] **B8 — translate the panel chrome** the keeper asked for by name: the left rail
+  (Save / Borders / Motion / Filters / System) and the panel header hint ("Esc to return"),
+  shared by all five sections. Method reuses B4's channel rather than inventing a second one:
+  a new exported global `PanelText` (`ui/panel/panel_text.slint`) filled by
+  `src/panel_i18n.rs::apply_panel_chrome`, applied once in `main()` before the event loop.
+  English defaults are today's copy verbatim; the `panel.*` i18n section is reconciled, not
+  duplicated. **Done in `ca31949`** — see the B8 record in Progress below.
 
 ## Key files
 
@@ -491,11 +516,73 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
     1025; +1 test). B6 fence re-measured: SHA-256 of `~/.config/hve/config.json`,
     `~/.config/hypr/hyprland.lua`, all of `~/.cache/hve` and `assets/fragments/*.lua` byte-identical
     before/after a full suite.
+- 2026-09-27: **B8 done** (this commit, `ca31949`). The panel chrome the keeper
+  asked for ("el chrome de la izquierda") reads in the selected language now. What
+  was translated, and with which keys:
+  - **nav rail** (`ui/panel/PanelMenu.slint`): Save / Borders / Motion / Filters /
+    System -> `panel.nav.save` / `.borders` / `.motion` / `.filters` / `.system`
+    (all ADDED; the pre-existing `panel.tabs.*` keys were the old HVE 1 tab names —
+    Home/Animations/Effects/Themes — and do NOT map to the rail, so they were left
+    untouched rather than repurposed).
+  - **panel header hint** (`ui/panel/PanelRoot.slint`): "Esc to return" ->
+    `panel.esc_return` (ADDED).
+  - **unreachable section-placeholder branch** (`PanelRoot.slint`, section not in
+    0..4, never painted): its nav array, "Section placeholder — slice 1 skeleton"
+    and "Back to Gallery" now read from `PanelText` too (`panel.nav.*`,
+    `panel.section_placeholder`, `panel.back_to_gallery`, the last two ADDED), so
+    no stale English chrome literal is left in the file even where dead.
+  - **Mechanism reused, not reinvented**: a new exported global `PanelText`
+    (`ui/panel/panel_text.slint`, new file) filled by
+    `src/panel_i18n.rs::apply_panel_chrome` from the same embedded map B4 uses,
+    applied once in `main()` before the event loop (line 2468-2471 area). The
+    global's defaults ARE today's English copy, so a run that never calls the pass
+    reads exactly as before.
+  - **English is unchanged.** Two independent proofs: (1) the frame test snapshots
+    the chrome with the Slint DEFAULTS (no i18n pass), then applies Spanish, then
+    applies English, and the rail and the header must come back **byte for byte** —
+    so the English key values equal today's copy; (2) a static check that each
+    `PanelText` default string equals its `i18n/en.json` value for all 8 labels.
+  - **The test that proves the language switch**,
+    `panel_chrome_follows_the_language`: it reads the REAL production function
+    `apply_panel_chrome` in both languages, asserts the global, and measures the
+    FRAME — the rail repaints **714** changed pixels and the header hint **1089**
+    at Spanish, and the round trip restores both areas to **0**. Backed by
+    `the_panel_chrome_reads_every_label_from_the_text_global` (source check: every
+    label is bound to `PanelText`, none hardcoded — measured: hardcoding
+    `label: "Borders"` back FAILS it while the global test stays green, the same
+    B4 trap) and `main_applies_the_panel_chrome_i18n_before_the_event_loop` (AST,
+    call-site pinned exactly once before the loop).
+  - **Visual verification (PNGs read with vision, both languages):**
+    `/tmp/opencode/panel_chrome_en.png` — rail "Save / Borders / Motion / Filters /
+    System" (Borders active), header "▸ My Theme" + "Esc to return";
+    `/tmp/opencode/panel_chrome_es.png` — rail "Guardar / Bordes / Movimiento /
+    Filtros / Sistema", header "Esc para volver". The longest Spanish label
+    ("Movimiento") fits the 160px rail with room; nothing clipped or overflowing.
+    `slice_settled.png` (gallery) unchanged. The Borders CONTENT stays English in
+    both frames on purpose: only chrome is re-translated here, which is what makes
+    every changed pixel chrome.
+  - **Static gate** (named command):
+    `grep -nE '"(Save|Borders|Motion|Filters|System)"' ui/panel/PanelMenu.slint`
+    and `grep -nE '"(Esc to return|Back to Gallery|Section placeholder)'
+    ui/panel/PanelRoot.slint` both return nothing.
+  - **Deliberately NOT translated:** the theme name in the header (`▸ My Theme`) is
+    DATA the user chose; the symbols `▶`/`▸` are glyphs; the Save-panel body
+    defaults in `PanelRoot` (`save-button-text: "Save"`, `settings-title: "System"`,
+    …) are another panel's CONTENT (out of scope), and the colour-picker footer
+    hint `ColorPicker.slint:358` is Borders content, not shell chrome — reported as
+    a separate decision, not touched.
+  - Diff: 9 files + 1 new, **+315 / -13 authored lines** (under the ~400 budget).
+    Full suite **1030 passed / 0 failed, 0 warnings** (was 1026; +4 tests). B6 fence
+    re-measured: SHA-256 of `~/.config/hve/config.json`, `~/.config/hypr/hyprland.lua`,
+    all of `~/.cache/hve` and `assets/fragments/*.lua` byte-identical before/after;
+    0 reloads.
 
 ## Next step
 
-B1, B5, B6, B7, B2, B3 and B4 are done and B4's correction is in (`70c1874`); the full suite is
-green, the picker PNGs are read in both languages. Two follow-ups B4 surfaced remain, neither of
-them i18n wiring and neither started: `SavedPresetCard.apply-text` is declared and never painted,
-and the panel nav strip ("Save / Borders / Motion / Filters / System", `ui/panel/PanelRoot.slint:911`)
-is still hardcoded English — shared chrome across all sections, so it needs its own decision.
+B1, B5, B6, B7, B2, B3, B4 (with its correction) and B8 are done; the full suite is
+green and the chrome PNGs are read in both languages. B8 closed the "panel nav strip
+is still hardcoded English" follow-up B4 had surfaced. Two follow-ups remain, neither
+started: `SavedPresetCard.apply-text` is declared and never painted, and the Save
+panel body defaults in `PanelRoot` (`save-button-text` / `save-placeholder`, set
+hardcoded in `main.rs:~4157`) are still English-only — that is Save's CONTENT, a
+separate decision from the chrome.
