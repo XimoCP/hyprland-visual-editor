@@ -178,8 +178,9 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
     Angle; `borders_geometry_radius_focus.png`, `borders_geometry_gapin_focus.png` and
     `borders_geometry_gapout_focus.png` each show the corresponding row with the icy focus ring
     and white knob.
-- [ ] **B3 — simplify the tune pane** to Colors, Angle, Inactive color, Halo/Shadow, Save.
-  Delicate: touches the save path. Do it last.
+- [x] **B3 — simplify the tune pane** to Colors, Angle, Inactive color, Halo/Shadow, Save.
+  Delicate: touches the save path. Do it last. **Done in `64d4e09`** — see the B3
+  record in Progress below.
 - [ ] **B4 — i18n** for everything added (preset `@Title`/`@Desc` are English-only today and not
   wired to i18n; `13_the_joker` also has Spanish comments and no `@Color`).
 
@@ -280,10 +281,47 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   ranges recovered from `ef68106`, the new seat map, the `idx-strip` de-duplication, and the two
   new tests (behaviour through the real keyboard path + per-slider render). Full suite 1014
   passed / 0 failed, 0 warnings; environment hashes byte-identical before/after.
+- 2026-09-27: **B3 done** (this commit, `64d4e09`). The tune pane is trimmed to Geometry,
+  Gradient Angle, Inactive, Active Border Colors, Glow (Halo/Shadow) and Save; the whole
+  "Border Animations" block (Border Angle / Border Pulse / Fade Shadow, each with Curve and
+  Style) and the "Floating Window Rule" toggle are gone. **`anim-*` / `tune-anim-*` model: KEPT,
+  editing surface only removed.** Decision with evidence: `tune_params_from_window`
+  (`src/main.rs:303-318`) reads `w.get_tune_rule_enabled()` and `w.get_tune_animations()`, and
+  BOTH the live-draft callback (`on_panel_tune_changed`, `src/main.rs:4449`) and the save
+  callback (`on_panel_save_border_preset`, `src/main.rs:4337`) build their `BorderParams` through
+  it. Dropping the properties would make any edit or save of an animation-bearing preset silently
+  strip its `hl.animation` / `windowrulev2` data. `sync_border_tune_pane`, the per-leaf Rust
+  setters and the sealed engine are untouched; the pane simply no longer edits the leaves. The
+  applies themselves never depended on the model — `border.sh` copies the preset `.lua` verbatim
+  — so animation-bearing presets keep animating when applied.
+  - New keyboard seat map (tune-local): 0=size, 1=radius, 2=gap-in, 3=gap-out, 4=angle,
+    5=inactive, [6=strip, 7=add, 8=remove while colours exist], then 6 with zero colours / 9 with
+    colours = glow-enabled (+1 range, +2 power, +3 colour, +4 inactive glow when on), save-name,
+    save-button. 9 fixed stops (12 with colours), +4 with glow: 9 / 12 glow-off, 13 / 16 glow-on.
+    The three mirrored maps moved together — the pane's `idx-*` (now `base-tail` feeds
+    `idx-save-name`/`idx-save-btn`), the section's `idx-glow-en`/`tune-count`, and
+    `callbacks::borders_tune_stop_count` (the three anim params were dropped).
+  - Tests, RED first on the new count contract: `animation_bearing_preset_round_trips_through_the_tune_model`
+    (13_the_joker's three leaves survive load -> `tune_params_from_window` -> `generate_border_lua_full`,
+    which re-emits `hl.animation`) and `borders_tune_seat_map_walks_each_remaining_control_once` (a REAL
+    Down+Enter walk in both colour cases through PanelRoot's FocusScope: zero colours -> add/remove never
+    fire, 13 seats; with colours -> add then remove then glow then Save, 16 seats), plus the render test
+    `borders_tune_trimmed_pane_ends_at_save`. Existing count/focus tests were re-pinned to the smaller
+    map; no assertion covering a remaining control was weakened. `borders_strip_picker_opens_above_strip`
+    now uses a glow-bearing fixture: the R10 top-anchor is content-clamped, and with the animation/rule
+    blocks gone the bare pane is shorter than a viewport, so the card lands as high as the content allows
+    (still fully visible, directly above the strip) — the assertion was kept, not relaxed.
+  - Visual PNGs read with vision: `borders_tune_trimmed_save_focus.png` (pane ends at Save; inventory
+    Geometry -> Angle -> Inactive -> Active Border Colors -> Glow -> Save; no Border Animations, no
+    Floating Window Rule, no empty container), `borders_tune_trimmed_past_save.png` (no dead tail),
+    `borders_tune_focus_middle.png` (glow-enable seat), `borders_tune_focus_last.png` (glow-expanded tail
+    ends at Save), `slice_settled.png` (gallery unaffected).
+  - Diff: 4 files, +278 / -930 authored lines (1208 total), dominated by the ~600 removed render lines;
+    above the ~400 soft budget, reported rather than split (a split would not compile: the map, count and
+    removed blocks move together). Full suite **1017 passed / 0 failed, 0 warnings** (was 1014; +3 tests).
 
 ## Next step
 
-B1, B5, B6, B7 and B2 are done, verified and accepted live. **B3 is next**: simplify the tune
-pane to Colors, Angle, Inactive color, Halo/Shadow, Save (animations, curves and rules gone).
-B4 (i18n for everything added) follows. B3 is delicate — it touches the save path — so do it
-last among the code changes.
+B1, B5, B6, B7, B2 and B3 are done, verified and accepted live. **B4 is next**: i18n for everything
+added (preset `@Title`/`@Desc` are English-only today and not wired to i18n; `13_the_joker` also has
+Spanish comments and no `@Color`).
