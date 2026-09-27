@@ -5599,10 +5599,17 @@ fn borders_strip_renders_correct_chip_count() {
 /// popover and not pinned to the top of the pane: opening it must show the
 /// card and its chips together (R10), and the card's own bottom edge must sit
 /// one layout gap above the chip row.
+///
+/// B3 note: the R10 "card lands at the top of the pane content" anchor is
+/// content-clamped — it only reaches the very top while the content BELOW the
+/// card fills at least a viewport. Removing the animation / rule blocks made the
+/// bare pane shorter than that, so this scenario enables glow (as most real
+/// presets do) to keep the anchor observable without weakening any assertion.
 #[test]
 fn borders_strip_picker_opens_above_strip() {
     use slint::ComponentHandle as _;
     let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
+    win.set_tune_glow_enabled(true);
     settle_frames(20);
     let closed = win.window().take_snapshot().expect("closed snapshot");
     assert!(
@@ -5705,49 +5712,49 @@ fn borders_strip_compact_rows_height() {
 /// R8 — the strip is ONE stop whatever the slot count: `borders_tune_stop_count`
 /// must IGNORE a POSITIVE `slot_count`. The old formula added N stops (one per
 /// gradient slot), so the same call returned 14 for 2 slots and 20 for 8; the
-/// new one is flat. PR 1 shipped the formula, so this test LOCK THE BEHAVIOUR IN
-/// rather than driving a fresh RED. The values grew by three in B2, when the
-/// radius / inner-gap / outer-gap sliders rejoined the Borders tune pane as the
-/// "Geometry" block: the fixed stops are now size, radius, gap-in, gap-out,
-/// angle and inactive (16 with colours, 13 without). ZERO slots still moves the
-/// count: the strip / add / remove controls are not mounted, so their three
-/// stops are not counted (Q2).
+/// new one is flat. B3 removed the three animation leaves and the floating
+/// window rule from the tune pane, so the count dropped again: the fixed stops
+/// are now size, radius, gap-in, gap-out, angle, inactive, glow-enable,
+/// save-name and save-button (12 with colours, 9 without). ZERO slots still
+/// moves the count: the strip / add / remove controls are not mounted, so their
+/// three stops are not counted (Q2). The animation leaves still exist in the
+/// model (they round-trip through `tune-animations`) but they have no keyboard
+/// seat any more.
 #[test]
 fn borders_tune_stop_count_strip_single_stop() {
     use crate::callbacks::borders_tune_stop_count;
 
-    // 2 slots, no glow, no anims → 16: size, radius, gap-in, gap-out, angle,
-    // inactive, STRIP, add, remove, glow-toggle, 3 idle anim leaves, rule,
-    // save-name, save-button.
-    assert_eq!(borders_tune_stop_count(2, false, false, false, false), 16);
+    // 2 slots, no glow → 12: size, radius, gap-in, gap-out, angle, inactive,
+    // STRIP, add, remove, glow-toggle, save-name, save-button.
+    assert_eq!(borders_tune_stop_count(2, false), 12);
 
-    // 4 slots + glow → 20, and 2 slots + glow → the same 20: the two extra
+    // 4 slots + glow → 16, and 2 slots + glow → the same 16: the two extra
     // slots contribute nothing, glow contributes its fixed 4.
-    assert_eq!(borders_tune_stop_count(4, true, false, false, false), 20);
-    assert_eq!(borders_tune_stop_count(2, true, false, false, false), 20);
+    assert_eq!(borders_tune_stop_count(4, true), 16);
+    assert_eq!(borders_tune_stop_count(2, true), 16);
 
-    // 8 slots, glow on, all three anims on → 29.
-    assert_eq!(borders_tune_stop_count(8, true, true, true, true), 29);
+    // 8 slots, glow on → 16.
+    assert_eq!(borders_tune_stop_count(8, true), 16);
 
     // The contract itself: any POSITIVE N is ignored, so those slot counts
     // all agree.
     for n in [2, 4, 8, 99] {
         assert_eq!(
-            borders_tune_stop_count(n, false, false, false, false),
-            16,
+            borders_tune_stop_count(n, false),
+            12,
             "slot_count {n} must not change the stop count — the strip is ONE stop"
         );
         assert_eq!(
-            borders_tune_stop_count(n, true, true, true, true),
-            29,
+            borders_tune_stop_count(n, true),
+            16,
             "slot_count {n} must not change the stop count — the strip is ONE stop"
         );
     }
 
     // Zero colours: the three slot-management stops do not exist, so the count
-    // drops by three (13 fixed stops) instead of counting unmounted controls.
-    assert_eq!(borders_tune_stop_count(0, false, false, false, false), 13);
-    assert_eq!(borders_tune_stop_count(0, true, true, true, true), 26);
+    // drops by three (9 fixed stops) instead of counting unmounted controls.
+    assert_eq!(borders_tune_stop_count(0, false), 9);
+    assert_eq!(borders_tune_stop_count(0, true), 13);
 }
 
 /// A focused, non-grabbed GeometrySlider row renders as a 96px card whose icy
@@ -5878,6 +5885,175 @@ fn borders_geometry_block_renders_each_slider() {
     let gap_out = win.window().take_snapshot().expect("gap-out focus snapshot");
     save_slice_png(gap_out.clone(), "/tmp/opencode/borders_geometry_gapout_focus.png");
     assert_geometry_slider_row(&gap_out, "gap-out");
+}
+
+/// B3 (a) — a preset that carries its animation in its own `.lua` must keep it
+/// through the whole tune round-trip, even though the tune pane no longer edits
+/// animations. Loading populates the model; the save path rebuilds the preset
+/// from that model. If the animation leaves were dropped from the model, any
+/// edit or save of such a preset would silently strip the `hl.animation` block.
+/// The applies themselves (`border.sh` copies the `.lua`) are untouched; this
+/// proves the model half that B3 could have broken.
+#[test]
+fn animation_bearing_preset_round_trips_through_the_tune_model() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // 13_the_joker.lua carries THREE leaves (borderangle + border + fadeShadow)
+    // and a floating-window rule.
+    crate::sync_border_tune_pane(&win, &proj, "13_the_joker.lua");
+    let loaded = win.get_tune_animations().to_string();
+    assert!(loaded.contains("borderangle"), "the angle leaf must load: {loaded}");
+    assert!(loaded.contains("fadeShadow"), "the shadow leaf must load: {loaded}");
+    assert!(win.get_tune_rule_enabled(), "the floating-window rule must load");
+
+    // The save path rebuilds BorderParams from the tune model.
+    let params = crate::tune_params_from_window(&win, 2);
+    assert_eq!(
+        params.animations.len(),
+        3,
+        "all three animation leaves must survive the model round-trip"
+    );
+    assert!(
+        params.find_leaf("borderangle").is_some_and(|l| l.enabled),
+        "the angle leaf must stay enabled"
+    );
+    assert!(params.rule_enabled, "the rule must survive the round-trip");
+
+    let lua = crate::preset_store::PresetStore::generate_border_lua_full("roundtrip", &params);
+    assert!(
+        lua.contains("hl.animation({ leaf = \"borderangle\""),
+        "the regenerated preset must re-emit the angle animation:\n{lua}"
+    );
+    assert!(
+        lua.contains("leaf = \"fadeShadow\""),
+        "the regenerated preset must re-emit the shadow animation:\n{lua}"
+    );
+}
+
+/// B3 (b) — the seat map must reach every REMAINING tune control exactly once,
+/// in both colour cases, with no ghost stop. Drives the REAL keyboard walk
+/// (Down + Enter through PanelRoot's FocusScope) from the preset card to the end
+/// of the tune tail. Each control fires at its own seat and nowhere else:
+/// zero colours → add/remove never fire (unmounted) and the tail is glow +
+/// Save (13 seats); with colours → add then remove fire once each and the tail
+/// is glow + Save (16 seats). A ghost seat (a mapped index with no control)
+/// would leave the expected action unfired. The animation leaves and the
+/// floating window rule no longer have any seat.
+#[test]
+fn borders_tune_seat_map_walks_each_remaining_control_once() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+
+    #[derive(Default)]
+    struct Log {
+        adds: u32,
+        removes: u32,
+        saves: u32,
+    }
+
+    for (colors, expected_walk) in [
+        (&[][..], 13usize),
+        (&["p:primary", "p:secondary"][..], 16usize),
+    ] {
+        let win = borders_tune_pane_fixture(colors);
+        win.set_border_preset_name(slint::SharedString::from("B3 walk"));
+        focus_settle();
+
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Log::default()));
+        {
+            let w = win.as_weak();
+            let log = log.clone();
+            // Mutate the model like production does, so `remove` is legal at
+            // its own seat (it needs > 2 slots).
+            win.on_panel_add_color_slot(move || {
+                log.borrow_mut().adds += 1;
+                if let Some(w) = w.upgrade() {
+                    w.set_tune_color_count(w.get_tune_color_count() + 1);
+                }
+            });
+        }
+        {
+            let w = win.as_weak();
+            let log = log.clone();
+            win.on_panel_remove_color_slot(move || {
+                log.borrow_mut().removes += 1;
+                if let Some(w) = w.upgrade() {
+                    w.set_tune_color_count((w.get_tune_color_count() - 1).max(2));
+                }
+            });
+        }
+        {
+            let log = log.clone();
+            win.on_panel_save_border_preset(move |_| log.borrow_mut().saves += 1);
+        }
+
+        // A slider seat engages on Enter; the next Down releases it and moves
+        // on, so each pass lands exactly one seat further down. The strip / a
+        // colour seat can open the picker: close it so the walk continues.
+        for _ in 0..expected_walk {
+            focus_press_key(&win, Key::DownArrow);
+            focus_press_key(&win, Key::Return);
+            focus_settle();
+            if win.get_tune_editing_slot() >= 0 {
+                focus_press_key(&win, Key::Escape);
+                focus_settle();
+            }
+        }
+
+        let log = log.borrow();
+        let expected = if colors.is_empty() { 0 } else { 1 };
+        assert_eq!(
+            log.adds, expected,
+            "colours={}: add must fire once at its seat (and never at a ghost)",
+            colors.len()
+        );
+        assert_eq!(
+            log.removes, expected,
+            "colours={}: remove must fire once at its seat",
+            colors.len()
+        );
+        assert_eq!(
+            log.saves, 1,
+            "colours={}: the walk's LAST seat must be Save ({} seats walked)",
+            colors.len(),
+            expected_walk
+        );
+        assert!(
+            win.get_tune_glow_enabled(),
+            "colours={}: the glow toggle must be a real seat on the walk",
+            colors.len()
+        );
+    }
+}
+
+/// B3 (c) — the trimmed tune pane must END at Save: focus the LAST seat (Save
+/// button) and render it. The PNGs are the human-review evidence for the visual
+/// half (no leftover container, no orphan heading where the animation / rule
+/// blocks used to be); the ghost-stop walk above pins reachability.
+#[test]
+fn borders_tune_trimmed_pane_ends_at_save() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    // 2 colours, glow off → 12 seats; the last one is the Save button.
+    let count = crate::callbacks::borders_tune_stop_count(2, false);
+    assert_eq!(count, 12, "trimmed inventory with colours, glow off");
+
+    win.set_panel_kbd_preview_index(1 + count - 1);
+    settle_frames(80);
+    let shot = win.window().take_snapshot().expect("save-focused snapshot");
+    save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_trimmed_save_focus.png");
+    assert!(
+        count_icy_pixels(&shot) > 200,
+        "the Save seat must paint its focus ring"
+    );
+
+    // The seat one past Save is not mounted; render it for review as well.
+    win.set_panel_kbd_preview_index(1 + count);
+    settle_frames(80);
+    let past = win.window().take_snapshot().expect("past-save snapshot");
+    save_slice_png(past.clone(), "/tmp/opencode/borders_tune_trimmed_past_save.png");
 }
 
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
@@ -6518,10 +6694,12 @@ fn borders_glow_group_renders_addable_and_expanded() {
 }
 
 // ── Borders full-tune focus walk (keyboard R11 recompute) ─────────────
-// Tune order: size, angle, inactive, strip, add/remove, glow group, 3 anim
-// leaves (enabled/speed/bezier/style), rule, save name + button, then wrap.
+// Tune order: size, radius, gap-in, gap-out, angle, inactive, strip,
+// add/remove, glow group, save name + button, then wrap. B3 removed the three
+// animation leaves and the floating window rule, so the tail of the walk is now
+// the glow group + Save.
 // Focus the LAST stop (Save button) and a MIDDLE stop (the glow-ENABLE
-// toggle, tune-local 6): the tune ScrollView must follow so each focused stop
+// toggle, tune-local 9): the tune ScrollView must follow so each focused stop
 // is visible and carries the icy #8fd8ff ring. PNGs for human review.
 #[test]
 fn borders_tune_full_focus_reaches_last_and_middle() {
@@ -6568,13 +6746,10 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     win.set_tune_glow_render_power(4);
     win.set_tune_glow_color(SharedString::from("p:primary"));
     win.set_tune_glow_color_inactive(SharedString::from("p:surface_lowest"));
-    win.set_tune_anim_borderangle_enabled(true);
-    win.set_tune_anim_border_enabled(true);
-    win.set_tune_anim_fadeshadow_enabled(true);
 
-    // Production count: 1 strip stop + glow on + 3 leaves on = 29 tune stops.
-    let tune = crate::callbacks::borders_tune_stop_count(2, true, true, true, true);
-    assert_eq!(tune, 29, "fixture must expose the full inventory");
+    // Production count: 9 fixed stops + 3 slot stops + 4 glow stops = 16.
+    let tune = crate::callbacks::borders_tune_stop_count(2, true);
+    assert_eq!(tune, 16, "fixture must expose the trimmed inventory");
     let last = 1 + tune - 1; // 1 card + tune, last = Save button
     let middle = 1 + 9; // glow-enabled stop (size0 radius1 gap-in2 gap-out3 angle4 inactive5 strip6 add7 remove8 glow-en9 -> global 10)
 
@@ -6622,7 +6797,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
          Range stop"
     );
 
-    // Positive control: the neighbouring glow stop (Range, tune-local 7) DOES
+    // Positive control: the neighbouring glow stop (Range, tune-local 10) DOES
     // carry the white knob, so the measurement above is not vacuous.
     win.set_panel_kbd_preview_index(middle + 1);
     for _ in 0..80 {
@@ -6744,11 +6919,12 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         slint::Color::from_rgb_u8(15, 23, 42),
     ])));
 
-    // Glow on, leaves off: 1 card + 20 tune stops. Focus the LAST glow colour
-    // (glow-inactive) so both glow colour cards are inside the viewport.
+    // Glow on: 9 fixed + 3 slot stops + 4 glow stops = 16 tune stops. Focus the
+    // LAST glow colour (glow-inactive) so both glow colour cards are inside the
+    // viewport.
     assert_eq!(
-        crate::callbacks::borders_tune_stop_count(2, true, false, false, false),
-        20,
+        crate::callbacks::borders_tune_stop_count(2, true),
+        16,
         "fixture inventory"
     );
     let glow_inactive = 1 + 13; // 1 card + tune-local 13

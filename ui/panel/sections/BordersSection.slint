@@ -5,7 +5,9 @@
 //     → 80ms debounce → apply_geometry, angle segmented control (30/45/90),
 //     inactive color row, dynamic color slots (2..8) from
 //     tune-active-colors model with interactive token swatches, add/remove
-//     controls, plus save form (LineEdit + Save button) at the bottom.
+//     controls, glow/shadow group, plus save form (LineEdit + Save button) at
+//     the bottom. B3 removed the animation leaves and the floating window rule:
+//     they still round-trip through the model but have no editing surface.
 //   • List pane  — Built-in presets (apply only) + user presets (apply,
 //     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
 // Wide section → panes side by side; narrow section → stacked. Each pane owns
@@ -111,11 +113,12 @@ component BorderCompactColorRow inherits Rectangle {
     }
 }
 
-// ─── Tune pane: Geometry block + angle + inactive + colors + save form. ───
+// ─── Tune pane: Geometry block + angle + inactive + colors + glow + save. ───
 // Recovered in B2: the 4-slider Geometry block (thickness, radius, gap_in,
 // gap_out) is back at the top, next to the size slider, after U3a had removed
 // it and left only the thickness. Then: dynamic color slots (2..8), angle
-// segmented control (30/45/90), inactive color row, glow / animation groups.
+// segmented control (30/45/90), inactive color row, glow / shadow group and the
+// save form. B3 removed the animation leaves and the floating window rule.
 // Every control carries a plain-language description (frozen requirement).
 component BordersTunePane inherits Rectangle {
     in property <int> size: 2;
@@ -190,15 +193,11 @@ component BordersTunePane inherits Rectangle {
     // the one tune value with NO route to Rust, so neither the 30/45/90 buttons
     // nor the arrow cycle could ever change the desktop border.
     callback angle-changed(int);
-    // The floating-rule toggle has the same problem as the angle: it moved its
-    // own state and never reached Rust, so the mouse path did not apply live
-    // (only the keyboard path in `tune-enter` did).
-    callback rule-toggled(bool);
-    callback anim-changed(string, bool, int, string, string);
-    // Bezier/Style rows: a click cycles the value (the section owns the
-    // next-value logic, so mouse and keyboard share one implementation).
-    callback cycle-anim-part(string, string);
-    // Rule toggle
+    // Model-only animation / rule state. B3 removed the animation leaves and the
+    // floating window rule from the editing surface, so the pane no longer edits
+    // them: the section still owns `tune-animations` (the encoded leaf string)
+    // and `tune-rule-enabled`, which Rust reads for the live draft and the preset
+    // save round-trip. They are kept here so the model stays whole.
     in-out property <bool> tune-rule-enabled: false;
 
     // ── Picker keyboard command channel (task 3.7) ────────────────
@@ -215,10 +214,11 @@ component BordersTunePane inherits Rectangle {
     // stops at the top are 0=size, 1=radius, 2=gap-in, 3=gap-out, 4=angle,
     // 5=inactive. WHILE COLOURS EXIST the slot block follows:
     // 6=strip, 7=add, 8=remove, 9=glow-enabled (10..13=range, power, color,
-    // inactive when on), then per anim leaf enabled (speed, bezier, style when
-    // on) x3, rule, save-name, save-button. WITH ZERO COLOURS the strip / add /
-    // remove block is not mounted, so it does not exist and everything after
-    // `inactive` shifts down by three (`slot-stops` below). Mirrors
+    // inactive when on), then save-name, save-button. WITH ZERO COLOURS the
+    // strip / add / remove block is not mounted, so it does not exist and
+    // everything after `inactive` shifts down by three (`slot-stops` below).
+    // B3 removed the three animation leaves and the floating window rule, so the
+    // tail is now the glow group + Save. Mirrors
     // callbacks::borders_tune_stop_count.
     property <int> local-focus: root.focused-index - root.split;
     property <int> slot-count: clamp(root.tune-color-count, 0, 8);
@@ -232,14 +232,13 @@ component BordersTunePane inherits Rectangle {
     // mounted (Q2). `slot-stops` is the block's width; the map below derives
     // from it instead of hard-coding 7..9.
     property <int> slot-stops: root.slot-count > 0 ? 3 : 0;
-    // Fixed tune-local map (PR 3, shifted by three in B2): the six geometry /
-    // colour stops precede the slot block, the strip is ONE stop, so the slot
-    // block is a constant 3 wide while it exists and every stop after it
-    // derives from `idx-glow-en` — no `+ slot-count` anywhere. `-1` marks a
-    // stop that is not there, so no literal can ever match an absent control.
-    // Downstream idx-a*/base-tail/idx-rule/idx-save-* recompute from
-    // `base-anim` alone. Mirrors callbacks::borders_tune_stop_count and
-    // BordersSection.tune-enter.
+    // Fixed tune-local map: the six geometry / colour stops precede the slot
+    // block, the strip is ONE stop, so the slot block is a constant 3 wide while
+    // it exists and every stop after it derives from `idx-glow-en` — no
+    // `+ slot-count` anywhere. `-1` marks a stop that is not there, so no
+    // literal can ever match an absent control. Downstream `base-tail` /
+    // `idx-save-*` recompute from `idx-glow-en` alone. Mirrors
+    // callbacks::borders_tune_stop_count and BordersSection.tune-enter.
     property <int> idx-add: root.slot-stops > 0 ? 7 : -1;
     property <int> idx-remove: root.slot-stops > 0 ? 8 : -1;
     property <int> idx-glow-en: root.slot-stops + 6;
@@ -247,25 +246,9 @@ component BordersTunePane inherits Rectangle {
     property <int> idx-glow-power: root.idx-glow-en + 2;
     property <int> idx-glow-color: root.idx-glow-en + 3;
     property <int> idx-glow-inactive: root.idx-glow-en + 4;
-    property <int> base-anim: root.idx-glow-en + (root.glow-enabled ? 5 : 1);
-    property <int> idx-a0-en: root.base-anim;
-    property <int> idx-a0-speed: root.base-anim + 1;
-    property <int> idx-a0-bezier: root.base-anim + 2;
-    property <int> idx-a0-style: root.base-anim + 3;
-    property <int> base-a1: root.base-anim + 1 + (root.anim-borderangle-enabled ? 3 : 0);
-    property <int> idx-a1-en: root.base-a1;
-    property <int> idx-a1-speed: root.base-a1 + 1;
-    property <int> idx-a1-bezier: root.base-a1 + 2;
-    property <int> idx-a1-style: root.base-a1 + 3;
-    property <int> base-a2: root.base-a1 + 1 + (root.anim-border-enabled ? 3 : 0);
-    property <int> idx-a2-en: root.base-a2;
-    property <int> idx-a2-speed: root.base-a2 + 1;
-    property <int> idx-a2-bezier: root.base-a2 + 2;
-    property <int> idx-a2-style: root.base-a2 + 3;
-    property <int> base-tail: root.base-a2 + 1 + (root.anim-fadeshadow-enabled ? 3 : 0);
-    property <int> idx-rule: root.base-tail;
-    property <int> idx-save-name: root.base-tail + 1;
-    property <int> idx-save-btn: root.base-tail + 2;
+    property <int> base-tail: root.idx-glow-en + (root.glow-enabled ? 5 : 1);
+    property <int> idx-save-name: root.base-tail;
+    property <int> idx-save-btn: root.base-tail + 1;
 
     // Slint has no substring op, so the encoded value ("p:primary", "c:rrggbbaa")
     // is mapped to a readable label explicitly. Raw encodings must never reach
@@ -1198,608 +1181,6 @@ component BordersTunePane inherits Rectangle {
             // Separator
             Rectangle { height: 1px; background: HveColors.border; }
 
-            // ── Animation leaves ──
-            Text {
-                text: "Border Animations";
-                font-family: SkwdTokens.font-heading;
-                font-size: SkwdTokens.size-13;
-                font-weight: 600;
-                color: HveColors.accent-cyan;
-            }
-
-            Text {
-                text: "Optional motion on the active border. Each animation turns on by itself; enabling one reveals its speed, curve and style.";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // Helper component for animation leaf
-            // borderangle leaf (enabled stop highlights the card)
-            Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a0-en && root.has-focus;
-                height: root.anim-borderangle-enabled ? 120px : 56px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
-                border-radius: SkwdTokens.radius-8;
-                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-
-                    HorizontalLayout {
-                        spacing: 8px;
-
-                        Text {
-                            text: "Border Angle Animation";
-                            color: HveColors.text;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-13;
-                            font-weight: 600;
-                            horizontal-stretch: 1;
-                            vertical-alignment: center;
-                        }
-
-                        Rectangle {
-                            width: 48px;
-                            height: 24px;
-                            border-radius: 12px;
-                            background: root.anim-borderangle-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
-                            border-width: 1px;
-                            border-color: HveColors.border;
-
-                            Rectangle {
-                                x: root.anim-borderangle-enabled ? 26px : 4px;
-                                width: 16px;
-                                height: 16px;
-                                border-radius: 8px;
-                                background: root.anim-borderangle-enabled ? HveColors.bg-dark : HveColors.text-muted;
-                                animate x { duration: 150ms; easing: ease-out; }
-                            }
-
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                clicked => { root.anim-changed("borderangle", !root.anim-borderangle-enabled, root.anim-borderangle-speed, root.anim-borderangle-bezier, root.anim-borderangle-style); }
-                            }
-                        }
-                    }
-
-                    if root.anim-borderangle-enabled : Text {
-                        text: "Animates the gradient direction around the border.";
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        color: HveColors.text-muted;
-                        wrap: word-wrap;
-                    }
-
-                    if root.anim-borderangle-enabled : Rectangle {
-                        property <bool> lit: root.local-focus == root.idx-a0-speed && root.has-focus;
-                        property <bool> grabbed: root.engaged-slider == root.idx-a0-speed && root.has-focus;
-                        height: 48px;
-                        border-width: 1px;
-                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                        border-radius: SkwdTokens.radius-8;
-                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-surface;
-
-                        GeometrySlider {
-                            width: 100%;
-                            y: (parent.height - self.height) / 2;
-                            engaged: root.engaged-slider == root.idx-a0-speed;
-                            focused: root.local-focus == root.idx-a0-speed && root.has-focus;
-                            label: "Speed";
-                            value: root.anim-borderangle-speed;
-                            min: 5;
-                            max: 120;
-                            changed(v) => { root.anim-changed("borderangle", root.anim-borderangle-enabled, v, root.anim-borderangle-bezier, root.anim-borderangle-style); }
-                        }
-                    }
-                }
-            }
-
-            if root.anim-borderangle-enabled : Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a0-bezier && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == root.idx-a0-bezier && root.has-focus;
-                height: 48px;
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
-                    Text {
-                        text: "Bezier: " + root.anim-borderangle-bezier;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: "Curve";
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        vertical-alignment: center;
-                    }
-                }
-                // Mouse path for the curve: the row had no TouchArea, so a click
-                // did nothing and only the keyboard could change it.
-                curve-a0-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => { root.cycle-anim-part("borderangle", "bezier"); }
-                }
-            }
-            if root.anim-borderangle-enabled : Text {
-                text: "Animation curve for the angle sweep (default plus preset curves).";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-            if root.anim-borderangle-enabled : Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a0-style && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == root.idx-a0-style && root.has-focus;
-                height: 48px;
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
-                    Text {
-                        text: root.anim-borderangle-style == "" ? "Style: none" : "Style: " + root.anim-borderangle-style;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: "Style";
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        vertical-alignment: center;
-                    }
-                }
-                style-a0-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => { root.cycle-anim-part("borderangle", "style"); }
-                }
-            }
-            if root.anim-borderangle-enabled : Text {
-                text: "Loop style for the angle animation (none or loop).";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // border leaf
-            Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a1-en && root.has-focus;
-                height: root.anim-border-enabled ? 120px : 56px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
-                border-radius: SkwdTokens.radius-8;
-                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-
-                    HorizontalLayout {
-                        spacing: 8px;
-
-                        Text {
-                            text: "Border Pulse Animation";
-                            color: HveColors.text;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-13;
-                            font-weight: 600;
-                            horizontal-stretch: 1;
-                            vertical-alignment: center;
-                        }
-
-                        Rectangle {
-                            width: 48px;
-                            height: 24px;
-                            border-radius: 12px;
-                            background: root.anim-border-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
-                            border-width: 1px;
-                            border-color: HveColors.border;
-
-                            Rectangle {
-                                x: root.anim-border-enabled ? 26px : 4px;
-                                width: 16px;
-                                height: 16px;
-                                border-radius: 8px;
-                                background: root.anim-border-enabled ? HveColors.bg-dark : HveColors.text-muted;
-                                animate x { duration: 150ms; easing: ease-out; }
-                            }
-
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                clicked => { root.anim-changed("border", !root.anim-border-enabled, root.anim-border-speed, root.anim-border-bezier, root.anim-border-style); }
-                            }
-                        }
-                    }
-
-                    if root.anim-border-enabled : Text {
-                        text: "Pulsing border thickness effect.";
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        color: HveColors.text-muted;
-                        wrap: word-wrap;
-                    }
-
-                    if root.anim-border-enabled : Rectangle {
-                        property <bool> lit: root.local-focus == root.idx-a1-speed && root.has-focus;
-                        property <bool> grabbed: root.engaged-slider == root.idx-a1-speed && root.has-focus;
-                        height: 48px;
-                        border-width: 1px;
-                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                        border-radius: SkwdTokens.radius-8;
-                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-surface;
-
-                        GeometrySlider {
-                            width: 100%;
-                            y: (parent.height - self.height) / 2;
-                            engaged: root.engaged-slider == root.idx-a1-speed;
-                            focused: root.local-focus == root.idx-a1-speed && root.has-focus;
-                            label: "Speed";
-                            value: root.anim-border-speed;
-                            min: 5;
-                            max: 120;
-                            changed(v) => { root.anim-changed("border", root.anim-border-enabled, v, root.anim-border-bezier, root.anim-border-style); }
-                        }
-                    }
-                }
-            }
-
-            if root.anim-border-enabled : Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a1-bezier && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == root.idx-a1-bezier && root.has-focus;
-                height: 48px;
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
-                    Text {
-                        text: "Bezier: " + root.anim-border-bezier;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: "Curve";
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        vertical-alignment: center;
-                    }
-                }
-                curve-a1-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => { root.cycle-anim-part("border", "bezier"); }
-                }
-            }
-            if root.anim-border-enabled : Text {
-                text: "Animation curve for the border pulse (default plus preset curves).";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-            if root.anim-border-enabled : Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a1-style && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == root.idx-a1-style && root.has-focus;
-                height: 48px;
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
-                    Text {
-                        text: root.anim-border-style == "" ? "Style: none" : "Style: " + root.anim-border-style;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: "Style";
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        vertical-alignment: center;
-                    }
-                }
-                style-a1-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => { root.cycle-anim-part("border", "style"); }
-                }
-            }
-            if root.anim-border-enabled : Text {
-                text: "Loop style for the border pulse (none or loop).";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // fadeShadow leaf
-            Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a2-en && root.has-focus;
-                height: root.anim-fadeshadow-enabled ? 120px : 56px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
-                border-radius: SkwdTokens.radius-8;
-                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-
-                    HorizontalLayout {
-                        spacing: 8px;
-
-                        Text {
-                            text: "Fade Shadow Animation";
-                            color: HveColors.text;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-13;
-                            font-weight: 600;
-                            horizontal-stretch: 1;
-                            vertical-alignment: center;
-                        }
-
-                        Rectangle {
-                            width: 48px;
-                            height: 24px;
-                            border-radius: 12px;
-                            background: root.anim-fadeshadow-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
-                            border-width: 1px;
-                            border-color: HveColors.border;
-
-                            Rectangle {
-                                x: root.anim-fadeshadow-enabled ? 26px : 4px;
-                                width: 16px;
-                                height: 16px;
-                                border-radius: 8px;
-                                background: root.anim-fadeshadow-enabled ? HveColors.bg-dark : HveColors.text-muted;
-                                animate x { duration: 150ms; easing: ease-out; }
-                            }
-
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                clicked => { root.anim-changed("fadeShadow", !root.anim-fadeshadow-enabled, root.anim-fadeshadow-speed, root.anim-fadeshadow-bezier, root.anim-fadeshadow-style); }
-                            }
-                        }
-                    }
-
-                    if root.anim-fadeshadow-enabled : Text {
-                        text: "Fading shadow pulse on focused windows.";
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        color: HveColors.text-muted;
-                        wrap: word-wrap;
-                    }
-
-                    if root.anim-fadeshadow-enabled : Rectangle {
-                        property <bool> lit: root.local-focus == root.idx-a2-speed && root.has-focus;
-                        property <bool> grabbed: root.engaged-slider == root.idx-a2-speed && root.has-focus;
-                        height: 48px;
-                        border-width: 1px;
-                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                        border-radius: SkwdTokens.radius-8;
-                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-surface;
-
-                        GeometrySlider {
-                            width: 100%;
-                            y: (parent.height - self.height) / 2;
-                            engaged: root.engaged-slider == root.idx-a2-speed;
-                            focused: root.local-focus == root.idx-a2-speed && root.has-focus;
-                            label: "Speed";
-                            value: root.anim-fadeshadow-speed;
-                            min: 5;
-                            max: 120;
-                            changed(v) => { root.anim-changed("fadeShadow", root.anim-fadeshadow-enabled, v, root.anim-fadeshadow-bezier, root.anim-fadeshadow-style); }
-                        }
-                    }
-                }
-            }
-
-            if root.anim-fadeshadow-enabled : Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a2-bezier && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == root.idx-a2-bezier && root.has-focus;
-                height: 48px;
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
-                    Text {
-                        text: "Bezier: " + root.anim-fadeshadow-bezier;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: "Curve";
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        vertical-alignment: center;
-                    }
-                }
-                curve-a2-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => { root.cycle-anim-part("fadeShadow", "bezier"); }
-                }
-            }
-            if root.anim-fadeshadow-enabled : Text {
-                text: "Animation curve for the shadow fade (default plus preset curves).";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-            if root.anim-fadeshadow-enabled : Rectangle {
-                property <bool> lit: root.local-focus == root.idx-a2-style && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == root.idx-a2-style && root.has-focus;
-                height: 48px;
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
-                    Text {
-                        text: root.anim-fadeshadow-style == "" ? "Style: none" : "Style: " + root.anim-fadeshadow-style;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: "Style";
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-11;
-                        vertical-alignment: center;
-                    }
-                }
-                style-a2-ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    mouse-cursor: pointer;
-                    clicked => { root.cycle-anim-part("fadeShadow", "style"); }
-                }
-            }
-            if root.anim-fadeshadow-enabled : Text {
-                text: "Loop style for the shadow fade (none or loop).";
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // Separator
-            Rectangle { height: 1px; background: HveColors.border; }
-
-            // ── Rule toggle ──
-            rule-wrap := Rectangle {
-                property <bool> lit: root.local-focus == root.idx-rule && root.has-focus;
-                height: self.lit ? 64px : 56px;
-                border-width: 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
-                border-radius: SkwdTokens.radius-8;
-                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                HorizontalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        spacing: 2px;
-
-                        Text {
-                            text: "Floating Window Rule";
-                            color: HveColors.text;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-13;
-                            font-weight: 600;
-                        }
-
-                        Text {
-                            text: "Adds noshadow + dim_around rules for floating windows.";
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-11;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
-                        }
-                    }
-
-                    Rectangle {
-                        width: 48px;
-                        height: 24px;
-                        border-radius: 12px;
-                        background: root.tune-rule-enabled ? HveColors.accent-cyan : HveColors.bg-surface;
-                        border-width: 1px;
-                        border-color: HveColors.border;
-
-                        Rectangle {
-                            x: root.tune-rule-enabled ? 26px : 4px;
-                            width: 16px;
-                            height: 16px;
-                            border-radius: 8px;
-                            background: root.tune-rule-enabled ? HveColors.bg-dark : HveColors.text-muted;
-                            animate x { duration: 150ms; easing: ease-out; }
-                        }
-
-                        TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            // Was a bare local flip: it animated the switch and
-                            // never notified, so the rule never reached the live
-                            // draft from the mouse.
-                            clicked => { root.rule-toggled(!root.tune-rule-enabled); }
-                        }
-                    }
-                }
-            }
-
-            // Separator
-            Rectangle { height: 1px; background: HveColors.border; }
-
             // Save form: LineEdit + Save button
             Text {
                 text: "Save as Preset";
@@ -2121,8 +1502,8 @@ export component BordersSection inherits Rectangle {
     // Cards-first global sequence: 0..list-count-1 cards, then tune stops.
     // split is the tune start; tune-count mirrors
     // callbacks::borders_tune_stop_count (size, radius, gap-in, gap-out,
-    // angle, inactive, strip, add, remove, glow group, 3 anim leaves, rule,
-    // save name + button).
+    // angle, inactive, strip, add, remove, glow group, save name + button).
+    // B3 removed the three animation leaves and the floating window rule.
     property <int> list-count: root.border-titles.length + root.user-preset-names.length;
     property <int> split: root.list-count;
     property <int> tune-n: clamp(root.tune-color-count, 0, 8);
@@ -2130,8 +1511,8 @@ export component BordersSection inherits Rectangle {
     // (instantiated twice behind conditions), so it cannot read the pane's
     // `idx-*`. It needs only the block width, the first glow stop and the strip
     // stop: the slot block is 3 wide while colours exist and 0 when they do not
-    // (the strip / add / remove controls are not mounted), and every glow /
-    // anim stop is `idx-glow-en + offset`. Mirrors the pane's map and
+    // (the strip / add / remove controls are not mounted), and every glow stop
+    // is `idx-glow-en + offset`. Mirrors the pane's map and
     // callbacks::borders_tune_stop_count.
     property <int> slot-stops: root.tune-n > 0 ? 3 : 0;
     // The strip is the ONE stop after the six geometry / colour stops; PanelRoot
@@ -2139,15 +1520,12 @@ export component BordersSection inherits Rectangle {
     // dispatch can never drift from the map again.
     out property <int> idx-strip: root.slot-stops > 0 ? 6 : -1;
     property <int> idx-glow-en: root.slot-stops + 6;
-    // 13 fixed stops (size, radius, gap-in, gap-out, angle, inactive,
-    // glow-enable, 3 anim-enable, rule, save-name, save-button) plus the 3
-    // colour-slot stops ONLY while colours exist, then the conditional leaves.
-    // Mirrors callbacks::borders_tune_stop_count, which subtracts the same 3.
-    out property <int> tune-count: 13 + root.slot-stops
-        + (root.tune-glow-enabled ? 4 : 0)
-        + (root.tune-anim-borderangle-enabled ? 3 : 0)
-        + (root.tune-anim-border-enabled ? 3 : 0)
-        + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
+    // 9 fixed stops (size, radius, gap-in, gap-out, angle, inactive,
+    // glow-enable, save-name, save-button) plus the 3 colour-slot stops ONLY
+    // while colours exist, then the conditional glow stops. Mirrors
+    // callbacks::borders_tune_stop_count, which subtracts the same 3.
+    out property <int> tune-count: 9 + root.slot-stops
+        + (root.tune-glow-enabled ? 4 : 0);
 
     function next-angle(a: int, up: bool) -> int {
         if (up) {
@@ -2175,32 +1553,9 @@ export component BordersSection inherits Rectangle {
         if (t == "p:tertiary") { return "p:secondary"; }
         return "p:primary";
     }
-    function next-style(s: string, up: bool) -> string {
-        if (s == "") { return "loop"; }
-        return "";
-    }
-    function next-bezier(b: string, up: bool) -> string {
-        if (root.tune-anim-curves.length == 0) { return "default"; }
-        if (up) {
-            if (b == "default") { return root.tune-anim-curves[0]; }
-            if (root.tune-anim-curves.length > 1 && b == root.tune-anim-curves[0]) { return root.tune-anim-curves[1]; }
-            return "default";
-        }
-        if (b == "default") {
-            if (root.tune-anim-curves.length > 1) { return root.tune-anim-curves[1]; }
-            return root.tune-anim-curves[0];
-        }
-        if (b == root.tune-anim-curves[0]) { return "default"; }
-        return root.tune-anim-curves[0];
-    }
     function rebuild-glow() -> string {
         if (!root.tune-glow-enabled) { return ""; }
         return "enabled:true|range:" + root.tune-glow-range + "|power:" + root.tune-glow-render-power + "|color:" + root.tune-glow-color + "|inactive:" + root.tune-glow-color-inactive + "|ox:0|oy:0";
-    }
-    function rebuild-anims() -> string {
-        return "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
-            + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
-            + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
     }
 
     // Write a custom colour into the channel the picker is editing. `commit`
@@ -2283,7 +1638,7 @@ export component BordersSection inherits Rectangle {
 
     // Slider adjust (keyboard arrows) — every slider-like tune stop, clamped.
     // Tune-local engaged index: 0=size, 1=radius, 2=gap-in, 3=gap-out,
-    // 4=angle, 5=inactive, glow range/power/colors, anim speed/bezier/style.
+    // 4=angle, 5=inactive, glow range/power/colors.
     // Toggles, actions and the strip are handled by tune-enter, never here.
     public function adjust-slider(up: bool) {
         let e = root.engaged-slider;
@@ -2372,72 +1727,6 @@ export component BordersSection inherits Rectangle {
                 return;
             }
         }
-        let base = root.idx-glow-en + (root.tune-glow-enabled ? 5 : 1);
-        let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
-        let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
-        if (root.tune-anim-borderangle-enabled) {
-            if (e == base + 1) {
-                let next = up ? min(root.tune-anim-borderangle-speed + 5, 120) : max(root.tune-anim-borderangle-speed - 5, 5);
-                root.tune-anim-borderangle-speed = next;
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-            if (e == base + 2) {
-                root.tune-anim-borderangle-bezier = root.next-bezier(root.tune-anim-borderangle-bezier, up);
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-            if (e == base + 3) {
-                root.tune-anim-borderangle-style = root.next-style(root.tune-anim-borderangle-style, up);
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-        }
-        if (root.tune-anim-border-enabled) {
-            if (e == b1 + 1) {
-                let next = up ? min(root.tune-anim-border-speed + 5, 120) : max(root.tune-anim-border-speed - 5, 5);
-                root.tune-anim-border-speed = next;
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-            if (e == b1 + 2) {
-                root.tune-anim-border-bezier = root.next-bezier(root.tune-anim-border-bezier, up);
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-            if (e == b1 + 3) {
-                root.tune-anim-border-style = root.next-style(root.tune-anim-border-style, up);
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-        }
-        if (root.tune-anim-fadeshadow-enabled) {
-            if (e == b2 + 1) {
-                let next = up ? min(root.tune-anim-fadeshadow-speed + 5, 120) : max(root.tune-anim-fadeshadow-speed - 5, 5);
-                root.tune-anim-fadeshadow-speed = next;
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-            if (e == b2 + 2) {
-                root.tune-anim-fadeshadow-bezier = root.next-bezier(root.tune-anim-fadeshadow-bezier, up);
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-            if (e == b2 + 3) {
-                root.tune-anim-fadeshadow-style = root.next-style(root.tune-anim-fadeshadow-style, up);
-                root.tune-animations = root.rebuild-anims();
-                root.notify-tune-changed();
-                return;
-            }
-        }
     }
 
     // Enter on a tune stop: 0 = slider-like (PanelRoot engages), 1 = handled
@@ -2445,10 +1734,11 @@ export component BordersSection inherits Rectangle {
     // focused index so hidden stops are never reachable.
     // Tune-local map (the strip is ONE stop, never N). With colours:
     // 0=size, 1=radius, 2=gap-in, 3=gap-out, 4=angle, 5=inactive, 6=strip,
-    // 7=add, 8=remove, then the glow / anim / rule / save stops. With ZERO
-    // colours the strip / add / remove block does not exist (`slot-stops` = 0)
-    // and those positions shift down by three: 6=glow-enabled, and so on
-    // (`idx-glow-en` below).
+    // 7=add, 8=remove, then the glow / save stops. With ZERO colours the strip /
+    // add / remove block does not exist (`slot-stops` = 0) and those positions
+    // shift down by three: 6=glow-enabled, and so on (`idx-glow-en` below).
+    // B3 removed the animation leaves and the floating window rule, so the tail
+    // is now save-name + save-button only.
     public function tune-enter() -> int {
         let local = root.focused-index - root.list-count;
         // The strip stop is NEVER engaged: Enter opens the picker for the
@@ -2488,37 +1778,9 @@ export component BordersSection inherits Rectangle {
             root.notify-tune-changed();
             return 1;
         }
-        let base = root.idx-glow-en + (root.tune-glow-enabled ? 5 : 1);
-        let b1 = base + 1 + (root.tune-anim-borderangle-enabled ? 3 : 0);
-        let b2 = b1 + 1 + (root.tune-anim-border-enabled ? 3 : 0);
-        let tail = b2 + 1 + (root.tune-anim-fadeshadow-enabled ? 3 : 0);
-        if (local == base) {
-            root.tune-anim-borderangle-enabled = !root.tune-anim-borderangle-enabled;
-            root.tune-animations = root.rebuild-anims();
-            root.notify-tune-changed();
-            return 1;
-        }
-        if (local == b1) {
-            root.tune-anim-border-enabled = !root.tune-anim-border-enabled;
-            root.tune-animations = root.rebuild-anims();
-            root.notify-tune-changed();
-            return 1;
-        }
-        if (local == b2) {
-            root.tune-anim-fadeshadow-enabled = !root.tune-anim-fadeshadow-enabled;
-            root.tune-animations = root.rebuild-anims();
-            root.notify-tune-changed();
-            return 1;
-        }
-        if (local == tail) {
-            root.tune-rule-enabled = !root.tune-rule-enabled;
-            // The rule was the one tune stop that did NOT notify, so flipping
-            // it never reached the live draft (D4: everything applies live).
-            root.notify-tune-changed();
-            return 1;
-        }
-        if (local == tail + 1) { return 1; }
-        if (local == tail + 2) {
+        let tail = root.idx-glow-en + (root.tune-glow-enabled ? 5 : 1);
+        if (local == tail) { return 1; }
+        if (local == tail + 1) {
             if (root.preset-name != "") { root.save-border-preset(root.preset-name); }
             return 1;
         }
@@ -2581,33 +1843,6 @@ export component BordersSection inherits Rectangle {
         if (root.editing-slot >= 0 && root.editing-slot < 8 && root.editing-slot >= n) {
             root.editing-slot = -1;
         }
-    }
-
-    // Cycle one animation leaf's bezier or style. Mouse and keyboard share this
-    // so the two can never drift apart (the rows had no TouchArea at all, so a
-    // mouse user could not change the curve or the loop style).
-    function cycle-anim-part(leaf: string, part: string) {
-        if (leaf == "borderangle") {
-            if (part == "bezier") {
-                root.tune-anim-borderangle-bezier = root.next-bezier(root.tune-anim-borderangle-bezier, true);
-            } else {
-                root.tune-anim-borderangle-style = root.next-style(root.tune-anim-borderangle-style, true);
-            }
-        } else if (leaf == "border") {
-            if (part == "bezier") {
-                root.tune-anim-border-bezier = root.next-bezier(root.tune-anim-border-bezier, true);
-            } else {
-                root.tune-anim-border-style = root.next-style(root.tune-anim-border-style, true);
-            }
-        } else if (leaf == "fadeShadow") {
-            if (part == "bezier") {
-                root.tune-anim-fadeshadow-bezier = root.next-bezier(root.tune-anim-fadeshadow-bezier, true);
-            } else {
-                root.tune-anim-fadeshadow-style = root.next-style(root.tune-anim-fadeshadow-style, true);
-            }
-        }
-        root.tune-animations = root.rebuild-anims();
-        root.notify-tune-changed();
     }
 
     // Mouse-direct slider edits for the four Geometry sliders. No first-edit
@@ -2794,35 +2029,8 @@ export component BordersSection inherits Rectangle {
                 anim-fadeshadow-style: root.tune-anim-fadeshadow-style;
                 anim-curves: root.tune-anim-curves;
                 tune-rule-enabled: root.tune-rule-enabled;
-                anim-changed(leaf, enabled, speed, bezier, style) => {
-                    if leaf == "borderangle" {
-                        root.tune-anim-borderangle-enabled = enabled;
-                        root.tune-anim-borderangle-speed = speed;
-                        root.tune-anim-borderangle-bezier = bezier;
-                        root.tune-anim-borderangle-style = style;
-                    } else if leaf == "border" {
-                        root.tune-anim-border-enabled = enabled;
-                        root.tune-anim-border-speed = speed;
-                        root.tune-anim-border-bezier = bezier;
-                        root.tune-anim-border-style = style;
-                    } else if leaf == "fadeShadow" {
-                        root.tune-anim-fadeshadow-enabled = enabled;
-                        root.tune-anim-fadeshadow-speed = speed;
-                        root.tune-anim-fadeshadow-bezier = bezier;
-                        root.tune-anim-fadeshadow-style = style;
-                    }
-                    root.tune-animations = "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
-                        + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
-                        + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
-                    root.notify-tune-changed();
-                }
-                cycle-anim-part(leaf, part) => { root.cycle-anim-part(leaf, part); }
                 angle-changed(v) => {
                     root.tune-angle = v;
-                    root.notify-tune-changed();
-                }
-                rule-toggled(v) => {
-                    root.tune-rule-enabled = v;
                     root.notify-tune-changed();
                 }
             }
@@ -2922,35 +2130,8 @@ export component BordersSection inherits Rectangle {
                 anim-fadeshadow-style: root.tune-anim-fadeshadow-style;
                 anim-curves: root.tune-anim-curves;
                 tune-rule-enabled: root.tune-rule-enabled;
-                anim-changed(leaf, enabled, speed, bezier, style) => {
-                    if leaf == "borderangle" {
-                        root.tune-anim-borderangle-enabled = enabled;
-                        root.tune-anim-borderangle-speed = speed;
-                        root.tune-anim-borderangle-bezier = bezier;
-                        root.tune-anim-borderangle-style = style;
-                    } else if leaf == "border" {
-                        root.tune-anim-border-enabled = enabled;
-                        root.tune-anim-border-speed = speed;
-                        root.tune-anim-border-bezier = bezier;
-                        root.tune-anim-border-style = style;
-                    } else if leaf == "fadeShadow" {
-                        root.tune-anim-fadeshadow-enabled = enabled;
-                        root.tune-anim-fadeshadow-speed = speed;
-                        root.tune-anim-fadeshadow-bezier = bezier;
-                        root.tune-anim-fadeshadow-style = style;
-                    }
-                    root.tune-animations = "borderangle|" + (root.tune-anim-borderangle-enabled ? "true" : "false") + "|" + root.tune-anim-borderangle-speed + "|" + root.tune-anim-borderangle-bezier + "|" + root.tune-anim-borderangle-style
-                        + ",border|" + (root.tune-anim-border-enabled ? "true" : "false") + "|" + root.tune-anim-border-speed + "|" + root.tune-anim-border-bezier + "|" + root.tune-anim-border-style
-                        + ",fadeShadow|" + (root.tune-anim-fadeshadow-enabled ? "true" : "false") + "|" + root.tune-anim-fadeshadow-speed + "|" + root.tune-anim-fadeshadow-bezier + "|" + root.tune-anim-fadeshadow-style;
-                    root.notify-tune-changed();
-                }
-                cycle-anim-part(leaf, part) => { root.cycle-anim-part(leaf, part); }
                 angle-changed(v) => {
                     root.tune-angle = v;
-                    root.notify-tune-changed();
-                }
-                rule-toggled(v) => {
-                    root.tune-rule-enabled = v;
                     root.notify-tune-changed();
                 }
             }

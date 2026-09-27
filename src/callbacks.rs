@@ -1070,32 +1070,23 @@ mod panel_save_tests {
 /// Borders tune stop count (keyboard R11 recompute).
 /// Order: size, radius, gap-in, gap-out, angle, inactive,
 /// [strip, add, remove ONLY while slots exist], glow-enabled,
-/// (+range, power, color, inactive when on), per anim leaf enabled
-/// (+speed, bezier, style when on) x3, rule, save-name, save-button.
-/// `slot_count` no longer adds one stop per slot — the strip is ONE stop — but
-/// ZERO colours still removes the three slot-management stops, because the
-/// strip / add / remove controls mount only while colours do. The three
-/// geometry stops (radius, gap-in, gap-out) were recovered in B2. Mirrors
-/// `BordersSection.tune-count` (and the pane's `slot-stops`).
+/// (+range, power, color, inactive when on), save-name, save-button.
+/// The three animation leaves and the floating window rule were REMOVED from
+/// the tune pane in B3; they survive in the model (`tune-animations` /
+/// `tune-rule-enabled`) but have no keyboard seat any more. The three geometry
+/// stops (radius, gap-in, gap-out) were recovered in B2. `slot_count` no longer
+/// adds one stop per slot — the strip is ONE stop — but ZERO colours still
+/// removes the three slot-management stops, because the strip / add / remove
+/// controls mount only while colours do. Mirrors `BordersSection.tune-count`
+/// (and the pane's `slot-stops`).
 #[allow(dead_code)]
-pub fn borders_tune_stop_count(
-    slot_count: i32,
-    glow_enabled: bool,
-    anim0: bool,
-    anim1: bool,
-    anim2: bool,
-) -> i32 {
-    // 13 fixed stops (size, radius, gap-in, gap-out, angle, inactive,
-    // glow-enable, 3 anim-enable, rule, save-name, save-button) + the
-    // colour-slot block (3 while colours exist).
-    let mut total = 13 + if slot_count > 0 { 3 } else { 0 };
+pub fn borders_tune_stop_count(slot_count: i32, glow_enabled: bool) -> i32 {
+    // 9 fixed stops (size, radius, gap-in, gap-out, angle, inactive,
+    // glow-enable, save-name, save-button) + the colour-slot block (3 while
+    // colours exist).
+    let mut total = 9 + if slot_count > 0 { 3 } else { 0 };
     if glow_enabled {
         total += 4;
-    }
-    for enabled in [anim0, anim1, anim2] {
-        if enabled {
-            total += 3;
-        }
     }
     total
 }
@@ -1133,14 +1124,14 @@ mod keyboard_nav_tests {
 
     #[test]
     fn test_borders_tune_count_covers_full_inventory() {
-        assert_eq!(borders_tune_stop_count(2, false, false, false, false), 16);
-        assert_eq!(borders_tune_stop_count(8, true, true, true, true), 29);
-        assert_eq!(borders_tune_stop_count(3, true, false, false, false), 20);
+        assert_eq!(borders_tune_stop_count(2, false), 12);
+        assert_eq!(borders_tune_stop_count(8, true), 16);
+        assert_eq!(borders_tune_stop_count(3, true), 16);
         // Zero colours: the strip / add / remove controls are not mounted, so
         // their three stops are not counted either.
-        assert_eq!(borders_tune_stop_count(0, false, false, false, false), 13);
+        assert_eq!(borders_tune_stop_count(0, false), 9);
         // Above zero the count is flat: the strip is ONE stop, not N.
-        assert_eq!(borders_tune_stop_count(99, false, false, false, false), 16);
+        assert_eq!(borders_tune_stop_count(99, false), 12);
     }
 
     #[test]
