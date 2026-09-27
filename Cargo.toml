@@ -31,6 +31,9 @@ serial_test = "3"
 tempfile = "3"
 i-slint-backend-testing = { version = "1.17", features = ["renderer-software"] }
 i-slint-core = "1.17"
+# B7: the shutdown-flush wiring test parses `main` with a real AST instead of
+# grepping its source, so removing/reordering/nesting the call is detected.
+syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }
 
 [profile.dev]
 codegen-units = 256

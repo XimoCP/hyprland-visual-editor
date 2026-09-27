@@ -5363,13 +5363,21 @@ mod tests {
         assert_eq!(preset_geometry_for("unknown.ron"), BorderGeometry::default());
     }
 
-    // ── B5: the deferred persist must not be dropped on shutdown ─────────
+    // ── B5/B7: the deferred persist must not be dropped on shutdown ──────
     // `arm_geometry_persist` only writes when its 400 ms idle timer fires. A
     // quit inside that window (window close, IPC, tray quit) would drop the
     // whole drag: the config and the fragment keep the previous value and the
     // next `hyprctl reload` reverts what the user just saw. The flush closes
     // that window by running the same drain on the way out, before the process
-    // leaves. These tests pin the drain itself, not the real compositor.
+    // leaves.
+    //
+    // Two different things are protected below and they must not be confused:
+    //   • `flush_on_shutdown_writes_the_last_geometry` pins the DRAIN's
+    //     semantics (the last value wins, nothing owed is a no-op).
+    //   • `shutdown_flushes_the_deferred_geometry_before_teardown` pins the
+    //     WIRING: that `main` actually calls the flush on the shutdown path.
+    // B5 shipped a test that called the drain directly and called it a day;
+    // that is why B7 replaces the missing half, not the drain coverage.
 
     /// Temp project whose `geometry.sh` records its four arguments instead of
     /// writing a fragment and firing a reload. No Hyprland, no `hyprctl`.
@@ -5395,9 +5403,11 @@ mod tests {
         (engine, dir, record)
     }
 
-    /// The shutdown path must persist the drag even when the idle timer never
-    /// fired. RED before the fix: there is no flush, so quitting inside the
-    /// 400 ms window leaves both the config and the fragment at the old value.
+    /// Drain semantics: the shutdown flush must persist the drag even when the
+    /// idle timer never fired, and a flush with nothing owed must be a no-op.
+    /// This exercises `flush_geometry_persist` directly, so it proves the
+    /// DRAIN is correct — not that `main` runs it. The wiring is pinned by
+    /// `shutdown_flushes_the_deferred_geometry_before_teardown` below (B7).
     #[test]
     fn flush_on_shutdown_writes_the_last_geometry() {
         let _env = crate::test_utils::TempEnv::new();
@@ -5452,6 +5462,150 @@ mod tests {
         std::fs::remove_file(&record).unwrap();
         flush_geometry_persist(&timer, &pending, &state);
         assert!(!record.exists(), "a flush with nothing owed must not write");
+    }
+
+    // ── B7: the shutdown flush must be WIRED, not just available ──────────
+    // The test above calls `flush_geometry_persist` directly, so deleting the
+    // production call in `main` leaves it green. That is a false safety net:
+    // it cannot catch the regression it exists to catch. This test parses
+    // `src/main.rs` with a real Rust AST (`syn`) and asserts the call sits at
+    // the top level of `main`, AFTER `run_event_loop_until_quit()` and BEFORE
+    // `ipc::cleanup()` (teardown). It catches the three plausible regressions:
+    // the call removed, reordered before the loop, or nested into a branch
+    // that may never run.
+    //
+    // Why this shape and not an end-to-end binary run: spawning
+    // `env!("CARGO_BIN_EXE_hve")` needs a live Wayland/XRandR session and a
+    // real compositor to reach `run_event_loop_until_quit`, and the suite must
+    // never touch the keeper's desktop (B6). The AST check is the strongest
+    // hermetic option that is still a real test of the wiring; the live binary
+    // run complementary to it is the keeper's own manual test.
+
+    /// Parse `src/main.rs` and return `main`'s body block.
+    fn main_fn_body() -> syn::Block {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+            .expect("read src/main.rs");
+        let file: syn::File = syn::parse_file(&src).expect("parse src/main.rs");
+        for item in file.items {
+            if let syn::Item::Fn(func) = item {
+                if func.sig.ident == "main" {
+                    return *func.block;
+                }
+            }
+        }
+        panic!("main() not found in src/main.rs");
+    }
+
+    /// The last path segment of a plain function-call statement, if the
+    /// statement is exactly `some::path(...);`, with any trailing `?` peeled
+    /// off (`slint::run_event_loop_until_quit()?` is a `Try`, not a bare call).
+    /// Anything that is not a plain call (a `let`, a macro, a nested block)
+    /// yields `None`.
+    fn stmt_call_name(stmt: &syn::Stmt) -> Option<String> {
+        fn peel(expr: &syn::Expr) -> Option<&syn::ExprCall> {
+            match expr {
+                syn::Expr::Call(call) => Some(call),
+                syn::Expr::Try(try_expr) => peel(&try_expr.expr),
+                _ => None,
+            }
+        }
+        let syn::Stmt::Expr(expr, _) = stmt else {
+            return None;
+        };
+        let call = peel(expr)?;
+        let syn::Expr::Path(path) = &*call.func else {
+            return None;
+        };
+        path.path
+            .segments
+            .last()
+            .map(|seg| seg.ident.to_string())
+    }
+
+    /// Index of the first top-level statement that is a plain call to `callee`.
+    fn call_index(stmts: &[syn::Stmt], callee: &str) -> Option<usize> {
+        stmts
+            .iter()
+            .position(|stmt| stmt_call_name(stmt).as_deref() == Some(callee))
+    }
+
+    /// True when `expr` contains a call whose last path segment is `name`,
+    /// at any depth. Used to prove a statement does NOT smuggle the flush into
+    /// a branch or loop.
+    fn expr_mentions_call(expr: &syn::Expr, name: &str) -> bool {
+        use syn::visit::Visit;
+        struct Finder<'a> {
+            name: &'a str,
+            found: bool,
+        }
+        impl<'a, 'ast> Visit<'ast> for Finder<'a> {
+            fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+                if let syn::Expr::Path(path) = &*call.func {
+                    if path
+                        .path
+                        .segments
+                        .last()
+                        .is_some_and(|seg| seg.ident == self.name)
+                    {
+                        self.found = true;
+                    }
+                }
+                syn::visit::visit_expr_call(self, call);
+            }
+        }
+        let mut finder = Finder { name, found: false };
+        finder.visit_expr(expr);
+        finder.found
+    }
+
+    /// True when a statement contains a call to `name` ANYWHERE (the statement
+    /// itself, or nested inside blocks, branches, loops or closures).
+    fn stmt_mentions_call(stmt: &syn::Stmt, name: &str) -> bool {
+        match stmt {
+            syn::Stmt::Expr(expr, _) => expr_mentions_call(expr, name),
+            syn::Stmt::Local(local) => local
+                .init
+                .as_ref()
+                .is_some_and(|init| expr_mentions_call(&init.expr, name)),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn shutdown_flushes_the_deferred_geometry_before_teardown() {
+        const FLUSH: &str = "flush_geometry_persist";
+        let body = main_fn_body();
+
+        // 1. main calls the flush exactly once, as a plain top-level call.
+        let flush_calls: Vec<&syn::Stmt> = body
+            .stmts
+            .iter()
+            .filter(|stmt| stmt_mentions_call(stmt, FLUSH))
+            .collect();
+        assert_eq!(
+            flush_calls.len(),
+            1,
+            "main must call flush_geometry_persist exactly once"
+        );
+        let flush = call_index(&body.stmts, FLUSH)
+            .expect("the single flush mention must be a plain top-level call, \
+                     never nested in a branch or loop");
+
+        // 2. It runs after the event loop returns and before teardown.
+        let quit = call_index(&body.stmts, "run_event_loop_until_quit")
+            .expect("main must call run_event_loop_until_quit");
+        let cleanup = call_index(&body.stmts, "cleanup")
+            .expect("main must call ipc::cleanup during teardown");
+        assert!(
+            flush > quit,
+            "the geometry flush must run after run_event_loop_until_quit returns \
+             (flush at statement {flush}, quit at {quit})"
+        );
+        assert!(
+            flush < cleanup,
+            "the geometry flush must run before ipc::cleanup (flush at statement \
+             {flush}, cleanup at {cleanup})"
+        );
     }
 
     // ── Theme interlude view switch (strict TDD) ─────────────────────────
