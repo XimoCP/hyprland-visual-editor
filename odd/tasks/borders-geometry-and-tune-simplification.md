@@ -181,8 +181,9 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 - [x] **B3 — simplify the tune pane** to Colors, Angle, Inactive color, Halo/Shadow, Save.
   Delicate: touches the save path. Do it last. **Done in `64d4e09`** — see the B3
   record in Progress below.
-- [ ] **B4 — i18n** for everything added (preset `@Title`/`@Desc` are English-only today and not
-  wired to i18n; `13_the_joker` also has Spanish comments and no `@Color`).
+- [x] **B4 — i18n** for everything added (preset `@Title`/`@Desc` are English-only today and not
+  wired to i18n; `13_the_joker` also has Spanish comments and no `@Color`). **Done in `e348cbb`** —
+  see the B4 record in Progress below.
 
 ## Key files
 
@@ -192,6 +193,9 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 - `src/main.rs:4110` `on_panel_apply_geometry`; `src/main.rs:1410` `hypr_eval`.
 - `src/engine.rs:179` `apply_geometry`; `src/app_state.rs:81`; `src/config.rs`.
 - `assets/scripts/geometry.sh`, `assets/scripts/assemble.sh` — the slow path.
+- `ui/panel/sections/borders_text.slint` — every user-visible string of the Borders panel (B4).
+- `src/panel_i18n.rs` — fills that global from the embedded i18n map (`apply_borders`).
+- `i18n/en.json`, `i18n/es.json` → `borders.*` — the panel copy and the 14 preset name/desc keys.
 
 ## Progress
 
@@ -319,9 +323,100 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   - Diff: 4 files, +278 / -930 authored lines (1208 total), dominated by the ~600 removed render lines;
     above the ~400 soft budget, reported rather than split (a split would not compile: the map, count and
     removed blocks move together). Full suite **1017 passed / 0 failed, 0 warnings** (was 1014; +3 tests).
+- 2026-09-27: **B4 done** (this commit, `e348cbb`). The whole Borders panel reads in the selected
+  language. The i18n section existed and was fully translated but DEAD: `borders.header_title` said
+  "Visual Styles", the geometry/radius/gap descriptions said "Define line thickness (0-5px)" while the
+  panel said something else, and only the preset titles/descs were reachable at all (through
+  `scan.sh` -> `borders.presets.<stem>.title`, live at HEAD).
+  - **Wiring.** Every user-visible string of `ui/panel/sections/BordersSection.slint` (55 labels, plus
+    the ones the pane composes: "Active Border Colors (N slots)", "N of 8", the picker title) is bound
+    to a new exported Slint global `BordersText` (`ui/panel/sections/borders_text.slint`, new), filled
+    by `src/panel_i18n.rs::apply_borders` (new) from the same embedded map the shell strings use.
+    Chosen over `window.set_*` because the tune pane is instantiated TWICE (two-column and stacked) and
+    threading ~50 strings through MainWindow -> ShellRoot -> PanelRoot -> section is several hundred
+    lines of boilerplate with no behaviour; exported globals are already this codebase's Rust<->Slint
+    channel (`SkwdTokens` is read from Rust). The global's defaults ARE today's English copy, so a run
+    that never calls the pass reads exactly as before. `main()` calls it once, pinned by
+    `main_applies_the_borders_i18n_before_the_event_loop` — the B7 lesson: without the call-site test,
+    deleting the call leaves the label tests green.
+  - **Stale keys reconciled to the UI, keys unchanged**: `header_title` "Visual Styles" -> "Borders",
+    `geometry.desc` -> the panel's real sentence, and so on; the only English that moved is
+    `borders.presets.*` (below). `borders.gaps.title` / `gaps.desc` are left UNUSED on purpose: the
+    panel has no "Gaps" heading (the four rows live under Geometry), they were unreachable before too,
+    and deleting the keeper's translations is a bigger call than leaving them. Reported, not silently
+    dropped.
+  - **Preset names/descriptions**: the mechanism already existed (`scan.sh` emits
+    `borders.presets.<stem>.title|desc`, `PresetInfo` carries it, `translate_presets` falls back to the
+    raw `@Title`/`@Desc`), so B4's work was reconciling the values with what each `.lua` does — all 14
+    had keys. Deliberate English changes: the `08_neon` name "Neon Breath" -> "Neon Flicker" (the file's
+    `glitch` curve overshoots: it flickers, it does not breathe) and 13 of the 14 descriptions rewritten
+    to match the file. The keeper's decision stands: the visible name is the i18n one, so `01_cascade`
+    shows "Cascade"/"Cascada" while its `@Title` still says "Waterfall"; a test pins that the raw value
+    never wins while a key exists, and that the stale values are still there as the fallback.
+  - **Final preset table** (file | EN | ES): `01_cascade` Cascade / Cascada; `02_diagonal` Diagonal /
+    Diagonal; `03_duo` Duo Contrast / Dúo Contraste; `04_tri` Trident / Tridente; `05_spectrum` Spectrum
+    / Espectro; `06_pulse` Pulse / Latido; `07_infinity` Infinity / Infinito; `08_neon` Neon Flicker /
+    Parpadeo Neón; `09_glitch` Cyber Glitch / Cyber Glitch; `10_golden` Golden Luxury / Golden Luxury;
+    `11_toxic` Toxic Green / Verde Tóxico; `12_neon_cyberpunk` Neon Cyber-Glow (Dual) / Neón Cyber-Glow
+    (Dual); `13_the_joker` The Joker / El Joker; `14_looper` Looper / Looper.
+  - **`13_the_joker.lua`**: five Spanish comments -> English, and `@Color: #39ff14` added (the only
+    preset without one). The same leaked line (`-- fundido a invisible al perder foco`) sat in 12 and
+    14; translated too, since the whole rationale is "Spanish comments in an English codebase". The new
+    test pins `@Title`/`@Desc`/`@Color` and English-only comments for all 14 files.
+  - **Bug found by that translation**: `border_preset::extract_glow` took the FIRST boundary-valid
+    `shadow` token, so the English comment "-- Keep the original purple shadow." above the block made
+    `13_the_joker` parse as glow-less — three existing tests went red (glow absent, tune-pane sync,
+    fixtures) before the cause was known. Fixed at the root: `find_shadow_block` now walks past prose
+    occurrences exactly like `find_colors_block` and `find_rule_block` already did, with
+    `glow_is_found_when_a_comment_mentions_shadow_first` covering it. The Lua parser is
+    comment-sensitive; that is now written down in the code.
+  - **Tests** (+8, all RED-first in practice; the same-model mutation checks below were run and reverted):
+    `borders_panel_labels_follow_the_language` (the 55-label EN/ES table read from `BordersText`, the
+    composed sentences, EN/ES frame pixel diffs, and the ES -> EN round trip restoring the English frame
+    byte for byte), `border_picker_title_follows_the_language` (picker open on the glow channel),
+    `border_preset_names_and_descriptions_follow_the_language` (REAL `scan.sh` +
+    `populate_presets`, both languages, plus the stale `@Title` fallback), `every_borders_label_has_its_own_spanish_text`,
+    `the_borders_section_reads_every_label_from_the_text_global`, `main_applies_the_borders_i18n_before_the_event_loop`,
+    `every_border_preset_declares_title_desc_and_color`, `glow_is_found_when_a_comment_mentions_shadow_first`.
+    Nothing deleted, `#[ignore]`d or weakened; the 33 existing Borders render tests kept their exact
+    English assertions and still pass.
+  - **Mutation checks (evidence the tests are not decorative)**: hardcoding
+    `text: "Geometry"` back left the global assertions GREEN — measured, not assumed — which is why
+    `the_borders_section_reads_every_label_from_the_text_global` exists; with it added the same mutation
+    FAILS. Making `apply_borders` a no-op FAILS the label test. Dropping `@Color` from 13 FAILS the
+    fixture test.
+  - **Why the accessible-text route was rejected**: `ElementQuery`/`ElementHandle` need Slint element
+    debug info, and building with it ALSO disables the compiler's `optimize_useless_rectangles` pass, so
+    the item tree under test stops being the tree the shipped binary renders (the B7 false-safety-net
+    pattern). Measured: the 44 Borders PNGs are byte-identical either way, but the flag was reverted
+    anyway; the tests read the global the section binds to, check statically that it binds all 55, and
+    measure the frames.
+  - Visual PNGs read with vision: `borders_i18n_en_top.png` / `borders_i18n_es_top.png` (Geometry rows,
+    Angle, Inactive, colour strip: "Geometría" / "Grosor del Borde" / "Espacio Interno" / "Ángulo del
+    Degradado" / "Colores del Borde Activo (2 ranuras)", longest description on one line, nothing
+    clipped), `borders_i18n_en_save.png` / `borders_i18n_es_save.png` (glow group, save form and the
+    keyboard hint: "Brillo (decoración de sombra)" / "Guardar como Preajuste" / "Nombre del preajuste…"
+    / "Guardar" / "↑↓ navegar • ←→ cambiar de panel • Enter aplicar/activar • flechas ±1 • Esc volver" —
+    the hint is the longest Spanish string in the frame and still ends well inside the pane),
+    `borders_i18n_en_picker.png` / `borders_i18n_es_picker.png` ("Color personalizado — el color del
+    brillo" with the colour field intact), `borders_i18n_en_presets.png` / `borders_i18n_es_presets.png`
+    (the 14 card names: "Cascade" -> "Cascada", "Neon Flicker" -> "Parpadeo Neón", "Toxic Green" ->
+    "Verde Tóxico"; "Waterfall" is nowhere), plus `slice_settled.png` from the mandated
+    `slice_focus_flow_renders`, unchanged.
+  - **B4 surfaced three non-i18n gaps, deliberately NOT started** (in Next step): `border-descs` has no
+    reader (descriptions are translated but only reach the window model), `SavedPresetCard.apply-text` is
+    declared and never painted, and the panel nav strip in `PanelRoot.slint:911` is still hardcoded
+    English (shared chrome across all four sections).
+  - Diff: 12 files, **+1221 / -119 authored lines (1340 total)**, of which 560 are the new test block and
+    237 the two new files; above the ~400 soft budget, reported rather than split. Full suite
+    **1025 passed / 0 failed, 0 warnings** (was 1017; +8 tests). B6 fence intact — the new tests use
+    `TempEnv` and read `assets/`; no state-changing `hyprctl`, no reload.
 
 ## Next step
 
-B1, B5, B6, B7, B2 and B3 are done, verified and accepted live. **B4 is next**: i18n for everything
-added (preset `@Title`/`@Desc` are English-only today and not wired to i18n; `13_the_joker` also has
-Spanish comments and no `@Color`).
+B1, B5, B6, B7, B2, B3 and B4 are done; B4 is verified (full suite green, PNGs read). Three
+follow-ups B4 surfaced, none of them i18n wiring and none of them started:
+`border-descs` has no reader (the preset descriptions are translated but only reach the window
+model), `SavedPresetCard.apply-text` is declared and never painted, and the panel nav strip
+("Save / Borders / Motion / Filters / System", `ui/panel/PanelRoot.slint:911`) is still hardcoded
+English — shared chrome across all sections, so it needs its own decision.
