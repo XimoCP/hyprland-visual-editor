@@ -183,7 +183,9 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
   record in Progress below.
 - [x] **B4 — i18n** for everything added (preset `@Title`/`@Desc` are English-only today and not
   wired to i18n; `13_the_joker` also has Spanish comments and no `@Color`). **Done in `e348cbb`** —
-  see the B4 record in Progress below.
+  see the B4 record in Progress below. **B4-correction:** the preset DESCRIPTIONS never
+  reached the picker (the `border-descs` channel was dead end to end) and 13 of the 14 EN
+  values were invented fragments; fixed — see the B4-correction record in Progress below.
 
 ## Key files
 
@@ -194,8 +196,14 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 - `src/engine.rs:179` `apply_geometry`; `src/app_state.rs:81`; `src/config.rs`.
 - `assets/scripts/geometry.sh`, `assets/scripts/assemble.sh` — the slow path.
 - `ui/panel/sections/borders_text.slint` — every user-visible string of the Borders panel (B4).
+- `ui/panel/sections/SavedPresetCard.slint` — the preset card itself. B4-correction gave it the
+  `desc` property it paints under the name; `BordersSection.slint`'s `BordersListPane` forwards the
+  translated `border-descs` model into it. The model is the channel, not `BordersText`: it is
+  filled by `presets.rs::translate_presets`, which is what the i18n preset keys feed.
 - `src/panel_i18n.rs` — fills that global from the embedded i18n map (`apply_borders`).
 - `i18n/en.json`, `i18n/es.json` → `borders.*` — the panel copy and the 14 preset name/desc keys.
+  The EN preset `desc` values mirror each preset's own `@Desc` (the fallback), so the key and the
+  fallback read the same; ES is their neutral translation.
 
 ## Progress
 
@@ -353,6 +361,9 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
     to match the file. The keeper's decision stands: the visible name is the i18n one, so `01_cascade`
     shows "Cascade"/"Cascada" while its `@Title` still says "Waterfall"; a test pins that the raw value
     never wins while a key exists, and that the stale values are still there as the fallback.
+    **CORRECTED:** the rewrite of those 13 descriptions was a mistake — they were invented
+    abstractions, not the presets' real text — and the descriptions were never painted at all.
+    See the B4-correction record below.
   - **Final preset table** (file | EN | ES): `01_cascade` Cascade / Cascada; `02_diagonal` Diagonal /
     Diagonal; `03_duo` Duo Contrast / Dúo Contraste; `04_tri` Trident / Tridente; `05_spectrum` Spectrum
     / Espectro; `06_pulse` Pulse / Latido; `07_infinity` Infinity / Infinito; `08_neon` Neon Flicker /
@@ -403,20 +414,88 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
     (the 14 card names: "Cascade" -> "Cascada", "Neon Flicker" -> "Parpadeo Neón", "Toxic Green" ->
     "Verde Tóxico"; "Waterfall" is nowhere), plus `slice_settled.png` from the mandated
     `slice_focus_flow_renders`, unchanged.
-  - **B4 surfaced three non-i18n gaps, deliberately NOT started** (in Next step): `border-descs` has no
-    reader (descriptions are translated but only reach the window model), `SavedPresetCard.apply-text` is
-    declared and never painted, and the panel nav strip in `PanelRoot.slint:911` is still hardcoded
-    English (shared chrome across all four sections).
+  - **B4 surfaced three non-i18n gaps, deliberately NOT started** (in Next step):
+    `SavedPresetCard.apply-text` is declared and never painted, and the panel nav strip in
+    `PanelRoot.slint:911` is still hardcoded English (shared chrome across all four sections).
+    The third gap it named — "`border-descs` has no reader" — was real and is now CLOSED by the
+    B4-correction below: that channel was exactly where the preset descriptions were supposed to
+    reach the picker, and B4 left it dead.
   - Diff: 12 files, **+1221 / -119 authored lines (1340 total)**, of which 560 are the new test block and
     237 the two new files; above the ~400 soft budget, reported rather than split. Full suite
     **1025 passed / 0 failed, 0 warnings** (was 1017; +8 tests). B6 fence intact — the new tests use
     `TempEnv` and read `assets/`; no state-changing `hyprctl`, no reload.
+- 2026-09-27: **B4 correction done** (this commit, `70c1874`). An independent adversarial review
+  (GLM) returned FAIL on B4 with one required fix, and it was right: the translated preset
+  DESCRIPTIONS never reached the UI. The finding was reproduced before any fix — emptying the
+  `border-descs` model changed **0 pixels** of the picker (the first reduction of
+  `border_preset_descriptions_are_painted_and_follow_the_language`), so the descriptions could only
+  ever be asserted from the model, which is what B4 did.
+  - **The dead channel.** `border-descs` travels `presets.rs` -> `main.slint` -> `shell.slint` ->
+  `PanelRoot.slint` -> `BordersSection`, which declared the property and read it nowhere; the card
+  the list renders, `SavedPresetCard`, had no description slot at all. B4's own record had already
+  noticed this ("`border-descs` has no reader") and filed it as a follow-up instead of wiring it.
+  - **The fix, one channel.** `SavedPresetCard` gains `in property <string> desc: ""` and paints it
+    under the name (`if root.desc != ""`, `overflow: elide`). `BordersListPane` gains
+    `builtin-descs` and binds `desc: i < root.builtin-descs.length ? root.builtin-descs[i] : ""`;
+    both instantiations (two-column and stacked) forward `builtin-descs: root.border-descs`. No new
+    channel was invented: the descriptions ride the same translated model the names already use.
+    An empty description paints nothing, so Motion's cards and user presets are unchanged.
+  - **Design note.** Routing them through `BordersText` (the static panel-copy global) was the other
+    option the review offered. It was rejected: the descriptions are per-preset DATA with a
+    `.lua @Desc` fallback, and `presets.rs::translate_presets` already resolves key-or-fallback per
+    row. Re-encoding 14 descriptions as 14 static globals would drop that fallback for no gain.
+  - **EN values reconciled.** 13 of the 14 EN descriptions B4 shipped were invented abstractions
+    ("Soft vertical gradient that blends the primary colour into the surface colour.") instead of the
+    presets' real text. They are now each file's own `@Desc`, so the i18n value and the fallback read
+    the same; ES is their neutral translation. The one deliberate name change from B4 (`08_neon`
+    "Neon Breath" -> "Neon Flicker") and every preset NAME are untouched — only the descriptions
+    moved. Final table: `01` "Dynamic border with vertical gradient using the Noctalia palette.";
+    `02` "Smooth gradient at a 45° angle using the Noctalia palette."; `03` "High contrast between
+    Noctalia's Primary and Secondary color."; `04` "The perfect balance between Primary, Secondary and
+    Tertiary."; `05` "The complete Noctalia color cycle (Static)."; `06` "Electrocardiogram effect. A
+    pulse of color runs through the window when focused."; `07` "Fluid loop of Noctalia colors.
+    Constant and elegant rotation."; `08` "Cyberpunk effect. The edge light flickers, moving back and
+    forth like unstable electricity."; `09` "Aggressive digital glitch effect. Alert colors with
+    ultra-fast rotation."; `10` "24k gold. An intense white reflection travels over a real gold
+    surface."; `11` "Intense radioactive green with toxic flow effect."; `12` "Two-color glow
+    simulation using a white/violet light base."; `13` "Joker Aesthetic: Acid green and deep purple
+    with electric glow."; `14` "Looper Aesthetic: Noctalia colors with Joker structure and glow."
+  - **The test that can fail on the physical claim** (`border_preset_descriptions_are_painted_and_follow_the_language`):
+    (1) empty the description model -> the list MUST repaint (0 before the fix, thousands after);
+    (2) keep the Spanish names, swap the descriptions to English -> MUST repaint again, so an
+    untranslated description cannot hide behind a constant; (3) a source check that the model reaches
+    the painted `Text` (`border-descs` -> section -> list -> card -> `text:`). The B4 test keeps its
+    model assertions but its doc no longer claims the descriptions land in a component that reads
+    them, because that was the false half.
+  - **"Cascade" in Spanish — fixture artifact, VERDICT: names localise.** `borders_i18n_es_top.png`
+    does show the built-in card as "Cascade" while the panel is Spanish, but that frame comes from
+    `borders_tune_pane_fixture`, which hardcodes `border_titles = ["Cascade"]` as a SYNTHETIC card
+    and never runs `scan.sh`; that test asserts PANEL copy, not preset names. The real scan path
+    renders "Cascada" — read in `borders_i18n_es_presets_descs.png` ("Cascada", "Dúo Contraste",
+    "Parpadeo Neón", "Neón Cyber-Glow (Dual)"). The fixture now carries a comment saying exactly that,
+    so the frame stops reading as a localisation bug.
+  - **Visual verification (PNGs read with vision, both languages):**
+    `borders_i18n_es_presets_descs.png` — full Spanish picker: "Cascada / Borde dinámico con
+    degradado vertical usando la paleta de Noctalia.", "Dúo Contraste / Alto contraste entre el color
+    primario y el secundario de Noctalia.", "Parpadeo Neón / Efecto cyberpunk: la luz del borde
+    parpadea de un lado a otro como electricidad inestable." — the longest description, one line,
+    ending well inside the card, nothing clipped or overflowing; cards stay 56px.
+    `borders_i18n_en_presets.png` — the same list in English, each line matching its `@Desc`
+    ("Cascade / Dynamic border with vertical gradient using the Noctalia palette.", "Pulse /
+    Electrocardiogram effect. A pulse of color runs through the window when focused.").
+    `borders_i18n_es_presets_descs_blank.png` — Spanish names, NO descriptions (the pre-fix frame).
+    `borders_i18n_es_presets_en_descs.png` — Spanish names with ENGLISH descriptions, the physical
+    proof that the painted text follows the model's language.
+  - Diff: 5 files, **+175 / -65 authored lines (240 total)** — i18n 56, tests 165, the two `.slint`
+    files 19 — under the ~400 soft budget. Full suite **1026 passed / 0 failed, 0 warnings** (was
+    1025; +1 test). B6 fence re-measured: SHA-256 of `~/.config/hve/config.json`,
+    `~/.config/hypr/hyprland.lua`, all of `~/.cache/hve` and `assets/fragments/*.lua` byte-identical
+    before/after a full suite.
 
 ## Next step
 
-B1, B5, B6, B7, B2, B3 and B4 are done; B4 is verified (full suite green, PNGs read). Three
-follow-ups B4 surfaced, none of them i18n wiring and none of them started:
-`border-descs` has no reader (the preset descriptions are translated but only reach the window
-model), `SavedPresetCard.apply-text` is declared and never painted, and the panel nav strip
-("Save / Borders / Motion / Filters / System", `ui/panel/PanelRoot.slint:911`) is still hardcoded
-English — shared chrome across all sections, so it needs its own decision.
+B1, B5, B6, B7, B2, B3 and B4 are done and B4's correction is in (`70c1874`); the full suite is
+green, the picker PNGs are read in both languages. Two follow-ups B4 surfaced remain, neither of
+them i18n wiring and neither started: `SavedPresetCard.apply-text` is declared and never painted,
+and the panel nav strip ("Save / Borders / Motion / Filters / System", `ui/panel/PanelRoot.slint:911`)
+is still hardcoded English — shared chrome across all sections, so it needs its own decision.
