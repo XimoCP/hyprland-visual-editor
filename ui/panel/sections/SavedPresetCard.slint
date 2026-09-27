@@ -12,6 +12,11 @@ import { HveColors } from "../../theme.slint";
 
 export component SavedPresetCard inherits Rectangle {
     in property <string> preset-name;
+    // Optional one-line description painted under the name. Built-in border
+    // presets carry theirs from the i18n map (or the file's own `@Desc` as the
+    // fallback); a caller that passes none (user presets, Motion's list) keeps
+    // the exact single-line card it had before.
+    in property <string> desc: "";
     // Value sent when the card is applied: the owner decides (built-in cards
     // send the preset FILE, because border.sh resolves presets by file name,
     // while the card keeps DISPLAYING the translated title). Defaults to the
@@ -107,6 +112,13 @@ export component SavedPresetCard inherits Rectangle {
                     font-weight: 700;
                     vertical-alignment: center;
                 }
+            }
+
+            if root.desc != "" : Text {
+                text: root.desc;
+                color: HveColors.text-muted;
+                font-size: 11px;
+                overflow: elide;
             }
         }
 

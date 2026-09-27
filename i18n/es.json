@@ -234,59 +234,59 @@
     "presets": {
       "01_cascade": {
         "title": "Cascada",
-        "desc": "Degradado vertical suave que mezcla el color primario con el color de superficie."
+        "desc": "Borde dinámico con degradado vertical usando la paleta de Noctalia."
       },
       "02_diagonal": {
         "title": "Diagonal",
-        "desc": "Degradado suave del color primario al color de superficie, inclinado a 45°."
+        "desc": "Degradado suave en un ángulo de 45° usando la paleta de Noctalia."
       },
       "03_duo": {
         "title": "Dúo Contraste",
-        "desc": "Contraste marcado entre el color primario y el secundario."
+        "desc": "Alto contraste entre el color primario y el secundario de Noctalia."
       },
       "04_tri": {
         "title": "Tridente",
-        "desc": "Borde de tres colores: primario, secundario y terciario."
+        "desc": "El equilibrio perfecto entre primario, secundario y terciario."
       },
       "05_spectrum": {
         "title": "Espectro",
-        "desc": "Cuatro colores estáticos para máxima visibilidad."
+        "desc": "El ciclo de color completo de Noctalia (estático)."
       },
       "06_pulse": {
         "title": "Latido",
-        "desc": "Curva de latido: un pulso de color recorre el borde."
+        "desc": "Efecto electrocardiograma: un pulso de color recorre la ventana al enfocarla."
       },
       "07_infinity": {
         "title": "Infinito",
-        "desc": "Ocho paradas que mantienen los colores girando sin parar."
+        "desc": "Bucle fluido de colores de Noctalia. Rotación constante y elegante."
       },
       "08_neon": {
         "title": "Parpadeo Neón",
-        "desc": "Neón inestable: la luz del borde parpadea de un lado a otro."
+        "desc": "Efecto cyberpunk: la luz del borde parpadea de un lado a otro como electricidad inestable."
       },
       "09_glitch": {
         "title": "Cyber Glitch",
-        "desc": "Fallo digital agresivo en colores de alerta."
+        "desc": "Efecto de fallo digital agresivo. Colores de alerta con rotación ultrarrápida."
       },
       "10_golden": {
         "title": "Golden Luxury",
-        "desc": "Reflejos metálicos dorados con un destello blanco."
+        "desc": "Oro de 24 quilates: un reflejo blanco intenso recorre una superficie de oro real."
       },
       "11_toxic": {
         "title": "Verde Tóxico",
-        "desc": "Verde radiactivo intenso que recorre el borde."
+        "desc": "Verde radiactivo intenso con efecto de flujo tóxico."
       },
       "12_neon_cyberpunk": {
         "title": "Neón Cyber-Glow (Dual)",
-        "desc": "Brillo de dos colores sobre una base blanca y violeta."
+        "desc": "Simulación de brillo de dos colores sobre una base de luz blanca y violeta."
       },
       "13_the_joker": {
         "title": "El Joker",
-        "desc": "Verde ácido y morado profundo con un brillo eléctrico."
+        "desc": "Estética Joker: verde ácido y morado profundo con brillo eléctrico."
       },
       "14_looper": {
         "title": "Looper",
-        "desc": "Bucle de tres colores con un brillo blanco suave."
+        "desc": "Estética Looper: colores de Noctalia con la estructura y el brillo de Joker."
       }
     }
   },

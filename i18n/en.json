@@ -234,59 +234,59 @@
     "presets": {
       "01_cascade": {
         "title": "Cascade",
-        "desc": "Soft vertical gradient that blends the primary colour into the surface colour."
+        "desc": "Dynamic border with vertical gradient using the Noctalia palette."
       },
       "02_diagonal": {
         "title": "Diagonal",
-        "desc": "Soft gradient of the primary colour into the surface colour, tilted to 45°."
+        "desc": "Smooth gradient at a 45° angle using the Noctalia palette."
       },
       "03_duo": {
         "title": "Duo Contrast",
-        "desc": "Hard contrast between the primary and the secondary colour."
+        "desc": "High contrast between Noctalia's Primary and Secondary color."
       },
       "04_tri": {
         "title": "Trident",
-        "desc": "Three-colour border: primary, secondary and tertiary."
+        "desc": "The perfect balance between Primary, Secondary and Tertiary."
       },
       "05_spectrum": {
         "title": "Spectrum",
-        "desc": "Four static colours for maximum visibility."
+        "desc": "The complete Noctalia color cycle (Static)."
       },
       "06_pulse": {
         "title": "Pulse",
-        "desc": "Heartbeat curve: a pulse of colour runs around the border."
+        "desc": "Electrocardiogram effect. A pulse of color runs through the window when focused."
       },
       "07_infinity": {
         "title": "Infinity",
-        "desc": "Eight stops that keep the colours rotating non-stop."
+        "desc": "Fluid loop of Noctalia colors. Constant and elegant rotation."
       },
       "08_neon": {
         "title": "Neon Flicker",
-        "desc": "Unstable neon: the edge light flickers back and forth."
+        "desc": "Cyberpunk effect. The edge light flickers, moving back and forth like unstable electricity."
       },
       "09_glitch": {
         "title": "Cyber Glitch",
-        "desc": "Aggressive digital glitch in alert colours."
+        "desc": "Aggressive digital glitch effect. Alert colors with ultra-fast rotation."
       },
       "10_golden": {
         "title": "Golden Luxury",
-        "desc": "Gold metallic reflections with a white shimmer."
+        "desc": "24k gold. An intense white reflection travels over a real gold surface."
       },
       "11_toxic": {
         "title": "Toxic Green",
-        "desc": "Intense radioactive green flowing along the border."
+        "desc": "Intense radioactive green with toxic flow effect."
       },
       "12_neon_cyberpunk": {
         "title": "Neon Cyber-Glow (Dual)",
-        "desc": "Two-colour glow built on a white and violet base."
+        "desc": "Two-color glow simulation using a white/violet light base."
       },
       "13_the_joker": {
         "title": "The Joker",
-        "desc": "Acid green and deep purple with an electric glow."
+        "desc": "Joker Aesthetic: Acid green and deep purple with electric glow."
       },
       "14_looper": {
         "title": "Looper",
-        "desc": "Three-colour loop with a soft white glow."
+        "desc": "Looper Aesthetic: Noctalia colors with Joker structure and glow."
       }
     }
   },

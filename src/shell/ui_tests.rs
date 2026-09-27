@@ -5313,6 +5313,12 @@ fn borders_tune_pane_fixture(colors: &[&str]) -> crate::MainWindow {
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
     win.set_panel_section(1);
+    // A single SYNTHETIC built-in card, for the tests that only need one preset
+    // mounted (panel labels, tune seats, strip). The name here is a bare literal
+    // and is NOT the real scan output: `border_preset_names_and_descriptions_
+    // follow_the_language` runs the real `scan.sh` and gets "Cascada" in Spanish.
+    // Do not read `borders_i18n_es_top.png`'s card name as a localisation check —
+    // that frame proves the PANEL copy, and this literal is what it paints.
     win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Cascade")])));
     win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("soft gradient")])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
@@ -6081,6 +6087,44 @@ const TUNE_AREA: (usize, usize, usize, usize) = (360, 0, 1920, 1080);
 /// x≈185 to x≈380): the names the i18n preset keys feed.
 const PRESET_LIST_AREA: (usize, usize, usize, usize) = (0, 0, 1040, 1080);
 
+/// The 14 built-in border descriptions after the B4 correction. English is each
+/// preset `.lua`'s own `@Desc` (the text the fallback would show), lightly
+/// normalised; Spanish is its neutral translation. Both the language test and
+/// the paint test below read this same table, so they cannot drift apart.
+const BORDER_PRESET_EN_DESCS: [&str; 14] = [
+    "Dynamic border with vertical gradient using the Noctalia palette.",
+    "Smooth gradient at a 45° angle using the Noctalia palette.",
+    "High contrast between Noctalia's Primary and Secondary color.",
+    "The perfect balance between Primary, Secondary and Tertiary.",
+    "The complete Noctalia color cycle (Static).",
+    "Electrocardiogram effect. A pulse of color runs through the window when focused.",
+    "Fluid loop of Noctalia colors. Constant and elegant rotation.",
+    "Cyberpunk effect. The edge light flickers, moving back and forth like unstable electricity.",
+    "Aggressive digital glitch effect. Alert colors with ultra-fast rotation.",
+    "24k gold. An intense white reflection travels over a real gold surface.",
+    "Intense radioactive green with toxic flow effect.",
+    "Two-color glow simulation using a white/violet light base.",
+    "Joker Aesthetic: Acid green and deep purple with electric glow.",
+    "Looper Aesthetic: Noctalia colors with Joker structure and glow.",
+];
+
+const BORDER_PRESET_ES_DESCS: [&str; 14] = [
+    "Borde dinámico con degradado vertical usando la paleta de Noctalia.",
+    "Degradado suave en un ángulo de 45° usando la paleta de Noctalia.",
+    "Alto contraste entre el color primario y el secundario de Noctalia.",
+    "El equilibrio perfecto entre primario, secundario y terciario.",
+    "El ciclo de color completo de Noctalia (estático).",
+    "Efecto electrocardiograma: un pulso de color recorre la ventana al enfocarla.",
+    "Bucle fluido de colores de Noctalia. Rotación constante y elegante.",
+    "Efecto cyberpunk: la luz del borde parpadea de un lado a otro como electricidad inestable.",
+    "Efecto de fallo digital agresivo. Colores de alerta con rotación ultrarrápida.",
+    "Oro de 24 quilates: un reflejo blanco intenso recorre una superficie de oro real.",
+    "Verde radiactivo intenso con efecto de flujo tóxico.",
+    "Simulación de brillo de dos colores sobre una base de luz blanca y violeta.",
+    "Estética Joker: verde ácido y morado profundo con brillo eléctrico.",
+    "Estética Looper: colores de Noctalia con la estructura y el brillo de Joker.",
+];
+
 /// Changed pixels between two frames, inside `area`.
 fn frame_diff(
     a: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
@@ -6485,11 +6529,9 @@ fn border_picker_title_follows_the_language() {
 ///
 /// This runs the REAL path — `scan.sh` over `assets/borders`, then
 /// `presets::populate_presets` — and asserts the models the section receives, so
-/// a stale `@Title` must never win while a key exists. The NAMES are what the
-/// cards paint; the DESCRIPTIONS land in `border-descs`, which the section
-/// carries but no component reads today (pre-existing — the card shows a name
-/// and an apply switch), so the frame check below covers the names and the model
-/// assertions cover both.
+/// a stale `@Title` must never win while a key exists. The frame check covers the
+/// names; `border_preset_descriptions_are_painted_and_follow_the_language` below
+/// proves the DESCRIPTIONS reach the pixels, which this test alone could not.
 #[test]
 fn border_preset_names_and_descriptions_follow_the_language() {
     use slint::{ComponentHandle as _, Model as _, ModelRc, SharedString};
@@ -6521,43 +6563,13 @@ fn border_preset_names_and_descriptions_follow_the_language() {
         "Infinity", "Neon Flicker", "Cyber Glitch", "Golden Luxury", "Toxic Green",
         "Neon Cyber-Glow (Dual)", "The Joker", "Looper",
     ];
-    const EN_DESCS: &[&str] = &[
-        "Soft vertical gradient that blends the primary colour into the surface colour.",
-        "Soft gradient of the primary colour into the surface colour, tilted to 45°.",
-        "Hard contrast between the primary and the secondary colour.",
-        "Three-colour border: primary, secondary and tertiary.",
-        "Four static colours for maximum visibility.",
-        "Heartbeat curve: a pulse of colour runs around the border.",
-        "Eight stops that keep the colours rotating non-stop.",
-        "Unstable neon: the edge light flickers back and forth.",
-        "Aggressive digital glitch in alert colours.",
-        "Gold metallic reflections with a white shimmer.",
-        "Intense radioactive green flowing along the border.",
-        "Two-colour glow built on a white and violet base.",
-        "Acid green and deep purple with an electric glow.",
-        "Three-colour loop with a soft white glow.",
-    ];
+    const EN_DESCS: &[&str] = &BORDER_PRESET_EN_DESCS;
     const ES_NAMES: &[&str] = &[
         "Cascada", "Diagonal", "Dúo Contraste", "Tridente", "Espectro", "Latido",
         "Infinito", "Parpadeo Neón", "Cyber Glitch", "Golden Luxury", "Verde Tóxico",
         "Neón Cyber-Glow (Dual)", "El Joker", "Looper",
     ];
-    const ES_DESCS: &[&str] = &[
-        "Degradado vertical suave que mezcla el color primario con el color de superficie.",
-        "Degradado suave del color primario al color de superficie, inclinado a 45°.",
-        "Contraste marcado entre el color primario y el secundario.",
-        "Borde de tres colores: primario, secundario y terciario.",
-        "Cuatro colores estáticos para máxima visibilidad.",
-        "Curva de latido: un pulso de color recorre el borde.",
-        "Ocho paradas que mantienen los colores girando sin parar.",
-        "Neón inestable: la luz del borde parpadea de un lado a otro.",
-        "Fallo digital agresivo en colores de alerta.",
-        "Reflejos metálicos dorados con un destello blanco.",
-        "Verde radiactivo intenso que recorre el borde.",
-        "Brillo de dos colores sobre una base blanca y violeta.",
-        "Verde ácido y morado profundo con un brillo eléctrico.",
-        "Bucle de tres colores con un brillo blanco suave.",
-    ];
+    const ES_DESCS: &[&str] = &BORDER_PRESET_ES_DESCS;
 
     crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("en"));
     assert_eq!(
@@ -6612,6 +6624,85 @@ fn border_preset_names_and_descriptions_follow_the_language() {
             "the i18n name must win over {file}'s stale @Title {raw_title:?}"
         );
     }
+}
+
+/// B4 correction — the 14 built-in preset DESCRIPTIONS must be PAINTED by the
+/// picker cards, not merely carried in `border-descs`. The test above asserts the
+/// model and a name-only frame diff, so deleting the card's description `Text`
+/// (or painting a hardcoded English string) left it green. This one fails on the
+/// physical claim:
+///  1. emptying the description model MUST repaint the list — a card that never
+///     reads it changes zero pixels;
+///  2. swapping only the description model, Spanish names untouched, MUST
+///     repaint it again — an untranslated description cannot hide behind a
+///     constant, the painted text follows the model's language;
+///  3. a source check that the model reaches the painted `Text` end to end
+///     (`border-descs` -> section -> list -> card -> `text:`).
+#[test]
+fn border_preset_descriptions_are_painted_and_follow_the_language() {
+    use slint::{ComponentHandle as _, Model as _, ModelRc, SharedString, VecModel};
+
+    let _env = crate::test_utils::TempEnv::new();
+
+    let win = borders_tune_pane_fixture(&[]);
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let cfg = crate::config::Config::default();
+    // The Spanish panel copy, then the REAL scan, so this frame is the same one
+    // the Spanish picker PNG comes from.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("spanish preset list");
+    save_slice_png(es.clone(), "/tmp/opencode/borders_i18n_es_presets_descs.png");
+
+    // (1) Empty descriptions: the list MUST repaint.
+    let blank: Vec<SharedString> = (0..win.get_border_descs().row_count())
+        .map(|_| SharedString::from(""))
+        .collect();
+    win.set_border_descs(ModelRc::new(VecModel::from(blank)));
+    settle_frames(80);
+    let es_blank = win.window().take_snapshot().expect("spanish list, descriptions emptied");
+    save_slice_png(es_blank.clone(), "/tmp/opencode/borders_i18n_es_presets_descs_blank.png");
+    let painted = frame_diff(&es, &es_blank, PRESET_LIST_AREA);
+    assert!(
+        painted > 200,
+        "the picker cards must paint the description model: emptying it changed only {painted} pixels"
+    );
+
+    // (2) Spanish names kept, descriptions in ENGLISH: MUST repaint again.
+    let en_descs: Vec<SharedString> = BORDER_PRESET_EN_DESCS
+        .iter()
+        .map(|d| SharedString::from(*d))
+        .collect();
+    win.set_border_descs(ModelRc::new(VecModel::from(en_descs)));
+    settle_frames(80);
+    let es_en_descs = win.window().take_snapshot().expect("spanish list, english descriptions");
+    save_slice_png(es_en_descs.clone(), "/tmp/opencode/borders_i18n_es_presets_en_descs.png");
+    let relang = frame_diff(&es, &es_en_descs, PRESET_LIST_AREA);
+    assert!(
+        relang > 200,
+        "the painted description must follow the language: switching it to English changed only {relang} pixels"
+    );
+
+    // (3) The wire, end to end.
+    const CARD: &str = include_str!("../../ui/panel/sections/SavedPresetCard.slint");
+    assert!(CARD.contains("in property <string> desc"), "SavedPresetCard must take a `desc`");
+    assert!(CARD.contains("text: root.desc"), "the card must PAINT its `desc`");
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+    assert!(
+        SECTION.contains("in property <[string]> builtin-descs"),
+        "the list pane must take `builtin-descs`"
+    );
+    assert!(
+        SECTION.contains("root.builtin-descs[i]"),
+        "each built-in card's `desc` must come from `builtin-descs`"
+    );
+    assert_eq!(
+        SECTION.matches("builtin-descs: root.border-descs").count(),
+        2,
+        "both BordersListPane instantiations (two-column and stacked) must forward `border-descs`"
+    );
 }
 
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
