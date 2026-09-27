@@ -25,6 +25,8 @@ import { HveColors } from "../../theme.slint";
 import { GeometrySlider } from "../../components.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
 import { HveColorPicker } from "../ColorPicker.slint";
+import { BordersText } from "borders_text.slint";
+
 
 // ─── Compact colour row (R6/R7) ───────────────────────────────────────
 // ONE row per non-gradient colour channel — inactive (8), glow colour (9),
@@ -94,7 +96,7 @@ component BorderCompactColorRow inherits Rectangle {
                 : (custom-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
 
             Text {
-                text: root.editing ? "Editing…" : "Custom…";
+                text: root.editing ? BordersText.editing-button : BordersText.custom-button;
                 color: root.editing ? HveColors.bg-dark : HveColors.text;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
@@ -260,7 +262,7 @@ component BordersTunePane inherits Rectangle {
         if (v == "p:error") { return "error"; }
         if (v == "p:surface") { return "surface"; }
         if (v == "p:surface_lowest") { return "surface_lowest"; }
-        if (v == "") { return "(none)"; }
+        if (v == "") { return BordersText.value-none; }
         return v;
     }
     function is-token-color(v: string) -> bool {
@@ -272,20 +274,20 @@ component BordersTunePane inherits Rectangle {
     // the colour chip beside the label is the real information, so the label
     // just says what kind of value it is.
     function value-label(v: string) -> string {
-        if (v == "") { return "(none)"; }
+        if (v == "") { return BordersText.value-none; }
         if (root.is-token-color(v)) { return root.readable-color(v); }
-        return "Custom";
+        return BordersText.value-custom;
     }
     // Human name for the channel the picker is editing, so the picker header
     // states exactly which colour it will change.
     function channel-name(idx: int) -> string {
         if (idx >= 0 && idx < root.slot-count) {
-            return "gradient colour " + (idx + 1) + " of " + root.slot-count;
+            return BordersText.picker-channel-gradient-prefix + (idx + 1) + BordersText.picker-channel-gradient-mid + root.slot-count;
         }
-        if (idx == 8) { return "the inactive border colour"; }
-        if (idx == 9) { return "the glow colour"; }
-        if (idx == 10) { return "the inactive glow colour"; }
-        return "this colour";
+        if (idx == 8) { return BordersText.picker-channel-inactive; }
+        if (idx == 9) { return BordersText.picker-channel-glow; }
+        if (idx == 10) { return BordersText.picker-channel-glow-inactive; }
+        return BordersText.picker-channel-fallback;
     }
     // The value the picker is editing ("p:primary" / "c:rrggbbaa"), in the same
     // index space as tune-colors-resolved. Drives the token row's selection
@@ -382,7 +384,7 @@ component BordersTunePane inherits Rectangle {
             // Borders: he put them there because he did not know where else
             // they belonged, and this is home for them now.
             Text {
-                text: "Geometry";
+                text: BordersText.geometry-heading;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-12;
                 font-weight: 600;
@@ -406,7 +408,7 @@ component BordersTunePane inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     engaged: root.engaged-slider == 0;
                     focused: size-wrap.lit;
-                    label: "Border Thickness";
+                    label: BordersText.thickness-label;
                     value: root.size;
                     min: 1;
                     max: 5;
@@ -416,7 +418,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: size ──
             Text {
-                text: "Border width in pixels (1 thin, 5 thick).";
+                text: BordersText.thickness-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -440,7 +442,7 @@ component BordersTunePane inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     engaged: root.engaged-slider == 1;
                     focused: radius-wrap.lit;
-                    label: "Corner Radius";
+                    label: BordersText.radius-label;
                     value: root.radius;
                     min: 0;
                     max: 100;
@@ -450,7 +452,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: radius ──
             Text {
-                text: "Corner rounding in pixels (0 square, 100 fully round).";
+                text: BordersText.radius-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -474,7 +476,7 @@ component BordersTunePane inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     engaged: root.engaged-slider == 2;
                     focused: gap-in-wrap.lit;
-                    label: "Inner Gap";
+                    label: BordersText.gap-in-label;
                     value: root.gap-in;
                     min: 0;
                     max: 30;
@@ -484,7 +486,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: gap-in ──
             Text {
-                text: "Space between a window and its neighbors (inner gap).";
+                text: BordersText.gap-in-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -508,7 +510,7 @@ component BordersTunePane inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     engaged: root.engaged-slider == 3;
                     focused: gap-out-wrap.lit;
-                    label: "Outer Gap";
+                    label: BordersText.gap-out-label;
                     value: root.gap-out;
                     min: 0;
                     max: 30;
@@ -518,7 +520,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: gap-out ──
             Text {
-                text: "Space between windows and the screen edge (outer gap).";
+                text: BordersText.gap-out-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -545,7 +547,7 @@ component BordersTunePane inherits Rectangle {
                     spacing: 8px;
 
                     Text {
-                        text: "Gradient Angle";
+                        text: BordersText.angle-label;
                         color: HveColors.text;
                         font-family: SkwdTokens.font-body;
                         font-size: 13px;
@@ -592,7 +594,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: angle ──
             Text {
-                text: "Direction of the active border gradient (30/45/90 degrees).";
+                text: BordersText.angle-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -603,7 +605,7 @@ component BordersTunePane inherits Rectangle {
             // A compact single row — chip + label + "Custom…" — instead of the
             // 110px slot card. The token swatches live in the shared picker now.
             BorderCompactColorRow {
-                label: "Inactive";
+                label: BordersText.inactive-label;
                 value-label: root.value-label(root.tune-inactive-color);
                 resolved-color: root.tune-colors-resolved[8];
                 lit: root.focused-index == root.split + 5 && root.has-focus;
@@ -613,7 +615,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: inactive ──
             Text {
-                text: "Color applied to borders of unfocused (inactive) windows.";
+                text: BordersText.inactive-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -625,7 +627,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Dynamic gradient colours: one strip, one stop ──
             if root.slot-count > 0 : Text {
-                text: "Active Border Colors (" + root.slot-count + " slots)";
+                text: BordersText.active-colors-label + " (" + root.slot-count + BordersText.active-colors-slots + ")";
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-12;
                 font-weight: 600;
@@ -716,7 +718,7 @@ component BordersTunePane inherits Rectangle {
                             spacing: 8px;
 
                             Text {
-                                text: "Custom colour — " + root.channel-name(root.editing-slot);
+                                text: BordersText.picker-title-prefix + root.channel-name(root.editing-slot);
                                 font-family: SkwdTokens.font-body;
                                 font-size: SkwdTokens.size-13;
                                 font-weight: 600;
@@ -734,7 +736,7 @@ component BordersTunePane inherits Rectangle {
                                 border-color: HveColors.border;
 
                                 Text {
-                                    text: "Done";
+                                    text: BordersText.picker-done;
                                     color: HveColors.text;
                                     font-family: SkwdTokens.font-body;
                                     font-size: SkwdTokens.size-11;
@@ -878,7 +880,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: gradient colours ──
             Text {
-                text: "←→ select gradient colour, Enter to edit, Esc to close.";
+                text: BordersText.active-colors-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -919,7 +921,7 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 Text {
-                    text: root.slot-count + " of 8";
+                    text: root.slot-count + BordersText.slots-count-suffix;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-11;
                     color: HveColors.text-muted;
@@ -957,7 +959,7 @@ component BordersTunePane inherits Rectangle {
 
             // ── Description: dynamic slots ──
             if root.slot-count > 0 : Text {
-                text: "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland.";
+                text: BordersText.slots-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -982,7 +984,7 @@ component BordersTunePane inherits Rectangle {
                     alignment: space-between;
 
                     Text {
-                        text: "Glow (shadow decoration)";
+                        text: BordersText.glow-title;
                         color: HveColors.text-muted;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-13;
@@ -997,7 +999,7 @@ component BordersTunePane inherits Rectangle {
                         background: glow-add-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
 
                         Text {
-                            text: "Add";
+                            text: BordersText.glow-add;
                             color: HveColors.bg-dark;
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-12;
@@ -1020,7 +1022,7 @@ component BordersTunePane inherits Rectangle {
             // Task 3.4 requires the addable state to explain itself, not just
             // show a button.
             if !root.glow-enabled : Text {
-                text: "This preset has no glow. Add one to give the border a coloured shadow around focused windows.";
+                text: BordersText.glow-empty-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-11;
                 color: HveColors.text-muted;
@@ -1043,7 +1045,7 @@ component BordersTunePane inherits Rectangle {
                         spacing: 8px;
                         alignment: space-between;
                         Text {
-                            text: "Glow (shadow decoration)";
+                            text: BordersText.glow-title;
                             color: HveColors.accent-cyan;
                             font-family: SkwdTokens.font-heading;
                             font-size: SkwdTokens.size-13;
@@ -1094,7 +1096,7 @@ component BordersTunePane inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == root.idx-glow-range;
                         focused: root.local-focus == root.idx-glow-range && root.has-focus;
-                        label: "Range";
+                        label: BordersText.glow-range-label;
                         value: root.glow-range;
                         min: 5;
                         max: 40;
@@ -1103,7 +1105,7 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 Text {
-                    text: "How far the shadow extends from the window edge (5 near, 40 far).";
+                    text: BordersText.glow-range-desc;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-11;
                     color: HveColors.text-muted;
@@ -1125,7 +1127,7 @@ component BordersTunePane inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                         engaged: root.engaged-slider == root.idx-glow-power;
                         focused: root.local-focus == root.idx-glow-power && root.has-focus;
-                        label: "Power";
+                        label: BordersText.glow-power-label;
                         value: root.glow-render-power;
                         min: 1;
                         max: 8;
@@ -1134,7 +1136,7 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 Text {
-                    text: "Shadow intensity (1 subtle, 8 strong).";
+                    text: BordersText.glow-power-desc;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-11;
                     color: HveColors.text-muted;
@@ -1143,7 +1145,7 @@ component BordersTunePane inherits Rectangle {
 
                 // Glow color — compact row, same pattern as the inactive row (R7).
                 BorderCompactColorRow {
-                    label: "Glow Color";
+                    label: BordersText.glow-color-label;
                     value-label: root.value-label(root.glow-color);
                     resolved-color: root.tune-colors-resolved[9];
                     lit: root.local-focus == root.idx-glow-color && root.has-focus;
@@ -1152,7 +1154,7 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 Text {
-                    text: "Color of the glow on focused windows. Tap Custom… to change it.";
+                    text: BordersText.glow-color-desc;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-11;
                     color: HveColors.text-muted;
@@ -1161,7 +1163,7 @@ component BordersTunePane inherits Rectangle {
 
                 // Glow inactive color — compact row (R7).
                 BorderCompactColorRow {
-                    label: "Inactive Glow";
+                    label: BordersText.glow-inactive-label;
                     value-label: root.value-label(root.glow-color-inactive);
                     resolved-color: root.tune-colors-resolved[10];
                     lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
@@ -1170,7 +1172,7 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 Text {
-                    text: "Glow color for unfocused windows. Tap Custom… to change it.";
+                    text: BordersText.glow-inactive-desc;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-11;
                     color: HveColors.text-muted;
@@ -1183,7 +1185,7 @@ component BordersTunePane inherits Rectangle {
 
             // Save form: LineEdit + Save button
             Text {
-                text: "Save as Preset";
+                text: BordersText.save-title;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-14;
                 font-weight: 700;
@@ -1208,7 +1210,7 @@ component BordersTunePane inherits Rectangle {
                         y: 4px;
                         width: parent.width - 8px;
                         height: parent.height - 8px;
-                        placeholder-text: "Border preset name…";
+                        placeholder-text: BordersText.save-placeholder;
                         text <=> root.preset-name;
                         font-size: SkwdTokens.size-13;
                         accepted(text) => {
@@ -1229,7 +1231,7 @@ component BordersTunePane inherits Rectangle {
                     border-color: #8fd8ff;
 
                     Text {
-                        text: "Save";
+                        text: BordersText.save-button;
                         color: HveColors.bg-dark;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-13;
@@ -1261,7 +1263,7 @@ component BordersTunePane inherits Rectangle {
 
             // Keyboard hint
             Text {
-                text: "↑↓ navigate • ←→ switch panel • Enter apply/engage • arrows ±1 • Esc back";
+                text: BordersText.kbd-hint;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted.transparentize(0.4);
@@ -1359,7 +1361,7 @@ component BordersListPane inherits Rectangle {
 
             // Built-in presets header
             if root.builtin-names.length > 0 : Text {
-                text: "Built-in";
+                text: BordersText.list-builtin;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-12;
                 font-weight: 600;
@@ -1371,6 +1373,9 @@ component BordersListPane inherits Rectangle {
                 apply-value: root.builtin-files[i];
                 is-active: i == root.active-index;
                 is-user: false;
+                apply-text: BordersText.card-apply;
+                rename-text: BordersText.card-rename;
+                delete-text: BordersText.card-delete;
                 keyboard-focused: root.focused-index == i && root.has-focus;
                 accent: #8fd8ff;
                 index: i;
@@ -1381,7 +1386,7 @@ component BordersListPane inherits Rectangle {
             // User presets header
             if root.user-names.length > 0 : Rectangle { height: 8px; }
             if root.user-names.length > 0 : Text {
-                text: "My Border Presets";
+                text: BordersText.list-user;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-12;
                 font-weight: 600;
@@ -1392,6 +1397,9 @@ component BordersListPane inherits Rectangle {
                 preset-name: root.user-names[i];
                 is-active: root.builtin-names.length + i == root.active-index;
                 is-user: true;
+                apply-text: BordersText.card-apply;
+                rename-text: BordersText.card-rename;
+                delete-text: BordersText.card-delete;
                 keyboard-focused: root.focused-index == root.builtin-names.length + i && root.has-focus;
                 accent: HveColors.accent-amber;
                 index: root.builtin-names.length + i;
@@ -1403,7 +1411,7 @@ component BordersListPane inherits Rectangle {
 
             // Empty state
             if root.total-count == 0 : Text {
-                text: "No border presets found.";
+                text: BordersText.list-empty;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -1894,14 +1902,14 @@ export component BordersSection inherits Rectangle {
             padding: 16px;
             spacing: 4px;
             Text {
-                text: "Borders";
+                text: BordersText.header-title;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Tune the border, then save it as a preset. Or pick an existing style.";
+                text: BordersText.header-subtitle;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -1921,8 +1929,8 @@ export component BordersSection inherits Rectangle {
                 }
                 Text {
                     text: root.tune-dirty
-                        ? "Live preview — unsaved changes"
-                        : "Live preview — no unsaved changes";
+                        ? BordersText.live-dirty
+                        : BordersText.live-clean;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-11;
                     font-weight: 600;

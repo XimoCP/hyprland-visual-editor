@@ -1,0 +1,90 @@
+// HVE 2 — Borders panel text (B4).
+//
+// Declared in its own file (no components) so the compiler exposes it to
+// Rust as `crate::BordersText`, the way `HveColors` (theme.slint) and
+// `SkwdTokens` (tokens.slint) are exposed.
+// EVERY user-visible string of this section lives here, so the whole panel
+// can be shown in the selected language. Rust fills these from the embedded
+// i18n map (`tr.tr_shared`) through `panel_i18n::apply_borders`; the
+// defaults below are today's English copy, so a run that never calls the
+// i18n pass reads exactly as it always did.
+//
+// Font/button symbols (30°, +, −, ×, ✓), the palette token names
+// (primary/secondary/…) and the encoded colour values ("p:primary") are NOT
+// text: they are identifiers the Rust side round-trips verbatim, so they stay
+// untranslated on purpose.
+export global BordersText {
+    in-out property <string> header-title: "Borders";
+    in-out property <string> header-subtitle: "Tune the border, then save it as a preset. Or pick an existing style.";
+    in-out property <string> live-dirty: "Live preview — unsaved changes";
+    in-out property <string> live-clean: "Live preview — no unsaved changes";
+
+    // Tune pane — Geometry block
+    in-out property <string> geometry-heading: "Geometry";
+    in-out property <string> thickness-label: "Border Thickness";
+    in-out property <string> thickness-desc: "Border width in pixels (1 thin, 5 thick).";
+    in-out property <string> radius-label: "Corner Radius";
+    in-out property <string> radius-desc: "Corner rounding in pixels (0 square, 100 fully round).";
+    in-out property <string> gap-in-label: "Inner Gap";
+    in-out property <string> gap-in-desc: "Space between a window and its neighbors (inner gap).";
+    in-out property <string> gap-out-label: "Outer Gap";
+    in-out property <string> gap-out-desc: "Space between windows and the screen edge (outer gap).";
+
+    // Tune pane — angle, inactive colour
+    in-out property <string> angle-label: "Gradient Angle";
+    in-out property <string> angle-desc: "Direction of the active border gradient (30/45/90 degrees).";
+    in-out property <string> inactive-label: "Inactive";
+    in-out property <string> inactive-desc: "Color applied to borders of unfocused (inactive) windows.";
+
+    // Tune pane — gradient colour slots
+    in-out property <string> active-colors-label: "Active Border Colors";
+    in-out property <string> active-colors-slots: " slots";
+    in-out property <string> active-colors-desc: "←→ select gradient colour, Enter to edit, Esc to close.";
+    in-out property <string> slots-count-suffix: " of 8";
+    in-out property <string> slots-desc: "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland.";
+
+    // Tune pane — glow / shadow group
+    in-out property <string> glow-title: "Glow (shadow decoration)";
+    in-out property <string> glow-add: "Add";
+    in-out property <string> glow-empty-desc: "This preset has no glow. Add one to give the border a coloured shadow around focused windows.";
+    in-out property <string> glow-range-label: "Range";
+    in-out property <string> glow-range-desc: "How far the shadow extends from the window edge (5 near, 40 far).";
+    in-out property <string> glow-power-label: "Power";
+    in-out property <string> glow-power-desc: "Shadow intensity (1 subtle, 8 strong).";
+    in-out property <string> glow-color-label: "Glow Color";
+    in-out property <string> glow-color-desc: "Color of the glow on focused windows. Tap Custom… to change it.";
+    in-out property <string> glow-inactive-label: "Inactive Glow";
+    in-out property <string> glow-inactive-desc: "Glow color for unfocused windows. Tap Custom… to change it.";
+
+    // Tune pane — save form and hint
+    in-out property <string> save-title: "Save as Preset";
+    in-out property <string> save-placeholder: "Border preset name…";
+    in-out property <string> save-button: "Save";
+    in-out property <string> kbd-hint: "↑↓ navigate • ←→ switch panel • Enter apply/engage • arrows ±1 • Esc back";
+
+    // List pane
+    in-out property <string> list-builtin: "Built-in";
+    in-out property <string> list-user: "My Border Presets";
+    in-out property <string> list-empty: "No border presets found.";
+    // `card-apply` reaches `SavedPresetCard.apply-text`, which that card
+    // declares but does not paint: its apply control is a switch with no label,
+    // and Rename/Delete are the only card actions with visible text today. The
+    // string is wired for the day the card shows one; it is not on screen now.
+    in-out property <string> card-apply: "Apply";
+    in-out property <string> card-rename: "Rename";
+    in-out property <string> card-delete: "Delete";
+
+    // Compact colour rows and the shared picker
+    in-out property <string> custom-button: "Custom…";
+    in-out property <string> editing-button: "Editing…";
+    in-out property <string> picker-title-prefix: "Custom colour — ";
+    in-out property <string> picker-done: "Done";
+    in-out property <string> picker-channel-gradient-prefix: "gradient colour ";
+    in-out property <string> picker-channel-gradient-mid: " of ";
+    in-out property <string> picker-channel-inactive: "the inactive border colour";
+    in-out property <string> picker-channel-glow: "the glow colour";
+    in-out property <string> picker-channel-glow-inactive: "the inactive glow colour";
+    in-out property <string> picker-channel-fallback: "this colour";
+    in-out property <string> value-custom: "Custom";
+    in-out property <string> value-none: "(none)";
+}

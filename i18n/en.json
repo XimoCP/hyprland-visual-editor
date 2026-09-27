@@ -140,84 +140,153 @@
     }
   },
   "borders": {
+    "header_title": "Borders",
+    "header_subtitle": "Tune the border, then save it as a preset. Or pick an existing style.",
+    "live_dirty": "Live preview — unsaved changes",
+    "live_clean": "Live preview — no unsaved changes",
     "geometry": {
+      "heading": "Geometry",
       "title": "Border Thickness",
-      "desc": "Define line thickness (0-5px)"
+      "desc": "Border width in pixels (1 thin, 5 thick)."
     },
     "radius": {
       "title": "Corner Radius",
-      "desc": "Define window corner rounding (0-100px)"
+      "desc": "Corner rounding in pixels (0 square, 100 fully round)."
     },
     "gaps": {
       "title": "Gaps",
       "desc": "Define spacing between windows (0-30px)",
       "in": {
         "title": "Inner Gap",
-        "desc": "Spacing between windows (0-30px)"
+        "desc": "Space between a window and its neighbors (inner gap)."
       },
       "out": {
         "title": "Outer Gap",
-        "desc": "Spacing from screen edges (0-30px)"
+        "desc": "Space between windows and the screen edge (outer gap)."
       }
     },
-    "header_title": "Visual Styles",
-    "header_subtitle": "Define your windows' personality",
+    "angle": {
+      "title": "Gradient Angle",
+      "desc": "Direction of the active border gradient (30/45/90 degrees)."
+    },
+    "inactive": {
+      "title": "Inactive",
+      "desc": "Color applied to borders of unfocused (inactive) windows."
+    },
+    "active_colors": {
+      "title": "Active Border Colors",
+      "slots": " slots",
+      "desc": "←→ select gradient colour, Enter to edit, Esc to close."
+    },
+    "slots": {
+      "count_suffix": " of 8",
+      "desc": "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland."
+    },
+    "glow": {
+      "title": "Glow (shadow decoration)",
+      "add": "Add",
+      "empty_desc": "This preset has no glow. Add one to give the border a coloured shadow around focused windows.",
+      "range": {
+        "title": "Range",
+        "desc": "How far the shadow extends from the window edge (5 near, 40 far)."
+      },
+      "power": {
+        "title": "Power",
+        "desc": "Shadow intensity (1 subtle, 8 strong)."
+      },
+      "color": {
+        "title": "Glow Color",
+        "desc": "Color of the glow on focused windows. Tap Custom… to change it."
+      },
+      "inactive": {
+        "title": "Inactive Glow",
+        "desc": "Glow color for unfocused windows. Tap Custom… to change it."
+      }
+    },
+    "save": {
+      "title": "Save as Preset",
+      "placeholder": "Border preset name…",
+      "button": "Save"
+    },
+    "kbd_hint": "↑↓ navigate • ←→ switch panel • Enter apply/engage • arrows ±1 • Esc back",
+    "list": {
+      "builtin": "Built-in",
+      "user": "My Border Presets",
+      "empty": "No border presets found.",
+      "apply": "Apply",
+      "rename": "Rename",
+      "delete": "Delete"
+    },
+    "picker": {
+      "custom": "Custom…",
+      "editing": "Editing…",
+      "title_prefix": "Custom colour — ",
+      "done": "Done",
+      "channel_gradient_prefix": "gradient colour ",
+      "channel_gradient_mid": " of ",
+      "channel_inactive": "the inactive border colour",
+      "channel_glow": "the glow colour",
+      "channel_glow_inactive": "the inactive glow colour",
+      "channel_fallback": "this colour",
+      "value_custom": "Custom",
+      "value_none": "(none)"
+    },
     "presets": {
       "01_cascade": {
         "title": "Cascade",
-        "desc": "Soft vertical gradient at 50%."
+        "desc": "Soft vertical gradient that blends the primary colour into the surface colour."
       },
       "02_diagonal": {
         "title": "Diagonal",
-        "desc": "Dynamic angle fade."
+        "desc": "Soft gradient of the primary colour into the surface colour, tilted to 45°."
       },
       "03_duo": {
         "title": "Duo Contrast",
-        "desc": "Strong Primary/Secondary contrast."
+        "desc": "Hard contrast between the primary and the secondary colour."
       },
       "04_tri": {
         "title": "Trident",
-        "desc": "Tricolor elegance with gold."
+        "desc": "Three-colour border: primary, secondary and tertiary."
       },
       "05_spectrum": {
         "title": "Spectrum",
-        "desc": "Four colors for maximum visibility."
+        "desc": "Four static colours for maximum visibility."
       },
       "06_pulse": {
         "title": "Pulse",
-        "desc": "Rotates once when selecting window."
+        "desc": "Heartbeat curve: a pulse of colour runs around the border."
       },
       "07_infinity": {
         "title": "Infinity",
-        "desc": "Constant color rotation."
+        "desc": "Eight stops that keep the colours rotating non-stop."
       },
       "08_neon": {
-        "title": "Neon Breath",
-        "desc": "Slow and relaxing oscillation."
+        "title": "Neon Flicker",
+        "desc": "Unstable neon: the edge light flickers back and forth."
       },
       "09_glitch": {
         "title": "Cyber Glitch",
-        "desc": "Aggressive, fast, and error colors."
+        "desc": "Aggressive digital glitch in alert colours."
       },
       "10_golden": {
         "title": "Golden Luxury",
-        "desc": "Gold metallic reflections."
+        "desc": "Gold metallic reflections with a white shimmer."
       },
       "11_toxic": {
         "title": "Toxic Green",
-        "desc": "Fluor green metallic reflections."
+        "desc": "Intense radioactive green flowing along the border."
       },
       "12_neon_cyberpunk": {
         "title": "Neon Cyber-Glow (Dual)",
-        "desc": "Simulation of bicolor brightness using a white/violet light base."
+        "desc": "Two-colour glow built on a white and violet base."
       },
       "13_the_joker": {
         "title": "The Joker",
-        "desc": "Joker aesthetic: Acid green and deep purple with an electric glow."
+        "desc": "Acid green and deep purple with an electric glow."
       },
       "14_looper": {
         "title": "Looper",
-        "desc": "Looper Aesthetic: Desktop colors with loop effect."
+        "desc": "Three-colour loop with a soft white glow."
       }
     }
   },

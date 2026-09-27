@@ -9,6 +9,7 @@ mod countdown;
 mod engine;
 mod hypr_ipc;
 mod ipc;
+mod panel_i18n;
 mod presets;
 mod preset_store;
 mod providers;
@@ -2459,6 +2460,12 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_shell_home_hint(tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"));
     window.set_shell_gallery_hint(tr.tr_shared("shell.gallery.hint", "Gallery slot — module 2"));
     window.set_shell_workshop_hint(tr.tr_shared("shell.workshop.hint", "Workshop slot — module 4"));
+
+    // ── Borders panel i18n (B4) ────────────────────────────────────────
+    // The section's ~50 labels live in the exported `BordersText` global so
+    // the tune pane reads them wherever it is instantiated; this fills that
+    // global from the same embedded map the shell strings above use.
+    panel_i18n::apply_borders(&window, &tr);
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
@@ -5608,8 +5615,46 @@ mod tests {
         );
     }
 
-    // ── Theme interlude view switch (strict TDD) ─────────────────────────
+    /// B4 — the Borders panel i18n must be applied by the REAL startup path.
+    ///
+    /// `borders_panel_labels_follow_the_language` proves `panel_i18n::apply_borders`
+    /// translates the whole panel, but a test that only calls the function
+    /// itself would keep passing if `main()` stopped calling it — the exact
+    /// false safety net B7 removed for the geometry flush. So this pins the
+    /// call site: `main` calls it exactly once, as a plain top-level statement,
+    /// before the event loop starts.
+    #[test]
+    fn main_applies_the_borders_i18n_before_the_event_loop() {
+        const APPLY: &str = "apply_borders";
+        let body = main_fn_body();
 
+        let calls: Vec<&syn::Stmt> = body
+            .stmts
+            .iter()
+            .filter(|stmt| stmt_mentions_call(stmt, APPLY))
+            .collect();
+        assert_eq!(
+            calls.len(),
+            1,
+            "main must call panel_i18n::apply_borders exactly once"
+        );
+        let apply = call_index(&body.stmts, APPLY)
+            .expect("the single apply_borders mention must be a plain top-level call, \
+                     never nested in a branch or loop");
+
+        // The panel is built from this global before the window is shown, so
+        // the first frame is already translated.
+        let quit = call_index(&body.stmts, "run_event_loop_until_quit");
+        if let Some(quit) = quit {
+            assert!(
+                apply < quit,
+                "the Borders i18n must be applied before the event loop \
+                 (apply at statement {apply}, quit at {quit})"
+            );
+        }
+    }
+
+    // ── Theme interlude view switch (strict TDD) ─────────────────────────
     #[test]
     fn interlude_script_matches_verified_lua_payload() {
         // Verified live on Hyprland 0.56.2: `hyprctl dispatch

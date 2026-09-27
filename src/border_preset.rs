@@ -413,20 +413,33 @@ fn extract_int_value(text: &str, key: &str) -> Option<i32> {
     extract_assignment_value(text, key)?.trim().parse::<i32>().ok()
 }
 
+/// Locate the `decoration.shadow` block. Comment prose may mention the word
+/// before the real assignment (`13_the_joker`'s header comment does), so every
+/// boundary-valid `shadow` occurrence is tried in order and only one followed
+/// by `= {` starts the block — the same rule `find_colors_block` applies to
+/// `colors` and `find_rule_block` to `windowrulev2`.
+fn find_shadow_block(text: &str) -> Option<&str> {
+    let mut search = text;
+    loop {
+        let rel = find_key(search, "shadow")?;
+        let abs = text.len() - search.len() + rel;
+        let after = text[abs + "shadow".len()..].trim_start();
+        if after.starts_with('=') {
+            let after_eq = after[1..].trim_start();
+            if after_eq.starts_with('{') {
+                return match_brace(after_eq);
+            }
+        }
+        // False positive (comment prose): continue after this occurrence.
+        search = &search[rel + 1..];
+    }
+}
+
 /// Extract the `decoration.shadow` block. Absent block = `None`, and the
 /// pane shows the addable empty state (D3). Locals resolve before
 /// classification; unresolvable colors fall back per D2.
 fn extract_glow(text: &str, aliases: &HashMap<String, String>) -> Option<GlowParams> {
-    let key_pos = find_key(text, "shadow")?;
-    let after = text[key_pos + "shadow".len()..].trim_start();
-    if !after.starts_with('=') {
-        return None;
-    }
-    let after_eq = after[1..].trim_start();
-    if !after_eq.starts_with('{') {
-        return None;
-    }
-    let block = match_brace(after_eq)?;
+    let block = find_shadow_block(text)?;
     Some(GlowParams {
         enabled: extract_bool_value(block, "enabled").unwrap_or(false),
         range: extract_int_value(block, "range").unwrap_or(0),
@@ -884,6 +897,41 @@ mod tests {
         }
     }
 
+    /// A comment that mentions the word `shadow` before the block must not hide
+    /// the glow. `13_the_joker`'s English header comment does exactly that, and
+    /// the first-occurrence lookup reported the whole preset as glow-less —
+    /// caught by `all_fixtures_pin_glow_and_rule_presence`. `colors` and
+    /// `windowrulev2` already skip prose occurrences; `shadow` did not.
+    #[test]
+    fn glow_is_found_when_a_comment_mentions_shadow_first() {
+        let text = r#"
+-- Keep the original purple shadow.
+local shadow_glow = "rgba(9d00ff88)"
+hl.config({
+    decoration = {
+        shadow = {
+            enabled = true,
+            range = 20,
+            render_power = 4,
+            color = shadow_glow,
+            color_inactive = "rgba(9d00ff00)",
+            offset = { 0, 0 }
+        }
+    }
+})
+"#;
+        let glow = parse(text)
+            .glow
+            .expect("the shadow block must be found past the comment prose");
+        assert!(glow.enabled);
+        assert_eq!(glow.range, 20);
+        assert_eq!(glow.render_power, 4);
+        assert_eq!(
+            glow.color,
+            BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 }
+        );
+    }
+
     /// Garbage input resolves to documented defaults and never panics.
     #[test]
     fn garbage_input_resolves_to_defaults() {
@@ -891,5 +939,65 @@ mod tests {
         assert_eq!(p, BorderParams::default());
         let empty = parse("");
         assert_eq!(empty, BorderParams::default());
+    }
+
+    /// Every shipped border preset opens with the same three metadata fields, and
+    /// its hand-written comments stay in the codebase's language.
+    ///
+    /// `13_the_joker` was the file that broke this: no `@Color`, and five Spanish
+    /// comments (12 and 14 carried one Spanish line each, the same one). Walking
+    /// the directory — not a hard-coded list — means a new preset is covered too.
+    ///
+    /// The character check is a tripwire, not a language detector: it allows the
+    /// typographic marks an English comment legitimately carries here (a degree
+    /// sign on an angle) and rejects accents, `¿` and `¡`, which is what four of
+    /// the five leaks had. Accent-free Spanish still needs a reviewer's eye.
+    #[test]
+    fn every_border_preset_declares_title_desc_and_color() {
+        const ALLOWED_NON_ASCII: &[char] = &['°', '±', '→', '←', '•', '…', '—'];
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/borders");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .expect("assets/borders must be readable")
+            .map(|e| e.expect("directory entry").path())
+            .filter(|p| p.extension().map(|e| e == "lua").unwrap_or(false))
+            .collect();
+        files.sort();
+        assert_eq!(files.len(), 14, "the shipped border preset set: {files:?}");
+
+        for path in files {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let text = std::fs::read_to_string(&path).expect("preset file");
+
+            for field in ["@Title:", "@Desc:", "@Color: #"] {
+                assert!(
+                    text.lines()
+                        .any(|l| l.trim_start().starts_with("--") && l.contains(field)),
+                    "{name} must declare {field} in its header"
+                );
+            }
+
+            let leaks: Vec<String> = text
+                .lines()
+                .enumerate()
+                .filter_map(|(i, line)| {
+                    let trimmed = line.trim_start();
+                    // Metadata and the rule divider are exempt: `@Desc` may
+                    // carry a degree sign on purpose.
+                    if !trimmed.starts_with("--") || trimmed.starts_with("-- @") {
+                        return None;
+                    }
+                    let bad: Vec<char> = line
+                        .chars()
+                        .filter(|c| !c.is_ascii() && !ALLOWED_NON_ASCII.contains(c))
+                        .collect();
+                    (!bad.is_empty()).then(|| format!("{name}:{} {line:?} -> {bad:?}", i + 1))
+                })
+                .collect();
+            assert!(
+                leaks.is_empty(),
+                "border preset comments must be English: {leaks:#?}"
+            );
+        }
     }
 }

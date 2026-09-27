@@ -26,7 +26,7 @@ hl.config({
             range = 20,
             render_power = 4,
             color = "rgba(ffffff44)",
-            color_inactive = "rgba(ffffff00)", -- fundido a invisible al perder foco
+            color_inactive = "rgba(ffffff00)", -- fades to invisible on focus loss
             offset = { 0, 0 }
         }
     }

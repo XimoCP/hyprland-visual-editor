@@ -140,84 +140,153 @@
     }
   },
   "borders": {
+    "header_title": "Bordes",
+    "header_subtitle": "Ajusta el borde y guárdalo como preajuste. O elige un estilo existente.",
+    "live_dirty": "Vista previa en vivo — cambios sin guardar",
+    "live_clean": "Vista previa en vivo — sin cambios pendientes",
     "geometry": {
+      "heading": "Geometría",
       "title": "Grosor del Borde",
-      "desc": "Define el grosor de la línea (0-5px)"
+      "desc": "Ancho del borde en píxeles (1 fino, 5 grueso)."
     },
     "radius": {
-      "title": "Radio de Borde",
-      "desc": "Define el redondeo de esquinas de la ventana (0-100px)"
+      "title": "Radio de las Esquinas",
+      "desc": "Redondeo de las esquinas en píxeles (0 cuadrado, 100 totalmente redondeado)."
     },
     "gaps": {
-      "title": "Gaps",
+      "title": "Espacios",
       "desc": "Define el espacio entre ventanas (0-30px)",
       "in": {
-        "title": "Gap Interno",
-        "desc": "Espacio entre ventanas (0-30px)"
+        "title": "Espacio Interno",
+        "desc": "Espacio entre una ventana y las de al lado (espacio interno)."
       },
       "out": {
-        "title": "Gap Externo",
-        "desc": "Espacio con los bordes de la pantalla (0-30px)"
+        "title": "Espacio Externo",
+        "desc": "Espacio entre las ventanas y el borde de la pantalla (espacio externo)."
       }
     },
-    "header_title": "Estilos Visuales",
-    "header_subtitle": "Define la personalidad de tus ventanas",
+    "angle": {
+      "title": "Ángulo del Degradado",
+      "desc": "Dirección del degradado del borde activo (30/45/90 grados)."
+    },
+    "inactive": {
+      "title": "Inactivo",
+      "desc": "Color aplicado a los bordes de las ventanas sin foco (inactivas)."
+    },
+    "active_colors": {
+      "title": "Colores del Borde Activo",
+      "slots": " ranuras",
+      "desc": "←→ elige un color del degradado, Enter para editar, Esc para cerrar."
+    },
+    "slots": {
+      "count_suffix": " de 8",
+      "desc": "Cada ranura es un color del degradado del borde activo. El orden coincide con el archivo del preajuste. Hyprland admite de 2 a 8 ranuras."
+    },
+    "glow": {
+      "title": "Brillo (decoración de sombra)",
+      "add": "Añadir",
+      "empty_desc": "Este preajuste no tiene brillo. Añade uno para dar al borde una sombra de color alrededor de las ventanas con foco.",
+      "range": {
+        "title": "Alcance",
+        "desc": "Hasta dónde se extiende la sombra desde el borde de la ventana (5 cerca, 40 lejos)."
+      },
+      "power": {
+        "title": "Intensidad",
+        "desc": "Intensidad de la sombra (1 sutil, 8 fuerte)."
+      },
+      "color": {
+        "title": "Color del Brillo",
+        "desc": "Color del brillo en las ventanas con foco. Pulsa Personalizar… para cambiarlo."
+      },
+      "inactive": {
+        "title": "Brillo Inactivo",
+        "desc": "Color del brillo en las ventanas sin foco. Pulsa Personalizar… para cambiarlo."
+      }
+    },
+    "save": {
+      "title": "Guardar como Preajuste",
+      "placeholder": "Nombre del preajuste…",
+      "button": "Guardar"
+    },
+    "kbd_hint": "↑↓ navegar • ←→ cambiar de panel • Enter aplicar/activar • flechas ±1 • Esc volver",
+    "list": {
+      "builtin": "Integrados",
+      "user": "Mis Preajustes de Borde",
+      "empty": "No se encontraron preajustes de borde.",
+      "apply": "Aplicar",
+      "rename": "Renombrar",
+      "delete": "Eliminar"
+    },
+    "picker": {
+      "custom": "Personalizar…",
+      "editing": "Editando…",
+      "title_prefix": "Color personalizado — ",
+      "done": "Hecho",
+      "channel_gradient_prefix": "color del degradado ",
+      "channel_gradient_mid": " de ",
+      "channel_inactive": "el color del borde inactivo",
+      "channel_glow": "el color del brillo",
+      "channel_glow_inactive": "el color del brillo inactivo",
+      "channel_fallback": "este color",
+      "value_custom": "Personalizado",
+      "value_none": "(ninguno)"
+    },
     "presets": {
       "01_cascade": {
         "title": "Cascada",
-        "desc": "Degradado vertical suave al 50%."
+        "desc": "Degradado vertical suave que mezcla el color primario con el color de superficie."
       },
       "02_diagonal": {
         "title": "Diagonal",
-        "desc": "Desvanecimiento dinámico en ángulo."
+        "desc": "Degradado suave del color primario al color de superficie, inclinado a 45°."
       },
       "03_duo": {
         "title": "Dúo Contraste",
-        "desc": "Fuerte contraste Primario/Secundario."
+        "desc": "Contraste marcado entre el color primario y el secundario."
       },
       "04_tri": {
         "title": "Tridente",
-        "desc": "Elegancia tricolor con dorado."
+        "desc": "Borde de tres colores: primario, secundario y terciario."
       },
       "05_spectrum": {
         "title": "Espectro",
-        "desc": "Cuatro colores para máxima visibilidad."
+        "desc": "Cuatro colores estáticos para máxima visibilidad."
       },
       "06_pulse": {
         "title": "Latido",
-        "desc": "Gira una vez al seleccionar la ventana."
+        "desc": "Curva de latido: un pulso de color recorre el borde."
       },
       "07_infinity": {
         "title": "Infinito",
-        "desc": "Rotación constante de colores."
+        "desc": "Ocho paradas que mantienen los colores girando sin parar."
       },
       "08_neon": {
-        "title": "Respiración Neón",
-        "desc": "Oscilación lenta y relajante."
+        "title": "Parpadeo Neón",
+        "desc": "Neón inestable: la luz del borde parpadea de un lado a otro."
       },
       "09_glitch": {
         "title": "Cyber Glitch",
-        "desc": "Agresivo, rápido y colores de error."
+        "desc": "Fallo digital agresivo en colores de alerta."
       },
       "10_golden": {
         "title": "Golden Luxury",
-        "desc": "Reflejos metálicos dorados."
+        "desc": "Reflejos metálicos dorados con un destello blanco."
       },
       "11_toxic": {
-        "title": "Toxic Green",
-        "desc": "Reflejos metálicos verdes flúor."
+        "title": "Verde Tóxico",
+        "desc": "Verde radiactivo intenso que recorre el borde."
       },
       "12_neon_cyberpunk": {
         "title": "Neón Cyber-Glow (Dual)",
-        "desc": "Simulación de brillo bicolor usando una base de luz blanca y violeta."
+        "desc": "Brillo de dos colores sobre una base blanca y violeta."
       },
       "13_the_joker": {
         "title": "El Joker",
-        "desc": "Estética Joker: Verde ácido y morado profundo con un brillo eléctrico."
+        "desc": "Verde ácido y morado profundo con un brillo eléctrico."
       },
       "14_looper": {
         "title": "Looper",
-        "desc": "Estética Looper: Colores del escritorio con efecto de bucle."
+        "desc": "Bucle de tres colores con un brillo blanco suave."
       }
     }
   },

@@ -1,5 +1,6 @@
 -- @Title: the_joker
 -- @Icon: mood-sad
+-- @Color: #39ff14
 -- @Tag: THEME
 -- @Desc: Joker Aesthetic: Acid green and deep purple with electric glow.
 -- =====================================
@@ -9,9 +10,9 @@ local joker_green  = "rgba(39ff14ff)"
 local joker_purple = "rgba(9d00ffff)"
 local joker_dark   = "rgba(1a0026ff)"
 
--- Mantenemos tu sombra morada original
+-- Keep the original purple shadow.
 local shadow_glow  = "rgba(9d00ff88)"
--- El mismo color morado, pero con opacidad "00" para que sea invisible
+-- Same purple, alpha "00" so the shadow is invisible.
 local shadow_off   = "rgba(9d00ff00)"
 
 hl.config({
@@ -27,16 +28,16 @@ hl.config({
     decoration = {
         shadow = {
             enabled = true,
-            range = 20,                  -- Tu rango original
-            render_power = 4,            -- Tu potencia original
+            range = 20,                  -- Original range.
+            render_power = 4,            -- Original power.
             color = shadow_glow,
-            color_inactive = shadow_off, -- Hyprland hará un fundido hasta volverla invisible
+            color_inactive = shadow_off, -- Hyprland fades it out until it is invisible.
             offset = { 0, 0 }
         }
     },
     windowrulev2 = {
         "noshadow, focus:0",
-        "dim_around, floating:1" -- NUEVO: dim around floating windows
+        "dim_around, floating:1" -- Dim around floating windows.
     }
 })
 
@@ -44,7 +45,7 @@ hl.curve("nv_joker_flow", { type = "bezier", points = { { 0.4, 0 }, { 0.2, 1 } }
 hl.curve("joker_bounce", { type = "bezier", points = { { 0.175, 0.885 }, { 0.32, 1.275 } } })
 
 hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "nv_joker_flow", style = "loop" })
--- Esta animación "border" es la que controla lo rápido que se apaga la sombra
+-- The "border" animation controls how fast the shadow fades out.
 hl.animation({ leaf = "border", enabled = true, speed = 30, bezier = "default" })
--- NUEVO: Fade de la sombra al cambiar de ventana
+-- Shadow fade when switching windows.
 hl.animation({ leaf = "fadeShadow", enabled = true, speed = 10, bezier = "default" })

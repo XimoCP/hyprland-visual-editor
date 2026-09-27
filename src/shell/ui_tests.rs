@@ -6056,6 +6056,564 @@ fn borders_tune_trimmed_pane_ends_at_save() {
     save_slice_png(past.clone(), "/tmp/opencode/borders_tune_trimmed_past_save.png");
 }
 
+// ── B4 — Borders panel i18n ──────────────────────────────────────────
+// The whole panel must read in the selected language, and these assertions read
+// the copy where the UI reads it: `BordersText` is the exported Slint global
+// every label of this section binds its `text` to, so its values ARE the strings
+// the pane paints. Nothing here opens `i18n/*.json`: a key present in the file
+// but never wired would leave the English default in the global and fail the
+// Spanish half.
+//
+// Why not the accessible-text route (`ElementQuery` / `ElementHandle`): it needs
+// Slint element debug info, and building with it ALSO disables the compiler's
+// `optimize_useless_rectangles` pass — the item tree under test would stop being
+// the tree the shipped binary renders, which is the false safety net B7 removed
+// (measured: the 44 Borders PNGs are byte-identical with and without the flag,
+// but the optimization is off, so the suite would stop guarding it). The
+// language switch is measured on the FRAME instead — the EN and the ES snapshot
+// must differ inside the panel — and the PNGs are read with eyes on top.
+
+/// The tune pane, right of the rail: the geometry rows, the colour strip, the
+/// glow group, the save form and the open picker all live here.
+const TUNE_AREA: (usize, usize, usize, usize) = (360, 0, 1920, 1080);
+
+/// The built-in preset column, left of the tune pane (the card names run from
+/// x≈185 to x≈380): the names the i18n preset keys feed.
+const PRESET_LIST_AREA: (usize, usize, usize, usize) = (0, 0, 1040, 1080);
+
+/// Changed pixels between two frames, inside `area`.
+fn frame_diff(
+    a: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    b: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    area: (usize, usize, usize, usize),
+) -> usize {
+    count_buffer_diff_region(a, b, area.0, area.1, area.2, area.3)
+}
+
+/// One row per user-visible `BordersText` property:
+/// (property, reader, English, Spanish).
+///
+/// The English column is TODAY'S copy — the same string the Slint global
+/// declares as its default — so the English half pins "the panel still reads
+/// exactly as it did". The Spanish column is what `i18n/es.json` must resolve
+/// for the same key: `tr_shared` falls back to the English default when a key is
+/// missing, so a hole shows up here as an English string on a Spanish panel.
+type BordersLabel = (
+    &'static str,
+    fn(&crate::BordersText) -> String,
+    &'static str,
+    &'static str,
+);
+
+#[rustfmt::skip]
+fn borders_labels() -> [BordersLabel; 55] {
+    [
+        ("header-title", |t| t.get_header_title().to_string(),
+            "Borders", "Bordes"),
+        ("header-subtitle", |t| t.get_header_subtitle().to_string(),
+            "Tune the border, then save it as a preset. Or pick an existing style.",
+            "Ajusta el borde y guárdalo como preajuste. O elige un estilo existente."),
+        ("live-dirty", |t| t.get_live_dirty().to_string(),
+            "Live preview — unsaved changes", "Vista previa en vivo — cambios sin guardar"),
+        ("live-clean", |t| t.get_live_clean().to_string(),
+            "Live preview — no unsaved changes", "Vista previa en vivo — sin cambios pendientes"),
+
+        ("geometry-heading", |t| t.get_geometry_heading().to_string(),
+            "Geometry", "Geometría"),
+        ("thickness-label", |t| t.get_thickness_label().to_string(),
+            "Border Thickness", "Grosor del Borde"),
+        ("thickness-desc", |t| t.get_thickness_desc().to_string(),
+            "Border width in pixels (1 thin, 5 thick).",
+            "Ancho del borde en píxeles (1 fino, 5 grueso)."),
+        ("radius-label", |t| t.get_radius_label().to_string(),
+            "Corner Radius", "Radio de las Esquinas"),
+        ("radius-desc", |t| t.get_radius_desc().to_string(),
+            "Corner rounding in pixels (0 square, 100 fully round).",
+            "Redondeo de las esquinas en píxeles (0 cuadrado, 100 totalmente redondeado)."),
+        ("gap-in-label", |t| t.get_gap_in_label().to_string(),
+            "Inner Gap", "Espacio Interno"),
+        ("gap-in-desc", |t| t.get_gap_in_desc().to_string(),
+            "Space between a window and its neighbors (inner gap).",
+            "Espacio entre una ventana y las de al lado (espacio interno)."),
+        ("gap-out-label", |t| t.get_gap_out_label().to_string(),
+            "Outer Gap", "Espacio Externo"),
+        ("gap-out-desc", |t| t.get_gap_out_desc().to_string(),
+            "Space between windows and the screen edge (outer gap).",
+            "Espacio entre las ventanas y el borde de la pantalla (espacio externo)."),
+
+        ("angle-label", |t| t.get_angle_label().to_string(),
+            "Gradient Angle", "Ángulo del Degradado"),
+        ("angle-desc", |t| t.get_angle_desc().to_string(),
+            "Direction of the active border gradient (30/45/90 degrees).",
+            "Dirección del degradado del borde activo (30/45/90 grados)."),
+        ("inactive-label", |t| t.get_inactive_label().to_string(),
+            "Inactive", "Inactivo"),
+        ("inactive-desc", |t| t.get_inactive_desc().to_string(),
+            "Color applied to borders of unfocused (inactive) windows.",
+            "Color aplicado a los bordes de las ventanas sin foco (inactivas)."),
+
+        ("active-colors-label", |t| t.get_active_colors_label().to_string(),
+            "Active Border Colors", "Colores del Borde Activo"),
+        ("active-colors-slots", |t| t.get_active_colors_slots().to_string(),
+            " slots", " ranuras"),
+        ("active-colors-desc", |t| t.get_active_colors_desc().to_string(),
+            "←→ select gradient colour, Enter to edit, Esc to close.",
+            "←→ elige un color del degradado, Enter para editar, Esc para cerrar."),
+        ("slots-count-suffix", |t| t.get_slots_count_suffix().to_string(),
+            " of 8", " de 8"),
+        ("slots-desc", |t| t.get_slots_desc().to_string(),
+            "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland.",
+            "Cada ranura es un color del degradado del borde activo. El orden coincide con el archivo del preajuste. Hyprland admite de 2 a 8 ranuras."),
+
+        ("glow-title", |t| t.get_glow_title().to_string(),
+            "Glow (shadow decoration)", "Brillo (decoración de sombra)"),
+        ("glow-add", |t| t.get_glow_add().to_string(),
+            "Add", "Añadir"),
+        ("glow-empty-desc", |t| t.get_glow_empty_desc().to_string(),
+            "This preset has no glow. Add one to give the border a coloured shadow around focused windows.",
+            "Este preajuste no tiene brillo. Añade uno para dar al borde una sombra de color alrededor de las ventanas con foco."),
+        ("glow-range-label", |t| t.get_glow_range_label().to_string(),
+            "Range", "Alcance"),
+        ("glow-range-desc", |t| t.get_glow_range_desc().to_string(),
+            "How far the shadow extends from the window edge (5 near, 40 far).",
+            "Hasta dónde se extiende la sombra desde el borde de la ventana (5 cerca, 40 lejos)."),
+        ("glow-power-label", |t| t.get_glow_power_label().to_string(),
+            "Power", "Intensidad"),
+        ("glow-power-desc", |t| t.get_glow_power_desc().to_string(),
+            "Shadow intensity (1 subtle, 8 strong).",
+            "Intensidad de la sombra (1 sutil, 8 fuerte)."),
+        ("glow-color-label", |t| t.get_glow_color_label().to_string(),
+            "Glow Color", "Color del Brillo"),
+        ("glow-color-desc", |t| t.get_glow_color_desc().to_string(),
+            "Color of the glow on focused windows. Tap Custom… to change it.",
+            "Color del brillo en las ventanas con foco. Pulsa Personalizar… para cambiarlo."),
+        ("glow-inactive-label", |t| t.get_glow_inactive_label().to_string(),
+            "Inactive Glow", "Brillo Inactivo"),
+        ("glow-inactive-desc", |t| t.get_glow_inactive_desc().to_string(),
+            "Glow color for unfocused windows. Tap Custom… to change it.",
+            "Color del brillo en las ventanas sin foco. Pulsa Personalizar… para cambiarlo."),
+
+        ("save-title", |t| t.get_save_title().to_string(),
+            "Save as Preset", "Guardar como Preajuste"),
+        ("save-placeholder", |t| t.get_save_placeholder().to_string(),
+            "Border preset name…", "Nombre del preajuste…"),
+        ("save-button", |t| t.get_save_button().to_string(),
+            "Save", "Guardar"),
+        ("kbd-hint", |t| t.get_kbd_hint().to_string(),
+            "↑↓ navigate • ←→ switch panel • Enter apply/engage • arrows ±1 • Esc back",
+            "↑↓ navegar • ←→ cambiar de panel • Enter aplicar/activar • flechas ±1 • Esc volver"),
+
+        ("list-builtin", |t| t.get_list_builtin().to_string(),
+            "Built-in", "Integrados"),
+        ("list-user", |t| t.get_list_user().to_string(),
+            "My Border Presets", "Mis Preajustes de Borde"),
+        ("list-empty", |t| t.get_list_empty().to_string(),
+            "No border presets found.", "No se encontraron preajustes de borde."),
+        ("card-apply", |t| t.get_card_apply().to_string(),
+            "Apply", "Aplicar"),
+        ("card-rename", |t| t.get_card_rename().to_string(),
+            "Rename", "Renombrar"),
+        ("card-delete", |t| t.get_card_delete().to_string(),
+            "Delete", "Eliminar"),
+
+        ("custom-button", |t| t.get_custom_button().to_string(),
+            "Custom…", "Personalizar…"),
+        ("editing-button", |t| t.get_editing_button().to_string(),
+            "Editing…", "Editando…"),
+        ("picker-title-prefix", |t| t.get_picker_title_prefix().to_string(),
+            "Custom colour — ", "Color personalizado — "),
+        ("picker-done", |t| t.get_picker_done().to_string(),
+            "Done", "Hecho"),
+        ("picker-channel-gradient-prefix", |t| t.get_picker_channel_gradient_prefix().to_string(),
+            "gradient colour ", "color del degradado "),
+        ("picker-channel-gradient-mid", |t| t.get_picker_channel_gradient_mid().to_string(),
+            " of ", " de "),
+        ("picker-channel-inactive", |t| t.get_picker_channel_inactive().to_string(),
+            "the inactive border colour", "el color del borde inactivo"),
+        ("picker-channel-glow", |t| t.get_picker_channel_glow().to_string(),
+            "the glow colour", "el color del brillo"),
+        ("picker-channel-glow-inactive", |t| t.get_picker_channel_glow_inactive().to_string(),
+            "the inactive glow colour", "el color del brillo inactivo"),
+        ("picker-channel-fallback", |t| t.get_picker_channel_fallback().to_string(),
+            "this colour", "este color"),
+        ("value-custom", |t| t.get_value_custom().to_string(),
+            "Custom", "Personalizado"),
+        ("value-none", |t| t.get_value_none().to_string(),
+            "(none)", "(ninguno)"),
+    ]
+}
+
+/// Assert every label reads in `lang`. The mismatch list is printed whole on
+/// failure, so a missing translation names itself instead of needing a rerun.
+fn assert_borders_labels(win: &crate::MainWindow, lang: &str) {
+    use slint::Global as _;
+
+    let t = crate::BordersText::get(win);
+    let wrong: Vec<String> = borders_labels()
+        .iter()
+        .filter_map(|(name, read, en, es)| {
+            let want = if lang == "en" { en } else { es };
+            let got = read(&t);
+            (got != *want).then(|| format!("{name}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "[{lang}] the Borders panel is not fully in {lang}: {wrong:#?}"
+    );
+}
+
+/// The sentences the pane COMPOSES from parts (the heading + slot count, the
+/// slot counter, the picker title). They only exist as Slint bindings, so the
+/// parts are concatenated here exactly the way the `.slint` side does and the
+/// result is compared with the sentence the panel shows.
+fn assert_borders_composed(win: &crate::MainWindow, lang: &str) {
+    use slint::Global as _;
+
+    let t = crate::BordersText::get(win);
+    let (heading, of_eight, picker_glow, picker_gradient) = if lang == "en" {
+        (
+            "Active Border Colors (2 slots)",
+            "2 of 8",
+            "Custom colour — the glow colour",
+            "Custom colour — gradient colour 1 of 2",
+        )
+    } else {
+        (
+            "Colores del Borde Activo (2 ranuras)",
+            "2 de 8",
+            "Color personalizado — el color del brillo",
+            "Color personalizado — color del degradado 1 de 2",
+        )
+    };
+    assert_eq!(
+        format!(
+            "{} (2{})",
+            t.get_active_colors_label(),
+            t.get_active_colors_slots()
+        ),
+        heading,
+        "[{lang}] the gradient heading must compose the slot count"
+    );
+    assert_eq!(
+        format!("2{}", t.get_slots_count_suffix()),
+        of_eight,
+        "[{lang}] the slot counter must compose as \"<n> of 8\""
+    );
+    assert_eq!(
+        format!(
+            "{}{}",
+            t.get_picker_title_prefix(),
+            t.get_picker_channel_glow()
+        ),
+        picker_glow,
+        "[{lang}] the picker title must name the glow channel"
+    );
+    assert_eq!(
+        format!(
+            "{}{}1{}2",
+            t.get_picker_title_prefix(),
+            t.get_picker_channel_gradient_prefix(),
+            t.get_picker_channel_gradient_mid()
+        ),
+        picker_gradient,
+        "[{lang}] the picker title must name a gradient stop and its slot count"
+    );
+}
+
+/// No Spanish label may be a copy of its English one: that is what a MISSING
+/// key looks like after `tr_shared` falls back, and it would let the Spanish
+/// half below pass on an English panel.
+#[test]
+fn every_borders_label_has_its_own_spanish_text() {
+    let twinned: Vec<&str> = borders_labels()
+        .iter()
+        .filter(|(_, _, en, es)| en == es)
+        .map(|(name, _, _, _)| *name)
+        .collect();
+    assert!(
+        twinned.is_empty(),
+        "these labels would read English on the Spanish panel: {twinned:?}"
+    );
+}
+
+/// English renders exactly today's copy; Spanish renders the translation, on the
+/// FRAME as well as in the global; and the round trip back to English restores
+/// the frame byte for byte.
+#[test]
+fn borders_panel_labels_follow_the_language() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    // A user preset as well, so the "My Border Presets" group and the
+    // Rename/Delete strings come from a mounted user card.
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "My Border",
+    )])));
+    win.set_user_border_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "CUSTOM",
+    )])));
+    win.set_active_border_index(1);
+    settle_frames(80);
+
+    // English = the strings the panel shipped with before B4. Nothing moved.
+    assert_borders_labels(&win, "en");
+    assert_borders_composed(&win, "en");
+
+    // Two frames: the top of the pane, and the glow + save area (where the
+    // longer Spanish copy has the least room). The visual verification reads
+    // these PNGs.
+    win.set_panel_kbd_preview_index(5);
+    settle_frames(80);
+    let en_top = win.window().take_snapshot().expect("english tune pane");
+    save_slice_png(en_top.clone(), "/tmp/opencode/borders_i18n_en_top.png");
+    win.set_panel_kbd_preview_index(14);
+    settle_frames(80);
+    let en_save = win.window().take_snapshot().expect("english glow and save area");
+    save_slice_png(en_save.clone(), "/tmp/opencode/borders_i18n_en_save.png");
+
+    // Spanish, through the REAL production function `main()` calls.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    assert_borders_labels(&win, "es");
+    assert_borders_composed(&win, "es");
+
+    win.set_panel_kbd_preview_index(5);
+    settle_frames(80);
+    let es_top = win.window().take_snapshot().expect("spanish tune pane");
+    save_slice_png(es_top.clone(), "/tmp/opencode/borders_i18n_es_top.png");
+    win.set_panel_kbd_preview_index(14);
+    settle_frames(80);
+    let es_save = win.window().take_snapshot().expect("spanish glow and save area");
+    save_slice_png(es_save.clone(), "/tmp/opencode/borders_i18n_es_save.png");
+
+    // The switch reached the FRAME, not only the global: the panel repainted.
+    for (label, en, es) in [("tune pane", &en_top, &es_top), ("glow and save area", &en_save, &es_save)] {
+        let changed = frame_diff(en, es, TUNE_AREA);
+        assert!(
+            changed > 500,
+            "switching to Spanish must repaint the {label}: only {changed} pixels differ"
+        );
+    }
+
+    // And back: English is restored to the byte, so the round trip loses nothing.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("en"));
+    assert_borders_labels(&win, "en");
+    assert_borders_composed(&win, "en");
+    win.set_panel_kbd_preview_index(5);
+    settle_frames(80);
+    let en_again = win.window().take_snapshot().expect("english tune pane, restored");
+    assert_eq!(
+        frame_diff(&en_top, &en_again, TUNE_AREA),
+        0,
+        "switching back to English must restore the English frame exactly"
+    );
+}
+
+/// The label table proves the i18n map reaches the Slint global; this proves the
+/// SECTION reads it. Without it, hardcoding a label back (`text: "Geometry"`)
+/// leaves every assertion above green — measured, not assumed — and the panel
+/// goes on painting English with the suite none the wiser. That is the end of
+/// the wire the accessible-text route would have covered in one shot, and which
+/// it cannot be used for (see the block comment at the top of this section).
+#[test]
+fn the_borders_section_reads_every_label_from_the_text_global() {
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+
+    let unbound: Vec<&str> = borders_labels()
+        .iter()
+        .map(|(name, _, _, _)| *name)
+        .filter(|name| !SECTION.contains(&format!("BordersText.{name}")))
+        .collect();
+    assert!(
+        unbound.is_empty(),
+        "these labels are never read from BordersText: {unbound:?}"
+    );
+
+    // Comments may quote today's copy (they do: "Custom…" describes the old
+    // button), so only real code lines count as a leftover hardcoded label.
+    let code: String = SECTION
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let hardcoded: Vec<(&str, &str)> = borders_labels()
+        .iter()
+        .filter(|(_, _, en, _)| code.contains(&format!("\"{en}\"")))
+        .map(|(name, _, en, _)| (*name, *en))
+        .collect();
+    assert!(
+        hardcoded.is_empty(),
+        "these labels are hardcoded in the section AND read from BordersText: {hardcoded:#?}"
+    );
+}
+
+/// The picker's composed title over its real state (glow on, the picker open on
+/// the glow colour), in both languages, with the two frames side by side.
+#[test]
+fn border_picker_title_follows_the_language() {
+    use slint::{ComponentHandle as _, SharedString};
+
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    win.set_tune_glow_enabled(true);
+    win.set_tune_glow(SharedString::from(
+        "enabled:true|range:20|power:4|color:c:ff8800ff|inactive:p:surface_lowest|ox:0|oy:0",
+    ));
+    win.set_tune_editing_slot(9);
+    settle_frames(80);
+
+    assert_borders_composed(&win, "en");
+    let en = win.window().take_snapshot().expect("english picker");
+    save_slice_png(en.clone(), "/tmp/opencode/borders_i18n_en_picker.png");
+
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    assert_borders_composed(&win, "es");
+    settle_frames(8);
+    let es = win.window().take_snapshot().expect("spanish picker");
+    save_slice_png(es.clone(), "/tmp/opencode/borders_i18n_es_picker.png");
+
+    let changed = frame_diff(&en, &es, TUNE_AREA);
+    assert!(
+        changed > 500,
+        "the open picker must repaint in Spanish: only {changed} pixels differ"
+    );
+}
+
+/// B4 — the preset NAME and DESCRIPTION of each built-in border come from the
+/// i18n map keyed by the preset's file stem (the keys `scan.sh` already emits:
+/// `borders.presets.<stem>.title` / `.desc`), with the file's `@Title` / `@Desc`
+/// as the fallback for a preset that has no key yet.
+///
+/// This runs the REAL path — `scan.sh` over `assets/borders`, then
+/// `presets::populate_presets` — and asserts the models the section receives, so
+/// a stale `@Title` must never win while a key exists. The NAMES are what the
+/// cards paint; the DESCRIPTIONS land in `border-descs`, which the section
+/// carries but no component reads today (pre-existing — the card shows a name
+/// and an apply switch), so the frame check below covers the names and the model
+/// assertions cover both.
+#[test]
+fn border_preset_names_and_descriptions_follow_the_language() {
+    use slint::{ComponentHandle as _, Model as _, ModelRc, SharedString};
+
+    let _env = crate::test_utils::TempEnv::new();
+
+    // The list pane must be mounted for the cards to render; the tune state is
+    // irrelevant here (the real scan replaces the preset models).
+    let win = borders_tune_pane_fixture(&[]);
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let cfg = crate::config::Config::default();
+
+    let model_strings = |m: &ModelRc<SharedString>| -> Vec<String> {
+        (0..m.row_count())
+            .map(|i| m.row_data(i).unwrap().to_string())
+            .collect()
+    };
+
+    // The 14 preset FILES the repo actually ships, in scan order.
+    const FILES: &[&str] = &[
+        "01_cascade.lua", "02_diagonal.lua", "03_duo.lua", "04_tri.lua",
+        "05_spectrum.lua", "06_pulse.lua", "07_infinity.lua", "08_neon.lua",
+        "09_glitch.lua", "10_golden.lua", "11_toxic.lua", "12_neon_cyberpunk.lua",
+        "13_the_joker.lua", "14_looper.lua",
+    ];
+    const EN_NAMES: &[&str] = &[
+        "Cascade", "Diagonal", "Duo Contrast", "Trident", "Spectrum", "Pulse",
+        "Infinity", "Neon Flicker", "Cyber Glitch", "Golden Luxury", "Toxic Green",
+        "Neon Cyber-Glow (Dual)", "The Joker", "Looper",
+    ];
+    const EN_DESCS: &[&str] = &[
+        "Soft vertical gradient that blends the primary colour into the surface colour.",
+        "Soft gradient of the primary colour into the surface colour, tilted to 45°.",
+        "Hard contrast between the primary and the secondary colour.",
+        "Three-colour border: primary, secondary and tertiary.",
+        "Four static colours for maximum visibility.",
+        "Heartbeat curve: a pulse of colour runs around the border.",
+        "Eight stops that keep the colours rotating non-stop.",
+        "Unstable neon: the edge light flickers back and forth.",
+        "Aggressive digital glitch in alert colours.",
+        "Gold metallic reflections with a white shimmer.",
+        "Intense radioactive green flowing along the border.",
+        "Two-colour glow built on a white and violet base.",
+        "Acid green and deep purple with an electric glow.",
+        "Three-colour loop with a soft white glow.",
+    ];
+    const ES_NAMES: &[&str] = &[
+        "Cascada", "Diagonal", "Dúo Contraste", "Tridente", "Espectro", "Latido",
+        "Infinito", "Parpadeo Neón", "Cyber Glitch", "Golden Luxury", "Verde Tóxico",
+        "Neón Cyber-Glow (Dual)", "El Joker", "Looper",
+    ];
+    const ES_DESCS: &[&str] = &[
+        "Degradado vertical suave que mezcla el color primario con el color de superficie.",
+        "Degradado suave del color primario al color de superficie, inclinado a 45°.",
+        "Contraste marcado entre el color primario y el secundario.",
+        "Borde de tres colores: primario, secundario y terciario.",
+        "Cuatro colores estáticos para máxima visibilidad.",
+        "Curva de latido: un pulso de color recorre el borde.",
+        "Ocho paradas que mantienen los colores girando sin parar.",
+        "Neón inestable: la luz del borde parpadea de un lado a otro.",
+        "Fallo digital agresivo en colores de alerta.",
+        "Reflejos metálicos dorados con un destello blanco.",
+        "Verde radiactivo intenso que recorre el borde.",
+        "Brillo de dos colores sobre una base blanca y violeta.",
+        "Verde ácido y morado profundo con un brillo eléctrico.",
+        "Bucle de tres colores con un brillo blanco suave.",
+    ];
+
+    crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("en"));
+    assert_eq!(
+        model_strings(&win.get_border_files()),
+        FILES,
+        "the scan must find every shipped border preset"
+    );
+    assert_eq!(model_strings(&win.get_border_titles()), EN_NAMES, "english names");
+    assert_eq!(model_strings(&win.get_border_descs()), EN_DESCS, "english descriptions");
+
+    win.set_panel_kbd_preview_index(0);
+    settle_frames(80);
+    let en = win.window().take_snapshot().expect("english preset list");
+    save_slice_png(en.clone(), "/tmp/opencode/borders_i18n_en_presets.png");
+
+    crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("es"));
+    assert_eq!(model_strings(&win.get_border_titles()), ES_NAMES, "spanish names");
+    assert_eq!(model_strings(&win.get_border_descs()), ES_DESCS, "spanish descriptions");
+
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("spanish preset list");
+    save_slice_png(es.clone(), "/tmp/opencode/borders_i18n_es_presets.png");
+    let changed = frame_diff(&en, &es, PRESET_LIST_AREA);
+    assert!(
+        changed > 500,
+        "the preset list must repaint in Spanish: only {changed} pixels differ"
+    );
+
+    // The stale `@Title` values are still in the files — the scan must report
+    // them as the fallback, and the i18n name must win over them. Without this
+    // the test could pass on preset files whose metadata happened to match.
+    let scanned = engine.scan("borders").expect("scan borders");
+    let stale = [
+        ("01_cascade.lua", "Waterfall"),
+        ("06_pulse.lua", "Heartbeat"),
+        ("08_neon.lua", "Neon"),
+        ("13_the_joker.lua", "the_joker"),
+    ];
+    for (file, raw_title) in stale {
+        let entry = scanned
+            .iter()
+            .find(|p| p.file == file)
+            .unwrap_or_else(|| panic!("{file} must be scanned"));
+        assert_eq!(entry.raw_title, raw_title, "{file} keeps its @Title as the fallback");
+        assert!(
+            entry.i18n_title.starts_with("borders.presets."),
+            "{file} must carry an i18n key path, got {:?}",
+            entry.i18n_title
+        );
+        assert!(
+            !model_strings(&win.get_border_titles()).contains(&raw_title.to_string()),
+            "the i18n name must win over {file}'s stale @Title {raw_title:?}"
+        );
+    }
+}
+
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
 /// verification reads from the sanctioned runtime artifact dir (/tmp/opencode/):
 /// (1) strip closed, (2) picker open above the strip, (3) 8 chips, (4) the
@@ -8413,3 +8971,5 @@ fn focus_restore_bumps_are_bounded_in_count_and_time() {
         "every ping lands inside the ~2-6 s re-assert window with margin"
     );
 }
+
+
