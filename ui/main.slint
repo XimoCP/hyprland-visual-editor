@@ -2,6 +2,7 @@ import { HveColors } from "./theme.slint";
 import { CloseButton, AboutItem } from "./components.slint";
 import { ShellRoot, SkwdTokens } from "./shell.slint";
 import { BordersText } from "panel/sections/borders_text.slint";
+import { PanelText } from "panel/panel_text.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
@@ -12,6 +13,9 @@ export { SkwdTokens }
 // (`panel_i18n::apply_borders`), so the global must be part of this
 // compilation unit's public API.
 export { BordersText }
+// And the shared panel chrome (nav rail + header hint): Rust fills it from the
+// same map through `panel_i18n::apply_panel_chrome`.
+export { PanelText }
 
 
 // ─── MAIN WINDOW ────────────────────────────────────────────────────

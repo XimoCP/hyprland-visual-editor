@@ -17,7 +17,17 @@
       "borders": "Bordes",
       "effects": "Efectos",
       "themes": "Temas"
-    }
+    },
+    "nav": {
+      "save": "Guardar",
+      "borders": "Bordes",
+      "motion": "Movimiento",
+      "filters": "Filtros",
+      "system": "Sistema"
+    },
+    "esc_return": "Esc para volver",
+    "section_placeholder": "Marcador de sección — esqueleto de la rebanada 1",
+    "back_to_gallery": "Volver a la Galería"
   },
   "welcome": {
     "toast": {

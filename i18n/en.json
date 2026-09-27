@@ -17,7 +17,17 @@
       "borders": "Borders",
       "effects": "Effects",
       "themes": "Themes"
-    }
+    },
+    "nav": {
+      "save": "Save",
+      "borders": "Borders",
+      "motion": "Motion",
+      "filters": "Filters",
+      "system": "System"
+    },
+    "esc_return": "Esc to return",
+    "section_placeholder": "Section placeholder — slice 1 skeleton",
+    "back_to_gallery": "Back to Gallery"
   },
   "welcome": {
     "toast": {

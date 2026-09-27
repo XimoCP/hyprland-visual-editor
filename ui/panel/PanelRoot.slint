@@ -10,6 +10,7 @@
 import { SkwdTokens } from "../tokens.slint";
 import { HveColors } from "../theme.slint";
 import { PanelMenu } from "PanelMenu.slint";
+import { PanelText } from "panel_text.slint";
 import { AboutItem } from "../components.slint";
 import { SaveSection } from "sections/SaveSection.slint";
 import { BordersSection } from "sections/BordersSection.slint";
@@ -284,7 +285,7 @@ export component PanelRoot inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Text {
-                    text: "Esc to return";
+                    text: PanelText.esc-return;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
                     color: HveColors.text-muted;
@@ -908,14 +909,14 @@ export component PanelRoot inherits Rectangle {
                         alignment: center;
                         spacing: SkwdTokens.spacing-12;
                         Text {
-                            text: ["Save","Borders","Motion","Filters","System"][root.section];
+                            text: [PanelText.nav-save, PanelText.nav-borders, PanelText.nav-motion, PanelText.nav-filters, PanelText.nav-system][root.section];
                             font-family: SkwdTokens.font-heading;
                             font-size: SkwdTokens.size-24;
                             color: HveColors.accent-cyan;
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "Section placeholder — slice 1 skeleton";
+                            text: PanelText.section-placeholder;
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-12;
                             color: HveColors.text-muted;
@@ -929,7 +930,7 @@ export component PanelRoot inherits Rectangle {
                             horizontal-stretch: 0;
                             x: (parent.width - self.width) / 2;
                             Text {
-                                text: "Back to Gallery";
+                                text: PanelText.back-to-gallery;
                                 font-family: SkwdTokens.font-body;
                                 font-size: SkwdTokens.size-13;
                                 color: HveColors.accent-cyan;

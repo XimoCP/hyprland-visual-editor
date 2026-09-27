@@ -1,0 +1,28 @@
+// HVE 2 — Panel chrome text (nav rail + header hint).
+//
+// The left rail (PanelMenu) and the panel header are shared by all five
+// sections, so their strings live in an exported global the way the Borders
+// panel copy does (`borders_text.slint`): the compiler exposes it to Rust as
+// `crate::PanelText`, and `panel_i18n::apply_panel_chrome` fills it from the
+// embedded i18n map. The defaults below are today's English copy, so a run
+// that never calls the i18n pass reads exactly as it always did.
+//
+// Symbols (▶, ▸) and the theme name in the header are NOT text: the chevron is
+// a glyph and the theme name is data the user chose, so they stay as they are.
+export global PanelText {
+    // Left rail — the five sections, in navigation order.
+    in-out property <string> nav-save: "Save";
+    in-out property <string> nav-borders: "Borders";
+    in-out property <string> nav-motion: "Motion";
+    in-out property <string> nav-filters: "Filters";
+    in-out property <string> nav-system: "System";
+
+    // Panel header hint (top right).
+    in-out property <string> esc-return: "Esc to return";
+
+    // Unreachable section-placeholder branch: `section` never leaves 0..4, but
+    // the fallback frame is still chrome, so it reads from here too rather than
+    // keeping stale English literals in PanelRoot.
+    in-out property <string> section-placeholder: "Section placeholder — slice 1 skeleton";
+    in-out property <string> back-to-gallery: "Back to Gallery";
+}

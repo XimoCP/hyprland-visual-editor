@@ -2466,6 +2466,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // the tune pane reads them wherever it is instantiated; this fills that
     // global from the same embedded map the shell strings above use.
     panel_i18n::apply_borders(&window, &tr);
+    // The shared chrome — the left nav rail and the panel header hint — is not
+    // Borders-specific, so it lives in its own global and gets its own pass.
+    panel_i18n::apply_panel_chrome(&window, &tr);
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
@@ -5649,6 +5652,39 @@ mod tests {
             assert!(
                 apply < quit,
                 "the Borders i18n must be applied before the event loop \
+                 (apply at statement {apply}, quit at {quit})"
+            );
+        }
+    }
+
+    /// Panel chrome (nav rail + header hint) — the shared `PanelText` global
+    /// must be applied by the REAL startup path, the B7 lesson: a test that only
+    /// calls `apply_panel_chrome` itself keeps passing if `main()` stops calling
+    /// it. So this pins the call site the same way the Borders pass is pinned.
+    #[test]
+    fn main_applies_the_panel_chrome_i18n_before_the_event_loop() {
+        const APPLY: &str = "apply_panel_chrome";
+        let body = main_fn_body();
+
+        let calls: Vec<&syn::Stmt> = body
+            .stmts
+            .iter()
+            .filter(|stmt| stmt_mentions_call(stmt, APPLY))
+            .collect();
+        assert_eq!(
+            calls.len(),
+            1,
+            "main must call panel_i18n::apply_panel_chrome exactly once"
+        );
+        let apply = call_index(&body.stmts, APPLY)
+            .expect("the single apply_panel_chrome mention must be a plain top-level call, \
+                     never nested in a branch or loop");
+
+        let quit = call_index(&body.stmts, "run_event_loop_until_quit");
+        if let Some(quit) = quit {
+            assert!(
+                apply < quit,
+                "the panel chrome i18n must be applied before the event loop \
                  (apply at statement {apply}, quit at {quit})"
             );
         }

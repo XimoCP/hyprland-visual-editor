@@ -10,6 +10,7 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { HveColors } from "../theme.slint";
+import { PanelText } from "panel_text.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -89,7 +90,7 @@ export component PanelMenu inherits Rectangle {
         padding: 12px;
 
         MenuItem {
-            label: "Save";
+            label: PanelText.nav-save;
             active: root.active-section == 0;
             has-focus: root.keyboard-ring && root.menu-index == 0;
             reduced-motion: root.reduced-motion;
@@ -98,28 +99,28 @@ export component PanelMenu inherits Rectangle {
             selected => { root.section-selected(0); }
         }
         MenuItem {
-            label: "Borders";
+            label: PanelText.nav-borders;
             active: root.active-section == 1;
             has-focus: root.keyboard-ring && root.menu-index == 1;
             reduced-motion: root.reduced-motion;
             selected => { root.section-selected(1); }
         }
         MenuItem {
-            label: "Motion";
+            label: PanelText.nav-motion;
             active: root.active-section == 2;
             has-focus: root.keyboard-ring && root.menu-index == 2;
             reduced-motion: root.reduced-motion;
             selected => { root.section-selected(2); }
         }
         MenuItem {
-            label: "Filters";
+            label: PanelText.nav-filters;
             active: root.active-section == 3;
             has-focus: root.keyboard-ring && root.menu-index == 3;
             reduced-motion: root.reduced-motion;
             selected => { root.section-selected(3); }
         }
         MenuItem {
-            label: "System";
+            label: PanelText.nav-system;
             active: root.active-section == 4;
             has-focus: root.keyboard-ring && root.menu-index == 4;
             reduced-motion: root.reduced-motion;

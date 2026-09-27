@@ -6705,6 +6705,183 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
     );
 }
 
+// ── Panel chrome i18n (nav rail + header hint) ────────────────────────
+// The rail and the panel header are shared by all five sections, so their
+// strings live in the exported `PanelText` global — the same channel
+// `BordersText` uses — filled by `panel_i18n::apply_panel_chrome`. The English
+// column below is TODAY'S copy (the Slint default), so the English half pins
+// "the chrome still reads exactly as it did"; a missing Spanish key falls back
+// to English and shows up as an English label on a Spanish panel.
+
+/// The rail area, left of the content: the nav labels paint here.
+const CHROME_RAIL_AREA: (usize, usize, usize, usize) = (0, 0, 160, 1080);
+/// The panel header band (below the shell's 57px top chrome and right of the
+/// rail) that carries the "Esc to return" hint.
+const CHROME_HEADER_AREA: (usize, usize, usize, usize) = (200, 57, 1920, 120);
+
+/// One row per user-visible `PanelText` property: (property, reader, English,
+/// Spanish). The English column is the same string the Slint global declares as
+/// its default.
+type PanelChromeLabel = (
+    &'static str,
+    fn(&crate::PanelText) -> String,
+    &'static str,
+    &'static str,
+);
+
+#[rustfmt::skip]
+fn panel_chrome_labels() -> [PanelChromeLabel; 8] {
+    [
+        ("nav-save", |t| t.get_nav_save().to_string(),
+            "Save", "Guardar"),
+        ("nav-borders", |t| t.get_nav_borders().to_string(),
+            "Borders", "Bordes"),
+        ("nav-motion", |t| t.get_nav_motion().to_string(),
+            "Motion", "Movimiento"),
+        ("nav-filters", |t| t.get_nav_filters().to_string(),
+            "Filters", "Filtros"),
+        ("nav-system", |t| t.get_nav_system().to_string(),
+            "System", "Sistema"),
+        ("esc-return", |t| t.get_esc_return().to_string(),
+            "Esc to return", "Esc para volver"),
+        ("back-to-gallery", |t| t.get_back_to_gallery().to_string(),
+            "Back to Gallery", "Volver a la Galería"),
+        ("section-placeholder", |t| t.get_section_placeholder().to_string(),
+            "Section placeholder — slice 1 skeleton",
+            "Marcador de sección — esqueleto de la rebanada 1"),
+    ]
+}
+
+/// The `.slint` file each chrome label is painted in. The nav labels live in the
+/// rail; the header hint and the unreachable section-placeholder branch live in
+/// `PanelRoot`. The split matters for the hardcode check below: `PanelRoot`
+/// declares many Save-panel defaults ("Save", "System", …) that must not count
+/// as the rail's labels.
+fn panel_chrome_owner(name: &str) -> &'static str {
+    match name {
+        "nav-save" | "nav-borders" | "nav-motion" | "nav-filters" | "nav-system" => "PanelMenu",
+        _ => "PanelRoot",
+    }
+}
+
+fn assert_panel_chrome(win: &crate::MainWindow, lang: &str) {
+    use slint::Global as _;
+    let t = crate::PanelText::get(win);
+    let wrong: Vec<String> = panel_chrome_labels()
+        .iter()
+        .filter_map(|(name, read, en, es)| {
+            let want = if lang == "en" { *en } else { *es };
+            let got = read(&t);
+            (got != want).then(|| format!("{name}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "[{lang}] the panel chrome is not fully in {lang}: {wrong:#?}"
+    );
+}
+
+/// No Spanish chrome label may be a copy of its English one: that is what a
+/// MISSING key looks like after `tr_shared` falls back, and it would let the
+/// Spanish half below pass on an English rail.
+#[test]
+fn every_panel_chrome_label_has_its_own_spanish_text() {
+    let twinned: Vec<&str> = panel_chrome_labels()
+        .iter()
+        .filter(|(_, _, en, es)| en == es)
+        .map(|(name, _, _, _)| *name)
+        .collect();
+    assert!(
+        twinned.is_empty(),
+        "these chrome labels would read English on the Spanish panel: {twinned:?}"
+    );
+}
+
+/// English renders exactly today's chrome; Spanish renders the translation, on
+/// the FRAME (the rail and the header) as well as in the global; and the round
+/// trip back to English restores the frame byte for byte — the same standard B4
+/// was held to. The Borders content is never re-translated here, so every pixel
+/// that changes is chrome.
+#[test]
+fn panel_chrome_follows_the_language() {
+    use slint::ComponentHandle as _;
+
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    settle_frames(80);
+
+    assert_panel_chrome(&win, "en");
+    let en = win.window().take_snapshot().expect("english chrome");
+    save_slice_png(en.clone(), "/tmp/opencode/panel_chrome_en.png");
+
+    crate::panel_i18n::apply_panel_chrome(&win, &crate::tr::Tr::with_lang("es"));
+    assert_panel_chrome(&win, "es");
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("spanish chrome");
+    save_slice_png(es.clone(), "/tmp/opencode/panel_chrome_es.png");
+
+    let rail = frame_diff(&en, &es, CHROME_RAIL_AREA);
+    let header = frame_diff(&en, &es, CHROME_HEADER_AREA);
+    assert!(
+        rail > 400,
+        "switching the rail to Spanish must repaint it: only {rail} pixels differ"
+    );
+    assert!(
+        header > 300,
+        "switching the header hint to Spanish must repaint it: only {header} pixels differ"
+    );
+
+    crate::panel_i18n::apply_panel_chrome(&win, &crate::tr::Tr::with_lang("en"));
+    assert_panel_chrome(&win, "en");
+    settle_frames(80);
+    let en_again = win.window().take_snapshot().expect("english chrome, restored");
+    assert_eq!(
+        frame_diff(&en, &en_again, CHROME_RAIL_AREA),
+        0,
+        "switching back to English must restore the English rail exactly"
+    );
+    assert_eq!(
+        frame_diff(&en, &en_again, CHROME_HEADER_AREA),
+        0,
+        "switching back to English must restore the English header hint exactly"
+    );
+}
+
+/// The table proves the i18n map reaches the Slint global; this proves the CHROME
+/// components READ it. Without it, hardcoding a rail label back
+/// (`label: "Borders"`) leaves every assertion above green.
+#[test]
+fn the_panel_chrome_reads_every_label_from_the_text_global() {
+    const MENU: &str = include_str!("../../ui/panel/PanelMenu.slint");
+    const ROOT: &str = include_str!("../../ui/panel/PanelRoot.slint");
+
+    let unbound: Vec<&str> = panel_chrome_labels()
+        .iter()
+        .map(|(name, _, _, _)| *name)
+        .filter(|name| !MENU.contains(&format!("PanelText.{name}")) && !ROOT.contains(&format!("PanelText.{name}")))
+        .collect();
+    assert!(
+        unbound.is_empty(),
+        "these chrome labels are never read from PanelText: {unbound:?}"
+    );
+
+    // Comments may quote today's copy, so only real code lines count as a
+    // leftover hardcoded label, and only in the file that paints it.
+    let hardcoded: Vec<(&str, &str)> = panel_chrome_labels()
+        .iter()
+        .filter(|(name, _, en, _)| {
+            let src = if panel_chrome_owner(name) == "PanelMenu" { MENU } else { ROOT };
+            src.lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .any(|l| l.contains(&format!("\"{en}\"")))
+        })
+        .map(|(name, _, en, _)| (*name, *en))
+        .collect();
+    assert!(
+        hardcoded.is_empty(),
+        "these chrome labels are hardcoded in their component AND read from PanelText: {hardcoded:#?}"
+    );
+}
+
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
 /// verification reads from the sanctioned runtime artifact dir (/tmp/opencode/):
 /// (1) strip closed, (2) picker open above the strip, (3) 8 chips, (4) the

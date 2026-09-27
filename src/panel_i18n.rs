@@ -14,6 +14,10 @@
 //! Every call passes the English string the global itself declares as the
 //! fallback, so a key missing from the active language degrades to English
 //! instead of blanking a label.
+//!
+//! The shared panel chrome (left nav rail + header hint) is not Borders
+//! specific and is filled by [`apply_panel_chrome`] into `PanelText`; it uses
+//! exactly the same channel and the same fallback rule.
 
 use crate::tr::Tr;
 use crate::MainWindow;
@@ -144,4 +148,27 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
     t.set_picker_channel_fallback(tr.tr_shared("borders.picker.channel_fallback", "this colour"));
     t.set_value_custom(tr.tr_shared("borders.picker.value_custom", "Custom"));
     t.set_value_none(tr.tr_shared("borders.picker.value_none", "(none)"));
+}
+
+/// Fill every `PanelText` string from `tr` for the selected language.
+///
+/// The panel chrome — the left nav rail and the header hint — is shared by all
+/// five sections, so it is filled once here and read wherever the panel mounts.
+/// English is the fallback, exactly as `apply_borders` does.
+pub fn apply_panel_chrome(window: &MainWindow, tr: &Tr) {
+    let t = crate::PanelText::get(window);
+
+    t.set_nav_save(tr.tr_shared("panel.nav.save", "Save"));
+    t.set_nav_borders(tr.tr_shared("panel.nav.borders", "Borders"));
+    t.set_nav_motion(tr.tr_shared("panel.nav.motion", "Motion"));
+    t.set_nav_filters(tr.tr_shared("panel.nav.filters", "Filters"));
+    t.set_nav_system(tr.tr_shared("panel.nav.system", "System"));
+
+    t.set_esc_return(tr.tr_shared("panel.esc_return", "Esc to return"));
+
+    t.set_section_placeholder(tr.tr_shared(
+        "panel.section_placeholder",
+        "Section placeholder — slice 1 skeleton",
+    ));
+    t.set_back_to_gallery(tr.tr_shared("panel.back_to_gallery", "Back to Gallery"));
 }
