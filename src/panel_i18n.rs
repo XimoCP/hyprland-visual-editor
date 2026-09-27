@@ -148,6 +148,14 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
     t.set_picker_channel_fallback(tr.tr_shared("borders.picker.channel_fallback", "this colour"));
     t.set_value_custom(tr.tr_shared("borders.picker.value_custom", "Custom"));
     t.set_value_none(tr.tr_shared("borders.picker.value_none", "(none)"));
+
+    // Colour picker footer hint: the control the arrow keys act on + the tail
+    // of the line. The picker composes it, so the parts travel separately.
+    t.set_picker_part_saturation(tr.tr_shared("borders.picker.part_saturation", "Saturation"));
+    t.set_picker_part_brightness(tr.tr_shared("borders.picker.part_brightness", "Brightness"));
+    t.set_picker_part_hue(tr.tr_shared("borders.picker.part_hue", "Hue"));
+    t.set_picker_part_alpha(tr.tr_shared("borders.picker.part_alpha", "Alpha"));
+    t.set_picker_hint_change(tr.tr_shared("borders.picker.hint_change", "   ·   ←→ change"));
 }
 
 /// Fill every `PanelText` string from `tr` for the selected language.

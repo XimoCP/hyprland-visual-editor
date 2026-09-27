@@ -6150,7 +6150,7 @@ type BordersLabel = (
 );
 
 #[rustfmt::skip]
-fn borders_labels() -> [BordersLabel; 55] {
+fn borders_labels() -> [BordersLabel; 60] {
     [
         ("header-title", |t| t.get_header_title().to_string(),
             "Borders", "Bordes"),
@@ -6284,6 +6284,17 @@ fn borders_labels() -> [BordersLabel; 55] {
             "Custom", "Personalizado"),
         ("value-none", |t| t.get_value_none().to_string(),
             "(none)", "(ninguno)"),
+
+        ("picker-part-saturation", |t| t.get_picker_part_saturation().to_string(),
+            "Saturation", "Saturación"),
+        ("picker-part-brightness", |t| t.get_picker_part_brightness().to_string(),
+            "Brightness", "Brillo"),
+        ("picker-part-hue", |t| t.get_picker_part_hue().to_string(),
+            "Hue", "Tono"),
+        ("picker-part-alpha", |t| t.get_picker_part_alpha().to_string(),
+            "Alpha", "Alfa"),
+        ("picker-hint-change", |t| t.get_picker_hint_change().to_string(),
+            "   ·   ←→ change", "   ·   ←→ cambiar"),
     ]
 }
 
@@ -6362,6 +6373,23 @@ fn assert_borders_composed(win: &crate::MainWindow, lang: &str) {
         ),
         picker_gradient,
         "[{lang}] the picker title must name a gradient stop and its slot count"
+    );
+    // The picker's footer hint, on the control the arrows start on (part 0).
+    // Same composition as ColorPicker.slint: the arrows are symbols, the
+    // control name and the tail come from the global.
+    let (hint_name, hint_tail) = if lang == "en" {
+        ("Saturation", "   ·   ←→ change")
+    } else {
+        ("Saturación", "   ·   ←→ cambiar")
+    };
+    assert_eq!(
+        format!(
+            "↑↓ {}{}",
+            t.get_picker_part_saturation(),
+            t.get_picker_hint_change()
+        ),
+        format!("↑↓ {hint_name}{hint_tail}"),
+        "[{lang}] the picker footer hint must compose from the text global"
     );
 }
 
@@ -6519,6 +6547,263 @@ fn border_picker_title_follows_the_language() {
     assert!(
         changed > 500,
         "the open picker must repaint in Spanish: only {changed} pixels differ"
+    );
+}
+
+/// The colour picker's footer hint ("↑↓ Saturation · ←→ change") was hardcoded
+/// English inside `ColorPicker.slint`. It is Borders copy, so it now travels
+/// the same wire as the rest of the section: i18n map → `apply_borders` →
+/// `BordersText` → the section → the picker. The label table above only pins
+/// the GLOBAL; this proves the LINE THE USER READS, by moving the text global
+/// alone and reading the frame — nothing else in that card changes.
+#[test]
+fn the_picker_footer_hint_is_painted_from_the_text_global() {
+    use slint::{ComponentHandle as _, Global as _};
+
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    // Open the picker on a gradient stop and scroll the pane to its card, so
+    // the hint is inside the frame rather than below the fold.
+    win.set_tune_editing_slot(1);
+    win.set_panel_kbd_preview_index(8);
+    settle_frames(80);
+
+    let en = win.window().take_snapshot().expect("english hint");
+    save_slice_png(en.clone(), "/tmp/opencode/borders_picker_hint_en.png");
+
+    // Spanish, through the REAL production function `main()` calls.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("spanish hint");
+    save_slice_png(es.clone(), "/tmp/opencode/borders_picker_hint_es.png");
+    let translated = frame_diff(&en, &es, TUNE_AREA);
+    assert!(
+        translated > 500,
+        "the open picker must repaint in Spanish: only {translated} pixels differ"
+    );
+
+    // Isolate the hint: the card carries other Spanish strings too, so move
+    // ONLY the two parts the hint composes from. Every pixel that changes now
+    // is the footer line under the hex readout.
+    let t = crate::BordersText::get(&win);
+    t.set_picker_part_saturation(slint::SharedString::from("HINT-PART"));
+    t.set_picker_hint_change(slint::SharedString::from("   ·   ←→ HINT"));
+    settle_frames(8);
+    let marked = win.window().take_snapshot().expect("marked hint");
+    save_slice_png(marked.clone(), "/tmp/opencode/borders_picker_hint_marked.png");
+    let hint = frame_diff(&es, &marked, TUNE_AREA);
+    assert!(
+        hint > 100,
+        "the footer hint must be painted from the text global: only {hint} pixels differ"
+    );
+}
+
+/// `ColorPicker.slint` cannot reach the section's global itself, so the hint
+/// travels as IN properties the section fills. These English defaults are the
+/// byte-for-byte copy a picker mounted without an i18n pass paints, and they
+/// are what today's English is pinned against.
+#[test]
+fn the_picker_declares_its_hint_properties_with_the_english_copy() {
+    const PICKER: &str = include_str!("../../ui/panel/ColorPicker.slint");
+    // (property on the picker, property on the BordersText global)
+    const HINTS: [(&str, &str); 5] = [
+        ("part-name-saturation", "picker-part-saturation"),
+        ("part-name-brightness", "picker-part-brightness"),
+        ("part-name-hue", "picker-part-hue"),
+        ("part-name-alpha", "picker-part-alpha"),
+        ("hint-change", "picker-hint-change"),
+    ];
+    let labels = borders_labels();
+    for (prop, global) in HINTS {
+        let (_, _, en, _) = labels
+            .iter()
+            .find(|(name, _, _, _)| *name == global)
+            .unwrap_or_else(|| panic!("{global} must be one of the Borders labels"));
+        let decl = format!("in property <string> {prop}: \"{en}\";");
+        assert!(
+            PICKER.contains(&decl),
+            "the picker must declare {decl} (its default is today's English copy)"
+        );
+    }
+}
+
+/// The cards' apply control is a switch with no label: `apply-text` travelled
+/// from Rust through the shell into the card and NOTHING painted it. It is now
+/// the switch's hover help, and hover is the only way a user reaches it, so the
+/// proof has to be a frame with the pointer parked on the switch.
+///
+/// The parked card is the ACTIVE one, so the card is already expanded and the
+/// switch does not move under the pointer while it is hovered.
+#[test]
+fn the_preset_card_apply_hover_help_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Cascade"),
+        SharedString::from("Nordic"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("soft gradient"),
+        SharedString::from("cold edges"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_cascade.lua"),
+        SharedString::from("02_nordic.lua"),
+    ])));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_border_size(2);
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(borders_chip_resolved())));
+    // The ACTIVE card is the one the pointer lands on: it is already expanded,
+    // so hovering it changes no geometry and the frame diff below is the help
+    // label alone. Its switch is the only accent-green surface here.
+    win.set_active_border_index(0);
+    settle_frames(80);
+
+    // Parked off the cards: the reference frame, with no help up.
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(400.0, 600.0),
+    });
+    settle_frames(40);
+
+    let before = win.window().take_snapshot().expect("before hover");
+    save_slice_png(before.clone(), "/tmp/opencode/apply_help_preset_before.png");
+    let (x0, y0, x1, y1) = exact_color_bbox_below(&before, (16, 185, 129), 8, 140)
+        .expect("the active card must paint its green apply switch");
+    println!("apply switch bbox: ({x0},{y0}) .. ({x1},{y1})");
+
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(
+            (x0 + x1) as f32 / 2.0,
+            (y0 + y1) as f32 / 2.0,
+        ),
+    });
+    settle_frames(40); // 640ms — past the 300ms hover delay
+
+    let after = win.window().take_snapshot().expect("after hover");
+    save_slice_png(after.clone(), "/tmp/opencode/apply_help_preset.png");
+    let help = frame_diff(&before, &after, PRESET_LIST_AREA);
+    assert!(
+        help > 100,
+        "hovering the apply switch must paint its help: only {help} pixels differ"
+    );
+}
+
+/// Same help, same wire, on the OTHER card: the Save section's apply square,
+/// whose text comes from `themes.apply` (a window property), not from
+/// `BordersText`. Two cards, one component, two plumbings — both reach pixels.
+#[test]
+fn the_theme_card_apply_hover_help_renders() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(0);
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Nord"),
+        SharedString::from("Cyber"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-08-01"),
+        SharedString::from("2026-08-02"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![true, false])));
+    win.set_active_theme_index(0);
+    win.set_panel_save_apply_text(SharedString::from("Apply"));
+    win.set_panel_save_refresh_text(SharedString::from("Refresh"));
+    win.set_panel_save_rename_text(SharedString::from("Rename"));
+    win.set_panel_save_delete_text(SharedString::from("Delete"));
+    settle_frames(80);
+
+    let before = win.window().take_snapshot().expect("before hover");
+    save_slice_png(before.clone(), "/tmp/opencode/apply_help_theme_before.png");
+    let (x0, y0, x1, y1) = exact_color_bbox_below(&before, (16, 185, 129), 8, 140)
+        .expect("the active theme card must paint its green apply square");
+    println!("apply square bbox: ({x0},{y0}) .. ({x1},{y1})");
+    let cx = (x0 + x1) as f32 / 2.0;
+    let cy = (y0 + y1) as f32 / 2.0;
+
+    // Parked off the card: the reference frame, with no help up.
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(400.0, 600.0),
+    });
+    settle_frames(40);
+    let parked = win.window().take_snapshot().expect("parked");
+    save_slice_png(parked.clone(), "/tmp/opencode/apply_help_theme_parked.png");
+
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(cx, cy),
+    });
+    settle_frames(40); // 640ms — past the 300ms hover delay
+
+    let after = win.window().take_snapshot().expect("after hover");
+    save_slice_png(after.clone(), "/tmp/opencode/apply_help_theme.png");
+    let help = frame_diff(&parked, &after, PRESET_LIST_AREA);
+    assert!(
+        help > 100,
+        "hovering the apply square must paint its help: only {help} pixels differ"
+    );
+
+    // And the SIBLING IconButton's help still paints now that the tooltip lives
+    // in a shared component: the refresh button is the next one in the row
+    // (32px wide + 6px spacing), so it sits 38px to the right. The apply help
+    // is gone by then (the pointer left it), so this diff is that label alone.
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(cx + 38.0, cy),
+    });
+    settle_frames(40);
+    let sibling = win.window().take_snapshot().expect("after hovering refresh");
+    save_slice_png(sibling.clone(), "/tmp/opencode/apply_help_theme_refresh.png");
+    let sibling_help = frame_diff(&parked, &sibling, PRESET_LIST_AREA);
+    assert!(
+        sibling_help > 100,
+        "hovering an IconButton must still paint its help: only {sibling_help} pixels differ"
     );
 }
 

@@ -802,6 +802,13 @@ component BordersTunePane inherits Rectangle {
                         col-picker := HveColorPicker {
                             width: 100%;
                             seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
+                            // Footer hint copy (B4): the control names and the
+                            // tail of the line come from the Borders text global.
+                            part-name-saturation: BordersText.picker-part-saturation;
+                            part-name-brightness: BordersText.picker-part-brightness;
+                            part-name-hue: BordersText.picker-part-hue;
+                            part-name-alpha: BordersText.picker-part-alpha;
+                            hint-change: BordersText.picker-hint-change;
                             // Keyboard command channel from the section (task 3.7).
                             cmd-seq: root.picker-cmd;
                             cmd-kind: root.picker-cmd-kind;

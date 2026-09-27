@@ -239,7 +239,12 @@
       "channel_glow_inactive": "el color del brillo inactivo",
       "channel_fallback": "este color",
       "value_custom": "Personalizado",
-      "value_none": "(ninguno)"
+      "value_none": "(ninguno)",
+      "part_saturation": "Saturación",
+      "part_brightness": "Brillo",
+      "part_hue": "Tono",
+      "part_alpha": "Alfa",
+      "hint_change": "   ·   ←→ cambiar"
     },
     "presets": {
       "01_cascade": {

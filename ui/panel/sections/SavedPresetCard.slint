@@ -7,7 +7,7 @@
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-import { IconButton } from "../../components.slint";
+import { IconButton, Tooltip } from "../../components.slint";
 import { HveColors } from "../../theme.slint";
 
 export component SavedPresetCard inherits Rectangle {
@@ -160,6 +160,16 @@ export component SavedPresetCard inherits Rectangle {
                             root.apply-preset(root.index, root.apply-value);
                             root.refocus();
                         }
+                    }
+
+                    // The switch IS the apply control, so the apply help hangs
+                    // here — the same 300ms hover help Rename/Delete get from
+                    // their IconButtons, with the text the caller already sends.
+                    Tooltip {
+                        width: 100%;
+                        height: 100%;
+                        text: root.apply-text;
+                        hovered: switch-ta.has-hover;
                     }
                 }
 

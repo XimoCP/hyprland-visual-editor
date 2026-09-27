@@ -239,7 +239,12 @@
       "channel_glow_inactive": "the inactive glow colour",
       "channel_fallback": "this colour",
       "value_custom": "Custom",
-      "value_none": "(none)"
+      "value_none": "(none)",
+      "part_saturation": "Saturation",
+      "part_brightness": "Brightness",
+      "part_hue": "Hue",
+      "part_alpha": "Alpha",
+      "hint_change": "   ·   ←→ change"
     },
     "presets": {
       "01_cascade": {

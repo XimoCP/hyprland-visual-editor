@@ -9,7 +9,7 @@
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-import { IconButton } from "../../components.slint";
+import { IconButton, Tooltip } from "../../components.slint";
 import { HveColors } from "../../theme.slint";
 
 export component SavedThemeCard inherits Rectangle {
@@ -159,6 +159,16 @@ export component SavedThemeCard inherits Rectangle {
                                 root.refocus();
                             }
                         }
+                    }
+
+                    // The apply square is not an IconButton, so it carries the
+                    // help explicitly: the same 300ms hover label its three
+                    // siblings get, with the apply text the caller already sends.
+                    Tooltip {
+                        width: 100%;
+                        height: 100%;
+                        text: root.apply-text;
+                        hovered: apply-ta.has-hover;
                     }
                 }
 

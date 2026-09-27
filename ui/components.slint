@@ -1060,6 +1060,71 @@ export component NavCard inherits Rectangle {
 // The handlers that SystemSection still uses (toggle-auto-minimize, language, etc.) survive in
 // src/main.rs / src/callbacks.rs; only the overlay component and its unique settings-open state are gone.
 
+// ─── Hover help (tooltip) ──────────────────────────────────────────
+// A small floating label 300ms after the pointer settles on the anchor.
+// Extracted from IconButton so controls that are NOT icon buttons (the
+// cards' apply switch) offer the same help with one implementation instead of
+// a second copy of the markup.
+//
+// It is an OVERLAY, not a layout child: place it as the last child of the
+// element it describes, sized to that element, and it paints only the label
+// (a plain Rectangle swallows no pointer event, so the control underneath
+// keeps working).
+export component Tooltip inherits Rectangle {
+    in property <string> text;
+    in property <bool> hovered: false;
+    property <bool> show-tooltip: false;
+
+    tt-timer := Timer {
+        interval: 300ms;
+        running: root.hovered;
+        triggered => {
+            if (root.hovered && root.text != "") {
+                root.show-tooltip = true;
+            }
+        }
+    }
+
+    // Hide it on leaving the anchor.
+    changed hovered => {
+        if (!root.hovered) {
+            root.show-tooltip = false;
+        }
+    }
+
+    /// Dismiss without waiting for the pointer to leave (a click does this).
+    public function close() {
+        root.show-tooltip = false;
+    }
+
+    if (root.show-tooltip) : Rectangle {
+        x: (parent.width - 80px) / 2;
+        y: -36px;
+        width: 80px;
+        height: 24px;
+        z: 100;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #1e1e2e;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: HveColors.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000080;
+
+            Text {
+                text: root.text;
+                color: HveColors.text;
+                font-size: 10px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
 // ─── Icon Button with Tooltip ─────────────────────────────────────────
 export component IconButton inherits Rectangle {
     in property <string> icon;
@@ -1069,8 +1134,6 @@ export component IconButton inherits Rectangle {
     in property <bool> disabled: false;
     out property <bool> has-hover: ta.has-hover;
     callback clicked;
-
-    property <bool> show-tooltip: false;
 
     width: 32px;
     height: 32px;
@@ -1096,55 +1159,19 @@ export component IconButton inherits Rectangle {
 
         clicked => {
             if (!root.disabled) {
-                root.show-tooltip = false;
+                hint.close();
                 root.clicked();
             }
         }
     }
 
-    // Timer de 300ms
-    tt-timer := Timer {
-        interval: 300ms;
-        running: ta.has-hover;
-        triggered => {
-            if (ta.has-hover && root.tooltip-text != "") {
-                root.show-tooltip = true;
-            }
-        }
-    }
-
-    // Apaga el tooltip al salir del botón
-    changed has-hover => {
-        if (!ta.has-hover) {
-            root.show-tooltip = false;
-        }
-    }
-
-    // ── Tooltip (Rectangle flotante, sin PopupWindow) ──
-    if (root.show-tooltip) : Rectangle {
-        x: (parent.width - 80px) / 2;
-        y: -36px;
-        width: 80px;
-        height: 24px;
-        z: 100;
-
-        Rectangle {
-            width: 100%;
-            height: 100%;
-            background: #1e1e2e;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: HveColors.border;
-            drop-shadow-blur: 8px;
-            drop-shadow-color: #00000080;
-
-            Text {
-                text: root.tooltip-text;
-                color: HveColors.text;
-                font-size: 10px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
+    // ── Hover help (Rectangle flotante, sin PopupWindow) ──
+    hint := Tooltip {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        text: root.tooltip-text;
+        hovered: ta.has-hover;
     }
 }

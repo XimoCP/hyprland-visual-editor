@@ -119,11 +119,21 @@ export component HveColorPicker inherits Rectangle {
     // control the arrows act on and drives the visible highlight below.
     in-out property <int> part: 0;         // 0=saturation 1=brightness 2=hue 3=alpha
 
+    // The footer hint below NAMES the control the arrows act on. Those words
+    // are Borders copy (`borders.picker.*`), so the section passes them
+    // translated; the defaults are today's English, byte for byte, so a picker
+    // mounted without the i18n pass reads exactly as it always did.
+    in property <string> part-name-saturation: "Saturation";
+    in property <string> part-name-brightness: "Brightness";
+    in property <string> part-name-hue: "Hue";
+    in property <string> part-name-alpha: "Alpha";
+    in property <string> hint-change: "   ·   ←→ change";
+
     public pure function part-name() -> string {
-        return root.part == 0 ? "Saturation"
-             : root.part == 1 ? "Brightness"
-             : root.part == 2 ? "Hue"
-             : "Alpha";
+        return root.part == 0 ? root.part-name-saturation
+             : root.part == 1 ? root.part-name-brightness
+             : root.part == 2 ? root.part-name-hue
+             : root.part-name-alpha;
     }
 
     /// Move the arrow target. Wraps in both directions.
@@ -355,7 +365,7 @@ export component HveColorPicker inherits Rectangle {
         // Names the control the arrows act on, so the keyboard path is
         // discoverable rather than secret (task 3.7).
         Text {
-            text: "↑↓ " + root.part-name() + "   ·   ←→ change";
+            text: "↑↓ " + root.part-name() + root.hint-change;
             font-family: SkwdTokens.font-body;
             font-size: SkwdTokens.size-11;
             font-weight: 600;

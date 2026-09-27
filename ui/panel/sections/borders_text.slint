@@ -66,10 +66,9 @@ export global BordersText {
     in-out property <string> list-builtin: "Built-in";
     in-out property <string> list-user: "My Border Presets";
     in-out property <string> list-empty: "No border presets found.";
-    // `card-apply` reaches `SavedPresetCard.apply-text`, which that card
-    // declares but does not paint: its apply control is a switch with no label,
-    // and Rename/Delete are the only card actions with visible text today. The
-    // string is wired for the day the card shows one; it is not on screen now.
+    // `card-apply` reaches `SavedPresetCard.apply-text`, which that card paints
+    // as the hover help of its apply switch (the switch itself has no label,
+    // the way Rename/Delete label their icon buttons).
     in-out property <string> card-apply: "Apply";
     in-out property <string> card-rename: "Rename";
     in-out property <string> card-delete: "Delete";
@@ -87,4 +86,13 @@ export global BordersText {
     in-out property <string> picker-channel-fallback: "this colour";
     in-out property <string> value-custom: "Custom";
     in-out property <string> value-none: "(none)";
+
+    // Colour picker footer hint — the control the arrow keys act on, and the
+    // tail of the line. The picker composes `↑↓ <name><tail>` from these; the
+    // arrows are symbols (see the header) and stay untranslated.
+    in-out property <string> picker-part-saturation: "Saturation";
+    in-out property <string> picker-part-brightness: "Brightness";
+    in-out property <string> picker-part-hue: "Hue";
+    in-out property <string> picker-part-alpha: "Alpha";
+    in-out property <string> picker-hint-change: "   ·   ←→ change";
 }
