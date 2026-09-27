@@ -269,8 +269,8 @@ pub fn start_listener(window: &crate::MainWindow, proj: PathBuf) -> ListenerHand
 }
 
 // ─── Focus listener ────────────────────────────────────────────────
-// Escucha el evento `activewindow` de Hyprland. Llama a on_focus_lost
-// cuando la ventana activa deja de ser "Hyprland Visual Editor".
+// Listens to Hyprland's `activewindow` event. Calls on_focus_lost
+// when the active window stops being "Hyprland Visual Editor".
 const HVE_WINDOW_TITLE: &str = "Hyprland Visual Editor";
 
 /// Spawn a thread that listens for Hyprland `activewindow` events.
@@ -367,7 +367,7 @@ where
                         tracing::debug!("[focus] Foco PERDIDO -> '{}'", title);
                         on_focus_lost();
                     }
-                    // Si title está vacío, no actuar (transición entre escritorios)
+                    // If title is empty, do nothing (transition between workspaces)
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock

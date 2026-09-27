@@ -4726,15 +4726,15 @@ fn main() -> Result<(), slint::PlatformError> {
     //     BEFORE the first show (gallery-immersive-redesign 1.5) ──
     composer::startup_fullscreen_sanity();
 
-    // ── Visibilidad inicial según el modo ──
+    // ── Initial visibility according to the mode ──
     if tray_mode {
-        // Lazy load: no llamamos a show() hasta que el usuario pulse SUPER+H.
-        // El primer toggle via IPC creará el xdg_toplevel con un debounce
-        // de 400ms para evitar que el roundtrip de Wayland sea saboteado
-        // por una pulsación accidental repetida.
+        // Lazy load: we don't call show() until the user presses SUPER+H.
+        // The first toggle via IPC will create the xdg_toplevel with a debounce
+        // of 400ms so the Wayland roundtrip is not sabotaged
+        // by an accidental repeated key press.
         //
-        // Esto evita por completo el problema de set_minimized() en Wayland
-        // (no existe un-minimize programático) y es 100% agnóstico al WM.
+        // This fully avoids the set_minimized() problem on Wayland
+        // (there is no programmatic un-minimize) and is 100% WM-agnostic.
         if let Some(mut ctrl) = composer::global_controller() {
             ctrl.set_window_hidden(true);
             ctrl.set_tray_mode(true);
@@ -4779,8 +4779,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
         // ── Legacy prewarm/warmup removed — panel handles its own focus (R11) ──
 
-        // En Wayland/Hyprland, show() no garantiza foco automático.
-        // Forzamos foco via Composer para evitar el doble-click inicial.
+        // On Wayland/Hyprland, show() does not guarantee automatic focus.
+        // We force focus via Composer to avoid the initial double-click.
         if let Some(ctrl) = composer::global_controller() {
             ctrl.composer().focus();
         }

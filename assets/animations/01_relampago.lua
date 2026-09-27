@@ -1,8 +1,8 @@
--- @Title: Relámpago
+-- @Title: Lightning
 -- @Icon: bolt
 -- @Color: #f87171
 -- @Tag: FAST
--- @Desc: Máxima respuesta visual.
+-- @Desc: Maximum visual response.
 
 hl.animation({ leaf = "global", enabled = true, speed = 1, bezier = "default" })
 

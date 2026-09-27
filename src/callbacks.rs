@@ -140,9 +140,9 @@ pub fn setup_callbacks(
             let is_gallery = Shell::with_nav(&shell, |n| {
                 n.screen() == Screen::Gallery && n.expansion() != ExpansionState::Collapsed
             });
-            // V6.1: Up/Down ya no mueven el carrusel — despliegan los cajones
-            // (arriba Settings, abajo Slider/Mosaic). Solo Left/Right mueven.
-            // En Gallery, Up togglea cajón superior, Down cajón inferior.
+            // V6.1: Up/Down no longer move the carousel — they deploy the drawers
+            // (top Settings, bottom Slider/Mosaic). Only Left/Right move it.
+            // In Gallery, Up toggles the top drawer, Down the bottom drawer.
             if is_gallery {
                 let dir = direction.as_str();
                 if dir == "up" {
@@ -166,7 +166,7 @@ pub fn setup_callbacks(
                 "right" => 1,
                 "left" => -1,
                 "down" | "up" if !is_gallery => {
-                    // En Home, Up/Down siguen moviendo el foco vertical
+                    // In Home, Up/Down keep moving the vertical focus
                     if direction.as_str() == "down" { 1 } else { -1 }
                 },
                 _ => 0,
@@ -175,7 +175,7 @@ pub fn setup_callbacks(
                 return;
             }
             if is_gallery {
-                // Si un cajón está abierto, Left/Right lo navega — no mover carrusel
+                // If a drawer is open, Left/Right navigates it — do not move the carousel
                 let drawer_open = weak.upgrade().map(|w| w.get_gallery_top_open() || w.get_gallery_bottom_open()).unwrap_or(false);
                 if drawer_open {
                     return;
@@ -466,19 +466,19 @@ pub fn setup_callbacks(
     {
         let win_weak_for_close = window.as_weak();
         window.window().on_close_requested(move || {
-            // "Secuestramos" el cierre (SUPER+C) para que haga lo MISMO que el
-            // toggle de SUPER+H: esconder la ventana en el escritorio oculto
-            // (special workspace) en lugar de destruir la superficie. Así nunca se
-            // recrea y el foco de teclado se conserva. KeepWindowShown rechaza la
-            // destrucción y el hide() del compositor la retira a pantalla aparte.
+            // We "hijack" the close (SUPER+C) so it does the SAME as the
+            // SUPER+H toggle: hide the window on the hidden desktop
+            // (special workspace) instead of destroying the surface. That way it is never
+            // recreated and keyboard focus is kept. KeepWindowShown rejects the
+            // destruction and the compositor's hide() moves it to a screen of its own.
             let needs_slint_hide = {
                 if let Some(win) = win_weak_for_close.upgrade() {
                     if let Some(mut ctrl) = crate::composer::global_controller() {
-                        // La ventana está visible al cerrar → hide path (al escondite).
+                        // The window is visible at close → hide path (to the hideout).
                         ctrl.toggle_tray(&win);
-                        // Si el compositor no pudo mover al escondite (hide() cayó al
-                        // fallback Slint), la ventana no quedó oculta por hyprctl →
-                        // hay que ocultarla por Slint.
+                        // If the compositor could not move it to the hideout (hide() fell to
+                        // the Slint fallback), the window was not hidden by hyprctl →
+                        // it must be hidden by Slint.
                         !ctrl.window_hidden()
                     } else {
                         // Unreachable in production: the controller is initialized
@@ -486,7 +486,7 @@ pub fn setup_callbacks(
                         false
                     }
                 } else {
-                    // Ventana ya muerta: nada que ocultar, que respete el codigo default.
+                    // Window already dead: nothing to hide, let it respect the default code.
                     true
                 }
             };
@@ -494,8 +494,8 @@ pub fn setup_callbacks(
             if needs_slint_hide {
                 slint::CloseRequestResponse::HideWindow
             } else {
-                // El compositor ya la movió al escondite: rechazamos la destrucción
-                // y dejamos que la superficie siga viva.
+                // The compositor already moved it to the hideout: we reject the destruction
+                // and let the surface stay alive.
                 slint::CloseRequestResponse::KeepWindowShown
             }
         });

@@ -2,7 +2,7 @@
 //!
 //! Two signals, each used for what it actually knows:
 //! - The COMPOSITOR's layer stack (`hyprctl -j layers`) says WHICH layer
-//!   is on top ("lo que se ve encima") — ground truth for visibility.
+//!   is on top ("what is seen on top") — ground truth for visibility.
 //! - The DAEMON (`skwd-helm` / `skwd-wall-v2` `outputs --json`) says the
 //!   TYPE of its own layers (`"static"`, `"video"`, `"we"`).
 //!
@@ -1542,7 +1542,7 @@ mod tests {
     // ── Compositor layer-stack tests ──
     //
     // `hyprctl -j layers` is the source of truth for which background is
-    // actually on top ("lo que se ve encima"). The daemon (`skwd-helm`)
+    // actually on top ("what is seen on top"). The daemon (`skwd-helm`)
     // only knows its own last-set wallpaper and is blind to other painters
     // (verified live: daemon said "static" while mpvpaper's video covered
     // the screen). Within background level "0", LATER entries draw ON TOP.

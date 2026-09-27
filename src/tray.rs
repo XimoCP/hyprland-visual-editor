@@ -229,7 +229,7 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Separator ──
             ksni::MenuItem::Separator,
-            // ── Toggle Window (hide/show) — mantiene ventana mapeada en special workspace ──
+            // ── Toggle Window (hide/show) — keeps the window mapped on the special workspace ──
             StandardItem {
                 label: if is_hidden {
                     self.tr.tr_or("tray.show_window", "Show Window").to_string()

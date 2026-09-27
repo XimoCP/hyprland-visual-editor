@@ -1,7 +1,7 @@
-//! Countdown auto-minimize cuando la ventana pierde foco.
+//! Countdown auto-minimize when the window loses focus.
 //!
-//! El Timer se guarda en un thread_local del thread principal (event loop de Slint).
-//! El listener de Hyprland envía señales vía invoke_from_event_loop.
+//! The Timer is stored in a thread_local of the main thread (Slint's event loop).
+//! The Hyprland listener sends signals via invoke_from_event_loop.
 
 use slint::{ComponentHandle, Timer, TimerMode, Weak};
 use std::cell::RefCell;
@@ -9,17 +9,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Bandera compartida para indicar si el countdown está activo.
+/// Shared flag indicating whether the countdown is active.
 static COUNTDOWN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Hasta cuándo se suprime el auto-minimize. Se setea durante un apply de
-/// tema: el hyprctl reload y la regeneración de window rules hacen que la
-/// ventana pierda y recupere foco varias veces, y esos eventos (encolados en
-/// el event loop) no deben disparar un countdown espurio.
+/// Until when the auto-minimize is suppressed. It is set during a theme
+/// apply: the hyprctl reload and the regeneration of window rules make the
+/// window lose and regain focus several times, and those events (queued in
+/// the event loop) must not trigger a spurious countdown.
 static SUPPRESS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
-/// Suprime el auto-minimize durante `duration` (p. ej. mientras se aplica un
-/// tema). Safe to call desde cualquier thread.
+/// Suppresses the auto-minimize for `duration` (e.g. while a theme is being
+/// applied). Safe to call from any thread.
 #[allow(dead_code)]
 pub fn suppress_auto_minimize(duration: Duration) {
     let until = Instant::now() + duration;
@@ -39,11 +39,11 @@ fn is_suppressed() -> bool {
 }
 
 thread_local! {
-    /// Timer del countdown (solo accesible desde el thread principal).
+    /// Countdown timer (only accessible from the main thread).
     static COUNTDOWN_TIMER: RefCell<Option<Timer>> = const { RefCell::new(None) };
 }
 
-/// Inicia el countdown. Debe llamarse desde el thread principal.
+/// Starts the countdown. Must be called from the main thread.
 pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
     if COUNTDOWN_ACTIVE.swap(true, Ordering::Relaxed) {
         tracing::debug!("[countdown] Ya activo, ignorando start");
@@ -101,7 +101,7 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
     });
 }
 
-/// Cancela el countdown activo. Debe llamarse desde el thread principal.
+/// Cancels the active countdown. Must be called from the main thread.
 pub fn cancel_countdown(window_weak: Weak<crate::MainWindow>) {
     if !COUNTDOWN_ACTIVE.swap(false, Ordering::Relaxed) {
         return;
@@ -198,7 +198,7 @@ pub(crate) fn blur_decision(
     BlurDecision::Nothing
 }
 
-/// Click en el botón X → minimiza inmediatamente.
+/// Click on the X button → minimizes immediately.
 pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     tracing::info!("[countdown] Minimizando ventana...");
     cancel_countdown(window_weak.clone());
@@ -213,29 +213,29 @@ pub fn minimize_now(window_weak: Weak<crate::MainWindow>) {
     }
 }
 
-/// Resultado de procesar un tick de countdown.
+/// Result of processing a countdown tick.
 ///
-/// Este struct es puro (sin side effects) y permite testear la lógica
-/// de countdown sin necesidad de mockear Slint ni IPC.
+/// This struct is pure (no side effects) and lets us test the countdown
+/// logic without having to mock Slint or IPC.
 pub(crate) struct CountdownTick {
-    /// Nuevo valor de segundos restantes tras decrementar.
+    /// New value of remaining seconds after decrementing.
     pub(crate) next_seconds: i32,
-    /// Progreso normalizado 0.0..1.0 (1.0 = completo, 0.0 = terminado).
+    /// Normalized progress 0.0..1.0 (1.0 = complete, 0.0 = done).
     pub(crate) progress: f32,
-    /// true cuando el countdown llegó a 0 y hay que minimizar.
+    /// true when the countdown reaches 0 and it is time to minimize.
     pub(crate) should_minimize: bool,
 }
 
-/// Procesa un tick del countdown: decrementa, calcula progreso,
-/// decide si debe minimizar.
+/// Processes a countdown tick: decrements, computes progress,
+/// decides whether it must minimize.
 ///
-/// Esta función es pura (sin side effects) y testeable:
+/// This function is pure (no side effects) and testable:
 /// - `next_seconds` = current_seconds - 1
-/// - `progress` = next_seconds / total_seconds (0.0 si total == 0)
-/// - `should_minimize` = true si next_seconds <= 0
+/// - `progress` = next_seconds / total_seconds (0.0 if total == 0)
+/// - `should_minimize` = true if next_seconds <= 0
 ///
-/// Para casos inválidos (current > total, current < 0) mantiene
-/// coherencia: decrementa y calcula progress como f32 division.
+/// For invalid cases (current > total, current < 0) it keeps
+/// consistency: it decrements and computes progress as an f32 division.
 pub(crate) fn process_tick(current_seconds: i32, total_seconds: i32) -> CountdownTick {
     let next_seconds = current_seconds - 1;
     let progress = if total_seconds == 0 {
@@ -252,7 +252,7 @@ pub(crate) fn process_tick(current_seconds: i32, total_seconds: i32) -> Countdow
     }
 }
 
-/// Tick interno: decrementa el contador; al llegar a 0 minimiza.
+/// Internal tick: decrements the counter; minimizes when it reaches 0.
 fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
     if !COUNTDOWN_ACTIVE.load(Ordering::Relaxed) {
         return;
@@ -513,7 +513,7 @@ mod tests {
     }
 }
 
-/// Wrapper para conectar el listener de Hyprland.
+/// Wrapper to connect the Hyprland listener.
 /// Returns a `ListenerHandle` that keeps the focus listener thread alive.
 /// When the handle is dropped (app shutdown), the thread stops cleanly.
 pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc::ListenerHandle {

@@ -39,9 +39,9 @@ const NOCTALIA_FILES: &[&str] = &["settings.json", "colors.json", "plugins.json"
 /// These are what `colors.sh` actually reads, and what Hyprland sources.
 const NOCTALIA_RENDERED_FILES: &[&str] = &["noctalia-colors.conf", "noctalia-colors.lua"];
 
-/// Rutas por defecto para Noctalia v4.
+/// Default paths for Noctalia v4.
 ///
-/// Soporta tres niveles de personalización (prioridad descendente):
+/// Supports three levels of customization (descending priority):
 /// 1. Environment variables: `HVE_NOCTALIA_CONFIG`, `HVE_NOCTALIA_HYPR`,
 ///    `HVE_NOCTALIA_TEMPLATE_PROCESSOR`
 /// 2. System paths: `/etc/xdg/quickshell/noctalia-shell/...`
@@ -151,7 +151,7 @@ impl ShellProvider for NoctaliaV4Paths {
     }
 }
 
-/// Detecta si un shell está activo en el sistema.
+/// Detects whether a shell is active on the system.
 pub trait ShellDetector: Send + Sync {
     // `id` is used by tests and by `ShellRegistry` (tests-only); the lint does
     // not count `#[cfg(test)]` usage during a plain `cargo check`.
@@ -175,11 +175,11 @@ impl ShellDetector for NoctaliaV4Paths {
     }
 }
 
-/// Noctalia v5 (Rust native shell) — paths solo para detección y acceso a paletas.
+/// Noctalia v5 (Rust native shell) — paths for detection and palette access only.
 ///
-/// La save/apply del provider se maneja enteramente por IPC (`noctalia msg`).
-/// No hay template processor, rendered files, wallpapers.json cache, ni reload.
-/// v5 tiene hot-reload automático.
+/// The provider's save/apply is handled entirely over IPC (`noctalia msg`).
+/// There is no template processor, rendered files, wallpapers.json cache, or reload.
+/// v5 has automatic hot-reload.
 pub struct NoctaliaV5Paths;
 
 impl ShellProvider for NoctaliaV5Paths {
@@ -266,9 +266,9 @@ impl ShellDetector for NoctaliaV5Paths {
     }
 
     fn is_active(&self) -> bool {
-        // Ambas condiciones necesarias:
-        // 1. El proceso noctalia está corriendo
-        // 2. Existe ~/.config/noctalia/profiles/ (solo v5)
+        // Both conditions are required:
+        // 1. The noctalia process is running
+        // 2. ~/.config/noctalia/profiles/ exists (v5 only)
         let process_running = std::process::Command::new("pgrep")
             .arg("-x")
             .arg("noctalia")
@@ -285,10 +285,10 @@ impl ShellDetector for NoctaliaV5Paths {
     }
 }
 
-/// Registry que detecta qué shell está activo.
+/// Registry that detects which shell is active.
 ///
-/// Se registran los detectores en orden; el primero que retorne
-/// `is_active() == true` se marca como activo.
+/// Detectors are registered in order; the first one to return
+/// `is_active() == true` is marked as active.
 ///
 /// NOTE: only instantiated by tests. Production (main.rs) bypasses the
 /// registry and calls `is_active()` on the detectors directly.
@@ -390,8 +390,8 @@ mod tests {
     fn test_apply_wallpaper_ipc_format() {
         let p = NoctaliaV4Paths;
         let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
-        // Puede fallar si quickshell no está disponible o devuelve error
-        // Solo verificamos que no panic y que la sintaxis del comando sea correcta
+        // It can fail if quickshell is not available or returns an error
+        // We only check that it does not panic and that the command syntax is correct
         if let Err(e) = &result {
             assert!(
                 e.contains("quickshell") || e.contains("Wallpaper IPC"),
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn test_noctalia_v5_paths_apply_wallpaper_ipc_format() {
         let p = NoctaliaV5Paths;
-        // Puede fallar — solo verificamos que no panic y la sintaxis sea correcta
+        // It can fail — we only check that it does not panic and the syntax is correct
         let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
         if let Err(e) = &result {
             assert!(
@@ -524,16 +524,16 @@ mod tests {
 
     #[test]
     fn test_v4_detector_is_active_no_crash() {
-        // Puede ser true o false dependiendo de si quickshell está corriendo
-        // Solo verificamos que no panic
+        // It can be true or false depending on whether quickshell is running
+        // We only check that it does not panic
         let detector = NoctaliaV4Paths;
         let _ = detector.is_active();
     }
 
     #[test]
     fn test_v5_detector_is_active_no_crash() {
-        // Puede ser true o false dependiendo de procesos y directorios
-        // Solo verificamos que no panic
+        // It can be true or false depending on processes and directories
+        // We only check that it does not panic
         let detector = NoctaliaV5Paths;
         let _ = detector.is_active();
     }
@@ -551,8 +551,8 @@ mod tests {
         let mut registry = ShellRegistry::new();
         registry.register(NoctaliaV4Paths);
         registry.register(NoctaliaV5Paths);
-        // El active_id será None (ningún proceso corriendo en tests)
-        // o será Some("noctalia") (si uno de los detectores devuelve true)
+        // active_id will be None (no process running in tests)
+        // or Some("noctalia") (if one of the detectors returns true)
         match registry.active_id() {
             None => {} // ninguno activo — OK
             Some(id) => assert_eq!(id, "noctalia"), // uno activo — OK
@@ -565,7 +565,7 @@ mod tests {
         registry.register(NoctaliaV4Paths);
         registry.register(NoctaliaV5Paths);
 
-        // Si alguno está activo, is_active("noctalia") debe ser true
+        // If any is active, is_active("noctalia") must be true
         if registry.active_id() == Some("noctalia") {
             assert!(registry.is_active("noctalia"));
             assert!(!registry.is_active("nonexistent"));

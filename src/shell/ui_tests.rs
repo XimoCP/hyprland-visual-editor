@@ -3014,8 +3014,8 @@ fn panel_system_narrow_pane_keeps_retardo_toggle() {
 /// frame around the surface being tuned is the compositor's border around HVE
 /// itself. It used to be an inner card — 80%, radius 16, drop shadow — over
 /// the faded gallery, which read as a second window inside the floating
-/// window. That is exactly what was reported live: "se ve la ventana flotante
-/// y dentro de esa ventana otra ventana".
+/// window. That is exactly what was reported live: "you see the floating window
+/// and inside that window another window".
 ///
 /// Sampled a few pixels inside each corner of the slot area (the window minus
 /// the 56px + 1px top chrome and the 32px bottom chrome).
@@ -5031,7 +5031,7 @@ fn panel_open_hands_focus_to_content() {
 }
 
 /// System rows must stay lit when hovering inner chips/toggles, not only the
-/// empty row background — otherwise the row visually "apagón" when mouse is
+/// empty row background — otherwise the row visually blacks out when mouse is
 /// over a chip because the outer hover TouchArea loses has-hover to the
 /// inner chip's TouchArea on top (z-order). Lit must be true if outer
 /// hover OR any inner has-hover OR focused-row+has-focus.
@@ -8216,7 +8216,7 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
 // Both pane ScrollViews drive `viewport-y` from a BINDING so the keyboard focus
 // can steer them. A bound property is recomputed from its binding, so a wheel
 // write is reverted on the next evaluation and the pane does not move — the
-// "el scroll con el ratón no funciona correctamente" report from the running
+// "mouse wheel scrolling does not work correctly" report from the running
 // app. This injects a real PointerScrolled event through the same path the
 // backend uses, and asserts the content actually moved.
 #[test]
@@ -8308,8 +8308,8 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     // `viewport-y` is bound so the keyboard can steer the pane. Slint replaces
     // a binding when code assigns the property, so a wheel write may permanently
     // drop that binding: the list then stops following the focused preset and the
-    // lower presets can never be brought into view — "hay alguno que no se
-    // alcanza a ver". Same window, same focus, with and without a prior wheel:
+    // lower presets can never be brought into view — "there is one you cannot
+    // reach". Same window, same focus, with and without a prior wheel:
     // the two must look the same.
     let last = (n - 1) as i32;
     let focus = |i: i32, w: &crate::MainWindow| {
@@ -8369,8 +8369,8 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     // `animate viewport-y { duration: 250ms }` sits on the same property the
     // wheel writes. A tick that lands mid-animation makes the next target be
     // computed from the interpolated value, which can silently drop the part of
-    // the previous tick that had not been travelled yet — "al hacer scroll no
-    // llegás al final". Same input, two pacings; the end states must agree.
+    // the previous tick that had not been travelled yet — "when scrolling you
+    // do not reach the end". Same input, two pacings; the end states must agree.
     let wheel = |w: &crate::MainWindow, dy: f32| {
         w.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
             position: slint::LogicalPosition::new(700.0, 620.0),
@@ -8413,7 +8413,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     );
 }
 
-/// The keeper, live: "arregla la navegación, ves que no llega al final".
+/// The keeper, live: "fix the navigation — you see it does not reach the end".
 /// He was right, and the `lost < 15000` above was too loose to catch it: 80
 /// notches left the list around preset 12 of 14, and the last preset could
 /// never be reached with the wheel — only with the keyboard follow.

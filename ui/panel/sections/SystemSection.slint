@@ -119,7 +119,7 @@ component SystemSettingsPane inherits Rectangle {
                 }
             }
 
-            // 1+2 — Retardo al ocultar — hover sobre chips/toggle no apaga fila
+            // 1+2 — Delay when hiding — hovering chips/toggle does not turn off the row
             retardo-wrap := Rectangle {
                 property <bool> lit: ((root.focused-row == 1 || root.focused-row == 2) && root.has-focus) || root.mouse-row == 1 || root.mouse-row == 2 || hover-retardo.has-hover || sec0-ta.has-hover || sec2-ta.has-hover || sec4-ta.has-hover || sec6-ta.has-hover || sec8-ta.has-hover || sec10-ta.has-hover || retardo-toggle-ta.has-hover;
                 // Grabbed only on the chips stop (row 2), so the two keyboard

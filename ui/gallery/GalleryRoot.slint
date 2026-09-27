@@ -1,12 +1,12 @@
 // HVE 2 — GalleryRoot (theme-gallery PR4.5 + behind-drawers).
 //
-// Dos cajones que nacen DETRÁS del Slider/Mosaic y se despliegan
-// verticalmente: arriba para Settings, abajo para Slider/Mosaic.
-// La tira (Slice/Mosaic) pinta POR ENCIMA de los cajones (declaración
-// antes que stage), así que al estar cerrados quedan escondidos detrás
-// del carrusel y al abrirse se deslizan fuera del borde de la banda
-// central (scaled-h). Dos ChromeButton arriba/abajo los disparan; arriba
-// ya no mueve el carrusel, abajo tampoco — left/right siguen moviendo.
+// Two drawers born BEHIND the Slider/Mosaic and deploy
+// vertically: upwards for Settings, downwards for Slider/Mosaic.
+// The strip (Slice/Mosaic) paints ON TOP of the drawers (declared
+// before stage), so while closed they stay hidden behind
+// the carousel and when opened they slide out past the edge of the central
+// band (scaled-h). Two ChromeButton top/bottom trigger them; the top one
+// no longer moves the carousel, neither does the bottom one — left/right still do.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -18,7 +18,7 @@ import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel, SliceTileData } from "SliceCarousel.slint";
 import { MosaicView, MosaicTileData } from "MosaicView.slint";
 
-// Reused pill — mismo look que FilterBar (paralelogramo 10px sesgo).
+// Reused pill — same look as FilterBar (10px skew parallelogram).
 component SkewPill inherits Rectangle {
     in property <string> label: "";
     in property <bool> active: false;
@@ -35,7 +35,7 @@ component SkewPill inherits Rectangle {
     property <float> hn: self.height / 1px;
     property <float> sn: 10px / 1px;
 
-    // Hover lift — mismo lenguaje que Slice/Mosaic (1.03 + brillo)
+    // Hover lift — same language as Slice/Mosaic (1.03 + glow)
     property <bool> has-hover: touch.has-hover;
 
     Path {
@@ -45,7 +45,7 @@ component SkewPill inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: parent.wn;
         viewbox-height: parent.hn;
-        // Todos mismo color en reposo; al hover o con foco se rellena con primary
+        // All the same color at rest; on hover or focus it fills with primary
         fill: (root.active || root.has-hover || root.key-focused) ? HveColors.accent-cyan : HveColors.bg-card.transparentize(0.35);
         stroke: root.key-focused ? #8fd8ff : ((root.active || root.has-hover || root.key-focused) ? HveColors.accent-cyan : HveColors.border.transparentize(0.4));
         stroke-width: root.key-focused ? 1.5px : 1px;
@@ -113,22 +113,22 @@ export component GalleryRoot inherits Rectangle {
     property <bool> opened: false;
     init => { self.opened = true; }
 
-    // ── Dos cajones detrás del carrusel ──
-    // Local UI state — no necesita Rust para abrir/cerrar, pero se
-    // expone como in-out por si el teclado (Up/Down) lo quiere togglear
-    // desde callbacks.rs. Por defecto cerrados (escondidos detrás).
+    // ── Two drawers behind the carousel ──
+    // Local UI state — no Rust needed to open/close, but it is
+    // exposed as in-out in case the keyboard (Up/Down) wants to toggle it
+    // from callbacks.rs. Closed by default (hidden behind).
     in-out property <bool> top-menu-open: false;
     in-out property <bool> bottom-menu-open: false;
-    // Compat: FilterBar viejo usaba style-menu-open — lo mantenemos como
-    // alias a bottom para no romper bindings externos si quedara alguno.
+    // Compat: the old FilterBar used style-menu-open — we keep it as
+    // an alias to bottom so as not to break external bindings if any remain.
     property <bool> style-menu-open: root.bottom-menu-open;
 
-    // Foco de teclado dentro de cada cajón — loop y primer pill resaltado
+    // Keyboard focus inside each drawer — loop and the first pill highlighted
     property <int> top-focused: 0;
     property <int> bottom-focused: 0;
 
-    // Scaled band height (misma fórmula que SliceCarousel) para calcular
-    // el borde superior/inferior de la banda central donde se esconde.
+    // Scaled band height (same formula as SliceCarousel) to calculate
+    // the top/bottom edge of the central band where it hides.
     property <float> scaled-h: (root.width / 1px < 100.0 ? 924.0 : Math.min(924.0, root.width / 1px * 0.58)) * 520.0 / 924.0;
 
     changed top-menu-open => {
@@ -165,9 +165,9 @@ export component GalleryRoot inherits Rectangle {
         animate opacity { duration: SkwdTokens.anim-300; }
     }
 
-    // ── Cajón superior: Settings (Sale DETRÁS en Slider, delante en Mosaic) ──
-    // Slider (style 0): este cajón de atrás crea el efecto "sale de detrás" (stage lo tapa).
-    // Mosaic (style 2): este cajón queda tapado por la grilla, por eso se usa el duplicado de frente.
+    // ── Top drawer: Settings (comes out BEHIND in Slider, in front in Mosaic) ──
+    // Slider (style 0): this back drawer creates the "comes out from behind" effect (stage covers it).
+    // Mosaic (style 2): this drawer is covered by the grid, which is why the front duplicate is used.
     top-drawer := Rectangle {
         visible: root.current-style == 0;
         x: (parent.width - self.width) / 2;
@@ -234,7 +234,7 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Cajón inferior: Slider / Mosaic ──
+    // ── Bottom drawer: Slider / Mosaic ──
     bottom-drawer := Rectangle {
         visible: root.current-style == 0;
         x: (parent.width - self.width) / 2;
@@ -277,7 +277,7 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Teclado cuando un cajón está abierto: Left/Right navega con loop, Enter activa y cierra ──
+    // ── Keyboard while a drawer is open: Left/Right navigates with loop, Enter activates and closes ──
     gallery-keys := FocusScope {
         width: 0px;
         height: 0px;
@@ -291,7 +291,7 @@ export component GalleryRoot inherits Rectangle {
                 if (root.bottom-menu-open) { root.bottom-menu-open = false; return accept; }
                 return reject;
             }
-            // ↑/↓ cierran el cajón abierto (sin necesitar Esc) y permiten toggle cruzado
+            // ↑/↓ close the open drawer (no Esc needed) and allow cross toggling
             if (event.text == Key.UpArrow) {
                 if (root.top-menu-open) { root.top-menu-open = false; return accept; }
                 if (root.bottom-menu-open) { root.bottom-menu-open = false; root.top-menu-open = true; return accept; }
@@ -337,7 +337,7 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Stage: pinta POR ENCIMA de los cajones (declarado después) ──
+    // ── Stage: paints ON TOP of the drawers (declared after) ──
     stage := Rectangle {
         width: 100%;
         height: 100%;
@@ -387,7 +387,7 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Duplicados al FRENTE solo para Mosaic — pintan por encima de la grilla y no se tapan ──
+    // ── Duplicates at the FRONT only for Mosaic — they paint above the grid and are never covered ──
     top-drawer-front := Rectangle {
         visible: root.current-style == 2;
         x: (parent.width - self.width) / 2;
@@ -504,7 +504,7 @@ export component GalleryRoot inherits Rectangle {
         mit-opened => { root.mit-opened(); }
     }
 
-    // ── Flecha superior: despliega Settings hacia ARRIBA ──
+    // ── Top arrow: deploys Settings UPWARD ──
     top-arrow := ChromeButton {
         x: (parent.width - self.width) / 2;
         y: 2px;
@@ -518,7 +518,7 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Flecha inferior: despliega Slider/Mosaic hacia ABAJO ──
+    // ── Bottom arrow: deploys Slider/Mosaic DOWNWARD ──
     bottom-arrow := ChromeButton {
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - 2px;
@@ -532,10 +532,10 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // Esc cierra cajones primero, luego delega al shell
-    // (GalleryChrome ya maneja Escape del panel, esto es para los drawers).
-    // Se expone vía FilterBar compat pero aquí lo hacemos directo:
-    // si alguno está abierto, Escape lo cierra y no propaga hide.
-    // El shell ya tiene su handler de Escape global, así que este es
-    // solo para no perder el cajón sin cerrar.
+    // Esc closes the drawers first, then delegates to the shell
+    // (GalleryChrome already handles the panel's Escape, this is for the drawers).
+    // It is exposed via the FilterBar compat but here we do it directly:
+    // if any is open, Escape closes it and does not propagate hide.
+    // The shell already has its global Escape handler, so this is
+    // only so the drawer is not lost without closing it.
 }

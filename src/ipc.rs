@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Debounce: evita que pulsaciones rápidas de SUPER+H saboteen el
-/// roundtrip de Wayland al crear el xdg_toplevel por primera vez.
+/// Debounce: keeps rapid SUPER+H presses from sabotaging the
+/// Wayland roundtrip when creating the xdg_toplevel for the first time.
 static LAST_TOGGLE: Mutex<Option<Instant>> = Mutex::new(None);
 const DEBOUNCE_MS: u64 = 400;
 
@@ -344,7 +344,7 @@ fn cmd_show(window: &slint::Weak<crate::MainWindow>) -> String {
 }
 
 fn cmd_toggle_tray(window: &slint::Weak<crate::MainWindow>) -> String {
-    // Debounce: solo para dedup keybind spam (~80ms entre pulsaciones humanas).
+    // Debounce: only to dedup keybind spam (~80ms between human key presses).
     {
         let mut last = LAST_TOGGLE.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();

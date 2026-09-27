@@ -1345,7 +1345,7 @@ component BordersListPane inherits Rectangle {
         // `viewport-y: <expr>` the wheel therefore killed the binding for the
         // rest of the session: the list stopped following the focused preset,
         // so navigating by keyboard no longer brought the lower presets into
-        // view ("hay alguno que no se alcanza a ver"). Assigning on the events
+        // view ("there is one you cannot reach"). Assigning on the events
         // that should move the pane keeps both paths alive.
         public function follow-focus() {
             if (root.follow && root.focused-index >= 0) {

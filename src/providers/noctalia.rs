@@ -1107,8 +1107,8 @@ fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<Str
 
 // ── NoctaliaV5Provider ───────────────────────────────────────────────
 //
-// Auto-contenido: todo el save/apply se hace por IPC (`noctalia msg`).
-// No necesita ShellProvider, ni file paths, ni template processor.
+// Self-contained: the whole save/apply happens over IPC (`noctalia msg`).
+// It needs no ShellProvider, no file paths, no template processor.
 
 pub struct NoctaliaV5Provider;
 
@@ -1816,14 +1816,14 @@ mod tests {
 
     #[test]
     fn test_noctalia_v5_save_creates_provider_dir() {
-        // Save requires noctalia running — solo verificamos que el
-        // directorio del provider se intente crear. TempDir cleans up
+        // Save requires noctalia running — we only check that creating the
+        // provider directory is attempted. TempDir cleans up
         // automatically on drop (no leftover state between runs).
         let provider = NoctaliaV5Provider::new();
         let dir = TempDir::new().unwrap();
 
-        // No assert on result — puede ser Ok (noctalia corriendo) o
-        // Err (noctalia no disponible). Solo verificamos que no panic.
+        // No assert on result — it can be Ok (noctalia running) or
+        // Err (noctalia not available). We only check that it does not panic.
         let _result = provider.save(dir.path());
     }
 

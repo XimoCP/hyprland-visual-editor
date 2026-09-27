@@ -198,10 +198,10 @@ impl Composer for HyprlandComposer {
                 for step in &plan {
                     match step {
                         HideStep::MoveToSpecial => {
-                            // Apuntar el move EXPLÍCITAMENTE a HVE por título. Sin `window=`,
-                            // `hl.dsp.window.move` actúa sobre la ventana con foco: si el
-                            // usuario está clickeando otra ventana en el mismo instante del
-                            // SUPER+H, el move secuestra ESA ventana y la manda al special.
+                            // Target the move EXPLICITLY at HVE by title. Without `window=`,
+                            // `hl.dsp.window.move` acts on the focused window: if the
+                            // user is clicking another window at the very instant of
+                            // SUPER+H, the move hijacks THAT window and sends it to the special.
                             if !self.hypr_dispatch_v5(&v5_move_to_special()) {
                                 // Abandon the v5 plan before any close: the move is the
                                 // foundation the close builds on. The v4 fallback below
@@ -211,16 +211,16 @@ impl Composer for HyprlandComposer {
                             }
                         }
                         HideStep::CloseScratchpad => {
-                            // Mover al special lo "abre" como overlay visible: cerrar tras
-                            // mover deja la ventana oculta, no flotando encima del workspace
-                            // activo (era la regresión de "no minimiza").
+                            // Moving to the special "opens" it as a visible overlay: closing
+                            // after moving leaves the window hidden, not floating above the
+                            // active workspace (that was the "does not minimize" regression).
                             let _ = self.hypr_dispatch_v5(&v5_toggle_special());
                         }
                     }
                 }
                 if abandoned_v5 {
-                    // Si el move por lua falló, intentamos mover con la sintaxis
-                    // clásica (comunmente "special:minimized" acepta move).
+                    // If the lua move failed, we try moving with the classic
+                    // syntax (commonly "special:minimized" accepts move).
                     // V4/conf fallback: Hyprland V4 dispatch has NO window targeting
                     // — must focus-by-title first; this pattern is required and
                     // forbidden to remove (movetoworkspacesilent acts on focused window).
@@ -274,7 +274,7 @@ impl Composer for HyprlandComposer {
         let fast = match self.hypr_mode() {
             HyprMode::V5 => {
                 if self.hve_in_special() {
-                    // Workspace donde devolver HVE: el activo o el previo.
+                    // Workspace to bring HVE back to: the active one or the previous one.
                     let target = self
                         .active_workspace()
                         .or_else(|| prev_workspace.map(|s| s.to_string()))
@@ -326,9 +326,9 @@ impl Composer for HyprlandComposer {
                         self.show_and_sync(win);
                         return false;
                     }
-                    // 1) Enfocar HVE primero (movetoworkspacesilent acts on focused window — V4 has no window selector).
+                    // 1) Focus HVE first (movetoworkspacesilent acts on focused window — V4 has no window selector).
                     let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-                    // 2) Devolverla al workspace real.
+                    // 2) Bring it back to the real workspace.
                     let did_move =
                         self.hypr_dispatch_v4(&["movetoworkspacesilent", &target]);
                     if !(did_focus && did_move) {
