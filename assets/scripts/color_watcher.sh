@@ -11,6 +11,10 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 source "$SCRIPT_DIR/utils.sh"
+# colors.sh is sourced for the theme-authority helper only. NOTE: its
+# auto-load runs hve_load_colors on source and prints one extra
+# `[HVE] Colors from:` line into the log at startup — that is expected.
+source "$SCRIPT_DIR/colors.sh"
 
 HVE_HYPR_DIR="$HOME/.config/hypr"
 ASSEMBLE_SCRIPT="$HVE_SCRIPTS_DIR/assemble.sh"
@@ -160,6 +164,25 @@ _notify_hve() {
     fi
 }
 
+# Put the applied theme's palette back when something external rewrote it, and
+# re-hash what we wrote so the watch loop does not read our own write as a fresh
+# external change (that is what would ping-pong with the other writer).
+_reassert_theme_authority() {
+    if hve_theme_authority_assert "$@"; then
+        _log "Theme authority re-asserted: the applied theme owns the colours"
+        local live_name
+        live_name=$(_hve_theme_palette_name)
+        for f in \
+            "$HOME/.config/noctalia/palettes/${live_name}.json" \
+            "$HVE_HYPR_DIR/noctalia.lua" \
+            "$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"; do
+            [ -f "$f" ] && LAST_HASHES["$f"]=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
+        done
+    fi
+}
+
+# Repair a hijack that happened while HVE was off, before the first paint.
+_reassert_theme_authority force
 # Force initial refresh: ensure overlay is up-to-date when watcher starts
 _log "Initial overlay refresh..."
 if bash "$ASSEMBLE_SCRIPT" 9>&- >> "$LOG_FILE" 2>&1; then
@@ -202,6 +225,11 @@ while true; do
         if [ "$changed" = false ]; then
             break
         fi
+
+        # Theme authority first: re-assert the applied theme's palette before
+        # the settings/templates branch, so templates-apply and assemble.sh
+        # afterwards both render the theme's colours.
+        _reassert_theme_authority
 
         # Noctalia v5: if settings.toml changed, run templates-apply FIRST so the
         # rendered Lua files (noctalia.lua / noctalia-colors.lua) reflect the new

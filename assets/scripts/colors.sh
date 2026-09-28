@@ -60,65 +60,97 @@ _hve_extract_border_gradient() {
 
 # --- Detection & extraction per tool ---
 
-# Try to read the full M3 palette directly from the Noctalia scheme/palette file.
-# This gives us ALL colors (tertiary, surface_variant, etc.) regardless of what
-# the hyprland template happens to render. For wallpaper schemes (no palette
-# file), falls back to template output via _hve_try_noctalia().
-_hve_try_noctalia_palette() {
-    command -v noctalia &>/dev/null || return 1
+# --- The applied theme is the colour authority -------------------------------
+# While the applied theme carries a SAVED palette snapshot (its source.txt says
+# `custom <name>`), that snapshot is the source of truth: an external palette
+# rewrite — a wallpaper engine re-extracting colours, another app switching the
+# scheme — must not be able to repaint HVE. A theme whose source is `wallpaper`
+# has no snapshot: the engine derives those colours by design, so it keeps
+# flowing through the live chain below. See odd/tasks/theme-owns-the-palette.md.
+
+# Resolve the applied theme's saved palette file. Prints the path, or nothing.
+# config.json is read with python3 (never eval) and the theme name is validated
+# before it is used in a path.
+_hve_theme_palette_file() {
     command -v python3 &>/dev/null || return 1
 
-    local scheme_raw
-    scheme_raw=$(noctalia msg color-scheme-get 2>/dev/null) || return 1
-    scheme_raw="${scheme_raw%[$'\r\n']}"  # strip trailing newline
+    local cfg="$HOME/.config/hve/config.json"
+    [ -f "$cfg" ] || return 1
 
-    local source="${scheme_raw%% *}"
-    local name="${scheme_raw#* }"
+    local theme
+    theme=$(python3 - "$cfg" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        cfg = json.load(f)
+except Exception:
+    sys.exit(1)
+name = (cfg.get("last_applied_theme") or "").strip()
+if not name:
+    sys.exit(1)
+print(name)
+PY
+) || return 1
+    [ -n "$theme" ] || return 1
 
-    # SECURITY: reject anything outside the exact supported source set.
-    case "$source" in
-        custom|builtin|community|wallpaper) ;;
+    # SECURITY: this name is interpolated into a path. Allow only a plain
+    # directory name: letters, digits, dot, underscore, parentheses, spaces and
+    # hyphen; no slash, no traversal, no leading dot or dash.
+    local stripped
+    stripped=$(printf '%s' "$theme" | tr -d 'A-Za-z0-9._() -')
+    if [ -n "$stripped" ]; then
+        echo "[HVE] Unsafe theme name in config, skipping theme palette" >&2
+        return 1
+    fi
+    case "$theme" in
+        */*|*..*|.*|-*) return 1 ;;
+    esac
+
+    local dir="$HOME/.config/hve/themes/$theme/providers/noctalia-v5"
+    local src="$dir/source.txt"
+    local palette="$dir/palette.json"
+    [ -f "$src" ] && [ -f "$palette" ] || return 1
+    # Only a `custom` snapshot means the theme OWNS a palette file.
+    case "$(cat "$src" 2>/dev/null)" in
+        custom\ *) ;;
         *) return 1 ;;
     esac
 
-    # SECURITY: the scheme name is theme-controlled and would be interpolated
-    # into file paths. Only [A-Za-z0-9_-] plus spaces are allowed; quotes,
-    # slashes, $, backticks, ;, (), control chars etc. make the whole palette
-    # attempt fall through safely to the template output. (Spaces are mapped
-    # to '_' before matching: a literal space inside a case bracket class is
-    # a bash parse error, while a space in the VALUE is harmless.)
-    local testname
-    testname=$(printf '%s' "$name" | tr ' ' '_')
-    case "$testname" in
-        ''|*[!A-Za-z0-9_-]*)
-            echo "[HVE] Invalid Noctalia scheme name, skipping palette" >&2
-            return 1
-            ;;
-    esac
+    printf '%s\n' "$palette"
+}
 
-    local palette_file=""
-    case "$source" in
-        custom)
-            [ -f "$HOME/.config/noctalia/palettes/${name}.json" ] && palette_file="$HOME/.config/noctalia/palettes/${name}.json"
-            ;;
-        builtin)
-            if [ -f "$HOME/.config/noctalia/colorschemes/${name}/${name}.json" ]; then
-                palette_file="$HOME/.config/noctalia/colorschemes/${name}/${name}.json"
-            elif [ -f "/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json" ]; then
-                palette_file="/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json"
-            fi
-            ;;
-        community)
-            [ -f "$HOME/.local/state/noctalia/community-palettes/${name}.json" ] && palette_file="$HOME/.local/state/noctalia/community-palettes/${name}.json"
-            ;;
-        wallpaper)
-            return 1  # no palette file, fall through to template output
-            ;;
-    esac
+# The palette name the applied theme owns (source.txt: `custom <name>`), or empty.
+_hve_theme_palette_name() {
+    local palette_file
+    palette_file=$(_hve_theme_palette_file) || return 1
+    [ -n "$palette_file" ] || return 1
 
-    [ -n "$palette_file" ] && [ -f "$palette_file" ] || return 1
+    local src="${palette_file%/palette.json}/source.txt"
+    local name
+    name=$(cat "$src" 2>/dev/null) || return 1
+    name="${name#custom }"
+    name="${name%%$'\n'*}"
+    name="${name%$'\r'}"
+    [ -n "$name" ] || return 1
 
-    echo "[HVE] Colors from: Noctalia palette (${source})" >&2
+    local stripped
+    stripped=$(printf '%s' "$name" | tr -d 'A-Za-z0-9._ -')
+    [ -z "$stripped" ] || return 1
+    printf '%s\n' "$name"
+}
+
+# Priority 0: the applied theme's saved snapshot.
+_hve_try_theme_palette() {
+    local palette_file
+    palette_file=$(_hve_theme_palette_file) || return 1
+    [ -n "$palette_file" ] || return 1
+    echo "[HVE] Colors from: applied theme snapshot" >&2
+    _hve_palette_from_file "$palette_file"
+}
+
+# Turn a Noctalia-shaped palette file into validated HVE_* assignments.
+_hve_palette_from_file() {
+    local palette_file="$1"
 
     # SECURITY: the palette path is passed to python as argv, never embedded
     # in the python source, so no injection is possible via the file path.
@@ -219,6 +251,68 @@ PY
     fi
     rm -f "$safe_palette"
     return 1
+}
+
+# Try to read the full M3 palette directly from the Noctalia scheme/palette file.
+# This gives us ALL colors (tertiary, surface_variant, etc.) regardless of what
+# the hyprland template happens to render. For wallpaper schemes (no palette
+# file), falls back to template output via _hve_try_noctalia().
+_hve_try_noctalia_palette() {
+    command -v noctalia &>/dev/null || return 1
+    command -v python3 &>/dev/null || return 1
+
+    local scheme_raw
+    scheme_raw=$(noctalia msg color-scheme-get 2>/dev/null) || return 1
+    scheme_raw="${scheme_raw%[$'\r\n']}"  # strip trailing newline
+
+    local source="${scheme_raw%% *}"
+    local name="${scheme_raw#* }"
+
+    # SECURITY: reject anything outside the exact supported source set.
+    case "$source" in
+        custom|builtin|community|wallpaper) ;;
+        *) return 1 ;;
+    esac
+
+    # SECURITY: the scheme name is theme-controlled and would be interpolated
+    # into file paths. Only [A-Za-z0-9_-] plus spaces are allowed; quotes,
+    # slashes, $, backticks, ;, (), control chars etc. make the whole palette
+    # attempt fall through safely to the template output. (Spaces are mapped
+    # to '_' before matching: a literal space inside a case bracket class is
+    # a bash parse error, while a space in the VALUE is harmless.)
+    local testname
+    testname=$(printf '%s' "$name" | tr ' ' '_')
+    case "$testname" in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "[HVE] Invalid Noctalia scheme name, skipping palette" >&2
+            return 1
+            ;;
+    esac
+
+    local palette_file=""
+    case "$source" in
+        custom)
+            [ -f "$HOME/.config/noctalia/palettes/${name}.json" ] && palette_file="$HOME/.config/noctalia/palettes/${name}.json"
+            ;;
+        builtin)
+            if [ -f "$HOME/.config/noctalia/colorschemes/${name}/${name}.json" ]; then
+                palette_file="$HOME/.config/noctalia/colorschemes/${name}/${name}.json"
+            elif [ -f "/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json" ]; then
+                palette_file="/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json"
+            fi
+            ;;
+        community)
+            [ -f "$HOME/.local/state/noctalia/community-palettes/${name}.json" ] && palette_file="$HOME/.local/state/noctalia/community-palettes/${name}.json"
+            ;;
+        wallpaper)
+            return 1  # no palette file, fall through to template output
+            ;;
+    esac
+
+    [ -n "$palette_file" ] && [ -f "$palette_file" ] || return 1
+
+    echo "[HVE] Colors from: Noctalia palette (${source})" >&2
+    _hve_palette_from_file "$palette_file"
 }
 
 # Noctalia template output fallback (Lua-only):
@@ -389,6 +483,63 @@ _hve_try_manual() {
     return 1
 }
 
+# --- Theme authority re-assert ---------------------------------------------
+# Re-assert the applied theme's palette over a hijacked live scheme.
+# Returns 0 when it acted, 1 when there is nothing to do: no theme authority,
+# the live scheme already matches the snapshot, HVE has yielded colour authority
+# to the engine, or the cooldown is still armed. See
+# odd/tasks/theme-owns-the-palette.md.
+# Usage: hve_theme_authority_assert [force]
+hve_theme_authority_assert() {
+    local force="${1:-}"
+    command -v noctalia &>/dev/null || return 1
+
+    local palette_file palette_name
+    palette_file=$(_hve_theme_palette_file) || return 1
+    palette_name=$(_hve_theme_palette_name) || return 1
+    [ -n "$palette_file" ] && [ -n "$palette_name" ] || return 1
+
+    # Never fight while HVE has yielded colour authority to the engine: the
+    # apply path owns the colours during that window (src/providers/skwd_policy.rs).
+    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    [ -f "$safe_dir/skwd-policy-yield.json" ] && return 1
+
+    local live_palette="$HOME/.config/noctalia/palettes/${palette_name}.json"
+
+    # Already ours? Then there is nothing to re-assert and nothing to repaint.
+    # Every noctalia child closes fd 9 (the watcher's singleton lock rides on
+    # that open file description): an orphan holding it would keep the lock
+    # forever and silently disable the next watcher.
+    local live_scheme
+    live_scheme=$(noctalia msg color-scheme-get 9>&- 2>/dev/null | tr -d '\r')
+    if [ "$live_scheme" = "custom ${palette_name}" ] &&
+        [ -f "$live_palette" ] &&
+        cmp -s "$live_palette" "$palette_file"; then
+        return 1
+    fi
+
+    # Cooldown: at most one re-assert per window, so two writers cannot ping-pong.
+    local stamp_file="$safe_dir/theme-authority.last"
+    local now
+    now=$(date +%s)
+    if [ "$force" != "force" ] && [ -f "$stamp_file" ]; then
+        local last
+        last=$(cat "$stamp_file" 2>/dev/null)
+        case "$last" in
+            ''|*[!0-9]*) ;;
+            *) [ $((now - last)) -lt "${HVE_THEME_ASSERT_COOLDOWN:-5}" ] && return 1 ;;
+        esac
+    fi
+    mkdir -p "$safe_dir" 2>/dev/null
+    printf '%s' "$now" > "$stamp_file"
+
+    cp -f "$palette_file" "$live_palette" || return 1
+    noctalia msg color-scheme-set custom "$palette_name" 9>&- >/dev/null 2>&1 || true
+    noctalia msg templates-apply 9>&- >/dev/null 2>&1 || true
+    echo "[HVE] Theme palette re-asserted (custom ${palette_name})" >&2
+    return 0
+}
+
 # --- Main ---
 
 hve_load_colors() {
@@ -400,9 +551,11 @@ hve_load_colors() {
     HVE_ACCENT=""
 
     # Detection priority:
-    #   1. Noctalia full palette (direct from scheme file — has ALL M3 colors)
-    #   2. Noctalia template output (fallback for wallpaper schemes, or v4)
-    #   3. Pywal / Matugen / Manual
+    #   1. Applied theme snapshot (the theme owns the colours; see above)
+    #   2. Noctalia full palette (direct from scheme file — has ALL M3 colors)
+    #   3. Noctalia template output (fallback for wallpaper schemes, or v4)
+    #   4. Pywal / Matugen / Manual
+    _hve_try_theme_palette ||
     _hve_try_noctalia_palette ||
     _hve_try_noctalia ||
     _hve_try_pywal ||

@@ -349,6 +349,161 @@ fn stale_v4_tertiary_is_skipped_for_the_same_scheme_template() {
     );
 }
 
+// ── Theme owns the palette: the applied snapshot beats the live one ──────
+
+const THEME_SNAPSHOT_JSON: &str = r##"{"dark":{"mPrimary":"#67abe4","mSecondary":"#d6915c","mTertiary":"#9566cc","mSurface":"#11202c","mSurfaceVariant":"#1d3549"},"light":{"mPrimary":"#2279c3"}}"##;
+const LIVE_SKWALL_JSON: &str = r##"{"dark":{"mPrimary":"#e4aa67","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#291f14","mSurfaceVariant":"#372a1b"}}"##;
+
+/// Run get_colors.sh with a stub noctalia reporting the given scheme.
+/// Mirrors run_get_colors, except the noctalia stub answers
+/// `color-scheme-get` with `scheme` so the live-palette path is exercised.
+fn run_get_colors_with_scheme(home: &Path, scheme: &str) -> serde_json::Value {
+    let bin_tmp = tempfile::tempdir().unwrap();
+    let bin = fake_bin_dir(bin_tmp.path());
+    std::fs::write(
+        bin.join("noctalia"),
+        format!("#!/bin/bash\nprintf '%s\\n' \"{scheme}\"\n"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    make_exec(&bin.join("noctalia"));
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let script = scripts_dir().join("get_colors.sh");
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .env("PATH", path)
+        .env("HOME", home)
+        .current_dir(home)
+        .output()
+        .expect("bash must be available");
+    assert!(
+        out.status.success(),
+        "get_colors.sh failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json = stdout
+        .lines()
+        .find(|l| l.trim_start().starts_with('{'))
+        .unwrap_or_else(|| panic!("get_colors.sh must print JSON: {stdout}"));
+    serde_json::from_str(json)
+        .unwrap_or_else(|e| panic!("bad JSON from get_colors.sh: {e}: {json}"))
+}
+
+fn write_hve_config(home: &Path, body: &str) {
+    let dir = home.join(".config").join("hve");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.json"), body).unwrap();
+}
+
+fn write_theme_snapshot(home: &Path, theme: &str, palette_json: &str, source_exact: &str) {
+    let dir = home
+        .join(".config")
+        .join("hve")
+        .join("themes")
+        .join(theme)
+        .join("providers")
+        .join("noctalia-v5");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("palette.json"), palette_json).unwrap();
+    // Exact bytes: the caller decides about the trailing newline.
+    std::fs::write(dir.join("source.txt"), source_exact).unwrap();
+}
+
+fn write_theme_source_only(home: &Path, theme: &str, source: &str) {
+    let dir = home
+        .join(".config")
+        .join("hve")
+        .join("themes")
+        .join(theme)
+        .join("providers")
+        .join("noctalia-v5");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("source.txt"), source).unwrap();
+}
+
+fn write_live_palette(home: &Path, name: &str, palette_json: &str) {
+    let dir = home.join(".config").join("noctalia").join("palettes");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{name}.json")), palette_json).unwrap();
+}
+
+/// The applied theme carries a `custom` snapshot while the live scheme was
+/// rewritten externally: the snapshot must win, not the live palette.
+#[test]
+fn applied_theme_snapshot_wins_over_live_palette() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+    // No trailing newline on purpose: the resolver must accept the raw bytes.
+    write_theme_snapshot(
+        home.path(),
+        "Animation",
+        THEME_SNAPSHOT_JSON,
+        "custom other-palette",
+    );
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#67abe4",
+        "the theme snapshot must own the colours, not the live palette"
+    );
+    assert_eq!(colors["secondary"].as_str().unwrap(), "#d6915c");
+    assert_eq!(colors["tertiary"].as_str().unwrap(), "#9566cc");
+    assert_eq!(colors["surface"].as_str().unwrap(), "#11202c");
+    assert_ne!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "the externally rewritten palette must not repaint HVE"
+    );
+}
+
+/// With no theme applied, behaviour is exactly today's: the live wins.
+#[test]
+fn no_theme_config_falls_through_to_live_palette() {
+    // Case 1: no config.json at all.
+    let home = tempfile::tempdir().unwrap();
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "without a theme the live palette must keep flowing through"
+    );
+
+    // Case 2: config.json exists but names no theme.
+    let home2 = tempfile::tempdir().unwrap();
+    write_hve_config(home2.path(), r#"{"last_applied_theme": ""}"#);
+    write_live_palette(home2.path(), "skwd-wall", LIVE_SKWALL_JSON);
+    let colors2 = run_get_colors_with_scheme(home2.path(), "custom skwd-wall");
+    assert_eq!(
+        colors2["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "with an empty theme name the live palette must keep flowing through"
+    );
+}
+
+/// A `wallpaper`-source theme owns no snapshot: the live chain still applies.
+#[test]
+fn wallpaper_source_theme_without_snapshot_uses_live_palette() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Walls"}"#);
+    write_theme_source_only(home.path(), "Walls", "wallpaper\n");
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "a wallpaper-source theme has no snapshot, so the live palette applies"
+    );
+}
+
 // ── init.sh refuses a conf-only system (R8) ─────────────────────────────
 
 #[test]

@@ -1112,4 +1112,381 @@ mod tests {
             "the unguarded watcher must still perform the initial refresh (work happened)"
         );
     }
+
+    /// Stateful recording `noctalia` stub for the theme-authority tests.
+    ///
+    /// Every invocation appends one line (`$*`) to the calls file. The stub
+    /// keeps a scheme state file: `msg color-scheme-get` prints it (initially
+    /// `custom skwd-wall`) and `msg color-scheme-set custom <name>` rewrites
+    /// it, so the watcher observes its own re-assert like the live tool.
+    fn write_stateful_noctalia_stub(stubs: &std::path::Path, cache: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let calls = cache.join("noctalia_calls");
+        let state = cache.join("noctalia_scheme");
+        std::fs::write(&state, "custom skwd-wall\n").unwrap();
+        std::fs::write(
+            stubs.join("noctalia"),
+            format!(
+                "#!/bin/bash\nCALLS=\"{}\"\nSTATE=\"{}\"\n\
+                 echo \"$*\" >> \"$CALLS\"\n\
+                 if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"color-scheme-get\" ]; then\n\
+                 cat \"$STATE\" 2>/dev/null || echo \"custom skwd-wall\"\n\
+                 elif [ \"$1\" = \"msg\" ] && [ \"$2\" = \"color-scheme-set\" ]; then\n\
+                 printf '%s' \"$3 $4\" > \"$STATE\"\n\
+                 fi\nexit 0\n",
+                calls.display(),
+                state.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stubs.join("noctalia"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+    }
+
+    /// Sandbox scripts for the theme-authority tests: the real watcher plus
+    /// its `utils.sh`/`colors.sh` sources, counting `assemble.sh` stub and
+    /// no-op `get_colors.sh`/`hve-ipc`. This extends the older harness (which
+    /// predates the watcher's `colors.sh` source line) the same way the other
+    /// stubs are built.
+    fn write_theme_test_scripts(scripts: &std::path::Path, cache: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
+        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
+            .unwrap();
+        std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        let assemble_marker = cache.join("assemble_runs");
+        std::fs::write(
+            scripts.join("assemble.sh"),
+            format!("#!/bin/bash\necho run >> {}\n", assemble_marker.display()),
+        )
+        .unwrap();
+        std::fs::write(scripts.join("get_colors.sh"), "#!/bin/bash\nexit 0\n").unwrap();
+        std::fs::write(scripts.join("hve-ipc"), "#!/bin/bash\nexit 0\n").unwrap();
+        for name in ["assemble.sh", "get_colors.sh", "hve-ipc"] {
+            let path = scripts.join(name);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn watcher_reasserts_the_applied_theme_palette_on_an_external_change() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Theme authority (odd/tasks/theme-owns-the-palette.md U2): with a
+        // `custom` theme applied, an external rewrite of a watched palette
+        // must not repaint HVE — the watcher puts the snapshot back, once.
+        const BLUE_SNAPSHOT: &str = r##"{"dark":{"mPrimary":"#67abe4","mSecondary":"#d6915c","mTertiary":"#9566cc","mSurface":"#11202c","mSurfaceVariant":"#1d3549"},"light":{"mPrimary":"#2279c3"}}"##;
+        const STALE_THEME_BLUE: &str = r##"{"dark":{"mPrimary":"#224466","mSecondary":"#335577","mTertiary":"#446688","mSurface":"#101418","mSurfaceVariant":"#182028"}}"##;
+        const AMBER_SKWALL: &str = r##"{"dark":{"mPrimary":"#e4aa67","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#291f14","mSurfaceVariant":"#372a1b"}}"##;
+        const AMBER_HIJACK: &str = r##"{"dark":{"mPrimary":"#e4bb77","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#2a2015","mSurfaceVariant":"#382b1c"}}"##;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        // Applied theme BEFORE the watcher spawns: config + blue snapshot
+        // whose source.txt is `custom theme-blue` with NO trailing newline.
+        let theme_dir = home.join(".config/hve/themes/Animation/providers/noctalia-v5");
+        std::fs::create_dir_all(&theme_dir).unwrap();
+        std::fs::write(home.join(".config/hve/config.json"), r#"{"last_applied_theme":"Animation"}"#)
+            .unwrap();
+        std::fs::write(theme_dir.join("palette.json"), BLUE_SNAPSHOT).unwrap();
+        std::fs::write(theme_dir.join("source.txt"), "custom theme-blue").unwrap();
+
+        // Live state: a STALE theme-blue file plus the amber skwd-wall file
+        // the external writer owns. The stub reports `custom skwd-wall`.
+        let palettes = home.join(".config/noctalia/palettes");
+        std::fs::create_dir_all(&palettes).unwrap();
+        std::fs::write(palettes.join("theme-blue.json"), STALE_THEME_BLUE).unwrap();
+        std::fs::write(palettes.join("skwd-wall.json"), AMBER_SKWALL).unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_theme_test_scripts(&scripts, &cache);
+
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
+        std::fs::set_permissions(&stubs.join("inotifywait"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        write_stateful_noctalia_stub(&stubs, &cache);
+        let path_with_stubs =
+            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+
+        let script_path = scripts.join("color_watcher.sh");
+        let _watcher = KillOnDrop::new(
+            Command::new("bash")
+                .arg(&script_path)
+                .env("HOME", &home)
+                .env("HVE_CACHE_DIR", &cache)
+                .env("PATH", &path_with_stubs)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+
+        // Wait until the watcher is armed (lock + start line + initial refresh).
+        let log_file = home.join(".cache/hve/color_watcher.log");
+        let lock_file = cache.join("color_watcher.lock");
+        let assemble_marker = cache.join("assemble_runs");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let armed = lock_file.exists()
+                && std::fs::read_to_string(&log_file)
+                    .map(|s| s.contains("Starting watcher"))
+                    .unwrap_or(false)
+                && std::fs::read_to_string(&assemble_marker)
+                    .map(|s| s.lines().count() > 0)
+                    .unwrap_or(false);
+            if armed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watcher never armed within 30s"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // The hijack: an external writer rewrites the watched palette.
+        std::fs::write(palettes.join("skwd-wall.json"), AMBER_HIJACK).unwrap();
+
+        let calls_file = cache.join("noctalia_calls");
+        let live_theme_blue = palettes.join("theme-blue.json");
+        let set_calls = || {
+            std::fs::read_to_string(&calls_file)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| l.contains("color-scheme-set") && l.contains("theme-blue"))
+                .count()
+        };
+        let poll_deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let live = std::fs::read_to_string(&live_theme_blue).unwrap_or_default();
+            if set_calls() == 1 && live == BLUE_SNAPSHOT {
+                break;
+            }
+            assert!(
+                Instant::now() < poll_deadline,
+                "watcher never re-asserted the theme palette within 20s \
+                 (set calls: {}, live theme-blue: {live:?})",
+                set_calls(),
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // Settle past the inotify cycle: a second re-assert (ping-pong with
+        // the other writer) must never arrive.
+        std::thread::sleep(Duration::from_secs(6));
+
+        assert_eq!(
+            set_calls(),
+            1,
+            "exactly one `color-scheme-set custom theme-blue` must be recorded, got:\n{}",
+            std::fs::read_to_string(&calls_file).unwrap_or_default()
+        );
+        let live = std::fs::read_to_string(&live_theme_blue).unwrap_or_default();
+        assert_eq!(
+            live, BLUE_SNAPSHOT,
+            "the live theme-blue file must be byte-equal to the theme snapshot"
+        );
+        assert!(
+            !live.contains("e4aa67") && !live.contains("e4bb77"),
+            "the amber hijack values must never appear in the live theme-blue file, got: {live:?}"
+        );
+    }
+
+    #[test]
+    fn watcher_without_applied_theme_keeps_following_the_live_palette() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Regression: with no theme applied the watcher stays a follower —
+        // an external palette rewrite regenerates the overlay and never
+        // issues a `color-scheme-set`.
+        const AMBER_SKWALL: &str = r##"{"dark":{"mPrimary":"#e4aa67","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#291f14","mSurfaceVariant":"#372a1b"}}"##;
+        const AMBER_HIJACK: &str = r##"{"dark":{"mPrimary":"#e4bb77","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#2a2015","mSurfaceVariant":"#382b1c"}}"##;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        // No config.json on purpose: no theme authority.
+        let palettes = home.join(".config/noctalia/palettes");
+        std::fs::create_dir_all(&palettes).unwrap();
+        std::fs::write(palettes.join("skwd-wall.json"), AMBER_SKWALL).unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_theme_test_scripts(&scripts, &cache);
+
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
+        std::fs::set_permissions(&stubs.join("inotifywait"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        write_stateful_noctalia_stub(&stubs, &cache);
+        let path_with_stubs =
+            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+
+        let script_path = scripts.join("color_watcher.sh");
+        let _watcher = KillOnDrop::new(
+            Command::new("bash")
+                .arg(&script_path)
+                .env("HOME", &home)
+                .env("HVE_CACHE_DIR", &cache)
+                .env("PATH", &path_with_stubs)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+
+        let log_file = home.join(".cache/hve/color_watcher.log");
+        let lock_file = cache.join("color_watcher.lock");
+        let assemble_marker = cache.join("assemble_runs");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let armed = lock_file.exists()
+                && std::fs::read_to_string(&log_file)
+                    .map(|s| s.contains("Starting watcher"))
+                    .unwrap_or(false)
+                && std::fs::read_to_string(&assemble_marker)
+                    .map(|s| s.lines().count() > 0)
+                    .unwrap_or(false);
+            if armed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watcher never armed within 30s"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        std::fs::write(palettes.join("skwd-wall.json"), AMBER_HIJACK).unwrap();
+
+        let refresh_deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let runs = std::fs::read_to_string(&assemble_marker).unwrap_or_default();
+            if runs.lines().count() >= 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < refresh_deadline,
+                "watcher never regenerated the overlay after the external change"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        std::thread::sleep(Duration::from_secs(3));
+        let calls = std::fs::read_to_string(cache.join("noctalia_calls")).unwrap_or_default();
+        assert!(
+            !calls.contains("color-scheme-set"),
+            "with no theme applied no `color-scheme-set` may be issued, got:\n{calls}"
+        );
+    }
+
+    #[test]
+    fn watcher_with_wallpaper_source_theme_does_not_reassert() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Regression: a `wallpaper`-source theme owns no palette snapshot, so
+        // the watcher keeps following the live palette.
+        const AMBER_SKWALL: &str = r##"{"dark":{"mPrimary":"#e4aa67","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#291f14","mSurfaceVariant":"#372a1b"}}"##;
+        const AMBER_HIJACK: &str = r##"{"dark":{"mPrimary":"#e4bb77","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#2a2015","mSurfaceVariant":"#382b1c"}}"##;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        // Wallpaper-source theme: source.txt says `wallpaper` and there is
+        // deliberately NO palette.json.
+        let theme_dir = home.join(".config/hve/themes/Animation/providers/noctalia-v5");
+        std::fs::create_dir_all(&theme_dir).unwrap();
+        std::fs::write(home.join(".config/hve/config.json"), r#"{"last_applied_theme":"Animation"}"#)
+            .unwrap();
+        std::fs::write(theme_dir.join("source.txt"), "wallpaper\n").unwrap();
+
+        let palettes = home.join(".config/noctalia/palettes");
+        std::fs::create_dir_all(&palettes).unwrap();
+        std::fs::write(palettes.join("skwd-wall.json"), AMBER_SKWALL).unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_theme_test_scripts(&scripts, &cache);
+
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
+        std::fs::set_permissions(&stubs.join("inotifywait"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        write_stateful_noctalia_stub(&stubs, &cache);
+        let path_with_stubs =
+            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+
+        let script_path = scripts.join("color_watcher.sh");
+        let _watcher = KillOnDrop::new(
+            Command::new("bash")
+                .arg(&script_path)
+                .env("HOME", &home)
+                .env("HVE_CACHE_DIR", &cache)
+                .env("PATH", &path_with_stubs)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+
+        let log_file = home.join(".cache/hve/color_watcher.log");
+        let lock_file = cache.join("color_watcher.lock");
+        let assemble_marker = cache.join("assemble_runs");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let armed = lock_file.exists()
+                && std::fs::read_to_string(&log_file)
+                    .map(|s| s.contains("Starting watcher"))
+                    .unwrap_or(false)
+                && std::fs::read_to_string(&assemble_marker)
+                    .map(|s| s.lines().count() > 0)
+                    .unwrap_or(false);
+            if armed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watcher never armed within 30s"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        std::fs::write(palettes.join("skwd-wall.json"), AMBER_HIJACK).unwrap();
+
+        let refresh_deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let runs = std::fs::read_to_string(&assemble_marker).unwrap_or_default();
+            if runs.lines().count() >= 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < refresh_deadline,
+                "watcher never regenerated the overlay after the external change"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        std::thread::sleep(Duration::from_secs(3));
+        let calls = std::fs::read_to_string(cache.join("noctalia_calls")).unwrap_or_default();
+        assert!(
+            !calls.contains("color-scheme-set"),
+            "with a wallpaper-source theme no `color-scheme-set` may be issued, got:\n{calls}"
+        );
+    }
 }
