@@ -1145,9 +1145,11 @@ mod tests {
 
     /// Sandbox scripts for the theme-authority tests: the real watcher plus
     /// its `utils.sh`/`colors.sh` sources, counting `assemble.sh` stub and
-    /// no-op `get_colors.sh`/`hve-ipc`. This extends the older harness (which
-    /// predates the watcher's `colors.sh` source line) the same way the other
-    /// stubs are built.
+    /// no-op `get_colors.sh`. The `hve-ipc` stub RECORDS every invocation
+    /// (`$*` appended to `hve_ipc_calls`), built exactly like the stateful
+    /// `noctalia` stub above, so the tests can count how often the watcher
+    /// asked the app (`assert-color-authority`) — the capability-routing
+    /// mechanism (`odd/tasks/hve-capability-routing.md`, unit 1c3).
     ///
     /// It also plants the colour-authority descriptor in the sandbox cache
     /// dir (the script's `HVE_SAFE_DIR`, via `HVE_CACHE_DIR`) because the
@@ -1176,7 +1178,14 @@ mod tests {
         )
         .unwrap();
         std::fs::write(scripts.join("get_colors.sh"), "#!/bin/bash\nexit 0\n").unwrap();
-        std::fs::write(scripts.join("hve-ipc"), "#!/bin/bash\nexit 0\n").unwrap();
+        std::fs::write(
+            scripts.join("hve-ipc"),
+            format!(
+                "#!/bin/bash\necho \"$*\" >> {}\nexit 0\n",
+                cache.join("hve_ipc_calls").display()
+            ),
+        )
+        .unwrap();
         for name in ["assemble.sh", "get_colors.sh", "hve-ipc"] {
             let path = scripts.join(name);
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1198,9 +1207,14 @@ mod tests {
     fn watcher_reasserts_the_applied_theme_palette_on_an_external_change() {
         use std::os::unix::fs::PermissionsExt;
 
-        // Theme authority (odd/tasks/theme-owns-the-palette.md U2): with a
-        // `custom` theme applied, an external rewrite of a watched palette
-        // must not repaint HVE — the watcher puts the snapshot back, once.
+        // Theme authority via capability routing
+        // (odd/tasks/hve-capability-routing.md, unit 1c3): with a `custom`
+        // theme applied, an external rewrite of a watched palette must make
+        // the watcher ASK THE APP exactly once
+        // (`hve-ipc assert-color-authority`). Bash itself must never run the
+        // backend CLI (`color-scheme-set`) nor rewrite backend files — that
+        // is now the app's business through the `assert-color-authority`
+        // IPC verb (`src/ipc.rs`).
         const BLUE_SNAPSHOT: &str = r##"{"dark":{"mPrimary":"#67abe4","mSecondary":"#d6915c","mTertiary":"#9566cc","mSurface":"#11202c","mSurfaceVariant":"#1d3549"},"light":{"mPrimary":"#2279c3"}}"##;
         const STALE_THEME_BLUE: &str = r##"{"dark":{"mPrimary":"#224466","mSecondary":"#335577","mTertiary":"#446688","mSurface":"#101418","mSurfaceVariant":"#182028"}}"##;
         const AMBER_SKWALL: &str = r##"{"dark":{"mPrimary":"#e4aa67","mSecondary":"#d8dd55","mTertiary":"#6ba5ce","mSurface":"#291f14","mSurfaceVariant":"#372a1b"}}"##;
@@ -1277,51 +1291,61 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
 
+        // Tell the start-side ask from the loop-side one apart: the `force`
+        // ask at startup already fired. Clear both call logs and the ask
+        // cooldown stamp, so the hijack below measures exactly the
+        // loop-side reaction — one ask, zero backend CLI.
+        std::fs::write(cache.join("hve_ipc_calls"), "").unwrap();
+        std::fs::write(cache.join("noctalia_calls"), "").unwrap();
+        let _ = std::fs::remove_file(cache.join("assert-color-authority.last"));
+
         // The hijack: an external writer rewrites the watched palette.
         std::fs::write(palettes.join("skwd-wall.json"), AMBER_HIJACK).unwrap();
 
-        let calls_file = cache.join("noctalia_calls");
-        let live_theme_blue = palettes.join("theme-blue.json");
-        let set_calls = || {
-            std::fs::read_to_string(&calls_file)
+        let ipc_calls_file = cache.join("hve_ipc_calls");
+        let ask_count = || {
+            std::fs::read_to_string(&ipc_calls_file)
                 .unwrap_or_default()
                 .lines()
-                .filter(|l| l.contains("color-scheme-set") && l.contains("theme-blue"))
+                .filter(|l| l.contains("assert-color-authority"))
                 .count()
         };
         let poll_deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            let live = std::fs::read_to_string(&live_theme_blue).unwrap_or_default();
-            if set_calls() == 1 && live == BLUE_SNAPSHOT {
+            if ask_count() == 1 {
                 break;
             }
             assert!(
                 Instant::now() < poll_deadline,
-                "watcher never re-asserted the theme palette within 20s \
-                 (set calls: {}, live theme-blue: {live:?})",
-                set_calls(),
+                "watcher never asked the app to re-assert within 20s \
+                 (assert-color-authority calls: {}, log: {:?})",
+                ask_count(),
+                std::fs::read_to_string(&log_file).unwrap_or_default(),
             );
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        // Settle past the inotify cycle: a second re-assert (ping-pong with
-        // the other writer) must never arrive.
+        // Settle past the inotify cycle: a second ask (spam through the
+        // socket) must never arrive — the bash-side cooldown forbids it.
         std::thread::sleep(Duration::from_secs(6));
 
         assert_eq!(
-            set_calls(),
+            ask_count(),
             1,
-            "exactly one `color-scheme-set custom theme-blue` must be recorded, got:\n{}",
-            std::fs::read_to_string(&calls_file).unwrap_or_default()
+            "exactly one `assert-color-authority` ask must be recorded, got:\n{}",
+            std::fs::read_to_string(&ipc_calls_file).unwrap_or_default()
         );
-        let live = std::fs::read_to_string(&live_theme_blue).unwrap_or_default();
-        assert_eq!(
-            live, BLUE_SNAPSHOT,
-            "the live theme-blue file must be byte-equal to the theme snapshot"
-        );
+        let calls = std::fs::read_to_string(cache.join("noctalia_calls")).unwrap_or_default();
         assert!(
-            !live.contains("e4aa67") && !live.contains("e4bb77"),
-            "the amber hijack values must never appear in the live theme-blue file, got: {live:?}"
+            !calls.contains("color-scheme-set"),
+            "bash must never run the backend CLI itself — re-asserting is the \
+             app's business, got:\n{calls}"
+        );
+        let live = std::fs::read_to_string(palettes.join("theme-blue.json")).unwrap_or_default();
+        assert_eq!(
+            live, STALE_THEME_BLUE,
+            "bash must not rewrite backend files — the live theme-blue file \
+             stays byte-identical until the app re-asserts, got: {live:?}"
         );
     }
 
@@ -1414,6 +1438,12 @@ mod tests {
         assert!(
             !calls.contains("color-scheme-set"),
             "with no theme applied no `color-scheme-set` may be issued, got:\n{calls}"
+        );
+        let ipc_calls =
+            std::fs::read_to_string(cache.join("hve_ipc_calls")).unwrap_or_default();
+        assert!(
+            !ipc_calls.contains("assert-color-authority"),
+            "with no theme applied the watcher must never ask the app to re-assert, got:\n{ipc_calls}"
         );
     }
 
@@ -1512,6 +1542,12 @@ mod tests {
         assert!(
             !calls.contains("color-scheme-set"),
             "with a wallpaper-source theme no `color-scheme-set` may be issued, got:\n{calls}"
+        );
+        let ipc_calls =
+            std::fs::read_to_string(cache.join("hve_ipc_calls")).unwrap_or_default();
+        assert!(
+            !ipc_calls.contains("assert-color-authority"),
+            "with a wallpaper-source theme the watcher must never ask the app to re-assert, got:\n{ipc_calls}"
         );
     }
 }

@@ -164,20 +164,34 @@ _notify_hve() {
     fi
 }
 
-# Put the applied theme's palette back when something external rewrote it, and
-# re-hash what we wrote so the watch loop does not read our own write as a fresh
-# external change (that is what would ping-pong with the other writer).
+# Ask the app to re-assert the applied theme's colour authority, exactly
+# once per change burst. Capability routing
+# (odd/tasks/hve-capability-routing.md, unit 1c3): bash only asks — the app
+# routes `assert-color-authority` to the backend that owns the colours, so
+# this shell never copies palettes, never calls a backend CLI and never
+# rewrites backend files (no re-hash needed: bash wrote nothing). The small
+# cooldown keeps a burst from spamming the socket; `force` (startup repair)
+# bypasses it.
 _reassert_theme_authority() {
-    if hve_theme_authority_assert "$@"; then
-        _log "Theme authority re-asserted: the applied theme owns the colours"
-        local live_name
-        live_name=$(_hve_theme_palette_name)
-        for f in \
-            "$HOME/.config/noctalia/palettes/${live_name}.json" \
-            "$HVE_HYPR_DIR/noctalia.lua" \
-            "$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"; do
-            [ -f "$f" ] && LAST_HASHES["$f"]=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
-        done
+    local force="${1:-}"
+    hve_theme_owns_colours || return 0
+    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    local stamp_file="$safe_dir/assert-color-authority.last"
+    local now
+    now=$(date +%s)
+    if [ "$force" != "force" ] && [ -f "$stamp_file" ]; then
+        local last
+        last=$(cat "$stamp_file" 2>/dev/null)
+        case "$last" in
+            ''|*[!0-9]*) ;;
+            *) [ $((now - last)) -lt "${HVE_THEME_ASSERT_COOLDOWN:-5}" ] && return 0 ;;
+        esac
+    fi
+    mkdir -p "$safe_dir" 2>/dev/null
+    printf '%s' "$now" > "$stamp_file"
+    if [ -x "$HVE_SCRIPTS_DIR/hve-ipc" ]; then
+        "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- assert-color-authority 2>/dev/null || true
+        _log "Asked HVE to re-assert colour authority (assert-color-authority)"
     fi
 }
 

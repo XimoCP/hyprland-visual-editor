@@ -504,61 +504,19 @@ _hve_try_manual() {
     return 1
 }
 
-# --- Theme authority re-assert ---------------------------------------------
-# Re-assert the applied theme's palette over a hijacked live scheme.
-# Returns 0 when it acted, 1 when there is nothing to do: no theme authority,
-# the live scheme already matches the snapshot, HVE has yielded colour authority
-# to the engine, or the cooldown is still armed. See
-# odd/tasks/theme-owns-the-palette.md.
-# Usage: hve_theme_authority_assert [force]
-hve_theme_authority_assert() {
-    local force="${1:-}"
-    command -v noctalia &>/dev/null || return 1
-
+# --- Theme colour ownership (read-only predicate) ---------------------------
+# Answers "does the applied theme own its colours?": the descriptor is
+# present, valid and non-stale. Reuses _hve_theme_palette_file (which checks
+# the theme match, the safe path and the existing file) plus the palette
+# name check. READ-ONLY: it never writes, copies or calls a backend CLI —
+# re-asserting is the app's business through the `assert-color-authority`
+# IPC verb. See odd/tasks/hve-capability-routing.md (unit 1c3).
+# Usage: hve_theme_owns_colours
+hve_theme_owns_colours() {
     local palette_file palette_name
     palette_file=$(_hve_theme_palette_file) || return 1
     palette_name=$(_hve_theme_palette_name) || return 1
     [ -n "$palette_file" ] && [ -n "$palette_name" ] || return 1
-
-    # Never fight while HVE has yielded colour authority to the engine: the
-    # apply path owns the colours during that window (src/providers/skwd_policy.rs).
-    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
-    [ -f "$safe_dir/skwd-policy-yield.json" ] && return 1
-
-    local live_palette="$HOME/.config/noctalia/palettes/${palette_name}.json"
-
-    # Already ours? Then there is nothing to re-assert and nothing to repaint.
-    # Every noctalia child closes fd 9 (the watcher's singleton lock rides on
-    # that open file description): an orphan holding it would keep the lock
-    # forever and silently disable the next watcher.
-    local live_scheme
-    live_scheme=$(noctalia msg color-scheme-get 9>&- 2>/dev/null | tr -d '\r')
-    if [ "$live_scheme" = "custom ${palette_name}" ] &&
-        [ -f "$live_palette" ] &&
-        cmp -s "$live_palette" "$palette_file"; then
-        return 1
-    fi
-
-    # Cooldown: at most one re-assert per window, so two writers cannot ping-pong.
-    local stamp_file="$safe_dir/theme-authority.last"
-    local now
-    now=$(date +%s)
-    if [ "$force" != "force" ] && [ -f "$stamp_file" ]; then
-        local last
-        last=$(cat "$stamp_file" 2>/dev/null)
-        case "$last" in
-            ''|*[!0-9]*) ;;
-            *) [ $((now - last)) -lt "${HVE_THEME_ASSERT_COOLDOWN:-5}" ] && return 1 ;;
-        esac
-    fi
-    mkdir -p "$safe_dir" 2>/dev/null
-    printf '%s' "$now" > "$stamp_file"
-
-    cp -f "$palette_file" "$live_palette" || return 1
-    noctalia msg color-scheme-set custom "$palette_name" 9>&- >/dev/null 2>&1 || true
-    noctalia msg templates-apply 9>&- >/dev/null 2>&1 || true
-    echo "[HVE] Theme palette re-asserted (custom ${palette_name})" >&2
-    return 0
 }
 
 # --- Main ---
