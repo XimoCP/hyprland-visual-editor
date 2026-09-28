@@ -251,9 +251,9 @@ fn write_v5_without_tertiary(home: &Path, primary: &str, secondary: &str) {
     .unwrap();
 }
 
-/// Noctalia-generated terminal template (kitty palette). `color4` is the
-/// palette's 4th accent — the third theme role after color2/primary and
-/// color3/secondary.
+/// Another integration's terminal template. Capability routing forbids one
+/// integration filling another's gap, so this file must NEVER supply the
+/// tertiary: it exists in tests only to prove it is not consulted.
 fn write_terminal_template(home: &Path, color4: &str) {
     let dir = home.join(".config").join("kitty").join("themes");
     std::fs::create_dir_all(&dir).unwrap();
@@ -298,10 +298,11 @@ fn missing_tertiary_never_aliases_the_secondary() {
     );
 }
 
-/// The shell-generated terminal template of the SAME scheme supplies the
-/// fourth accent when the v5 output carries no tertiary.
+/// Another integration's template must NOT fill the gap: with no tertiary
+/// from the winning module, the documented distinct fallback applies even
+/// when a terminal template of the same scheme is present.
 #[test]
-fn missing_tertiary_resolves_from_the_terminal_template() {
+fn missing_tertiary_ignores_the_terminal_template() {
     let home = tempfile::tempdir().unwrap();
     write_v5_without_tertiary(home.path(), "67abe4", "d6915c");
     write_terminal_template(home.path(), "#9e70d6");
@@ -309,15 +310,17 @@ fn missing_tertiary_resolves_from_the_terminal_template() {
     let colors = run_get_colors(home.path());
     assert_eq!(
         colors["tertiary"].as_str().unwrap(),
-        "#9e70d6",
-        "the terminal template's 4th accent must supply the tertiary"
+        "#94e2d5",
+        "another integration's template must not supply the tertiary; the fallback applies"
     );
 }
 
-/// A v4 palette whose primary agrees with the active scheme is a real
-/// tertiary source and is preferred over the terminal template.
+/// The winning module supplies its own tertiary from its own backend
+/// sources: a v4 rendering whose primary agrees with the active scheme is
+/// a real tertiary source, preferred over the documented fallback even
+/// when another integration's template is present.
 #[test]
-fn coherent_v4_tertiary_wins_over_the_terminal_template() {
+fn winning_module_supplies_coherent_v4_tertiary() {
     let home = tempfile::tempdir().unwrap();
     write_v5_without_tertiary(home.path(), "67abe4", "d6915c");
     write_terminal_template(home.path(), "#9e70d6");
@@ -327,14 +330,50 @@ fn coherent_v4_tertiary_wins_over_the_terminal_template() {
     assert_eq!(
         colors["tertiary"].as_str().unwrap(),
         "#9d00ff",
-        "a coherent v4 palette is the first tertiary source after v5"
+        "the winning module must supply a coherent v4 tertiary itself"
+    );
+}
+
+/// The winning module declares its tertiary hook, and the loader routes
+/// through it: with no other integration's file present, the tertiary
+/// still resolves from the module's own backend sources.
+#[test]
+fn winning_module_declares_its_own_tertiary_hook() {
+    let home = tempfile::tempdir().unwrap();
+    write_v5_without_tertiary(home.path(), "67abe4", "d6915c");
+    write_v4_palette(home.path(), "67abe4", "9d00ff");
+
+    let script = format!(
+        r#"source "{scripts}/colors.sh" >/dev/null 2>&1
+source "{scripts}/color_sources.d/noctalia_lua.sh" >/dev/null 2>&1
+declare -F hve_colour_source_tertiary >/dev/null 2>&1 || {{ echo NO-HOOK; exit 3; }}
+printf 'tertiary=%s\n' "$HVE_TERTIARY""#,
+        scripts = scripts_dir().display()
+    );
+    let out = run_bash(
+        &script,
+        &[],
+        &[("HOME", home.path().to_str().unwrap())],
+        home.path(),
+    );
+    assert!(
+        out.status.success(),
+        "the winning module must declare hve_colour_source_tertiary: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("tertiary=#9d00ff"),
+        "the loader must route the tertiary through the winning module, got: {stdout}"
     );
 }
 
 /// A v4 palette left over from an OLDER scheme (its primary disagrees with
 /// the active one) must not leak its tertiary into the current scheme.
+/// With no other integration allowed to fill the gap, the documented
+/// distinct fallback applies.
 #[test]
-fn stale_v4_tertiary_is_skipped_for_the_same_scheme_template() {
+fn stale_v4_tertiary_falls_back_to_documented_colour() {
     let home = tempfile::tempdir().unwrap();
     write_v5_without_tertiary(home.path(), "67abe4", "d6915c");
     write_terminal_template(home.path(), "#9e70d6");
@@ -344,8 +383,8 @@ fn stale_v4_tertiary_is_skipped_for_the_same_scheme_template() {
     let colors = run_get_colors(home.path());
     assert_eq!(
         colors["tertiary"].as_str().unwrap(),
-        "#9e70d6",
-        "a stale v4 palette from another scheme must not supply the tertiary"
+        "#94e2d5",
+        "a stale v4 palette from another scheme must not supply the tertiary; the fallback applies"
     );
 }
 

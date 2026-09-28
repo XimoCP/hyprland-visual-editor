@@ -71,7 +71,7 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/providers/shell.rs", "hyprctl", 1),
     ("src/providers/shell.rs", "noctalia", 35),
     ("src/providers/shell.rs", "quickshell", 6),
-    ("assets/scripts/colors.sh", "noctalia", 9),
+    ("assets/scripts/colors.sh", "noctalia", 4),
     ("assets/scripts/colors.sh", "matugen", 2),
     ("assets/scripts/color_watcher.sh", "hyprland", 1),
     ("assets/scripts/color_watcher.sh", "noctalia", 1),

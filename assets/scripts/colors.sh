@@ -301,64 +301,28 @@ PY
 }
 
 # --- Tertiary completion (a missing tertiary must never alias the secondary) ---
-# The active scheme may expose only primary/secondary — Noctalia v5's wallpaper
-# templates render no tertiary (verified live). Aliasing the secondary painted
-# the strip with two identical chips, which reads as a render bug. Resolve the
-# third role from a REAL source of the SAME scheme, in preference order, and
-# only then fall back to a documented, distinct colour:
-#
-#   1. (already covered) the Noctalia palette path sets HVE_TERTIARY directly.
-#   2. The v4 palette file, ACCEPTED ONLY when its primary agrees with the
-#      detected primary: a v4 file left over from an older scheme must not leak
-#      its tertiary into the current one (this machine has exactly that case).
-#   3. A shell-generated terminal template of the current scheme: its color4
-#      is the palette's 4th accent — the third role after primary (color2) and
-#      secondary (color3). Verified live as the coherent violet #9e70d6.
-#   4. HVE_TERTIARY_FALLBACK (see hve_load_colors) — documented, distinct.
-_hve_tertiary_from_v4_palette() {
-    local v4="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
-    [ -f "$v4" ] || return 1
-
-    local v4_vars v4_primary v4_tertiary
-    v4_vars=$(_hve_extract_lua_vars "$v4")
-    v4_primary=$(printf '%s\n' "$v4_vars" | grep '^HVE_PRIMARY=' | head -1)
-    v4_primary="${v4_primary#HVE_PRIMARY=}"
-
-    # Coherence gate: skip a palette whose primary is a different scheme.
-    if [ -n "$v4_primary" ] && [ -n "$HVE_PRIMARY" ] && [ "$v4_primary" != "$HVE_PRIMARY" ]; then
-        echo "[HVE] Skipping stale v4 palette (primary $v4_primary != $HVE_PRIMARY)" >&2
-        return 1
-    fi
-
-    v4_tertiary=$(printf '%s\n' "$v4_vars" | grep '^HVE_TERTIARY=' | head -1)
-    v4_tertiary="${v4_tertiary#HVE_TERTIARY=}"
-    [ -n "$v4_tertiary" ] && echo "$v4_tertiary" && return 0
-    return 1
-}
-
-_hve_tertiary_from_terminal_template() {
-    local candidate hex
-    for candidate in \
-        "$HOME/.config/kitty/themes/noctalia.conf" \
-        "$HOME/.config/kitty/current-theme.conf"
-    do
-        [ -f "$candidate" ] || continue
-        hex=$(grep -E '^[[:space:]]*color4[[:space:]]+' "$candidate" 2>/dev/null \
-            | head -1 | grep -oE '[0-9a-fA-F]{6}' | head -1)
-        hex=$(_hve_normalize_color "$hex")
-        [ -n "$hex" ] && echo "$hex" && return 0
-    done
-    return 1
-}
-
-# Only fills HVE_TERTIARY when the detection chain left it empty.
+# The active scheme may expose only primary/secondary — some rendered
+# templates carry no tertiary. Aliasing the secondary painted the strip
+# with two identical chips, which reads as a render bug. The step that
+# WON the chain may complete the third role from its OWN backend sources
+# through the optional hve_colour_source_tertiary hook (see the loader
+# header); no module may read another backend's files to fill the gap.
+# Only when the winner declares no hook (or its hook reports 1) does the
+# documented, distinct colour below apply — never the secondary's.
 _hve_complete_tertiary() {
-    [ -n "$HVE_TERTIARY" ] && return 0
+    [ -n "${HVE_TERTIARY:-}" ] && return 0
 
-    local resolved
-    resolved=$(_hve_tertiary_from_v4_palette) && HVE_TERTIARY="$resolved" && return 0
-    resolved=$(_hve_tertiary_from_terminal_template) && HVE_TERTIARY="$resolved" && return 0
-    return 1
+    # Route to the winner: only a module winner can be asked (the
+    # still-inline snapshot step either set a tertiary itself or has no
+    # backend to ask). Re-source the winner so its own hook is the one
+    # that runs, then call it when it declares one.
+    local winner
+    winner=$(hve_colour_winner_module) || return 1
+    [ -f "$winner" ] || return 1
+    # shellcheck disable=SC1090
+    source "$winner" >/dev/null 2>&1 || return 1
+    declare -F hve_colour_source_tertiary >/dev/null 2>&1 || return 1
+    hve_colour_source_tertiary
 }
 
 # Documented fallback when no real tertiary source exists at all. Catppuccin
@@ -406,6 +370,15 @@ hve_theme_owns_colours() {
 #                                  asks the loader which module declared a
 #                                  changed path and runs that module's refresh
 #                                  once, never naming the tool or its layout.
+#   hve_colour_source_tertiary() - completes the third role from the
+#                                  module's OWN sources when it won the chain
+#                                  but left HVE_TERTIARY empty. Sets
+#                                  HVE_TERTIARY and returns 0 when its own
+#                                  source can supply one, 1 otherwise. It must
+#                                  only read that backend's own files:
+#                                  reaching into another backend's files to
+#                                  fill the gap is forbidden — the documented
+#                                  HVE_TERTIARY_FALLBACK covers that case.
 # Modules must be safe under "set -u", must quote every expansion, and must
 # never eval file content or any external data. Sourcing a module only runs
 # its top-level function definitions; shipped modules are trusted exactly
@@ -424,6 +397,12 @@ _HVE_LEGACY_PRIORITIES="10"
 # Modules live beside this file so installs, checkouts and sandboxes that
 # copy both keep working without a configured path.
 _HVE_COLOR_SOURCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")/color_sources.d" 2>/dev/null && pwd)"
+
+# The step that won the last hve_load_colors run: "legacy:<priority>" for a
+# still-inline step, the module file path for a module winner, empty when
+# no step won. _hve_complete_tertiary routes through it; other callers read
+# it with hve_colour_winner_module below.
+_HVE_COLOUR_WINNER=""
 
 # Historic id of the still-inline step, for the tie-break only.
 _hve_legacy_id_for() {
@@ -515,6 +494,17 @@ _hve_colour_module_for_path() {
     return 1
 }
 
+# Prints the winning module file of the last hve_load_colors run, or
+# nothing (status 1) when the winner was a still-inline step or no step
+# won. The completion step routes through this so the winner's own hook
+# is the one that runs.
+hve_colour_winner_module() {
+    case "${_HVE_COLOUR_WINNER:-}" in
+        ""|legacy:*) return 1 ;;
+        *) printf '%s\n' "$_HVE_COLOUR_WINNER" ;;
+    esac
+}
+
 # Runs one module file's declared refresh (see the module contract above).
 # A module without hve_colour_source_refresh has nothing to do (status 1).
 # What to log is the caller's business; this helper only routes.
@@ -533,6 +523,7 @@ hve_load_colors() {
     HVE_SURFACE=""
     HVE_SURFACE_LOWEST=""
     HVE_ACCENT=""
+    _HVE_COLOUR_WINNER=""
 
     # Detection priority:
     #   1. Applied theme snapshot (the theme owns the colours; see above)
@@ -545,10 +536,10 @@ hve_load_colors() {
     while IFS="$tab" read -r step_prio step_id step_kind step_payload; do
         [ -n "$step_kind" ] || continue
         if [ "$step_kind" = "legacy" ]; then
-            _hve_run_legacy_step "$step_payload" && break
+            _hve_run_legacy_step "$step_payload" && { _HVE_COLOUR_WINNER="legacy:$step_payload"; break; }
         else
             # shellcheck disable=SC1090
-            source "$step_payload" >/dev/null 2>&1 && hve_colour_source_try && break
+            source "$step_payload" >/dev/null 2>&1 && hve_colour_source_try && { _HVE_COLOUR_WINNER="$step_payload"; break; }
         fi
         # A failed step never leaves partial state for the next one.
         HVE_PRIMARY=""
