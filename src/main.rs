@@ -23,6 +23,8 @@ mod tray;
 mod utils;
 mod watcher;
 #[cfg(test)]
+mod architecture_contract;
+#[cfg(test)]
 mod scripts_contract;
 #[cfg(test)]
 mod reload_coalescer;
