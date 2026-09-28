@@ -80,7 +80,7 @@ Extend the headless render coverage (`cargo test slice_focus_flow_renders` and/o
 ## Checks (exact commands)
 
 1. `cargo test` — full suite must stay green (baseline 843 passed / 0 failed).
-2. `cargo test slice_focus_flow_renders` — then READ the PNGs it writes under `/tmp/opencode/`.
+2. `cargo test slice_focus_flow_renders` — then READ the PNGs in the per-run directory the run prints.
 3. `cargo check` — zero new warnings (the suite already carries two pre-existing release-build warnings; do not add more).
 
 ## TDD

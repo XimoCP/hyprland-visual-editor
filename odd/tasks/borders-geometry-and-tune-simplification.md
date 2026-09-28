@@ -45,7 +45,9 @@ The tune pane then grew too much: past Halo/Shadow the keeper wants everything e
 - Engineered artifacts in English (code, comments, UI copy, docs). Comments may carry the
   keeper's personal note where he explicitly asked for it.
 - Visual verification is mandatory for any `.slint` change: run the headless render test, READ
-  the PNGs it writes under `/tmp/opencode/`, and extend/add a render test for any new state.
+  the PNGs from the per-run directory it prints (`render artifacts for this run: <dir>`), and
+  extend/add a render test for any new state. Anything flat in `/tmp/opencode/*.png` is a pre-fix
+  leftover and never evidence.
 
 ## Delivery strategy (size exception)
 
