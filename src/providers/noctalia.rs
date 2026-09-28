@@ -1105,6 +1105,36 @@ fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<Str
     });
 }
 
+/// Whether the live Noctalia colour state still matches the theme's saved
+/// palette snapshot (unit 1c2 of `odd/tasks/hve-capability-routing.md`).
+///
+/// Pure: no I/O, no `Command` — `reassert_colours` reads the inputs and this
+/// function decides, so the decision is pinned by unit tests.
+///
+/// `None` live scheme (noctalia not answering / no scheme readable) answers
+/// `true`: the re-assert is idempotent (copy + set + templates converge on
+/// the snapshot), so an unreadable scheme cannot start a fight; a dead
+/// daemon surfaces as `Err` from the CLI step instead. An empty snapshot or
+/// an empty name owns nothing and answers `false`.
+fn palette_needs_reassert(
+    live_scheme: Option<&str>,
+    live_palette: Option<&[u8]>,
+    snapshot: &[u8],
+    palette_name: &str,
+) -> bool {
+    if snapshot.is_empty() || palette_name.is_empty() {
+        return false;
+    }
+    if live_scheme.is_none() {
+        return true;
+    }
+    let expected = format!("custom {}", palette_name);
+    if live_scheme.map(|s| s.trim()) != Some(expected.as_str()) {
+        return true;
+    }
+    !matches!(live_palette, Some(live) if live == snapshot)
+}
+
 // ── NoctaliaV5Provider ───────────────────────────────────────────────
 //
 // Self-contained: the whole save/apply happens over IPC (`noctalia msg`).
@@ -1744,6 +1774,75 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
+        Ok(())
+    }
+
+    /// Re-assert this backend's colours for an applied theme (unit 1c2 of
+    /// `odd/tasks/hve-capability-routing.md`): when the theme carries our
+    /// colour snapshot and the live state drifted, put it back — copy +
+    /// `color-scheme-set` + `templates-apply`, reusing the apply path's own
+    /// steps. Read-only until the decision: anything unowned or already
+    /// matching is `Ok(())` with no CLI write at all.
+    fn reassert_colours(&self, theme_dir: &Path) -> Result<(), String> {
+        let provider_dir = theme_dir.join("providers").join(self.id());
+        let snapshot = match fs::read(provider_dir.join("palette.json")) {
+            Ok(bytes) if !bytes.is_empty() => bytes,
+            _ => return Ok(()),
+        };
+        let source = match fs::read_to_string(provider_dir.join("source.txt")) {
+            Ok(text) => text,
+            Err(_) => return Ok(()),
+        };
+        // Same parse as the apply path: `custom <name>` owns a snapshot,
+        // anything else (builtin/community/wallpaper) carries no palette
+        // file to put back.
+        let mut parts = source.trim().splitn(2, ' ');
+        let origin = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("").trim();
+        if origin != "custom" || name.is_empty() {
+            return Ok(());
+        }
+        // Same sanitization the apply path applies before the name touches
+        // a file name or a CLI argument (`Command` args never see a shell).
+        let safe_name = name.replace('/', "_");
+        // While an apply holds the engine's colour authority off, the yield
+        // marker is present and the re-assert worker owns the palette — a
+        // watcher-driven re-assert now would fight it. Same marker the apply
+        // path writes and clears; quiet by design, nothing alarming.
+        if crate::providers::skwd_policy::marker_path().exists() {
+            tracing::debug!(
+                "[noctalia-v5] colour authority yielded to the engine; skipping colour re-assert"
+            );
+            return Ok(());
+        }
+        let live_path = find_palette_path("custom", &safe_name);
+        let live_palette = live_path
+            .as_ref()
+            .and_then(|path| fs::read(path).ok());
+        let live_scheme = noctalia_msg(&["msg", "color-scheme-get"])
+            .ok()
+            .map(|out| out.trim().to_string());
+        if !palette_needs_reassert(
+            live_scheme.as_deref(),
+            live_palette.as_deref(),
+            &snapshot,
+            &safe_name,
+        ) {
+            return Ok(());
+        }
+        let live_path =
+            live_path.ok_or_else(|| "Cannot resolve live palette path".to_string())?;
+        if let Some(parent) = live_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create palettes dir: {}", e))?;
+        }
+        fs::write(&live_path, &snapshot)
+            .map_err(|e| format!("Cannot restore palette: {}", e))?;
+        noctalia_msg(&["msg", "color-scheme-set", "custom", &safe_name])
+            .map_err(|e| format!("Cannot set color scheme: {}", e))?;
+        noctalia_msg(&["msg", "templates-apply"])
+            .map_err(|e| format!("Cannot apply templates: {}", e))?;
+        tracing::info!("[noctalia-v5] Colours re-asserted: custom {}", safe_name);
         Ok(())
     }
 
@@ -3876,5 +3975,208 @@ exit 1
             "video.txt must hold the resolved video path, got: {}",
             record
         );
+    }
+
+    // ── Unit 1c2: pure re-assert decision ──
+    //
+    // WHY these exist: `reassert_colours` (the `set-colours` refresh of the
+    // capability-routing contract) must decide from data alone — no I/O, no
+    // `Command` — so the decision is pinned here and the method stays a thin
+    // shell around it.
+
+    #[test]
+    fn palette_needs_reassert_match_returns_false() {
+        let snapshot = br#"{"palette":"blue"}"#;
+        assert!(
+            !palette_needs_reassert(
+                Some("custom theme-blue"),
+                Some(snapshot),
+                snapshot,
+                "theme-blue"
+            ),
+            "live scheme and bytes both match the snapshot: nothing to do"
+        );
+    }
+
+    #[test]
+    fn palette_needs_reassert_engine_override_returns_true() {
+        let snapshot = br#"{"palette":"wall"}"#;
+        let live = br#"{"palette":"blue"}"#;
+        assert!(
+            palette_needs_reassert(Some("custom skwd-wall"), Some(live), snapshot, "theme-blue"),
+            "another backend's scheme with different bytes must re-assert"
+        );
+    }
+
+    #[test]
+    fn palette_needs_reassert_same_scheme_changed_bytes_returns_true() {
+        let snapshot = br#"{"palette":"blue-v2"}"#;
+        let live = br#"{"palette":"blue-v1"}"#;
+        assert!(
+            palette_needs_reassert(Some("custom theme-blue"), Some(live), snapshot, "theme-blue"),
+            "right scheme but drifted bytes must re-assert"
+        );
+    }
+
+    #[test]
+    fn palette_needs_reassert_unreadable_scheme_reasserts() {
+        // `None` = noctalia not answering / no scheme readable. Pinned
+        // `true`: the re-assert is idempotent (copy + set + templates
+        // converge on the snapshot), so an unreadable scheme cannot start a
+        // fight; a dead daemon surfaces as `Err` from the CLI step instead.
+        let snapshot = br#"{"palette":"blue"}"#;
+        assert!(
+            palette_needs_reassert(None, Some(snapshot), snapshot, "theme-blue"),
+            "an unreadable live scheme must re-assert, never silently keep"
+        );
+    }
+
+    #[test]
+    fn palette_needs_reassert_empty_snapshot_or_name_returns_false() {
+        assert!(
+            !palette_needs_reassert(Some("custom skwd-wall"), Some(b"x"), b"", "theme-blue"),
+            "an empty snapshot owns nothing"
+        );
+        assert!(
+            !palette_needs_reassert(
+                Some("custom skwd-wall"),
+                Some(br#"{"palette":"blue"}"#),
+                br#"{"palette":"blue"}"#,
+                ""
+            ),
+            "an empty name owns nothing"
+        );
+    }
+
+    #[test]
+    fn palette_needs_reassert_trims_scheme_whitespace() {
+        // CLI output carries a trailing newline; the caller-facing decision
+        // trims it so a matching scheme is not misread as drift.
+        let snapshot = br#"{"palette":"blue"}"#;
+        assert!(
+            !palette_needs_reassert(
+                Some("custom theme-blue\n"),
+                Some(snapshot),
+                snapshot,
+                "theme-blue"
+            ),
+            "a matching scheme with trailing whitespace must not re-assert"
+        );
+    }
+
+    #[test]
+    fn palette_needs_reassert_missing_live_palette_returns_true() {
+        // Scheme matches but the live palette file is gone/unreadable: the
+        // bytes cannot be proven equal, and the copy recreates the file —
+        // a genuine repair, not a fight.
+        let snapshot = br#"{"palette":"blue"}"#;
+        assert!(
+            palette_needs_reassert(Some("custom theme-blue"), None, snapshot, "theme-blue"),
+            "a missing live palette must re-assert even when the scheme matches"
+        );
+    }
+
+    // ── Unit 1c2: `reassert_colours` through the stub harness ──
+    //
+    // The existing `ColorStub` seam (stub `noctalia` on PATH + invocation
+    // log) observes CLI calls: set/template counts stay EXACT because
+    // nothing else in the suite issues those commands.
+
+    #[test]
+    #[serial]
+    fn reassert_colours_without_snapshot_is_noop_without_cli() {
+        let stub = ColorStub::new("custom skwd-wall", 0, None, true);
+        let theme = TempDir::new().unwrap();
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("source.txt"), "custom JokerTheme").unwrap();
+        let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
+        assert!(res.is_ok(), "a missing snapshot must be a quiet Ok: {:?}", res);
+        assert_eq!(stub.sets(), 0, "no snapshot must issue no set");
+        assert_eq!(stub.templates(), 0, "no snapshot must run no templates-apply");
+    }
+
+    #[test]
+    #[serial]
+    fn reassert_colours_non_custom_source_is_noop_without_cli() {
+        let stub = ColorStub::new("wallpaper vibrant", 0, None, true);
+        let theme = stub.custom_theme("builtin Kanagawa", true);
+        let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
+        assert!(res.is_ok(), "a non-custom source must be a quiet Ok: {:?}", res);
+        assert_eq!(stub.sets(), 0, "a non-custom source must issue no set");
+        assert_eq!(stub.templates(), 0, "a non-custom source must run no templates-apply");
+    }
+
+    #[test]
+    #[serial]
+    fn reassert_colours_matching_live_state_writes_nothing() {
+        let stub = ColorStub::new("custom JokerTheme", 0, None, true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let snapshot = std::fs::read(
+            theme.path().join("providers").join("noctalia-v5").join("palette.json"),
+        )
+        .unwrap();
+        let live_path = PathBuf::from(std::env::var("HVE_NOCTALIA_CONFIG").unwrap())
+            .join("palettes")
+            .join("JokerTheme.json");
+        std::fs::create_dir_all(live_path.parent().unwrap()).unwrap();
+        std::fs::write(&live_path, &snapshot).unwrap();
+        let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
+        assert!(res.is_ok(), "matching state must be Ok: {:?}", res);
+        assert_eq!(stub.sets(), 0, "matching state must issue no set");
+        assert_eq!(stub.templates(), 0, "matching state must run no templates-apply");
+    }
+
+    #[test]
+    #[serial]
+    fn reassert_colours_yielded_authority_is_quiet_noop() {
+        // A yield in flight (marker present): the apply's worker owns the
+        // palette — Ok with zero writes even though the live state drifted.
+        let stub = ColorStub::new("custom skwd-wall", 0, None, true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let marker = crate::providers::skwd_policy::marker_path();
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(
+            &marker,
+            r#"{"previous_value":"wallpaper","config_path":"/tmp/hve-test-config.json"}"#,
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
+        let _ = std::fs::remove_file(&marker);
+        assert!(res.is_ok(), "a yielded authority must be a quiet Ok: {:?}", res);
+        assert_eq!(stub.sets(), 0, "a yield in flight must issue no set");
+        assert_eq!(stub.templates(), 0, "a yield in flight must run no templates-apply");
+    }
+
+    #[test]
+    #[serial]
+    fn reassert_colours_through_dyn_provider_reasserts_drift() {
+        // Reached through `dyn ThemeProvider` — proof this is the override,
+        // not the default no-op (the default would write nothing): a drifted
+        // live state converges back on the snapshot with one set + one
+        // templates-apply.
+        let stub = ColorStub::new("custom skwd-wall", 0, None, true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        let live_path = PathBuf::from(std::env::var("HVE_NOCTALIA_CONFIG").unwrap())
+            .join("palettes")
+            .join("JokerTheme.json");
+        std::fs::create_dir_all(live_path.parent().unwrap()).unwrap();
+        std::fs::write(&live_path, br#"{"palette":"stale"}"#).unwrap();
+        let provider: Box<dyn ThemeProvider> = Box::new(NoctaliaV5Provider::new());
+        let res = provider.reassert_colours(theme.path());
+        assert!(res.is_ok(), "the re-assert must succeed: {:?}", res);
+        assert_eq!(stub.sets(), 1, "one set converges the drifted scheme");
+        assert_eq!(stub.templates(), 1, "one templates-apply re-renders");
+        let snapshot = std::fs::read(
+            theme.path().join("providers").join("noctalia-v5").join("palette.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(&live_path).unwrap(),
+            snapshot,
+            "the live palette must converge on the snapshot"
+        );
+        let scheme = std::fs::read_to_string(stub.state_dir.join("scheme")).unwrap();
+        assert_eq!(scheme.trim(), "custom JokerTheme");
     }
 }
