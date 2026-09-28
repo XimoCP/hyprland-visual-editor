@@ -1666,6 +1666,28 @@ impl ThemeProvider for NoctaliaV5Provider {
                     noctalia_msg(&["msg", "color-scheme-set", "custom", &safe_name])
                         .map_err(|e| format!("Cannot set color scheme: {}", e))?;
                     tracing::info!("[noctalia-v5] Set active scheme: custom {}", safe_name);
+                    // The applied theme owns the colours: declare it (backend,
+                    // theme, saved snapshot, palette name) so the central
+                    // colour pipeline can follow the snapshot instead of the
+                    // live palette. Best-effort: a failed write warns and
+                    // never fails the apply; nothing reads it yet.
+                    let theme_name = theme_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let authority = crate::color_authority::ColorAuthority {
+                        backend: self.id().to_string(),
+                        theme: theme_name,
+                        palette_file: palette_src.display().to_string(),
+                        palette_name: safe_name.clone(),
+                    };
+                    if let Err(e) = crate::color_authority::write_descriptor(&authority) {
+                        tracing::warn!(
+                            "[noctalia-v5] Cannot write colour-authority descriptor: {}",
+                            e
+                        );
+                    }
                     custom_restored = Some(safe_name);
                 }
             } else if !name.is_empty() && matches!(source, "builtin" | "community") {
@@ -1673,6 +1695,16 @@ impl ThemeProvider for NoctaliaV5Provider {
                 noctalia_msg(&["msg", "color-scheme-set", source, name])
                     .map_err(|e| format!("Cannot set color scheme: {}", e))?;
                 tracing::info!("[noctalia-v5] Set active scheme: {} {}", source, name);
+            } else {
+                // Wallpaper scheme (or no named scheme): the theme carries no
+                // palette snapshot, so it claims no colour authority — drop a
+                // stale descriptor instead of writing one.
+                if let Err(e) = crate::color_authority::clear_descriptor() {
+                    tracing::warn!(
+                        "[noctalia-v5] Cannot clear colour-authority descriptor: {}",
+                        e
+                    );
+                }
             }
             // wallpaper scheme: already handled by wallpaper restoration above
 

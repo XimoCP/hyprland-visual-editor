@@ -1,6 +1,7 @@
 mod app_state;
 mod border_preset;
 mod callbacks;
+mod color_authority;
 mod composer;
 mod config;
 mod config_guard;

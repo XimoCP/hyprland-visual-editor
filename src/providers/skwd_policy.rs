@@ -542,6 +542,14 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
     // the next `recover_crashed_yield`.
     write_marker(&path, &plan.previous_value)?;
     write_atomic(&path, &plan.new_text)?;
+    // While the engine is held off no theme owns the colours: drop any
+    // stale descriptor. Best-effort — a failed clear never aborts the apply.
+    if let Err(e) = crate::color_authority::clear_descriptor() {
+        tracing::warn!(
+            "[skwd-policy] cannot clear colour-authority descriptor: {}",
+            e
+        );
+    }
     tracing::info!(
         "[skwd-policy] yielding engine colour authority for the apply: \
          theme.policy \"{}\" -> \"off\" ({})",

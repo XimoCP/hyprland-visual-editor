@@ -410,6 +410,16 @@ impl ThemeManager {
         if self.last_applied == name {
             self.last_applied.clear();
         }
+        // A descriptor naming a theme that no longer exists would be a lie:
+        // drop it, but only when it names the deleted theme.
+        if crate::color_authority::read_descriptor()
+            .map(|d| d.theme == name)
+            .unwrap_or(false)
+        {
+            if let Err(e) = crate::color_authority::clear_descriptor() {
+                tracing::warn!("[themes] Cannot clear colour-authority descriptor: {e}");
+            }
+        }
         Ok(())
     }
 
@@ -457,6 +467,15 @@ impl ThemeManager {
             .map_err(|e| format!("Failed to rename theme: {}", e))?;
         if self.last_applied == old_name {
             self.last_applied = new_name;
+        }
+        // Same lie as on delete: the old name no longer exists.
+        if crate::color_authority::read_descriptor()
+            .map(|d| d.theme == old_name)
+            .unwrap_or(false)
+        {
+            if let Err(e) = crate::color_authority::clear_descriptor() {
+                tracing::warn!("[themes] Cannot clear colour-authority descriptor: {e}");
+            }
         }
         Ok(())
     }
