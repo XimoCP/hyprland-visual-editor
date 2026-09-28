@@ -1,5 +1,7 @@
 use crate::providers::background;
-use crate::providers::noctalia_runtime::{noctalia_config_dir, noctalia_msg, noctalia_state_dir};
+use crate::providers::noctalia_runtime::{
+    noctalia_config_dir, noctalia_msg, noctalia_state_dir, plugin_enabled_probe, MPVPAPER_PLUGIN_ID,
+};
 use crate::providers::wallpaper_authority::{self, SavePlan, WallpaperKind};
 use crate::providers::shell::NoctaliaV4Paths;
 use crate::providers::shell::ShellProvider;
@@ -354,14 +356,10 @@ fn live_mpvpaper_plugin_enabled() -> Option<bool> {
         }
     }
     // Same predicate as mpvpaper::mpvpaper_enabled, but tri-state: an IPC
-    // failure is "unknown", never "disabled".
-    match noctalia_msg(&["msg", "plugins", "list"]) {
-        Ok(out) => Some(
-            out.lines().any(|l| {
-                l.trim_start().starts_with("noctalia/mpvpaper")
-                    && l.trim_end().ends_with("enabled")
-            }),
-        ),
+    // failure is "unknown", never "disabled" — the seam's probe carries the
+    // failure back verbatim, so this warning keeps its cause.
+    match plugin_enabled_probe(MPVPAPER_PLUGIN_ID) {
+        Ok(enabled) => Some(enabled),
         Err(e) => {
             tracing::warn!(
                 "[noctalia-v5] Cannot snapshot plugin state ({}); leaving reloaded state alone",
@@ -2197,6 +2195,226 @@ mod tests {
         assert_eq!(plugin_reassert_action(Some(false)), PluginReassert::Disable);
         assert_eq!(plugin_reassert_action(Some(true)), PluginReassert::Enable);
         assert_eq!(plugin_reassert_action(None), PluginReassert::Leave);
+    }
+
+    /// What the stub answers the `plugins list` probe with.
+    enum ProbeAnswer {
+        /// The probe prints this line and exits 0.
+        Line(&'static str),
+        /// The probe succeeds but prints no matching line.
+        Empty,
+        /// The probe logs the call, then the CLI fails outright.
+        Fail,
+    }
+
+    /// Hermetic `noctalia msg plugins list` sandbox — the SAME mechanism as
+    /// `ColorStub` above and `ProbeSandbox` in `background.rs`: `TempEnv`
+    /// takes the shared environment lock and redirects `HOME` (so the live
+    /// `settings.toml` the primary signal reads lands inside the
+    /// sandbox), the stub bin dir is prepended to `PATH`, and `Drop`
+    /// restores the original `PATH` while that lock is still held. The
+    /// stub logs ONLY `plugins list` invocations, so a concurrent
+    /// suite-mate's unrelated IPC (the shell wallpaper test spawns
+    /// `noctalia` without the env lock) cannot pollute the probe log.
+    struct PluginProbeStub {
+        /// Restored first: `Drop` puts PATH back before any field goes.
+        old_path: Option<String>,
+        /// Every `msg plugins list` the probe sent, in order.
+        log: PathBuf,
+        /// Sandbox HOME: the primary signal reads
+        /// `<home>/.local/state/noctalia/settings.toml`.
+        home: PathBuf,
+        /// Lives on PATH until `old_path` is restored above.
+        _bin: TempDir,
+        /// Shared env lock, released last.
+        _env: crate::test_utils::TempEnv,
+    }
+
+    impl PluginProbeStub {
+        fn new(answer: ProbeAnswer) -> Self {
+            let env = crate::test_utils::TempEnv::new();
+            let bin = tempfile::tempdir().expect("stub bin dir");
+            let log = bin.path().join("probes.log");
+            let logging = format!("printf 'msg plugins list\\n' >> '{}'\n", log.display());
+            let script = match answer {
+                ProbeAnswer::Line(line) => format!(
+                    "#!/bin/sh\n\
+                     if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"plugins\" ] && [ \"$3\" = \"list\" ]; then\n\
+                     {logging}printf '%s' '{line}'\n\
+                     fi\nexit 0\n"
+                ),
+                ProbeAnswer::Empty => format!(
+                    "#!/bin/sh\n\
+                     if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"plugins\" ] && [ \"$3\" = \"list\" ]; then\n\
+                     {logging}fi\nexit 0\n"
+                ),
+                ProbeAnswer::Fail => format!(
+                    "#!/bin/sh\n\
+                     if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"plugins\" ] && [ \"$3\" = \"list\" ]; then\n\
+                     {logging}echo 'no daemon' >&2\nexit 4\n\
+                     fi\nexit 0\n"
+                ),
+            };
+            let stub = bin.path().join("noctalia");
+            std::fs::write(&stub, script).expect("stub script");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+                    .expect("stub must be executable");
+            }
+            let home = PathBuf::from(std::env::var("HOME").expect("TempEnv must set HOME"));
+            let old_path = std::env::var("PATH").ok();
+            let new_path = match &old_path {
+                Some(prev) => format!("{}:{}", bin.path().display(), prev),
+                None => bin.path().display().to_string(),
+            };
+            std::env::set_var("PATH", &new_path);
+            Self {
+                old_path,
+                log,
+                home,
+                _bin: bin,
+                _env: env,
+            }
+        }
+
+        /// Write the live `settings.toml` under the sandbox HOME so the
+        /// primary signal of `live_mpvpaper_plugin_enabled` answers.
+        fn write_settings(&self, body: &str) {
+            let dir = self.home.join(".local").join("state").join("noctalia");
+            std::fs::create_dir_all(&dir).expect("live state dir");
+            std::fs::write(dir.join("settings.toml"), body).expect("live settings.toml");
+        }
+
+        /// The recorded `msg plugins list` invocations, in order.
+        fn probes(&self) -> Vec<String> {
+            std::fs::read_to_string(&self.log)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    impl Drop for PluginProbeStub {
+        fn drop(&mut self) {
+            match &self.old_path {
+                Some(p) => std::env::set_var("PATH", p),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    /// D4: with no readable live settings.toml the snapshot falls back to
+    /// the `plugins list` IPC — a matching `enabled` line reads
+    /// `Some(true)`, a successful answer without one reads `Some(false)`,
+    /// and each answers with exactly ONE probe.
+    #[test]
+    #[serial]
+    fn live_snapshot_falls_back_to_the_plugins_list_ipc() {
+        let stub = PluginProbeStub::new(ProbeAnswer::Line("noctalia/mpvpaper enabled"));
+        assert_eq!(
+            live_mpvpaper_plugin_enabled(),
+            Some(true),
+            "an `enabled` line for the plugin must snapshot as enabled"
+        );
+        assert_eq!(
+            stub.probes(),
+            vec!["msg plugins list"],
+            "the fallback must send exactly one probe"
+        );
+        drop(stub);
+
+        let stub = PluginProbeStub::new(ProbeAnswer::Empty);
+        assert_eq!(
+            live_mpvpaper_plugin_enabled(),
+            Some(false),
+            "a successful probe without a matching line must snapshot as disabled"
+        );
+        assert_eq!(stub.probes(), vec!["msg plugins list"]);
+    }
+
+    /// D4: a failing IPC is "unknown", never "disabled" — the caller then
+    /// leaves the reloaded state alone instead of disabling a plugin it
+    /// could not read.
+    #[test]
+    #[serial]
+    fn live_snapshot_is_none_when_the_ipc_fails() {
+        let stub = PluginProbeStub::new(ProbeAnswer::Fail);
+        assert_eq!(
+            live_mpvpaper_plugin_enabled(),
+            None,
+            "an IPC failure must read as unknown, never as disabled"
+        );
+        assert_eq!(stub.probes(), vec!["msg plugins list"]);
+    }
+
+    /// D4: the live settings.toml is the PRIMARY signal — it wins over an
+    /// IPC answer that says the opposite, and it short-circuits the probe
+    /// entirely (no IPC at all), even when that IPC would fail.
+    #[test]
+    #[serial]
+    fn live_snapshot_prefers_the_live_settings_toml() {
+        let stub = PluginProbeStub::new(ProbeAnswer::Line("noctalia/mpvpaper enabled"));
+        stub.write_settings("[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n");
+        assert_eq!(
+            live_mpvpaper_plugin_enabled(),
+            Some(false),
+            "the live settings.toml must win over a contradicting IPC answer"
+        );
+        assert!(
+            stub.probes().is_empty(),
+            "a readable settings.toml must not trigger any IPC"
+        );
+        drop(stub);
+
+        let stub = PluginProbeStub::new(ProbeAnswer::Fail);
+        stub.write_settings("[plugins]\nenabled = [ \"noctalia/mpvpaper\" ]\n");
+        assert_eq!(
+            live_mpvpaper_plugin_enabled(),
+            Some(true),
+            "the primary signal must win even over a failing IPC"
+        );
+        assert!(stub.probes().is_empty(), "no IPC while the primary answers");
+    }
+
+    /// The duplication this unit breaks: the apply-time snapshot must
+    /// reach `plugins list` ONLY through the neutral seam's tri-state
+    /// probe — a second parse here would be a second implementation to
+    /// keep in sync. Comment lines are stripped first so a commented-out
+    /// parse cannot satisfy it. Needles are built with concat() so this
+    /// test's own source — it lives in the file it inspects — can never
+    /// contain them.
+    #[test]
+    fn live_snapshot_probes_through_the_seam_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parse = ["plugins\", \"list"].concat();
+        assert!(
+            !code.contains(&parse),
+            "noctalia.rs must not parse `plugins list` itself — the probe belongs \
+             to the neutral seam (found: {parse})"
+        );
+        let start = code
+            .find("fn live_mpvpaper_plugin_enabled(")
+            .expect("the snapshot function must exist");
+        let brace_at = start + code[start..].find('{').expect("it must have a body");
+        let rest = &code[brace_at..];
+        let body = &rest[..rest.find("\n}").expect("the body must close")];
+        assert!(
+            body.contains("plugin_enabled_probe(") && body.contains("MPVPAPER_PLUGIN_ID"),
+            "the fallback must call the seam probe with the seam's plugin id; body was:\n{body}"
+        );
+        assert!(
+            body.contains("leaving reloaded state alone"),
+            "the unknown-state warning must keep its wording; body was:\n{body}"
+        );
     }
 
     /// D4: applying a theme restores settings.toml verbatim and runs

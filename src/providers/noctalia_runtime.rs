@@ -162,19 +162,27 @@ pub(crate) fn noctalia_state_dir() -> Option<PathBuf> {
 /// backend that feeds the plugin.
 pub(crate) const MPVPAPER_PLUGIN_ID: &str = "noctalia/mpvpaper";
 
-/// Check whether the plugin is installed AND enabled, by parsing
-/// `noctalia msg plugins list` (line suffix `enabled`).
+/// Tri-state probe behind [`plugin_enabled`]: `Ok` carries the parsed
+/// answer (line suffix `enabled`), `Err` carries the IPC failure verbatim
+/// (missing binary, non-zero exit). This is the ONE `plugins list` parse
+/// in the codebase: callers that must keep "IPC failed" (unknown) apart
+/// from "disabled" — the apply-time plugin snapshot — go through here;
+/// everyone else reads failure as NOT enabled via [`plugin_enabled`].
+pub(crate) fn plugin_enabled_probe(plugin_id: &str) -> Result<bool, String> {
+    let out = noctalia_msg(&["msg", "plugins", "list"])?;
+    Ok(out
+        .lines()
+        .any(|l| l.trim_start().starts_with(plugin_id) && l.trim_end().ends_with("enabled")))
+}
+
+/// Check whether the plugin is installed AND enabled, through the
+/// tri-state probe [`plugin_enabled_probe`].
 ///
 /// Semantics preserved from the old `mpvpaper::mpvpaper_enabled`: a failed
 /// IPC (missing binary, non-zero exit) reads as NOT enabled — the caller
 /// then refuses to act, which is always the safe side.
 pub(crate) fn plugin_enabled(plugin_id: &str) -> bool {
-    match noctalia_msg(&["msg", "plugins", "list"]) {
-        Ok(out) => out
-            .lines()
-            .any(|l| l.trim_start().starts_with(plugin_id) && l.trim_end().ends_with("enabled")),
-        Err(_) => false,
-    }
+    plugin_enabled_probe(plugin_id).unwrap_or(false)
 }
 
 /// Bounce the plugin so it re-reads its assignments at boot and relaunches
@@ -439,6 +447,66 @@ mod tests {
             !plugin_enabled("other/plugin"),
             "the id parameter must filter the list, not a hardcoded name"
         );
+    }
+
+    /// Exactly ONE `plugins list` parse exists behind these helpers: the
+    /// tri-state probe. `plugin_enabled` must reach it THROUGH the probe —
+    /// a second parse here would fork the semantics that keep "IPC failed"
+    /// and "disabled" apart. Comment lines are stripped first so a
+    /// commented-out parse cannot satisfy it. The needle is built with
+    /// concat() so this test's own source — it lives in the file it
+    /// inspects — can never contain it.
+    #[test]
+    fn plugin_enabled_delegates_to_the_tri_state_probe_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia_runtime.rs")
+            .expect("the runtime module must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let start = code
+            .find("pub(crate) fn plugin_enabled(")
+            .expect("the boolean wrapper must exist");
+        let brace_at = start + code[start..].find('{').expect("it must have a body");
+        let rest = &code[brace_at..];
+        let body = &rest[..rest.find("\n}").expect("the body must close")];
+        assert!(
+            body.contains("plugin_enabled_probe("),
+            "plugin_enabled must delegate to the tri-state probe; body was:\n{body}"
+        );
+        assert!(
+            !body.contains("noctalia_msg("),
+            "plugin_enabled must not parse `plugins list` itself — the parse lives \
+             only in the probe; body was:\n{body}"
+        );
+    }
+
+    /// The tri-state probe is what the apply-time snapshot needs:
+    /// `Ok(true)` / `Ok(false)` from the answer, `Err` carrying the IPC
+    /// failure verbatim (the caller's warning keeps its cause) — the
+    /// distinction `plugin_enabled` deliberately collapses to `false`.
+    #[test]
+    #[serial]
+    fn plugin_enabled_probe_is_tri_state() {
+        let state = tempfile::tempdir().expect("stub state");
+        let log = state.path().join("log");
+        {
+            let _stub = StubNoctalia::new(Some(&supervisor_stub(&log, "noctalia/mpvpaper", true)));
+            assert_eq!(plugin_enabled_probe(MPVPAPER_PLUGIN_ID), Ok(true));
+        }
+        {
+            let _stub = StubNoctalia::new(Some(&supervisor_stub(&log, "noctalia/mpvpaper", false)));
+            assert_eq!(plugin_enabled_probe(MPVPAPER_PLUGIN_ID), Ok(false));
+        }
+        {
+            let _stub = StubNoctalia::new(Some("#!/bin/sh\necho 'no daemon' >&2\nexit 4\n"));
+            assert_eq!(
+                plugin_enabled_probe(MPVPAPER_PLUGIN_ID),
+                Err("noctalia msg plugins list failed: no daemon".to_string()),
+                "the failure must reach the caller verbatim, not collapse to false"
+            );
+        }
     }
 
     /// A failed IPC means "not enabled" — never a panic, never `true`.
