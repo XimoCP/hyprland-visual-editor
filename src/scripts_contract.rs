@@ -373,10 +373,12 @@ fn run_get_colors_with_scheme(home: &Path, scheme: &str) -> serde_json::Value {
         std::env::var("PATH").unwrap_or_default()
     );
     let script = scripts_dir().join("get_colors.sh");
+    let cache = home.join(".cache").join("hve");
     let out = std::process::Command::new("bash")
         .arg(&script)
         .env("PATH", path)
         .env("HOME", home)
+        .env("HVE_SAFE_DIR", &cache)
         .current_dir(home)
         .output()
         .expect("bash must be available");
@@ -400,30 +402,33 @@ fn write_hve_config(home: &Path, body: &str) {
     std::fs::write(dir.join("config.json"), body).unwrap();
 }
 
-fn write_theme_snapshot(home: &Path, theme: &str, palette_json: &str, source_exact: &str) {
-    let dir = home
-        .join(".config")
-        .join("hve")
-        .join("themes")
-        .join(theme)
-        .join("providers")
-        .join("noctalia-v5");
+/// Plant the colour-authority descriptor in the sandbox cache dir, exactly
+/// where the provider would have written it on a real machine.
+fn write_color_authority(home: &Path, theme: &str, palette_file: &str, palette_name: &str) {
+    let dir = home.join(".cache").join("hve");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("palette.json"), palette_json).unwrap();
-    // Exact bytes: the caller decides about the trailing newline.
-    std::fs::write(dir.join("source.txt"), source_exact).unwrap();
+    let body = serde_json::json!({
+        "backend": "noctalia-v5",
+        "theme": theme,
+        "palette_file": palette_file,
+        "palette_name": palette_name,
+    });
+    std::fs::write(
+        dir.join("color-authority.json"),
+        serde_json::to_string_pretty(&body).unwrap(),
+    )
+    .unwrap();
 }
 
-fn write_theme_source_only(home: &Path, theme: &str, source: &str) {
-    let dir = home
-        .join(".config")
-        .join("hve")
-        .join("themes")
-        .join(theme)
-        .join("providers")
-        .join("noctalia-v5");
+/// Snapshot planted at a layout-agnostic path under the theme dir: the
+/// central script must only read the descriptor's declaration, never
+/// reconstruct any backend's directory layout to find the file.
+fn write_descriptor_snapshot(home: &Path, theme: &str, palette_json: &str) -> String {
+    let dir = home.join(".config").join("hve").join("themes").join(theme);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("source.txt"), source).unwrap();
+    let path = dir.join("palette.json");
+    std::fs::write(&path, palette_json).unwrap();
+    path.to_str().unwrap().to_owned()
 }
 
 fn write_live_palette(home: &Path, name: &str, palette_json: &str) {
@@ -432,19 +437,15 @@ fn write_live_palette(home: &Path, name: &str, palette_json: &str) {
     std::fs::write(dir.join(format!("{name}.json")), palette_json).unwrap();
 }
 
-/// The applied theme carries a `custom` snapshot while the live scheme was
-/// rewritten externally: the snapshot must win, not the live palette.
+/// The applied theme carries a descriptor naming its saved snapshot while
+/// the live scheme was rewritten externally: the snapshot must win, not
+/// the live palette.
 #[test]
 fn applied_theme_snapshot_wins_over_live_palette() {
     let home = tempfile::tempdir().unwrap();
     write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
-    // No trailing newline on purpose: the resolver must accept the raw bytes.
-    write_theme_snapshot(
-        home.path(),
-        "Animation",
-        THEME_SNAPSHOT_JSON,
-        "custom other-palette",
-    );
+    let snapshot = write_descriptor_snapshot(home.path(), "Animation", THEME_SNAPSHOT_JSON);
+    write_color_authority(home.path(), "Animation", &snapshot, "other-palette");
     write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
 
     let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
@@ -488,12 +489,13 @@ fn no_theme_config_falls_through_to_live_palette() {
     );
 }
 
-/// A `wallpaper`-source theme owns no snapshot: the live chain still applies.
+/// A `wallpaper`-source theme owns no snapshot, so no descriptor exists:
+/// the live chain still applies.
 #[test]
 fn wallpaper_source_theme_without_snapshot_uses_live_palette() {
     let home = tempfile::tempdir().unwrap();
     write_hve_config(home.path(), r#"{"last_applied_theme": "Walls"}"#);
-    write_theme_source_only(home.path(), "Walls", "wallpaper\n");
+    // No descriptor planted: a wallpaper-source theme declares nothing.
     write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
 
     let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
@@ -501,6 +503,54 @@ fn wallpaper_source_theme_without_snapshot_uses_live_palette() {
         colors["primary"].as_str().unwrap(),
         "#e4aa67",
         "a wallpaper-source theme has no snapshot, so the live palette applies"
+    );
+}
+
+/// A descriptor naming a different theme than the applied one is stale
+/// (leftover from an earlier theme): it must not hijack the colours.
+#[test]
+fn stale_descriptor_theme_falls_through_to_live_palette() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+    let snapshot = write_descriptor_snapshot(home.path(), "Other", THEME_SNAPSHOT_JSON);
+    write_color_authority(home.path(), "Other", &snapshot, "other-palette");
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "a stale descriptor (theme != applied theme) must not own the colours"
+    );
+}
+
+/// A descriptor whose palette file is gone (theme deleted, snapshot lost)
+/// must fall through instead of breaking the colour pipeline.
+#[test]
+fn descriptor_with_missing_palette_file_uses_live_palette() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+    // Point at a snapshot path that was never created.
+    let missing = home
+        .path()
+        .join(".config")
+        .join("hve")
+        .join("themes")
+        .join("Animation")
+        .join("palette.json");
+    write_color_authority(
+        home.path(),
+        "Animation",
+        missing.to_str().unwrap(),
+        "other-palette",
+    );
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "a descriptor with a missing palette file must fall through to live"
     );
 }
 

@@ -1148,7 +1148,21 @@ mod tests {
     /// no-op `get_colors.sh`/`hve-ipc`. This extends the older harness (which
     /// predates the watcher's `colors.sh` source line) the same way the other
     /// stubs are built.
-    fn write_theme_test_scripts(scripts: &std::path::Path, cache: &std::path::Path) {
+    ///
+    /// It also plants the colour-authority descriptor in the sandbox cache
+    /// dir (the script's `HVE_SAFE_DIR`, via `HVE_CACHE_DIR`) because the
+    /// script knows no backend layout and only reads that declaration (the
+    /// capability-routing contract, `openspec/specs/capability-routing/spec.md`).
+    /// The descriptor claims theme `Animation` owns palette `theme-blue` at
+    /// its snapshot under the sandbox theme dir. Tests without that
+    /// snapshot/config (no theme applied, wallpaper source) still observe no
+    /// authority: the script validates the descriptor (theme match, existing
+    /// regular file under `$HOME/.config/hve/themes/`) and falls through.
+    fn write_theme_test_scripts(
+        scripts: &std::path::Path,
+        cache: &std::path::Path,
+        home: &std::path::Path,
+    ) {
         use std::os::unix::fs::PermissionsExt;
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
         std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
@@ -1167,6 +1181,17 @@ mod tests {
             let path = scripts.join(name);
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        let palette_file =
+            home.join(".config/hve/themes/Animation/providers/noctalia-v5/palette.json");
+        std::fs::write(
+            cache.join("color-authority.json"),
+            format!(
+                "{{\"backend\":\"noctalia-v5\",\"theme\":\"Animation\",\
+                  \"palette_file\":\"{}\",\"palette_name\":\"theme-blue\"}}",
+                palette_file.display()
+            ),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1205,7 +1230,7 @@ mod tests {
 
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
-        write_theme_test_scripts(&scripts, &cache);
+        write_theme_test_scripts(&scripts, &cache, &home);
 
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();
@@ -1323,7 +1348,7 @@ mod tests {
 
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
-        write_theme_test_scripts(&scripts, &cache);
+        write_theme_test_scripts(&scripts, &cache, &home);
 
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();
@@ -1421,7 +1446,7 @@ mod tests {
 
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
-        write_theme_test_scripts(&scripts, &cache);
+        write_theme_test_scripts(&scripts, &cache, &home);
 
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();

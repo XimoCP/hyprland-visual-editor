@@ -61,81 +61,102 @@ _hve_extract_border_gradient() {
 # --- Detection & extraction per tool ---
 
 # --- The applied theme is the colour authority -------------------------------
-# While the applied theme carries a SAVED palette snapshot (its source.txt says
-# `custom <name>`), that snapshot is the source of truth: an external palette
-# rewrite — a wallpaper engine re-extracting colours, another app switching the
-# scheme — must not be able to repaint HVE. A theme whose source is `wallpaper`
-# has no snapshot: the engine derives those colours by design, so it keeps
-# flowing through the live chain below. See odd/tasks/theme-owns-the-palette.md.
+# Rule: the applied theme's backend owns its palette and declares it in the
+# colour-authority descriptor; this central script only reads that
+# declaration and knows no backend's directory layout. When the descriptor
+# is absent or invalid, the live chain below applies, exactly as before.
+# See odd/tasks/hve-capability-routing.md (unit 1b).
 
-# Resolve the applied theme's saved palette file. Prints the path, or nothing.
-# config.json is read with python3 (never eval) and the theme name is validated
-# before it is used in a path.
+# Resolve the applied theme's declared palette file. Prints the path, or
+# nothing. The descriptor and config.json are read with python3 (never eval).
 _hve_theme_palette_file() {
     command -v python3 &>/dev/null || return 1
+
+    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    local descriptor="$safe_dir/color-authority.json"
+    [ -f "$descriptor" ] || return 1
 
     local cfg="$HOME/.config/hve/config.json"
     [ -f "$cfg" ] || return 1
 
-    local theme
-    theme=$(python3 - "$cfg" <<'PY' 2>/dev/null
+    local palette
+    palette=$(python3 - "$descriptor" "$cfg" <<'PY' 2>/dev/null
 import json, sys
 try:
     with open(sys.argv[1]) as f:
+        desc = json.load(f)
+    with open(sys.argv[2]) as f:
         cfg = json.load(f)
 except Exception:
     sys.exit(1)
-name = (cfg.get("last_applied_theme") or "").strip()
-if not name:
+theme = desc.get("theme")
+pfile = desc.get("palette_file")
+pname = desc.get("palette_name")
+for v in (theme, pfile, pname):
+    if not isinstance(v, str) or not v.strip():
+        sys.exit(1)
+applied = (cfg.get("last_applied_theme") or "").strip()
+if not applied or applied != theme.strip():
     sys.exit(1)
-print(name)
+print(pfile)
 PY
 ) || return 1
-    [ -n "$theme" ] || return 1
+    [ -n "$palette" ] || return 1
 
-    # SECURITY: this name is interpolated into a path. Allow only a plain
-    # directory name: letters, digits, dot, underscore, parentheses, spaces and
-    # hyphen; no slash, no traversal, no leading dot or dash.
-    local stripped
-    stripped=$(printf '%s' "$theme" | tr -d 'A-Za-z0-9._() -')
-    if [ -n "$stripped" ]; then
-        echo "[HVE] Unsafe theme name in config, skipping theme palette" >&2
-        return 1
-    fi
-    case "$theme" in
-        */*|*..*|.*|-*) return 1 ;;
-    esac
-
-    local dir="$HOME/.config/hve/themes/$theme/providers/noctalia-v5"
-    local src="$dir/source.txt"
-    local palette="$dir/palette.json"
-    [ -f "$src" ] && [ -f "$palette" ] || return 1
-    # Only a `custom` snapshot means the theme OWNS a palette file.
-    case "$(cat "$src" 2>/dev/null)" in
-        custom\ *) ;;
+    # Defence in depth: the only place a provider snapshot may live is under
+    # this machine's theme directory. Absolute path, no traversal, an
+    # existing regular file — otherwise fall through to the live chain.
+    case "$palette" in
+        /*) ;;
         *) return 1 ;;
     esac
+    case "$palette" in
+        *..*) return 1 ;;
+    esac
+    case "$palette" in
+        "$HOME/.config/hve/themes/"*) ;;
+        *) return 1 ;;
+    esac
+    [ -f "$palette" ] || return 1
 
     printf '%s\n' "$palette"
 }
 
-# The palette name the applied theme owns (source.txt: `custom <name>`), or empty.
+# The palette name the applied theme owns (from the same descriptor), or empty.
 _hve_theme_palette_name() {
     local palette_file
     palette_file=$(_hve_theme_palette_file) || return 1
     [ -n "$palette_file" ] || return 1
 
-    local src="${palette_file%/palette.json}/source.txt"
+    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    local descriptor="$safe_dir/color-authority.json"
     local name
-    name=$(cat "$src" 2>/dev/null) || return 1
-    name="${name#custom }"
-    name="${name%%$'\n'*}"
-    name="${name%$'\r'}"
+    name=$(python3 - "$descriptor" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        desc = json.load(f)
+except Exception:
+    sys.exit(1)
+pname = desc.get("palette_name")
+if not isinstance(pname, str) or not pname.strip():
+    sys.exit(1)
+print(pname)
+PY
+) || return 1
     [ -n "$name" ] || return 1
 
+    # SECURITY: this name is interpolated into a live palette path and passed
+    # to a CLI. Allow only plain names: letters, digits, dot, underscore,
+    # space and hyphen; no slash, no traversal, no leading dot or dash, and
+    # no control characters (a hostile descriptor must not inject a path or
+    # an argument).
     local stripped
     stripped=$(printf '%s' "$name" | tr -d 'A-Za-z0-9._ -')
     [ -z "$stripped" ] || return 1
+    case "$name" in
+        */*|*..*|.*|-*) return 1 ;;
+    esac
     printf '%s\n' "$name"
 }
 
