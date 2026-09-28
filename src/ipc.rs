@@ -213,6 +213,7 @@ fn dispatch_command(
         "status" => cmd_status(window),
         "quit" => cmd_quit(window),
         "refresh-theme" => cmd_refresh_theme(window, proj),
+        "assert-color-authority" => cmd_assert_color_authority(proj),
         _ => format!("error: unknown command '{}'\n", cmd),
     }
 }
@@ -417,8 +418,69 @@ fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &Path) -> St
     }))
 }
 
-fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {
-    let w = window.clone();
+/// Route the `assert-color-authority` capability: re-assert the applied
+/// theme's colour authority through the providers the theme records.
+///
+/// Pure over its inputs so tests can drive it with a fake provider:
+/// - empty `last_applied` → `noop` (nothing applied, nothing to re-assert);
+/// - missing theme dir or unreadable `meta.json` → the file's normal error
+///   line, never a panic;
+/// - a recorded provider that is not registered is skipped, never fatal;
+/// - the first provider error → the file's error shape, else `ok`.
+///
+/// Safe to call twice in a row: the verb keeps no state of its own, and
+/// each provider's `reassert_colours` is idempotent by contract.
+fn resolve_assert_color_authority(
+    last_applied: &str,
+    themes_dir: &Path,
+    manager: &crate::theme_manager::ThemeManager,
+) -> String {
+    if last_applied.is_empty() {
+        return "noop\n".to_string();
+    }
+    let theme_dir = themes_dir.join(last_applied);
+    if !theme_dir.is_dir() {
+        return format_response(Err(format!("theme '{last_applied}' not found")));
+    }
+    let meta: crate::theme_manager::ThemeMeta = match std::fs::read_to_string(theme_dir.join("meta.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    {
+        Some(meta) => meta,
+        None => {
+            return format_response(Err(format!(
+                "cannot read metadata for theme '{last_applied}'"
+            )))
+        }
+    };
+    for id in &meta.providers {
+        let Some(provider) = manager.provider(id) else {
+            continue;
+        };
+        if let Err(e) = provider.reassert_colours(&theme_dir) {
+            return format_response(Err(e));
+        }
+    }
+    format_response(Ok("ok".to_string()))
+}
+
+fn cmd_assert_color_authority(proj: &Path) -> String {
+    // File-based state, like cmd_refresh_theme: the IPC thread must never
+    // lock SharedState (see its invariant in app_state.rs), so the applied
+    // theme comes from the on-disk config and the providers from a fresh
+    // file-based manager, exactly as main() builds it.
+    let cfg = Config::load();
+    let config_dir = dirs::config_dir()
+        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
+    let mut manager = crate::theme_manager::ThemeManager::new(&config_dir);
+    let engine = Engine::new(proj);
+    crate::providers::register_default_providers(&mut manager, &engine);
+    let themes_dir = config_dir.join("hve").join("themes");
+    resolve_assert_color_authority(cfg.last_applied_theme.trim(), &themes_dir, &manager)
+}
+
+fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {    let w = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(win) = w.upgrade() {
             let _ = win.window().hide();
@@ -747,6 +809,170 @@ mod tests {
         assert_eq!(
             response, "error: event loop not ready\n",
             "`show` must reach its handler (which needs the event loop), got: {response}"
+        );
+    }
+
+    // ── assert-color-authority (capability-routing seam, unit 1c1) ──
+    //
+    // The verb routes a capability: the core names the applied theme and
+    // each recorded provider re-asserts its own colours. These tests drive
+    // the pure routing half with a fake provider, so no event loop, no
+    // shell and no real theme on disk are needed.
+
+    /// Provider double: records every `reassert_colours` call, optionally fails.
+    struct FakeColourProvider {
+        id: &'static str,
+        calls: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
+        fail_with: Option<String>,
+    }
+
+    impl crate::theme_manager::ThemeProvider for FakeColourProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn display_name_key(&self) -> &str {
+            self.id
+        }
+        fn icon(&self) -> &str {
+            ""
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn reassert_colours(&self, theme_dir: &Path) -> Result<(), String> {
+            self.calls.lock().unwrap().push(theme_dir.to_path_buf());
+            match &self.fail_with {
+                Some(e) => Err(e.clone()),
+                None => Ok(()),
+            }
+        }
+    }
+
+    /// Seed `{themes_dir}/{name}/meta.json` listing `ids` as providers.
+    fn seed_theme_meta(themes_dir: &Path, name: &str, ids: &[&str]) {
+        let dir = themes_dir.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let providers = ids
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        std::fs::write(
+            dir.join("meta.json"),
+            format!(
+                "{{\"saved_at\":\"2026-09-28T00:00:00.000Z\",\"description\":\"\",\"providers\":[{providers}]}}"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Empty manager plus themes dir under a temp config dir. The manager
+    /// takes the config dir directly, so no process-global env is touched.
+    fn colour_test_setup() -> (
+        tempfile::TempDir,
+        PathBuf,
+        crate::theme_manager::ThemeManager,
+    ) {
+        let config_dir = tempfile::tempdir().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        let tm = crate::theme_manager::ThemeManager::new(config_dir.path());
+        (config_dir, themes_dir, tm)
+    }
+
+    fn register_fake(
+        tm: &mut crate::theme_manager::ThemeManager,
+        fail_with: Option<&str>,
+    ) -> std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>> {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        tm.register_provider(Box::new(FakeColourProvider {
+            id: "fake-colours",
+            calls: calls.clone(),
+            fail_with: fail_with.map(|s| s.to_string()),
+        }));
+        calls
+    }
+
+    #[test]
+    fn assert_color_authority_with_no_applied_theme_is_noop() {
+        let (_dir, themes_dir, mut tm) = colour_test_setup();
+        let calls = register_fake(&mut tm, None);
+
+        let response = resolve_assert_color_authority("", &themes_dir, &tm);
+
+        assert_eq!(response, "noop\n");
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "noop must not touch any provider"
+        );
+    }
+
+    #[test]
+    fn assert_color_authority_calls_the_recorded_provider_once() {
+        let (_dir, themes_dir, mut tm) = colour_test_setup();
+        let calls = register_fake(&mut tm, None);
+        seed_theme_meta(&themes_dir, "Demo", &["fake-colours"]);
+
+        let response = resolve_assert_color_authority("Demo", &themes_dir, &tm);
+
+        assert_eq!(response, "ok\n");
+        let got = calls.lock().unwrap();
+        assert_eq!(got.len(), 1, "exactly one re-assert call for the applied theme");
+        assert_eq!(got[0], themes_dir.join("Demo"));
+    }
+
+    #[test]
+    fn assert_color_authority_is_safe_called_twice() {
+        let (_dir, themes_dir, mut tm) = colour_test_setup();
+        let calls = register_fake(&mut tm, None);
+        seed_theme_meta(&themes_dir, "Demo", &["fake-colours"]);
+
+        assert_eq!(resolve_assert_color_authority("Demo", &themes_dir, &tm), "ok\n");
+        assert_eq!(resolve_assert_color_authority("Demo", &themes_dir, &tm), "ok\n");
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            2,
+            "the verb keeps no state: one call per invocation, nothing else"
+        );
+    }
+
+    #[test]
+    fn assert_color_authority_skips_a_provider_that_is_not_registered() {
+        let (_dir, themes_dir, tm) = colour_test_setup();
+        seed_theme_meta(&themes_dir, "Demo", &["retired-backend"]);
+
+        let response = resolve_assert_color_authority("Demo", &themes_dir, &tm);
+
+        assert_eq!(
+            response, "ok\n",
+            "a recorded provider that is not registered is skipped, never fatal"
+        );
+    }
+
+    #[test]
+    fn assert_color_authority_provider_error_is_an_error_response() {
+        let (_dir, themes_dir, mut tm) = colour_test_setup();
+        let calls = register_fake(&mut tm, Some("palette refused"));
+        seed_theme_meta(&themes_dir, "Demo", &["fake-colours"]);
+
+        let response = resolve_assert_color_authority("Demo", &themes_dir, &tm);
+
+        assert_eq!(response, "error: palette refused\n");
+        assert_eq!(calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn assert_color_authority_missing_theme_is_an_error_not_a_panic() {
+        let (_dir, themes_dir, tm) = colour_test_setup();
+
+        let response = resolve_assert_color_authority("Gone", &themes_dir, &tm);
+
+        assert!(
+            response.starts_with("error: "),
+            "a missing theme dir must be an error line, got: {response}"
         );
     }
 }

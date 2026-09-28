@@ -61,6 +61,16 @@ pub trait ThemeProvider: Send + Sync {
         let _ = theme_name;
         Ok(())
     }
+
+    /// Re-assert this provider's colour authority for an applied theme: the
+    /// backend owns the colours of a theme it saved, so it — not the core, and not
+    /// a shell script — puts them back if something external changed them.
+    /// Idempotent: doing nothing when the state already matches is correct.
+    /// Default: no-op, because most providers do not own colours.
+    fn reassert_colours(&self, theme_dir: &std::path::Path) -> Result<(), String> {
+        let _ = theme_dir;
+        Ok(())
+    }
 }
 
 /// Provider ids that have been removed from the product itself.
@@ -123,6 +133,17 @@ impl ThemeManager {
     /// Returns the IDs of all registered providers.
     pub fn provider_ids(&self) -> Vec<String> {
         self.providers.iter().map(|p| p.id().to_string()).collect()
+    }
+
+    /// Resolve one registered provider by id. `None` when no provider with
+    /// that id is registered — callers skip the missing one, never fail, so
+    /// a theme that records a retired or unavailable provider still routes
+    /// to the providers that are present.
+    pub fn provider(&self, id: &str) -> Option<&dyn ThemeProvider> {
+        self.providers
+            .iter()
+            .find(|p| p.id() == id)
+            .map(|p| p.as_ref())
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
@@ -770,6 +791,20 @@ mod tests {
         assert_eq!(
             ThemeManager::validate_name("Joker").unwrap(),
             "Joker".to_string()
+        );
+    }
+
+    /// Unit 1c1 seam: a provider that owns no colours inherits the default —
+    /// a no-op `Ok`. This pins the default so a future edit cannot silently
+    /// turn every colour-less provider into a failure.
+    #[test]
+    fn reassert_colours_defaults_to_noop() {
+        let provider = StubProvider { id: "plain" };
+        assert!(
+            provider
+                .reassert_colours(Path::new("/nonexistent-theme-dir"))
+                .is_ok(),
+            "the default reassert_colours must be a no-op Ok"
         );
     }
 
