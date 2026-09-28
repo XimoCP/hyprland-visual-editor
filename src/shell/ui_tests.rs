@@ -9,6 +9,7 @@
 #![cfg(test)]
 
 use slint::Global as _;
+use std::path::{Path, PathBuf};
 
 /// Every mouse interaction must leave a --verbose trace: Save handlers +
 /// close + back log in Rust, Slint-only clicks (empty state, dialog
@@ -485,7 +486,7 @@ fn panel_keyboard_nav_callbacks_exposed() {
 // ── V6 focus-flow visual verification (headless render) ────────────────
 // Renders the Slice wall at a settled focus position and mid-glide
 // (frac 0.5) with real baked parallelogram images, and saves PNGs under
-// /tmp/opencode/ for human review. This is the headless visual-check tool:
+// the run's snapshot directory for human review. This is the headless visual-check tool:
 // geometry regressions (positions, widths, image layers) show up here
 // before they reach the screen. MIT credit: translated from skwd-wall
 // (MIT, © liixini).
@@ -512,11 +513,100 @@ fn slice_test_gradient(i: usize) -> image::RgbaImage {
     img
 }
 
-fn save_slice_png(buf: slint::SharedPixelBuffer<slint::Rgba8Pixel>, path: &str) {
-    let w = buf.width();
-    let h = buf.height();
+/// Pure run identity: an explicit override wins when non-empty, otherwise the
+/// directory name carries the run identity (timestamp in ms + process id).
+fn render_run_dir_from(env_override: Option<&str>, stamp_ms: u128, pid: u32) -> PathBuf {
+    match env_override {
+        Some(v) if !v.trim().is_empty() => PathBuf::from(v),
+        _ => PathBuf::from(format!("/tmp/opencode/render-{stamp_ms}-{pid}")),
+    }
+}
+
+/// The directory that holds THIS run's snapshots. Created once per process and
+/// printed once, so no two runs can ever read each other's frames.
+fn render_run_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let stamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let dir = render_run_dir_from(
+            std::env::var("HVE_RENDER_DIR").ok().as_deref(),
+            stamp_ms,
+            std::process::id(),
+        );
+        std::fs::create_dir_all(&dir)
+            .unwrap_or_else(|e| panic!("create render run dir {}: {e}", dir.display()));
+        println!("render artifacts for this run: {}", dir.display());
+        dir
+    })
+}
+
+fn save_slice_png(buf: slint::SharedPixelBuffer<slint::Rgba8Pixel>, name: &str) {
+    // Exactly one plain component: a bare file name. Anything else — "a/b.png",
+    // "/tmp/x.png", "." or ".." — would escape the run directory.
+    let mut parts = Path::new(name).components();
+    let first_is_file = matches!(parts.next(), Some(std::path::Component::Normal(_)));
+    let bare = first_is_file && parts.next().is_none();
+    assert!(bare, "snapshot name must be a bare file name, got {name:?}");
+    let path = render_run_dir().join(name);
+    let (w, h) = (buf.width(), buf.height());
     let img = image::RgbaImage::from_raw(w, h, Vec::from(buf.as_bytes())).expect("snapshot buffer");
-    img.save(path).expect("save png");
+    img.save(&path)
+        .unwrap_or_else(|e| panic!("save png {}: {e}", path.display()));
+}
+
+#[test]
+#[should_panic(expected = "bare file name")]
+fn render_snapshot_refuses_a_path_with_a_directory() {
+    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4);
+    save_slice_png(buf, "/tmp/opencode/__render_run_probe.png");
+}
+
+#[test]
+#[should_panic(expected = "bare file name")]
+fn render_snapshot_refuses_a_parent_directory_name() {
+    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4);
+    save_slice_png(buf, "..");
+}
+
+#[test]
+fn render_snapshot_is_written_into_the_per_run_directory() {
+    let name = "__render_run_probe.png";
+    let flat = Path::new("/tmp/opencode").join(name);
+    std::fs::create_dir_all("/tmp/opencode").expect("scratch dir");
+    let stale = b"stale frame left by an earlier run";
+    std::fs::write(&flat, stale).expect("seed a stale frame at the shared path");
+    save_slice_png(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4), name);
+    let written = render_run_dir().join(name);
+    assert!(written.is_file(), "snapshot must land in the run dir: {}", written.display());
+    assert_eq!(
+        std::fs::read(&flat).expect("read the seeded frame"),
+        stale,
+        "the run overwrote the shared flat path: fresh frames and stale frames would share a name"
+    );
+    // The seed was a probe, not evidence: leave the shared path clean.
+    let _ = std::fs::remove_file(&flat);
+}
+
+#[test]
+fn render_run_dir_identity_is_per_run_and_env_overridable() {
+    let a = render_run_dir_from(None, 1_700_000_000_000, 4242);
+    let b = render_run_dir_from(None, 1_700_000_000_001, 4242);
+    let c = render_run_dir_from(None, 1_700_000_000_000, 4243);
+    assert_ne!(a, b, "a different timestamp must be a different run");
+    assert_ne!(a, c, "a different process must be a different run");
+    assert!(
+        a.starts_with("/tmp/opencode"),
+        "the default run dir must live under /tmp/opencode, got {}",
+        a.display()
+    );
+    assert_eq!(
+        render_run_dir_from(Some("/tmp/opencode/custom-run"), 1, 1),
+        PathBuf::from("/tmp/opencode/custom-run")
+    );
+    assert_eq!(render_run_dir_from(Some("  "), 1, 1), render_run_dir_from(None, 1, 1), "a blank override must fall back");
 }
 
 #[test]
@@ -601,7 +691,7 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_delta_base(6);
     win.set_gallery_slice_focus_pos(6.0);
     let settled = win.window().take_snapshot().expect("settled snapshot");
-    save_slice_png(settled, "/tmp/opencode/slice_settled.png");
+    save_slice_png(settled, "slice_settled.png");
 
     // Mid-glide (production state): one chained step commits → Rust relabels
     // deltas for the new focused slot (Theme 7) and retargets focus-pos,
@@ -626,7 +716,7 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_rebasing(true);
     win.set_gallery_slice_focus_pos(6.5); // frac = −0.5
     let mid = win.window().take_snapshot().expect("midflight snapshot");
-    save_slice_png(mid, "/tmp/opencode/slice_midflight.png");
+    save_slice_png(mid, "slice_midflight.png");
 
     // Ring-seam crossing (infinite-carousel regression): 12 themes, chain
     // forward from real 11 into real 0. The virtual focus keeps counting
@@ -648,7 +738,7 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_delta_base(12);
     win.set_gallery_slice_focus_pos(11.7); // frac = −0.3: incoming 70% grown
     let seam = win.window().take_snapshot().expect("seam snapshot");
-    save_slice_png(seam, "/tmp/opencode/slice_seam.png");
+    save_slice_png(seam, "slice_seam.png");
     win.set_gallery_slice_delta_base(0);
     win.set_gallery_slice_rebasing(false);
 }
@@ -749,7 +839,7 @@ fn gallery_opens_on_active_theme() {
         "zero drift: focus-pos == delta-base when settled"
     );
     let shot = win.window().take_snapshot().expect("active-open snapshot");
-    save_slice_png(shot, "/tmp/opencode/slice_active_open.png");
+    save_slice_png(shot, "slice_active_open.png");
 
     // Fallback: no active theme → focus 0 (previous behavior preserved).
     let model = win.get_gallery_cards();
@@ -852,7 +942,7 @@ fn gallery_fallback_focus_reaffirms_when_active_arrives_late() {
     win.set_gallery_slice_delta_base(initial as i32);
     win.set_gallery_slice_focus_pos(initial as f32);
     let fallback_shot = win.window().take_snapshot().expect("fallback snapshot");
-    save_slice_png(fallback_shot, "/tmp/opencode/slice_fallback_open.png");
+    save_slice_png(fallback_shot, "slice_fallback_open.png");
 
     // The active mark arrives LATE via the real in-place merge path.
     let model = win.get_gallery_cards();
@@ -897,7 +987,7 @@ fn gallery_fallback_focus_reaffirms_when_active_arrives_late() {
         "expanded tile must be the late active card"
     );
     let late_shot = win.window().take_snapshot().expect("late-active snapshot");
-    save_slice_png(late_shot, "/tmp/opencode/slice_late_active.png");
+    save_slice_png(late_shot, "slice_late_active.png");
 
     // Second call is a no-op (fallback consumed).
     assert!(
@@ -1043,7 +1133,7 @@ fn mark_theme_applied_persists_active_across_restart() {
 
 // ── Save tranche B visual verification (headless render) ─────────────────
 // Panel Save section with two saved themes: plain list, delete confirm and
-// rename dialog. Snapshots go under /tmp/opencode/ for human review; the
+// rename dialog. Snapshots go under this run's snapshot directory; the
 // dialog frames must differ from the plain list (dim overlay + 300px card).
 #[test]
 fn save_dialogs_render_list_delete_and_rename() {
@@ -1080,7 +1170,7 @@ fn save_dialogs_render_list_delete_and_rename() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let list = win.window().take_snapshot().expect("save list snapshot");
-    save_slice_png(list.clone(), "/tmp/opencode/save_list.png");
+    save_slice_png(list.clone(), "save_list.png");
 
     win.set_panel_save_dialog_target(SharedString::from("Alpha"));
     win.set_panel_save_dialog_mode(SharedString::from("delete"));
@@ -1088,14 +1178,14 @@ fn save_dialogs_render_list_delete_and_rename() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let delete = win.window().take_snapshot().expect("save delete snapshot");
-    save_slice_png(delete.clone(), "/tmp/opencode/save_delete.png");
+    save_slice_png(delete.clone(), "save_delete.png");
 
     win.set_panel_save_dialog_mode(SharedString::from("rename"));
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let rename = win.window().take_snapshot().expect("save rename snapshot");
-    save_slice_png(rename.clone(), "/tmp/opencode/save_rename.png");
+    save_slice_png(rename.clone(), "save_rename.png");
 
     let diff_list_delete = count_buffer_diff(&list, &delete);
     let diff_list_rename = count_buffer_diff(&list, &rename);
@@ -1172,7 +1262,7 @@ fn save_list_keyboard_focus_navs_and_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let shot = win.window().take_snapshot().expect("save focus snapshot");
-    save_slice_png(shot, "/tmp/opencode/save_focus_row.png");
+    save_slice_png(shot, "save_focus_row.png");
 }
 
 // ── Keyboard R11 v3 (spatial) render hooks ──────────────────────────────
@@ -1223,7 +1313,7 @@ fn panel_menu_and_engaged_slider_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let menu = win.window().take_snapshot().expect("menu preview snapshot");
-    save_slice_png(menu.clone(), "/tmp/opencode/panel_menu_focus.png");
+    save_slice_png(menu.clone(), "panel_menu_focus.png");
 
     // Borders preview: 2 cards → slider #1 (radius) sits at sequence index 3.
     win.set_panel_kbd_preview_index(3);
@@ -1231,7 +1321,7 @@ fn panel_menu_and_engaged_slider_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let focused = win.window().take_snapshot().expect("slider focus snapshot");
-    save_slice_png(focused.clone(), "/tmp/opencode/borders_slider_focus.png");
+    save_slice_png(focused.clone(), "borders_slider_focus.png");
 
     // Engaged: same slider grabbed (emphasis ring, 2px).
     win.set_panel_kbd_preview_engaged(true);
@@ -1239,7 +1329,7 @@ fn panel_menu_and_engaged_slider_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let engaged = win.window().take_snapshot().expect("slider engaged snapshot");
-    save_slice_png(engaged.clone(), "/tmp/opencode/borders_slider_engaged.png");
+    save_slice_png(engaged.clone(), "borders_slider_engaged.png");
     let diff_menu = count_buffer_diff(&menu, &focused);
     let diff_engaged = count_buffer_diff(&focused, &engaged);
     assert!(diff_menu > 200, "menu ring and slider focus must differ — got {diff_menu}");
@@ -1319,8 +1409,8 @@ fn save_card_expansion_animates_like_preset_cards() {
     let diff_mid = count_buffer_diff(&collapsed, &mid_flight);
     let diff_full = count_buffer_diff(&collapsed, &expanded);
     let diff_mid_end = count_buffer_diff(&mid_flight, &expanded);
-    save_slice_png(mid_flight.clone(), "/tmp/opencode/save_expand_mid.png");
-    save_slice_png(expanded.clone(), "/tmp/opencode/save_expand_end.png");
+    save_slice_png(mid_flight.clone(), "save_expand_mid.png");
+    save_slice_png(expanded.clone(), "save_expand_end.png");
     assert!(
         diff_mid > 200,
         "mid-flight frame must differ from collapsed (expansion in flight): got {diff_mid}"
@@ -1368,9 +1458,9 @@ fn save_card_expansion_animates_like_preset_cards() {
     }
     let b_end = win.window().take_snapshot().expect("borders settled snapshot");
     let b_full_diff = count_buffer_diff(&b_collapsed, &b_end);
-    save_slice_png(b_collapsed.clone(), "/tmp/opencode/borders_focus_card0.png");
-    save_slice_png(b_mid.clone(), "/tmp/opencode/borders_focus_mid.png");
-    save_slice_png(b_end.clone(), "/tmp/opencode/borders_focus_card1.png");
+    save_slice_png(b_collapsed.clone(), "borders_focus_card0.png");
+    save_slice_png(b_mid.clone(), "borders_focus_mid.png");
+    save_slice_png(b_end.clone(), "borders_focus_card1.png");
     // Borders pick pane reacts to keyboard focus: moving from card 0 to card 1
     // must expand the newly focused card, collapse the previous one and reflow
     // the list. The three PNGs above are the human-review evidence.
@@ -1424,7 +1514,7 @@ fn save_scroll_follows_focus_past_the_fold() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let top = win.window().take_snapshot().expect("top snapshot");
-    save_slice_png(top.clone(), "/tmp/opencode/save_scroll_top.png");
+    save_slice_png(top.clone(), "save_scroll_top.png");
 
     // Focus row 12 — well past the fold. The scroll must follow.
     win.set_panel_save_focused_index(12);
@@ -1432,7 +1522,7 @@ fn save_scroll_follows_focus_past_the_fold() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let scrolled = win.window().take_snapshot().expect("scrolled snapshot");
-    save_slice_png(scrolled.clone(), "/tmp/opencode/save_scroll_follow.png");
+    save_slice_png(scrolled.clone(), "save_scroll_follow.png");
 
     // If the scroll did not follow, row 12 is off-screen and the frame is
     // indistinguishable from just any far position — with follow, the last
@@ -1461,7 +1551,7 @@ fn save_scroll_follows_focus_past_the_fold() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let b_scrolled = win.window().take_snapshot().expect("borders scrolled snapshot");
-    save_slice_png(b_scrolled, "/tmp/opencode/borders_scroll_follow.png");
+    save_slice_png(b_scrolled, "borders_scroll_follow.png");
 }
 
 // ── HveKnobSlider endpoints: min → knob glued left, no fill; max → knob ──
@@ -1514,14 +1604,14 @@ fn knob_slider_endpoints_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let lo = win.window().take_snapshot().expect("knob min snapshot");
-    save_slice_png(lo.clone(), "/tmp/opencode/knob_min.png");
+    save_slice_png(lo.clone(), "knob_min.png");
 
     win.set_border_size(5);
     for _ in 0..8 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let hi = win.window().take_snapshot().expect("knob max snapshot");
-    save_slice_png(hi.clone(), "/tmp/opencode/knob_max.png");
+    save_slice_png(hi.clone(), "knob_max.png");
 
     let diff = count_buffer_diff(&lo, &hi);
     assert!(diff > 2000, "min and max endpoints must differ — got {diff}");
@@ -1620,7 +1710,7 @@ fn slice_twenty_chained_steps_settle_without_drift() {
     assert!((m.expanded - 924.0).abs() < 0.01, "settled center must be 924");
     assert!((m.collapsed - 135.0).abs() < 0.01, "settled laterals must be 135");
     let snap = win.window().take_snapshot().expect("20-step snapshot");
-    save_slice_png(snap, "/tmp/opencode/slice_20steps.png");
+    save_slice_png(snap, "slice_20steps.png");
 }
 
 #[test]
@@ -1755,8 +1845,8 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
         assert!(fx + m.expanded <= stage_w + 0.5, "focused slot right must fit at stage {stage_w}");
         save_slice_png(snap, png);
     };
-    render_at(1092.0, 1080.0, "/tmp/opencode/slice_fluid_1092.png");
-    render_at(1920.0, 1080.0, "/tmp/opencode/slice_fluid_1920.png");
+    render_at(1092.0, 1080.0, "slice_fluid_1092.png");
+    render_at(1920.0, 1080.0, "slice_fluid_1920.png");
 }
 
 #[test]
@@ -1844,7 +1934,7 @@ fn mosaic_hero_centered_renders_with_pagination() {
     )));
 
     let snap = win.window().take_snapshot().expect("mosaic snapshot");
-    save_slice_png(snap, "/tmp/opencode/mosaic_hero.png");
+    save_slice_png(snap, "mosaic_hero.png");
 }
 
 fn bright_mosaic_thumb() -> slint::Image {
@@ -2173,14 +2263,14 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let mid = win.window().take_snapshot().expect("mid curtain snapshot");
-    save_slice_png(mid.clone(), "/tmp/opencode/mosaic_curtain_mid.png");
+    save_slice_png(mid.clone(), "mosaic_curtain_mid.png");
 
     // Settled: advance past total curtain duration (600ms total → another 400ms)
     for _ in 0..25 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let settled = win.window().take_snapshot().expect("settled snapshot");
-    save_slice_png(settled.clone(), "/tmp/opencode/mosaic_curtain_settled.png");
+    save_slice_png(settled.clone(), "mosaic_curtain_settled.png");
     let settled_dark = count_cover_pixels(&settled);
     let diff_mid_settled = count_buffer_diff(&mid, &settled);
     let covered_non_uniform = count_covered_non_uniform(&mid, &settled);
@@ -2359,7 +2449,7 @@ fn mosaic_curtain_respects_reduced_motion() {
     }
     let mid = win.window().take_snapshot().expect("reduced mid snapshot");
     // Save for visual inspection but not required for contract — keep distinct name
-    save_slice_png(mid.clone(), "/tmp/opencode/mosaic_curtain_reduced_mid.png");
+    save_slice_png(mid.clone(), "mosaic_curtain_reduced_mid.png");
     let mid_dark = count_cover_pixels(&mid);
     assert!(
         mid_dark < 300,
@@ -2370,7 +2460,7 @@ fn mosaic_curtain_respects_reduced_motion() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let settled = win.window().take_snapshot().expect("reduced settled");
-    save_slice_png(settled.clone(), "/tmp/opencode/mosaic_curtain_reduced_settled.png");
+    save_slice_png(settled.clone(), "mosaic_curtain_reduced_settled.png");
     let settled_dark = count_cover_pixels(&settled);
     assert!(settled_dark < 300, "reduced settled must have no covers — got {settled_dark}");
 }
@@ -2450,7 +2540,7 @@ fn panel_morph_midflight_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let settled_gallery = win.window().take_snapshot().expect("gallery settled");
-    save_slice_png(settled_gallery.clone(), "/tmp/opencode/panel_morph_gallery_settled.png");
+    save_slice_png(settled_gallery.clone(), "panel_morph_gallery_settled.png");
 
     // Trigger mutating: Gallery 1→0 / Panel 0→1 (350ms morph, 200ms stagger R1)
     win.set_is_mutating(true);
@@ -2459,7 +2549,7 @@ fn panel_morph_midflight_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let mid = win.window().take_snapshot().expect("midflight snapshot");
-    save_slice_png(mid.clone(), "/tmp/opencode/panel_morph_midflight.png");
+    save_slice_png(mid.clone(), "panel_morph_midflight.png");
 
     // Complete mutation: panel open — wait for tuck 500ms + pause 140ms + stretch 560ms
     win.set_is_mutating(false);
@@ -2468,7 +2558,7 @@ fn panel_morph_midflight_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let panel_settled = win.window().take_snapshot().expect("panel settled");
-    save_slice_png(panel_settled.clone(), "/tmp/opencode/panel_morph_panel_settled.png");
+    save_slice_png(panel_settled.clone(), "panel_morph_panel_settled.png");
 
     // Midflight must differ from both settled extremes (dock tuck + full-bleed wow visible, not instant swap)
     let diff_gallery_mid = count_buffer_diff(&settled_gallery, &mid);
@@ -2493,13 +2583,13 @@ fn panel_morph_midflight_renders() {
     win.set_is_mutating(true);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(8));
     let reduced_mid = win.window().take_snapshot().expect("reduced mid");
-    save_slice_png(reduced_mid.clone(), "/tmp/opencode/panel_morph_reduced_mid.png");
+    save_slice_png(reduced_mid.clone(), "panel_morph_reduced_mid.png");
     win.set_is_mutating(false);
     win.set_is_panel_open(true);
     // No delay needed — reduced-motion duration 0 means immediate
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(8));
     let reduced_settled = win.window().take_snapshot().expect("reduced settled");
-    save_slice_png(reduced_settled.clone(), "/tmp/opencode/panel_morph_reduced_settled.png");
+    save_slice_png(reduced_settled.clone(), "panel_morph_reduced_settled.png");
     // Reduced snapshots should be valid (no panic) and at least panel is visible (reuse diff check loosely)
     let diff_reduced = count_buffer_diff(&reduced_mid, &reduced_settled);
     // With 0ms, mid and settled may be close; just ensure we didn't crash and images exist
@@ -2600,7 +2690,7 @@ fn panel_save_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let settled = win.window().take_snapshot().expect("panel save settled");
-    save_slice_png(settled.clone(), "/tmp/opencode/panel_save.png");
+    save_slice_png(settled.clone(), "panel_save.png");
 
     // Also render with error to verify error label visibility
     win.set_panel_save_error("name-empty".into());
@@ -2608,7 +2698,7 @@ fn panel_save_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let err_snap = win.window().take_snapshot().expect("panel save error");
-    save_slice_png(err_snap.clone(), "/tmp/opencode/panel_save_error.png");
+    save_slice_png(err_snap.clone(), "panel_save_error.png");
 
     let diff = count_buffer_diff(&settled, &err_snap);
     assert!(diff > 200, "error label must change pixels — got {diff} expected >200");
@@ -2623,7 +2713,7 @@ fn panel_save_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let empty_list_snap = win.window().take_snapshot().expect("panel save empty list");
-    save_slice_png(empty_list_snap.clone(), "/tmp/opencode/panel_save_empty_list.png");
+    save_slice_png(empty_list_snap.clone(), "panel_save_empty_list.png");
     let list_diff = count_buffer_diff(&settled, &empty_list_snap);
     assert!(list_diff > 200, "My Themes list rows must change pixels — got {list_diff} expected >200");
 
@@ -2731,7 +2821,7 @@ fn panel_borders_pick_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap = win.window().take_snapshot().expect("panel borders pick snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_borders_pick.png");
+    save_slice_png(snap.clone(), "panel_borders_pick.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
     // Active indicator check: second snapshot with different active index must differ
@@ -2740,7 +2830,7 @@ fn panel_borders_pick_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap2 = win.window().take_snapshot().expect("panel borders pick active2");
-    save_slice_png(snap2.clone(), "/tmp/opencode/panel_borders_pick_active2.png");
+    save_slice_png(snap2.clone(), "panel_borders_pick_active2.png");
     // Full frame: the panel is full-bleed, so its preset list sits lower than
     // the mosaic band `count_buffer_diff` was written for.
     let diff = count_buffer_diff_region(&snap, &snap2, 0, 0, snap.width() as usize, snap.height() as usize);
@@ -2851,7 +2941,7 @@ fn panel_borders_tune_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap = win.window().take_snapshot().expect("panel borders tune snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_borders_tune.png");
+    save_slice_png(snap.clone(), "panel_borders_tune.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
     // Snap simulation: picking sharp snaps sliders to 1/0/0/0 — must differ visually
@@ -2864,7 +2954,7 @@ fn panel_borders_tune_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap2 = win.window().take_snapshot().expect("panel borders tune snapped");
-    save_slice_png(snap2.clone(), "/tmp/opencode/panel_borders_tune_snapped.png");
+    save_slice_png(snap2.clone(), "panel_borders_tune_snapped.png");
     let diff = count_buffer_diff(&snap, &snap2);
     assert!(diff > 200, "tune snap must change pixels — got {diff} expected >200 (slider values)");
 
@@ -2932,7 +3022,7 @@ fn panel_borders_two_pane_and_stacked_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let wide = win.window().take_snapshot().expect("borders wide snapshot");
-    save_slice_png(wide.clone(), "/tmp/opencode/panel_borders_two_col.png");
+    save_slice_png(wide.clone(), "panel_borders_two_col.png");
     assert_eq!(wide.width(), 1920, "wide snapshot width");
 
     // Below the breakpoint (min-width 800) the two panes must stack.
@@ -2941,7 +3031,7 @@ fn panel_borders_two_pane_and_stacked_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let narrow = win.window().take_snapshot().expect("borders narrow snapshot");
-    save_slice_png(narrow.clone(), "/tmp/opencode/panel_borders_stacked.png");
+    save_slice_png(narrow.clone(), "panel_borders_stacked.png");
     assert_eq!(narrow.width(), 820, "narrow snapshot width");
 }
 
@@ -2958,7 +3048,7 @@ fn panel_motion_system_save_stacked_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let sys = win.window().take_snapshot().expect("system stacked snapshot");
-    save_slice_png(sys.clone(), "/tmp/opencode/panel_system_stacked.png");
+    save_slice_png(sys.clone(), "panel_system_stacked.png");
     assert_eq!(sys.width(), 820, "system stacked width");
 
     // Save: form | list must stack.
@@ -2978,7 +3068,7 @@ fn panel_motion_system_save_stacked_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let save_snap = win.window().take_snapshot().expect("save stacked snapshot");
-    save_slice_png(save_snap.clone(), "/tmp/opencode/panel_save_stacked.png");
+    save_slice_png(save_snap.clone(), "panel_save_stacked.png");
 
     // Motion: cards | bezier must stack.
     win.set_anim_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Anim 01")])));
@@ -2991,7 +3081,7 @@ fn panel_motion_system_save_stacked_render() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let motion = win.window().take_snapshot().expect("motion stacked snapshot");
-    save_slice_png(motion.clone(), "/tmp/opencode/panel_motion_stacked.png");
+    save_slice_png(motion.clone(), "panel_motion_stacked.png");
 }
 
 /// Narrow two-column pane (1366px window): the settings pane is tight, so the
@@ -3006,7 +3096,7 @@ fn panel_system_narrow_pane_keeps_retardo_toggle() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap = win.window().take_snapshot().expect("system narrow pane snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_system_1200.png");
+    save_slice_png(snap.clone(), "panel_system_1200.png");
     assert_eq!(snap.width(), 1200, "narrow two-col width");
 }
 
@@ -3028,7 +3118,7 @@ fn panel_is_full_bleed_inside_the_slot_area() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap = win.window().take_snapshot().expect("full-bleed snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_full_bleed.png");
+    save_slice_png(snap.clone(), "panel_full_bleed.png");
     assert_eq!(snap.width(), 1920, "snapshot width");
     assert_slot_corners_are_panel_ink(&snap);
 
@@ -3041,7 +3131,7 @@ fn panel_is_full_bleed_inside_the_slot_area() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let float_snap = win.window().take_snapshot().expect("float-size snapshot");
-    save_slice_png(float_snap.clone(), "/tmp/opencode/panel_full_bleed_float_size.png");
+    save_slice_png(float_snap.clone(), "panel_full_bleed_float_size.png");
     assert_eq!(float_snap.width(), 1280, "float-size snapshot width");
     assert_slot_corners_are_panel_ink(&float_snap);
 
@@ -3080,7 +3170,7 @@ fn panel_is_full_bleed_inside_the_slot_area() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let borders_snap = win.window().take_snapshot().expect("borders at float size");
-    save_slice_png(borders_snap.clone(), "/tmp/opencode/panel_full_bleed_float_borders.png");
+    save_slice_png(borders_snap.clone(), "panel_full_bleed_float_borders.png");
     assert_slot_corners_are_panel_ink(&borders_snap);
 }
 
@@ -3192,7 +3282,7 @@ fn panel_curve_preview_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap = win.window().take_snapshot().expect("panel curve preview snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_curve_preview.png");
+    save_slice_png(snap.clone(), "panel_curve_preview.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
     // WHEN b→0.8 THEN preview redraws bezier (control point moves, curve shape changes)
@@ -3201,7 +3291,7 @@ fn panel_curve_preview_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap2 = win.window().take_snapshot().expect("panel curve preview b08 snapshot");
-    save_slice_png(snap2.clone(), "/tmp/opencode/panel_curve_preview_b08.png");
+    save_slice_png(snap2.clone(), "panel_curve_preview_b08.png");
     let diff = count_buffer_diff(&snap, &snap2);
     assert!(diff > 200, "curve preview must redraw on b change — got {diff} expected >200 (bezier 0.1→0.8)");
 
@@ -3211,7 +3301,7 @@ fn panel_curve_preview_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap3 = win.window().take_snapshot().expect("panel curve preview active2");
-    save_slice_png(snap3.clone(), "/tmp/opencode/panel_curve_preview_active2.png");
+    save_slice_png(snap3.clone(), "panel_curve_preview_active2.png");
     let diff2 = count_buffer_diff(&snap, &snap3);
     assert!(diff2 > 200, "active indicator must change pixels — got {diff2} expected >200");
 }
@@ -3299,7 +3389,7 @@ fn panel_filters_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap = win.window().take_snapshot().expect("panel filters snapshot");
-    save_slice_png(snap.clone(), "/tmp/opencode/panel_filters.png");
+    save_slice_png(snap.clone(), "panel_filters.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
     // Active indicator toggles
@@ -3308,7 +3398,7 @@ fn panel_filters_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap2 = win.window().take_snapshot().expect("panel filters active2");
-    save_slice_png(snap2.clone(), "/tmp/opencode/panel_filters_active2.png");
+    save_slice_png(snap2.clone(), "panel_filters_active2.png");
     let diff = count_buffer_diff(&snap, &snap2);
     assert!(diff > 200, "active shader indicator must change pixels — got {diff} expected >200");
 }
@@ -3502,7 +3592,7 @@ fn panel_system_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap_on = win.window().take_snapshot().expect("panel system ON snapshot");
-    save_slice_png(snap_on.clone(), "/tmp/opencode/panel_system.png");
+    save_slice_png(snap_on.clone(), "panel_system.png");
     assert!(snap_on.width() == 1920, "snapshot width 1920");
 
     // Toggle OFF — must differ (ON/OFF visible)
@@ -3511,7 +3601,7 @@ fn panel_system_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap_off = win.window().take_snapshot().expect("panel system OFF snapshot");
-    save_slice_png(snap_off.clone(), "/tmp/opencode/panel_system_off.png");
+    save_slice_png(snap_off.clone(), "panel_system_off.png");
     let diff_on_off = count_buffer_diff(&snap_on, &snap_off);
     assert!(
         diff_on_off > 200,
@@ -3525,7 +3615,7 @@ fn panel_system_renders() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let snap_10s = win.window().take_snapshot().expect("panel system 10s snapshot");
-    save_slice_png(snap_10s.clone(), "/tmp/opencode/panel_system_10s.png");
+    save_slice_png(snap_10s.clone(), "panel_system_10s.png");
     let diff_10s = count_buffer_diff(&snap_on, &snap_10s);
     assert!(
         diff_10s > 200,
@@ -3668,7 +3758,7 @@ fn test_filterbar_focus_scope_behind_pills() {
 // The swap choreography relies on a REAL opacity dissolve (fade-out on
 // exit, fade-in on entrance) instead of the compositor's elastic workspace
 // slide. This renders the three states headless and saves PNGs under
-// /tmp/opencode/ for human review, plus a deterministic pixel assertion:
+// the run's snapshot directory for human review, plus a deterministic pixel assertion:
 // with the shell at opacity 0 the top-left region must be perfectly
 // uniform (window background only), and content must return after the
 // entrance fade completes.
@@ -3714,7 +3804,7 @@ fn theme_fade_renders_settled_dissolved_and_reappeared() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let settled = win.window().take_snapshot().expect("settled snapshot");
-    save_slice_png(settled.clone(), "/tmp/opencode/theme_fade_settled.png");
+    save_slice_png(settled.clone(), "theme_fade_settled.png");
     let settled_frac = theme_fade_region_modal_fraction(&settled);
 
     // Dissolve-out (exit fade, ease-in): advancing past the duration must
@@ -3722,14 +3812,14 @@ fn theme_fade_renders_settled_dissolved_and_reappeared() {
     win.set_theme_transitioning(true);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(500));
     let dissolved = win.window().take_snapshot().expect("dissolved snapshot");
-    save_slice_png(dissolved.clone(), "/tmp/opencode/theme_fade_dissolved.png");
+    save_slice_png(dissolved.clone(), "theme_fade_dissolved.png");
     let dissolved_frac = theme_fade_region_modal_fraction(&dissolved);
 
     // Dissolve-in (entrance fade, ease-out): content must come back.
     win.set_theme_transitioning(false);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
     let reappeared = win.window().take_snapshot().expect("reappeared snapshot");
-    save_slice_png(reappeared.clone(), "/tmp/opencode/theme_fade_reappeared.png");
+    save_slice_png(reappeared.clone(), "theme_fade_reappeared.png");
     let reappeared_frac = theme_fade_region_modal_fraction(&reappeared);
 
     assert!(
@@ -3749,7 +3839,7 @@ fn theme_fade_renders_settled_dissolved_and_reappeared() {
 // ── Save classic restore, tranche A (old ThemesModule look, adapted) ────
 // Panel section 0 must expose the classic search box + per-theme action
 // cards (apply/refresh/rename/delete) with active/hover highlights, and
-// render them headless to /tmp/opencode/save_section.png for review.
+// render them headless into the run directory as save_section.png for review.
 // Source of truth: master:ui/modules.slint ThemesModule + ThemeItem.
 #[test]
 fn save_section_renders_list_search_and_cards() {
@@ -3792,7 +3882,7 @@ fn save_section_renders_list_search_and_cards() {
     win.set_panel_save_rename_text(SharedString::from("Rename"));
     win.set_panel_save_delete_text(SharedString::from("Delete"));
     let snap = win.window().take_snapshot().expect("save section snapshot");
-    save_slice_png(snap, "/tmp/opencode/save_section.png");
+    save_slice_png(snap, "save_section.png");
     assert_eq!(win.get_panel_save_search_placeholder(), "Search themes...");
     assert_eq!(win.get_panel_save_apply_text(), "Apply");
 }
@@ -3848,7 +3938,7 @@ fn motion_last_slider_renders_unclipped() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let top = win.window().take_snapshot().expect("motion top snapshot");
-    save_slice_png(top.clone(), "/tmp/opencode/motion_top.png");
+    save_slice_png(top.clone(), "motion_top.png");
 
     // Y2-d sits at tune pane index 3 (0-based: a=0, b=1, c=2, d=3).
     win.set_panel_kbd_preview_index(3);
@@ -3856,7 +3946,7 @@ fn motion_last_slider_renders_unclipped() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let lit = win.window().take_snapshot().expect("motion Y2-d lit snapshot");
-    save_slice_png(lit.clone(), "/tmp/opencode/motion_last_slider_lit.png");
+    save_slice_png(lit.clone(), "motion_last_slider_lit.png");
 
     // Grabbed (104px): same slider engaged.
     win.set_panel_kbd_preview_engaged(true);
@@ -3864,7 +3954,7 @@ fn motion_last_slider_renders_unclipped() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let grabbed = win.window().take_snapshot().expect("motion Y2-d grabbed snapshot");
-    save_slice_png(grabbed.clone(), "/tmp/opencode/motion_last_slider_grabbed.png");
+    save_slice_png(grabbed.clone(), "motion_last_slider_grabbed.png");
 
     let diff_top_lit = count_buffer_diff(&top, &lit);
     assert!(
@@ -4041,7 +4131,7 @@ fn system_rail_handoff_returns_focus_to_content() {
     focus_press_key(&win, Key::Return);
     focus_settle();
     let back = win.window().take_snapshot().expect("handoff snapshot");
-    save_slice_png(back.clone(), "/tmp/opencode/system_focus_handoff.png");
+    save_slice_png(back.clone(), "system_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
     assert!(back_icy > 200, "content must refocus after re-entering, icy={back_icy}");
     assert_eq!(win.get_panel_section(), 4, "section must stay System");
@@ -4216,13 +4306,13 @@ fn panel_system_engaged_row_renders_white_ring() {
     focus_press_key(&win, Key::DownArrow);
     focus_settle();
     let focused = win.window().take_snapshot().expect("focused row snapshot");
-    save_slice_png(focused.clone(), "/tmp/opencode/system_row2_focused.png");
+    save_slice_png(focused.clone(), "system_row2_focused.png");
 
     // Enter engages: the row must repaint (white grabbed ring).
     focus_press_key(&win, Key::Return);
     focus_settle();
     let engaged = win.window().take_snapshot().expect("engaged row snapshot");
-    save_slice_png(engaged.clone(), "/tmp/opencode/system_row2_engaged.png");
+    save_slice_png(engaged.clone(), "system_row2_engaged.png");
 
     let diff = count_buffer_diff(&focused, &engaged);
     assert!(
@@ -4245,12 +4335,12 @@ fn system_retardo_stops_are_visually_distinct() {
     focus_press_key(&win, Key::DownArrow); // row 1 — switch stop
     focus_settle();
     let r1 = win.window().take_snapshot().expect("row1 snapshot");
-    save_slice_png(r1.clone(), "/tmp/opencode/system_retardo_stop_switch.png");
+    save_slice_png(r1.clone(), "system_retardo_stop_switch.png");
 
     focus_press_key(&win, Key::DownArrow); // row 2 — chips stop
     focus_settle();
     let r2 = win.window().take_snapshot().expect("row2 snapshot");
-    save_slice_png(r2.clone(), "/tmp/opencode/system_retardo_stop_chips.png");
+    save_slice_png(r2.clone(), "system_retardo_stop_chips.png");
 
     let diff = count_buffer_diff(&r1, &r2);
     assert!(
@@ -4406,12 +4496,12 @@ fn panel_rail_cursor_and_content_dimming_render() {
     let win = focus_open_system_panel();
 
     let content = win.window().take_snapshot().expect("content focus snapshot");
-    save_slice_png(content.clone(), "/tmp/opencode/panel_content_focus.png");
+    save_slice_png(content.clone(), "panel_content_focus.png");
 
     focus_press_key(&win, Key::LeftArrow); // rail owns the cursor
     focus_settle();
     let rail = win.window().take_snapshot().expect("rail focus snapshot");
-    save_slice_png(rail.clone(), "/tmp/opencode/panel_rail_focus.png");
+    save_slice_png(rail.clone(), "panel_rail_focus.png");
 
     let diff = count_buffer_diff(&content, &rail);
     assert!(
@@ -4469,7 +4559,7 @@ fn panel_system_about_focus_renders_single_border() {
 
     focus_settle();
     let unfocused = win.window().take_snapshot().expect("about unfocused");
-    save_slice_png(unfocused.clone(), "/tmp/opencode/system_about_unfocused.png");
+    save_slice_png(unfocused.clone(), "system_about_unfocused.png");
 
     // Walk down to the About row (last row: 6 without the restart row).
     for _ in 0..6 {
@@ -4477,7 +4567,7 @@ fn panel_system_about_focus_renders_single_border() {
     }
     focus_settle();
     let focused = win.window().take_snapshot().expect("about focused");
-    save_slice_png(focused.clone(), "/tmp/opencode/system_about_focused.png");
+    save_slice_png(focused.clone(), "system_about_focused.png");
 
     let diff = count_buffer_diff(&unfocused, &focused);
     assert!(
@@ -4533,14 +4623,14 @@ fn filters_rail_handoff_returns_focus_to_content() {
     focus_press_key(&win, Key::LeftArrow);
     focus_settle();
     let stolen = win.window().take_snapshot().expect("filters stolen");
-    save_slice_png(stolen.clone(), "/tmp/opencode/filters_focus_stolen.png");
+    save_slice_png(stolen.clone(), "filters_focus_stolen.png");
     let stolen_icy = count_icy_pixels(&stolen);
     assert!(stolen_icy < base_icy / 2, "rail must steal filters focus, icy={stolen_icy} vs {base_icy}");
 
     focus_press_key(&win, Key::Return);
     focus_settle();
     let back = win.window().take_snapshot().expect("filters handoff");
-    save_slice_png(back.clone(), "/tmp/opencode/filters_focus_handoff.png");
+    save_slice_png(back.clone(), "filters_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
     assert!(back_icy > 1000, "filters must refocus after re-entering, icy={back_icy}");
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
@@ -5535,7 +5625,7 @@ fn borders_strip_renders_correct_chip_count() {
     let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
 
     let shot = win.window().take_snapshot().expect("strip snapshot");
-    save_slice_png(shot.clone(), "/tmp/opencode/borders_strip_closed_3chips.png");
+    save_slice_png(shot.clone(), "borders_strip_closed_3chips.png");
 
     let mut boxes = Vec::new();
     for (i, rgb) in CHIP_COLORS.iter().take(3).enumerate() {
@@ -5626,7 +5716,7 @@ fn borders_strip_picker_opens_above_strip() {
     win.set_tune_editing_slot(1);
     settle_frames(80);
     let open = win.window().take_snapshot().expect("picker snapshot");
-    save_slice_png(open.clone(), "/tmp/opencode/borders_strip_picker_open.png");
+    save_slice_png(open.clone(), "borders_strip_picker_open.png");
 
     let diff = count_buffer_diff_region(
         &closed,
@@ -5700,7 +5790,7 @@ fn borders_strip_compact_rows_height() {
     win.set_panel_kbd_preview_index(1 + 5);
     settle_frames(80);
     let shot = win.window().take_snapshot().expect("inactive row snapshot");
-    save_slice_png(shot.clone(), "/tmp/opencode/borders_strip_compact_row.png");
+    save_slice_png(shot.clone(), "borders_strip_compact_row.png");
 
     // A focused card paints its 1px icy border as two full-width bands, one per
     // horizontal edge: the distance between a band pair IS the row height.
@@ -5870,26 +5960,26 @@ fn borders_geometry_block_renders_each_slider() {
     focus_settle();
 
     let block = win.window().take_snapshot().expect("geometry block snapshot");
-    save_slice_png(block.clone(), "/tmp/opencode/borders_geometry_block.png");
+    save_slice_png(block.clone(), "borders_geometry_block.png");
 
     // card 0 → Down → size → Down → radius.
     focus_press_key(&win, Key::DownArrow);
     focus_press_key(&win, Key::DownArrow);
     focus_settle();
     let radius = win.window().take_snapshot().expect("radius focus snapshot");
-    save_slice_png(radius.clone(), "/tmp/opencode/borders_geometry_radius_focus.png");
+    save_slice_png(radius.clone(), "borders_geometry_radius_focus.png");
     assert_geometry_slider_row(&radius, "radius");
 
     focus_press_key(&win, Key::DownArrow);
     focus_settle();
     let gap_in = win.window().take_snapshot().expect("gap-in focus snapshot");
-    save_slice_png(gap_in.clone(), "/tmp/opencode/borders_geometry_gapin_focus.png");
+    save_slice_png(gap_in.clone(), "borders_geometry_gapin_focus.png");
     assert_geometry_slider_row(&gap_in, "gap-in");
 
     focus_press_key(&win, Key::DownArrow);
     focus_settle();
     let gap_out = win.window().take_snapshot().expect("gap-out focus snapshot");
-    save_slice_png(gap_out.clone(), "/tmp/opencode/borders_geometry_gapout_focus.png");
+    save_slice_png(gap_out.clone(), "borders_geometry_gapout_focus.png");
     assert_geometry_slider_row(&gap_out, "gap-out");
 }
 
@@ -6049,7 +6139,7 @@ fn borders_tune_trimmed_pane_ends_at_save() {
     win.set_panel_kbd_preview_index(1 + count - 1);
     settle_frames(80);
     let shot = win.window().take_snapshot().expect("save-focused snapshot");
-    save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_trimmed_save_focus.png");
+    save_slice_png(shot.clone(), "borders_tune_trimmed_save_focus.png");
     assert!(
         count_icy_pixels(&shot) > 200,
         "the Save seat must paint its focus ring"
@@ -6059,7 +6149,7 @@ fn borders_tune_trimmed_pane_ends_at_save() {
     win.set_panel_kbd_preview_index(1 + count);
     settle_frames(80);
     let past = win.window().take_snapshot().expect("past-save snapshot");
-    save_slice_png(past.clone(), "/tmp/opencode/borders_tune_trimmed_past_save.png");
+    save_slice_png(past.clone(), "borders_tune_trimmed_past_save.png");
 }
 
 // ── B4 — Borders panel i18n ──────────────────────────────────────────
@@ -6438,11 +6528,11 @@ fn borders_panel_labels_follow_the_language() {
     win.set_panel_kbd_preview_index(5);
     settle_frames(80);
     let en_top = win.window().take_snapshot().expect("english tune pane");
-    save_slice_png(en_top.clone(), "/tmp/opencode/borders_i18n_en_top.png");
+    save_slice_png(en_top.clone(), "borders_i18n_en_top.png");
     win.set_panel_kbd_preview_index(14);
     settle_frames(80);
     let en_save = win.window().take_snapshot().expect("english glow and save area");
-    save_slice_png(en_save.clone(), "/tmp/opencode/borders_i18n_en_save.png");
+    save_slice_png(en_save.clone(), "borders_i18n_en_save.png");
 
     // Spanish, through the REAL production function `main()` calls.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
@@ -6452,11 +6542,11 @@ fn borders_panel_labels_follow_the_language() {
     win.set_panel_kbd_preview_index(5);
     settle_frames(80);
     let es_top = win.window().take_snapshot().expect("spanish tune pane");
-    save_slice_png(es_top.clone(), "/tmp/opencode/borders_i18n_es_top.png");
+    save_slice_png(es_top.clone(), "borders_i18n_es_top.png");
     win.set_panel_kbd_preview_index(14);
     settle_frames(80);
     let es_save = win.window().take_snapshot().expect("spanish glow and save area");
-    save_slice_png(es_save.clone(), "/tmp/opencode/borders_i18n_es_save.png");
+    save_slice_png(es_save.clone(), "borders_i18n_es_save.png");
 
     // The switch reached the FRAME, not only the global: the panel repainted.
     for (label, en, es) in [("tune pane", &en_top, &es_top), ("glow and save area", &en_save, &es_save)] {
@@ -6535,13 +6625,13 @@ fn border_picker_title_follows_the_language() {
 
     assert_borders_composed(&win, "en");
     let en = win.window().take_snapshot().expect("english picker");
-    save_slice_png(en.clone(), "/tmp/opencode/borders_i18n_en_picker.png");
+    save_slice_png(en.clone(), "borders_i18n_en_picker.png");
 
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     assert_borders_composed(&win, "es");
     settle_frames(8);
     let es = win.window().take_snapshot().expect("spanish picker");
-    save_slice_png(es.clone(), "/tmp/opencode/borders_i18n_es_picker.png");
+    save_slice_png(es.clone(), "borders_i18n_es_picker.png");
 
     let changed = frame_diff(&en, &es, TUNE_AREA);
     assert!(
@@ -6568,13 +6658,13 @@ fn the_picker_footer_hint_is_painted_from_the_text_global() {
     settle_frames(80);
 
     let en = win.window().take_snapshot().expect("english hint");
-    save_slice_png(en.clone(), "/tmp/opencode/borders_picker_hint_en.png");
+    save_slice_png(en.clone(), "borders_picker_hint_en.png");
 
     // Spanish, through the REAL production function `main()` calls.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
     let es = win.window().take_snapshot().expect("spanish hint");
-    save_slice_png(es.clone(), "/tmp/opencode/borders_picker_hint_es.png");
+    save_slice_png(es.clone(), "borders_picker_hint_es.png");
     let translated = frame_diff(&en, &es, TUNE_AREA);
     assert!(
         translated > 500,
@@ -6589,7 +6679,7 @@ fn the_picker_footer_hint_is_painted_from_the_text_global() {
     t.set_picker_hint_change(slint::SharedString::from("   ·   ←→ HINT"));
     settle_frames(8);
     let marked = win.window().take_snapshot().expect("marked hint");
-    save_slice_png(marked.clone(), "/tmp/opencode/borders_picker_hint_marked.png");
+    save_slice_png(marked.clone(), "borders_picker_hint_marked.png");
     let hint = frame_diff(&es, &marked, TUNE_AREA);
     assert!(
         hint > 100,
@@ -6695,7 +6785,7 @@ fn the_preset_card_apply_hover_help_renders() {
     settle_frames(40);
 
     let before = win.window().take_snapshot().expect("before hover");
-    save_slice_png(before.clone(), "/tmp/opencode/apply_help_preset_before.png");
+    save_slice_png(before.clone(), "apply_help_preset_before.png");
     let (x0, y0, x1, y1) = exact_color_bbox_below(&before, (16, 185, 129), 8, 140)
         .expect("the active card must paint its green apply switch");
     println!("apply switch bbox: ({x0},{y0}) .. ({x1},{y1})");
@@ -6709,7 +6799,7 @@ fn the_preset_card_apply_hover_help_renders() {
     settle_frames(40); // 640ms — past the 300ms hover delay
 
     let after = win.window().take_snapshot().expect("after hover");
-    save_slice_png(after.clone(), "/tmp/opencode/apply_help_preset.png");
+    save_slice_png(after.clone(), "apply_help_preset.png");
     let help = frame_diff(&before, &after, PRESET_LIST_AREA);
     assert!(
         help > 100,
@@ -6762,7 +6852,7 @@ fn the_theme_card_apply_hover_help_renders() {
     settle_frames(80);
 
     let before = win.window().take_snapshot().expect("before hover");
-    save_slice_png(before.clone(), "/tmp/opencode/apply_help_theme_before.png");
+    save_slice_png(before.clone(), "apply_help_theme_before.png");
     let (x0, y0, x1, y1) = exact_color_bbox_below(&before, (16, 185, 129), 8, 140)
         .expect("the active theme card must paint its green apply square");
     println!("apply square bbox: ({x0},{y0}) .. ({x1},{y1})");
@@ -6775,7 +6865,7 @@ fn the_theme_card_apply_hover_help_renders() {
     });
     settle_frames(40);
     let parked = win.window().take_snapshot().expect("parked");
-    save_slice_png(parked.clone(), "/tmp/opencode/apply_help_theme_parked.png");
+    save_slice_png(parked.clone(), "apply_help_theme_parked.png");
 
     win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
         position: slint::LogicalPosition::new(cx, cy),
@@ -6783,7 +6873,7 @@ fn the_theme_card_apply_hover_help_renders() {
     settle_frames(40); // 640ms — past the 300ms hover delay
 
     let after = win.window().take_snapshot().expect("after hover");
-    save_slice_png(after.clone(), "/tmp/opencode/apply_help_theme.png");
+    save_slice_png(after.clone(), "apply_help_theme.png");
     let help = frame_diff(&parked, &after, PRESET_LIST_AREA);
     assert!(
         help > 100,
@@ -6799,7 +6889,7 @@ fn the_theme_card_apply_hover_help_renders() {
     });
     settle_frames(40);
     let sibling = win.window().take_snapshot().expect("after hovering refresh");
-    save_slice_png(sibling.clone(), "/tmp/opencode/apply_help_theme_refresh.png");
+    save_slice_png(sibling.clone(), "apply_help_theme_refresh.png");
     let sibling_help = frame_diff(&parked, &sibling, PRESET_LIST_AREA);
     assert!(
         sibling_help > 100,
@@ -6868,7 +6958,7 @@ fn border_preset_names_and_descriptions_follow_the_language() {
     win.set_panel_kbd_preview_index(0);
     settle_frames(80);
     let en = win.window().take_snapshot().expect("english preset list");
-    save_slice_png(en.clone(), "/tmp/opencode/borders_i18n_en_presets.png");
+    save_slice_png(en.clone(), "borders_i18n_en_presets.png");
 
     crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("es"));
     assert_eq!(model_strings(&win.get_border_titles()), ES_NAMES, "spanish names");
@@ -6876,7 +6966,7 @@ fn border_preset_names_and_descriptions_follow_the_language() {
 
     settle_frames(80);
     let es = win.window().take_snapshot().expect("spanish preset list");
-    save_slice_png(es.clone(), "/tmp/opencode/borders_i18n_es_presets.png");
+    save_slice_png(es.clone(), "borders_i18n_es_presets.png");
     let changed = frame_diff(&en, &es, PRESET_LIST_AREA);
     assert!(
         changed > 500,
@@ -6939,7 +7029,7 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
     crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
     let es = win.window().take_snapshot().expect("spanish preset list");
-    save_slice_png(es.clone(), "/tmp/opencode/borders_i18n_es_presets_descs.png");
+    save_slice_png(es.clone(), "borders_i18n_es_presets_descs.png");
 
     // (1) Empty descriptions: the list MUST repaint.
     let blank: Vec<SharedString> = (0..win.get_border_descs().row_count())
@@ -6948,7 +7038,7 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
     win.set_border_descs(ModelRc::new(VecModel::from(blank)));
     settle_frames(80);
     let es_blank = win.window().take_snapshot().expect("spanish list, descriptions emptied");
-    save_slice_png(es_blank.clone(), "/tmp/opencode/borders_i18n_es_presets_descs_blank.png");
+    save_slice_png(es_blank.clone(), "borders_i18n_es_presets_descs_blank.png");
     let painted = frame_diff(&es, &es_blank, PRESET_LIST_AREA);
     assert!(
         painted > 200,
@@ -6963,7 +7053,7 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
     win.set_border_descs(ModelRc::new(VecModel::from(en_descs)));
     settle_frames(80);
     let es_en_descs = win.window().take_snapshot().expect("spanish list, english descriptions");
-    save_slice_png(es_en_descs.clone(), "/tmp/opencode/borders_i18n_es_presets_en_descs.png");
+    save_slice_png(es_en_descs.clone(), "borders_i18n_es_presets_en_descs.png");
     let relang = frame_diff(&es, &es_en_descs, PRESET_LIST_AREA);
     assert!(
         relang > 200,
@@ -7096,13 +7186,13 @@ fn panel_chrome_follows_the_language() {
 
     assert_panel_chrome(&win, "en");
     let en = win.window().take_snapshot().expect("english chrome");
-    save_slice_png(en.clone(), "/tmp/opencode/panel_chrome_en.png");
+    save_slice_png(en.clone(), "panel_chrome_en.png");
 
     crate::panel_i18n::apply_panel_chrome(&win, &crate::tr::Tr::with_lang("es"));
     assert_panel_chrome(&win, "es");
     settle_frames(80);
     let es = win.window().take_snapshot().expect("spanish chrome");
-    save_slice_png(es.clone(), "/tmp/opencode/panel_chrome_es.png");
+    save_slice_png(es.clone(), "panel_chrome_es.png");
 
     let rail = frame_diff(&en, &es, CHROME_RAIL_AREA);
     let header = frame_diff(&en, &es, CHROME_HEADER_AREA);
@@ -7168,7 +7258,7 @@ fn the_panel_chrome_reads_every_label_from_the_text_global() {
 }
 
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual
-/// verification reads from the sanctioned runtime artifact dir (/tmp/opencode/):
+/// verification reads from the sanctioned runtime artifact dir (this run's snapshot directory):
 /// (1) strip closed, (2) picker open above the strip, (3) 8 chips, (4) the
 /// focused compact inactive row. The geometry is ASSERTED from the render where
 /// it can be (chips on one row, ordered and non-overlapping; the card above the
@@ -7182,7 +7272,7 @@ fn borders_strip_flow_renders() {
     // (1) Closed: the three chips are on one row, left to right, and the shared
     // picker card is not in the frame.
     let closed = win.window().take_snapshot().expect("closed strip");
-    save_slice_png(closed.clone(), "/tmp/opencode/borders_strip_flow_closed.png");
+    save_slice_png(closed.clone(), "borders_strip_flow_closed.png");
     let closed_boxes: Vec<(usize, usize, usize, usize)> = CHIP_COLORS
         .iter()
         .take(3)
@@ -7209,7 +7299,7 @@ fn borders_strip_flow_renders() {
     win.set_tune_editing_slot(1);
     settle_frames(4);
     let mid = win.window().take_snapshot().expect("mid-flight picker");
-    save_slice_png(mid.clone(), "/tmp/opencode/borders_strip_flow_picker_mid.png");
+    save_slice_png(mid.clone(), "borders_strip_flow_picker_mid.png");
     assert!(
         count_buffer_diff(&mid, &closed) > 500,
         "opening the picker must change the frame immediately"
@@ -7229,7 +7319,7 @@ fn borders_strip_flow_renders() {
     // above the strip, at its full 380px.
     settle_frames(80);
     let open = win.window().take_snapshot().expect("open picker");
-    save_slice_png(open.clone(), "/tmp/opencode/borders_strip_flow_picker_open.png");
+    save_slice_png(open.clone(), "borders_strip_flow_picker_open.png");
     assert!(
         count_buffer_diff(&mid, &open) > 500,
         "the settled card must differ from the mid-flight frame — an instant \
@@ -7260,7 +7350,7 @@ fn borders_strip_flow_renders() {
     win.set_tune_color_count(8);
     settle_frames(30);
     let eight = win.window().take_snapshot().expect("eight chips");
-    save_slice_png(eight.clone(), "/tmp/opencode/borders_strip_flow_eight.png");
+    save_slice_png(eight.clone(), "borders_strip_flow_eight.png");
     let mut eight_boxes = Vec::new();
     for (i, rgb) in CHIP_COLORS.iter().enumerate() {
         let bbox = exact_color_bbox(&eight, *rgb, 8)
@@ -7286,7 +7376,7 @@ fn borders_strip_flow_renders() {
     win.set_panel_kbd_preview_index(1 + 5);
     settle_frames(80);
     let compact = win.window().take_snapshot().expect("focused compact row");
-    save_slice_png(compact.clone(), "/tmp/opencode/borders_strip_flow_compact_row.png");
+    save_slice_png(compact.clone(), "borders_strip_flow_compact_row.png");
     let bands = color_row_bands(&compact, ICY, 40, 300);
     assert!(
         bands.windows(2).any(|w| (40..=60).contains(&(w[1].0 - w[0].0))),
@@ -7348,7 +7438,7 @@ fn borders_strip_keyboard_sub_navigation() {
     let at_strip = win.window().take_snapshot().expect("strip focused snapshot");
     save_slice_png(
         at_strip.clone(),
-        "/tmp/opencode/borders_strip_kbd_focused.png",
+        "borders_strip_kbd_focused.png",
     );
     assert_eq!(
         strip_ring_chip(&at_strip, 3),
@@ -7380,7 +7470,7 @@ fn borders_strip_keyboard_sub_navigation() {
     let wrapped = win.window().take_snapshot().expect("strip wrap snapshot");
     save_slice_png(
         wrapped.clone(),
-        "/tmp/opencode/borders_strip_kbd_wrapped.png",
+        "borders_strip_kbd_wrapped.png",
     );
     assert_eq!(
         strip_ring_chip(&wrapped, 3),
@@ -7421,7 +7511,7 @@ fn borders_strip_keyboard_sub_navigation() {
     let open = win.window().take_snapshot().expect("strip picker-open snapshot");
     save_slice_png(
         open.clone(),
-        "/tmp/opencode/borders_strip_kbd_picker_open.png",
+        "borders_strip_kbd_picker_open.png",
     );
 
     // Esc closes the picker; the strip stays put.
@@ -7481,7 +7571,7 @@ fn borders_strip_ring_and_picker_clamp_when_slots_shrink() {
     focus_settle();
 
     let after = win.window().take_snapshot().expect("ring clamped");
-    save_slice_png(after.clone(), "/tmp/opencode/borders_strip_ring_clamped.png");
+    save_slice_png(after.clone(), "borders_strip_ring_clamped.png");
     assert_eq!(
         strip_ring_chip(&after, 2),
         Some(1),
@@ -7565,7 +7655,7 @@ fn borders_tune_zero_colours_has_no_ghost_stops() {
     let focused = win.window().take_snapshot().expect("zero-colour glow stop");
     save_slice_png(
         focused.clone(),
-        "/tmp/opencode/borders_tune_zero_colours_glow_stop.png",
+        "borders_tune_zero_colours_glow_stop.png",
     );
     assert!(
         focused_row_span(&focused, 56, 68).is_some(),
@@ -7647,7 +7737,7 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     }
 
     let snapshot = win.window().take_snapshot().expect("borders tune snapshot");
-    save_slice_png(snapshot.clone(), "/tmp/opencode/borders_tune_slots.png");
+    save_slice_png(snapshot.clone(), "borders_tune_slots.png");
 
     // Verify: icy focus pixels should be present (panel has focus)
     let icy = count_icy_pixels(&snapshot);
@@ -7760,7 +7850,7 @@ fn borders_glow_group_renders_addable_and_expanded() {
     }
 
     let snapshot = win.window().take_snapshot().expect("glow-addable snapshot");
-    save_slice_png(snapshot.clone(), "/tmp/opencode/borders_glow_addable.png");
+    save_slice_png(snapshot.clone(), "borders_glow_addable.png");
 
     // Verify content rendered
     let bytes = snapshot.as_bytes();
@@ -7789,7 +7879,7 @@ fn borders_glow_group_renders_addable_and_expanded() {
     }
 
     let snapshot2 = win.window().take_snapshot().expect("glow-expanded snapshot");
-    save_slice_png(snapshot2.clone(), "/tmp/opencode/borders_glow_expanded.png");
+    save_slice_png(snapshot2.clone(), "borders_glow_expanded.png");
 
     let bytes2 = snapshot2.as_bytes();
     let mut content2 = 0usize;
@@ -7872,7 +7962,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let mid = win.window().take_snapshot().expect("borders tune middle snapshot");
-    save_slice_png(mid.clone(), "/tmp/opencode/borders_tune_focus_middle.png");
+    save_slice_png(mid.clone(), "borders_tune_focus_middle.png");
 
     // Q5: the "middle" identity is the glow-ENABLE toggle (tune-local 6), not
     // the Range slider one stop below it. That identity used to live only in a
@@ -7920,7 +8010,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
         .expect("borders tune neighbour snapshot");
     save_slice_png(
         neighbour.clone(),
-        "/tmp/opencode/borders_tune_focus_neighbour.png",
+        "borders_tune_focus_neighbour.png",
     );
     let (n_top, n_bottom) = focused_row_span(&neighbour, 56, 68).unwrap_or_else(|| {
         panic!(
@@ -7947,7 +8037,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let end = win.window().take_snapshot().expect("borders tune last snapshot");
-    save_slice_png(end.clone(), "/tmp/opencode/borders_tune_focus_last.png");
+    save_slice_png(end.clone(), "borders_tune_focus_last.png");
 
     let diff = count_buffer_diff(&mid, &end);
     assert!(diff > 2000, "middle and last focus must scroll apart — got {diff}");
@@ -7965,7 +8055,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
 // R7 replaced all of that with compact 48px rows (56px while focused), so the
 // assertion is now the row HEIGHT read off the render: a focused row paints
 // its 1px icy border as two full-width bands, and the distance between them is
-// the rendered height. Reading /tmp/opencode/borders_tune_glow_colors.png is
+// the rendered height. Reading borders_tune_glow_colors.png from the run dir is
 // the visual half of the confirmation (D8: tests green alone never closes a
 // visual task).
 #[test]
@@ -8049,7 +8139,7 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     }
 
     let shot = win.window().take_snapshot().expect("glow colours snapshot");
-    save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_glow_colors.png");
+    save_slice_png(shot.clone(), "borders_tune_glow_colors.png");
 
     assert!(
         count_icy_pixels(&shot) > 200,
@@ -8084,7 +8174,7 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let dirty = win.window().take_snapshot().expect("dirty header snapshot");
-    save_slice_png(dirty.clone(), "/tmp/opencode/borders_tune_dirty_header.png");
+    save_slice_png(dirty.clone(), "borders_tune_dirty_header.png");
     assert!(
         count_buffer_diff(&shot, &dirty) > 100,
         "the header status must change when there are unsaved edits"
@@ -8164,7 +8254,7 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let open = win.window().take_snapshot().expect("picker snapshot");
-    save_slice_png(open.clone(), "/tmp/opencode/borders_tune_picker.png");
+    save_slice_png(open.clone(), "borders_tune_picker.png");
 
     assert!(
         count_buffer_diff(&closed, &open) > 5000,
@@ -8203,7 +8293,7 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
 }
 
 // ── Borders picker keyboard affordance (task 3.7) ─────────────────────
-// /tmp/opencode/borders_tune_picker.png must show, below the hex readout, the
+// the run's borders_tune_picker.png must show, below the hex readout, the
 // line "↑↓ Saturation · ←→ change" and a cyan 2px border on whichever of the
 // four controls it names. READING that PNG is the confirmation: the picker's
 // keyboard state (`part`) is internal and driven by the pane's command channel,
@@ -8267,7 +8357,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     };
     settle();
     let before = win.window().take_snapshot().expect("before snapshot");
-    save_slice_png(before.clone(), "/tmp/opencode/borders_wheel_before.png");
+    save_slice_png(before.clone(), "borders_wheel_before.png");
 
     // Wheel over the LIST pane (LEFT half of the content area: the preset list
     // sits next to the rail, the tune block on the right).
@@ -8289,7 +8379,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
         }
     }
     let after = win.window().take_snapshot().expect("after snapshot");
-    save_slice_png(after.clone(), "/tmp/opencode/borders_wheel_after.png");
+    save_slice_png(after.clone(), "borders_wheel_after.png");
 
     let diff = count_buffer_diff(&before, &after);
     println!("WHEEL: 2 frames = {early} ink, settled = {diff} ink");
@@ -8334,7 +8424,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     focus(last, &win);
     park(&win);
     let follow_reference = win.window().take_snapshot().expect("follow reference");
-    save_slice_png(follow_reference.clone(), "/tmp/opencode/borders_wheel_follow_reference.png");
+    save_slice_png(follow_reference.clone(), "borders_wheel_follow_reference.png");
 
     win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
         position: slint::LogicalPosition::new(700.0, 620.0),
@@ -8348,7 +8438,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     focus(last, &win);
     park(&win);
     let follow_after_wheel = win.window().take_snapshot().expect("follow after wheel");
-    save_slice_png(follow_after_wheel.clone(), "/tmp/opencode/borders_wheel_follow_after.png");
+    save_slice_png(follow_after_wheel.clone(), "borders_wheel_follow_after.png");
 
     let broke = count_buffer_diff(&follow_reference, &follow_after_wheel);
     // Scaling reference (measured, not guessed): with `viewport-y` BOUND the
@@ -8356,7 +8446,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     // content-scale shift of roughly one pane height. With the follow intact
     // the residual is under 10000 and comes from the scrollbar / scroll
     // indicator state, not the content: reading
-    // /tmp/opencode/borders_wheel_follow_{reference,after}.png shows both
+    // the run's borders_wheel_follow_{reference,after}.png shows both
     // ending on the same focused preset at the same offset.
     assert!(
         broke < 15000,
@@ -8392,7 +8482,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
         frames(30); // let each animation finish
     }
     let paced = win.window().take_snapshot().expect("paced");
-    save_slice_png(paced.clone(), "/tmp/opencode/borders_wheel_paced.png");
+    save_slice_png(paced.clone(), "borders_wheel_paced.png");
 
     focus(0, &win);
     for _ in 0..TICKS {
@@ -8401,7 +8491,7 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     }
     frames(120);
     let rapid = win.window().take_snapshot().expect("rapid");
-    save_slice_png(rapid.clone(), "/tmp/opencode/borders_wheel_rapid.png");
+    save_slice_png(rapid.clone(), "borders_wheel_rapid.png");
 
     let lost = count_buffer_diff(&paced, &rapid);
     assert!(
@@ -8473,7 +8563,7 @@ fn borders_list_wheel_reaches_the_end() {
         }
         frames(150); // settle fully
         let snap = win.window().take_snapshot().expect("burst");
-        save_slice_png(snap.clone(), &format!("/tmp/opencode/borders_wheel_{label}.png"));
+        save_slice_png(snap.clone(), &format!("borders_wheel_{label}.png"));
         snap
     };
     let first = burst("burst1");
@@ -8544,7 +8634,7 @@ fn borders_tune_renders_eight_slots() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
     let shot = win.window().take_snapshot().expect("eight slots snapshot");
-    save_slice_png(shot.clone(), "/tmp/opencode/borders_tune_eight_slots.png");
+    save_slice_png(shot.clone(), "borders_tune_eight_slots.png");
 
     // R1 — exactly 8 chips, one per slot, all on ONE row, ordered left to right
     // and non-overlapping. The old layout stacked 8 ~130px-tall slot cards
