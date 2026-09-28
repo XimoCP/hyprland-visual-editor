@@ -360,8 +360,8 @@ hve_theme_owns_colours() {
 # declarations and knows no source's layout. Adding a source means adding
 # one module under color_sources.d/, never editing this chain.
 #
-# Module contract: each color_sources.d/*.sh defines exactly these four
-# functions and nothing else at top level:
+# Module contract: each color_sources.d/*.sh defines these four functions
+# and nothing else at top level, except for the optional refresh:
 #   hve_colour_source_id()       - prints its stable id (for example "pywal")
 #   hve_colour_source_priority() - prints an integer; lower is tried first
 #   hve_colour_source_try()      - returns 0 and exports the HVE_*
@@ -369,6 +369,17 @@ hve_theme_owns_colours() {
 #   hve_colour_source_watch()    - prints the paths it wants watched, one
 #                                  per line (globs allowed); nothing when
 #                                  there is nothing to watch
+# A module MAY also define:
+#   hve_colour_source_refresh()  - re-asserts the backend's own rendered
+#                                  output after one of its declared paths
+#                                  changed (its own tool, its own files).
+#                                  Returns 0 when the refresh ran, 1 when it
+#                                  had nothing to do; a failed backend tool is
+#                                  reported non-zero. The refresh belongs to
+#                                  the backend — the core only routes it: it
+#                                  asks the loader which module declared a
+#                                  changed path and runs that module's refresh
+#                                  once, never naming the tool or its layout.
 # Modules must be safe under "set -u", must quote every expansion, and must
 # never eval file content or any external data. Sourcing a module only runs
 # its top-level function definitions; shipped modules are trusted exactly
@@ -453,6 +464,38 @@ _hve_colour_module_watch_paths() {
         fi
         bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_watch' _ "$mod" 2>/dev/null || continue
     done
+}
+
+# Prints the module file that declares the given path in its watch list
+# (exact line match), or nothing when no module declares it. The central
+# watcher reads this to route a changed path to its owning module; the
+# first match in filename order wins when two modules list one path.
+_hve_colour_module_for_path() {
+    local needle="${1:-}"
+    [ -n "$needle" ] || return 1
+    local moddir="${_HVE_COLOR_SOURCES_DIR:-}"
+    [ -n "$moddir" ] && [ -d "$moddir" ] || return 1
+    local mod line
+    for mod in "$moddir"/*.sh; do
+        [ -f "$mod" ] || continue
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if [ "$line" = "$needle" ]; then
+                printf '%s\n' "$mod"
+                return 0
+            fi
+        done < <(bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_watch' _ "$mod" 9>&- 2>/dev/null)
+    done
+    return 1
+}
+
+# Runs one module file's declared refresh (see the module contract above).
+# A module without hve_colour_source_refresh has nothing to do (status 1).
+# What to log is the caller's business; this helper only routes.
+_hve_colour_module_refresh() {
+    local mod="${1:-}"
+    [ -n "$mod" ] && [ -f "$mod" ] || return 1
+    bash -c 'source "$1" >/dev/null 2>&1; declare -F hve_colour_source_refresh >/dev/null 2>&1 || exit 1; hve_colour_source_refresh' _ "$mod" 9>&-
 }
 
 # --- Main ---

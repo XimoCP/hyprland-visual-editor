@@ -1,8 +1,9 @@
 # --- HVE colour source: noctalia-lua -------------------------------------------
 # Module contract (see the loader header in ../colors.sh): this file defines
-# exactly the four hve_colour_source_* functions below and nothing else at
-# top level. It must stay safe under "set -u", must quote every expansion,
-# and must never eval file content or any external data.
+# the four hve_colour_source_* functions plus the optional
+# hve_colour_source_refresh below, and nothing else at top level. It must
+# stay safe under "set -u", must quote every expansion, and must never eval
+# file content or any external data.
 #
 # Backend home: Noctalia. This module IS the Noctalia backend's home for the
 # rendered template step; the central scripts (colors.sh, color_watcher.sh)
@@ -52,4 +53,25 @@ hve_colour_source_watch() {
     if [ -f "$noctalia_v4_lua" ]; then
         printf '%s\n' "$noctalia_v4_lua"
     fi
+    # The backend's own settings file: watched only when the tool is
+    # available — the same condition the central watcher applied before
+    # this module owned the trigger.
+    local backend_settings="$HOME/.local/state/noctalia/settings.toml"
+    if [ -f "$backend_settings" ] && command -v noctalia &>/dev/null; then
+        printf '%s\n' "$backend_settings"
+    fi
+}
+
+# Declared refresh (see the loader header in ../colors.sh): re-render the
+# backend's own template output after its settings changed, BEFORE the
+# central overlay reads the lua files. The core only routes this — the tool
+# and the files below are this backend's own. Returns 0 when the refresh
+# ran; the guards below report 1 (nothing to do) and a failed tool call
+# reports its own non-zero status. Either way the caller logs the outcome
+# and continues — this never aborts the watcher's loop.
+hve_colour_source_refresh() {
+    local backend_settings="$HOME/.local/state/noctalia/settings.toml"
+    [ -f "$backend_settings" ] || return 1
+    command -v noctalia &>/dev/null || return 1
+    noctalia msg templates-apply 9>&-
 }

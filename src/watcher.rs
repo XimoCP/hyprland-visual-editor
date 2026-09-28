@@ -1632,4 +1632,272 @@ mod tests {
             "with a wallpaper-source theme the watcher must never ask the app to re-assert, got:\n{ipc_calls}"
         );
     }
+
+    #[test]
+    fn colour_module_routing_declares_settings_watch_and_refresh() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Unit 1d4 (capability routing, odd/tasks/hve-capability-routing.md):
+        // the settings.toml trigger and the templates-apply refresh belong
+        // to the backend module. The loader routes a changed path to the
+        // module that declared it; the module owns the refresh action and
+        // the core only routes it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(scripts.join("color_sources.d")).unwrap();
+        let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
+
+        // The module declares settings.toml only when the tool is
+        // available: a `noctalia` stub on PATH plus the file itself.
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
+        std::fs::set_permissions(&stubs.join("noctalia"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let state_dir = home.join(".local/state/noctalia");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        let settings = state_dir.join("settings.toml");
+        std::fs::write(&settings, "[general]\n").unwrap();
+        let path_with_stubs =
+            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+
+        let run_probe = |bash_body: &str| {
+            Command::new("bash")
+                .arg("-c")
+                .arg(bash_body)
+                .env("HOME", &home)
+                .env("HVE_CACHE_DIR", &cache)
+                .env("PATH", &path_with_stubs)
+                .output()
+                .unwrap()
+        };
+
+        // (i) The loader routes settings.toml to the owning module file.
+        let probe = format!(
+            "source \"{s}/utils.sh\" >/dev/null 2>&1; \
+             source \"{s}/colors.sh\" >/dev/null 2>&1; \
+             _hve_colour_module_for_path \"{p}\"",
+            s = scripts.display(),
+            p = settings.display()
+        );
+        let out = run_probe(&probe);
+        assert!(
+            out.status.success(),
+            "the loader must route the settings path to a module: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.trim().ends_with("color_sources.d/noctalia_lua.sh"),
+            "settings.toml must route to the owning module, got:\n{stdout}"
+        );
+
+        // (ii) That module defines the refresh action itself.
+        let module = scripts.join("color_sources.d/noctalia_lua.sh");
+        let probe = format!(
+            "source \"{}\" >/dev/null 2>&1; declare -F hve_colour_source_refresh",
+            module.display()
+        );
+        let out = run_probe(&probe);
+        assert!(
+            out.status.success(),
+            "the owning module must define hve_colour_source_refresh"
+        );
+
+        // (iii) A path no module declares routes nowhere — no refresh.
+        let probe = format!(
+            "source \"{s}/utils.sh\" >/dev/null 2>&1; \
+             source \"{s}/colors.sh\" >/dev/null 2>&1; \
+             _hve_colour_module_for_path \"/definitely/not/watched-xyz.json\"",
+            s = scripts.display()
+        );
+        let out = run_probe(&probe);
+        assert!(
+            !out.status.success(),
+            "a path with no declaring module must route nowhere"
+        );
+    }
+
+    #[test]
+    fn watcher_routes_settings_change_through_declared_module_refresh() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Unit 1d4 end to end: rewriting the watched settings.toml must run
+        // the OWNING MODULE's refresh exactly once (the stub records
+        // `templates-apply`) and still regenerate the overlay — routed
+        // generically, never through a hardcoded branch. A change in a path
+        // whose module defines no refresh regenerates the overlay with no
+        // refresh at all.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        // Watched from the start: the backend settings file, one rendered
+        // lua file (the refresh rewrites it — the re-baseline must swallow
+        // that write), and a pywal file whose module defines no refresh.
+        let state_dir = home.join(".local/state/noctalia");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        let settings = state_dir.join("settings.toml");
+        std::fs::write(&settings, "[general]\n").unwrap();
+        let hypr_dir = home.join(".config/hypr");
+        std::fs::create_dir_all(&hypr_dir).unwrap();
+        let lua = hypr_dir.join("noctalia.lua");
+        std::fs::write(&lua, "-- rendered v1\n").unwrap();
+        std::fs::create_dir_all(home.join(".cache/wal")).unwrap();
+        let wal = home.join(".cache/wal/colors.json");
+        std::fs::write(&wal, r#"{"wallpaper": "/dev/null"}"#).unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_theme_test_scripts(&scripts, &cache, &home);
+
+        // Recording `noctalia` stub: every invocation appends `$*` to the
+        // calls file, and `templates-apply` rewrites the rendered lua —
+        // exactly what the live tool does, so a missing re-baseline would
+        // re-trigger the loop and the count below would grow past one.
+        let stubs = root.join("stubs");
+        std::fs::create_dir_all(&stubs).unwrap();
+        std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
+        std::fs::write(
+            stubs.join("noctalia"),
+            format!(
+                "#!/bin/bash\nCALLS=\"{}\"\nLUA=\"{}\"\n\
+                 echo \"$*\" >> \"$CALLS\"\n\
+                 if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"templates-apply\" ]; then\n\
+                 echo \"-- rendered\" >> \"$LUA\"\n\
+                 fi\nexit 0\n",
+                cache.join("noctalia_calls").display(),
+                lua.display()
+            ),
+        )
+        .unwrap();
+        for name in ["inotifywait", "noctalia"] {
+            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        let path_with_stubs =
+            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+
+        let script_path = scripts.join("color_watcher.sh");
+        let _watcher = KillOnDrop::new(
+            Command::new("bash")
+                .arg(&script_path)
+                .env("HOME", &home)
+                .env("HVE_CACHE_DIR", &cache)
+                .env("PATH", &path_with_stubs)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+
+        let log_file = home.join(".cache/hve/color_watcher.log");
+        let lock_file = cache.join("color_watcher.lock");
+        let assemble_marker = cache.join("assemble_runs");
+        let calls_file = cache.join("noctalia_calls");
+        let assemble_runs = || {
+            std::fs::read_to_string(&assemble_marker)
+                .unwrap_or_default()
+                .lines()
+                .count()
+        };
+        let refresh_runs = || {
+            std::fs::read_to_string(&calls_file)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| l.contains("templates-apply"))
+                .count()
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let armed = lock_file.exists()
+                && std::fs::read_to_string(&log_file)
+                    .map(|s| s.contains("Starting watcher"))
+                    .unwrap_or(false)
+                && assemble_runs() > 0;
+            if armed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "watcher never armed within 30s");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // Measure the loop-side reaction only: clear the calls recorded
+        // during arming (none expected — the stub only records).
+        std::fs::write(&calls_file, "").unwrap();
+        let runs_before = assemble_runs();
+
+        // Phase A: an external settings rewrite.
+        std::fs::write(&settings, "[general]\ntheme = \"amber\"\n").unwrap();
+        let poll = Instant::now() + Duration::from_secs(20);
+        loop {
+            if refresh_runs() == 1 && assemble_runs() >= runs_before + 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < poll,
+                "watcher never ran the declared refresh within 20s \
+                 (refreshes: {}, log: {:?})",
+                refresh_runs(),
+                std::fs::read_to_string(&log_file).unwrap_or_default(),
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // The routing must be generic: the new mechanism logs its declared
+        // refresh, and the old hardcoded branch (with its own log line) is
+        // gone.
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        assert!(
+            log.contains("Declared refresh"),
+            "the refresh must be routed as a declared module action, got:\n{log}"
+        );
+        assert!(
+            !log.contains("applying templates"),
+            "the hardcoded settings branch must be gone, got:\n{log}"
+        );
+
+        // Settle past several watch cycles: the refresh's own lua rewrite
+        // was re-baselined, so no second refresh may fire.
+        std::thread::sleep(Duration::from_secs(6));
+        assert_eq!(
+            refresh_runs(),
+            1,
+            "the module refresh must run exactly once, got:\n{}",
+            std::fs::read_to_string(&calls_file).unwrap_or_default()
+        );
+
+        // Phase B: a path whose module defines no refresh.
+        let regen_before = assemble_runs();
+        std::fs::write(&wal, r#"{"wallpaper": "/other"}"#).unwrap();
+        let poll = Instant::now() + Duration::from_secs(20);
+        loop {
+            if assemble_runs() >= regen_before + 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < poll,
+                "watcher never regenerated the overlay after the pywal change"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(
+            refresh_runs(),
+            1,
+            "a change with no declaring refresh must run no refresh, got:\n{}",
+            std::fs::read_to_string(&calls_file).unwrap_or_default()
+        );
+    }
 }

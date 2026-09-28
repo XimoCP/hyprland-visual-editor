@@ -74,7 +74,7 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("assets/scripts/colors.sh", "noctalia", 9),
     ("assets/scripts/colors.sh", "matugen", 2),
     ("assets/scripts/color_watcher.sh", "hyprland", 1),
-    ("assets/scripts/color_watcher.sh", "noctalia", 32),
+    ("assets/scripts/color_watcher.sh", "noctalia", 1),
     ("assets/scripts/color_watcher.sh", "matugen", 1),
 ];
 

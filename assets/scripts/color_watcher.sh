@@ -21,7 +21,6 @@ ASSEMBLE_SCRIPT="$HVE_SCRIPTS_DIR/assemble.sh"
 LOG_FILE="$HOME/.cache/hve/color_watcher.log"
 COLOR_SIGNAL="$HOME/.cache/hve/colors.json"
 GET_COLORS_SCRIPT="$HVE_SCRIPTS_DIR/get_colors.sh"
-NOCTALIA_V5_SETTINGS="$HOME/.local/state/noctalia/settings.toml"
 
 _log() {
     echo "[HVE Watcher] $(date '+%H:%M:%S') $*" >> "$LOG_FILE"
@@ -31,18 +30,10 @@ _log() {
 find_watch_files() {
     local files=()
 
-    # Noctalia rendered lua and palette paths are declared by their own
-    # colour-source modules (noctalia-lua, noctalia-palette in
-    # color_sources.d/) and picked up through
-    # _hve_colour_module_watch_paths below — this function must not name
-    # them. The settings.toml block stays here for now (later unit).
-
-    # Noctalia v5: settings.toml changes when user modifies colors in Noctalia's own UI.
-    # We watch it so HVE can detect external color changes and refresh.
-    local noctalia_v5_settings="$HOME/.local/state/noctalia/settings.toml"
-    if [ -f "$noctalia_v5_settings" ] && command -v noctalia &>/dev/null; then
-        files+=("$noctalia_v5_settings")
-    fi
+    # Rendered, palette and settings paths are declared by their own
+    # colour-source modules (see color_sources.d/ and the loader header in
+    # colors.sh) and picked up through _hve_colour_module_watch_paths
+    # below — this function must not name any backend's paths itself.
 
     # Colour-source modules declare their own watch paths (see the loader
     # header in colors.sh); this list only reads those declarations. The
@@ -173,6 +164,45 @@ _reassert_theme_authority() {
     fi
 }
 
+# Declared backend refresh (capability routing,
+# odd/tasks/hve-capability-routing.md, unit 1d4): every changed path is
+# offered to the module that declared it, and each owning module's refresh
+# runs once per pass, before the overlay regeneration below. The core knows
+# no backend tool or layout — the module owns both. A refresh that fails or
+# has nothing to do is logged and the loop continues: the overlay
+# regeneration afterwards is unconditional. Afterwards every watched hash is
+# re-baselined, so writes the refresh itself made cannot re-trigger the loop.
+_run_declared_refreshes() {
+    local f mod id
+    declare -A _refreshed_mods=()
+    local ran_any=false
+    for f in "$@"; do
+        [ -n "$f" ] || continue
+        mod=$(_hve_colour_module_for_path "$f" 9>&- 2>/dev/null) || continue
+        [ -n "$mod" ] || continue
+        if [ -n "${_refreshed_mods[$mod]:-}" ]; then
+            continue
+        fi
+        _refreshed_mods[$mod]=1
+        id=$(bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_id' _ "$mod" 9>&- 2>/dev/null) || id="$mod"
+        _log "Running declared refresh for colour module '$id'..."
+        if _hve_colour_module_refresh "$mod" 9>&- >> "$LOG_FILE" 2>&1; then
+            _log "Declared refresh for colour module '$id' OK"
+        else
+            _log "Declared refresh for colour module '$id' failed or had nothing to do (continuing)"
+        fi
+        ran_any=true
+    done
+    if [ "$ran_any" = true ]; then
+        local wf
+        while IFS= read -r wf; do
+            if [ -f "$wf" ]; then
+                LAST_HASHES["$wf"]=$(md5sum "$wf" 2>/dev/null | cut -d' ' -f1)
+            fi
+        done <<< "$WATCH_FILES"
+    fi
+}
+
 # Repair a hijack that happened while HVE was off, before the first paint.
 _reassert_theme_authority force
 # Force initial refresh: ensure overlay is up-to-date when watcher starts
@@ -198,16 +228,15 @@ while true; do
     while true; do
         # Check if any file's content actually changed (hash-based detection)
         changed=false
-        noctalia_settings_changed=false
+        changed_files=()
         while IFS= read -r file; do
             if [ -f "$file" ]; then
                 current_hash=$(md5sum "$file" 2>/dev/null | cut -d' ' -f1)
                 if [ "$current_hash" != "${LAST_HASHES[$file]}" ]; then
                     LAST_HASHES["$file"]="$current_hash"
                     changed=true
+                    changed_files+=("$file")
                     _log "Change detected: $file"
-                    # Track if this was Noctalia v5 settings
-                    [ "$file" = "$NOCTALIA_V5_SETTINGS" ] && noctalia_settings_changed=true
                 fi
             else
                 _log "WARN: watched file no longer exists: $file"
@@ -223,27 +252,9 @@ while true; do
         # afterwards both render the theme's colours.
         _reassert_theme_authority
 
-        # Noctalia v5: if settings.toml changed, run templates-apply FIRST so the
-        # rendered Lua files (noctalia.lua / noctalia-colors.lua) reflect the new
-        # palette before assemble.sh reads them. This bridges the gap where v5's
-        # color-scheme-set only persists the setting but does NOT auto-run
-        # templates-apply.
-        if [ "$noctalia_settings_changed" = true ] && [ -f "$NOCTALIA_V5_SETTINGS" ] && command -v noctalia &>/dev/null; then
-            _log "Noctalia v5 settings changed — applying templates..."
-            if noctalia msg templates-apply 9>&- >> "$LOG_FILE" 2>&1; then
-                _log "Templates applied"
-                # Update hashes of rendered files so they don't trigger a second pass
-                # v4: noctalia/noctalia-colors.lua
-                # v5: noctalia.lua
-                for f in \
-                    "$HVE_HYPR_DIR/noctalia/noctalia-colors.lua" \
-                    "$HVE_HYPR_DIR/noctalia.lua"; do
-                    [ -f "$f" ] && LAST_HASHES["$f"]=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
-                done
-            else
-                _log "templates-apply failed (noctalia may not be available)"
-            fi
-        fi
+        # Declared backend refreshes, once per owning module, before the
+        # overlay regeneration (the timing the per-tool branch had).
+        _run_declared_refreshes "${changed_files[@]}"
 
         _log "Regenerating overlay..."
         # Run assemble.sh — stderr goes to log so we can see if it fails
