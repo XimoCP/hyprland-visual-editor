@@ -274,26 +274,6 @@ PY
     return 1
 }
 
-# Matugen: ~/.config/matugen/config.toml → find generated output
-_hve_try_matugen() {
-    local matugen_config="$HOME/.config/matugen/config.toml"
-    if [ -f "$matugen_config" ]; then
-        # Find the output template that targets hyprland
-        local output_file
-        output_file=$(grep -A5 'hyprland' "$matugen_config" 2>/dev/null | grep 'output' | head -1 | sed 's/.*= *//' | tr -d '"' | sed "s|~|$HOME|")
-
-        if [ -n "$output_file" ] && [ -f "$output_file" ]; then
-            echo "[HVE] Colors from: matugen ($output_file)" >&2
-            # Lua-only output.
-            local found
-            found=$(_hve_extract_lua_vars "$output_file")
-            [ -n "$found" ] && eval "$found"
-            return 0
-        fi
-    fi
-    return 1
-}
-
 # --- Tertiary completion (a missing tertiary must never alias the secondary) ---
 # The active scheme may expose only primary/secondary — Noctalia v5's wallpaper
 # templates render no tertiary (verified live). Aliasing the secondary painted
@@ -360,41 +340,6 @@ _hve_complete_tertiary() {
 # (#89b4fa) fallbacks below, and never a silent alias of either.
 HVE_TERTIARY_FALLBACK="#94e2d5"
 
-# Manual/fallback: scan hypr config files
-_hve_try_manual() {
-    echo "[HVE] Colors from: manual config scan" >&2
-    local found=0
-
-    # Scan .lua files
-    while IFS= read -r file; do
-        [[ "$file" == *"noctalia"* ]] && continue
-        local vars
-        vars=$(_hve_extract_lua_vars "$file")
-        if [ -n "$vars" ]; then
-            eval "$vars"
-            found=1
-            break
-        fi
-    done < <(find "$HVE_HYPR_DIR" -maxdepth 2 -name "*.lua" -type f 2>/dev/null)
-
-    # Last resort: border gradient from appearance
-    if [ $found -eq 0 ]; then
-        local appearance="$HVE_HYPR_DIR/configs/appearance.lua"
-        if [ -f "$appearance" ]; then
-            local colors
-            colors=$(_hve_extract_border_gradient "$appearance")
-            if [ -n "$colors" ]; then
-                HVE_PRIMARY=$(echo "$colors" | head -1)
-                HVE_SECONDARY=$(echo "$colors" | tail -1)
-                found=1
-            fi
-        fi
-    fi
-
-    [ $found -eq 1 ] && return 0
-    return 1
-}
-
 # --- Theme colour ownership (read-only predicate) ---------------------------
 # Answers "does the applied theme own its colours?": the descriptor is
 # present, valid and non-stale. Reuses _hve_theme_palette_file (which checks
@@ -433,34 +378,30 @@ hve_theme_owns_colours() {
 # Canonical order in ONE place: the priorities below preserve the historic
 # chain exactly (10 applied-theme snapshot, 20 scheme palette file,
 # 30 rendered template, 40 module slot, 50 generated output, 60 config
-# scan). Priorities 20, 30 and 40 now live in color_sources.d/ modules
-# (noctalia-palette, noctalia-lua, pywal); the legacy table below keeps
-# only the still-inline steps, so the overall order does not change.
+# scan). Priorities 20, 30, 40, 50 and 60 now live in color_sources.d/
+# modules; the legacy table below keeps only the still-inline step
+# (priority 10), so the overall order does not change.
 # Steps run sorted by priority; ties break by id.
-_HVE_LEGACY_PRIORITIES="10 50 60"
+_HVE_LEGACY_PRIORITIES="10"
 
 # Modules live beside this file so installs, checkouts and sandboxes that
 # copy both keep working without a configured path.
 _HVE_COLOR_SOURCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")/color_sources.d" 2>/dev/null && pwd)"
 
-# Historic ids of the still-inline steps, for the tie-break only.
+# Historic id of the still-inline step, for the tie-break only.
 _hve_legacy_id_for() {
     case "$1" in
         10) printf '%s\n' "theme-snapshot" ;;
-        50) printf '%s\n' "generator-output" ;;
-        60) printf '%s\n' "manual-scan" ;;
         *) return 1 ;;
     esac
 }
 
-# Runs one still-inline step by priority. The module slots (20, 30, 40)
-# are NOT here: a module step sources its file and calls
-# hve_colour_source_try instead.
+# Runs one still-inline step by priority. The module slots
+# (20, 30, 40, 50, 60) are NOT here: a module step sources its file and
+# calls hve_colour_source_try instead.
 _hve_run_legacy_step() {
     case "$1" in
         10) _hve_try_theme_palette ;;
-        50) _hve_try_matugen ;;
-        60) _hve_try_manual ;;
         *) return 1 ;;
     esac
 }
@@ -496,13 +437,20 @@ _hve_colour_steps() {
 
 # Prints every path the modules want watched, one per line. The central
 # watcher reads this list instead of naming sources; the dedupe and the
-# ordering of the final list stay the watcher's business.
+# ordering of the final list stay the watcher's business. Takes one
+# optional module id to skip: the watcher skips "manual-hypr" here and
+# adds its paths only under its own empty-list rule (see color_watcher.sh).
 _hve_colour_module_watch_paths() {
+    local skip_id="${1:-}"
     local moddir="${_HVE_COLOR_SOURCES_DIR:-}"
     [ -n "$moddir" ] && [ -d "$moddir" ] || return 0
-    local mod
+    local mod id
     for mod in "$moddir"/*.sh; do
         [ -f "$mod" ] || continue
+        if [ -n "$skip_id" ]; then
+            id=$(bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_id' _ "$mod" 2>/dev/null) || continue
+            [ "$id" = "$skip_id" ] && continue
+        fi
         bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_watch' _ "$mod" 2>/dev/null || continue
     done
 }

@@ -45,29 +45,26 @@ find_watch_files() {
     fi
 
     # Colour-source modules declare their own watch paths (see the loader
-    # header in colors.sh); this list only reads those declarations.
+    # header in colors.sh); this list only reads those declarations. The
+    # manual-hypr module is skipped here: its paths are watched only when
+    # nothing else was found (the fallback below).
     if command -v _hve_colour_module_watch_paths >/dev/null 2>&1; then
         while IFS= read -r module_path; do
             [ -n "$module_path" ] && files+=("$module_path")
-        done < <(_hve_colour_module_watch_paths 2>/dev/null)
+        done < <(_hve_colour_module_watch_paths "manual-hypr" 2>/dev/null)
     fi
 
-    # Matugen: watch the config to detect output file changes
-    local matugen_config="$HOME/.config/matugen/config.toml"
-    if [ -f "$matugen_config" ]; then
-        files+=("$matugen_config")
-        local output_file
-        output_file=$(grep -A5 'hyprland' "$matugen_config" 2>/dev/null | grep 'output' | head -1 | sed 's/.*= *//' | tr -d '"' | sed "s|~|$HOME|")
-        if [ -n "$output_file" ] && [ -f "$output_file" ]; then
-            files+=("$output_file")
-        fi
-    fi
-
-    # Manual fallback: scan hypr Lua config files for color definitions
+    # Manual fallback: the manual-hypr module's lua paths. HVE's own
+    # policy, not the module's declaration: these paths are watched ONLY
+    # when the list is otherwise empty. The module declares the paths;
+    # this block only applies the rule.
     if [ ${#files[@]} -eq 0 ]; then
-        while IFS= read -r f; do
-            files+=("$f")
-        done < <(find "$HVE_HYPR_DIR" -maxdepth 2 -name "*.lua" -type f 2>/dev/null)
+        local manual_mod="${_HVE_COLOR_SOURCES_DIR:-}/manual_hypr.sh"
+        if [ -f "$manual_mod" ]; then
+            while IFS= read -r f; do
+                [ -n "$f" ] && files+=("$f")
+            done < <(bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_watch' _ "$manual_mod" 2>/dev/null)
+        fi
     fi
 
     # Return unique files

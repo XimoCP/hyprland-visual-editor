@@ -71,12 +71,11 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/providers/shell.rs", "hyprctl", 1),
     ("src/providers/shell.rs", "noctalia", 35),
     ("src/providers/shell.rs", "quickshell", 6),
-    ("assets/scripts/colors.sh", "hyprland", 2),
-    ("assets/scripts/colors.sh", "noctalia", 12),
-    ("assets/scripts/colors.sh", "matugen", 11),
-    ("assets/scripts/color_watcher.sh", "hyprland", 2),
+    ("assets/scripts/colors.sh", "noctalia", 9),
+    ("assets/scripts/colors.sh", "matugen", 2),
+    ("assets/scripts/color_watcher.sh", "hyprland", 1),
     ("assets/scripts/color_watcher.sh", "noctalia", 32),
-    ("assets/scripts/color_watcher.sh", "matugen", 7),
+    ("assets/scripts/color_watcher.sh", "matugen", 1),
 ];
 
 /// Production code only: strip full-line and trailing `//` comments, then
