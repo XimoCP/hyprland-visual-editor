@@ -274,91 +274,6 @@ PY
     return 1
 }
 
-# Try to read the full M3 palette directly from the Noctalia scheme/palette file.
-# This gives us ALL colors (tertiary, surface_variant, etc.) regardless of what
-# the hyprland template happens to render. For wallpaper schemes (no palette
-# file), falls back to template output via _hve_try_noctalia().
-_hve_try_noctalia_palette() {
-    command -v noctalia &>/dev/null || return 1
-    command -v python3 &>/dev/null || return 1
-
-    local scheme_raw
-    scheme_raw=$(noctalia msg color-scheme-get 2>/dev/null) || return 1
-    scheme_raw="${scheme_raw%[$'\r\n']}"  # strip trailing newline
-
-    local source="${scheme_raw%% *}"
-    local name="${scheme_raw#* }"
-
-    # SECURITY: reject anything outside the exact supported source set.
-    case "$source" in
-        custom|builtin|community|wallpaper) ;;
-        *) return 1 ;;
-    esac
-
-    # SECURITY: the scheme name is theme-controlled and would be interpolated
-    # into file paths. Only [A-Za-z0-9_-] plus spaces are allowed; quotes,
-    # slashes, $, backticks, ;, (), control chars etc. make the whole palette
-    # attempt fall through safely to the template output. (Spaces are mapped
-    # to '_' before matching: a literal space inside a case bracket class is
-    # a bash parse error, while a space in the VALUE is harmless.)
-    local testname
-    testname=$(printf '%s' "$name" | tr ' ' '_')
-    case "$testname" in
-        ''|*[!A-Za-z0-9_-]*)
-            echo "[HVE] Invalid Noctalia scheme name, skipping palette" >&2
-            return 1
-            ;;
-    esac
-
-    local palette_file=""
-    case "$source" in
-        custom)
-            [ -f "$HOME/.config/noctalia/palettes/${name}.json" ] && palette_file="$HOME/.config/noctalia/palettes/${name}.json"
-            ;;
-        builtin)
-            if [ -f "$HOME/.config/noctalia/colorschemes/${name}/${name}.json" ]; then
-                palette_file="$HOME/.config/noctalia/colorschemes/${name}/${name}.json"
-            elif [ -f "/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json" ]; then
-                palette_file="/etc/xdg/quickshell/noctalia-shell/Assets/ColorScheme/${name}/${name}.json"
-            fi
-            ;;
-        community)
-            [ -f "$HOME/.local/state/noctalia/community-palettes/${name}.json" ] && palette_file="$HOME/.local/state/noctalia/community-palettes/${name}.json"
-            ;;
-        wallpaper)
-            return 1  # no palette file, fall through to template output
-            ;;
-    esac
-
-    [ -n "$palette_file" ] && [ -f "$palette_file" ] || return 1
-
-    echo "[HVE] Colors from: Noctalia palette (${source})" >&2
-    _hve_palette_from_file "$palette_file"
-}
-
-# Noctalia template output fallback (Lua-only):
-#   v5: ~/.config/hypr/noctalia.lua
-#   v4: ~/.config/hypr/noctalia/noctalia-colors.lua
-_hve_try_noctalia() {
-    local noctalia_v5_lua="$HVE_HYPR_DIR/noctalia.lua"
-    local noctalia_v4_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
-
-    # Prefer v5 output (templates-apply writes here).
-    if [ -f "$noctalia_v5_lua" ]; then
-        echo "[HVE] Colors from: Noctalia v5 (lua)" >&2
-        eval "$(_hve_extract_lua_vars "$noctalia_v5_lua")"
-        return 0
-    fi
-
-    # Fallback to v4 path.
-    if [ -f "$noctalia_v4_lua" ]; then
-        echo "[HVE] Colors from: Noctalia v4 (lua)" >&2
-        eval "$(_hve_extract_lua_vars "$noctalia_v4_lua")"
-        return 0
-    fi
-    return 1
-}
-
 # Matugen: ~/.config/matugen/config.toml → find generated output
 _hve_try_matugen() {
     local matugen_config="$HOME/.config/matugen/config.toml"
@@ -518,9 +433,11 @@ hve_theme_owns_colours() {
 # Canonical order in ONE place: the priorities below preserve the historic
 # chain exactly (10 applied-theme snapshot, 20 scheme palette file,
 # 30 rendered template, 40 module slot, 50 generated output, 60 config
-# scan). The migrated module slot keeps its number (40), so the overall
-# order does not change. Steps run sorted by priority; ties break by id.
-_HVE_LEGACY_PRIORITIES="10 20 30 50 60"
+# scan). Priorities 20, 30 and 40 now live in color_sources.d/ modules
+# (noctalia-palette, noctalia-lua, pywal); the legacy table below keeps
+# only the still-inline steps, so the overall order does not change.
+# Steps run sorted by priority; ties break by id.
+_HVE_LEGACY_PRIORITIES="10 50 60"
 
 # Modules live beside this file so installs, checkouts and sandboxes that
 # copy both keep working without a configured path.
@@ -530,21 +447,18 @@ _HVE_COLOR_SOURCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")/color_sources.d" 
 _hve_legacy_id_for() {
     case "$1" in
         10) printf '%s\n' "theme-snapshot" ;;
-        20) printf '%s\n' "full-palette" ;;
-        30) printf '%s\n' "template-lua" ;;
         50) printf '%s\n' "generator-output" ;;
         60) printf '%s\n' "manual-scan" ;;
         *) return 1 ;;
     esac
 }
 
-# Runs one still-inline step by priority. The module slot (40) is NOT here:
-# a module step sources its file and calls hve_colour_source_try instead.
+# Runs one still-inline step by priority. The module slots (20, 30, 40)
+# are NOT here: a module step sources its file and calls
+# hve_colour_source_try instead.
 _hve_run_legacy_step() {
     case "$1" in
         10) _hve_try_theme_palette ;;
-        20) _hve_try_noctalia_palette ;;
-        30) _hve_try_noctalia ;;
         50) _hve_try_matugen ;;
         60) _hve_try_manual ;;
         *) return 1 ;;

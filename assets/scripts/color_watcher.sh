@@ -31,38 +31,17 @@ _log() {
 find_watch_files() {
     local files=()
 
-    # Noctalia v4: rendered Lua output in noctalia/ subdirectory
-    local noctalia_lua="$HVE_HYPR_DIR/noctalia/noctalia-colors.lua"
-    if [ -f "$noctalia_lua" ]; then
-        files+=("$noctalia_lua")
-    fi
-
-    # Noctalia v5: rendered Lua output directly in the hypr dir
-    local noctalia_v5_lua="$HVE_HYPR_DIR/noctalia.lua"
-    if [ -f "$noctalia_v5_lua" ]; then
-        files+=("$noctalia_v5_lua")
-    fi
+    # Noctalia rendered lua and palette paths are declared by their own
+    # colour-source modules (noctalia-lua, noctalia-palette in
+    # color_sources.d/) and picked up through
+    # _hve_colour_module_watch_paths below — this function must not name
+    # them. The settings.toml block stays here for now (later unit).
 
     # Noctalia v5: settings.toml changes when user modifies colors in Noctalia's own UI.
     # We watch it so HVE can detect external color changes and refresh.
     local noctalia_v5_settings="$HOME/.local/state/noctalia/settings.toml"
     if [ -f "$noctalia_v5_settings" ] && command -v noctalia &>/dev/null; then
         files+=("$noctalia_v5_settings")
-    fi
-
-    # Noctalia palette files: watch custom palettes and community palettes so HVE
-    # picks up direct palette edits (individual color changes within a scheme).
-    local noctalia_palettes_dir="$HOME/.config/noctalia/palettes"
-    if [ -d "$noctalia_palettes_dir" ]; then
-        while IFS= read -r pf; do
-            files+=("$pf")
-        done < <(find "$noctalia_palettes_dir" -name "*.json" -type f 2>/dev/null)
-    fi
-    local noctalia_community_palettes_dir="$HOME/.local/state/noctalia/community-palettes"
-    if [ -d "$noctalia_community_palettes_dir" ]; then
-        while IFS= read -r pf; do
-            files+=("$pf")
-        done < <(find "$noctalia_community_palettes_dir" -name "*.json" -type f 2>/dev/null)
     fi
 
     # Colour-source modules declare their own watch paths (see the loader
