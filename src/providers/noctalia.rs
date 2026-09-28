@@ -1846,6 +1846,46 @@ impl ThemeProvider for NoctaliaV5Provider {
         Ok(())
     }
 
+    /// Rebuild the colour-authority descriptor from this theme's OWN saved
+    /// state (capability-routing R2, the upgrade window: a theme applied
+    /// before the descriptor existed otherwise declares no authority until
+    /// the next apply). Same parse and same construction as the apply path
+    /// above — but purely declarative: nothing is copied into a live
+    /// palette, no CLI runs, and `None` comes back whenever the state that
+    /// would have to be declared is missing.
+    fn derive_colour_authority(
+        &self,
+        theme_dir: &Path,
+    ) -> Option<crate::color_authority::ColorAuthority> {
+        let provider_dir = theme_dir.join("providers").join(self.id());
+        let palette_src = provider_dir.join("palette.json");
+        let raw = fs::read_to_string(provider_dir.join("source.txt")).ok()?;
+        let mut parts = raw.trim().splitn(2, ' ');
+        let origin = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("").trim();
+        // Same rule as the apply path: only a custom palette carries a
+        // snapshot we can point at; builtin/community/wallpaper schemes
+        // claim no colour authority.
+        if origin != "custom" || name.is_empty() {
+            return None;
+        }
+        // An empty snapshot is no snapshot — the same guard
+        // `reassert_colours` applies before it would write bytes back.
+        match fs::read(&palette_src) {
+            Ok(bytes) if !bytes.is_empty() => {}
+            _ => return None,
+        }
+        let theme_name = theme_dir.file_name()?.to_str()?.to_string();
+        Some(crate::color_authority::ColorAuthority {
+            backend: self.id().to_string(),
+            theme: theme_name,
+            palette_file: palette_src.display().to_string(),
+            // Same sanitization the apply path applies before the name
+            // touches a file name or a CLI argument.
+            palette_name: name.replace('/', "_"),
+        })
+    }
+
     fn post_apply(&self, theme_name: &str) -> Result<(), String> {
         // No reload needed — v5 hot-reloads automatically.
         // Just a notification.

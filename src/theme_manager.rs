@@ -71,6 +71,21 @@ pub trait ThemeProvider: Send + Sync {
         let _ = theme_dir;
         Ok(())
     }
+
+    /// Rebuild this provider's colour-authority descriptor from the theme's
+    /// OWN saved state (startup repair for themes applied before the
+    /// descriptor existed). Read-only by contract: no palette is copied and
+    /// no backend CLI runs — it only re-declares what a previous apply
+    /// already recorded. `None` when the provider claims no colour
+    /// authority for this theme, or when the state needed to declare it is
+    /// missing. Default: `None`, because most providers do not own colours.
+    fn derive_colour_authority(
+        &self,
+        theme_dir: &std::path::Path,
+    ) -> Option<crate::color_authority::ColorAuthority> {
+        let _ = theme_dir;
+        None
+    }
 }
 
 /// Provider ids that have been removed from the product itself.
@@ -499,6 +514,73 @@ impl ThemeManager {
             }
         }
         Ok(())
+    }
+
+    /// Startup repair for the colour-authority upgrade window
+    /// (`odd/tasks/hve-capability-routing.md`, R2): a theme applied before
+    /// the descriptor existed declares no colour authority until it is
+    /// applied again. When a theme IS applied and the descriptor is ABSENT,
+    /// rebuild it once from the theme's own saved state through the
+    /// provider that owns it — never from a fresh apply, never from a
+    /// backend CLI.
+    ///
+    /// Quiet by contract: an empty last-applied name, an existing
+    /// descriptor, a missing or unreadable theme, an unregistered owner and
+    /// a failed write are all logged and swallowed. It never clears a
+    /// descriptor and can never fail startup. Idempotent: with the
+    /// descriptor present the write is skipped entirely.
+    pub fn restore_missing_colour_authority(&self) {
+        // validate_name also rejects hostile names: this string comes from
+        // the on-disk config and becomes a directory lookup.
+        let Ok(name) = Self::validate_name(&self.last_applied) else {
+            return;
+        };
+        if crate::color_authority::read_descriptor().is_some() {
+            tracing::debug!(
+                "[themes] Colour-authority descriptor already present; startup repair skipped"
+            );
+            return;
+        }
+        let theme_dir = self.themes_dir.join(&name);
+        if !theme_dir.is_dir() {
+            tracing::debug!(
+                "[themes] No applied theme dir for '{name}'; colour-authority repair skipped"
+            );
+            return;
+        }
+        let meta: ThemeMeta = match fs::read_to_string(theme_dir.join("meta.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(meta) => meta,
+            None => {
+                tracing::debug!(
+                    "[themes] Unreadable metadata for '{name}'; colour-authority repair skipped"
+                );
+                return;
+            }
+        };
+        for id in &meta.providers {
+            let Some(provider) = self.provider(id) else {
+                continue;
+            };
+            let Some(authority) = provider.derive_colour_authority(&theme_dir) else {
+                continue;
+            };
+            match crate::color_authority::write_descriptor(&authority) {
+                Ok(()) => {
+                    tracing::info!("[themes] Restored colour-authority descriptor for '{name}'");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!("[themes] Cannot write colour-authority descriptor: {e}");
+                    return;
+                }
+            }
+        }
+        tracing::debug!(
+            "[themes] No registered provider claims colour authority for '{name}'; descriptor left absent"
+        );
     }
 }
 
@@ -1370,6 +1452,212 @@ mod tests {
         assert!(
             !genuine.exists(),
             "a genuine non-symlink cache entry named *-frame.png must be removed"
+        );
+    }
+
+    // ── Colour-authority startup repair (capability-routing R2) ──────
+
+    /// Seed a theme that carries the colour-owning provider's saved state
+    /// (source line + snapshot) — every theme applied before the descriptor
+    /// existed looks exactly like this. Returns the provider dir.
+    fn seed_colours_theme(
+        themes_dir: &Path,
+        name: &str,
+        source: &str,
+        with_snapshot: bool,
+    ) -> PathBuf {
+        seed_meta(
+            themes_dir,
+            name,
+            "2026-09-20T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let provider_dir = themes_dir.join(name).join("providers").join("noctalia-v5");
+        fs::create_dir_all(&provider_dir).unwrap();
+        fs::write(provider_dir.join("source.txt"), source).unwrap();
+        if with_snapshot {
+            fs::write(provider_dir.join("palette.json"), r#"{"palette":"demo"}"#).unwrap();
+        }
+        provider_dir
+    }
+
+    /// Build the manager a fresh startup would build, run the repair, and
+    /// assert the descriptor stayed absent — the quiet no-op contract.
+    fn repair_and_expect_noop(config_dir: &Path, last_applied: &str, register_provider: bool) {
+        let mut tm = ThemeManager::new(config_dir);
+        if register_provider {
+            tm.register_provider(Box::new(
+                crate::providers::noctalia::NoctaliaV5Provider::new(),
+            ));
+        }
+        tm.last_applied = last_applied.to_string();
+
+        tm.restore_missing_colour_authority();
+
+        assert!(
+            crate::color_authority::read_descriptor().is_none(),
+            "repair must be a quiet no-op (last_applied={last_applied:?}, \
+             provider registered={register_provider})"
+        );
+    }
+
+    /// The upgrade window: a theme applied before the descriptor existed
+    /// declares no colour authority until it is applied again. Startup must
+    /// close that window from the state ALREADY on disk — the theme's own
+    /// saved snapshot and its recorded palette name — never from a fresh
+    /// apply.
+    #[test]
+    fn restore_missing_colour_authority_rebuilds_it_from_saved_state() {
+        let _env = crate::test_utils::TempEnv::new();
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        let provider_dir = seed_colours_theme(&themes_dir, "Legacy", "custom LegacyPal\n", true);
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
+        tm.last_applied = "Legacy".to_string();
+
+        assert!(
+            crate::color_authority::read_descriptor().is_none(),
+            "precondition: the upgrade window is open"
+        );
+
+        tm.restore_missing_colour_authority();
+
+        assert_eq!(
+            crate::color_authority::read_descriptor(),
+            Some(crate::color_authority::ColorAuthority {
+                backend: "noctalia-v5".to_string(),
+                theme: "Legacy".to_string(),
+                palette_file: provider_dir.join("palette.json").display().to_string(),
+                palette_name: "LegacyPal".to_string(),
+            }),
+            "the descriptor must be rebuilt from the theme's own saved snapshot"
+        );
+    }
+
+    /// Repair runs only while the descriptor is ABSENT: a second run writes
+    /// nothing (not even the same bytes), and an existing descriptor — even
+    /// one that disagrees with the saved state — is never rewritten or
+    /// cleared by startup.
+    #[test]
+    fn restore_missing_colour_authority_skips_an_existing_descriptor_and_is_idempotent() {
+        let _env = crate::test_utils::TempEnv::new();
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_colours_theme(&themes_dir, "Legacy", "custom LegacyPal\n", true);
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
+        tm.last_applied = "Legacy".to_string();
+
+        tm.restore_missing_colour_authority();
+        let path = crate::color_authority::descriptor_path();
+        let bytes = fs::read(&path).expect("the repair must have written a descriptor");
+        let stamped = fs::metadata(&path).unwrap().modified().unwrap();
+
+        tm.restore_missing_colour_authority();
+
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            bytes,
+            "a second run must leave byte-identical content"
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().modified().unwrap(),
+            stamped,
+            "a second run must SKIP the write, not rewrite the same bytes"
+        );
+
+        // Existing-but-different wins: startup repairs the ABSENT case only.
+        let existing = crate::color_authority::ColorAuthority {
+            backend: "something-else".to_string(),
+            theme: "Other".to_string(),
+            palette_file: "/tmp/other.json".to_string(),
+            palette_name: "OtherPal".to_string(),
+        };
+        crate::color_authority::write_descriptor(&existing).unwrap();
+        tm.restore_missing_colour_authority();
+        assert_eq!(
+            crate::color_authority::read_descriptor(),
+            Some(existing),
+            "startup must never rewrite or clear a descriptor that exists"
+        );
+    }
+
+    /// Missing state is a quiet no-op in every shape it takes: nothing
+    /// applied, the theme gone, unreadable metadata, the owner not
+    /// registered, no usable snapshot, or a hostile last-applied name. No
+    /// descriptor written, nothing cleared, nothing panicked.
+    #[test]
+    fn restore_missing_colour_authority_is_a_quiet_noop_when_state_is_missing() {
+        let _env = crate::test_utils::TempEnv::new();
+        assert!(crate::color_authority::read_descriptor().is_none());
+
+        // (a) nothing applied at all
+        let cfg = TempDir::new().unwrap();
+        repair_and_expect_noop(cfg.path(), "", true);
+
+        // (b) the applied theme is gone from disk
+        let cfg = TempDir::new().unwrap();
+        repair_and_expect_noop(cfg.path(), "Ghost", true);
+
+        // (c) a theme dir without a readable meta.json
+        let cfg = TempDir::new().unwrap();
+        fs::create_dir_all(cfg.path().join("hve").join("themes").join("NoMeta")).unwrap();
+        repair_and_expect_noop(cfg.path(), "NoMeta", true);
+
+        // (d) the colour-owning provider is not registered
+        let cfg = TempDir::new().unwrap();
+        seed_colours_theme(
+            &cfg.path().join("hve").join("themes"),
+            "Unregistered",
+            "custom Demo\n",
+            true,
+        );
+        repair_and_expect_noop(cfg.path(), "Unregistered", false);
+
+        // (e) a builtin scheme carries no snapshot of ours
+        let cfg = TempDir::new().unwrap();
+        seed_colours_theme(
+            &cfg.path().join("hve").join("themes"),
+            "Builtin",
+            "builtin Ocean\n",
+            true,
+        );
+        repair_and_expect_noop(cfg.path(), "Builtin", true);
+
+        // (f) a custom source with no snapshot on disk
+        let cfg = TempDir::new().unwrap();
+        seed_colours_theme(
+            &cfg.path().join("hve").join("themes"),
+            "NoSnapshot",
+            "custom Demo\n",
+            false,
+        );
+        repair_and_expect_noop(cfg.path(), "NoSnapshot", true);
+
+        // (g) a hostile last-applied name never escapes the themes dir
+        let cfg = TempDir::new().unwrap();
+        repair_and_expect_noop(cfg.path(), "..", true);
+    }
+
+    /// The new hook defaults to "this provider owns no colours", the same
+    /// shape as `reassert_colours`' default: a colour-less provider stays
+    /// silent without writing an override.
+    #[test]
+    fn derive_colour_authority_defaults_to_none() {
+        let provider = StubProvider { id: "plain" };
+        assert!(
+            provider
+                .derive_colour_authority(Path::new("/nonexistent-theme-dir"))
+                .is_none(),
+            "the default derive_colour_authority must be None"
         );
     }
 }

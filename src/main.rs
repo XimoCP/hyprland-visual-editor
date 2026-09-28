@@ -2513,6 +2513,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
             }
         }
+        // Upgrade window (capability-routing R2): a theme applied before
+        // the colour-authority descriptor existed declares none. Rebuild it
+        // once from that theme's own saved state — a quiet no-op when the
+        // descriptor is already there or when the state to derive it from
+        // is missing. Never fails startup: every error is logged.
+        theme_manager.restore_missing_colour_authority();
     }
 
     // Refresh UI theme list
