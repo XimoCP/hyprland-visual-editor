@@ -554,6 +554,126 @@ fn descriptor_with_missing_palette_file_uses_live_palette() {
     );
 }
 
+/// A descriptor whose palette path escapes through a symlink must fall
+/// through to the live palette (unit 1e, F3): a symlinked theme-dir
+/// component can point outside `$HOME/.config/hve/themes/`, so the
+/// textual prefix match alone is not enough.
+#[test]
+fn descriptor_with_symlinked_theme_dir_falls_through_to_live_palette() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+    // Attacker snapshot outside the theme dir, linked in through a
+    // symlinked theme-dir component.
+    let outside = home.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("evil.json"), THEME_SNAPSHOT_JSON).unwrap();
+    let link = home
+        .path()
+        .join(".config")
+        .join("hve")
+        .join("themes")
+        .join("Evil");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    let palette = link.join("evil.json");
+    write_color_authority(
+        home.path(),
+        "Animation",
+        palette.to_str().unwrap(),
+        "evil",
+    );
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "a palette reached through a symlinked theme dir must not own the colours"
+    );
+}
+
+/// A descriptor whose palette file itself is a symlink to the outside
+/// must fall through to the live palette (unit 1e, F3).
+#[test]
+fn descriptor_with_symlinked_palette_file_falls_through_to_live_palette() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+    let outside = home.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("evil.json"), THEME_SNAPSHOT_JSON).unwrap();
+    let theme_dir = home
+        .path()
+        .join(".config")
+        .join("hve")
+        .join("themes")
+        .join("Animation");
+    std::fs::create_dir_all(&theme_dir).unwrap();
+    std::os::unix::fs::symlink(outside.join("evil.json"), theme_dir.join("link.json"))
+        .unwrap();
+    let palette = theme_dir.join("link.json");
+    write_color_authority(
+        home.path(),
+        "Animation",
+        palette.to_str().unwrap(),
+        "evil",
+    );
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "a symlinked palette file must not own the colours"
+    );
+}
+
+/// The palette-name whitelist (unit 1e, F1): `..`, `.`, slashes and
+/// leading dot/dash names must never own colours; a plain name must.
+#[test]
+fn hostile_palette_names_never_own_colours() {
+    let check = |palette_name: &str| -> String {
+        let home = tempfile::tempdir().unwrap();
+        write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+        let snapshot = write_descriptor_snapshot(home.path(), "Animation", THEME_SNAPSHOT_JSON);
+        write_color_authority(home.path(), "Animation", &snapshot, palette_name);
+        let cache = home.path().join(".cache").join("hve");
+        let out = run_bash(
+            &format!(
+                "source \"{}\" >/dev/null 2>&1; \
+                 if hve_theme_owns_colours >/dev/null 2>&1; then echo OWNS; else echo REFUSED; fi",
+                scripts_dir().join("colors.sh").display()
+            ),
+            &[],
+            &[
+                ("HOME", home.path().to_str().unwrap()),
+                ("HVE_SAFE_DIR", cache.to_str().unwrap()),
+            ],
+            home.path(),
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    for hostile in [
+        "..",
+        ".",
+        "../evil",
+        "a/b",
+        "/etc/passwd",
+        "-evil",
+        ".hidden",
+    ] {
+        assert_eq!(
+            check(hostile),
+            "REFUSED",
+            "palette name {hostile:?} must never own colours"
+        );
+    }
+    assert_eq!(
+        check("theme-blue"),
+        "OWNS",
+        "a plain palette name must keep owning colours"
+    );
+}
+
 // ── Colour-source loader: a new file, not central edits (unit 1d) ───────
 // Capability routing (odd/tasks/hve-capability-routing.md, unit 1d):
 // colour sources are modules under assets/scripts/color_sources.d/; the

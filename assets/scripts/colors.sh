@@ -72,7 +72,9 @@ _hve_extract_border_gradient() {
 _hve_theme_palette_file() {
     command -v python3 &>/dev/null || return 1
 
-    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    # Cache-dir convention (unit 1e, F5): same default as utils.sh, which
+    # mirrors Rust's `hve_cache_dir()` — `$XDG_CACHE_HOME` else `$HOME/.cache`.
+    local safe_dir="${HVE_SAFE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
     local descriptor="$safe_dir/color-authority.json"
     [ -f "$descriptor" ] || return 1
 
@@ -119,6 +121,27 @@ PY
     esac
     [ -f "$palette" ] || return 1
 
+    # Symlink confinement (capability-routing unit 1e, F3): a symlinked
+    # path component can point outside the theme directory, so the
+    # textual prefix match above is not enough. Reject a palette path
+    # that IS a symlink, and resolve the PARENT directory (never the
+    # file itself — `cd -P` plus `pwd`) to confirm it still lives under
+    # the themes directory. Cheap, `set -u`-safe, no recursion.
+    [ -L "$palette" ] && return 1
+    local _hve_parent _hve_real_parent _hve_themes_root _hve_real_root
+    _hve_parent=$(dirname -- "$palette")
+    _hve_real_parent=$(cd -P -- "$_hve_parent" 2>/dev/null && pwd) || return 1
+    _hve_themes_root="$HOME/.config/hve/themes"
+    if _hve_real_root=$(cd -P -- "$_hve_themes_root" 2>/dev/null && pwd); then
+        case "$_hve_real_parent/" in
+            "$_hve_real_root/"*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    # (When the themes root itself cannot be resolved it does not exist,
+    # so no symlink could have been traversed — the -f check above
+    # governs and the textual prefix already passed.)
+
     printf '%s\n' "$palette"
 }
 
@@ -128,7 +151,7 @@ _hve_theme_palette_name() {
     palette_file=$(_hve_theme_palette_file) || return 1
     [ -n "$palette_file" ] || return 1
 
-    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    local safe_dir="${HVE_SAFE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
     local descriptor="$safe_dir/color-authority.json"
     local name
     name=$(python3 - "$descriptor" <<'PY' 2>/dev/null
@@ -165,8 +188,11 @@ _hve_try_theme_palette() {
     local palette_file
     palette_file=$(_hve_theme_palette_file) || return 1
     [ -n "$palette_file" ] || return 1
+    # The log line reports what is true: it prints only AFTER the
+    # snapshot parsed (unit 1e, F4) — a failed parse falls through to
+    # the live chain silently instead of claiming the snapshot won.
+    _hve_palette_from_file "$palette_file" || return 1
     echo "[HVE] Colors from: applied theme snapshot" >&2
-    _hve_palette_from_file "$palette_file"
 }
 
 # Turn a Noctalia-shaped palette file into validated HVE_* assignments.

@@ -25,8 +25,13 @@ HVE_BORDERS_DIR="$HVE_ASSETS_DIR/borders"
 HVE_ANIMATIONS_DIR="$HVE_ASSETS_DIR/animations"
 HVE_SHADERS_DIR="$HVE_ASSETS_DIR/shaders"
 
-# Safe cache directory (outside plugin, survives plugin deletion for cleanup)
-HVE_SAFE_DIR="${HVE_CACHE_DIR:-$HOME/.cache/hve}"
+# Safe cache directory (outside plugin, survives plugin deletion for cleanup).
+# Cache-dir convention (capability-routing unit 1e, F5): the default mirrors
+# Rust's `src/config.rs::hve_cache_dir()` — `$XDG_CACHE_HOME` when set, else
+# `$HOME/.cache`, plus `hve` — so both sides find `color-authority.json`.
+# Rule: an explicit `HVE_CACHE_DIR` (sandbox/test override) wins; otherwise
+# the XDG rule above. In production neither `HVE_*` var is set, so both agree.
+HVE_SAFE_DIR="${HVE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
 
 # Hyprland config directory
 HVE_HYPR_DIR="$HOME/.config/hypr"
