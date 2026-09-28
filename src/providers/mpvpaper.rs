@@ -42,13 +42,20 @@
 //!
 //! Themes WITHOUT a manifest send `clear-all` first (the programmatic STOP)
 //! so a previously running video cannot hijack the screen.
+//!
+//! Supervising the plugin (probing `plugins list`, the disable/enable
+//! bounce, the `clear-all` service call) is Noctalia runtime knowledge and
+//! lives in `noctalia_runtime` — the plugin is Noctalia's. This backend
+//! only states what it needs from that seam.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::providers::noctalia_runtime::{noctalia_msg, noctalia_state_dir};
+use crate::providers::noctalia_runtime::{
+    noctalia_state_dir, plugin_bounce, plugin_enabled, plugin_service_clear_all, MPVPAPER_PLUGIN_ID,
+};
 
 // The shared background information — manifest file name, manifest types,
 // live-state path and capture, and the user notification — lives in the
@@ -93,11 +100,12 @@ fn video_directory_from_settings() -> PathBuf {
 /// Pure parser: extract `video_directory` from the mpvpaper plugin section of
 /// a settings.toml string. Returns `default` when absent or unparseable.
 fn parse_video_directory(raw: &str, default: PathBuf, home: &str) -> PathBuf {
+    let section = format!("[plugin_settings.\"{MPVPAPER_PLUGIN_ID}\"]");
     let mut in_mpvpaper_section = false;
     for line in raw.lines() {
         let line = line.trim();
         if line.starts_with('[') {
-            in_mpvpaper_section = line == "[plugin_settings.\"noctalia/mpvpaper\"]";
+            in_mpvpaper_section = line == section;
             continue;
         }
         if in_mpvpaper_section {
@@ -129,15 +137,12 @@ fn expand_home(path: &str, home: &str) -> Option<PathBuf> {
     }
 }
 
-/// Check whether the mpvpaper plugin is installed AND enabled, by parsing
-/// `noctalia msg plugins list` (line suffix `enabled`).
+/// Check whether the mpvpaper plugin is installed AND enabled. One
+/// implementation only, in the neutral `noctalia_runtime` seam (the plugin
+/// is Noctalia's, so how to ask is Noctalia runtime knowledge); this
+/// backend just states which plugin it feeds.
 pub(crate) fn mpvpaper_enabled() -> bool {
-    match noctalia_msg(&["msg", "plugins", "list"]) {
-        Ok(out) => out
-            .lines()
-            .any(|l| l.trim_start().starts_with("noctalia/mpvpaper") && l.trim_end().ends_with("enabled")),
-        Err(_) => false,
-    }
+    plugin_enabled(MPVPAPER_PLUGIN_ID)
 }
 
 /// Kill every running mpvpaper instance. The plugin's own kill is async and
@@ -156,21 +161,12 @@ fn kill_all_instances() {
 /// Bounce the plugin so it re-reads assignments.json at boot and launches
 /// the configured mpvpaper instances (the programmatic "click").
 ///
-/// G3: refused while the plugin is currently disabled — the enable step
-/// would RE-ENABLE a plugin the user turned off and resurrect its old
-/// video on the next theme apply. Callers check first; this guard is the
-/// backstop so no path can bounce a disabled plugin by accident.
+/// G3 lives with the IPC it guards: `noctalia_runtime::plugin_bounce`
+/// refuses while the plugin is currently disabled, so the enable step can
+/// never RE-ENABLE a plugin the user turned off. This backend delegates
+/// and keeps no supervisor IPC of its own.
 fn bounce_plugin() -> Result<(), String> {
-    if !mpvpaper_enabled() {
-        return Err(
-            "noctalia/mpvpaper plugin is not enabled; refusing to bounce \
-             (would re-enable a plugin the user disabled)"
-                .into(),
-        );
-    }
-    noctalia_msg(&["msg", "plugins", "disable", "noctalia/mpvpaper"])?;
-    noctalia_msg(&["msg", "plugins", "enable", "noctalia/mpvpaper"])?;
-    Ok(())
+    plugin_bounce(MPVPAPER_PLUGIN_ID)
 }
 
 // ── Apply ───────────────────────────────────────────────────────────────
@@ -373,10 +369,9 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
     // disabled plugin must never be re-enabled by a theme apply, and no
     // half-written assignments file may linger for its next boot.
     if !mpvpaper_enabled() {
-        return Err(
-            "noctalia/mpvpaper plugin is not enabled; videos not launched (live state untouched)"
-                .into(),
-        );
+        return Err(format!(
+            "{MPVPAPER_PLUGIN_ID} plugin is not enabled; videos not launched (live state untouched)"
+        ));
     }
 
     // Persist live state so the plugin picks it up at boot.
@@ -431,7 +426,7 @@ pub fn clear_all() -> Result<(), String> {
     if !mpvpaper_enabled() {
         return Ok(());
     }
-    noctalia_msg(&["msg", "plugin", "noctalia/mpvpaper:service", "all", "clear-all"])?;
+    plugin_service_clear_all(MPVPAPER_PLUGIN_ID)?;
     // Let the plugin's async ffmpeg frame extraction settle before the caller
     // applies its static wallpaper, so the extracted frame cannot win the race.
     std::thread::sleep(Duration::from_millis(CLEAR_SETTLE_MS));
@@ -697,11 +692,16 @@ video_directory = "~/Videos"
     }
 
     /// G3: restoring a video must never re-enable a plugin the user
-    /// disabled. The disable+enable bounce is therefore guarded by the
-    /// live enabled check, and the live assignments file is only written
-    /// after that check passes — a disabled plugin means early refusal
-    /// before any write or kill. Comment lines are stripped first so a
-    /// commented-out guard cannot satisfy this.
+    /// disabled. The disable+enable bounce and its guard moved to the
+    /// neutral runtime seam (`noctalia_runtime::plugin_bounce`, pinned
+    /// there by `plugin_bounce_guard_dominates_the_enable_step_by_construction`),
+    /// so this backend must reach that guarded bounce BY DELEGATION — the
+    /// property is guarded in its new location, not re-implemented here.
+    /// `apply_manifest` must still refuse a disabled plugin before any
+    /// write or kill. Comment lines are stripped first so a commented-out
+    /// guard cannot satisfy this. Needles are built with concat() so this
+    /// test's own source — it lives in the file it inspects — can never
+    /// satisfy them.
     #[test]
     fn apply_never_enables_disabled_plugin_by_construction() {
         let src = std::fs::read_to_string("src/providers/mpvpaper.rs")
@@ -713,16 +713,10 @@ video_directory = "~/Videos"
             .join("\n");
         let bounce_at = code.find("fn bounce_plugin").expect("bounce_plugin must exist");
         let after_bounce = &code[bounce_at..];
-        let guard_at = after_bounce
-            .find("mpvpaper_enabled")
-            .expect("bounce_plugin must consult the live enabled check");
-        let enable_at = after_bounce
-            .find("\"enable\"")
-            .expect("bounce_plugin must still contain its enable step");
-        assert!(
-            guard_at < enable_at,
-            "the enabled check must dominate the enable step inside bounce_plugin"
-        );
+        let delegate = ["plugin", "_bounce("].concat();
+        after_bounce
+            .find(&delegate)
+            .expect("bounce_plugin must delegate to the guarded bounce in the runtime seam");
         let apply_at = code.find("pub fn apply_manifest").expect("apply_manifest must exist");
         let after_apply = &code[apply_at..];
         let apply_guard = after_apply
@@ -735,5 +729,36 @@ video_directory = "~/Videos"
             apply_guard < live_write,
             "apply_manifest must refuse a disabled plugin before writing any live state"
         );
+    }
+
+    /// The chain this unit breaks: the media backend owns mpvpaper
+    /// processes, manifests, downloads and pkill — never the plugin's
+    /// supervision. The probe, the bounce and the service IPC live in the
+    /// neutral `noctalia_runtime` seam; the only `noctalia` knowledge left
+    /// here is the plugin id as data (settings section, error copy) and
+    /// comments. Needles are built with concat() so this test's own source
+    /// — it lives in the file it inspects — can never satisfy them.
+    #[test]
+    fn media_backend_sends_no_supervisor_ipc_by_construction() {
+        let src = std::fs::read_to_string("src/providers/mpvpaper.rs")
+            .expect("src/providers/mpvpaper.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for needle in [
+            ["noctalia", "_msg"].concat(),
+            ["plugins\", \"dis", "able\""].concat(),
+            ["plugins\", \"en", "able\""].concat(),
+            ["noctalia/mpvpaper", ":service"].concat(),
+        ] {
+            assert!(
+                !code.contains(&needle),
+                "mpvpaper.rs must not contain `{needle}` — the supervisor IPC belongs to \
+                 the neutral runtime seam (capability routing: the media backend owns \
+                 mpvpaper processes, manifests and downloads, never supervision)"
+            );
+        }
     }
 }

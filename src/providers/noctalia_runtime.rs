@@ -3,6 +3,12 @@
 //!
 //! This is the neutral shared piece used by the `noctalia` and `mpvpaper`
 //! providers, so neither depends on the other provider's internals.
+//!
+//! Plugin supervision lives here too: the plugin is Noctalia's
+//! (`noctalia/mpvpaper`), so knowing how to probe, bounce and command it is
+//! Noctalia runtime knowledge — not the media backend's. Every supervisor
+//! call takes an explicit plugin id, so this seam is not shaped around one
+//! plugin.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -147,6 +153,56 @@ pub(crate) fn noctalia_config_dir() -> Option<PathBuf> {
 pub(crate) fn noctalia_state_dir() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(".local").join("state").join("noctalia"))
+}
+
+// ── Plugin supervision ─────────────────────────────────────────────────
+
+/// The plugin id HVE supervises by default: `noctalia/mpvpaper`. One
+/// `pub(crate)` constant, so the id is never spelled out twice in the
+/// backend that feeds the plugin.
+pub(crate) const MPVPAPER_PLUGIN_ID: &str = "noctalia/mpvpaper";
+
+/// Check whether the plugin is installed AND enabled, by parsing
+/// `noctalia msg plugins list` (line suffix `enabled`).
+///
+/// Semantics preserved from the old `mpvpaper::mpvpaper_enabled`: a failed
+/// IPC (missing binary, non-zero exit) reads as NOT enabled — the caller
+/// then refuses to act, which is always the safe side.
+pub(crate) fn plugin_enabled(plugin_id: &str) -> bool {
+    match noctalia_msg(&["msg", "plugins", "list"]) {
+        Ok(out) => out
+            .lines()
+            .any(|l| l.trim_start().starts_with(plugin_id) && l.trim_end().ends_with("enabled")),
+        Err(_) => false,
+    }
+}
+
+/// Bounce the plugin so it re-reads its assignments at boot and relaunches
+/// what it supervises (the programmatic "click").
+///
+/// G3: refused while the plugin is currently disabled — the enable step
+/// would RE-ENABLE a plugin the user turned off and resurrect its old video
+/// on the next theme apply. Callers check first; this guard is the backstop
+/// so no path can bounce a disabled plugin by accident.
+pub(crate) fn plugin_bounce(plugin_id: &str) -> Result<(), String> {
+    if !plugin_enabled(plugin_id) {
+        return Err(format!(
+            "{plugin_id} plugin is not enabled; refusing to bounce \
+             (would re-enable a plugin the user disabled)"
+        ));
+    }
+    noctalia_msg(&["msg", "plugins", "disable", plugin_id])?;
+    noctalia_msg(&["msg", "plugins", "enable", plugin_id])?;
+    Ok(())
+}
+
+/// Send `clear-all` to the plugin's own service — the IPC that stops every
+/// running instance the plugin supervises. The enabled check and any
+/// settle sleep belong to the caller: this is the bare IPC, nothing else.
+pub(crate) fn plugin_service_clear_all(plugin_id: &str) -> Result<(), String> {
+    let service = format!("{plugin_id}:service");
+    noctalia_msg(&["msg", "plugin", &service, "all", "clear-all"])?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -334,6 +390,182 @@ mod tests {
         assert!(
             body.contains("noctalia_msg_bounded(args, NOCTALIA_MSG_TIMEOUT)"),
             "noctalia_msg must delegate to the bounded runner with the named const; body was:\n{body}"
+        );
+    }
+
+    // ── Plugin supervision seam ───────────────────────────────────────
+
+    /// Stub that logs every invocation and answers `msg plugins list` with
+    /// `<plugin_id> enabled` when `lists_enabled` (nothing otherwise), so
+    /// the supervisor tests assert the exact IPC sequence the old
+    /// `mpvpaper` code sent, in the same order.
+    fn supervisor_stub(log: &std::path::Path, plugin_id: &str, lists_enabled: bool) -> String {
+        let answer = if lists_enabled {
+            format!("printf '{} enabled\\n'\n", plugin_id)
+        } else {
+            String::new()
+        };
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\n\
+             if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"plugins\" ] && [ \"$3\" = \"list\" ]; then\n\
+             :\n{answer}fi\nexit 0\n",
+            log = log.display(),
+            answer = answer
+        )
+    }
+
+    /// The recorded invocation lines, in order.
+    fn stub_log(log: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The probe: an `enabled` line answers enabled, and the id PARAMETER
+    /// decides — the seam never hardcodes which plugin it is asked about.
+    #[test]
+    #[serial]
+    fn plugin_enabled_reflects_the_plugins_list_answer() {
+        let state = tempfile::tempdir().expect("stub state");
+        let log = state.path().join("log");
+        let _stub = StubNoctalia::new(Some(&supervisor_stub(&log, "noctalia/mpvpaper", true)));
+        assert!(
+            plugin_enabled(MPVPAPER_PLUGIN_ID),
+            "an `enabled` line for the plugin id must probe as enabled"
+        );
+        assert!(
+            !plugin_enabled("other/plugin"),
+            "the id parameter must filter the list, not a hardcoded name"
+        );
+    }
+
+    /// A failed IPC means "not enabled" — never a panic, never `true`.
+    #[test]
+    #[serial]
+    fn plugin_enabled_is_false_when_the_cli_fails() {
+        let _stub = StubNoctalia::new(Some("#!/bin/sh\necho 'no daemon' >&2\nexit 4\n"));
+        assert!(
+            !plugin_enabled(MPVPAPER_PLUGIN_ID),
+            "a failing CLI must read as not-enabled"
+        );
+    }
+
+    /// No resolvable `noctalia` at all: the spawn itself fails and still
+    /// reads as not-enabled (the same semantics the old code had).
+    #[test]
+    #[serial]
+    fn plugin_enabled_is_false_when_the_cli_is_missing() {
+        let _stub = StubNoctalia::new(None);
+        assert!(
+            !plugin_enabled(MPVPAPER_PLUGIN_ID),
+            "an unspawnable CLI must read as not-enabled"
+        );
+    }
+
+    /// The bounce: probe first, then `disable`, then `enable` — exactly the
+    /// IPC the old `mpvpaper::bounce_plugin` sent, in the same order.
+    #[test]
+    #[serial]
+    fn plugin_bounce_disables_then_enables_in_order() {
+        let state = tempfile::tempdir().expect("stub state");
+        let log = state.path().join("log");
+        let _stub = StubNoctalia::new(Some(&supervisor_stub(&log, "noctalia/mpvpaper", true)));
+        plugin_bounce(MPVPAPER_PLUGIN_ID).expect("an enabled plugin must bounce");
+        assert_eq!(
+            stub_log(&log),
+            vec![
+                "msg plugins list",
+                "msg plugins disable noctalia/mpvpaper",
+                "msg plugins enable noctalia/mpvpaper",
+            ],
+            "the bounce must probe, disable and enable in that exact order"
+        );
+    }
+
+    /// G3, moved here verbatim from `mpvpaper.rs`: a disabled plugin must
+    /// never be bounced, because the enable step would RE-ENABLE a plugin
+    /// the user turned off — so the refusal fires at the probe and the stub
+    /// must record no disable and no enable at all.
+    #[test]
+    #[serial]
+    fn plugin_bounce_refuses_a_disabled_plugin_and_sends_no_ipc() {
+        let state = tempfile::tempdir().expect("stub state");
+        let log = state.path().join("log");
+        let _stub = StubNoctalia::new(Some(&supervisor_stub(&log, "noctalia/mpvpaper", false)));
+        let err =
+            plugin_bounce(MPVPAPER_PLUGIN_ID).expect_err("a disabled plugin must never bounce");
+        assert_eq!(
+            err,
+            "noctalia/mpvpaper plugin is not enabled; refusing to bounce (would re-enable a plugin the user disabled)"
+        );
+        assert_eq!(
+            stub_log(&log),
+            vec!["msg plugins list"],
+            "the refusal must stop at the probe: no disable, no enable"
+        );
+    }
+
+    /// `clear-all` is ONE service IPC: no probe and no bounce around it
+    /// (the enabled check and the settle sleep belong to the caller).
+    #[test]
+    #[serial]
+    fn plugin_service_clear_all_sends_the_service_ipc() {
+        let state = tempfile::tempdir().expect("stub state");
+        let log = state.path().join("log");
+        let _stub = StubNoctalia::new(Some(&supervisor_stub(&log, "noctalia/mpvpaper", false)));
+        plugin_service_clear_all(MPVPAPER_PLUGIN_ID).expect("the service call must succeed");
+        assert_eq!(
+            stub_log(&log),
+            vec!["msg plugin noctalia/mpvpaper:service all clear-all"],
+            "clear-all must reach the plugin service verbatim, once"
+        );
+    }
+
+    /// The non-zero-exit shape callers match on must not drift.
+    #[test]
+    #[serial]
+    fn plugin_service_clear_all_reports_a_failing_cli_verbatim() {
+        let _stub = StubNoctalia::new(Some(
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"plugin\" ]; then\n\
+             echo 'service unavailable' >&2\nexit 9\nfi\nexit 0\n",
+        ));
+        let err = plugin_service_clear_all(MPVPAPER_PLUGIN_ID)
+            .expect_err("a failing service call must stay an Err");
+        assert_eq!(
+            err,
+            "noctalia msg plugin noctalia/mpvpaper:service all clear-all failed: service unavailable"
+        );
+    }
+
+    /// The G3 guard moved here from `mpvpaper.rs`'s source-inspection test:
+    /// inside `plugin_bounce` the enabled check must DOMINATE the enable
+    /// step. Comment lines are stripped first so a commented-out guard
+    /// cannot satisfy it.
+    #[test]
+    fn plugin_bounce_guard_dominates_the_enable_step_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia_runtime.rs")
+            .expect("the runtime module must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bounce_at = code
+            .find("fn plugin_bounce")
+            .expect("plugin_bounce must exist");
+        let after_bounce = &code[bounce_at..];
+        let guard_at = after_bounce
+            .find("plugin_enabled")
+            .expect("plugin_bounce must consult the live enabled check");
+        let enable_at = after_bounce
+            .find("\"enable\"")
+            .expect("plugin_bounce must still contain its enable step");
+        assert!(
+            guard_at < enable_at,
+            "the enabled check must dominate the enable step inside plugin_bounce"
         );
     }
 
