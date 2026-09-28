@@ -554,6 +554,101 @@ fn descriptor_with_missing_palette_file_uses_live_palette() {
     );
 }
 
+// ── Colour-source loader: a new file, not central edits (unit 1d) ───────
+// Capability routing (odd/tasks/hve-capability-routing.md, unit 1d):
+// colour sources are modules under assets/scripts/color_sources.d/; the
+// central chain only reads each module's id, priority, try and watch
+// declarations. `pywal` is the first migrated source.
+
+/// Sandbox scripts dir mirroring the repo layout: colors.sh plus its
+/// color_sources.d/ modules (when present), so the loader under test
+/// resolves modules exactly like production.
+fn sandbox_scripts_with_modules() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let scripts = tmp.path().join("scripts");
+    std::fs::create_dir_all(scripts.join("color_sources.d")).unwrap();
+    std::fs::copy(
+        scripts_dir().join("colors.sh"),
+        scripts.join("colors.sh"),
+    )
+    .unwrap();
+    let repo_modules = scripts_dir().join("color_sources.d");
+    if repo_modules.is_dir() {
+        for entry in std::fs::read_dir(&repo_modules).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "sh") {
+                std::fs::copy(&path, scripts.join("color_sources.d").join(entry.file_name()))
+                    .unwrap();
+            }
+        }
+    }
+    (tmp, scripts)
+}
+
+/// A live pywal layout: ~/.cache/wal/colors.json with all six mapped roles.
+fn write_pywal_colors(home: &Path) {
+    let dir = home.join(".cache").join("wal");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("colors.json"),
+        r##"{"wallpaper":"/dev/null","colors":{"color0":"#111111","color3":"#222222","color5":"#333333","color7":"#444444","color10":"#555555","color13":"#666666"}}"##,
+    )
+    .unwrap();
+}
+
+/// A module with a HIGHER priority (lower number) than the live source wins
+/// the chain: proves the loader dispatches modules and honours priority.
+#[test]
+fn colour_module_with_higher_priority_wins_the_chain() {
+    let home = tempfile::tempdir().unwrap();
+    write_pywal_colors(home.path());
+    let (_tmp, scripts) = sandbox_scripts_with_modules();
+    std::fs::write(
+        scripts.join("color_sources.d").join("00-sentinel.sh"),
+        "hve_colour_source_id() { printf '%s\\n' \"sentinel\"; }\n\
+         hve_colour_source_priority() { printf '%s\\n' \"5\"; }\n\
+         hve_colour_source_try() { HVE_PRIMARY=\"#123456\"; export HVE_PRIMARY; return 0; }\n\
+         hve_colour_source_watch() { return 0; }\n",
+    )
+    .unwrap();
+
+    let script = format!(
+        r#"source "{}/colors.sh" >/dev/null 2>&1; printf 'primary=%s\n' "$HVE_PRIMARY""#,
+        scripts.display()
+    );
+    let out = run_bash(
+        &script,
+        &[],
+        &[("HOME", home.path().to_str().unwrap())],
+        home.path(),
+    );
+    assert!(
+        out.status.success(),
+        "bash failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("primary=#123456"),
+        "the higher-priority module must win over the live pywal source, got: {stdout}"
+    );
+}
+
+/// The migrated pywal source resolves exactly like the old inline step.
+#[test]
+fn pywal_colors_flow_through_the_module() {
+    let home = tempfile::tempdir().unwrap();
+    write_pywal_colors(home.path());
+
+    let colors = run_get_colors(home.path());
+    assert_eq!(colors["primary"].as_str().unwrap(), "#222222");
+    assert_eq!(colors["secondary"].as_str().unwrap(), "#666666");
+    assert_eq!(colors["tertiary"].as_str().unwrap(), "#333333");
+    assert_eq!(colors["surface"].as_str().unwrap(), "#111111");
+    assert_eq!(colors["surface_lowest"].as_str().unwrap(), "#444444");
+    assert_eq!(colors["accent"].as_str().unwrap(), "#555555");
+}
+
 // ── init.sh refuses a conf-only system (R8) ─────────────────────────────
 
 #[test]

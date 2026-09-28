@@ -343,6 +343,8 @@ mod tests {
         std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
             .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
 
         let assemble_marker = cache.join("assemble_runs");
         std::fs::write(
@@ -608,6 +610,8 @@ mod tests {
         std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
             .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
 
         let assemble_marker = cache.join("assemble_runs");
         std::fs::write(
@@ -853,6 +857,8 @@ mod tests {
         std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
             .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
 
         // Stubs beside the real scripts so utils.sh resolves HVE_SCRIPTS_DIR
         // into the temp tree: assemble.sh (counts its own runs), get_colors.sh
@@ -1026,6 +1032,8 @@ mod tests {
         std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
             .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
 
         let assemble_marker = cache.join("assemble_runs");
         std::fs::write(
@@ -1113,6 +1121,79 @@ mod tests {
         );
     }
 
+    #[test]
+    fn watch_list_still_contains_the_pywal_path_from_its_module() {
+        // Unit 1d moved the pywal watch path out of color_watcher.sh into
+        // the module's hve_colour_source_watch declaration (capability
+        // routing: the list only reads declarations). With only the pywal
+        // file present, find_watch_files must still list it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(home.join(".cache/wal")).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(
+            home.join(".cache/wal/colors.json"),
+            r#"{"wallpaper": "/dev/null"}"#,
+        )
+        .unwrap();
+
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
+        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
+            .unwrap();
+        std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
+        std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
+
+        // Source the sandbox layer and call only find_watch_files (sourcing
+        // color_watcher.sh itself would start the daemon loop).
+        let probe = format!(
+            "source \"{s}/utils.sh\" >/dev/null 2>&1; \
+             source \"{s}/colors.sh\" >/dev/null 2>&1; \
+             eval \"$(sed -n '/^find_watch_files() {{/,/^}}/p' \"{s}/color_watcher.sh\")\"; \
+             find_watch_files",
+            s = scripts.display()
+        );
+        let out = Command::new("bash")
+            .arg("-c")
+            .arg(&probe)
+            .env("HOME", &home)
+            .env("HVE_CACHE_DIR", &cache)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "watch-list probe failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains(".cache/wal/colors.json"),
+            "the pywal watch path must still be listed (now from its module), got:\n{stdout}"
+        );
+    }
+
+    /// Mirror the shipped colour-source modules into a sandbox scripts dir.
+    /// The watcher reads watch paths from the modules (through colors.sh),
+    /// so a sandbox without color_sources.d/ would silently lose them and
+    /// misreport the watch list.
+    fn copy_color_sources_dir(repo_scripts: &std::path::Path, scripts: &std::path::Path) {
+        let dest = scripts.join("color_sources.d");
+        std::fs::create_dir_all(&dest).unwrap();
+        let src = repo_scripts.join("color_sources.d");
+        if src.is_dir() {
+            for entry in std::fs::read_dir(&src).unwrap().flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "sh") {
+                    std::fs::copy(&path, dest.join(entry.file_name())).unwrap();
+                }
+            }
+        }
+    }
+
     /// Stateful recording `noctalia` stub for the theme-authority tests.
     ///
     /// Every invocation appends one line (`$*`) to the calls file. The stub
@@ -1171,6 +1252,7 @@ mod tests {
             .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
+        copy_color_sources_dir(&repo_scripts, &scripts);
         let assemble_marker = cache.join("assemble_runs");
         std::fs::write(
             scripts.join("assemble.sh"),

@@ -65,10 +65,12 @@ find_watch_files() {
         done < <(find "$noctalia_community_palettes_dir" -name "*.json" -type f 2>/dev/null)
     fi
 
-    # Pywal
-    local wal_json="$HOME/.cache/wal/colors.json"
-    if [ -f "$wal_json" ]; then
-        files+=("$wal_json")
+    # Colour-source modules declare their own watch paths (see the loader
+    # header in colors.sh); this list only reads those declarations.
+    if command -v _hve_colour_module_watch_paths >/dev/null 2>&1; then
+        while IFS= read -r module_path; do
+            [ -n "$module_path" ] && files+=("$module_path")
+        done < <(_hve_colour_module_watch_paths 2>/dev/null)
     fi
 
     # Matugen: watch the config to detect output file changes

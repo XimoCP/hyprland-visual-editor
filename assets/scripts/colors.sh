@@ -359,30 +359,6 @@ _hve_try_noctalia() {
     return 1
 }
 
-# Pywal: ~/.cache/wal/colors.json
-_hve_try_pywal() {
-    local wal_json="$HOME/.cache/wal/colors.json"
-    if [ -f "$wal_json" ] && command -v python3 &>/dev/null; then
-        echo "[HVE] Colors from: pywal" >&2
-        local c0 c3 c5 c10 c13 c7
-        c0=$(python3 -c "import json; print(json.load(open('$wal_json'))['colors']['color0'])" 2>/dev/null)
-        c3=$(python3 -c "import json; print(json.load(open('$wal_json'))['colors']['color3'])" 2>/dev/null)
-        c5=$(python3 -c "import json; print(json.load(open('$wal_json'))['colors']['color5'])" 2>/dev/null)
-        c10=$(python3 -c "import json; print(json.load(open('$wal_json'))['colors']['color10'])" 2>/dev/null)
-        c13=$(python3 -c "import json; print(json.load(open('$wal_json'))['colors']['color13'])" 2>/dev/null)
-        c7=$(python3 -c "import json; print(json.load(open('$wal_json'))['colors']['color7'])" 2>/dev/null)
-
-        [ -n "$c3" ] && HVE_PRIMARY=$(_hve_normalize_color "$c3")
-        [ -n "$c13" ] && HVE_SECONDARY=$(_hve_normalize_color "$c13")
-        [ -n "$c5" ] && HVE_TERTIARY=$(_hve_normalize_color "$c5")
-        [ -n "$c0" ] && HVE_SURFACE=$(_hve_normalize_color "$c0")
-        [ -n "$c7" ] && HVE_SURFACE_LOWEST=$(_hve_normalize_color "$c7")
-        [ -n "$c10" ] && HVE_ACCENT=$(_hve_normalize_color "$c10")
-        return 0
-    fi
-    return 1
-}
-
 # Matugen: ~/.config/matugen/config.toml → find generated output
 _hve_try_matugen() {
     local matugen_config="$HOME/.config/matugen/config.toml"
@@ -519,6 +495,104 @@ hve_theme_owns_colours() {
     [ -n "$palette_file" ] && [ -n "$palette_name" ] || return 1
 }
 
+# --- Colour-source loader (one new source = one new file) -------------------
+# A colour source declares its capability; this file only reads those
+# declarations and knows no source's layout. Adding a source means adding
+# one module under color_sources.d/, never editing this chain.
+#
+# Module contract: each color_sources.d/*.sh defines exactly these four
+# functions and nothing else at top level:
+#   hve_colour_source_id()       - prints its stable id (for example "pywal")
+#   hve_colour_source_priority() - prints an integer; lower is tried first
+#   hve_colour_source_try()      - returns 0 and exports the HVE_*
+#                                  variables on success, 1 otherwise
+#   hve_colour_source_watch()    - prints the paths it wants watched, one
+#                                  per line (globs allowed); nothing when
+#                                  there is nothing to watch
+# Modules must be safe under "set -u", must quote every expansion, and must
+# never eval file content or any external data. Sourcing a module only runs
+# its top-level function definitions; shipped modules are trusted exactly
+# like this file (both ship in the same scripts directory), while palette
+# files and descriptors stay untrusted data and are only ever read.
+#
+# Canonical order in ONE place: the priorities below preserve the historic
+# chain exactly (10 applied-theme snapshot, 20 scheme palette file,
+# 30 rendered template, 40 module slot, 50 generated output, 60 config
+# scan). The migrated module slot keeps its number (40), so the overall
+# order does not change. Steps run sorted by priority; ties break by id.
+_HVE_LEGACY_PRIORITIES="10 20 30 50 60"
+
+# Modules live beside this file so installs, checkouts and sandboxes that
+# copy both keep working without a configured path.
+_HVE_COLOR_SOURCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")/color_sources.d" 2>/dev/null && pwd)"
+
+# Historic ids of the still-inline steps, for the tie-break only.
+_hve_legacy_id_for() {
+    case "$1" in
+        10) printf '%s\n' "theme-snapshot" ;;
+        20) printf '%s\n' "full-palette" ;;
+        30) printf '%s\n' "template-lua" ;;
+        50) printf '%s\n' "generator-output" ;;
+        60) printf '%s\n' "manual-scan" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Runs one still-inline step by priority. The module slot (40) is NOT here:
+# a module step sources its file and calls hve_colour_source_try instead.
+_hve_run_legacy_step() {
+    case "$1" in
+        10) _hve_try_theme_palette ;;
+        20) _hve_try_noctalia_palette ;;
+        30) _hve_try_noctalia ;;
+        50) _hve_try_matugen ;;
+        60) _hve_try_manual ;;
+        *) return 1 ;;
+    esac
+}
+
+# Prints one "priority<TAB>id<TAB>kind<TAB>payload" line per available step:
+# the legacy table plus every valid module. A module is valid only when it
+# defines its id and priority functions, its id is non-empty, and its
+# priority is an integer; anything else is skipped silently.
+_hve_colour_steps() {
+    local prio id
+    # shellcheck disable=SC2086
+    for prio in $_HVE_LEGACY_PRIORITIES; do
+        id=$(_hve_legacy_id_for "$prio") || continue
+        printf '%s\t%s\t%s\t%s\n' "$prio" "$id" "legacy" "$prio"
+    done
+    local moddir="${_HVE_COLOR_SOURCES_DIR:-}"
+    if [ -n "$moddir" ] && [ -d "$moddir" ]; then
+        local mod
+        for mod in "$moddir"/*.sh; do
+            [ -f "$mod" ] || continue
+            id=$(bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_id' _ "$mod" 2>/dev/null) || continue
+            prio=$(bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_priority' _ "$mod" 2>/dev/null) || continue
+            case "$id" in
+                ''|*[!A-Za-z0-9._-]*) continue ;;
+            esac
+            case "$prio" in
+                ''|*[!0-9]*) continue ;;
+            esac
+            printf '%s\t%s\t%s\t%s\n' "$prio" "$id" "module" "$mod"
+        done
+    fi
+}
+
+# Prints every path the modules want watched, one per line. The central
+# watcher reads this list instead of naming sources; the dedupe and the
+# ordering of the final list stay the watcher's business.
+_hve_colour_module_watch_paths() {
+    local moddir="${_HVE_COLOR_SOURCES_DIR:-}"
+    [ -n "$moddir" ] && [ -d "$moddir" ] || return 0
+    local mod
+    for mod in "$moddir"/*.sh; do
+        [ -f "$mod" ] || continue
+        bash -c 'source "$1" >/dev/null 2>&1; hve_colour_source_watch' _ "$mod" 2>/dev/null || continue
+    done
+}
+
 # --- Main ---
 
 hve_load_colors() {
@@ -534,12 +608,25 @@ hve_load_colors() {
     #   2. Noctalia full palette (direct from scheme file — has ALL M3 colors)
     #   3. Noctalia template output (fallback for wallpaper schemes, or v4)
     #   4. Pywal / Matugen / Manual
-    _hve_try_theme_palette ||
-    _hve_try_noctalia_palette ||
-    _hve_try_noctalia ||
-    _hve_try_pywal ||
-    _hve_try_matugen ||
-    _hve_try_manual
+    local steps step_prio step_id step_kind step_payload tab
+    tab=$(printf '\t')
+    steps=$(_hve_colour_steps | LC_ALL=C sort -t "$tab" -k1,1n -k2,2)
+    while IFS="$tab" read -r step_prio step_id step_kind step_payload; do
+        [ -n "$step_kind" ] || continue
+        if [ "$step_kind" = "legacy" ]; then
+            _hve_run_legacy_step "$step_payload" && break
+        else
+            # shellcheck disable=SC1090
+            source "$step_payload" >/dev/null 2>&1 && hve_colour_source_try && break
+        fi
+        # A failed step never leaves partial state for the next one.
+        HVE_PRIMARY=""
+        HVE_SECONDARY=""
+        HVE_TERTIARY=""
+        HVE_SURFACE=""
+        HVE_SURFACE_LOWEST=""
+        HVE_ACCENT=""
+    done <<< "$steps"
 
     # A scheme with no tertiary gets one from a real same-scheme source when
     # one exists (see _hve_complete_tertiary). Only when nothing exists do the
