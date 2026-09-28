@@ -43,7 +43,6 @@
 //! Themes WITHOUT a manifest send `clear-all` first (the programmatic STOP)
 //! so a previously running video cannot hijack the screen.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,51 +50,26 @@ use std::time::Duration;
 
 use crate::providers::noctalia_runtime::{noctalia_msg, noctalia_state_dir};
 
-/// File HVE stores inside the theme provider dir.
-pub const MANIFEST_FILE: &str = "mpvpaper-assignments.json";
+// The shared background information — manifest file name, manifest types,
+// live-state path and capture, and the user notification — lives in the
+// neutral `bg_info` module, so `noctalia.rs` can read it without naming
+// this backend (capability routing: a backend never calls another one).
+// These are re-exports of the ONE implementation, which sits in `bg_info`.
+pub use crate::providers::bg_info::{MANIFEST_FILE, MpvpaperManifest, MpvpaperVideo};
+// Compatibility re-exports: the historical `mpvpaper::save_manifest` and
+// `mpvpaper::notify_plugin_required` paths must keep resolving (pinned by
+// the `bg_info` compatibility tests), while production code reaches them
+// through `bg_info`. Nothing in the binary calls them through THIS path,
+// hence the allow — the one implementation still lives in `bg_info`.
+#[allow(unused_imports)]
+pub use crate::providers::bg_info::{notify_plugin_required, save_manifest};
+pub(crate) use crate::providers::bg_info::{live_assignments_path, LiveAssignments};
 
 /// How long to wait after `clear-all` for the plugin to extract the static
 /// frame (async ffmpeg) before HVE applies its own static wallpaper.
 const CLEAR_SETTLE_MS: u64 = 1500;
 
-// ── Manifest types (theme side) ─────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MpvpaperVideo {
-    /// Base file name, used to detect existing copies in video_directory.
-    pub filename: String,
-    /// Absolute path from a local save (may be absent in distributed themes).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_path: Option<String>,
-    /// Remote source for distributed themes (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    /// Optional sha256 of the remote file, verified after download.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MpvpaperManifest {
-    pub version: u32,
-    /// connector ("*" = all outputs, or a monitor name) -> video reference.
-    pub assignments: HashMap<String, MpvpaperVideo>,
-}
-
-// ── Live plugin state (plugin side) ────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct LiveAssignments {
-    assignments: HashMap<String, String>,
-    #[serde(default, rename = "launchedAsSystemd")]
-    launched_as_systemd: HashMap<String, bool>,
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-fn live_assignments_path() -> Option<PathBuf> {
-    Some(noctalia_state_dir()?.join("mpvpaper").join("assignments.json"))
-}
 
 /// Parse `video_directory` from the real (restored) settings.toml section
 /// `[plugin_settings."noctalia/mpvpaper"]`. Falls back to `~/Videos`,
@@ -166,16 +140,6 @@ pub(crate) fn mpvpaper_enabled() -> bool {
     }
 }
 
-/// Notify the user that the mpvpaper plugin is required but not available,
-/// so an animated theme cannot be applied.
-pub(crate) fn notify_plugin_required() {
-    let _ = std::process::Command::new("notify-send")
-        .arg("--app-name=HVE")
-        .arg("⚠️ Fondo animado no aplicado")
-        .arg("El tema incluye fondos animados, pero el plugin noctalia/mpvpaper no está instalado o está desactivado. Activá el plugin en los ajustes de Noctalia para poder aplicarlos.")
-        .output();
-}
-
 /// Kill every running mpvpaper instance. The plugin's own kill is async and
 /// races with its start (`onConfigChanged -> applyAll -> startMpvpaper` does
 /// an async pkill then an async start), so a plain bounce can leave stale
@@ -206,55 +170,6 @@ fn bounce_plugin() -> Result<(), String> {
     }
     noctalia_msg(&["msg", "plugins", "disable", "noctalia/mpvpaper"])?;
     noctalia_msg(&["msg", "plugins", "enable", "noctalia/mpvpaper"])?;
-    Ok(())
-}
-
-// ── Save ────────────────────────────────────────────────────────────────
-
-/// Capture the plugin's current assignments into the theme manifest.
-///
-/// When the plugin has no live state, this is a no-op (theme ends up with no
-/// mpvpaper manifest, i.e. a non-animated theme).
-pub fn save_manifest(provider_dir: &Path) -> Result<(), String> {
-    let Some(src) = live_assignments_path() else {
-        return Err("Cannot resolve Noctalia state dir".into());
-    };
-    if !src.exists() {
-        tracing::debug!("[mpvpaper] No live assignments file, skipping manifest");
-        return Ok(());
-    }
-
-    let raw = fs::read_to_string(&src)
-        .map_err(|e| format!("Cannot read live assignments: {}", e))?;
-    let live: LiveAssignments = serde_json::from_str(&raw)
-        .map_err(|e| format!("Cannot parse live assignments: {}", e))?;
-
-    let mut assignments = HashMap::new();
-    for (connector, path) in live.assignments {
-        let filename = Path::new(&path)
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.clone());
-        assignments.insert(
-            connector,
-            MpvpaperVideo {
-                filename,
-                local_path: Some(path),
-                url: None,
-                sha256: None,
-            },
-        );
-    }
-
-    let manifest = MpvpaperManifest { version: 1, assignments };
-    fs::create_dir_all(provider_dir)
-        .map_err(|e| format!("Cannot create provider dir: {}", e))?;
-    let json = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("Manifest serialization error: {}", e))?;
-    fs::write(provider_dir.join(MANIFEST_FILE), json)
-        .map_err(|e| format!("Cannot write mpvpaper manifest: {}", e))?;
-
-    tracing::info!("[mpvpaper] Saved manifest with {} assignment(s)", manifest.assignments.len());
     Ok(())
 }
 

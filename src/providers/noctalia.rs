@@ -1,3 +1,4 @@
+use crate::providers::background;
 use crate::providers::noctalia_runtime::{noctalia_config_dir, noctalia_msg, noctalia_state_dir};
 use crate::providers::wallpaper_authority::{self, SavePlan, WallpaperKind};
 use crate::providers::shell::NoctaliaV4Paths;
@@ -149,138 +150,6 @@ fn blend_hex(a: &str, b: &str, t: f32) -> String {
 fn is_dark_hex(hex: &str) -> bool {
     let (r, g, b) = parse_hex_rgb(hex);
     (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) < 128.0
-}
-
-/// Best-effort delegation to skwd-walld (now skwd-wall-v2 / skwd-helm).
-///
-/// HVE remains agnostic: if the daemon's socket is absent we do nothing.
-/// If it is present we try `skwd-helm apply <path>` (and `skwd-wall-v2 apply` as fallback).
-///
-/// D1: returns whether the wallpaper was actually applied. Only a real
-/// success reports success — every other outcome (absent socket, invalid
-/// path, failing or unreachable daemon) returns false so the caller keeps
-/// the fallback routes (manifest, static restore) instead of claiming a
-/// background that was never painted. Failures are logged (warn), never
-/// silent and never fatal to the theme apply.
-fn skwd_wall_socket_path() -> PathBuf {
-    if let Ok(custom) = std::env::var("SKWD_WALL_V2_SOCK") {
-        let p = PathBuf::from(&custom);
-        if p.exists() {
-            return p;
-        }
-    }
-    let runtime = std::env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/run/user/1000"));
-    runtime.join("skwd-wall-v2").join("wall.sock")
-}
-
-fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
-    let socket = skwd_wall_socket_path();
-    if !socket.exists() {
-        tracing::debug!("[skwd-wall] socket absent at {:?} — skipping delegation", socket);
-        return false;
-    }
-    let path_str = match wallpaper_path.to_str() {
-        Some(s) if !s.is_empty() => s,
-        _ => {
-            tracing::warn!("[skwd-wall] invalid wallpaper path {:?}", wallpaper_path);
-            return false;
-        }
-    };
-    // PICK THE RIGHT ENGINE FOR THE JOB, the other as fallback.
-    //
-    // Measured on this machine (2026-09-26), and the numbers are NOT a
-    // fastest-first ordering — each engine is fast at its own thing:
-    //   still image: skwd-wall-v2 ~3ms   | skwd-helm ~616ms
-    //   video:       skwd-wall-v2 ~472ms | skwd-helm ~90ms
-    // Both accept both, so either order "works"; the order decides who does the
-    // work. Sending a video to the still-image path wastes ~380ms, and sending a
-    // still to the video engine wastes ~525ms — and the theme apply runs on the
-    // UI thread, so those are milliseconds the window cannot repaint.
-    //
-    // The old code always tried `skwd-helm` first under a 500ms cap, so the
-    // still-image case logged "timed out after 500ms" and killed the helper
-    // mid-work before falling through. The log lied and the path was wasteful.
-    let order: [&str; 2] = if is_video_path(wallpaper_path) {
-        ["skwd-helm", "skwd-wall-v2"]
-    } else {
-        ["skwd-wall-v2", "skwd-helm"]
-    };
-    for bin in order {
-        match run_delegate_apply(bin, path_str) {
-            Ok(()) => {
-                tracing::info!("[skwd-wall] delegated wallpaper to {}: {}", bin, path_str);
-                return true;
-            }
-            Err(reason) => {
-                tracing::warn!("[skwd-wall] {} apply failed: {}", bin, reason);
-                // try next bin
-            }
-        }
-    }
-    tracing::warn!("[skwd-wall] delegation failed for {} (daemon may be unreachable)", path_str);
-    false
-}
-
-/// Whether the wallpaper is an animated video, which decides the engine order.
-/// Extension-based on purpose: it only selects a PREFERENCE (the other engine
-/// still runs as fallback), so a surprising name costs time, never correctness.
-fn is_video_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| {
-            matches!(
-                e.to_ascii_lowercase().as_str(),
-                "mp4" | "webm" | "mkv" | "mov" | "gif" | "avi"
-            )
-        })
-        .unwrap_or(false)
-}
-
-/// Bounded wait for one delegation `apply` call, so a hung daemon helper can
-/// never freeze the theme apply (never held across I/O locks).
-///
-/// This runs on the UI thread, so the number is milliseconds the window cannot
-/// repaint. Measured worst case for a single engine is ~616ms (`skwd-helm` on a
-/// still image), so 700ms covers a healthy helper with margin while still
-/// capping a genuinely hung one.
-const DELEGATE_TIMEOUT: Duration = Duration::from_millis(700);
-
-fn run_delegate_apply(bin: &str, path_str: &str) -> Result<(), String> {
-    let mut child = std::process::Command::new(bin)
-        .arg("apply")
-        .arg(path_str)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("not available: {}", e))?;
-    let start = Instant::now();
-    loop {
-        match child
-            .try_wait()
-            .map_err(|e| format!("wait failed: {}", e))?
-        {
-            Some(_) => {
-                let out = child
-                    .wait_with_output()
-                    .map_err(|e| format!("output read failed: {}", e))?;
-                if out.status.success() {
-                    return Ok(());
-                }
-                return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-            }
-            None => {
-                if start.elapsed() >= DELEGATE_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("timed out after {:?}", DELEGATE_TIMEOUT));
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-        }
-    }
 }
 
 /// Generate a `terminal` section for a Noctalia predefined scheme from M3 core colors.
@@ -660,7 +529,7 @@ impl ThemeProvider for NoctaliaV4Provider {
                     tracing::warn!("[noctalia] Wallpaper IPC for '{}': {}", screen, e);
                 } else {
                     // Best-effort delegation to skwd-walld (agnostic, silent if absent)
-                    delegate_to_skwd_walld(Path::new(path));
+                    background::hand_off_path(Path::new(path));
                 }
             }
         }
@@ -1408,7 +1277,7 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    an exact painter record must never share a theme with it — apply
         //    would otherwise have two videos claiming the screen.
         if capture_video_manifest {
-            match crate::providers::mpvpaper::save_manifest(&provider_dir) {
+            match crate::providers::bg_info::save_manifest(&provider_dir) {
                 Ok(()) => {}
                 Err(e) => tracing::warn!("[noctalia-v5] Could not save mpvpaper manifest: {}", e),
             }
@@ -1416,7 +1285,7 @@ impl ThemeProvider for NoctaliaV5Provider {
             // Authority decided exactly (static, or video with a painter
             // record): drop any stale manifest (re-save does not wipe the
             // dir, and a leftover would hijack apply).
-            remove_stale_artifact(&provider_dir.join(crate::providers::mpvpaper::MANIFEST_FILE));
+            remove_stale_artifact(&provider_dir.join(crate::providers::bg_info::MANIFEST_FILE));
         }
 
         Ok(())
@@ -1538,9 +1407,15 @@ impl ThemeProvider for NoctaliaV5Provider {
         // value rides along to the worker explicitly so the restore is
         // never lost.
         let wp_path = provider_dir.join("wallpaper.txt");
-        let static_planned = fs::read_to_string(&wp_path)
-            .map(|text| !text.trim().is_empty())
-            .unwrap_or(false);
+        // Same lenient read as before (an unreadable wallpaper.txt must not
+        // change the yield behaviour): the non-empty saved path, kept as a
+        // fact for the `apply-background` request built below.
+        let static_wallpaper = fs::read_to_string(&wp_path)
+            .ok()
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .map(PathBuf::from);
+        let static_planned = static_wallpaper.is_some();
         let owner_snapshot: Option<bool>;
         let mut authority_guard: Option<crate::providers::skwd_policy::YieldGuard> = None;
         if painter_record.exists() || static_planned {
@@ -1579,7 +1454,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                 .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
             match recorded {
                 Some(path) if path.exists() => {
-                    if delegate_to_skwd_walld(&path) {
+                    if background::hand_off_path(&path) {
                         animated_applied = true;
                         tracing::info!(
                             "[noctalia-v5] Restored painter video (video.txt) via skwd: {}",
@@ -1611,34 +1486,37 @@ impl ThemeProvider for NoctaliaV5Provider {
         if animated_applied {
             // The exact video is back with its own manager: a stale mpvpaper
             // manifest must not bounce the plugin over it.
-            remove_stale_artifact(&provider_dir.join(crate::providers::mpvpaper::MANIFEST_FILE));
+            remove_stale_artifact(&provider_dir.join(crate::providers::bg_info::MANIFEST_FILE));
         }
         // 1b. Legacy animated wallpaper (mpvpaper plugin manifest).
         //    Only when no exact painter video was restored. Refuses (never
         //    enables) while the plugin is disabled — see mpvpaper.rs.
-        let manifest_exists = provider_dir
-            .join(crate::providers::mpvpaper::MANIFEST_FILE)
-            .exists();
-        if !animated_applied {
-            if manifest_exists {
-                // Warn the user up-front when the theme has animated wallpapers
-                // but the plugin is not available — otherwise they would apply the
-                // theme and silently lose the videos.
-                if !crate::providers::mpvpaper::mpvpaper_enabled() {
-                    crate::providers::mpvpaper::notify_plugin_required();
-                }
-                match crate::providers::mpvpaper::apply_manifest(theme_dir) {
-                    Ok(()) => {
-                        animated_applied = true;
-                        tracing::info!("[noctalia-v5] Animated wallpapers applied");
-                    }
-                    Err(e) => tracing::warn!("[noctalia-v5] Animated wallpapers skipped: {}", e),
-                }
-            } else {
-                match crate::providers::mpvpaper::clear_all() {
-                    Ok(()) => tracing::info!("[noctalia-v5] Stopped running video wallpapers"),
-                    Err(e) => tracing::warn!("[noctalia-v5] clear-all warning: {}", e),
-                }
+        //    The hand-off to the OTHER backends goes through the
+        //    `apply-background` router: this path names no backend. The
+        //    up-front notification for a missing/disabled plugin happens
+        //    inside the router, before the manifest leg runs, exactly as
+        //    it did here.
+        let mut bg_request = background::ApplyBackgroundRequest {
+            theme_dir: theme_dir.to_path_buf(),
+            provider_dir,
+            animated_applied,
+            static_wallpaper,
+        };
+        let outcome = background::apply_animated(&bg_request);
+        animated_applied = outcome.animated_applied;
+        match outcome.leg {
+            background::RoutedLeg::AlreadyApplied => {}
+            background::RoutedLeg::ManifestApplied => {
+                tracing::info!("[noctalia-v5] Animated wallpapers applied");
+            }
+            background::RoutedLeg::ManifestRefused(reason) => {
+                tracing::warn!("[noctalia-v5] Animated wallpapers skipped: {}", reason);
+            }
+            background::RoutedLeg::Cleared => {
+                tracing::info!("[noctalia-v5] Stopped running video wallpapers");
+            }
+            background::RoutedLeg::ClearFailed(reason) => {
+                tracing::warn!("[noctalia-v5] clear-all warning: {}", reason);
             }
         }
 
@@ -1664,7 +1542,11 @@ impl ThemeProvider for NoctaliaV5Provider {
                     .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
                 tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
                 // Best-effort delegation to skwd-walld (agnostic, silent if absent)
-                delegate_to_skwd_walld(Path::new(wp));
+                // — reached through the `apply-background` router. The
+                // authoritative read above is what Noctalia just set: state it
+                // on the request so the router hands the engine the SAME path.
+                bg_request.static_wallpaper = Some(PathBuf::from(wp));
+                background::hand_off_static(&bg_request);
             }
         }
 
@@ -2259,117 +2141,14 @@ mod tests {
         std::env::remove_var("HVE_NOCTALIA_HYPR");
     }
 
-    #[test]
-    #[serial]
-    fn delegate_noop_when_socket_absent() {
-        let _env = crate::test_utils::env_guard();
-        // Task 2: delegation must be no-op when socket absent and never panic
-        let tmp_runtime = TempDir::new().unwrap();
-        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
-        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
-        std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
-        std::env::remove_var("SKWD_WALL_V2_SOCK");
-        // No socket file exists in tmp_runtime/skwd-wall-v2/wall.sock
-        delegate_to_skwd_walld(Path::new("/tmp/fake-wallpaper.jpg"));
-        // Should not panic and socket path should be absent
-        assert!(!skwd_wall_socket_path().exists());
-        if let Some(v) = orig_runtime {
-            std::env::set_var("XDG_RUNTIME_DIR", v);
-        } else {
-            std::env::remove_var("XDG_RUNTIME_DIR");
-        }
-        if let Some(v) = orig_sock {
-            std::env::set_var("SKWD_WALL_V2_SOCK", v);
-        } else {
-            std::env::remove_var("SKWD_WALL_V2_SOCK");
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn delegate_swallow_failure_when_socket_is_not_socket() {
-        let _env = crate::test_utils::env_guard();
-        // Task 2: failure must be swallowed, not propagated. D1: it must
-        // also REPORT the failure. Stub binaries on PATH (both fail) keep
-        // this hermetic: no real `skwd-helm apply` may run during tests.
-        let tmp_runtime = TempDir::new().unwrap();
-        let sock_dir = tmp_runtime.path().join("skwd-wall-v2");
-        std::fs::create_dir_all(&sock_dir).unwrap();
-        let sock_path = sock_dir.join("wall.sock");
-        // Create a regular file where socket should be — connect will fail
-        std::fs::write(&sock_path, b"not a socket").unwrap();
-        let bin_dir = tmp_runtime.path().join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        for bin in ["skwd-helm", "skwd-wall-v2"] {
-            let stub = bin_dir.join(bin);
-            std::fs::write(&stub, "#!/bin/sh\nexit 1\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
-        }
-        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
-        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
-        let orig_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
-        std::env::remove_var("SKWD_WALL_V2_SOCK");
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", bin_dir.display(), orig_path),
-        );
-        // Must not panic, must swallow the error — and must report failure
-        // so the caller keeps its fallback routes.
-        assert!(!delegate_to_skwd_walld(Path::new("/tmp/another.jpg")));
-        // restore
-        std::env::set_var("PATH", &orig_path);
-        if let Some(v) = orig_runtime {
-            std::env::set_var("XDG_RUNTIME_DIR", v);
-        } else {
-            std::env::remove_var("XDG_RUNTIME_DIR");
-        }
-        if let Some(v) = orig_sock {
-            std::env::set_var("SKWD_WALL_V2_SOCK", v);
-        } else {
-            std::env::remove_var("SKWD_WALL_V2_SOCK");
-        }
-    }
-
-    /// D1: the delegation must report whether it actually applied. An
-    /// absent socket (daemon unreachable) is a failed delegation, never a
-    /// silent success — the caller gates the fallback routes on this.
-    #[test]
-    #[serial]
-    fn delegate_reports_failure_when_socket_absent() {
-        let _env = crate::test_utils::env_guard();
-        let tmp_runtime = TempDir::new().unwrap();
-        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
-        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
-        std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
-        std::env::remove_var("SKWD_WALL_V2_SOCK");
-        let applied = delegate_to_skwd_walld(Path::new("/tmp/fake-wallpaper.jpg"));
-        assert!(
-            !applied,
-            "absent socket must report failure so the caller keeps the fallback routes"
-        );
-        if let Some(v) = orig_runtime {
-            std::env::set_var("XDG_RUNTIME_DIR", v);
-        } else {
-            std::env::remove_var("XDG_RUNTIME_DIR");
-        }
-        if let Some(v) = orig_sock {
-            std::env::set_var("SKWD_WALL_V2_SOCK", v);
-        } else {
-            std::env::remove_var("SKWD_WALL_V2_SOCK");
-        }
-    }
-
     /// D1: a failed delegation must not claim the video is back. The apply
     /// path may only treat the painter video as restored on a real success;
     /// otherwise the manifest must survive and the static restore must run.
-    /// Comment lines are stripped first so a commented-out gate cannot
-    /// satisfy this. Needles are built with concat() so this test's own
-    /// source — it lives in the file it inspects — can never satisfy them.
+    /// The hand-off itself moved behind the `apply-background` router, so
+    /// the gate is asserted on the routed call. Comment lines are stripped
+    /// first so a commented-out gate cannot satisfy this. Needles are
+    /// built with concat() so this test's own source — it lives in the
+    /// file it inspects — can never satisfy them.
     #[test]
     fn v5_apply_claims_video_only_on_real_delegation_success_by_construction() {
         let src = std::fs::read_to_string("src/providers/noctalia.rs")
@@ -2379,12 +2158,12 @@ mod tests {
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
-        let gated = ["if delegate_to_skwd", "_walld"].concat();
+        let gated = ["if background::hand_off", "_path(&path)"].concat();
         assert!(
             code.contains(&gated),
-            "apply must gate the painter-video success on the delegation result"
+            "apply must gate the painter-video success on the routed hand-off result"
         );
-        let unconditional = ["delegate_to_skwd_walld(&path);\n", "                    animated_applied = true"].concat();
+        let unconditional = ["hand_off_path(&path);\n", "                        animated_applied = true"].concat();
         assert!(
             !code.contains(&unconditional),
             "apply must not set animated_applied unconditionally after delegating"
@@ -2462,11 +2241,11 @@ mod tests {
 
     /// G2/G3: a painter-identified video must be recorded exactly (kind +
     /// path + who painted it) and restored through the manager in charge
-    /// (`skwd-helm apply`, i.e. the existing delegation helper), never by
-    /// bouncing the mpvpaper plugin. Comment lines are stripped first so a
-    /// commented-out call cannot satisfy this. Needles are built with
-    /// concat() so this test's own source — it lives in the file it
-    /// inspects — can never satisfy them.
+    /// (`skwd-helm apply`, reached through the `apply-background` router),
+    /// never by bouncing the mpvpaper plugin. Comment lines are stripped
+    /// first so a commented-out call cannot satisfy this. Needles are
+    /// built with concat() so this test's own source — it lives in the
+    /// file it inspects — can never satisfy them.
     #[test]
     fn v5_apply_restores_painter_video_through_skwd_by_construction() {
         let src = std::fs::read_to_string("src/providers/noctalia.rs")
@@ -2477,14 +2256,59 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let video_record = ["vid", "eo.txt"].concat();
-        let delegator = ["delegate_to_skwd", "_walld"].concat();
+        let router = ["background::hand_off", "_path(&path)"].concat();
         assert!(
             code.contains(&video_record),
             "noctalia.rs apply must restore the painter-identified video record"
         );
         assert!(
-            code.contains(&delegator),
-            "noctalia.rs apply must route the recorded video through skwd delegation"
+            code.contains(&router),
+            "noctalia.rs apply must route the recorded video through the \
+             apply-background router to the skwd engine"
+        );
+    }
+
+    /// The chain this unit breaks: `noctalia.rs` must reach the skwd
+    /// engine and the mpvpaper plugin ONLY through the `apply-background`
+    /// router — never by naming their helpers or APIs. The provider's own
+    /// knowledge stays (settings parser, colour-authority seams, the
+    /// third-party plugin id as data). Comment lines are stripped first
+    /// so a commented-out call cannot satisfy this. Needles are built
+    /// with concat() so this test's own source — it lives in the file it
+    /// inspects — can never contain them.
+    #[test]
+    fn v5_apply_routes_backgrounds_through_the_router_by_construction() {
+        let src = std::fs::read_to_string("src/providers/noctalia.rs")
+            .expect("src/providers/noctalia.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for needle in [
+            ["delegate_to_", "skwd_walld"].concat(),
+            ["run_delegate_", "apply"].concat(),
+            ["skwd_wall_", "socket_path"].concat(),
+            ["is_video_", "path"].concat(),
+            ["providers::", "mpvpaper::"].concat(),
+        ] {
+            assert!(
+                !code.contains(&needle),
+                "noctalia.rs must not name `{}` — the hand-off belongs to the \
+                 apply-background router (capability routing: a backend never \
+                 calls another backend)",
+                needle
+            );
+        }
+        let routed_manifest = ["background::apply_", "animated"].concat();
+        assert!(
+            code.contains(&routed_manifest),
+            "noctalia.rs apply must reach the manifest leg through the router"
+        );
+        let routed_path = ["background::hand_off", "_path("].concat();
+        assert!(
+            code.contains(&routed_path),
+            "noctalia.rs must reach the path hand-off through the router"
         );
     }
 
