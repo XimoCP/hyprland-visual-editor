@@ -166,11 +166,15 @@ impl ShellDetector for NoctaliaV4Paths {
     }
 
     fn is_active(&self) -> bool {
+        // `.output()`, never `.status()`: `status()` inherits this process's
+        // stdout, so `pgrep` prints the matching PID straight into whatever
+        // terminal launched HVE. The question here is only "did it match",
+        // and `.output()` answers it while capturing the PID.
         std::process::Command::new("pgrep")
             .arg("-x")
             .arg("quickshell")
-            .status()
-            .map(|s| s.success())
+            .output()
+            .map(|o| o.status.success())
             .unwrap_or(false)
     }
 }
@@ -269,11 +273,13 @@ impl ShellDetector for NoctaliaV5Paths {
         // Both conditions are required:
         // 1. The noctalia process is running
         // 2. ~/.config/noctalia/profiles/ exists (v5 only)
+        // Same rule as the v4 detector above: `.output()` captures the PID
+        // `pgrep` would otherwise print into HVE's own terminal.
         let process_running = std::process::Command::new("pgrep")
             .arg("-x")
             .arg("noctalia")
-            .status()
-            .map(|s| s.success())
+            .output()
+            .map(|o| o.status.success())
             .unwrap_or(false);
 
         let profiles_dir_exists = self

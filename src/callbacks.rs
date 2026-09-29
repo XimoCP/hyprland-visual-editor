@@ -960,6 +960,10 @@ impl GeometryPersistCoalescer {
         self.pending.take()
     }
 
+    /// Test-only accessor: no production path needs to ask, so the method is
+    /// compiled only for the test build. Without the gate the bin target
+    /// reports it as dead code on every `cargo run`.
+    #[cfg(test)]
     pub fn has_pending(&self) -> bool {
         self.pending.is_some()
     }
