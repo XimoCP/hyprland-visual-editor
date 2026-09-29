@@ -54,6 +54,37 @@ impl std::ops::DerefMut for MutexGuard {
     }
 }
 
+// ── Detached capability access (pre-registration fallback) ────────────
+
+/// Run one Lua eval on a DETACHED Hyprland driver — the OLD behaviour of
+/// `main.rs::hypr_eval` for the paths that run BEFORE `init_global` (the
+/// startup mask repair at the top of `main()`, a configreloaded line from
+/// the IPC listener started just before the composition root). There the
+/// controller is `None`, and a silent no-op would strand the desktop
+/// masked, so the pre-seam spawn must remain reachable.
+pub fn eval_lua_detached(lua: &str) -> Result<(), String> {
+    HyprlandComposer::new().eval_lua(lua)
+}
+
+/// Dispatch one script on a DETACHED driver — the pre-`init_global`
+/// fallback for the theme-interlude view switch and the targeted fullscreen
+/// re-assert. Same contract as the registered path: success = stdout `ok`.
+pub fn dispatch_script_detached(script: &str) -> bool {
+    HyprlandComposer::new().dispatch_script(script)
+}
+
+/// Reload the compositor config on a DETACHED driver — the pre-`init_global`
+/// fallback keeping `settings.rs`'s inline-spawn behaviour (warn on
+/// failure, nothing returned) exactly as it was.
+///
+/// `cfg_attr(test)`: its only call site is `settings.rs`'s `#[cfg(not(test))]`
+/// reload arm, which does not compile under the test harness — the function
+/// itself is production code, not dead weight.
+#[cfg_attr(test, allow(dead_code))]
+pub fn reload_config_detached() {
+    HyprlandComposer::new().reload_config()
+}
+
 // ── HyprMode (internal to this module) ────────────────────────────────
 
 /// Hyprland version mode — detected once at init.
@@ -131,14 +162,40 @@ pub trait Composer: Send + Sync {
     ///
     /// Returns `None` on any failure. Never panics.
     fn read_option(&self, name: &str) -> Option<String>;
+
+    /// Run one compositor dispatch script (`hyprctl dispatch <script>`) and
+    /// report success. Success is exactly the driver's answer — stdout
+    /// contains `ok` — because this build routes `dispatch` through a Lua
+    /// shim that can reject a request while still exiting 0, so the raw
+    /// success test belongs to the driver, never to the call site.
+    ///
+    /// The script passes through verbatim: building it (and refusing unsafe
+    /// workspace names) stays with the caller, which owns that policy.
+    fn dispatch_script(&self, script: &str) -> bool;
+
+    /// Run one Lua eval chunk (`hyprctl eval <lua>`) and report the JUDGED
+    /// outcome: the answer decides, never the exit status alone — Hyprland
+    /// exits 0 when it REJECTS a request (the `keyword can't work with
+    /// non-legacy parsers` bug class whose absence hid the mask bug for
+    /// months). The judgement lives with the driver so every eval call site
+    /// gets one verdict and the same error strings.
+    ///
+    /// `Ok(())` only when stdout answers `ok`. Never panics.
+    fn eval_lua(&self, lua: &str) -> Result<(), String>;
+
+    /// Re-read the compositor configuration (`reload-config` capability): a
+    /// settings write is only meaningful once the compositor re-reads the
+    /// file. Warns on a spawn failure and reports nothing — the exact
+    /// observable contract `settings.rs` had with its inline spawn, kept
+    /// byte for byte (no Result for the call site to reinterpret).
+    fn reload_config(&self);
 }
 
 /// The read-only compositor JSON queries the core performs, as an explicit
 /// selector. Exactly today's call sites live here — the active-workspace
 /// read already has its own trait verb (`active_workspace`), and command
-/// verbs (dispatch/eval/reload) are NOT queries and belong to the next
-/// capability-routing unit. Add a variant only when a core call site needs
-/// the query.
+/// verbs (dispatch/eval/reload) are NOT queries: they have their own trait
+/// verbs below. Add a variant only when a core call site needs the query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompositorQuery {
     /// `hyprctl workspaces -j` — workspace list with per-workspace window
@@ -425,6 +482,10 @@ pub(crate) mod tests {
         query_answer: Option<String>,
         /// Raw payload the raw `read_option` verb answers with.
         option_answer: Option<String>,
+        /// Result reported by the `dispatch_script` verb (true = stdout said ok).
+        dispatch_ok: bool,
+        /// Result reported by the `eval_lua` verb (Ok = the chunk ran).
+        eval_answer: Result<(), String>,
     }
 
     impl FakeComposer {
@@ -437,6 +498,8 @@ pub(crate) mod tests {
                     fullscreen_ok: true,
                     query_answer: None,
                     option_answer: None,
+                    dispatch_ok: true,
+                    eval_answer: Ok(()),
                 },
                 calls,
             )
@@ -451,6 +514,8 @@ pub(crate) mod tests {
                     fullscreen_ok: true,
                     query_answer: None,
                     option_answer: None,
+                    dispatch_ok: true,
+                    eval_answer: Ok(()),
                 },
                 calls,
             )
@@ -466,6 +531,8 @@ pub(crate) mod tests {
                     fullscreen_ok: ok,
                     query_answer: None,
                     option_answer: None,
+                    dispatch_ok: true,
+                    eval_answer: Ok(()),
                 },
                 calls,
             )
@@ -482,6 +549,8 @@ pub(crate) mod tests {
                     fullscreen_ok: true,
                     query_answer: answer,
                     option_answer: None,
+                    dispatch_ok: true,
+                    eval_answer: Ok(()),
                 },
                 calls,
             )
@@ -498,6 +567,44 @@ pub(crate) mod tests {
                     fullscreen_ok: true,
                     query_answer: None,
                     option_answer: answer,
+                    dispatch_ok: true,
+                    eval_answer: Ok(()),
+                },
+                calls,
+            )
+        }
+
+        /// Fake composer whose dispatch script reports `ok` (`ok = false`
+        /// models a compositor that answers without the `ok` marker).
+        pub fn with_dispatch_result(ok: bool) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: true,
+                    query_answer: None,
+                    option_answer: None,
+                    dispatch_ok: ok,
+                    eval_answer: Ok(()),
+                },
+                calls,
+            )
+        }
+
+        /// Fake composer whose Lua eval answers with `answer` — the JUDGED
+        /// outcome, exactly as the driver reports it.
+        pub fn with_eval_answer(answer: Result<(), String>) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: true,
+                    query_answer: None,
+                    option_answer: None,
+                    dispatch_ok: true,
+                    eval_answer: answer,
                 },
                 calls,
             )
@@ -561,6 +668,20 @@ pub(crate) mod tests {
         fn read_option(&self, name: &str) -> Option<String> {
             self.record(&format!("read_option({name})"));
             self.option_answer.clone()
+        }
+
+        fn dispatch_script(&self, script: &str) -> bool {
+            self.record(&format!("dispatch_script({script})"));
+            self.dispatch_ok
+        }
+
+        fn eval_lua(&self, lua: &str) -> Result<(), String> {
+            self.record(&format!("eval_lua({lua})"));
+            self.eval_answer.clone()
+        }
+
+        fn reload_config(&self) {
+            self.record("reload_config");
         }
     }
 
@@ -1236,5 +1357,73 @@ pub(crate) mod tests {
 
         assert!(got.is_none(), "an unreadable option must be None, got: {got:?}");
         assert_eq!(*calls.lock().unwrap(), vec!["read_option(decoration:blur:enabled)"]);
+    }
+
+    // ── Command verbs (capability-routing Phase 3) ────────────────────
+
+    /// The dispatch verb carries the caller's script VERBATIM and reports
+    /// exactly what the driver reported: success is the driver's
+    /// "stdout contains ok" answer, never re-judged at the call site.
+    #[test]
+    fn test_dispatch_script_routes_the_script_verbatim_and_reports_the_answer() {
+        let script = "hl.dsp.focus({ workspace = \"10\" })";
+        let (fake, calls) = FakeComposer::with_dispatch_result(true);
+        let controller = Controller::new(Box::new(fake));
+        assert!(
+            controller.composer().dispatch_script(script),
+            "a driver `ok` must reach the caller as true"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![format!("dispatch_script({script})")],
+            "the script must reach the composer verbatim"
+        );
+
+        let (fake, calls) = FakeComposer::with_dispatch_result(false);
+        let controller = Controller::new(Box::new(fake));
+        assert!(
+            !controller.composer().dispatch_script(script),
+            "a driver refusal (no `ok` on stdout) must reach the caller as false"
+        );
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            1,
+            "the refused attempt is still recorded"
+        );
+    }
+
+    /// The eval verb carries the Lua chunk verbatim and passes the JUDGED
+    /// outcome through untouched — including the exact error string the
+    /// caller's failure log renders.
+    #[test]
+    fn test_eval_lua_routes_the_chunk_and_passes_the_judged_result_through() {
+        let (fake, calls) = FakeComposer::with_eval_answer(Ok(()));
+        let controller = Controller::new(Box::new(fake));
+        let chunk = "hl.config({ blur = 0 })";
+        assert!(controller.composer().eval_lua(chunk).is_ok());
+        assert_eq!(*calls.lock().unwrap(), vec![format!("eval_lua({chunk})")]);
+
+        let judged = "hyprctl eval did not answer ok: keyword can't work with non-legacy parsers";
+        let (fake, calls) = FakeComposer::with_eval_answer(Err(judged.to_string()));
+        let controller = Controller::new(Box::new(fake));
+        let got = controller.composer().eval_lua(chunk);
+        assert_eq!(
+            got.as_ref().err().map(String::as_str),
+            Some(judged),
+            "the judged error string must pass through untouched, got: {got:?}"
+        );
+        assert_eq!(calls.lock().unwrap().len(), 1, "the failed attempt is still recorded");
+    }
+
+    /// The reload verb must REACH the composer — `reload-config` is the
+    /// capability `settings.rs` writes through.
+    #[test]
+    fn test_reload_config_reaches_the_composer() {
+        let (fake, calls) = FakeComposer::new();
+        let controller = Controller::new(Box::new(fake));
+
+        controller.composer().reload_config();
+
+        assert_eq!(*calls.lock().unwrap(), vec!["reload_config"]);
     }
 }

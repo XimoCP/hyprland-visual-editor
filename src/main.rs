@@ -769,8 +769,13 @@ static THEME_MASK_ORIGINALS: std::sync::Mutex<std::collections::BTreeMap<&'stati
 /// would stay masked with the in-memory store and the marker both gone, and the
 /// next apply would then capture the masked values as if they were the
 /// originals — the permanent damage this unit exists to prevent. The critical
-/// section is one `hyprctl eval` and nothing else takes this lock, so it cannot
-/// deadlock. Lock order is always serial -> store, never the reverse.
+/// section is one Lua eval through the composer (GLOBAL_CONTROLLER), and no
+/// controller guard ever reaches for this lock, so it cannot deadlock.
+/// Lock order is always serial -> store -> controller, never the reverse.
+/// The same direction holds for the outer guards that reach the composer
+/// since the command verbs moved behind it: `THEME_INTERLUDE` and the
+/// `AppState` store are acquired BEFORE the controller and no controller
+/// guard ever takes either one, so the graph stays acyclic.
 static MASK_WRITE_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Interlude view state: the workspace the view must RETURN to and whether
 /// the view was actually staged away. See `InterludeState` for the rules.
@@ -1388,48 +1393,22 @@ pub(crate) fn write_mask_payload(
     }
 }
 
-/// Decide the outcome of one `hyprctl eval` from what it actually reported.
+/// Run one `hyprctl eval` Lua chunk. See `composer::hyprland::eval_outcome`
+/// for why the exit status is not enough — this is the check whose absence
+/// hid the bug for months.
 ///
-/// Hyprland answers exactly `ok` on stdout when the chunk ran, but it ALSO
-/// exits 0 when it REJECTS the request (measured: `keyword can't work with
-/// non-legacy parsers` exits 0). So a zero exit status alone proves nothing,
-/// and the answer is what decides. Noise on stderr alongside an `ok` answer is
-/// not a failure.
-pub(crate) fn eval_outcome(
-    exit_ok: bool,
-    code: Option<i32>,
-    stdout: &str,
-    stderr: &str,
-) -> Result<(), String> {
-    let out = stdout.trim();
-    let err = stderr.trim();
-    let detail = match (out.is_empty(), err.is_empty()) {
-        (_, true) => out.to_string(),
-        (true, false) => err.to_string(),
-        (false, false) => format!("{out} | {err}"),
-    };
-    if !exit_ok {
-        return Err(format!("hyprctl eval exited {code:?}: {detail}"));
-    }
-    if out != "ok" {
-        return Err(format!("hyprctl eval did not answer ok: {detail}"));
-    }
-    Ok(())
-}
-
-/// Run one `hyprctl eval` Lua chunk. See `eval_outcome` for why the exit status
-/// is not enough — this is the check whose absence hid the bug for months.
+/// Thin controller over the composer seam (capability-routing Phase 3): the
+/// judgement, the argv and the error strings live behind the trait. The
+/// detached fallback keeps the OLD spawn for the paths that run BEFORE
+/// `composer::init_global` (the startup mask repair, an early IPC line) —
+/// there the controller is `None` and a no-op would strand the desktop
+/// masked. Signature unchanged: this function is passed as a value into
+/// `write_mask_payload` / `restore_theme_masks_with`.
 fn hypr_eval(lua: &str) -> Result<(), String> {
-    let out = std::process::Command::new("hyprctl")
-        .args(["eval", lua])
-        .output()
-        .map_err(|e| format!("hyprctl eval could not run: {e}"))?;
-    eval_outcome(
-        out.status.success(),
-        out.status.code(),
-        &String::from_utf8_lossy(&out.stdout),
-        &String::from_utf8_lossy(&out.stderr),
-    )
+    match crate::composer::global_controller() {
+        Some(ctrl) => ctrl.composer().eval_lua(lua),
+        None => crate::composer::eval_lua_detached(lua),
+    }
 }
 
 /// Geometry persist idle window (ms): how long the drag must stay quiet before
@@ -2207,11 +2186,12 @@ fn hypr_switch_view(ws: &str) -> bool {
         tracing::warn!("[theme] interlude view switch rejected unsafe name {:?}", ws);
         return false;
     };
-    std::process::Command::new("hyprctl")
-        .args(["dispatch", &script])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
+    // Validation stays HERE (the unsafe-name rejection is this function's
+    // contract); the spawn itself is the composer's dispatch capability.
+    match crate::composer::global_controller() {
+        Some(ctrl) => ctrl.composer().dispatch_script(&script),
+        None => crate::composer::dispatch_script_detached(&script),
+    }
 }
 
 /// Re-set fullscreen on HVE via the WINDOW-TARGETED v5 dispatcher (reuses
@@ -2222,11 +2202,10 @@ fn hypr_switch_view(ws: &str) -> bool {
 /// already fullscreen (no-op), a real transition when a reload re-floated it.
 fn reassert_hve_fullscreen_targeted() -> bool {
     let script = crate::composer::hyprland::v5_set_fullscreen(true);
-    std::process::Command::new("hyprctl")
-        .args(["dispatch", &script])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
+    match crate::composer::global_controller() {
+        Some(ctrl) => ctrl.composer().dispatch_script(&script),
+        None => crate::composer::dispatch_script_detached(&script),
+    }
 }
 
 // ── Notification silence during the theme swap ──────────────────────────
@@ -5222,26 +5201,6 @@ mod tests {
     }
 
     #[test]
-    fn the_eval_answer_decides_not_the_exit_code() {
-        // `hyprctl keyword` printed an error and STILL exited 0 — the bug class
-        // this must never let through again.
-        assert!(eval_outcome(true, Some(0), "ok\n", "").is_ok());
-        assert!(
-            eval_outcome(true, Some(0), "ok", "some warning\n").is_ok(),
-            "stderr noise alongside ok is not a failure"
-        );
-        let rejected = eval_outcome(
-            true,
-            Some(0),
-            "keyword can't work with non-legacy parsers. Use eval.\n",
-            "",
-        );
-        assert!(rejected.is_err(), "a zero exit with a rejection must fail");
-        assert!(rejected.unwrap_err().contains("non-legacy"));
-        assert!(eval_outcome(false, Some(1), "", "boom").is_err());
-    }
-
-    #[test]
     fn the_builder_refuses_anything_it_cannot_render_as_valid_lua() {
         fn build(entries: &[(&str, &str)]) -> Option<String> {
             let v: Vec<(String, String)> = entries
@@ -6415,6 +6374,109 @@ mod tests {
             "1",
             "a non-numeric str yields the fallback"
         );
+    }
+
+    // ── Command verbs moved behind Composer (capability-routing Phase 3) ─
+    // House-style wiring pins (comment-stripped, same precedent as the
+    // begin_mask arm pin): the raw `hyprctl` spawns leave the core file,
+    // while the seam shape (`global_controller()` with a detached fallback
+    // for the pre-`init_global` paths) and the exact `Fn(&str) ->
+    // Result<(), String>` runner signature must stay.
+
+    /// Body of one `fn <sig>`: from the signature to its matching closing
+    /// brace (brace counting — every pinned body keeps its braces balanced,
+    /// including the `{:?}` format placeholders).
+    fn fn_body(src: &str, sig: &str) -> String {
+        let start = src.find(sig).unwrap_or_else(|| panic!("{sig} must exist"));
+        let open = src[start..].find('{').expect("the function must have a body") + start;
+        let mut depth = 0usize;
+        for (i, ch) in src[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return src[start..open + i + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{sig}: body must close");
+    }
+
+    /// Comment-stripped production body of `src/main.rs` for wiring pins.
+    fn main_rs_code() -> String {
+        let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+        src.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn hypr_eval_reaches_the_composer_and_never_spawns_itself() {
+        let code = main_rs_code();
+        let body = fn_body(&code, "fn hypr_eval(lua: &str) -> Result<(), String>");
+        assert!(
+            body.contains("global_controller()"),
+            "hypr_eval must ask the registered composer, got: {body}"
+        );
+        assert!(
+            body.contains("eval_lua"),
+            "hypr_eval must use the eval capability verb, got: {body}"
+        );
+        assert!(
+            body.contains("eval_lua_detached"),
+            "a pre-init_global caller (startup mask repair, early IPC line) must keep the OLD spawn via the detached fallback — never a silent no-op, got: {body}"
+        );
+        assert!(
+            !body.contains("Command::new"),
+            "hypr_eval must not spawn hyprctl itself, got: {body}"
+        );
+    }
+
+    #[test]
+    fn switch_view_and_targeted_reassert_route_through_the_composer() {
+        let code = main_rs_code();
+        for sig in [
+            "fn hypr_switch_view(ws: &str) -> bool",
+            "fn reassert_hve_fullscreen_targeted() -> bool",
+        ] {
+            let body = fn_body(&code, sig);
+            assert!(
+                body.contains("dispatch_script"),
+                "{sig} must run its script through the composer's dispatch verb, got: {body}"
+            );
+            assert!(
+                body.contains("dispatch_script_detached"),
+                "{sig} must fall back to the OLD spawn before init_global — never a silent no-op, got: {body}"
+            );
+            assert!(
+                !body.contains("Command::new"),
+                "{sig} must not spawn hyprctl itself, got: {body}"
+            );
+        }
+    }
+
+    /// The load-bearing seam: `hypr_eval` is passed as a function VALUE into
+    /// `write_mask_payload` / `restore_theme_masks_with` (both take
+    /// `impl Fn(&str) -> Result<(), String>`), and the tests drive those with
+    /// injected runners. The exact signature cannot change.
+    #[test]
+    fn hypr_eval_keeps_the_runner_signature_the_mask_seam_depends_on() {
+        let code = main_rs_code();
+        assert!(
+            code.contains("fn hypr_eval(lua: &str) -> Result<(), String>"),
+            "the Fn(&str) -> Result<(), String> runner signature is load-bearing"
+        );
+        for seam in [
+            "write_mask_payload(false, &originals, hypr_eval)",
+            "write_mask_payload(true, &originals, hypr_eval)",
+            "restore_theme_masks_with(hypr_eval)",
+        ] {
+            assert!(code.contains(seam), "the seam must keep passing hypr_eval: {seam}");
+        }
     }
 
 }

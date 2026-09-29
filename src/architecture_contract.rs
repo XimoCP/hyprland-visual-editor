@@ -161,13 +161,17 @@ fn is_exempt(file: &str, token: &str) -> bool {
 /// to re-home the reference deliberately (the failure message says so).
 /// Exempt pairs (see `EXEMPT_TOKENS`) carry no pin by design.
 const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
-    ("src/main.rs", "hyprctl", 6),
+    // Phase 3 (2026-09-29): the command path (`eval`, `dispatch` ×2) moved
+    // behind `Composer`; measured 0 by the scanner — lowered 6 → 0.
+    ("src/main.rs", "hyprctl", 0),
     ("src/main.rs", "hyprland", 12),
     ("src/main.rs", "noctalia", 13),
     ("src/main.rs", "skwd", 1),
     ("src/main.rs", "mpvpaper", 1),
     ("src/main.rs", "skwd_policy", 1),
-    ("src/settings.rs", "hyprctl", 2),
+    // Phase 3 (2026-09-29): `reload_hyprland` routes through the composer's
+    // `reload-config` verb; measured 0 — lowered 2 → 0.
+    ("src/settings.rs", "hyprctl", 0),
     ("src/settings.rs", "hyprland", 5),
     ("src/theme_manager.rs", "hyprland", 1),
     ("src/theme_manager.rs", "noctalia", 3),

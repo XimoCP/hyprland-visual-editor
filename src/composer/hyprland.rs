@@ -102,7 +102,7 @@ impl HyprlandComposer {
 
     fn hypr_dispatch_v5(&self, script: &str) -> bool {
         std::process::Command::new("hyprctl")
-            .args(["dispatch", script])
+            .args(dispatch_args(script))
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
             .unwrap_or(false)
@@ -187,6 +187,61 @@ fn query_args(query: CompositorQuery) -> &'static [&'static str] {
 /// pinned by test.
 fn option_args(name: &str) -> [&str; 3] {
     ["getoption", name, "-j"]
+}
+
+// ── Command capabilities (one spawn path per verb) ────────────────────
+
+/// argv (after the `hyprctl` binary) for one dispatch script. Pure, so the
+/// moved `main.rs` call sites' argv (`dispatch <script>`) is pinned by test
+/// instead of by spawning.
+pub(crate) fn dispatch_args(script: &str) -> [&str; 2] {
+    ["dispatch", script]
+}
+
+/// argv (after the `hyprctl` binary) for one Lua eval — the moved
+/// `main.rs::hypr_eval` shape (`eval <lua>`, chunk verbatim). Pure.
+pub(crate) fn eval_args(lua: &str) -> [&str; 2] {
+    ["eval", lua]
+}
+
+/// argv (after the `hyprctl` binary) for the config reload — the moved
+/// `settings.rs::reload_hyprland` shape (`reload`). Pure.
+pub(crate) fn reload_args() -> [&'static str; 1] {
+    ["reload"]
+}
+
+/// Decide the outcome of one `hyprctl eval` from what it actually reported.
+/// Moved here with the eval verb (capability-routing Phase 3): the verdict
+/// is Hyprland knowledge, so it lives with the driver that spawns it.
+///
+/// Hyprland answers exactly `ok` on stdout when the chunk ran, but it ALSO
+/// exits 0 when it REJECTS the request (measured: `keyword can't work with
+/// non-legacy parsers` exits 0). So a zero exit status alone proves nothing,
+/// and the answer is what decides. Noise on stderr alongside an `ok` answer is
+/// not a failure.
+///
+/// The error strings are the pre-move ones, byte for byte: they surface in
+/// the caller's failure logs and tests assert on them.
+pub(crate) fn eval_outcome(
+    exit_ok: bool,
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<(), String> {
+    let out = stdout.trim();
+    let err = stderr.trim();
+    let detail = match (out.is_empty(), err.is_empty()) {
+        (_, true) => out.to_string(),
+        (true, false) => err.to_string(),
+        (false, false) => format!("{out} | {err}"),
+    };
+    if !exit_ok {
+        return Err(format!("hyprctl eval exited {code:?}: {detail}"));
+    }
+    if out != "ok" {
+        return Err(format!("hyprctl eval did not answer ok: {detail}"));
+    }
+    Ok(())
 }
 
 impl Composer for HyprlandComposer {
@@ -470,6 +525,41 @@ impl Composer for HyprlandComposer {
     /// JSON text and owns the option-name normalisation.
     fn read_option(&self, name: &str) -> Option<String> {
         hyprctl_json(&option_args(name))
+    }
+
+    /// Dispatch script through the module's ONE dispatch spawn path
+    /// (`hypr_dispatch_v5`): success = stdout contains `ok`, exactly the
+    /// raw test the moved `main.rs` call sites ran themselves.
+    fn dispatch_script(&self, script: &str) -> bool {
+        self.hypr_dispatch_v5(script)
+    }
+
+    /// One eval spawn plus the answer-based judgement (see the trait doc).
+    /// The argv and every error string are the pre-move ones, byte for byte.
+    fn eval_lua(&self, lua: &str) -> Result<(), String> {
+        let out = std::process::Command::new("hyprctl")
+            .args(eval_args(lua))
+            .output()
+            .map_err(|e| format!("hyprctl eval could not run: {e}"))?;
+        eval_outcome(
+            out.status.success(),
+            out.status.code(),
+            &String::from_utf8_lossy(&out.stdout),
+            &String::from_utf8_lossy(&out.stderr),
+        )
+    }
+
+    /// `hyprctl reload` with the pre-move contract from `settings.rs`:
+    /// warn on a spawn failure (the only failure this path ever reported),
+    /// nothing returned.
+    fn reload_config(&self) {
+        if let Err(e) = std::process::Command::new("hyprctl")
+            .args(reload_args())
+            .output()
+            .map(|_| ())
+        {
+            tracing::warn!("[hve] hyprctl reload failed: {}", e);
+        }
     }
 
     /// Floating Settings presentation (see the trait doc): float and center
@@ -1022,6 +1112,59 @@ mod tests {
             ["getoption", "decoration:blur:enabled", "-j"],
             "getoption must take the caller's name verbatim, unnormalised"
         );
+    }
+
+    // ── Command verbs (capability-routing Phase 3) ────────────────────
+
+    /// argv (after the `hyprctl` binary) for one dispatch script — the exact
+    /// shape the moved `main.rs` call sites used: `hyprctl dispatch <script>`,
+    /// script verbatim. Pure, so the argv is asserted without spawning.
+    #[test]
+    fn dispatch_args_keep_the_dispatch_argv_shape() {
+        assert_eq!(
+            dispatch_args("hl.dsp.focus({ workspace = \"10\" })"),
+            ["dispatch", "hl.dsp.focus({ workspace = \"10\" })"],
+            "the dispatch script must pass through verbatim"
+        );
+    }
+
+    /// The Lua eval keeps the moved `hypr_eval` argv:
+    /// `hyprctl eval <lua>`, chunk verbatim.
+    #[test]
+    fn eval_args_keep_the_eval_argv_shape() {
+        assert_eq!(
+            eval_args("hl.config({ blur = 0 })"),
+            ["eval", "hl.config({ blur = 0 })"],
+            "the eval chunk must pass through verbatim"
+        );
+    }
+
+    /// The reload keeps the moved `settings.rs` argv: `hyprctl reload`.
+    #[test]
+    fn reload_args_keep_the_reload_argv_shape() {
+        assert_eq!(reload_args(), ["reload"], "reload must stay `hyprctl reload`");
+    }
+
+    /// The eval judgement moves here with the verb (was `main.rs`): the
+    /// ANSWER decides, never the exit status alone — Hyprland exits 0 when it
+    /// REJECTS the request (measured: `keyword can't work with non-legacy
+    /// parsers` exits 0), the bug class this must never let through again.
+    #[test]
+    fn the_eval_answer_decides_not_the_exit_code() {
+        assert!(eval_outcome(true, Some(0), "ok\n", "").is_ok());
+        assert!(
+            eval_outcome(true, Some(0), "ok", "some warning\n").is_ok(),
+            "stderr noise alongside ok is not a failure"
+        );
+        let rejected = eval_outcome(
+            true,
+            Some(0),
+            "keyword can't work with non-legacy parsers. Use eval.\n",
+            "",
+        );
+        assert!(rejected.is_err(), "a zero exit with a rejection must fail");
+        assert!(rejected.unwrap_err().contains("non-legacy"));
+        assert!(eval_outcome(false, Some(1), "", "boom").is_err());
     }
 }
 

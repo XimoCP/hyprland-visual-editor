@@ -7,8 +7,14 @@ use std::path::PathBuf;
 
 /// Reload Hyprland after a settings write.
 ///
-/// Production shells out to `hyprctl reload`: a settings change is only
-/// meaningful once the compositor re-reads the file.
+/// Production routes the `reload-config` capability through the registered
+/// composer: a settings change is only meaningful once the compositor
+/// re-reads the file. The `None` arm keeps the pre-seam spawn so a missing
+/// controller can never become a silent no-op — every writer in this module
+/// runs after `composer::init_global` (the startup keybind/autostart/rules
+/// writes follow the composition root; the UI callbacks run on the event
+/// loop, which starts after it), but the old behaviour must not depend on
+/// that ordering staying true.
 ///
 /// Under `cfg(test)` this is a deliberate no-op. The suite has no compositor
 /// to reload, and a real `hyprctl reload` from a test drives the developer's
@@ -20,12 +26,11 @@ use std::path::PathBuf;
 /// weakening any assertion.
 fn reload_hyprland() {
     #[cfg(not(test))]
-    if let Err(e) = std::process::Command::new("hyprctl")
-        .arg("reload")
-        .output()
-        .map(|_| ())
     {
-        tracing::warn!("[hve] hyprctl reload failed: {}", e);
+        match crate::composer::global_controller() {
+            Some(ctrl) => ctrl.composer().reload_config(),
+            None => crate::composer::reload_config_detached(),
+        }
     }
 }
 
@@ -993,6 +998,64 @@ mod tests {
             installed_bin_path(),
             None,
             "a non-executable file must NOT qualify as the installed binary"
+        );
+    }
+
+    // ── reload-config behind Composer (capability-routing Phase 3) ────
+
+    /// Comment-stripped production body of `src/settings.rs`.
+    fn settings_rs_code() -> String {
+        let src = std::fs::read_to_string("src/settings.rs").expect("src/settings.rs must exist");
+        src.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Body of one `fn <sig>`: signature to matching closing brace.
+    fn fn_body(src: &str, sig: &str) -> String {
+        let start = src.find(sig).unwrap_or_else(|| panic!("{sig} must exist"));
+        let open = src[start..].find('{').expect("the function must have a body") + start;
+        let mut depth = 0usize;
+        for (i, ch) in src[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return src[start..open + i + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{sig}: body must close");
+    }
+
+    #[test]
+    fn reload_routes_behind_the_composer_and_keeps_the_test_gate() {
+        let code = settings_rs_code();
+        let body = fn_body(&code, "fn reload_hyprland()");
+        assert!(
+            body.contains("#[cfg(not(test))]"),
+            "the deliberate test no-op gate must stay — a real reload from a test drives the \
+             developer's live desktop, got: {body}"
+        );
+        assert!(
+            body.contains("global_controller()"),
+            "reload must reach the registered composer, got: {body}"
+        );
+        assert!(
+            body.contains("reload_config"),
+            "reload must use the reload-config capability verb, got: {body}"
+        );
+        assert!(
+            body.contains("reload_config_detached"),
+            "a None controller must keep the OLD spawn — never a silent no-op, got: {body}"
+        );
+        assert!(
+            !body.contains("Command::new"),
+            "settings.rs must not spawn hyprctl itself, got: {body}"
         );
     }
 }
