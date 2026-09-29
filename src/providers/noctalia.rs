@@ -5,7 +5,10 @@ use crate::providers::noctalia_runtime::{
 use crate::providers::wallpaper_authority::{self, SavePlan, WallpaperKind};
 use crate::providers::shell::NoctaliaV4Paths;
 use crate::providers::shell::ShellProvider;
-use crate::theme_manager::{DeletableArtifact, ProviderCapabilities, ThemeProvider};
+use crate::theme_manager::{
+    DeletableArtifact, PreviewRole, PreviewSource, PreviewSourceKind, ProviderCapabilities,
+    ThemeProvider,
+};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -97,6 +100,58 @@ fn parse_theme_entries(saved_path: &Path) -> Result<Vec<(String, String)>, Strin
     });
 
     Ok(entries)
+}
+
+/// The wallpaper-record candidate paths a saved provider directory STATES,
+/// in the record's OWN precedence order (`read-preview-source`): the DP-3
+/// dark/light pair, then the empty-screen ("") dark/light pair, then the
+/// FALLBACK dark/light pair, then `defaultWallpaper`, then the first
+/// `usedRandomWallpapers["DP-3"]` entry — empty values dropped. The record
+/// must exist and parse; otherwise it declares nothing (no candidates).
+/// Existence of each CANDIDATE is the caller's decision — the gallery core
+/// keeps the first existing candidate in role-precedence order, exactly
+/// like the old chain did.
+fn preview_wallpaper_candidates(provider_dir: &Path) -> Vec<PathBuf> {
+    let Ok(text) = fs::read_to_string(provider_dir.join("wallpapers.json")) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let mut cands: Vec<String> = Vec::new();
+    if let Some(wp) = v.get("wallpapers").and_then(|x| x.as_object()) {
+        for key in ["DP-3", "", "FALLBACK"] {
+            if let Some(e) = wp.get(key) {
+                if let Some(s) = e.get("dark").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+                {
+                    cands.push(s.to_string());
+                }
+                if let Some(s) = e.get("light").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+                {
+                    cands.push(s.to_string());
+                }
+            }
+        }
+    }
+    if let Some(s) = v
+        .get("defaultWallpaper")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        cands.push(s.to_string());
+    }
+    if let Some(used) = v.get("usedRandomWallpapers").and_then(|x| x.as_object()) {
+        if let Some(arr) = used.get("DP-3").and_then(|x| x.as_array()) {
+            if let Some(s) = arr
+                .first()
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                cands.push(s.to_string());
+            }
+        }
+    }
+    cands.into_iter().map(PathBuf::from).collect()
 }
 
 // ── Color helpers ────────────────────────────────────────────────────
@@ -418,6 +473,24 @@ impl ThemeProvider for NoctaliaV4Provider {
 
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::COLORS
+    }
+
+    /// The `read-preview-source` declaration for the wallpaper record this
+    /// provider OWNS: the cache snapshot it saves as `wallpapers.json` —
+    /// including the byte-identical copy a retired sibling id (`wallpaper`)
+    /// stored, which the registration router hands to this same declarer.
+    /// The provider parses its own record format and states the candidate
+    /// order; the gallery core decides existence and precedence.
+    fn preview_sources(&self, provider_dir: &Path) -> Vec<PreviewSource> {
+        let paths = preview_wallpaper_candidates(provider_dir);
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        vec![PreviewSource {
+            role: PreviewRole::WallpaperManifest,
+            kind: PreviewSourceKind::Image,
+            paths,
+        }]
     }
 
     fn save(&self, theme_dir: &Path) -> Result<(), String> {
@@ -997,6 +1070,50 @@ impl ThemeProvider for NoctaliaV5Provider {
 
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::COLORS | ProviderCapabilities::WALLPAPERS
+    }
+
+    /// The `read-preview-source` declarations for the three preview
+    /// records this provider saves in its own directory: the live
+    /// background assignment manifest (format knowledge in `bg_info`, the
+    /// module that owns that record), the painter-identified video record
+    /// (format knowledge in `wallpaper_authority`), and the static
+    /// wallpaper text record. Each declaration carries the record's own
+    /// candidate order; the gallery core decides existence, precedence and
+    /// fall-through.
+    fn preview_sources(&self, provider_dir: &Path) -> Vec<PreviewSource> {
+        let mut out = Vec::new();
+
+        let paths = crate::providers::bg_info::preview_candidates(provider_dir);
+        if !paths.is_empty() {
+            out.push(PreviewSource {
+                role: PreviewRole::Assignment,
+                kind: PreviewSourceKind::Video,
+                paths,
+            });
+        }
+
+        if let Ok(text) = fs::read_to_string(provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE))
+        {
+            if let Some(path) = wallpaper_authority::parse_painter_video_record(&text) {
+                out.push(PreviewSource {
+                    role: PreviewRole::PainterVideo,
+                    kind: PreviewSourceKind::Video,
+                    paths: vec![path],
+                });
+            }
+        }
+
+        if let Ok(text) = fs::read_to_string(provider_dir.join("wallpaper.txt")) {
+            if let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) {
+                out.push(PreviewSource {
+                    role: PreviewRole::WallpaperText,
+                    kind: PreviewSourceKind::Image,
+                    paths: vec![PathBuf::from(line)],
+                });
+            }
+        }
+
+        out
     }
 
     fn save(&self, theme_dir: &Path) -> Result<(), String> {
@@ -1854,6 +1971,48 @@ mod tests {
             Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
             None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
         }
+    }
+
+    /// The `read-preview-source` declaration keeps the wallpaper record's
+    /// OWN candidate order — DP-3 dark → DP-3 light → "" dark → "" light →
+    /// FALLBACK dark → FALLBACK light → defaultWallpaper →
+    /// usedRandomWallpapers["DP-3"][0], empty values dropped. The gallery
+    /// takes the first EXISTING candidate in exactly this order, so the
+    /// provider must declare it exactly as the record states it.
+    #[test]
+    fn preview_wallpaper_candidates_keep_the_record_order() {
+        let dir = TempDir::new().unwrap();
+        let json = serde_json::json!({
+            "wallpapers": {
+                "DP-3": { "dark": "/a/dp3-dark.png", "light": "/a/dp3-light.png" },
+                "": { "dark": "/a/empty-dark.png", "light": "" },
+                "FALLBACK": { "dark": "/a/fb-dark.png", "light": "/a/fb-light.png" }
+            },
+            "defaultWallpaper": "/a/default.png",
+            "usedRandomWallpapers": { "DP-3": ["/a/random.png"] }
+        });
+        std::fs::write(
+            dir.path().join("wallpapers.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            preview_wallpaper_candidates(dir.path()),
+            vec![
+                PathBuf::from("/a/dp3-dark.png"),
+                PathBuf::from("/a/dp3-light.png"),
+                PathBuf::from("/a/empty-dark.png"),
+                PathBuf::from("/a/fb-dark.png"),
+                PathBuf::from("/a/fb-light.png"),
+                PathBuf::from("/a/default.png"),
+                PathBuf::from("/a/random.png"),
+            ],
+            "the declared candidate order is the gallery's first-existing chain"
+        );
+        // No record → no declaration (the default hook's contract in reverse).
+        let empty = TempDir::new().unwrap();
+        assert!(preview_wallpaper_candidates(empty.path()).is_empty());
     }
 
     /// Stale-artifact deletes must not swallow failures: silencing

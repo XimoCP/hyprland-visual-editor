@@ -64,7 +64,9 @@ pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
 
 /// A READ-ONLY declaration instance of a shipped provider, obtained by id
 /// for cleanup decisions about a theme that RECORDED that id when it was
-/// saved.
+/// saved — and for the gallery's `read-preview-source` declarations, which
+/// the core resolves from the theme's own `providers/` directory names the
+/// same way.
 ///
 /// Registration gates behaviour (save/apply/list) — it must not gate
 /// knowledge: the backend contract's `deletable-artefacts` applies "when a
@@ -76,9 +78,10 @@ pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
 /// unknown id declares nothing) and for `hve-presets` (constructing it
 /// needs an `Engine` handle, and it declares no artifacts).
 ///
-/// Constructing a declarer must stay side-effect free — the only method
-/// the cleanup seam calls is `deletable_artifacts`, which reads the
-/// theme's own record. Keep this list in sync with
+/// Constructing a declarer must stay side-effect free — the only methods
+/// the cleanup and preview seams call are `deletable_artifacts` (reads the
+/// theme's own record) and `preview_sources` (reads the record files of
+/// the provider directory the core hands it). Keep this list in sync with
 /// `register_default_providers` above: a shipped provider missing here
 /// only LEAKS its artifacts (nothing is declared, so nothing is deleted)
 /// — the failure is deliberately the safe direction.
@@ -86,6 +89,14 @@ pub fn declaration_provider(id: &str) -> Option<Box<dyn ThemeProvider>> {
     match id {
         "noctalia-v5" => Some(Box::new(noctalia::NoctaliaV5Provider::new())),
         "noctalia" => Some(Box::new(noctalia::NoctaliaV4Provider::new())),
+        // The retired `wallpaper` id (see `src/providers/wallpaper.rs`,
+        // inert) stored a byte-copy of Noctalia v4's OWN cache record —
+        // the same `wallpapers.json` file v4 saves from — so v4 is its
+        // read-only declarer: it parses the record format it owns in
+        // whatever provider directory the core hands it. Themes on disk
+        // still carry `providers/wallpaper/` trees; without this arm their
+        // preview source would silently disappear from the gallery.
+        "wallpaper" => Some(Box::new(noctalia::NoctaliaV4Provider::new())),
         _ => None,
     }
 }
@@ -304,6 +315,45 @@ mod tests {
             vec!["noctalia", "hve-presets"],
             "an unknown id must not skip, panic, or alter registration"
         );
+    }
+
+    /// `read-preview-source` coverage proof: the gallery resolves a
+    /// theme's preview sources by listing `providers/` dirs (sorted) and
+    /// asking the registry — so every shipped id whose provider writes a
+    /// preview record MUST resolve a read-only declarer, or its record
+    /// would silently vanish from the gallery. This is the "no shipped
+    /// dir left unrepresented" obligation of that convention.
+    #[test]
+    fn every_shipped_preview_record_id_resolves_a_declarer() {
+        // The three ids that appear under a theme's `providers/` tree and
+        // own a preview record: `noctalia-v5` (assignment manifest,
+        // painter video, wallpaper text), `noctalia` (v4's own
+        // `wallpapers.json`), `wallpaper` (the retired id's byte-copy of
+        // that same record).
+        for id in ["noctalia-v5", "noctalia", "wallpaper"] {
+            assert!(
+                declaration_provider(id).is_some(),
+                "the shipped id '{id}' owns a preview record and must resolve a declarer"
+            );
+        }
+
+        // `hve-presets` is deliberately absent from the registry (its
+        // constructor needs an `Engine` handle) and its save writes only
+        // `state.json` — a config record, never a preview source. Whether
+        // it stays absent or gains a declarer later, `state.json` must
+        // never become one.
+        let presets_dir = tempfile::tempdir().expect("presets dir");
+        std::fs::write(
+            presets_dir.path().join("state.json"),
+            r#"{"border_radius":12}"#,
+        )
+        .expect("record");
+        if let Some(declarer) = declaration_provider("hve-presets") {
+            assert!(
+                declarer.preview_sources(presets_dir.path()).is_empty(),
+                "hve-presets owns no preview record; a declarer for it must declare none"
+            );
+        }
     }
 
     /// A theme snapshot must never own the keeper's system state.

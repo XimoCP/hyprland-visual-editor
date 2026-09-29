@@ -36,6 +36,49 @@ pub struct DeletableArtifact {
     pub reference_key: String,
 }
 
+/// What one declared preview source contains (the backend contract's
+/// `read-preview-source`): the provider's own statement of the media type
+/// behind its record. The core's video-extension allowlist still gates how
+/// a source is treated, so a declared video whose path carries no video
+/// extension resolves exactly as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewSourceKind {
+    Image,
+    Video,
+}
+
+/// The precedence slot a declared preview source fills in the gallery's
+/// resolution chain. The CORE owns this vocabulary and the order below —
+/// a live background assignment first, then the painter's video record,
+/// then the static wallpaper manifest, then the static wallpaper text,
+/// and finally the loose image scan — because deciding precedence is the
+/// core's job. A provider only states which slot one of its own records
+/// fills; it never sees another backend's records and never decides which
+/// declaration wins. Variants are declared in precedence order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewRole {
+    /// The theme's live background assignment (image or video).
+    Assignment,
+    /// The painter-identified video record.
+    PainterVideo,
+    /// The static wallpaper manifest record.
+    WallpaperManifest,
+    /// The static wallpaper text record.
+    WallpaperText,
+}
+
+/// One preview source a provider declares for a theme: the precedence slot
+/// its record fills, the media type it holds, and the candidate paths the
+/// record states — in the record's OWN order, with no existence probing
+/// (the core probes, the first existing candidate in role precedence
+/// order wins).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewSource {
+    pub role: PreviewRole,
+    pub kind: PreviewSourceKind,
+    pub paths: Vec<PathBuf>,
+}
+
 /// A provider knows how to capture and restore one slice of desktop state.
 ///
 /// Each provider is identified by a stable `id` (e.g. `"noctalia"`,
@@ -125,6 +168,26 @@ pub trait ThemeProvider: Send + Sync {
     /// is deleted.
     fn deletable_artifacts(&self, theme_dir: &std::path::Path) -> Vec<DeletableArtifact> {
         let _ = theme_dir;
+        Vec::new()
+    }
+
+    /// The preview sources this provider can supply for a theme (the
+    /// backend contract's `read-preview-source`,
+    /// `openspec/specs/capability-routing/spec.md`). The provider reads its
+    /// OWN record files inside `provider_dir` — the theme provider
+    /// directory the core resolved for its id — and states, per record:
+    /// which precedence slot the record fills ([`PreviewRole`]), whether it
+    /// holds an image or a video ([`PreviewSourceKind`]), and the candidate
+    /// paths in the record's OWN order, exactly as the record states them
+    /// (existence is NOT probed here). The split mirrors
+    /// `deletable_artifacts`: the provider supplies knowledge — its layout
+    /// and its record format — while the core owns every decision: role
+    /// precedence, provider-directory order, existence, the
+    /// video-extension allowlist and every fall-through. The gallery must
+    /// never learn a backend's layout or record format. Default: no
+    /// preview record, so nothing is declared.
+    fn preview_sources(&self, provider_dir: &Path) -> Vec<PreviewSource> {
+        let _ = provider_dir;
         Vec::new()
     }
 }
@@ -2112,6 +2175,21 @@ mod tests {
                 .deletable_artifacts(Path::new("/nonexistent-theme-dir"))
                 .is_empty(),
             "the default deletable_artifacts must declare nothing"
+        );
+    }
+
+    /// The `read-preview-source` hook defaults to "this provider supplies
+    /// no preview record", the same shape as `deletable_artifacts`: a
+    /// provider whose theme carries no preview declares nothing and the
+    /// gallery falls through to its own loose scan, without an override.
+    #[test]
+    fn preview_sources_defaults_to_empty() {
+        let provider = StubProvider { id: "plain" };
+        assert!(
+            provider
+                .preview_sources(Path::new("/nonexistent-provider-dir"))
+                .is_empty(),
+            "the default preview_sources must declare nothing"
         );
     }
 }

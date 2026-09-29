@@ -117,6 +117,43 @@ pub fn save_manifest(provider_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ── Preview (read-preview-source) ───────────────────────────────────────
+
+/// The assignment paths a saved theme manifest STATES, in the record's own
+/// precedence order: the wildcard `"*"` assignment first, then the
+/// remaining connectors in sorted-key order. Only non-empty `local_path`
+/// values are candidates; existence is the CALLER's decision (the gallery
+/// core probes it and keeps the first existing candidate). An absent,
+/// unreadable or malformed manifest declares nothing — it is not an error,
+/// it is a theme without an animated-background record. The record format
+/// knowledge lives here, next to [`MANIFEST_FILE`] and the manifest types:
+/// callers never parse this file themselves.
+pub fn preview_candidates(provider_dir: &Path) -> Vec<PathBuf> {
+    let Ok(text) = fs::read_to_string(provider_dir.join(MANIFEST_FILE)) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(assignments) = v.get("assignments").and_then(|a| a.as_object()) else {
+        return Vec::new();
+    };
+    // Wildcard "*" wins; remaining entries keep sorted-key order.
+    let mut keys: Vec<&String> = assignments.keys().collect();
+    keys.sort();
+    keys.sort_by_key(|k| k.as_str() != "*");
+    keys.iter()
+        .filter_map(|key| {
+            assignments
+                .get(key.as_str())
+                .and_then(|e| e.get("local_path"))
+                .and_then(|l| l.as_str())
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        })
+        .collect()
+}
+
 // ── Notification ────────────────────────────────────────────────────────
 
 /// Notify the user that the mpvpaper plugin is required but not available,

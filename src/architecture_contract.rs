@@ -261,8 +261,11 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     // Phase 3 (2026-09-29): the shared-palette cleanup moved behind the
     // provider's `deletable_artifacts` declaration; measured 0 — lowered 3 → 0.
     ("src/theme_manager.rs", "noctalia", 0),
-    ("src/shell/gallery/thumbs.rs", "noctalia", 4),
-    ("src/shell/gallery/thumbs.rs", "mpvpaper", 1),
+    // Phase 3 (2026-09-29): the `read-preview-source` capability moved every
+    // hardcoded provider layout behind provider declarations; measured 0 —
+    // lowered 4 → 0 (noctalia) and 1 → 0 (mpvpaper).
+    ("src/shell/gallery/thumbs.rs", "noctalia", 0),
+    ("src/shell/gallery/thumbs.rs", "mpvpaper", 0),
     // Phase 4 (2026-09-29): the `read-desktop-preference` capability took
     // the probe out of the core (see `src/theme/desktop_preference/`);
     // measured 0 — lowered 1 → 0.

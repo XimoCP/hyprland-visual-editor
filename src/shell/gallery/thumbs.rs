@@ -13,6 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::theme_manager::{PreviewRole, PreviewSource, ThemeProvider};
+
 /// Thumbnail upper bound (design D8 / spec: decode ≤400×720 source size).
 pub const THUMB_MAX_W: u32 = 400;
 pub const THUMB_MAX_H: u32 = 720;
@@ -316,66 +318,61 @@ pub fn prune_stale(cache_dir: &Path, max_keep: usize) -> usize {
 /// File extensions eligible as thumbnail sources.
 const SOURCE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
 
-/// Try the provider wallpapers.json files first (FIX1): themes store the
-/// real wallpaper paths there, not as loose files. Priority:
-/// wallpapers[DP-3].dark/light, wallpapers[""].dark/light,
-/// wallpapers[FALLBACK].dark/light, defaultWallpaper,
-/// usedRandomWallpapers[DP-3][0]. First existing path wins.
-fn wallpaper_from_provider_json(theme_dir: &Path) -> Option<PathBuf> {
-    for rel in ["providers/noctalia/wallpapers.json", "providers/wallpaper/wallpapers.json"] {
-        let p = theme_dir.join(rel);
-        if !p.exists() { continue; }
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let mut cands: Vec<String> = Vec::new();
-                if let Some(wp) = v.get("wallpapers").and_then(|x| x.as_object()) {
-                    for key in ["DP-3", "", "FALLBACK"] {
-                        if let Some(e) = wp.get(key) {
-                            if let Some(s) = e.get("dark").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
-                            if let Some(s) = e.get("light").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
-                        }
-                    }
-                }
-                if let Some(s) = v.get("defaultWallpaper").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
-                if let Some(used) = v.get("usedRandomWallpapers").and_then(|x| x.as_object()) {
-                    if let Some(arr) = used.get("DP-3").and_then(|x| x.as_array()) {
-                        if let Some(s) = arr.first().and_then(|x| x.as_str()).filter(|s| !s.is_empty()) { cands.push(s.to_string()); }
-                    }
-                }
-                for cand in cands {
-                    let pb = PathBuf::from(&cand);
-                    if pb.exists() { return Some(pb); }
-                }
-            }
-        }
-    }
-    None
+/// One provider directory of the theme's `providers/` tree paired with the
+/// read-only declarer the registration router supplies for its id.
+type Declarer = (PathBuf, Box<dyn ThemeProvider>);
+
+/// The theme's provider directories in SORTED, deterministic order, each
+/// paired with its shipped declarer; unknown ids declare nothing.
+///
+/// This is the storage contract of [`ThemeProvider`] (`providers/{id}/`),
+/// not any backend's layout: directory names are ids resolved through the
+/// registry, and only the declarer knows what its records look like. The
+/// sort is the core's deterministic-order decision — the same sorted
+/// directory iteration the old assignment scan performed.
+fn collect_declarers(theme_dir: &Path) -> Vec<Declarer> {
+    let Ok(entries) = std::fs::read_dir(theme_dir.join("providers")) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    dirs.into_iter()
+        .filter_map(|dir| {
+            let id = dir.file_name()?.to_str()?.to_owned();
+            let declarer = crate::providers::declaration_provider(&id)?;
+            Some((dir, declarer))
+        })
+        .collect()
 }
 
-fn wallpaper_from_txt(theme_dir: &Path) -> Option<PathBuf> {
-    for rel in ["providers/noctalia-v5/wallpaper.txt", "providers/noctalia/wallpaper.txt"] {
-        if let Ok(text) = std::fs::read_to_string(theme_dir.join(rel)) {
-            if let Some(line) = text.lines().map(|l| l.trim()).find(|l| !l.is_empty()) { let p = PathBuf::from(line); if p.exists() { return Some(p); } }
-        }
-    }
-    None
+/// Every declared preview source for the theme: provider-directory order
+/// (sorted) outside, each provider's own records in its declaration order
+/// inside. The gallery contributes zero layout knowledge here — it only
+/// collects what the declarers state.
+fn declared_sources(declarers: &[Declarer]) -> Vec<PreviewSource> {
+    declarers
+        .iter()
+        .flat_map(|(provider_dir, declarer)| declarer.preview_sources(provider_dir))
+        .collect()
 }
 
-/// Resolve the CURRENT video authority record
-/// (`providers/noctalia-v5/video.txt`, written by the noctalia-v5 save path):
-/// parse the recorded path with the existing authority parser. `None` when
-/// there is no record or it names no usable absolute path — never a guess.
-fn painter_video_record(theme_dir: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(
-        theme_dir
-            .join("providers/noctalia-v5")
-            .join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
-    )
-    .ok()?;
-    crate::providers::wallpaper_authority::parse_painter_video_record(&text)
+/// The first candidate of `role` whose target file exists — role
+/// precedence is the core's (declarations are consulted in role order),
+/// provider-directory order decides ties, and the provider's own record
+/// order decides within one declaration.
+fn first_existing(sources: &[PreviewSource], role: PreviewRole) -> Option<PathBuf> {
+    sources
+        .iter()
+        .filter(|s| s.role == role)
+        .flat_map(|s| s.paths.iter())
+        .find(|p| p.exists())
+        .cloned()
 }
-/// Video extension allowlist (Piano 3): animated wallpaper sources served
-/// by mpvpaper.
+/// Video extension allowlist (Piano 3): animated wallpaper sources the
+/// frame extractor can handle.
 const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
 
 /// True when `path` carries a video extension (case-insensitive check).
@@ -386,44 +383,21 @@ pub fn is_video_source(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve a theme's mpvpaper video assignment (Piano 3): scan
-/// `providers/*/mpvpaper-assignments.json` in sorted, deterministic order,
-/// take `assignments["*"].local_path` — falling back to the first entry by
-/// sorted key — and return it only when non-empty AND the target file
-/// exists; otherwise keep scanning. None = no live video assignment.
+/// Resolve a theme's live background assignment (Piano 3): the first
+/// candidate every provider declares in the `Assignment` role — collected
+/// in sorted, deterministic provider-directory order, each declaration in
+/// its record's own order (wildcard connector first, then sorted keys) —
+/// returned only when the target file exists; otherwise keep scanning the
+/// remaining candidates. None = no live assignment.
+///
+/// The planner resolves this SAME stage inline over its already-collected
+/// declarations (see [`plan_with`]) instead of calling this wrapper, so
+/// this is the stage's direct test seam — kept `cfg(test)` so the binary
+/// never carries an uncalled entry point.
+#[cfg(test)]
 pub fn video_assignment(theme_dir: &Path) -> Option<PathBuf> {
-    let mut providers: Vec<PathBuf> = std::fs::read_dir(theme_dir.join("providers"))
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir())
-        .collect();
-    providers.sort();
-    for dir in providers {
-        let Ok(text) =
-            std::fs::read_to_string(dir.join("mpvpaper-assignments.json"))
-        else { continue };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
-        let Some(assignments) = v.get("assignments").and_then(|a| a.as_object())
-        else { continue };
-        // Wildcard "*" wins; remaining entries keep sorted-key order
-        // (stable sort preserves the lexical pass above).
-        let mut keys: Vec<&String> = assignments.keys().collect();
-        keys.sort();
-        keys.sort_by_key(|k| k.as_str() != "*");
-        for key in keys {
-            let Some(local) = assignments
-                .get(key.as_str())
-                .and_then(|e| e.get("local_path"))
-                .and_then(|l| l.as_str())
-                .filter(|s| !s.is_empty())
-            else { continue };
-            let path = PathBuf::from(local);
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-    None
+    let sources = declared_sources(&collect_declarers(theme_dir));
+    first_existing(&sources, PreviewRole::Assignment)
 }
 
 /// Extract a representative frame from a video source into the thumb cache
@@ -533,12 +507,15 @@ fn spec_for_video(video: PathBuf, theme_dir: &Path) -> Option<PreviewSpec> {
 
 /// Plan a theme's preview source WITHOUT spawning any process (W2-1).
 ///
-/// Priority matches the old `find_source_image` chain: an assigned static
-/// image wins outright (it IS the live wallpaper); video (legacy mpvpaper
-/// assignment, then the painter `video.txt` record) defers extraction to
-/// the background worker; static records and the loose image scan stay the
-/// fallback chain. A record naming a missing/non-video file warns (naming
-/// theme dir and video path) and falls through — never a bogus source.
+/// The resolution chain is the core's, in precedence order: the live
+/// background assignment wins outright (an assigned static image IS the
+/// live wallpaper; an assigned video defers extraction to the background
+/// worker), then the painter's video record (fall-through on an unusable
+/// one, with a warning naming theme dir and video), then the static
+/// records — wallpaper manifest before wallpaper text — and finally the
+/// loose image scan. Every record is a PROVIDER DECLARATION: the gallery
+/// collects what each backend states about its own files (see
+/// [`collect_declarers`]) and never parses a backend layout itself.
 ///
 /// Planning never decodes: a video ffmpeg could not decode still plans to
 /// a `Video` spec (keeping video's priority position), and the WORKER runs
@@ -546,7 +523,19 @@ fn spec_for_video(video: PathBuf, theme_dir: &Path) -> Option<PreviewSpec> {
 /// fails — so undecodable video + static fallback still renders stale,
 /// exactly as the old synchronous resolver did.
 pub fn plan_preview_source(theme_dir: &Path) -> Option<PreviewSpec> {
-    if let Some(assigned) = video_assignment(theme_dir) {
+    plan_with(theme_dir, &collect_declarers(theme_dir))
+}
+
+/// The planner over ALREADY-COLLECTED declarers (the production path passes
+/// the theme's registry-resolved declarers; tests pass fake providers) —
+/// everything about precedence lives here, independent of who declares.
+fn plan_with(theme_dir: &Path, declarers: &[Declarer]) -> Option<PreviewSpec> {
+    let sources = declared_sources(declarers);
+
+    // Role 1 — the live background assignment: a static assignment wins
+    // outright; a video one defers extraction to the worker. The
+    // video-extension allowlist decides which of the two it is.
+    if let Some(assigned) = first_existing(&sources, PreviewRole::Assignment) {
         if is_video_source(&assigned) {
             if let Some(spec) = spec_for_video(assigned, theme_dir) {
                 return Some(spec);
@@ -556,34 +545,47 @@ pub fn plan_preview_source(theme_dir: &Path) -> Option<PreviewSpec> {
             return Some(PreviewSpec::Image(assigned));
         }
     }
-    if let Some(recorded) = painter_video_record(theme_dir) {
-        if let Some(spec) = spec_for_video(recorded.clone(), theme_dir) {
+
+    // Role 2 — the painter's video record: usable video keeps its
+    // priority position; an unusable one warns and falls through.
+    for record in sources
+        .iter()
+        .filter(|s| s.role == PreviewRole::PainterVideo)
+    {
+        let Some(video) = record.paths.first() else {
+            continue;
+        };
+        if let Some(spec) = spec_for_video(video.clone(), theme_dir) {
             return Some(spec);
         }
         tracing::warn!(
             theme = %theme_dir.display(),
-            video = %recorded.display(),
+            video = %video.display(),
             "painter video record unusable, falling through to static sources"
         );
     }
-    if let Some(hit) = static_fallback_source(theme_dir) {
-        return Some(PreviewSpec::Image(hit));
-    }
-    None
+
+    // Roles 3-4 — the static records, then the loose scan.
+    static_from(&sources)
+        .or_else(|| scan_images(theme_dir))
+        .map(PreviewSpec::Image)
 }
 
-/// The static preview chain (no process spawn, no decode): provider JSON
-/// record → legacy txt record → loose image scan. Shared by the planner
-/// and — off-thread — by the worker's undecodable-video fallback and the
-/// delete cleanup, so all three agree on what "the static wallpaper" is.
+/// The static preview chain (no process spawn, no decode) over
+/// already-collected declarations: wallpaper manifest records → wallpaper
+/// text records → loose image scan. Shared by the planner and —
+/// off-thread — by the worker's undecodable-video fallback and the delete
+/// cleanup, so all three agree on what "the static wallpaper" is.
 pub fn static_fallback_source(theme_dir: &Path) -> Option<PathBuf> {
-    if let Some(hit) = wallpaper_from_provider_json(theme_dir) {
-        return Some(hit);
-    }
-    if let Some(hit) = wallpaper_from_txt(theme_dir) {
-        return Some(hit);
-    }
-    scan_images(theme_dir)
+    let sources = declared_sources(&collect_declarers(theme_dir));
+    static_from(&sources).or_else(|| scan_images(theme_dir))
+}
+
+/// The declared half of the static chain: first existing candidate of the
+/// manifest role, then of the text role (role precedence is the core's).
+fn static_from(sources: &[PreviewSource]) -> Option<PathBuf> {
+    first_existing(sources, PreviewRole::WallpaperManifest)
+        .or_else(|| first_existing(sources, PreviewRole::WallpaperText))
 }
 
 /// Pure loose image scan (extension-based discovery only — no process
@@ -1077,8 +1079,10 @@ mod tests {
     #[test]
     fn video_assignment_rejects_missing_target_file() {
         let dir = tempfile::tempdir().expect("tmp");
+        // The assignment record is declared by the provider that writes it;
+        // a candidate whose target file is missing must be rejected.
         write_assignments(
-            &dir.path().join("providers/wallpaper"),
+            &dir.path().join("providers/noctalia-v5"),
             serde_json::json!({ "assignments": { "*": { "local_path": "/nope/gone.mp4" } } }),
         );
         assert_eq!(video_assignment(dir.path()), None);
@@ -1090,7 +1094,7 @@ mod tests {
         let chosen = dir.path().join("chosen.mkv");
         std::fs::write(&chosen, b"v").expect("fixture");
         write_assignments(
-            &dir.path().join("providers/mpvpaper"),
+            &dir.path().join("providers/noctalia-v5"),
             serde_json::json!({ "assignments": {
                 "HDMI-A-1": { "local_path": "/nope/z.mp4" },
                 "DP-1": { "local_path": chosen.to_string_lossy() }
@@ -1099,22 +1103,63 @@ mod tests {
         assert_eq!(video_assignment(dir.path()), Some(chosen), "DP-1 sorts before HDMI-A-1");
     }
 
+    /// The preserved sorted, deterministic provider-directory iteration:
+    /// when two shipped directories declare the SAME role, the theme's
+    /// `providers/` tree is read in sorted order, so the record under the
+    /// lexically-first directory decides. (The retired `wallpaper` id
+    /// stores a byte-copy of the same cache record the first directory
+    /// holds, so both directories declare through the same format.)
+    ///
+    /// Replaces the old test that scanned arbitrary UNKNOWN directory
+    /// names for a hardcoded record file — that blind scan of every
+    /// backend layout is exactly the coupling this seam removed: an id
+    /// the registry does not ship now declares nothing.
     #[test]
-    fn video_assignment_scans_provider_dirs_sorted_deterministically() {
-        let dir = tempfile::tempdir().expect("tmp");
-        let early = dir.path().join("a.mp4");
+    fn manifest_sources_resolve_in_sorted_provider_dir_order() {
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        // Sources live OUTSIDE the theme tree so the loose image scan can
+        // never be what found them.
+        let early = src_dir.path().join("a.png");
+        let late = src_dir.path().join("z.png");
         std::fs::write(&early, b"a").expect("fixture");
-        let late = dir.path().join("z.mp4");
         std::fs::write(&late, b"z").expect("fixture");
-        write_assignments(
-            &dir.path().join("providers/zzz-late"),
-            serde_json::json!({ "assignments": { "*": { "local_path": late.to_string_lossy() } } }),
+
+        let dir = tempfile::tempdir().expect("tmp");
+        for (sub, target) in [("noctalia", &early), ("wallpaper", &late)] {
+            let provider_dir = dir.path().join("providers").join(sub);
+            std::fs::create_dir_all(&provider_dir).expect("mkdir");
+            let j = serde_json::json!({"wallpapers":{"DP-3":{"dark": target.to_string_lossy()}}});
+            std::fs::write(
+                provider_dir.join("wallpapers.json"),
+                serde_json::to_string(&j).unwrap(),
+            )
+            .expect("record");
+        }
+        assert_eq!(
+            plan_preview_source(dir.path()),
+            Some(PreviewSpec::Image(early)),
+            "providers/noctalia sorts before providers/wallpaper: sorted \
+             provider-directory order must decide which declaration wins"
         );
+    }
+
+    #[test]
+    fn unknown_provider_dirs_declare_nothing() {
+        // The other half of the removed blind scan: a record file under an
+        // id the registry does not ship is invisible to the gallery — no
+        // backend layout is read outside the declarations.
+        let dir = tempfile::tempdir().expect("tmp");
+        let video = dir.path().join("ghost.mp4");
+        std::fs::write(&video, b"v").expect("fixture");
         write_assignments(
             &dir.path().join("providers/aaa-early"),
-            serde_json::json!({ "assignments": { "*": { "local_path": early.to_string_lossy() } } }),
+            serde_json::json!({ "assignments": { "*": { "local_path": video.to_string_lossy() } } }),
         );
-        assert_eq!(video_assignment(dir.path()), Some(early), "aaa-early wins by provider sort");
+        assert_eq!(
+            video_assignment(dir.path()),
+            None,
+            "an unknown id must declare nothing"
+        );
     }
 
     #[test]
@@ -1916,6 +1961,401 @@ mod tests {
             "the worker must bake the static fallback's artifacts"
         );
         assert!(set.hero_path.exists(), "fallback hero PNG written");
+    }
+
+    // ── read-preview-source: provider-declared preview sources ─────────
+
+    use crate::theme_manager::{PreviewRole, PreviewSource, PreviewSourceKind, ThemeProvider};
+
+    /// A provider the product does NOT ship: its id matches no registry
+    /// entry, and its record file name is known only to this fake. The
+    /// gallery must resolve whatever it declares without knowing either —
+    /// that is the whole `read-preview-source` contract.
+    struct FakePreviewProvider {
+        id: &'static str,
+        /// File name of this fake's OWN record inside its provider dir.
+        record: &'static str,
+        role: PreviewRole,
+        kind: PreviewSourceKind,
+    }
+
+    impl ThemeProvider for FakePreviewProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn display_name_key(&self) -> &str {
+            "test.fake"
+        }
+        fn icon(&self) -> &str {
+            "✧"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn preview_sources(&self, provider_dir: &Path) -> Vec<PreviewSource> {
+            let Ok(text) = std::fs::read_to_string(provider_dir.join(self.record)) else {
+                return Vec::new();
+            };
+            let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) else {
+                return Vec::new();
+            };
+            vec![PreviewSource {
+                role: self.role,
+                kind: self.kind,
+                paths: vec![PathBuf::from(line)],
+            }]
+        }
+    }
+
+    fn fake_declarer(
+        provider_dir: &Path,
+        id: &'static str,
+        record: &'static str,
+        role: PreviewRole,
+        kind: PreviewSourceKind,
+    ) -> (PathBuf, Box<dyn ThemeProvider>) {
+        (
+            provider_dir.to_path_buf(),
+            Box::new(FakePreviewProvider {
+                id,
+                record,
+                role,
+                kind,
+            }),
+        )
+    }
+
+    #[test]
+    fn plan_resolves_a_declared_source_from_an_unknown_backend() {
+        // The source sits OUTSIDE the theme tree, so the loose image scan
+        // could never be what found it: resolution must come from the
+        // fake's declaration alone.
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        let src = src_dir.path().join("declared.png");
+        std::fs::write(&src, b"declared image bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        let provider_dir = theme.path().join("providers").join("unknown-shell-xyz");
+        std::fs::create_dir_all(&provider_dir).expect("provider dir");
+        std::fs::write(provider_dir.join("shell-record.src"), format!("{}\n", src.display()))
+            .expect("record");
+
+        let declarers = vec![fake_declarer(
+            &provider_dir,
+            "unknown-shell-xyz",
+            "shell-record.src",
+            PreviewRole::WallpaperText,
+            PreviewSourceKind::Image,
+        )];
+        assert_eq!(
+            plan_with(theme.path(), &declarers),
+            Some(PreviewSpec::Image(src)),
+            "the gallery must resolve a declared preview source with zero \
+             knowledge of any backend's layout or record format"
+        );
+    }
+
+    #[test]
+    fn preview_role_order_beats_declarer_order() {
+        // Two declaring providers, injected with the TEXT declarer first:
+        // the core's role precedence (wallpaper manifest before wallpaper
+        // text — the order the old chain hardcoded) must decide, not the
+        // order the declarations arrive in.
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        let manifest_src = src_dir.path().join("manifest.png");
+        let text_src = src_dir.path().join("text.png");
+        std::fs::write(&manifest_src, b"manifest image bytes").expect("fixture");
+        std::fs::write(&text_src, b"text image bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        let manifest_dir = theme.path().join("providers").join("shell-a");
+        let text_dir = theme.path().join("providers").join("shell-b");
+        std::fs::create_dir_all(&manifest_dir).unwrap();
+        std::fs::create_dir_all(&text_dir).unwrap();
+        std::fs::write(manifest_dir.join("a.rec"), format!("{}\n", manifest_src.display()))
+            .unwrap();
+        std::fs::write(text_dir.join("b.rec"), format!("{}\n", text_src.display())).unwrap();
+
+        let declarers = vec![
+            fake_declarer(
+                &text_dir,
+                "shell-b",
+                "b.rec",
+                PreviewRole::WallpaperText,
+                PreviewSourceKind::Image,
+            ),
+            fake_declarer(
+                &manifest_dir,
+                "shell-a",
+                "a.rec",
+                PreviewRole::WallpaperManifest,
+                PreviewSourceKind::Image,
+            ),
+        ];
+        assert_eq!(
+            plan_with(theme.path(), &declarers),
+            Some(PreviewSpec::Image(manifest_src)),
+            "a wallpaper-manifest declaration must beat a wallpaper-text \
+             declaration regardless of declarer order"
+        );
+    }
+
+    #[test]
+    fn painter_video_declaration_beats_wallpaper_manifest() {
+        // The preserved chain puts the painter's video record BEFORE the
+        // static wallpaper manifest: a usable declared video must plan to
+        // a Video spec even when an existing manifest image is declared too.
+        let _env = crate::test_utils::TempEnv::new();
+
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        let video = src_dir.path().join("loop.mp4");
+        let image = src_dir.path().join("manifest.png");
+        std::fs::write(&video, b"fake video bytes").expect("fixture");
+        std::fs::write(&image, b"manifest image bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        let painter_dir = theme.path().join("providers").join("shell-p");
+        let manifest_dir = theme.path().join("providers").join("shell-m");
+        std::fs::create_dir_all(&painter_dir).unwrap();
+        std::fs::create_dir_all(&manifest_dir).unwrap();
+        std::fs::write(painter_dir.join("p.rec"), format!("{}\n", video.display())).unwrap();
+        std::fs::write(manifest_dir.join("m.rec"), format!("{}\n", image.display())).unwrap();
+
+        let declarers = vec![
+            fake_declarer(
+                &manifest_dir,
+                "shell-m",
+                "m.rec",
+                PreviewRole::WallpaperManifest,
+                PreviewSourceKind::Image,
+            ),
+            fake_declarer(
+                &painter_dir,
+                "shell-p",
+                "p.rec",
+                PreviewRole::PainterVideo,
+                PreviewSourceKind::Video,
+            ),
+        ];
+        match plan_with(theme.path(), &declarers) {
+            Some(PreviewSpec::Video { video: v, .. }) => assert_eq!(
+                v, video,
+                "the painter video declaration must plan before the static manifest"
+            ),
+            other => panic!("expected a Video spec, got {other:?}"),
+        }
+    }
+
+    // ── read-preview-source divergence pins (verification D1 / D2) ─────
+    //
+    // The `read-preview-source` unit replaced the OLD hardcoded stages
+    // with provider declarations. Two sub-stages changed behaviour and
+    // had NO coverage. All three fixtures below were first written with
+    // the verifier's exact OLD expectations and observed RED
+    // (`None` vs `Some(Image(imgA))`, `None` vs `Some(imgA)`,
+    // `Some(imgA)` vs `Some(imgB)`); they now pin the DECIDED contract.
+    //
+    // D1 and D2A are the SAME fact pattern: a record owned by the
+    // `noctalia-v5` save/apply path, planted under the `noctalia` (v4)
+    // id. Restoring either would make the v4 provider declare a record
+    // format it has never written nor applied — a phantom declaration.
+    // Evidence (this corrective unit, 2026-09-29):
+    //   - `NoctaliaV4Provider::save` copies `settings.json`,
+    //     `colors.json`, `plugins.json`, `noctalia-colors.conf`,
+    //     `noctalia-colors.lua` and `wallpapers.json` — nothing else;
+    //   - across ALL 34 committed revisions of `src/providers/noctalia.rs`,
+    //     `wallpaper.txt` and `bg_info::save_manifest` appear ONLY inside
+    //     the v5 impl block (v4: 0 occurrences), and
+    //     `mpvpaper::apply_manifest` has hardcoded
+    //     `providers/noctalia-v5` since the manifest existed (444b3bd);
+    //   - a scan of the keeper's real themes tree holds ZERO
+    //     `mpvpaper-assignments.json` files and every `wallpaper.txt`
+    //     under `providers/noctalia-v5/` — never under `providers/noctalia/`.
+    // The OLD scan simply reached further than any writer ever did.
+
+    /// D1 pin — verifier's exact fixture: a theme carrying ONLY
+    /// `providers/noctalia/wallpaper.txt` → `imgA`. OLD resolved
+    /// `Some(Image(imgA))` (`wallpaper_from_txt` tried the v4 path after
+    /// the v5 one); the decided contract is `None`: v4 never writes that
+    /// record, so its provider declares no `WallpaperText`. The loose
+    /// scan cannot find `imgA` either — it lives outside the theme.
+    #[test]
+    fn wallpaper_txt_under_the_v4_id_declares_nothing() {
+        let src = tempfile::tempdir().expect("src tmp");
+        let img_a = src.path().join("imgA.png");
+        std::fs::write(&img_a, b"imgA bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        let v4_dir = theme.path().join("providers").join("noctalia");
+        std::fs::create_dir_all(&v4_dir).expect("mkdir");
+        std::fs::write(v4_dir.join("wallpaper.txt"), format!("{}\n", img_a.display()))
+            .expect("record");
+
+        assert_eq!(
+            plan_preview_source(theme.path()),
+            None,
+            "OLD contract read providers/noctalia/wallpaper.txt; no shipped \
+             writer ever produced that record, so it declares nothing"
+        );
+
+        // Provider-level half of the same pin: the v4 declarer must state
+        // no WallpaperText slot for its own directory, whatever a stray
+        // file there is called.
+        let declarer = crate::providers::declaration_provider("noctalia")
+            .expect("the v4 id is a shipped declarer");
+        assert!(
+            declarer
+                .preview_sources(&v4_dir)
+                .iter()
+                .all(|s| s.role != PreviewRole::WallpaperText),
+            "the v4 provider must not declare a wallpaper-text record it never writes"
+        );
+    }
+
+    /// D2 pin A — verifier's exact fixture: an assignment manifest under
+    /// `providers/noctalia/` → `imgA`. OLD resolved it (the blind
+    /// `providers/*/mpvpaper-assignments.json` scan); the decided
+    /// contract is `None`: only the `noctalia-v5` save writes that
+    /// manifest and only its apply path restores it, so `noctalia` is
+    /// not its owner. v4 also claims no `WALLPAPERS` capability — it
+    /// cannot own a background assignment.
+    #[test]
+    fn assignment_manifest_under_the_v4_id_declares_nothing() {
+        let src = tempfile::tempdir().expect("src tmp");
+        let img_a = src.path().join("imgA.png");
+        std::fs::write(&img_a, b"imgA bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        write_assignments(
+            &theme.path().join("providers/noctalia"),
+            serde_json::json!({
+                "version": 1,
+                "assignments": { "*": { "filename": "imgA.png", "local_path": img_a.to_string_lossy() } }
+            }),
+        );
+
+        assert_eq!(
+            video_assignment(theme.path()),
+            None,
+            "OLD contract scanned every providers/*/mpvpaper-assignments.json; \
+             the manifest is the noctalia-v5 provider's own record"
+        );
+        assert_eq!(
+            plan_preview_source(theme.path()),
+            None,
+            "a manifest under a dir that owns no assignment record plans no source"
+        );
+
+        // Provider-level half: the v4 declarer states no Assignment slot.
+        let declarer = crate::providers::declaration_provider("noctalia")
+            .expect("the v4 id is a shipped declarer");
+        assert!(
+            declarer
+                .preview_sources(&theme.path().join("providers").join("noctalia"))
+                .iter()
+                .all(|s| s.role != PreviewRole::Assignment),
+            "the v4 provider must not declare an assignment record it neither writes nor applies"
+        );
+    }
+
+    /// D2 pin B — verifier's exact fixture: `providers/aaa-custom/`
+    /// holds a manifest → `imgB`, `providers/noctalia-v5/` one →
+    /// `imgA`. OLD returned `imgB` (sorted dir scan over unknown ids);
+    /// the decided contract is `imgA`. This case CANNOT be restored
+    /// honestly, and the deliberate conflict resolves in favour of
+    /// `unknown_provider_dirs_declare_nothing`: an id the registry does
+    /// not ship has no owner, so no declarer can know what its records
+    /// look like — restoring `imgB` means restoring the blind layout
+    /// scan this seam removed (and the backend contract's Definition of
+    /// Done forbids thumbs.rs learning directory layouts).
+    #[test]
+    fn assignment_manifest_under_an_unknown_dir_cannot_beat_the_owning_dir() {
+        let src = tempfile::tempdir().expect("src tmp");
+        let img_b = src.path().join("imgB.png");
+        let img_a = src.path().join("imgA.png");
+        std::fs::write(&img_b, b"imgB bytes").expect("fixture");
+        std::fs::write(&img_a, b"imgA bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        write_assignments(
+            &theme.path().join("providers/aaa-custom"),
+            serde_json::json!({
+                "version": 1,
+                "assignments": { "*": { "filename": "imgB.png", "local_path": img_b.to_string_lossy() } }
+            }),
+        );
+        write_assignments(
+            &theme.path().join("providers/noctalia-v5"),
+            serde_json::json!({
+                "version": 1,
+                "assignments": { "*": { "filename": "imgA.png", "local_path": img_a.to_string_lossy() } }
+            }),
+        );
+
+        assert_eq!(
+            video_assignment(theme.path()),
+            Some(img_a.clone()),
+            "aaa-custom sorts first but declares nothing; the owning dir's \
+             record must decide (OLD gave imgB via the blind scan)"
+        );
+        assert_eq!(
+            plan_preview_source(theme.path()),
+            Some(PreviewSpec::Image(img_a)),
+            "the unknown dir must never supply the planned source"
+        );
+    }
+
+    /// Sorted-directory precedence between two DECLARING dirs (the
+    /// property D2 reported as lost). `collect_declarers` sorts the
+    /// theme's `providers/` tree BEFORE the registry filter, so the order
+    /// is the core's own — never `read_dir`'s: the dirs are created here
+    /// in REVERSE lexical order on purpose. The unknown `aaa-custom` dir
+    /// is included because it sorts FIRST: it must be skipped, not win.
+    ///
+    /// `noctalia` and `wallpaper` are the only two shipped ids that
+    /// declare the SAME role (`WallpaperManifest`, through the v4
+    /// declarer), which is why they are the pair under test; no role has
+    /// two Assignment declarers — `noctalia-v5` is the manifest's only
+    /// owner (see the D2 pin A above).
+    #[test]
+    fn sorted_provider_dir_order_decides_between_two_declaring_dirs() {
+        let src = tempfile::tempdir().expect("src tmp");
+        let unknown = src.path().join("unknown.png");
+        let early = src.path().join("early.png");
+        let late = src.path().join("late.png");
+        std::fs::write(&unknown, b"unknown").expect("fixture");
+        std::fs::write(&early, b"early").expect("fixture");
+        std::fs::write(&late, b"late").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        // Reverse lexical creation order: `wallpaper` first, `noctalia`
+        // last, the unknown id in between.
+        for (sub, target) in [
+            ("wallpaper", &late),
+            ("aaa-custom", &unknown),
+            ("noctalia", &early),
+        ] {
+            let provider_dir = theme.path().join("providers").join(sub);
+            std::fs::create_dir_all(&provider_dir).expect("mkdir");
+            let j = serde_json::json!({"wallpapers":{"DP-3":{"dark": target.to_string_lossy()}}});
+            std::fs::write(
+                provider_dir.join("wallpapers.json"),
+                serde_json::to_string(&j).unwrap(),
+            )
+            .expect("record");
+        }
+
+        assert_eq!(
+            plan_preview_source(theme.path()),
+            Some(PreviewSpec::Image(early)),
+            "providers/aaa-custom sorts first but declares nothing, \
+             providers/noctalia sorts before providers/wallpaper and both \
+             declare: sorted provider-directory order must decide, not \
+             creation/read_dir order"
+        );
     }
 
 }
