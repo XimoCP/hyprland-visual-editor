@@ -1179,13 +1179,21 @@ pub(crate) fn theme_finale_run(win: crate::MainWindow, gen: u64) {
 }
 
 fn hypr_getoption_int(option: &str, fallback: &str) -> String {
-    let text = std::process::Command::new("hyprctl")
-        .args(["getoption", option, "-j"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok());
+    // Raw live-option read behind `Composer` (capability-routing Phase 3):
+    // the option NAME is passed through verbatim here — its normalisation
+    // stays in this caller, which also owns the parse below.
+    let answer = crate::composer::global_controller()
+        .and_then(|ctrl| ctrl.composer().read_option(option));
+    option_int_from(answer.as_deref(), fallback)
+}
+
+/// The parse half of `hypr_getoption_int`, over the raw `getoption -j`
+/// JSON text the composer returns (`None` on any failure). Byte-identical
+/// to the pre-move parse: `int` first, then a trimmed numeric/boolean
+/// `str`, otherwise the caller's fallback.
+fn option_int_from(text: Option<&str>, fallback: &str) -> String {
     if let Some(t) = text {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
             // Hyprland is inconsistent: some options expose "int", booleans set
             // from config may only expose "str" ("true"/"1"/"[EMPTY]").
             if let Some(i) = v.get("int").and_then(|n| n.as_i64()) {
@@ -2124,26 +2132,36 @@ fn startup_settle_fullscreen(attempt: usize, tile_toggle: bool) {
     }
 }
 
+/// The active workspace name behind `Composer` (capability-routing Phase 3):
+/// the raw `activeworkspace -j` call moved into the composer, which keeps the
+/// same JSON path (`name`). Falls back to "2" exactly like the raw call did
+/// when the compositor did not answer.
 fn get_active_workspace_name() -> String {
-    std::process::Command::new("hyprctl")
-        .args(["activeworkspace", "-j"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
-        .unwrap_or_else(|| "2".to_string())
+    active_workspace_name(
+        crate::composer::global_controller().and_then(|ctrl| ctrl.composer().active_workspace()),
+    )
+}
+
+/// The contract of `get_active_workspace_name` over the composer's answer:
+/// no answer → the same `"2"` the raw query fell back to.
+fn active_workspace_name(answer: Option<String>) -> String {
+    answer.unwrap_or_else(|| "2".to_string())
 }
 
 fn find_empty_workspace(exclude: &str) -> String {
     // Find a normal workspace with no windows, not special, not the current one.
     // Falls back to "10" (Hyprland creates it on demand).
-    let out = std::process::Command::new("hyprctl")
-        .args(["workspaces", "-j"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let answer = crate::composer::global_controller()
+        .and_then(|ctrl| ctrl.composer().query_json(crate::composer::CompositorQuery::Workspaces));
+    empty_workspace_from(answer.as_deref(), exclude)
+}
+
+/// The contract of `find_empty_workspace` over an optional raw
+/// `workspaces -j` answer (`None` when the composer did not answer):
+/// same selection order and same `"10"` / `"11"` fallbacks as before the
+/// call moved behind `Composer`.
+fn empty_workspace_from(workspaces_json: Option<&str>, exclude: &str) -> String {
+    let out = workspaces_json.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok());
     if let Some(arr) = out.as_ref().and_then(|v| v.as_array()) {
         for ws in arr {
             let name = ws.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -6306,6 +6324,96 @@ mod tests {
         assert!(
             code.contains("PENDING_RECONSULT_AT"),
             "the one-pending-re-consult guard must exist (no stacked timers)"
+        );
+    }
+
+    // ── Moved query helpers: fallback behaviour pinned (capability-routing
+    //    Phase 3). The raw `hyprctl` calls left `main.rs`; these pin that
+    //    the observable contract — JSON path, selection order and fallback
+    //    values — is byte-identical to the pre-move code. ─────────────
+
+    /// `get_active_workspace_name`: a composer that cannot answer yields
+    /// the same `"2"` the raw `activeworkspace -j` failure path produced.
+    #[test]
+    fn active_workspace_name_keeps_the_two_fallback() {
+        assert_eq!(active_workspace_name(None), "2", "no answer must fall back to \"2\"");
+        assert_eq!(
+            active_workspace_name(Some("7".to_string())),
+            "7",
+            "a parsed workspace name passes through untouched"
+        );
+    }
+
+    /// `find_empty_workspace`: same selection order (first NORMAL workspace
+    /// with zero windows, skipping `special:*`, the excluded workspace and
+    /// empty names) and same `"10"` / `"11"` fallbacks for absent or
+    /// unparsable output.
+    #[test]
+    fn empty_workspace_from_keeps_selection_order_and_fallbacks() {
+        let payload = r#"[
+            {"name":"special:minimized","windows":0},
+            {"name":"5","windows":2},
+            {"name":"6","windows":0},
+            {"name":"7","windows":0}
+        ]"#;
+        assert_eq!(
+            empty_workspace_from(Some(payload), "6"),
+            "7",
+            "special is skipped, busy workspaces are skipped, the excluded one too"
+        );
+        assert_eq!(
+            empty_workspace_from(Some(payload), "7"),
+            "6",
+            "selection keeps the original ordering: first eligible workspace wins"
+        );
+        assert_eq!(
+            empty_workspace_from(Some(payload), "3"),
+            "6",
+            "without an exclusion the first eligible workspace wins"
+        );
+        assert_eq!(empty_workspace_from(None, "3"), "10", "absent output falls back to \"10\"");
+        assert_eq!(
+            empty_workspace_from(None, "10"),
+            "11",
+            "excluded \"10\" falls back to \"11\""
+        );
+        assert_eq!(empty_workspace_from(Some("not json"), "3"), "10", "garbage output falls back");
+        assert_eq!(
+            empty_workspace_from(Some(r#"[{"windows":0}]"#), "3"),
+            "10",
+            "an empty workspace NAME must never be selected"
+        );
+    }
+
+    /// `hypr_getoption_int`: same parse order (`int` first, then a numeric
+    /// or boolean `str`, trimmed) and the caller's fallback otherwise.
+    #[test]
+    fn option_int_from_keeps_the_pre_move_parse() {
+        assert_eq!(option_int_from(None, "1"), "1", "no answer must yield the fallback");
+        assert_eq!(option_int_from(Some("not json"), "1"), "1", "garbage must yield the fallback");
+        assert_eq!(option_int_from(Some(r#"[3]"#), "1"), "1", "a non-object answer yields the fallback");
+        assert_eq!(option_int_from(Some(r#"{"int":-4}"#), "1"), "-4", "int wins");
+        assert_eq!(
+            option_int_from(Some(r#"{"int":3,"str":"true"}"#), "1"),
+            "3",
+            "`int` is read before `str`"
+        );
+        assert_eq!(option_int_from(Some(r#"{"str":"12"}"#), "1"), "12", "numeric str passes");
+        assert_eq!(option_int_from(Some(r#"{"str":" 12 "}"#), "1"), "12", "str is trimmed");
+        assert_eq!(
+            option_int_from(Some(r#"{"str":"true"}"#), "1"),
+            "true",
+            "boolean str passes"
+        );
+        assert_eq!(
+            option_int_from(Some(r#"{"str":"false"}"#), "1"),
+            "false",
+            "boolean str passes"
+        );
+        assert_eq!(
+            option_int_from(Some(r#"{"str":"[EMPTY]"}"#), "1"),
+            "1",
+            "a non-numeric str yields the fallback"
         );
     }
 

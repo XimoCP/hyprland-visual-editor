@@ -114,6 +114,36 @@ pub trait Composer: Send + Sync {
 
     /// Read-only discovery: current active workspace name, if queryable.
     fn active_workspace(&self) -> Option<String>;
+
+    /// Read-only compositor JSON query, selected by an explicit enum
+    /// instead of a free-form string: the core may only ask for the
+    /// queries it actually performs (capability-routing vocabulary —
+    /// `read-config-option`'s workspace queries).
+    ///
+    /// Returns the raw JSON text for the caller to parse; `None` on any
+    /// failure (spawn failure, non-UTF-8 output). Never panics.
+    fn query_json(&self, query: CompositorQuery) -> Option<String>;
+
+    /// Read one live compositor option as raw JSON text
+    /// (`hyprctl getoption <name> -j` — the `read-config-option`
+    /// capability). The option name is passed through verbatim: its
+    /// normalisation belongs to the caller, which also owns the parse.
+    ///
+    /// Returns `None` on any failure. Never panics.
+    fn read_option(&self, name: &str) -> Option<String>;
+}
+
+/// The read-only compositor JSON queries the core performs, as an explicit
+/// selector. Exactly today's call sites live here — the active-workspace
+/// read already has its own trait verb (`active_workspace`), and command
+/// verbs (dispatch/eval/reload) are NOT queries and belong to the next
+/// capability-routing unit. Add a variant only when a core call site needs
+/// the query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompositorQuery {
+    /// `hyprctl workspaces -j` — workspace list with per-workspace window
+    /// counts (`main.rs::find_empty_workspace`).
+    Workspaces,
 }
 
 // ── Controller ────────────────────────────────────────────────────────
@@ -390,6 +420,11 @@ pub(crate) mod tests {
         show_fast: bool,
         /// Result reported by `set_fullscreen` (true = dispatch accepted).
         fullscreen_ok: bool,
+        /// Raw payload the read-only `query_json` verb answers with
+        /// (`None` = the compositor did not answer).
+        query_answer: Option<String>,
+        /// Raw payload the raw `read_option` verb answers with.
+        option_answer: Option<String>,
     }
 
     impl FakeComposer {
@@ -400,6 +435,8 @@ pub(crate) mod tests {
                     calls: calls.clone(),
                     show_fast: true,
                     fullscreen_ok: true,
+                    query_answer: None,
+                    option_answer: None,
                 },
                 calls,
             )
@@ -412,6 +449,8 @@ pub(crate) mod tests {
                     calls: calls.clone(),
                     show_fast,
                     fullscreen_ok: true,
+                    query_answer: None,
+                    option_answer: None,
                 },
                 calls,
             )
@@ -425,6 +464,40 @@ pub(crate) mod tests {
                     calls: calls.clone(),
                     show_fast: true,
                     fullscreen_ok: ok,
+                    query_answer: None,
+                    option_answer: None,
+                },
+                calls,
+            )
+        }
+
+        /// Fake composer whose read-only JSON query answers with `answer`.
+        /// `None` models a compositor that does not answer at all.
+        pub fn with_query_answer(answer: Option<String>) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: true,
+                    query_answer: answer,
+                    option_answer: None,
+                },
+                calls,
+            )
+        }
+
+        /// Fake composer whose raw option read answers with `answer`.
+        /// `None` models a compositor that does not answer at all.
+        pub fn with_option_answer(answer: Option<String>) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                    show_fast: true,
+                    fullscreen_ok: true,
+                    query_answer: None,
+                    option_answer: answer,
                 },
                 calls,
             )
@@ -478,6 +551,16 @@ pub(crate) mod tests {
         fn active_workspace(&self) -> Option<String> {
             self.record("active_workspace");
             Some("2".to_string())
+        }
+
+        fn query_json(&self, query: CompositorQuery) -> Option<String> {
+            self.record(&format!("query_json({query:?})"));
+            self.query_answer.clone()
+        }
+
+        fn read_option(&self, name: &str) -> Option<String> {
+            self.record(&format!("read_option({name})"));
+            self.option_answer.clone()
         }
     }
 
@@ -1087,5 +1170,71 @@ pub(crate) mod tests {
             "a show in flight must not re-dispatch, got: {:?}",
             *calls.lock().unwrap()
         );
+    }
+
+    // ── Read-only query verbs (capability-routing Phase 3) ────────────
+
+    /// The core asks for a query by EXPLICIT selector, never by a
+    /// free-form string: the selector must reach the composer verbatim and
+    /// the raw JSON answer must come back untouched for the caller to parse.
+    #[test]
+    fn test_query_selector_routes_and_returns_raw_json() {
+        let payload = r#"[{"name":"3","windows":0}]"#;
+        let (fake, calls) = FakeComposer::with_query_answer(Some(payload.to_string()));
+        let controller = Controller::new(Box::new(fake));
+
+        let got = controller.composer().query_json(CompositorQuery::Workspaces);
+
+        assert_eq!(got.as_deref(), Some(payload), "the raw JSON must pass through untouched");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["query_json(Workspaces)"],
+            "the selector must reach the composer verbatim"
+        );
+    }
+
+    /// A compositor that does not answer must yield `None` — never a
+    /// panic. The caller owns the fallback.
+    #[test]
+    fn test_query_failure_returns_none_without_panicking() {
+        let (fake, calls) = FakeComposer::with_query_answer(None);
+        let controller = Controller::new(Box::new(fake));
+
+        let got = controller.composer().query_json(CompositorQuery::Workspaces);
+
+        assert!(got.is_none(), "an unanswered query must be None, got: {got:?}");
+        assert_eq!(*calls.lock().unwrap(), vec!["query_json(Workspaces)"]);
+    }
+
+    /// `getoption` is a RAW read: the option name passes through verbatim
+    /// (normalisation stays in the caller) and the JSON text comes back
+    /// unparsed.
+    #[test]
+    fn test_read_option_is_a_raw_read_with_the_name_verbatim() {
+        let payload = r#"{"int":7,"str":"7"}"#;
+        let (fake, calls) = FakeComposer::with_option_answer(Some(payload.to_string()));
+        let controller = Controller::new(Box::new(fake));
+
+        let got = controller.composer().read_option("decoration:blur:enabled");
+
+        assert_eq!(got.as_deref(), Some(payload), "the raw option JSON must pass through untouched");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["read_option(decoration:blur:enabled)"],
+            "the option name must reach the composer verbatim"
+        );
+    }
+
+    /// Same contract as the query verb: an unreadable option is `None`,
+    /// never a panic.
+    #[test]
+    fn test_read_option_failure_returns_none_without_panicking() {
+        let (fake, calls) = FakeComposer::with_option_answer(None);
+        let controller = Controller::new(Box::new(fake));
+
+        let got = controller.composer().read_option("decoration:blur:enabled");
+
+        assert!(got.is_none(), "an unreadable option must be None, got: {got:?}");
+        assert_eq!(*calls.lock().unwrap(), vec!["read_option(decoration:blur:enabled)"]);
     }
 }

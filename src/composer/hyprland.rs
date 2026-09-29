@@ -1,4 +1,4 @@
-use crate::composer::{Composer, HyprMode};
+use crate::composer::{Composer, CompositorQuery, HyprMode};
 use slint::ComponentHandle;
 use std::sync::OnceLock;
 
@@ -138,29 +138,17 @@ impl HyprlandComposer {
     /// Fetch `hyprctl clients -j` stdout. Shared query path for
     /// `hve_in_special` and the startup sanity check.
     fn clients_json(&self) -> Option<String> {
-        let out = std::process::Command::new("hyprctl")
-            .args(["clients", "-j"])
-            .output()
-            .ok()?;
-        String::from_utf8(out.stdout).ok()
+        hyprctl_json(&["clients", "-j"])
     }
 
     /// Fetch `hyprctl monitors -j` stdout. Query path for the verified-hide
     /// scratchpad-open check (odd/hide-idempotency-and-singleton-watcher W2).
     fn monitors_json(&self) -> Option<String> {
-        let out = std::process::Command::new("hyprctl")
-            .args(["monitors", "-j"])
-            .output()
-            .ok()?;
-        String::from_utf8(out.stdout).ok()
+        hyprctl_json(&["monitors", "-j"])
     }
 
     fn active_workspace(&self) -> Option<String> {
-        let out = std::process::Command::new("hyprctl")
-            .args(["activeworkspace", "-j"])
-            .output()
-            .ok()?;
-        let text = String::from_utf8(out.stdout).ok()?;
+        let text = hyprctl_json(&["activeworkspace", "-j"])?;
         let v: serde_json::Value = serde_json::from_str(&text).ok()?;
         v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
     }
@@ -173,6 +161,32 @@ impl HyprlandComposer {
     fn sync_after_show(&self) {
         crate::shell::Shell::sync_global_after_show();
     }
+}
+
+// ── Read-only query helpers (one spawn path for every JSON verb) ──────
+
+/// Spawn one read-only `hyprctl … -j` query and return its raw stdout.
+/// `None` when the process cannot run or its output is not UTF-8 — every
+/// query verb in this module routes through here, so there is exactly ONE
+/// `Command::new("hyprctl")` per query shape instead of one per verb.
+fn hyprctl_json(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("hyprctl").args(args).output().ok()?;
+    String::from_utf8(out.stdout).ok()
+}
+
+/// argv (after the `hyprctl` binary) for one query selector. Pure, so the
+/// selector → query mapping is asserted without spawning anything.
+fn query_args(query: CompositorQuery) -> &'static [&'static str] {
+    match query {
+        CompositorQuery::Workspaces => &["workspaces", "-j"],
+    }
+}
+
+/// argv (after the `hyprctl` binary) for the raw live-option read. Pure,
+/// so the moved `main.rs` call site's argv (`getoption <name> -j`) is
+/// pinned by test.
+fn option_args(name: &str) -> [&str; 3] {
+    ["getoption", name, "-j"]
 }
 
 impl Composer for HyprlandComposer {
@@ -444,6 +458,18 @@ impl Composer for HyprlandComposer {
 
     fn active_workspace(&self) -> Option<String> {
         self.active_workspace()
+    }
+
+    /// Read-only query by explicit selector (see the trait doc): the raw
+    /// JSON text, `None` when the compositor does not answer.
+    fn query_json(&self, query: CompositorQuery) -> Option<String> {
+        hyprctl_json(query_args(query))
+    }
+
+    /// Raw live-option read (see the trait doc): the caller parses the
+    /// JSON text and owns the option-name normalisation.
+    fn read_option(&self, name: &str) -> Option<String> {
+        hyprctl_json(&option_args(name))
     }
 
     /// Floating Settings presentation (see the trait doc): float and center
@@ -971,6 +997,30 @@ mod tests {
             hide_plan(false, false),
             vec![HideStep::MoveToSpecial, HideStep::CloseScratchpad],
             "not parked + closed: the move opens the overlay, so the close must follow"
+        );
+    }
+
+    // ── Read-only query verbs (capability-routing Phase 3) ────────────
+
+    /// Each selector maps to EXACTLY the argv the moved `main.rs` call
+    /// site used — same verb, same `-j`, no speculative queries.
+    #[test]
+    fn query_args_map_each_selector_to_its_json_query() {
+        assert_eq!(
+            query_args(CompositorQuery::Workspaces),
+            &["workspaces", "-j"],
+            "the workspaces query must stay `hyprctl workspaces -j`"
+        );
+    }
+
+    /// The raw option read keeps the moved call site's argv:
+    /// `hyprctl getoption <name> -j`, with the name passed verbatim.
+    #[test]
+    fn option_args_keep_the_getoption_argv_shape() {
+        assert_eq!(
+            option_args("decoration:blur:enabled"),
+            ["getoption", "decoration:blur:enabled", "-j"],
+            "getoption must take the caller's name verbatim, unnormalised"
         );
     }
 }

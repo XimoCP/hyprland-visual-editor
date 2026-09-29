@@ -161,7 +161,7 @@ fn is_exempt(file: &str, token: &str) -> bool {
 /// to re-home the reference deliberately (the failure message says so).
 /// Exempt pairs (see `EXEMPT_TOKENS`) carry no pin by design.
 const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
-    ("src/main.rs", "hyprctl", 9),
+    ("src/main.rs", "hyprctl", 6),
     ("src/main.rs", "hyprland", 12),
     ("src/main.rs", "noctalia", 13),
     ("src/main.rs", "skwd", 1),
