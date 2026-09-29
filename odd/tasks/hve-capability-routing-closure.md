@@ -96,18 +96,51 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1175 filtered out; f
    wording has not been updated to say so.
 6. **No live-desktop verification in this session** — nothing on the running desktop was
    exercised here. The suite, the scanner and the headless renders are all this session ran.
+   **Superseded the same day — see "Live verification" below.**
+
+## Live verification (same day, after this record)
+
+The keeper ran the rebuilt binary on the running desktop and reported the results:
+
+- **The suspend defect is fixed.** After applying a theme, suspending the machine and waking it,
+  the palette was correct. This is the defect the whole effort started from (a theme applied
+  before the descriptor existed declared no colour authority and lost its palette), and it is
+  the only check that could confirm R2.
+- **One residual, root-caused and DECIDED.** On waking, the palette changed for about a second
+  and then returned to the correct one. Diagnosis from the live logs: the engine (skwd-walld)
+  notices the monitor hotplug at wake, re-applies the wallpaper and publishes its own palette
+  into Noctalia at 17:01:19; HVE's watcher asks for a re-assert in the same second and HVE wins
+  (`Colors from: applied theme snapshot` from the first pass). The cause is that the
+  colour-authority yield is per-apply, so the engine stays armed between applies. **The keeper
+  chose option C: leave it.** It is cosmetic, lasts ~1 s and the correct palette always wins.
+  Option A (mute the engine while a theme owns authority) was rejected because the mute would
+  live in another program's config file and would silently disable palette re-derivation if HVE
+  ever died or was removed; option B (re-assert on resume) narrows but does not remove the race.
+  The full blueprint — evidence, the three options and their tradeoffs, and the code paths for
+  each — is in Engram on topic `capability-routing/post-suspend-palette-flicker`.
+- **The keeper reports everything else working correctly.**
+
+Two commits landed after this record was written:
+
+- `69c629f` docs(odd): record the capability-routing closure (this file).
+- `bf73d2a` fix(providers): the shell detectors stop printing the PID they probe — `cargo run`
+  printed a bare PID at startup because `pgrep -x noctalia` ran under `.status()`, which
+  inherits stdout. Both detectors now use `.output()`. The same commit gates the test-only
+  `GeometryPersistCoalescer::has_pending` to the test build, so the bin target builds with zero
+  warnings.
 
 ## What only the keeper can verify
 
-- **The live desktop**: the palette surviving suspend was verified by the keeper earlier in
-  the work; **nothing after that point has been checked live**. This session ran no desktop
-  session, no `hyprctl` round-trip against a real compositor, and no reinstall.
+- **The live desktop**: R2's suspend behaviour is now CONFIRMED live (see "Live verification"
+  above), along with the ~1 s flicker that was accepted as-is. Everything else on the desktop
+  was exercised only through tests and stubs.
 - **The visual look**: no render inspection of the current head belongs to this session.
 - **Real-engine interaction**: every path that talks to Hyprland, Noctalia, skwd or mpvpaper
   was exercised only through tests and stubs. The real compositor, the real layer stack and
-  the real backend CLIs are unverified here.
-- After reinstall, the keeper must apply the theme once (Phase 1 residual R2's upgrade
-  window is fixed at startup, but only a live run proves it).
+  the real backend CLIs are unverified here beyond the wake behaviour above.
+- **R2's upgrade window**: CLOSED and confirmed live. The keeper reinstalled the rebuilt binary,
+  applied a theme and suspended the machine; the palette survived. The "apply the theme once
+  after reinstalling" step this record originally required has been done.
 
 ## Safety net
 
