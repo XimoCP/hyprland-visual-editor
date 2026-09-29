@@ -10,7 +10,13 @@
 //! files named in the plan's definition of done **and for every provider
 //! module** (Phase-2 measurement: the scanner used to stop at `shell.rs`, so
 //! every provider-level chain — the `noctalia → skwd_policy` coupling the
-//! whole-phase audit found — was invisible). The pin test fails when any
+//! whole-phase audit found — was invisible). The Phase-4 visibility pass
+//! (2026-09-29) then found the same class of blind spot one directory over:
+//! the `read-desktop-preference` probes moved into
+//! `src/theme/desktop_preference/` and the dead `pgrep hyprmod` scaffolding
+//! lived in `src/shell/gallery/slot.rs`, files no token policed — the
+//! scanner reported clean zeros over couplings it simply could not see.
+//! The pin test fails when any
 //! count GROWS (a new coupling leaked into a core or provider file) and also
 //! when a pin is HIGHER than the measured count (a stale pin — lower it,
 //! never raise it without moving the coupling into its backend module). Each
@@ -34,6 +40,20 @@ fn repo_root() -> PathBuf {
 /// cut never triggers for it. `src/providers/mod.rs` is deliberately NOT
 /// scanned: it is the registration router whose job is to name every backend,
 /// so its mentions are legitimate registration, not coupling.
+///
+/// Phase-4 visibility extension (2026-09-29): a file list that cannot see a
+/// coupling reports a clean zero while the coupling lives one directory over —
+/// worse than no instrument. Two such blind spots were found by audit:
+/// (1) the `gsettings`/`darkman` probes MOVED from `src/theme.rs` into
+/// `src/theme/desktop_preference/`, so the `("src/theme.rs", "gsettings")`
+/// pin fell to 0 without the probe dying — the capability directory and its
+/// two backends now join; (2) the dead `pgrep hyprmod` scaffolding lived in
+/// `src/shell/gallery/slot.rs`, a file the `hyprmod` token never policed at
+/// all — it joins too. Also added: `src/composer/hyprland.rs`, the largest
+/// ungated `Command::new` host left in `src/` — its OWN Hyprland tokens are
+/// exempt (sanctioned home, see `EXEMPT_TOKENS`), so what it adds is the 12
+/// cross-backend tokens at pin 0: the base module can never reach a backend
+/// unseen.
 const SCANNED_FILES: &[&str] = &[
     "src/main.rs",
     "src/settings.rs",
@@ -45,6 +65,14 @@ const SCANNED_FILES: &[&str] = &[
     "src/providers/shell.rs",
     "assets/scripts/colors.sh",
     "assets/scripts/color_watcher.sh",
+    // Phase-4 visibility: the read-desktop-preference capability directory.
+    "src/theme/desktop_preference/mod.rs",
+    "src/theme/desktop_preference/gsettings.rs",
+    "src/theme/desktop_preference/darkman.rs",
+    // Phase-4 visibility: the plan names this file for `pgrep hyprmod`.
+    "src/shell/gallery/slot.rs",
+    // Phase-4 visibility: the Hyprland base module (own tokens exempt).
+    "src/composer/hyprland.rs",
     "src/providers/noctalia.rs",
     "src/providers/noctalia_runtime.rs",
     "src/providers/mpvpaper.rs",
@@ -76,6 +104,18 @@ const SCANNED_FILES: &[&str] = &[
 /// - `providers::background` is qualified because the bare word
 ///   `background` is ordinary English ("the background engine owns the
 ///   scheme") and would force absurd, churning pins.
+/// - Phase-4 visibility (2026-09-29): `darkman` joins so a NEW reach into
+///   the `read-desktop-preference` probes is caught from ANY file: the
+///   `gsettings` side was already policed (the token predates the move),
+///   but nothing named the darkman backend. Smallest set that works: a core
+///   file calling `Command::new("darkman")`, `...::darkman::DarkmanBackend`
+///   or reading `~/.cache/darkman/mode` itself now fails at pin 0, while the
+///   capability's sanctioned registration point and each backend's own
+///   identity stay exempt (see `EXEMPT_TOKENS`). A `desktop_preference`
+///   token was deliberately NOT added: the core calling the capability
+///   entry point (`theme.rs -> read_desktop_preference()`) is the
+///   architecture working as designed, and `gsettings`/`darkman` already
+///   catch every probe-naming form.
 const TOKENS: &[&str] = &[
     "hyprctl",
     "hyprland",
@@ -85,6 +125,7 @@ const TOKENS: &[&str] = &[
     "quickshell",
     "matugen",
     "gsettings",
+    "darkman",
     "hyprmod",
     "skwd_policy",
     "skwd_engine",
@@ -119,11 +160,25 @@ const EXEMPT_TOKENS: &[(&str, &str)] = &[
     ("src/providers/noctalia.rs", "mpvpaper"),
     ("src/providers/noctalia_runtime.rs", "mpvpaper"),
     // The `apply-background` ROUTER: naming its backends is its whole job
-    // (a router calling backends is the sanctioned shape).
+    // (a router calling backends is the sanctioned shape). `skwd_policy`
+    // joins `skwd_engine` there: the router now also routes the
+    // colour-authority hold/release to the engine's OWN policy module —
+    // the mechanism stays in the engine, only the caller changed.
     ("src/providers/background.rs", "skwd"),
     ("src/providers/background.rs", "mpvpaper"),
     ("src/providers/background.rs", "skwd_engine"),
+    ("src/providers/background.rs", "skwd_policy"),
     ("src/providers/background.rs", "providers::mpvpaper"),
+    // The ENGINE's own config schema: `skwd-wall-v2/config.json` carries a
+    // `noctalia` section (`noctalia.themeMode`, one of the two ownership
+    // signals), so the ownership read in `skwd_policy.rs` mentions the
+    // substring while parsing the engine's OWN file format — a config key,
+    // not a reference to the Noctalia backend. Measured: 3x (the
+    // `get("noctalia")` string and its two reader bindings), all inside
+    // `engine_owns_color_scheme`. A real reach (running the noctalia CLI,
+    // naming a noctalia path) from this file stays policed at pin 0 via
+    // the other tokens.
+    ("src/providers/skwd_policy.rs", "noctalia"),
     // The SHARED info module names its sources; the three consumers read
     // shared manifest info, which is not a backend-to-backend chain.
     ("src/providers/bg_info.rs", "noctalia"),
@@ -137,6 +192,34 @@ const EXEMPT_TOKENS: &[(&str, &str)] = &[
     // sanctioned home is `composer/hyprland.rs`.
     ("src/providers/wallpaper_authority.rs", "skwd"),
     ("src/providers/wallpaper_authority.rs", "mpvpaper"),
+    // --- Phase-4 visibility (2026-09-29), verified by reading every
+    // occurrence on the current tree ---
+    // The `read-desktop-preference` capability directory: a backend's OWN
+    // probe identity (same shape as `noctalia.rs` -> `noctalia`) and the
+    // capability's REGISTRATION ROUTER naming the backends it registers
+    // (same sanctioned-registration answer as `providers/mod.rs` and the
+    // `apply-background` router above). Measured: `gsettings.rs` `gsettings`
+    // 4x (struct + impl ids, argv), `darkman.rs` `darkman` 4x (ids, cache
+    // path), `mod.rs` 3x each (`pub mod` + the `Default` registration).
+    // A REAL probe reach from elsewhere — a core file or a sibling backend
+    // naming either probe — is still policed at pin 0.
+    ("src/theme/desktop_preference/gsettings.rs", "gsettings"),
+    ("src/theme/desktop_preference/darkman.rs", "darkman"),
+    ("src/theme/desktop_preference/mod.rs", "gsettings"),
+    ("src/theme/desktop_preference/mod.rs", "darkman"),
+    // `composer/hyprland.rs` is the SANCTIONED HOME of Hyprland knowledge
+    // (spec: "Hyprland Is the Base, Never a Backend"), so `hyprctl` 18x and
+    // `hyprland` 6x there are the architecture working as designed — and
+    // pinning them would make the plan's OWN moves fail as growth in the
+    // sanctioned destination (Phase 3 sends the raw `hyprctl` sites INTO
+    // `Composer`; Phase 4 moves `hypr_ipc.rs` into the module). `hyprmod`
+    // 36x: grep-verified 2026-09-29, ALL 36 matches are this file's own
+    // `HyprMode` V4/V5 enum (`hypr_mode`, `HyprMode::V5`…) and ZERO are the
+    // hyprmod TOOL — the substring is unusable here without an absurd,
+    // wrong-advice pin. The 12 cross-backend tokens stay policed at pin 0.
+    ("src/composer/hyprland.rs", "hyprctl"),
+    ("src/composer/hyprland.rs", "hyprland"),
+    ("src/composer/hyprland.rs", "hyprmod"),
 ];
 
 fn is_exempt(file: &str, token: &str) -> bool {
@@ -155,7 +238,8 @@ fn is_exempt(file: &str, token: &str) -> bool {
 /// joined `TOKENS`, so counts that were never measured before are now pinned
 /// below. These entries are TODAY'S DEBT, measured on the current tree, not
 /// approvals: the `noctalia → skwd_policy` chain the whole-phase audit found
-/// is pinned at its real count (6) so it can only ratchet down. **A phase
+/// was pinned at its real count (6) until the colour-authority re-owning
+/// closed it (measured 0). **A phase
 /// that lowers a coupling must lower its pin in the same commit; a pin is
 /// never raised to make a new coupling pass** — raising it requires the plan
 /// to re-home the reference deliberately (the failure message says so).
@@ -194,12 +278,14 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("assets/scripts/color_watcher.sh", "noctalia", 1),
     ("assets/scripts/color_watcher.sh", "matugen", 1),
     // --- Phase-2 measured baseline (2026-09-29), provider modules ---
-    // noctalia.rs: the audited violation. `skwd_policy` 6x = the module
-    // configuring the skwd backend through `skwd_policy.rs` (config_path /
-    // yield / restore); `skwd` 15x counts every skwd mention including the
-    // config-path strings. Fixing the chain lowers both pins.
-    ("src/providers/noctalia.rs", "skwd", 15),
-    ("src/providers/noctalia.rs", "skwd_policy", 6),
+    // noctalia.rs: the audited violation, CLOSED by the colour-authority
+    // re-owning (2026-09-29): the yield/restore, the config resolver, the
+    // marker and the guard are reached through the `apply-background`
+    // router now, so `skwd_policy` measures 0 (lowered 6 -> 0) and `skwd`
+    // counts only the four log lines that still NAME the engine for the
+    // user (measured 4; lowered 15 -> 4).
+    ("src/providers/noctalia.rs", "skwd", 4),
+    ("src/providers/noctalia.rs", "skwd_policy", 0),
     // noctalia.rs delegating apply-background to the ROUTER; Phase 2 may
     // move that selection to the core, which lowers this pin to 0.
     ("src/providers/noctalia.rs", "providers::background", 1),
@@ -213,14 +299,33 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     // wallpaper.rs (inert: no `mod wallpaper;` today, but it ships and is
     // pending re-wiring) hardcodes Noctalia's cache paths for wallpapers.json.
     ("src/providers/wallpaper.rs", "noctalia", 4),
+    // --- Phase-4 visibility baseline (2026-09-29), newly-scanned files ---
+    // Read before touching: the desktop-preference capability directory,
+    // `src/shell/gallery/slot.rs` and `src/composer/hyprland.rs` joined
+    // `SCANNED_FILES`, so their (file, token) counts are measured here for
+    // the FIRST time. Measured TODAY by running this scanner on the current
+    // tree: every NON-EXEMPT pair in those five files is 0 — an absent
+    // entry below pins 0 by the `pin_for` rule, so 0 is the baseline for
+    // all of them (new coupling of any token fails immediately). The
+    // non-zero pairs are identity/registration and carry `exempt` in the
+    // report instead of a pin: `gsettings.rs` `gsettings` 4,
+    // `darkman.rs` `darkman` 4, `mod.rs` `gsettings` 3 / `darkman` 3,
+    // `composer/hyprland.rs` `hyprctl` 18 / `hyprland` 6 / `hyprmod` 36
+    // (see `EXEMPT_TOKENS` for why each is measured-and-exempt, not pinned).
+    // These are measured debt, never approvals: a later phase lowers any
+    // count that drops — and only the plan's own re-homing may change them.
+    // The single explicit pin below is the coupling the plan names for
+    // slot.rs (`odd/tasks/hve-capability-routing.md`, Phase 4):
+    ("src/shell/gallery/slot.rs", "hyprmod", 0),
 ];
 
 /// Production code only: strip full-line and trailing `//` comments, then
 /// drop everything from the test module to EOF.
 ///
-/// Cut-heuristic verification (2026-09-29, by grep, all 20 scanned files):
+/// Cut-heuristic verification (2026-09-29, by grep, all 25 scanned files):
 /// every scanned Rust file that HAS a test module has exactly ONE line
-/// containing `mod tests`, and it opens the trailing test module (no
+/// containing `mod tests` — modulo the Phase-4 exceptions documented
+/// below — and it opens the trailing test module (no
 /// column-0 item follows it before the final `}`), so cutting at the first
 /// line containing `mod tests` keeps all production code and no tests.
 /// `src/providers/hve_presets.rs` has ZERO occurrences — no test module at
@@ -232,6 +337,24 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
 /// `#[cfg(test)]` inside `//` comments (gone after comment stripping). No
 /// scanned file interleaves tests with production code, so no file is
 /// excluded.
+///
+/// Phase-4 additions, verified the same way on 2026-09-29 (three shapes
+/// that are NOT the plain "exactly one trailing module" case, each checked
+/// by listing every line containing `mod tests` AND every column-0 line
+/// after the cut):
+/// - `darkman.rs` — one `mod tests` (line 46), only the final `}` at
+///   column 0 after it. `mod.rs` — one (line 118), final `}` at 180.
+/// - `gsettings.rs` — one (line 50); the column-0 shell lines after it
+///   (74-77) are content of the test module's `ARGV_GUARD` raw string,
+///   well past the cut.
+/// - `slot.rs` — TWO lines contain `mod tests`: 459 (the real module) and
+///   793 (`.take_while(|line| !line.contains("mod tests"))` inside that
+///   very module). The cut takes the FIRST — correct — and no column-0
+///   non-brace line follows 459.
+/// - `composer/hyprland.rs` — one `mod tests` (899); a second TEST module
+///   (`#[cfg(test)] mod targeting_tests`, lines 1171-1265) follows it.
+///   Column-0 lines after 899 are only `}` (1169) and that second test
+///   module: no production item lives past the cut.
 fn production_body(source: &str) -> String {
     let mut kept = Vec::new();
     for line in source.lines() {
@@ -365,12 +488,12 @@ fn scanner_reports_a_new_leak_in_a_temp_copy() {
     );
 }
 
-/// Phase-2 blind spot: the scanner must COVER the provider modules and keep
-/// the cross-backend tokens in its vocabulary. Without this tripwire, removing
-/// a file from `SCANNED_FILES` (or a token from `TOKENS`) silently unpins
-/// every coupling in it — the pin test would stay green while going blind.
+/// Coverage tripwire: the scanner must COVER every policed file and keep the
+/// cross-backend tokens in its vocabulary. Without this tripwire, removing a
+/// file from `SCANNED_FILES` (or a token from `TOKENS`) silently unpins every
+/// coupling in it — the pin test would stay green while going blind.
 #[test]
-fn scanner_covers_provider_modules_and_tokens() {
+fn scanner_covers_every_policed_file_and_token() {
     for file in [
         "src/providers/noctalia.rs",
         "src/providers/noctalia_runtime.rs",
@@ -382,10 +505,17 @@ fn scanner_covers_provider_modules_and_tokens() {
         "src/providers/bg_info.rs",
         "src/providers/hve_presets.rs",
         "src/providers/wallpaper.rs",
+        // Phase-4 blind spots (2026-09-29): the coupling moved out of sight
+        // of the old file list — see the two injection tests below.
+        "src/theme/desktop_preference/mod.rs",
+        "src/theme/desktop_preference/gsettings.rs",
+        "src/theme/desktop_preference/darkman.rs",
+        "src/shell/gallery/slot.rs",
+        "src/composer/hyprland.rs",
     ] {
         assert!(
             SCANNED_FILES.contains(&file),
-            "the scanner no longer covers {file}: every provider-level coupling in it \
+            "the scanner no longer covers {file}: every coupling in it \
              becomes invisible"
         );
     }
@@ -395,11 +525,134 @@ fn scanner_covers_provider_modules_and_tokens() {
         "bg_info",
         "providers::mpvpaper",
         "providers::background",
+        "darkman",
     ] {
         assert!(
             TOKENS.contains(&token),
             "the cross-backend token `{token}` left the vocabulary: a new reference \
              to it would go unpoliced"
+        );
+    }
+}
+
+/// Phase-4 blind spot: the dead `pgrep hyprmod` scaffolding was deleted from
+/// `src/shell/gallery/slot.rs`, but the `hyprmod` token never policed this
+/// file, so the scanner could never have caught it. The file must be COVERED,
+/// and a re-injected leak — into a TEMPORARY copy (the repo file is never
+/// touched) — must be reported as a new coupling.
+#[test]
+fn scanner_covers_gallery_slot_and_reports_an_injected_hyprmod_leak() {
+    let file = "src/shell/gallery/slot.rs";
+    assert!(
+        SCANNED_FILES.contains(&file),
+        "the scanner no longer covers {file}: the `pgrep hyprmod` coupling the plan \
+         names for this file (odd/tasks/hve-capability-routing.md, Phase 4) becomes \
+         invisible"
+    );
+
+    let source = std::fs::read_to_string(repo_root().join(file)).unwrap();
+    let clean = production_body(&source).to_lowercase();
+    assert!(
+        check_body_against_pins(file, &clean).is_empty(),
+        "today's measured baseline for slot.rs must be clean against the pins"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("slot.rs");
+    // Inject BEFORE the trailing test module: appending at EOF would land
+    // past the `mod tests` cut and the scanner must (correctly) ignore it.
+    let cut = source
+        .find("mod tests")
+        .expect("slot.rs must have a trailing test module");
+    let mut tampered_source = source.clone();
+    tampered_source.insert_str(
+        cut,
+        "// temporary probe, never committed\n\
+         fn probe_leak() { let _ = \"pgrep -x hyprmod\"; }\n",
+    );
+    std::fs::write(&copy, &tampered_source).unwrap();
+    let tampered = std::fs::read_to_string(&copy).unwrap();
+    let tampered_body = production_body(&tampered).to_lowercase();
+
+    assert_eq!(
+        count_token(&tampered_body, "hyprmod"),
+        count_token(&clean, "hyprmod") + 1,
+        "the scanner must see the injected leak"
+    );
+    let failures = check_body_against_pins(file, &tampered_body);
+    assert!(
+        failures
+            .iter()
+            .any(|m| m.contains("NEW COUPLING") && m.contains("hyprmod")),
+        "the pin check must flag the injected slot.rs leak, got: {failures:?}"
+    );
+}
+
+/// Phase-4 blind spot #2: the `gsettings`/`darkman` probes moved out of the
+/// core into `src/theme/desktop_preference/`, so the core pin fell to 0 while
+/// the coupling only moved one directory over — unpoliced. The scanner must
+/// COVER the capability directory, must NOT flag its sanctioned registration
+/// point or a backend's own identity, and must catch a NEW sibling reach
+/// injected into a TEMPORARY copy (the repo file is never touched).
+#[test]
+fn scanner_covers_desktop_preference_backends_and_catches_a_sibling_reach() {
+    let backend_file = "src/theme/desktop_preference/gsettings.rs";
+    let source = std::fs::read_to_string(repo_root().join(backend_file)).unwrap();
+    let clean = production_body(&source).to_lowercase();
+
+    // A backend reaching its SIBLING backend — here `gsettings.rs` spawning
+    // the darkman probe itself (spec: "Backends Are Siblings, Never a
+    // Chain") — must be reported, never silently unpoliced.
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("gsettings.rs");
+    let cut = source
+        .find("mod tests")
+        .expect("gsettings.rs must have a trailing test module");
+    let mut tampered_source = source.clone();
+    tampered_source.insert_str(
+        cut,
+        "// temporary probe, never committed\n\
+         fn probe_leak() { let _ = std::process::Command::new(\"darkman\").arg(\"mode\"); }\n",
+    );
+    std::fs::write(&copy, &tampered_source).unwrap();
+    let tampered = std::fs::read_to_string(&copy).unwrap();
+    let tampered_body = production_body(&tampered).to_lowercase();
+
+    assert_eq!(
+        count_token(&tampered_body, "darkman"),
+        count_token(&clean, "darkman") + 1,
+        "the scanner must see the injected sibling reach"
+    );
+    let failures = check_body_against_pins(backend_file, &tampered_body);
+    assert!(
+        failures
+            .iter()
+            .any(|m| m.contains("NEW COUPLING") && m.contains("darkman")),
+        "the pin check must flag the injected gsettings -> darkman reach, got: \
+         {failures:?}"
+    );
+
+    // Coverage: the pin test only reads files listed here — and the
+    // sanctioned registration point plus each backend's own identity must
+    // stay CLEAN, because `EXEMPT_TOKENS` carries their probe mentions.
+    for file in [
+        "src/theme/desktop_preference/mod.rs",
+        "src/theme/desktop_preference/gsettings.rs",
+        "src/theme/desktop_preference/darkman.rs",
+    ] {
+        assert!(
+            SCANNED_FILES.contains(&file),
+            "the scanner no longer covers {file}: the probe coupling it hosts \
+             becomes invisible"
+        );
+        let body =
+            production_body(&std::fs::read_to_string(repo_root().join(file)).unwrap())
+                .to_lowercase();
+        let failures = check_body_against_pins(file, &body);
+        assert!(
+            failures.is_empty(),
+            "the legitimate registration/identity mentions in {file} must stay clean \
+             (see EXEMPT_TOKENS), got: {failures:?}"
         );
     }
 }

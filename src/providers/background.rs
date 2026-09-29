@@ -9,10 +9,12 @@
 //!
 //! Routing only: no Noctalia policy lives here (the provider keeps its own
 //! settings restore, plugin re-assert and saved records), no skwd engine
-//! knowledge beyond selecting it, and no mpvpaper internals beyond its
-//! public API.
+//! knowledge beyond selecting it and holding its colour authority off
+//! around an apply (the mechanism itself stays in `skwd_policy`), and no
+//! mpvpaper internals beyond its public API.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::providers::bg_info;
 
@@ -223,6 +225,121 @@ fn mpvpaper_manifest_leg(req: &ApplyBackgroundRequest) -> ApplyBackgroundOutcome
             leg: RoutedLeg::ManifestRefused(reason),
         },
     }
+}
+
+// ── Colour-authority capability (the engine held off around an apply) ─
+
+/// Bounds for the observe wait between the flip and the first wallpaper
+/// hand-off. The engine reloads its config on change, not on write:
+/// measured from `~/Proyectos/skwd-deck` (2026-09-23) — `skwd-walld`
+/// native-watches the config dir and calls `reload_config()` inline on
+/// the config-file event
+/// (`crates/skwd-walld/src/infrastructure/watcher.rs:688`), every
+/// `wall.apply` RPC reloads at the handler top
+/// (`crates/skwd-walld/src/infrastructure/rpc/wallpaper.rs:321`), and the
+/// periodic fallbacks tick at ≥50 ms while playlist assignments exist
+/// (`crates/skwd-walld/src/composition/runtime/playlist.rs:15`
+/// MIN_TICK_WAIT). One 250 ms sleep covers the worst scheduling jitter of
+/// those paths with a wide margin, costs once per hold, and the measured
+/// elapsed time is returned to the caller so the keeper's live test can
+/// tune it.
+const COLOR_YIELD_OBSERVE_WAIT: Duration = Duration::from_millis(250);
+
+/// Sleep the bounded observe wait so the engine's config watcher sees the
+/// flip before the wallpaper hand-off; returns the elapsed time so the
+/// caller keeps its "flip observed in N ms" log. The fast test profile
+/// (`HVE_REASSERT_PROFILE=fast`) shortens the wait so tests observe the
+/// whole race without real delays.
+fn wait_for_engine_to_observe_flip() -> Duration {
+    let wait = if std::env::var("HVE_REASSERT_PROFILE").as_deref() == Ok("fast") {
+        Duration::from_millis(5)
+    } else {
+        COLOR_YIELD_OBSERVE_WAIT
+    };
+    let start = Instant::now();
+    std::thread::sleep(wait);
+    start.elapsed()
+}
+
+/// One open window of the engine's colour authority — the colour-authority
+/// yield (W2/W4) made into a routed capability. While this value lives the
+/// engine is held off (`theme.policy` reads `off`), so it cannot regenerate
+/// its wallpaper-derived palette and stomp the colours the apply is about
+/// to paint.
+///
+/// Dropped armed → the previous value comes back on that scope's exit (the
+/// early-error path of an apply). [`ColourAuthorityHold::disarm`] hands the
+/// restore to the caller's palette-verification worker instead, which
+/// pairs it with [`release_color_authority`].
+#[must_use = "the hold restores the engine's colour authority when it drops; disarm it to hand the restore over"]
+pub struct ColourAuthorityHold {
+    guard: crate::providers::skwd_policy::YieldGuard,
+    observed_in: Duration,
+}
+
+impl ColourAuthorityHold {
+    /// How long the engine was given to observe the flip before the first
+    /// wallpaper hand-off (only meaningful under the production profile;
+    /// the `fast` test profile shortens it).
+    pub fn observed_in(&self) -> Duration {
+        self.observed_in
+    }
+
+    /// Detach the restore from this scope: the caller's async
+    /// palette-verification worker takes ownership and must put the
+    /// returned previous value back with [`release_color_authority`] once
+    /// the palette is verified (or at the bounded cap). `None` means there
+    /// was no previous value to restore — nothing to arrange.
+    pub fn disarm(&mut self) -> Option<String> {
+        self.guard.disarm()
+    }
+}
+
+/// Hold the engine's colour authority off for one apply: flip
+/// `theme.policy` to `off` (engine's own mechanism, never touched from
+/// here), give the engine's config watcher the bounded moment to observe
+/// it, and hand back the armed hold.
+///
+/// `Ok(None)`: nothing to hold (missing/unparsable config, or the engine
+/// does not own the scheme) — nothing was written, and no wait runs, so
+/// the caller behaves exactly as today. `Ok(Some(hold))`: the engine is
+/// held off until the hold drops or is disarmed. `Err`: honest failure;
+/// the caller logs and carries on — a failed write never aborts an apply.
+pub fn hold_color_authority() -> Result<Option<ColourAuthorityHold>, String> {
+    let previous = match crate::providers::skwd_policy::yield_color_authority() {
+        Ok(Some(previous)) => previous,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let observed_in = wait_for_engine_to_observe_flip();
+    Ok(Some(ColourAuthorityHold {
+        guard: crate::providers::skwd_policy::YieldGuard::new(previous),
+        observed_in,
+    }))
+}
+
+/// Put the engine's colour authority back EXACTLY as it was — the paired
+/// release for a hold that was disarmed into a worker. `Ok(true)` when the
+/// config was rewritten, `Ok(false)` when there was nothing to do (config
+/// gone, or a concurrent write won), `Err` an honest failure the caller
+/// logs and carries on from.
+pub fn release_color_authority(previous_value: &str) -> Result<bool, String> {
+    crate::providers::skwd_policy::restore_color_authority(previous_value)
+}
+
+/// Whether a hold is in flight (its crash marker is present): while the
+/// engine is held off, the apply's own worker owns the colours, so a
+/// watcher-driven re-assert must stay quiet instead of fighting it.
+pub fn color_authority_held() -> bool {
+    crate::providers::skwd_policy::marker_path().exists()
+}
+
+/// Whether the engine currently owns the colour scheme (it would
+/// regenerate and re-impose its own palette asynchronously). Read through
+/// the engine's own config resolver — a provider asks THIS module, never
+/// the engine's file. Missing or unparsable config answers `false`.
+pub fn engine_owns_color_scheme() -> bool {
+    crate::providers::skwd_policy::engine_owns_color_scheme()
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -552,5 +669,206 @@ mod tests {
             static_wallpaper: None,
         };
         assert!(!hand_off_static(&req));
+    }
+
+    // ── Colour-authority capability: the fake-engine harness ──────────
+    //
+    // WHY these exist: the hold/release IS the colour-authority yield
+    // (W2/W4) the provider used to drive straight into the engine's
+    // config. The router owns the capability now, so every call is
+    // recorded against a FAKE engine — a private `SKWD_WALL_V2_CONFIG`
+    // file — and never against the keeper's live engine config.
+
+    /// The fake engine's config while it owns the colour scheme.
+    const FAKE_ENGINE_OWNER: &str =
+        r#"{"theme": {"policy": "wallpaper"}, "noctalia": {"themeMode": "manual"}}"#;
+
+    /// Hermetic fake engine: `SKWD_WALL_V2_CONFIG` points at a private
+    /// temp config (or at nothing, for the engine-absent case), the shared
+    /// env lock is held for the whole test, and `HVE_REASSERT_PROFILE=fast`
+    /// keeps the observe wait off the real bound. Restores both env vars on
+    /// drop, exactly like the other harnesses.
+    struct FakeEngine {
+        config: PathBuf,
+        saved: Vec<(&'static str, Option<String>)>,
+        /// Owns the sandbox directory for the whole test.
+        _tmp: tempfile::TempDir,
+        /// Shared env lock, released last (after `Drop` restored the keys
+        /// and the sandbox dir went away).
+        _env: crate::test_utils::TempEnv,
+    }
+
+    impl FakeEngine {
+        fn new(config_text: Option<&str>) -> Self {
+            let env = crate::test_utils::TempEnv::new();
+            let saved: Vec<(&'static str, Option<String>)> =
+                ["SKWD_WALL_V2_CONFIG", "HVE_REASSERT_PROFILE"]
+                    .iter()
+                    .map(|k| (*k, std::env::var(k).ok()))
+                    .collect();
+            let dir = tempfile::tempdir().expect("create fake-engine sandbox");
+            let config = dir.path().join("config.json");
+            if let Some(text) = config_text {
+                std::fs::write(&config, text).unwrap();
+            }
+            std::env::set_var("SKWD_WALL_V2_CONFIG", &config);
+            std::env::set_var("HVE_REASSERT_PROFILE", "fast");
+            Self {
+                config,
+                saved,
+                _tmp: dir,
+                _env: env,
+            }
+        }
+
+        fn text(&self) -> String {
+            std::fs::read_to_string(&self.config).unwrap_or_default()
+        }
+    }
+
+    impl Drop for FakeEngine {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// The hold/release pair, recorded end to end against the fake engine:
+    /// hold flips `theme.policy` to `off`, disarm hands the previous value
+    /// over without restoring, and release puts the exact bytes back and
+    /// clears the held state.
+    #[test]
+    fn hold_then_release_restores_the_fake_engine_byte_for_byte() {
+        let engine = FakeEngine::new(Some(FAKE_ENGINE_OWNER));
+        let mut hold = hold_color_authority()
+            .expect("hold is an honest Result")
+            .expect("a wallpaper policy must be held");
+        assert!(
+            engine.text().contains("\"policy\": \"off\""),
+            "the hold must flip the engine config, got: {}",
+            engine.text()
+        );
+        assert!(
+            color_authority_held(),
+            "the held state must be observable while the hold is open"
+        );
+        assert!(
+            hold.observed_in() < Duration::from_millis(100),
+            "the fast profile must shorten the observe wait, took {:?}",
+            hold.observed_in()
+        );
+        let previous = hold
+            .disarm()
+            .expect("disarm must hand the previous value over");
+        assert_eq!(previous, "wallpaper");
+        drop(hold); // disarmed: the worker owns the restore now
+        assert!(
+            engine.text().contains("\"policy\": \"off\""),
+            "a disarmed hold must not restore by itself"
+        );
+        let wrote = release_color_authority(&previous).expect("release is an honest Result");
+        assert!(wrote, "release must rewrite the engine config");
+        assert_eq!(
+            engine.text(),
+            FAKE_ENGINE_OWNER,
+            "release must restore the exact original bytes"
+        );
+        assert!(
+            !color_authority_held(),
+            "release must clear the held state"
+        );
+    }
+
+    /// Restore-on-every-exit-path, through the new owner: an ARMED hold
+    /// restores the previous value when its scope ends — the early-error
+    /// path of any apply — and clears the held state behind it.
+    #[test]
+    fn an_armed_hold_restores_on_scope_exit() {
+        let engine = FakeEngine::new(Some(FAKE_ENGINE_OWNER));
+        {
+            let _hold = hold_color_authority()
+                .expect("hold is an honest Result")
+                .expect("a wallpaper policy must be held");
+            assert!(
+                engine.text().contains("\"policy\": \"off\""),
+                "the hold must be in effect inside its scope"
+            );
+        }
+        assert_eq!(
+            engine.text(),
+            FAKE_ENGINE_OWNER,
+            "an armed hold must restore the exact bytes on scope exit"
+        );
+        assert!(!color_authority_held(), "scope exit must clear the held state");
+    }
+
+    /// Nothing to hold: a `fixed` policy — and an absent engine config —
+    /// must write NOTHING, report no hold and leave no held state, so the
+    /// caller behaves exactly as today.
+    #[test]
+    fn hold_without_ownership_writes_nothing() {
+        let fixed = r#"{"theme": {"policy": "fixed"}, "noctalia": {"themeMode": "manual"}}"#;
+        {
+            let engine = FakeEngine::new(Some(fixed));
+            assert!(
+                hold_color_authority().expect("hold is an honest Result").is_none(),
+                "a fixed policy has no authority to hold"
+            );
+            assert_eq!(engine.text(), fixed, "the config must stay byte-identical");
+            assert!(!color_authority_held(), "no hold -> no held state");
+        }
+        {
+            let engine = FakeEngine::new(None);
+            assert!(
+                hold_color_authority().expect("hold is an honest Result").is_none(),
+                "a missing config has no authority to hold"
+            );
+            assert!(
+                !engine.config.exists(),
+                "a missing config must never be created"
+            );
+            assert!(!color_authority_held(), "no hold -> no held state");
+        }
+    }
+
+    /// The ownership read goes through the engine's ONE config resolver
+    /// (single-resolver rule): both seam states must answer from it —
+    /// env override set, and env override unset (platform config dir under
+    /// the TempEnv-redirected HOME, where no engine config exists).
+    #[test]
+    fn engine_owns_color_scheme_reads_the_engine_config_seam() {
+        let _env = crate::test_utils::TempEnv::new();
+        let saved = std::env::var("SKWD_WALL_V2_CONFIG").ok();
+        std::env::remove_var("SKWD_WALL_V2_CONFIG");
+        assert!(
+            !engine_owns_color_scheme(),
+            "no engine config under the sandbox HOME: no ownership"
+        );
+        let override_path = std::env::temp_dir().join("hve-background-owns-seam.json");
+        std::fs::write(&override_path, FAKE_ENGINE_OWNER).unwrap();
+        std::env::set_var("SKWD_WALL_V2_CONFIG", &override_path);
+        assert!(
+            engine_owns_color_scheme(),
+            "the env override must reach the engine's single config resolver"
+        );
+        std::env::remove_var("SKWD_WALL_V2_CONFIG");
+        let _ = std::fs::remove_file(&override_path);
+        match &saved {
+            Some(v) => std::env::set_var("SKWD_WALL_V2_CONFIG", v),
+            None => std::env::remove_var("SKWD_WALL_V2_CONFIG"),
+        }
+    }
+
+    /// The observe wait keeps its measured bound: one 250 ms sleep per
+    /// hold (the worst scheduling jitter of the engine's config reload
+    /// paths with a wide margin), shortened only by the `fast` test
+    /// profile the harness installs.
+    #[test]
+    fn the_observe_wait_keeps_its_measured_bound() {
+        assert_eq!(COLOR_YIELD_OBSERVE_WAIT, Duration::from_millis(250));
     }
 }

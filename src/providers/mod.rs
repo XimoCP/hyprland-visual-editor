@@ -11,7 +11,7 @@ pub mod wallpaper_authority;
 
 use crate::config::Config;
 use crate::engine::Engine;
-use crate::theme_manager::ThemeManager;
+use crate::theme_manager::{ThemeManager, ThemeProvider};
 use shell::ShellDetector;
 
 /// Register every provider shipped with HVE, in the canonical order.
@@ -59,6 +59,34 @@ pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
         tracing::info!("[providers] provider 'hve-presets' disabled in config — skipping registration");
     } else {
         tm.register_provider(Box::new(hve_presets::HvePresetsProvider::new(engine.clone())));
+    }
+}
+
+/// A READ-ONLY declaration instance of a shipped provider, obtained by id
+/// for cleanup decisions about a theme that RECORDED that id when it was
+/// saved.
+///
+/// Registration gates behaviour (save/apply/list) — it must not gate
+/// knowledge: the backend contract's `deletable-artefacts` applies "when a
+/// theme that used this backend is removed"
+/// (`openspec/specs/capability-routing/spec.md`), whether or not that
+/// backend is active — or enabled — today. The core calls this with the
+/// provider ids a theme's own `providers/` tree records; it never names a
+/// backend itself. `None` for an id this product does not ship (an
+/// unknown id declares nothing) and for `hve-presets` (constructing it
+/// needs an `Engine` handle, and it declares no artifacts).
+///
+/// Constructing a declarer must stay side-effect free — the only method
+/// the cleanup seam calls is `deletable_artifacts`, which reads the
+/// theme's own record. Keep this list in sync with
+/// `register_default_providers` above: a shipped provider missing here
+/// only LEAKS its artifacts (nothing is declared, so nothing is deleted)
+/// — the failure is deliberately the safe direction.
+pub fn declaration_provider(id: &str) -> Option<Box<dyn ThemeProvider>> {
+    match id {
+        "noctalia-v5" => Some(Box::new(noctalia::NoctaliaV5Provider::new())),
+        "noctalia" => Some(Box::new(noctalia::NoctaliaV4Provider::new())),
+        _ => None,
     }
 }
 

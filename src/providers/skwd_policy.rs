@@ -102,8 +102,10 @@ struct YieldMarker {
 /// i.e. `~/.config/...`), which the `TempEnv` test sandbox already
 /// redirects via HOME.
 ///
-/// Single-resolver rule: `noctalia::skwd_wall_config_path` delegates here,
-/// so a future change cannot fork the two copies.
+/// Single-resolver rule: this is the ONLY path logic for the engine
+/// config. The provider-side accessor that used to delegate here is gone
+/// (capability routing); everything left reads the engine config through
+/// this module, so a future change cannot fork the copies.
 pub(crate) fn config_path() -> PathBuf {
     if let Ok(custom) = std::env::var("SKWD_WALL_V2_CONFIG") {
         return PathBuf::from(custom);
@@ -117,6 +119,38 @@ pub(crate) fn config_path() -> PathBuf {
 /// Crash marker location: HVE cache dir + explicit, documented name.
 pub(crate) fn marker_path() -> PathBuf {
     hve_cache_dir().join("skwd-policy-yield.json")
+}
+
+/// True when the engine owns the color scheme and will asynchronously
+/// override whatever HVE sets: `theme.policy == "wallpaper"` (the engine
+/// derives the palette from the wallpaper it was just handed) OR
+/// `noctalia.themeMode == "follow"` (it tracks Noctalia instead of
+/// leaving the scheme alone). Missing or unparsable config is NOT
+/// ownership — HVE then behaves exactly as before. Never panics.
+///
+/// Re-homed from the Noctalia provider (capability routing: the engine's
+/// config is the engine's business). Providers reach it through the
+/// `apply-background` router, never through this module directly.
+pub(crate) fn engine_owns_color_scheme() -> bool {
+    let raw = match fs::read_to_string(config_path()) {
+        Ok(raw) => raw,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+    let policy_wallpaper = parsed
+        .get("theme")
+        .and_then(|theme| theme.get("policy"))
+        .and_then(|policy| policy.as_str())
+        == Some("wallpaper");
+    let follow_mode = parsed
+        .get("noctalia")
+        .and_then(|noctalia| noctalia.get("themeMode"))
+        .and_then(|mode| mode.as_str())
+        == Some("follow");
+    policy_wallpaper || follow_mode
 }
 
 // ── W2: RAII restore guard + atomic-write hardening ──────────────────

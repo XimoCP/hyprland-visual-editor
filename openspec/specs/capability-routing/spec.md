@@ -50,21 +50,18 @@ between them. Bidirectional calls between backends are forbidden.
 - THEN it is treated as a defect: the shared need becomes a routed
   capability and the direct call is deleted
 
-**Known debt**: `providers/noctalia.rs` still CONFIGURES the skwd backend —
-it reads and writes the engine's `config.json` through
-`providers/skwd_policy.rs` (the colour-authority yield) and reaches the
-engine's daemon through `providers/wallpaper_authority.rs`. That is the
-remaining half of the chain: the direct calls to the engine adapter and to
-the mpvpaper plugin API are gone (Phase 2), the configuration coupling is
-not. Phase 3 or 4 owns it.
-
-**Closed in Phase 2**: `providers/noctalia.rs` no longer calls the skwd
-engine adapter (`providers/skwd_engine.rs`) nor the mpvpaper plugin API
-(`providers/mpvpaper.rs`); `providers/mpvpaper.rs` no longer calls back
-into Noctalia — its supervisor IPC moved to the neutral
+**Closed in Phase 2 and after**: `providers/noctalia.rs` no longer calls the
+skwd engine adapter (`providers/skwd_engine.rs`) nor the mpvpaper plugin API
+(`providers/mpvpaper.rs`); `providers/mpvpaper.rs` no longer calls back into
+Noctalia — its supervisor IPC moved to the neutral
 `providers/noctalia_runtime.rs` seam. `apply-background` is routed by
-`providers/background.rs`, which the Noctalia provider invokes as its
-backend role rather than calling its siblings.
+`providers/background.rs`, which the Noctalia provider invokes as its backend
+role rather than calling its siblings, and the colour-authority yield (the
+engine-config flip that holds the skwd engine off while another backend
+applies colours) moved behind that same router: `background::hold_color_authority`
+/ `ColourAuthorityHold` / `release_color_authority`. Noctalia names the
+mechanism no longer; the router delegates to `providers/skwd_policy.rs`,
+which remains the owner of the engine's own config file.
 
 ### Requirement: Capability Vocabulary (decided contract)
 

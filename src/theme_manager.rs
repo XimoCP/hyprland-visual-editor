@@ -23,10 +23,16 @@ pub struct DeletableArtifact {
     /// Live path of the artifact the core may remove.
     pub path: PathBuf,
     /// The reference key any OTHER theme's record of the SAME artifact
-    /// carries. The core keeps the file alive while any surviving theme's
-    /// provider declares this same key — comparisons never cross providers,
-    /// so two backends recording equal keys for different files cannot
-    /// protect each other's paths.
+    /// carries. The core keeps the file alive while any surviving theme
+    /// declares this same key through ANY provider — the registered list
+    /// plus the read-only declarers of the survivor's own recorded ids.
+    /// Keys are matched ACROSS providers on purpose: a survivor's record
+    /// stored under a directory the owner never writes still references
+    /// the file, so when two readings of the key disagree the decision
+    /// must favour keeping. The admitted cost: two backends recording
+    /// equal keys for different files protect each other's paths — a
+    /// leak, never a deletion of something still referenced (over-keep
+    /// beats over-delete).
     pub reference_key: String,
 }
 
@@ -108,11 +114,15 @@ pub trait ThemeProvider: Send + Sync {
     /// `openspec/specs/capability-routing/spec.md`). The provider supplies
     /// only its own KNOWLEDGE: which live file it owns and the reference
     /// key its own record format produces for it. The core keeps the
-    /// DECISION: it removes the path only while no surviving theme's
-    /// provider declares the same key, fails OPEN (keeps the file) when a
-    /// survivor's tree cannot be scanned, and never runs this for the
-    /// currently applied theme. Default: nothing outside the theme dir, so
-    /// nothing is declared and nothing is deleted.
+    /// DECISION: it removes the path only while no surviving theme
+    /// declares the same key through any provider, fails OPEN (keeps the
+    /// file) when a survivor's tree cannot be scanned, and never runs this
+    /// for the currently applied theme. A theme's own recorded provider
+    /// ids are asked even when their backend is not registered — the
+    /// registration router supplies a read-only declarer for that id, so
+    /// an inactive backend never makes its own record invisible. Default:
+    /// nothing outside the theme dir, so nothing is declared and nothing
+    /// is deleted.
     fn deletable_artifacts(&self, theme_dir: &std::path::Path) -> Vec<DeletableArtifact> {
         let _ = theme_dir;
         Vec::new()
@@ -780,26 +790,33 @@ fn path_inside_dir(dir: &Path, candidate: &Path) -> bool {
     canon.starts_with(dir)
 }
 
-/// Remove a shared artifact a registered provider declared for the deleted
-/// theme IFF no surviving theme still references it.
+/// Remove a shared artifact a provider declared for the deleted theme IFF
+/// no surviving theme still references it.
 ///
 /// The provider supplies its own knowledge only — the live path of the
 /// artifact it owns plus the reference key its own record format produces
-/// for it. The core owns the decision: it asks the SAME provider whether
-/// any other theme dir still declares that key, and removes the file only
-/// when none does. A scan that cannot run keeps the file too — deleting a
-/// maybe-shared artifact is worse than leaking it.
+/// for it. The core owns the decision: it asks EVERY provider that could
+/// declare — the registered list plus a read-only declarer the
+/// registration router supplies for each provider id the theme itself
+/// recorded — whether any other theme dir still declares that key, and
+/// removes the file only when none does. A scan that cannot run keeps the
+/// file too — deleting a maybe-shared artifact is worse than leaking it.
 fn cleanup_shared_artifacts(
     themes_dir: &Path,
     theme_dir: &Path,
     providers: &[Box<dyn ThemeProvider>],
 ) {
-    for provider in providers {
+    let recorded = recorded_declarers(theme_dir, providers);
+    for provider in providers
+        .iter()
+        .map(|p| p.as_ref())
+        .chain(recorded.iter().map(|p| p.as_ref()))
+    {
         for artifact in provider.deletable_artifacts(theme_dir) {
             if shared_artifact_still_referenced(
                 themes_dir,
                 theme_dir,
-                provider.as_ref(),
+                providers,
                 &artifact.reference_key,
             ) {
                 continue;
@@ -816,17 +833,47 @@ fn cleanup_shared_artifacts(
     }
 }
 
+/// Read-only declaration instances for the provider ids `theme_dir`
+/// RECORDED when it was saved but that are NOT in `registered`: a theme's
+/// own record must stay visible to cleanup even when its backend is
+/// inactive (or disabled) today, or its shared artifacts leak forever —
+/// nothing reaps them later. Ids already registered are skipped (the same
+/// knowledge is already asked); ids the router does not ship declare
+/// nothing. Constructing a declarer is side-effect free by contract:
+/// `deletable_artifacts` only reads the theme's own record.
+fn recorded_declarers(
+    theme_dir: &Path,
+    registered: &[Box<dyn ThemeProvider>],
+) -> Vec<Box<dyn ThemeProvider>> {
+    let Ok(entries) = fs::read_dir(theme_dir.join("providers")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .filter(|id| !registered.iter().any(|p| p.id() == id))
+        .filter_map(|id| crate::providers::declaration_provider(&id))
+        .collect()
+}
+
 /// True when any theme dir other than the one being deleted still declares
-/// `reference_key` through the same provider. Every directory except the
-/// deleted one is scanned — HVE's own Save UI accepts names starting with
-/// `_` or `.`, so skipping those hid real referrers and deleted artifacts
-/// survivors still needed. Unreadable state fails OPEN (keep the artifact):
-/// an unscannable tree proves nothing about who still references the file —
-/// including a survivor whose `providers` dir cannot even be listed.
+/// `reference_key`. EVERY provider that could declare is asked for each
+/// survivor — the registered list plus the read-only declarers of the
+/// survivor's own recorded ids — and the key is matched ACROSS providers:
+/// a record stored under a directory the owner never writes still
+/// references the file (see `DeletableArtifact::reference_key` for why
+/// that match is deliberately not scoped per provider). Every directory
+/// except the deleted one is scanned — HVE's own Save UI accepts names
+/// starting with `_` or `.`, so skipping those hid real referrers and
+/// deleted artifacts survivors still needed. Unreadable state fails OPEN
+/// (keep the artifact): an unscannable tree proves nothing about who still
+/// references the file — including a survivor whose `providers` dir cannot
+/// even be listed.
 fn shared_artifact_still_referenced(
     themes_dir: &Path,
     deleted_dir: &Path,
-    owner: &dyn ThemeProvider,
+    providers: &[Box<dyn ThemeProvider>],
     reference_key: &str,
 ) -> bool {
     let entries = match fs::read_dir(themes_dir) {
@@ -843,12 +890,19 @@ fn shared_artifact_still_referenced(
             // cannot prove otherwise — keep it (leak beats breakage).
             return true;
         }
-        if owner
-            .deletable_artifacts(&path)
+        let recorded = recorded_declarers(&path, providers);
+        for provider in providers
             .iter()
-            .any(|declared| declared.reference_key == reference_key)
+            .map(|p| p.as_ref())
+            .chain(recorded.iter().map(|p| p.as_ref()))
         {
-            return true;
+            if provider
+                .deletable_artifacts(&path)
+                .iter()
+                .any(|declared| declared.reference_key == reference_key)
+            {
+                return true;
+            }
         }
     }
     false
@@ -923,6 +977,54 @@ mod tests {
             }
             vec![DeletableArtifact {
                 path: self.artifact_dir.join(format!("{key}.bin")),
+                reference_key: key,
+            }]
+        }
+    }
+
+    /// Test-only provider that declares its OWN shared artifact from its
+    /// `{id}/source.txt` record (`custom <key>`) — the record shape a
+    /// backend writes, spelled out here so the CORE stays free of it. The
+    /// D1 regression needs a declarer for the FOREIGN provider directory a
+    /// survivor's record lives in: the reference scan may only learn what
+    /// providers declare, so a record under a non-owner provider dir is
+    /// visible exactly when a provider for that id can declare it.
+    struct SourceRecordProvider {
+        id: &'static str,
+        artifact_dir: PathBuf,
+    }
+
+    impl ThemeProvider for SourceRecordProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn display_name_key(&self) -> &str {
+            self.id
+        }
+        fn icon(&self) -> &str {
+            "◆"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn deletable_artifacts(&self, theme_dir: &Path) -> Vec<DeletableArtifact> {
+            let record = theme_dir.join("providers").join(self.id).join("source.txt");
+            let Ok(text) = fs::read_to_string(&record) else {
+                return Vec::new();
+            };
+            let mut parts = text.split_whitespace();
+            if parts.next() != Some("custom") {
+                return Vec::new();
+            }
+            let key = parts.collect::<Vec<_>>().join(" ");
+            if key.is_empty() {
+                return Vec::new();
+            }
+            vec![DeletableArtifact {
+                path: self.artifact_dir.join(format!("{key}.json")),
                 reference_key: key,
             }]
         }
@@ -1596,6 +1698,142 @@ mod tests {
             shared.exists(),
             "an unscannable survivor fails OPEN — the declared artifact must stay"
         );
+    }
+
+    /// D1 regression (adversarial verification of `3e0fcc1`): the
+    /// reference scan must see a survivor's record stored under a provider
+    /// directory that does NOT own the artifact. The pre-seam code scanned
+    /// every survivor record; the seam's owner-only scan deleted a palette
+    /// a survivor still referenced — the dangerous direction. A matching
+    /// key declared through ANY provider keeps the file: a false keep only
+    /// leaks a file, a false miss deletes one a live theme needs.
+    #[test]
+    fn delete_keeps_palette_referenced_through_a_non_owner_provider_dir() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("K2.json");
+        fs::write(&palette, r#"{"name":"K2"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&gone_v5).unwrap();
+        fs::write(gone_v5.join("source.txt"), "custom K2\n").unwrap();
+        // The survivor's record lives under a NON-owner provider dir.
+        seed_meta(&themes_dir, "Stays", "2026-09-21T00:00:00.000Z", "", &["noctalia"]);
+        let stays_other = themes_dir.join("Stays").join("providers").join("noctalia");
+        fs::create_dir_all(&stays_other).unwrap();
+        fs::write(stays_other.join("source.txt"), "custom K2\n").unwrap();
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
+        tm.register_provider(Box::new(SourceRecordProvider {
+            id: "noctalia",
+            artifact_dir: palettes_dir.clone(),
+        }));
+
+        tm.delete("Gone").expect("delete must succeed");
+        assert!(
+            palette.exists(),
+            "a survivor's record under a NON-owner provider dir still references the palette — it must stay"
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
+
+    /// D2 regression (adversarial verification of `3e0fcc1`): the deleted
+    /// theme's OWN declaration must not depend on its backend being
+    /// registered. The pre-seam code read the record unconditionally; the
+    /// seam's registered-only scan leaked the palette whenever the backend
+    /// was inactive — the safe direction, but a real behaviour divergence
+    /// and a PERMANENT leak, since nothing ever reaps it later. Chosen
+    /// behaviour: REMOVE it. The theme's own `providers/` tree records
+    /// which backend's knowledge applies, and the registration router
+    /// supplies a read-only declarer for that id without registering the
+    /// backend for save/apply. The invariant is untouched: the survivor
+    /// scan asks the same declarers, so an artifact a survivor still
+    /// references is never deleted.
+    #[test]
+    fn delete_removes_palette_when_the_owning_provider_is_not_registered() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("K3.json");
+        fs::write(&palette, r#"{"name":"K3"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        fs::create_dir_all(&gone_v5).unwrap();
+        fs::write(gone_v5.join("source.txt"), "custom K3\n").unwrap();
+
+        // NO provider is registered: the theme's recorded backend is inactive.
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Gone").expect("delete must succeed");
+        assert!(
+            !palette.exists(),
+            "an unreferenced palette whose owning backend is not registered must still be removed — the theme's own record decides, not the registration state"
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
+    }
+
+    /// Invariant guard for the D2 fix's NEW deletion authority: when the
+    /// owning backend is not registered the core may now declare the
+    /// deleted theme's artifact through the router's read-only declarer,
+    /// so the survivor scan MUST ask the same declarers — otherwise a
+    /// survivor recording the same key through the same inactive backend
+    /// would lose the file. An artifact a survivor still references is
+    /// NEVER deleted, registered backend or not.
+    #[test]
+    fn delete_keeps_palette_when_survivor_references_through_an_unregistered_provider() {
+        let _env = crate::test_utils::TempEnv::new();
+        let noct_home = TempDir::new().unwrap();
+        let palettes_dir = noct_home.path().join("palettes");
+        fs::create_dir_all(&palettes_dir).unwrap();
+        let palette = palettes_dir.join("K4.json");
+        fs::write(&palette, r#"{"name":"K4"}"#).unwrap();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        for name in ["Gone", "Stays"] {
+            seed_meta(&themes_dir, name, "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+            let v5 = themes_dir.join(name).join("providers").join("noctalia-v5");
+            fs::create_dir_all(&v5).unwrap();
+            fs::write(v5.join("source.txt"), "custom K4\n").unwrap();
+        }
+
+        // NO provider is registered: both themes recorded an inactive backend.
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.delete("Gone").expect("delete must succeed");
+        assert!(
+            palette.exists(),
+            "a survivor recording the same key through the SAME inactive backend still references the palette — it must stay"
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
     }
 
     /// Symlink hardening: an OUTSIDE link whose target lives INSIDE the cache
