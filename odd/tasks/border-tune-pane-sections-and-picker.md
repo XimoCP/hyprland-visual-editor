@@ -1,0 +1,195 @@
+# Border Tune Pane — Interactive Blocks and Anchored Picker
+
+**Locator**: `odd/tasks/border-tune-pane-sections-and-picker.md`
+**Repo**: `hve` — branch `hve2-visual-rewrite`
+**Opened**: 2026-09-29
+**Surface**: right-hand tune pane, `ui/panel/sections/BordersSection.slint`
+(`BordersTunePane` from ~125; `BordersSection` owner from ~1420)
+
+## Workflow note (why this is organic)
+
+The keeper's standing choice is Organic Driven Development. SDD is blocked in this
+runtime: its preflight gate requires exactly three questions inside one `question`
+tool call, and that call fails with `Attempted to assign to readonly property`
+(reproduced three times, two payload shapes). Two-question calls are refused with
+"exactly three questions"; one question works. The gate forbids collecting those
+answers from chat, so no SDD phase can be launched here. Organic routing it is.
+
+Delegation policy for this document: mapping to a free model, writing to a free
+model, verification always on a *different* model than the writer. Engine files
+stay sealed (`src/engine.rs`, `config.rs`, `settings.rs`, `theme_manager.rs`,
+`app_state.rs`, `watcher.rs`, `utils.rs`, `src/providers/*`).
+
+## Objective
+
+Four changes to the right tune pane, requested by the keeper:
+
+- **A — Glow enable becomes a switch.** Today the glow block is enabled/disabled by
+  two rectangles that send a command: an "Add" rectangle
+  (`BordersSection.slint:1002-1024`) and a ✕ rectangle (`:1063-1087`), both calling
+  `glow-changed(bool, …)`. The keeper wants the same switch the left preset cards
+  use: inactive, animated, and coloured when active.
+- **B — Activated blocks fold open.** Blocks that a switch turns on must stay hidden
+  until the switch is on, then unfold with an animation, like the colour picker card
+  does today.
+- **C — The picker opens next to the edited field.** Today the picker renders in one
+  fixed in-flow slot; the keeper wants it adjacent to the row being edited, "if it is
+  possible".
+- **D — Block boundaries become obvious.** The pane is a long stack of controls and
+  the keeper cannot tell where one block ends and the next begins. Wanted: a title
+  and an explanation per block, and/or each block inside a container with its own
+  surface.
+
+## Exploration findings (evidence, read-only)
+
+**Canonical switch to copy (A).** `SavedPresetCard.apply-switch`,
+`ui/panel/sections/SavedPresetCard.slint:138-174`: pill 40×22, radius 11px,
+`background: is-active ? accent-green : border`, `animate background` 250ms
+`ease-in-out`, knob 16px travelling `x` 3px ↔ right-3px with `animate x` 350ms
+`ease-in-out-back`, driven by `switch-ta` click. Colours: off `HveColors.border`
+(`#30363d`), on `HveColors.accent-green` (`#10b981`), knob `HveColors.bg-dark`.
+Other switch-like components exist (`ui/components.slint:152-174` for the filter
+cards, `:667-692` for system cards, `SavedThemeCard.slint:131-173` which is a ✓
+square) — the left-preset one is the pattern the keeper named.
+
+**Animated fold to copy (B).** Only the picker card animates today:
+`picker-visible: root.editing-slot >= 0` (`BordersSection.slint:147`), the card is
+always mounted and animates its own geometry through `states [ picker-shown when
+root.picker-visible ]` with `height 0→380px`, `opacity 0→1`, `transform-scale 0.95→1`,
+`in` 250ms `ease-in-out-back` / `out` 150ms `ease-in` (`:671-704`). The source
+comment at `:649-657` records why: Slint only tweens a property that changes on a
+live element, so an element created by `if` comes up at its target values and cannot
+animate. The glow block today is exactly that — `if !root.glow-enabled`
+(`:980`, `:1031`) and `if root.glow-enabled : VerticalLayout` (`:1039`), instant.
+
+**Picker placement (C) — the hard one.** `HveColorPicker` (`ui/panel/ColorPicker.slint:28`)
+has exactly one instantiation: `BordersSection.slint:802-820`, inside `picker-block`
+(`:646`, deliberate) → card (`:671-822`) → `tune-col` (`:374`) → `tune-scroll`
+(`ScrollView :344`). It is normal in-flow layout, and the source states the card's
+`y` is owned by the layout so a y-shift cannot render (`:661-663`). There is no
+`PopupWindow`, no `absolute-position`, and no `Container` anywhere in `ui/`. The
+pane is instantiated twice behind `if root.two-col` (`:1956` / `:2059`), and Slint
+forbids reaching into a conditional child — which is why every cross-cutting signal
+in this file is lifted to the section. No control reports its geometry:
+`request-edit-slot(int)` (`:155`) carries only the channel index, and the section's
+only `out` properties are `idx-strip` (`:1541`) and `tune-count` (`:1547`).
+The current spec *requires* the in-flow behaviour: `border-color-strip` R3 says the
+picker MUST open above the strip in the normal document flow (`spec.md:60-94`), R5
+pins the entry animation and forbids animating `y` (`:121-164`), R10 the
+scroll-into-view (`:287-298`). Anchoring per field is a change of written contract,
+not a tweak.
+
+**Landmine to respect.** The keyboard stop count lives in two places that must move
+together: Slint `tune-count: 9 + slot-stops + (glow ? 4 : 0)` (`:1547`) and the Rust
+mirror `borders_tune_stop_count()` (`src/callbacks.rs:1087-1096`). Splitting them
+lands the keyboard walk one seat off for every later stop.
+
+**State that must keep working.** `glow-changed(bool,int,int,string,string)` (`:178`),
+`tune-glow-enabled` (`:1492`, forwarded at `:2020-2038` and `:2123-2140`), the pane's
+glow row indices `idx-glow-*` (`:244-251`), `PresetStore::decode_glow/encode_glow`
+(`src/main.rs:249,318`), and the whole keyboard sub-navigation (`:1702-1800`).
+
+**Specs that must stop lying after the change.** `openspec/specs/border-tune-pane/spec.md:61`
+(glow field set, "addable empty state") and `openspec/specs/border-color-strip/spec.md`
+R3/R5/R10/R11 for C.
+
+**Render verification.** Per-run artifacts come from `render_run_dir()`
+(`src/shell/ui_tests.rs:527`) keyed by `HVE_RENDER_DIR`, and
+`save_slice_png()` (`:546`). Existing coverage that this work touches:
+`borders_glow_group_renders_addable_and_expanded` (`:7806`), `borders_tune_zero_colours_has_no_ghost_stops`
+(`:7610`), `borders_tune_full_focus_reaches_last_and_middle` (`:7906`),
+`borders_tune_glow_color_cards_render_inside_their_box` (`:8062`),
+`borders_strip_picker_opens_above_strip` (`:5705`), `borders_strip_flow_renders`
+(`:7267`), `picker_scale_animation_stays_declared_by_construction` (`:4890`, a
+source-text test that WILL fail if the picker's scale declarations are restructured).
+No test currently pins the glow Add/✕ control itself, nor the glow reveal, nor any
+per-field picker anchor.
+
+## Scope
+
+In scope: the right tune pane's glow block, its activated-block reveal behaviour,
+the picker's placement, and the pane's block delimitation — plus the specs and tests
+that describe them.
+
+Out of scope: the gradient-angle control (keeper decided to leave it alone,
+2026-09-29), the left preset list's behaviour, the engine, the gallery, and
+monitors/HDR.
+
+## Constraints
+
+- Engine files stay sealed.
+- Strict TDD: failing test first, `cargo test` is the runner.
+- Visual verification is mandatory for any `.slint` change: run the headless render
+  into a per-run directory, then read the PNGs and confirm the look by eye.
+- One block at a time; the keeper approves each before the next starts.
+- `SavedPresetCard`/engine visuals are reused, not reinvented.
+- 400 changed lines is a planning heuristic for delivery slicing, not a hard cap.
+
+## Tasks
+
+- [x] **T1 — Glow enable becomes a switch (A)** — commit `d3be1a3`
+      Replaced the "Add" rectangle and the ✕ with ONE header row mounted in both
+      states, carrying the title and the same switch the left preset cards use.
+      The duplicate enabled-state header was deleted with its ✕. The click still
+      calls the unchanged `glow-changed(bool,int,int,string,string)`; no Rust,
+      callback, keyboard-stop or spec surface moved.
+      Evidence: `cargo test` 1183 passed / 0 failed; `cargo build` clean;
+      `cargo test architecture_contract` 7 passed; new render test
+      `borders_glow_switch_renders_off_and_on` read frame by frame
+      (`/tmp/opencode/render-t1-glow-switch/`) plus the five existing glow renders.
+      Independent verification on a different model: PASS, no refutations.
+      Deferred, not defects: the `glow-add` label chain is now dead in three
+      places (property, i18n setter, generated getter) and the title swaps
+      font-family/weight by state to preserve each state's previous look.
+- [ ] **T2 — Thin-block reveal behaviour (B)** Decide, from the C study, whether the
+      glow block can fold with the `states`/`in-out` pattern while staying mounted,
+      and whether the keyboard stop count must change. Implement the fold.
+      Checks: a render test that captures a mid-flight frame (a real animation, not
+      an instant jump), plus the settled frame; read the PNGs.
+- [ ] **T3 — Block delimitation (D)** Depends on the keeper's choice of treatment.
+      Checks: render test of the whole pane before/after; read the PNGs.
+- [ ] **T4 — Picker anchored to the edited field (C)** Feasibility study first:
+      report what plumbing an anchor needs (a reported row rect travelling up, an
+      absolute overlay or a `PopupWindow` idiom), what it costs, and what it breaks
+      in `border-color-strip` R3/R5/R10. Then implement only what the keeper approves,
+      or report honestly that it is not worth it.
+- [ ] **T5 — Specs and tests brought level** Update `border-tune-pane` and
+      `border-color-strip` requirements that the change makes false; update or add
+      tests that pin the new behaviour. Neither spec may be left describing the old UI.
+- [ ] **T6 — Close** Full `cargo test` green, zero build warnings, and a final
+      headless render of the pane in its new shape that the keeper reads live.
+
+## Acceptance criteria
+
+- The glow block is turned on and off by a switch that looks and behaves like the
+  left preset cards' switch, with the same animation and colour language.
+- No activated block appears instantly where its sibling animates.
+- Whatever C delivers is either a picker anchored to the edited field or a written,
+  evidence-backed statement of why not.
+- A reader of the pane can tell, without guessing, where each block starts and ends.
+- No block loses its description; no keyboard stop is lost or displaced.
+- The two specs match the shipped UI.
+
+## Decisions taken
+
+- 2026-09-29 — Gradient angle control: left as is (see
+  `border-tune-pane/gradient-angle-decision` in Engram).
+- 2026-09-29 — Workflow: organic from now on; SDD only if the keeper asks and the
+  preflight tooling is fixed.
+- 2026-09-29 — Block delimitation (D): the keeper chose a CONTAINER PER BLOCK —
+  each block inside a frame with its own surface (`bg-card`), a header with title
+  plus description, so a reader always sees where a block starts and ends.
+- 2026-09-29 — Free-tier models are unreachable in this runtime: the two free
+  agents exist only under `agent`, not under the spawn registry `agents`, and
+  forcing the free model onto a registered agent answers "OpenCode's free tier can
+  only be used from within OpenCode". Work continues on the cheap Go lane
+  (deepseek-v4-flash) with verification on a different family (glm-5.3-flash).
+
+## Progress
+
+- 2026-09-29 — Document opened. Exploration done (two read-only passes).
+- 2026-09-29 — T1 closed and committed (`d3be1a3`). Suite 1183/1183, build clean,
+  renders read by the writer and re-read independently by a second model.
+- 2026-09-29 — Next: the container-per-block treatment (T3) and the animated fold
+  (T2), both still pending the keeper's pick of order. The C feasibility study on
+  the anchored picker (T4) has not run yet.
