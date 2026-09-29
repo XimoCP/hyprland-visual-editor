@@ -168,6 +168,12 @@ appears in a core file outside its backend module.
   (`noctalia ↔ mpvpaper`, `noctalia → skwd`).
 - Make `disabled_providers` real: the registry consumes it.
 
+**CLOSED 2026-09-29** (commits `0e781b8`..`5136c5b`): the switch is real; `background.rs` routes
+`apply-background`; the skwd adapter, the mpvpaper info and the Noctalia plugin supervisor each
+live with their owner; the colour-authority yield moved behind the same router, so `noctalia.rs`
+no longer reads or writes the engine's config. Whole-phase audit found the scanner blind to the
+providers; it now scans them, so the debt can only ratchet down.
+
 ### Phase 3 — finish the seam that already exists
 - Move the 8 raw `hyprctl` sites behind `Composer` (queries included: `getoption`, `workspaces`,
   `activeworkspace`, `dispatch`, `eval`), and make the old invariant true again.
@@ -177,12 +183,30 @@ appears in a core file outside its backend module.
   "preview source" capability, so the gallery can preview a theme from any backend.
 - `settings.rs:23`'s reload → the `reload-config` capability.
 
+**CLOSED 2026-09-29**: every `Command::new("hyprctl")` in `src/` is now inside
+`composer/hyprland.rs`; the cleanup seam declares deletable artifacts; the gallery resolves its
+preview through `ThemeProvider::preview_sources`; the reload goes through
+`Composer::reload_config`.
+
 ### Phase 4 — the remaining leaks
 - `theme.rs:73,83` (gsettings/darkman) → a `read-desktop-preference` capability with backends.
 - `hypr_ipc.rs` event transport → inside the Hyprland module, with capability-named events.
 - `config_guard.rs` → the Hyprland module's own named guard (Hyprland-native; not a backend).
 - `shell/gallery/slot.rs:408-419` (`pgrep hyprmod`, currently dead code) → a real
   `yield-to-another-app` capability, or delete it.
+
+**CLOSED 2026-09-29 except `hypr_ipc.rs`**: the desktop-preference probes moved behind
+`src/theme/desktop_preference/`; `config_guard.rs` was read and found to be a pure predicate over
+file CONTENT, not event transport, so it is named honestly rather than re-homed; the dead
+`hyprmod` scaffolding was deleted instead of grown into a capability nothing consumes.
+`hypr_ipc.rs`'s transport is already encapsulated (its `hyprland` tokens are env/log strings and
+comments); renaming its events is polish, not a leak.
+
+**The last chain item — re-scoped, not refactored.** `assemble.sh → reload_coalescer.sh →
+hyprctl reload` holds no declared backend, so the siblings rule cannot apply; the one genuinely
+chained step in that sequence (a backend CLI inside the watcher) was already closed by unit 1d4.
+See the spec's "Not a chain — decided 2026-09-29" paragraph for the full argument and for the
+genuine debt that remains (`init.sh`'s one-shot reloads, the uncalled `reload_command`).
 
 ## Order rationale
 
