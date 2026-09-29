@@ -174,10 +174,15 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/settings.rs", "hyprctl", 0),
     ("src/settings.rs", "hyprland", 5),
     ("src/theme_manager.rs", "hyprland", 1),
-    ("src/theme_manager.rs", "noctalia", 3),
+    // Phase 3 (2026-09-29): the shared-palette cleanup moved behind the
+    // provider's `deletable_artifacts` declaration; measured 0 — lowered 3 → 0.
+    ("src/theme_manager.rs", "noctalia", 0),
     ("src/shell/gallery/thumbs.rs", "noctalia", 4),
     ("src/shell/gallery/thumbs.rs", "mpvpaper", 1),
-    ("src/theme.rs", "gsettings", 1),
+    // Phase 4 (2026-09-29): the `read-desktop-preference` capability took
+    // the probe out of the core (see `src/theme/desktop_preference/`);
+    // measured 0 — lowered 1 → 0.
+    ("src/theme.rs", "gsettings", 0),
     ("src/config_guard.rs", "hyprland", 2),
     ("src/hypr_ipc.rs", "hyprland", 9),
     ("src/providers/shell.rs", "hyprctl", 1),

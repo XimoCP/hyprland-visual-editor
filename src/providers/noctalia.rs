@@ -5,7 +5,7 @@ use crate::providers::noctalia_runtime::{
 use crate::providers::wallpaper_authority::{self, SavePlan, WallpaperKind};
 use crate::providers::shell::NoctaliaV4Paths;
 use crate::providers::shell::ShellProvider;
-use crate::theme_manager::{ProviderCapabilities, ThemeProvider};
+use crate::theme_manager::{DeletableArtifact, ProviderCapabilities, ThemeProvider};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -372,6 +372,13 @@ fn live_mpvpaper_plugin_enabled() -> Option<bool> {
 
 // ── NoctaliaV4Provider ───────────────────────────────────────────────
 
+// `deletable-artefacts`: none, so this provider inherits the trait's
+// no-op declaration. v4 only copies LIVE config files (colors.json,
+// settings.json, plugins.json, rendered outputs) that belong to the
+// running shell and are rewritten by every apply — a deleted v4 theme
+// owns no artifact outside its own directory (and the pre-Phase-3 core
+// cleanup only ever read the v5 record, so the no-op preserves it).
+
 pub struct NoctaliaV4Provider {
     shell: Box<dyn ShellProvider>,
     wallpaper_pending: Mutex<Vec<(String, String)>>,
@@ -710,6 +717,25 @@ impl ThemeProvider for NoctaliaV4Provider {
 }
 
 // ── Noctalia v5 path lookup ──────────────────────────────────────────
+
+/// Parse `custom <PaletteName>` from a `source.txt` body. Splits on ANY
+/// whitespace (space, tab, …): HVE's own Save UI accepts names the old
+/// space-only split misread, and a misread referrer is a palette deleted
+/// while a surviving theme still needs it. `None` for non-custom records.
+/// (Moved here from the theme manager with the `deletable-artefacts`
+/// declaration: the record format is this backend's own knowledge.)
+fn parse_custom_palette_name(text: &str) -> Option<String> {
+    let mut parts = text.split_whitespace();
+    if parts.next()? != "custom" {
+        return None;
+    }
+    let name: String = parts.collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return None;
+    }
+    // Apply sanitizes `/` so the on-disk file can never contain one.
+    Some(name.replace('/', "_"))
+}
 
 /// Find the palette JSON file for a given source and name.
 ///
@@ -1766,6 +1792,34 @@ impl ThemeProvider for NoctaliaV5Provider {
         })
     }
 
+    /// The backend contract's `deletable-artefacts` (capability-routing
+    /// Phase 3): a custom palette restored outside the theme dir lives in
+    /// this backend's own `palettes/` directory and is SHARED by every
+    /// theme recording the same name — so on delete the core may remove it
+    /// only while no surviving theme still declares it. The provider
+    /// supplies its own knowledge only (its record file, its parse, its
+    /// live path); the reference decision, the fail-open scan and the
+    /// "applied theme keeps its live palette" rule stay the core's.
+    /// Nothing declared — and therefore nothing deleted — when the record
+    /// is missing or unreadable, the scheme is not `custom`, or the config
+    /// dir cannot be resolved.
+    fn deletable_artifacts(&self, theme_dir: &Path) -> Vec<DeletableArtifact> {
+        let provider_dir = theme_dir.join("providers").join(self.id());
+        let Ok(text) = fs::read_to_string(provider_dir.join("source.txt")) else {
+            return Vec::new();
+        };
+        let Some(safe_name) = parse_custom_palette_name(&text) else {
+            return Vec::new();
+        };
+        let Some(config_dir) = noctalia_config_dir() else {
+            return Vec::new();
+        };
+        vec![DeletableArtifact {
+            path: config_dir.join("palettes").join(format!("{safe_name}.json")),
+            reference_key: safe_name,
+        }]
+    }
+
     fn post_apply(&self, theme_name: &str) -> Result<(), String> {
         // No reload needed — v5 hot-reloads automatically.
         // Just a notification.
@@ -1827,6 +1881,47 @@ mod tests {
         let caps = provider.capabilities();
         assert!(caps.contains(ProviderCapabilities::COLORS));
         assert!(caps.contains(ProviderCapabilities::WALLPAPERS));
+    }
+
+    /// The `deletable-artefacts` declaration (capability-routing Phase 3):
+    /// the v5 provider declares the custom palette file it restores OUTSIDE
+    /// the theme dir — its own `palettes/` layout, its own record parse.
+    /// A missing record or a non-custom scheme declares nothing, so the
+    /// core deletes nothing; `/` is sanitized exactly as the apply path
+    /// sanitizes it before the name touches a file name.
+    #[test]
+    fn deletable_artifacts_declares_the_custom_palette_only() {
+        let _env = crate::test_utils::TempEnv::new();
+        let old_noctalia = std::env::var("HVE_NOCTALIA_CONFIG").ok();
+        let noct_home = TempDir::new().unwrap();
+        std::env::set_var("HVE_NOCTALIA_CONFIG", noct_home.path());
+
+        let provider = NoctaliaV5Provider::new();
+        let theme = TempDir::new().unwrap();
+        let prov_dir = theme.path().join("providers").join("noctalia-v5");
+        std::fs::create_dir_all(&prov_dir).unwrap();
+
+        // Missing record: nothing declared, therefore nothing deleted.
+        assert!(provider.deletable_artifacts(theme.path()).is_empty());
+
+        // Non-custom scheme: the backend owns no palette file for it.
+        std::fs::write(prov_dir.join("source.txt"), "builtin Ocean\n").unwrap();
+        assert!(provider.deletable_artifacts(theme.path()).is_empty());
+
+        // Custom scheme: the live shared-palette path + the reference key.
+        std::fs::write(prov_dir.join("source.txt"), "custom Joker/Theme\n").unwrap();
+        assert_eq!(
+            provider.deletable_artifacts(theme.path()),
+            vec![DeletableArtifact {
+                path: noct_home.path().join("palettes").join("Joker_Theme.json"),
+                reference_key: "Joker_Theme".to_string(),
+            }]
+        );
+
+        match old_noctalia {
+            Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
+            None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
+        }
     }
 
     /// Stale-artifact deletes must not swallow failures: silencing

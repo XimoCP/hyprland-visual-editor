@@ -1,7 +1,11 @@
-use std::path::PathBuf;
+/// The `read-desktop-preference` capability: the core asks for the
+/// system-wide desktop preference and gets a `DesktopPreference` back,
+/// never the probe that produced it (capability-routing spec).
+pub mod desktop_preference;
 
 use slint::Color;
 
+use self::desktop_preference::DesktopPreference;
 use crate::engine::ColorScheme;
 
 // ─── Color parsing ──────────────────────────────────────────────
@@ -67,33 +71,6 @@ pub fn blend(c1: &Color, c2: &Color, t: f32) -> Color {
 
 // ─── Theme preference ──────────────────────────────────────────
 
-/// Detect whether the system prefers dark mode.
-/// Tries `gsettings` first (GNOME/GTK), falls back to dark.
-pub fn detect_system_dark() -> bool {
-    let output = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
-        .output();
-    match output {
-        Ok(out) => {
-            let s = String::from_utf8_lossy(&out.stdout);
-            // "prefer-dark" → dark, anything else ("default") → light
-            s.contains("prefer-dark")
-        }
-        Err(_) => {
-            // No gsettings → try darkman indicator file
-            let darkman = PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                .join(".cache")
-                .join("darkman")
-                .join("mode");
-            if let Ok(mode) = std::fs::read_to_string(&darkman) {
-                mode.trim() == "dark"
-            } else {
-                true // default to dark
-            }
-        }
-    }
-}
-
 /// Built-in dark palette (Tailwind-inspired).
 /// Used when user explicitly selects "dark" mode.
 fn dark_palette() -> ColorScheme {
@@ -137,19 +114,24 @@ fn light_from_base(base: &ColorScheme) -> ColorScheme {
 ///
 /// - `"dark"` → built-in dark palette (no Noctalia)
 /// - `"light"` → built-in light palette (no Noctalia)
-/// - `"system"` → use `base` (Noctalia) for dark, derive light from it
+/// - `"system"` → ask `read-desktop-preference`: dark keeps `base`
+///   (Noctalia), light derives from it
 pub fn resolve_scheme(base: &ColorScheme, preference: &str) -> ColorScheme {
     match preference {
         "dark" => dark_palette(),
         "light" => light_palette(),
-        _ => {
-            // "system" → follow system preference, use Noctalia as source
-            if detect_system_dark() {
-                base.clone()
-            } else {
-                light_from_base(base)
-            }
-        }
+        // "system" → the capability answers; the core only maps the answer.
+        _ => system_scheme(base, desktop_preference::read_desktop_preference()),
+    }
+}
+
+/// The `"system"` branch: map the capability's preference onto the scheme.
+/// The core consumes the preference — it never knows which probe produced it.
+fn system_scheme(base: &ColorScheme, system: DesktopPreference) -> ColorScheme {
+    if system.is_dark() {
+        base.clone()
+    } else {
+        light_from_base(base)
     }
 }
 
@@ -455,5 +437,54 @@ mod tests {
     fn test_parse_hex_short_fallback() {
         let fallback = parse_hex("#ff");
         assert_eq!(fallback.red(), 230);
+    }
+
+    /// Phase 4 (`read-desktop-preference`): the core resolves the "system"
+    /// branch from the capability's answer, driven through a FAKE backend —
+    /// `theme.rs` never names a probe, it only maps the preference it gets.
+    #[test]
+    fn system_scheme_follows_a_capability_answer_driven_by_a_fake_backend() {
+        use super::desktop_preference::{
+            DesktopPreference, DesktopPreferenceBackend, DesktopPreferenceRouter,
+        };
+
+        /// A backend that answers whatever the test declares — the core
+        /// cannot tell it from a real probe, which is the point.
+        struct FakeSource(Option<DesktopPreference>);
+
+        impl DesktopPreferenceBackend for FakeSource {
+            fn id(&self) -> &'static str {
+                "fake-desktop-preference"
+            }
+
+            fn read(&self) -> Option<DesktopPreference> {
+                self.0
+            }
+        }
+
+        let base = ColorScheme {
+            primary: "#38bdf8".to_string(),
+            secondary: "#fbbf24".to_string(),
+            tertiary: "#c084fc".to_string(),
+            accent: "#34d399".to_string(),
+            surface: "#1e293b".to_string(),
+            surface_lowest: "#0f172a".to_string(),
+        };
+
+        // A Light answer from the fake → the core derives the light scheme.
+        let light = DesktopPreferenceRouter::new(vec![Box::new(FakeSource(
+            Some(DesktopPreference::Light),
+        ))]);
+        let resolved = system_scheme(&base, light.read());
+        assert_eq!(resolved.surface, "#f5f5f4");
+        assert_eq!(resolved.surface_lowest, "#ffffff");
+
+        // A Dark answer → the core keeps the base scheme untouched.
+        let dark = DesktopPreferenceRouter::new(vec![Box::new(FakeSource(
+            Some(DesktopPreference::Dark),
+        ))]);
+        let resolved = system_scheme(&base, dark.read());
+        assert_eq!(resolved.surface, base.surface);
+        assert_eq!(resolved.primary, base.primary);
     }
 }

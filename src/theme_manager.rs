@@ -15,6 +15,21 @@ bitflags! {
     }
 }
 
+/// One artifact a provider owns OUTSIDE its theme directory, offered to the
+/// core for deletion when a theme that recorded it is removed (the backend
+/// contract's `deletable-artefacts`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletableArtifact {
+    /// Live path of the artifact the core may remove.
+    pub path: PathBuf,
+    /// The reference key any OTHER theme's record of the SAME artifact
+    /// carries. The core keeps the file alive while any surviving theme's
+    /// provider declares this same key — comparisons never cross providers,
+    /// so two backends recording equal keys for different files cannot
+    /// protect each other's paths.
+    pub reference_key: String,
+}
+
 /// A provider knows how to capture and restore one slice of desktop state.
 ///
 /// Each provider is identified by a stable `id` (e.g. `"noctalia"`,
@@ -85,6 +100,22 @@ pub trait ThemeProvider: Send + Sync {
     ) -> Option<crate::color_authority::ColorAuthority> {
         let _ = theme_dir;
         None
+    }
+
+    /// The artifacts this provider owns OUTSIDE the theme dir that the core
+    /// may delete when a theme recording them is deleted (the backend
+    /// contract's `deletable-artefacts`,
+    /// `openspec/specs/capability-routing/spec.md`). The provider supplies
+    /// only its own KNOWLEDGE: which live file it owns and the reference
+    /// key its own record format produces for it. The core keeps the
+    /// DECISION: it removes the path only while no surviving theme's
+    /// provider declares the same key, fails OPEN (keeps the file) when a
+    /// survivor's tree cannot be scanned, and never runs this for the
+    /// currently applied theme. Default: nothing outside the theme dir, so
+    /// nothing is declared and nothing is deleted.
+    fn deletable_artifacts(&self, theme_dir: &std::path::Path) -> Vec<DeletableArtifact> {
+        let _ = theme_dir;
+        Vec::new()
     }
 }
 
@@ -337,9 +368,10 @@ impl ThemeManager {
         }
 
         // Filter: only show themes whose providers are all currently registered.
-        // This ensures shell-specific themes (e.g. noctalia v4, v5, or future shells)
-        // are hidden when their shell is not active. Shell-agnostic themes
-        // (e.g. presets-only) always show because their providers are always registered.
+        // This ensures shell-specific themes (saved while a particular shell
+        // version or future shell was active) are hidden when their shell is
+        // not active. Shell-agnostic themes (e.g. presets-only) always show
+        // because their providers are always registered.
         let registered = self.provider_ids();
         themes.retain(|t| {
             t.providers.iter().all(|pid| registered.contains(pid))
@@ -440,7 +472,13 @@ impl ThemeManager {
         // Derived artifacts live outside the theme dir, so they are cleaned
         // BEFORE it is removed — resolving the preview source needs its
         // contents. Best-effort only: failures warn, never fail the delete.
-        Self::cleanup_derived_artifacts(&self.themes_dir, &theme_dir, name, &self.last_applied);
+        Self::cleanup_derived_artifacts(
+            &self.themes_dir,
+            &theme_dir,
+            name,
+            &self.last_applied,
+            &self.providers,
+        );
         fs::remove_dir_all(&theme_dir)
             .map_err(|e| format!("Failed to delete theme '{}': {}", name, e))?;
         if self.last_applied == name {
@@ -461,14 +499,16 @@ impl ThemeManager {
 
     /// Best-effort removal of everything a theme derived that lives OUTSIDE
     /// its own directory: the gallery's content-keyed bake artifacts plus,
-    /// when no surviving theme still uses it, the shared Noctalia custom
-    /// palette. Never touches anything beyond the bake cache and that one
-    /// palette file; every failure is logged and swallowed.
+    /// through each registered provider's `deletable_artifacts`
+    /// declaration, any shared artifact no surviving theme still references.
+    /// Never touches anything beyond the bake cache and the declared paths;
+    /// every failure is logged and swallowed.
     fn cleanup_derived_artifacts(
         themes_dir: &Path,
         theme_dir: &Path,
         deleted_name: &str,
         last_applied: &str,
+        providers: &[Box<dyn ThemeProvider>],
     ) {
         cleanup_bake_cache(theme_dir);
         // W2-4: the deleted theme's palette may be the LIVE one — the
@@ -482,7 +522,7 @@ impl ThemeManager {
             );
             return;
         }
-        cleanup_shared_palette(themes_dir, theme_dir);
+        cleanup_shared_artifacts(themes_dir, theme_dir, providers);
     }
 
     pub fn rename(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
@@ -740,69 +780,55 @@ fn path_inside_dir(dir: &Path, candidate: &Path) -> bool {
     canon.starts_with(dir)
 }
 
-/// Remove the shared Noctalia custom palette IFF no surviving theme still
-/// references it.
+/// Remove a shared artifact a registered provider declared for the deleted
+/// theme IFF no surviving theme still references it.
 ///
-/// The deleted theme's `providers/noctalia-v5/source.txt` holds
-/// `custom <PaletteName>`; the file on disk is
-/// `<noctalia>/palettes/<PaletteName>.json`. Because several themes share
-/// one palette name, the surviving theme dirs' `providers/*/source.txt`
-/// files are scanned first and any match keeps the file alive. A scan that
-/// cannot run keeps the file too — deleting a maybe-shared palette is
-/// worse than leaking it.
-/// Parse `custom <PaletteName>` from a `source.txt` body. Splits on ANY
-/// whitespace (space, tab, …): HVE's own Save UI accepts names the old
-/// space-only split misread, and a misread referrer is a palette deleted
-/// while a surviving theme still needs it. `None` for non-custom records.
-fn parse_custom_palette_name(text: &str) -> Option<String> {
-    let mut parts = text.split_whitespace();
-    if parts.next()? != "custom" {
-        return None;
-    }
-    let name: String = parts.collect::<Vec<_>>().join(" ");
-    if name.is_empty() {
-        return None;
-    }
-    // Apply sanitizes `/` so the on-disk file can never contain one.
-    Some(name.replace('/', "_"))
-}
-
-fn cleanup_shared_palette(themes_dir: &Path, theme_dir: &Path) {
-    let text = match fs::read_to_string(
-        theme_dir.join("providers").join("noctalia-v5").join("source.txt"),
-    ) {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    let Some(safe_name) = parse_custom_palette_name(&text) else {
-        return;
-    };
-    if palette_still_referenced(themes_dir, theme_dir, &safe_name) {
-        return;
-    }
-    let palette = match crate::providers::noctalia_runtime::noctalia_config_dir() {
-        Some(dir) => dir.join("palettes").join(format!("{safe_name}.json")),
-        None => return,
-    };
-    if let Err(e) = fs::remove_file(&palette) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(
-                palette = %palette.display(),
-                "theme delete: cannot remove unreferenced palette: {e}"
-            );
+/// The provider supplies its own knowledge only — the live path of the
+/// artifact it owns plus the reference key its own record format produces
+/// for it. The core owns the decision: it asks the SAME provider whether
+/// any other theme dir still declares that key, and removes the file only
+/// when none does. A scan that cannot run keeps the file too — deleting a
+/// maybe-shared artifact is worse than leaking it.
+fn cleanup_shared_artifacts(
+    themes_dir: &Path,
+    theme_dir: &Path,
+    providers: &[Box<dyn ThemeProvider>],
+) {
+    for provider in providers {
+        for artifact in provider.deletable_artifacts(theme_dir) {
+            if shared_artifact_still_referenced(
+                themes_dir,
+                theme_dir,
+                provider.as_ref(),
+                &artifact.reference_key,
+            ) {
+                continue;
+            }
+            if let Err(e) = fs::remove_file(&artifact.path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        palette = %artifact.path.display(),
+                        "theme delete: cannot remove unreferenced palette: {e}"
+                    );
+                }
+            }
         }
     }
 }
 
-/// True when any theme dir other than the one being deleted still carries
-/// `custom <safe_name>` in one of its `providers/*/source.txt` records.
-/// Every directory except the deleted one is scanned — HVE's own Save UI
-/// accepts names starting with `_` or `.`, so skipping those hid real
-/// referrers and deleted palettes survivors still needed. Unreadable state
-/// fails OPEN (keep the palette): an unscannable tree proves nothing about
-/// who still references the file — including a survivor whose `providers`
-/// dir cannot even be listed.
-fn palette_still_referenced(themes_dir: &Path, deleted_dir: &Path, safe_name: &str) -> bool {
+/// True when any theme dir other than the one being deleted still declares
+/// `reference_key` through the same provider. Every directory except the
+/// deleted one is scanned — HVE's own Save UI accepts names starting with
+/// `_` or `.`, so skipping those hid real referrers and deleted artifacts
+/// survivors still needed. Unreadable state fails OPEN (keep the artifact):
+/// an unscannable tree proves nothing about who still references the file —
+/// including a survivor whose `providers` dir cannot even be listed.
+fn shared_artifact_still_referenced(
+    themes_dir: &Path,
+    deleted_dir: &Path,
+    owner: &dyn ThemeProvider,
+    reference_key: &str,
+) -> bool {
     let entries = match fs::read_dir(themes_dir) {
         Ok(e) => e,
         Err(_) => return true,
@@ -812,21 +838,17 @@ fn palette_still_referenced(themes_dir: &Path, deleted_dir: &Path, safe_name: &s
         if path == deleted_dir || !path.is_dir() {
             continue;
         }
-        let Ok(prov_entries) = fs::read_dir(path.join("providers")) else {
-            // Fail open: this survivor might reference the palette and we
-            // cannot prove otherwise — keep the file (leak beats breakage).
+        if fs::read_dir(path.join("providers")).is_err() {
+            // Fail open: this survivor might reference the artifact and we
+            // cannot prove otherwise — keep it (leak beats breakage).
             return true;
-        };
-        for prov in prov_entries.flatten() {
-            if !prov.path().is_dir() {
-                continue;
-            }
-            let Ok(text) = fs::read_to_string(prov.path().join("source.txt")) else {
-                continue;
-            };
-            if parse_custom_palette_name(&text).as_deref() == Some(safe_name) {
-                return true;
-            }
+        }
+        if owner
+            .deletable_artifacts(&path)
+            .iter()
+            .any(|declared| declared.reference_key == reference_key)
+        {
+            return true;
         }
     }
     false
@@ -859,6 +881,50 @@ mod tests {
         }
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities::empty()
+        }
+    }
+
+    /// Test-only provider for the provider-declared cleanup seam: it owns
+    /// ONE artifact OUTSIDE the theme dir — `{artifact_dir}/{record}.bin` —
+    /// declared from its own `record.txt` record. The record text IS the
+    /// reference key: any other theme carrying the same record keeps the
+    /// file alive. Deliberately not any real backend layout: this proves
+    /// the core consults `deletable_artifacts` declarations instead of
+    /// knowing a provider's directory name or record format.
+    struct DeclaringProvider {
+        id: &'static str,
+        artifact_dir: PathBuf,
+    }
+
+    impl ThemeProvider for DeclaringProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn display_name_key(&self) -> &str {
+            self.id
+        }
+        fn icon(&self) -> &str {
+            "◆"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn deletable_artifacts(&self, theme_dir: &Path) -> Vec<DeletableArtifact> {
+            let record = theme_dir.join("providers").join(self.id).join("record.txt");
+            let Ok(key) = fs::read_to_string(&record) else {
+                return Vec::new();
+            };
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                return Vec::new();
+            }
+            vec![DeletableArtifact {
+                path: self.artifact_dir.join(format!("{key}.bin")),
+                reference_key: key,
+            }]
         }
     }
 
@@ -1073,7 +1139,12 @@ mod tests {
             fs::create_dir_all(&v5).unwrap();
             fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
         }
+        // Phase 3: the layout knowledge moved into the provider, so the
+        // manager must have it registered for any declaration to exist.
         let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
 
         tm.delete("ThemeOne").expect("delete must succeed");
         assert!(palette.exists(), "palette still referenced by ThemeTwo must stay");
@@ -1166,6 +1237,9 @@ mod tests {
         fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
 
         let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
         tm.delete("Broken").expect("cleanup failure must not fail the delete");
         assert!(!themes_dir.join("Broken").exists(), "theme dir itself must be gone");
 
@@ -1262,6 +1336,9 @@ mod tests {
         fs::write(stays_v5.join("source.txt"), "custom\tJokerTheme\n").unwrap();
 
         let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
         tm.delete("Gone").expect("delete must succeed");
         assert!(
             palette.exists(),
@@ -1299,6 +1376,9 @@ mod tests {
         fs::write(stays_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
 
         let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
         tm.delete("Gone").expect("delete must succeed");
         assert!(
             palette.exists(),
@@ -1349,6 +1429,9 @@ mod tests {
         }
 
         let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
         tm.delete("Gone").expect("delete must succeed");
         fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
@@ -1383,6 +1466,9 @@ mod tests {
         fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
 
         let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
         tm.last_applied = "Live".to_string();
         tm.delete("Live").expect("delete must succeed");
         assert!(
@@ -1396,6 +1482,120 @@ mod tests {
             Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
             None => std::env::remove_var("HVE_NOCTALIA_CONFIG"),
         }
+    }
+
+    /// Capability-routing Phase 3: the core cleans up ONLY what a provider
+    /// declares through `deletable_artifacts` — no provider layout lives in
+    /// the core. The fake provider declares `<sandbox>/<key>.bin` from its
+    /// own record: an artifact another theme still declares survives the
+    /// delete, and the one no surviving theme declares anymore is removed
+    /// as soon as its last declarer is gone.
+    #[test]
+    fn delete_cleans_provider_declared_artifacts_by_declaration() {
+        let _env = crate::test_utils::TempEnv::new();
+        let artifacts = TempDir::new().unwrap();
+        let shared = artifacts.path().join("shared-key.bin");
+        let orphan = artifacts.path().join("orphan-key.bin");
+        fs::write(&shared, b"shared").unwrap();
+        fs::write(&orphan, b"orphan").unwrap();
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        for (name, key) in [
+            ("Gone", "shared-key"),
+            ("Stays", "shared-key"),
+            ("Solo", "orphan-key"),
+        ] {
+            seed_meta(
+                &themes_dir,
+                name,
+                "2026-09-21T00:00:00.000Z",
+                "",
+                &["declares-stuff"],
+            );
+            let prov = themes_dir.join(name).join("providers").join("declares-stuff");
+            fs::create_dir_all(&prov).unwrap();
+            fs::write(prov.join("record.txt"), key).unwrap();
+        }
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(DeclaringProvider {
+            id: "declares-stuff",
+            artifact_dir: artifacts.path().to_path_buf(),
+        }));
+
+        tm.delete("Gone").expect("delete must succeed");
+        assert!(
+            shared.exists(),
+            "an artifact a surviving theme still declares must stay"
+        );
+        assert!(
+            orphan.exists(),
+            "an artifact another theme still declares must stay too"
+        );
+
+        tm.delete("Solo").expect("delete must succeed");
+        assert!(
+            !orphan.exists(),
+            "an unreferenced declared artifact must be removed"
+        );
+        assert!(shared.exists(), "the survivor's artifact must stay untouched");
+
+        tm.delete("Stays").expect("delete must succeed");
+        assert!(
+            !shared.exists(),
+            "once the last declarer is gone, the declared artifact must go"
+        );
+    }
+
+    /// Fail-open through the generic declaration scan: a survivor whose
+    /// `providers` tree cannot be listed might still declare the artifact —
+    /// the core keeps it (leak beats breakage), the same policy the record
+    /// scan had before the cleanup moved behind the seam.
+    #[test]
+    fn delete_keeps_declared_artifact_when_survivor_providers_dir_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::test_utils::TempEnv::new();
+        let artifacts = TempDir::new().unwrap();
+        let shared = artifacts.path().join("shared-key.bin");
+        fs::write(&shared, b"shared").unwrap();
+
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        for name in ["Gone", "Locked"] {
+            seed_meta(
+                &themes_dir,
+                name,
+                "2026-09-21T00:00:00.000Z",
+                "",
+                &["declares-stuff"],
+            );
+            let prov = themes_dir.join(name).join("providers").join("declares-stuff");
+            fs::create_dir_all(&prov).unwrap();
+            fs::write(prov.join("record.txt"), "shared-key").unwrap();
+        }
+        let locked_prov = themes_dir.join("Locked").join("providers");
+        fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(&locked_prov).is_ok() {
+            // Permissive environment (e.g. running as root): the fixture
+            // cannot be made unreadable, so there is nothing to prove here.
+            fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o755)).unwrap();
+            println!("unreadable-dir fixture impossible here — skipping");
+            return;
+        }
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(DeclaringProvider {
+            id: "declares-stuff",
+            artifact_dir: artifacts.path().to_path_buf(),
+        }));
+
+        tm.delete("Gone").expect("delete must succeed");
+        fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            shared.exists(),
+            "an unscannable survivor fails OPEN — the declared artifact must stay"
+        );
     }
 
     /// Symlink hardening: an OUTSIDE link whose target lives INSIDE the cache
@@ -1658,6 +1858,22 @@ mod tests {
                 .derive_colour_authority(Path::new("/nonexistent-theme-dir"))
                 .is_none(),
             "the default derive_colour_authority must be None"
+        );
+    }
+
+    /// The declaration hook defaults to "this provider owns nothing outside
+    /// its theme dir", the same shape as `reassert_colours` and
+    /// `derive_colour_authority`: a provider that declares nothing keeps the
+    /// delete path away from its (nonexistent) artifacts without writing an
+    /// override.
+    #[test]
+    fn deletable_artifacts_defaults_to_empty() {
+        let provider = StubProvider { id: "plain" };
+        assert!(
+            provider
+                .deletable_artifacts(Path::new("/nonexistent-theme-dir"))
+                .is_empty(),
+            "the default deletable_artifacts must declare nothing"
         );
     }
 }
