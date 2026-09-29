@@ -344,6 +344,7 @@ mod tests {
 
     #[test]
     fn test_noctalia_v4_paths_wallpapers_file() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV4Paths;
         let wf = p.wallpapers_file();
         assert!(wf.is_some());
@@ -354,6 +355,7 @@ mod tests {
 
     #[test]
     fn test_noctalia_v4_paths_theming_config() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV4Paths;
         let tc = p.theming_config();
         assert!(tc.is_some());
@@ -388,6 +390,7 @@ mod tests {
 
     #[test]
     fn test_apply_wallpaper_ipc_format() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV4Paths;
         let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
         // It can fail if quickshell is not available or returns an error
@@ -403,6 +406,7 @@ mod tests {
 
     #[test]
     fn test_get_wallpaper_ipc_format() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV4Paths;
         let result = p.get_wallpaper("DP-3");
         if let Err(e) = &result {
@@ -483,6 +487,7 @@ mod tests {
 
     #[test]
     fn test_noctalia_v5_paths_apply_wallpaper_ipc_format() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV5Paths;
         // It can fail — we only check that it does not panic and the syntax is correct
         let result = p.apply_wallpaper(Path::new("/tmp/fake.png"), "DP-3");
@@ -497,6 +502,7 @@ mod tests {
 
     #[test]
     fn test_noctalia_v5_paths_get_wallpaper_ipc_format() {
+        let _env = crate::test_utils::env_guard();
         let p = NoctaliaV5Paths;
         let result = p.get_wallpaper("DP-3");
         if let Err(e) = &result {
@@ -526,6 +532,7 @@ mod tests {
     fn test_v4_detector_is_active_no_crash() {
         // It can be true or false depending on whether quickshell is running
         // We only check that it does not panic
+        let _env = crate::test_utils::env_guard();
         let detector = NoctaliaV4Paths;
         let _ = detector.is_active();
     }
@@ -534,6 +541,7 @@ mod tests {
     fn test_v5_detector_is_active_no_crash() {
         // It can be true or false depending on processes and directories
         // We only check that it does not panic
+        let _env = crate::test_utils::env_guard();
         let detector = NoctaliaV5Paths;
         let _ = detector.is_active();
     }
@@ -548,6 +556,7 @@ mod tests {
 
     #[test]
     fn test_registry_register_v4_v5() {
+        let _env = crate::test_utils::env_guard();
         let mut registry = ShellRegistry::new();
         registry.register(NoctaliaV4Paths);
         registry.register(NoctaliaV5Paths);
@@ -561,6 +570,7 @@ mod tests {
 
     #[test]
     fn test_registry_is_active_check() {
+        let _env = crate::test_utils::env_guard();
         let mut registry = ShellRegistry::new();
         registry.register(NoctaliaV4Paths);
         registry.register(NoctaliaV5Paths);
