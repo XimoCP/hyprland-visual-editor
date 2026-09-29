@@ -977,7 +977,15 @@ component BordersTunePane inherits Rectangle {
             Rectangle { height: 1px; background: HveColors.border; }
 
             // ── Glow group ──
-            if !root.glow-enabled : Rectangle {
+            // ONE header row, mounted in BOTH states (glow off and on): the
+            // title, and the on/off switch. The switch IS the glow-enable
+            // control — the same 40×22 pill, animated background and travelling
+            // knob the left preset cards paint (`SavedPresetCard.apply-switch`)
+            // — so its colour reads the state at a glance. It replaced the old
+            // cyan "Add" rectangle (glow off) and the separate ✕ (glow on),
+            // which each existed in only one state and so made the row jump.
+            // Only the BODY below differs by state.
+            Rectangle {
                 property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
                 height: self.lit ? 64px : 56px;
                 border-width: 1px;
@@ -992,34 +1000,41 @@ component BordersTunePane inherits Rectangle {
 
                     Text {
                         text: BordersText.glow-title;
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
+                        // Same title, the copy each state already used: muted
+                        // body face while off, accented heading while on.
+                        color: root.glow-enabled ? HveColors.accent-cyan : HveColors.text-muted;
+                        font-family: root.glow-enabled ? SkwdTokens.font-heading : SkwdTokens.font-body;
                         font-size: SkwdTokens.size-13;
+                        font-weight: root.glow-enabled ? 600 : 400;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
 
-                    Rectangle {
-                        width: 80px;
-                        height: 28px;
-                        border-radius: SkwdTokens.radius-4;
-                        background: glow-add-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                    // The switch: grey/left = off, accent-green/right = on. Both
+                    // faces and the knob travel are the left preset cards'
+                    // exact language, reused rather than reinvented.
+                    glow-switch := Rectangle {
+                        width: 40px;
+                        height: 22px;
+                        border-radius: 11px;
+                        background: root.glow-enabled ? HveColors.accent-green : HveColors.border;
+                        animate background { duration: 250ms; easing: ease-in-out; }
 
-                        Text {
-                            text: BordersText.glow-add;
-                            color: HveColors.bg-dark;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-12;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            border-radius: 8px;
+                            background: HveColors.bg-dark;
+                            x: root.glow-enabled ? parent.width - self.width - 3px : 3px;
+                            y: 3px;
+                            animate x { duration: 350ms; easing: ease-in-out-back; }
                         }
 
-                        glow-add-ta := TouchArea {
+                        glow-switch-ta := TouchArea {
                             width: 100%;
                             height: 100%;
                             mouse-cursor: pointer;
-                            clicked => { root.glow-changed(true, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                            clicked => { root.glow-changed(!root.glow-enabled, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
                         }
                     }
                 }
@@ -1038,55 +1053,6 @@ component BordersTunePane inherits Rectangle {
 
             if root.glow-enabled : VerticalLayout {
                 spacing: 8px;
-
-                // Glow header with remove button (enabled stop)
-                Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
-                    height: self.lit ? 64px : 56px;
-                    border-width: 1px;
-                    border-color: self.lit ? #8fd8ff : HveColors.border;
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                    HorizontalLayout {
-                        padding: 12px;
-                        spacing: 8px;
-                        alignment: space-between;
-                        Text {
-                            text: BordersText.glow-title;
-                            color: HveColors.accent-cyan;
-                            font-family: SkwdTokens.font-heading;
-                            font-size: SkwdTokens.size-13;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        Rectangle {
-                            width: 28px;
-                            height: 28px;
-                            border-radius: SkwdTokens.radius-4;
-                            background: glow-remove-ta.has-hover ? HveColors.accent-red.transparentize(0.2) : HveColors.bg-surface;
-                            border-width: 1px;
-                            border-color: HveColors.border;
-
-                        Text {
-                            text: "×";
-                            color: HveColors.text-muted;
-                            font-family: SkwdTokens.font-body;
-                            font-size: 14px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        glow-remove-ta := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            mouse-cursor: pointer;
-                            clicked => { root.glow-changed(false, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
-                        }
-                        }
-                    }
-                }
 
                 // Range slider
                 Rectangle {

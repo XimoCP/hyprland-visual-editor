@@ -6240,7 +6240,7 @@ type BordersLabel = (
 );
 
 #[rustfmt::skip]
-fn borders_labels() -> [BordersLabel; 60] {
+fn borders_labels() -> [BordersLabel; 59] {
     [
         ("header-title", |t| t.get_header_title().to_string(),
             "Borders", "Bordes"),
@@ -6301,8 +6301,6 @@ fn borders_labels() -> [BordersLabel; 60] {
 
         ("glow-title", |t| t.get_glow_title().to_string(),
             "Glow (shadow decoration)", "Brillo (decoración de sombra)"),
-        ("glow-add", |t| t.get_glow_add().to_string(),
-            "Add", "Añadir"),
         ("glow-empty-desc", |t| t.get_glow_empty_desc().to_string(),
             "This preset has no glow. Add one to give the border a coloured shadow around focused windows.",
             "Este preajuste no tiene brillo. Añade uno para dar al borde una sombra de color alrededor de las ventanas con foco."),
@@ -7892,6 +7890,93 @@ fn borders_glow_group_renders_addable_and_expanded() {
         }
     }
     assert!(content2 > 5000, "glow expanded state must render content (pixels={content2})");
+}
+
+/// T1 — the glow block's on/off control is a SWITCH, the same pill the left
+/// preset cards paint (`SavedPresetCard.apply-switch`), not the old cyan "Add"
+/// rectangle plus a separate ✕. ONE header row carries the title and the switch
+/// in BOTH states; only the body below differs.
+///
+/// The switch IS the state: grey (`HveColors.border`) while glow is off,
+/// accent-green (`#10b981`) while it is on, with the dark knob parked left or
+/// right. The frame proves both at once, so this test reads the ink instead of
+/// the declaration: the ON frame must paint the pill green in the header row,
+/// and the OFF frame must paint that SAME box grey.
+#[test]
+fn borders_glow_switch_renders_off_and_on() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+
+    // 2 colours → the glow-enable stop is tune-local 9 (`slot-stops` 3 + 6),
+    // global 1 + 9 = 10 (one preset card). Parking the pane's follow there
+    // brings the header row inside the viewport in BOTH states.
+    let glow_enable = 1 + 9;
+    win.set_panel_kbd_preview_index(glow_enable);
+    settle_frames(80);
+
+    assert!(
+        !win.get_tune_glow_enabled(),
+        "the fixture must start with glow OFF"
+    );
+    let off = win.window().take_snapshot().expect("glow-off snapshot");
+    save_slice_png(off.clone(), "borders_glow_switch_off.png");
+
+    // Turn glow ON through the real state surface (`glow-enabled`, the property
+    // the switch's click writes through `glow-changed`), then settle the
+    // 250/350ms switch animations.
+    win.set_tune_glow_enabled(true);
+    settle_frames(80);
+    let on = win.window().take_snapshot().expect("glow-on snapshot");
+    save_slice_png(on.clone(), "borders_glow_switch_on.png");
+
+    // HveColors.accent-green (#10b981): the switch's "on" face. Nothing else in
+    // the panel paints it (the single preset card is inactive in this fixture).
+    const GREEN: (u8, u8, u8) = (16, 185, 129);
+    let off_green = count_exact_color(&off, GREEN, 6);
+    assert_eq!(
+        off_green, 0,
+        "the glow-off header must paint no accent-green at all (pixels={off_green})"
+    );
+
+    let on_green = count_exact_color(&on, GREEN, 6);
+    let bbox = exact_color_bbox(&on, GREEN, 6)
+        .unwrap_or_else(|| panic!("the ON glow switch must paint accent-green (pixels={on_green})"));
+    let (x0, y0, x1, y1) = bbox;
+    // A 40×22 pill minus its 16×16 dark knob paints a few hundred green pixels
+    // in a small box: the pill's own size. A stray green anywhere else in the
+    // panel would blow the box up.
+    assert!(
+        x1 - x0 <= 60 && y1 - y0 <= 30,
+        "the accent-green ink must be ONE 40×22 switch pill, got bbox {bbox:?}"
+    );
+    assert!(
+        (200..=800).contains(&on_green),
+        "the ON switch pill must paint accent-green (pixels={on_green})"
+    );
+
+    // The SAME box on the OFF frame is the pill's grey face — and the pill IS
+    // there (grey pixels inside it), so the zero-green result cannot come from
+    // the row having scrolled away between the two frames.
+    let off_in_box = count_color_in_box(&off, GREEN, 6, x0, y0, x1 + 1, y1 + 1);
+    assert_eq!(
+        off_in_box, 0,
+        "the switch box must be grey when glow is off, but {off_in_box} green pixels sit in it"
+    );
+    let off_grey = count_color_in_box(&off, BORDER_INK, 6, x0, y0, x1 + 1, y1 + 1);
+    assert!(
+        off_grey > 200,
+        "the OFF switch must paint its grey face in the same box, got {off_grey} pixels"
+    );
+
+    // The knob travels: with glow ON and the knob parked right, the pill's left
+    // half keeps more green than its right half (the dark knob covers it).
+    let mid_x = (x0 + x1) / 2;
+    let on_left = count_color_in_box(&on, GREEN, 6, x0, y0, mid_x, y1 + 1);
+    let on_right = count_color_in_box(&on, GREEN, 6, mid_x, y0, x1 + 1, y1 + 1);
+    assert!(
+        on_left > on_right,
+        "the dark knob must sit RIGHT when the switch is on (green left={on_left}, right={on_right})"
+    );
 }
 
 // ── Borders full-tune focus walk (keyboard R11 recompute) ─────────────
