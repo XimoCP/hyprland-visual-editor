@@ -71,10 +71,11 @@
 //! kind decision and again inside the static path). The save captures ONE
 //! snapshot and shares it across the kind, video-identity and static-path
 //! decisions. That bound covers ONLY this module's queries: the
-//! same `save()` additionally performs two UNBOUNDED `noctalia_msg` calls
-//! (`color-scheme-get`, `wallpaper-get` — `noctalia_runtime.rs` uses a
-//! bare `.output()` with no timeout), so a full panel save can block
-//! longer than the authority budget when the Noctalia IPC itself hangs.
+//! same `save()` additionally performs two `noctalia_msg` calls
+//! (`color-scheme-get`, `wallpaper-get`), each bounded by the runtime
+//! seam's own deadline (`noctalia_runtime::NOCTALIA_MSG_TIMEOUT`, R1), so
+//! a full panel save can block longer than the authority budget when the
+//! Noctalia IPC itself hangs — bounded, never unbounded.
 //! A live query answers in single-digit ms; expiry falls back to the
 //! lossless capture-everything path, so tight bounds cost precision,
 //! never data.
@@ -95,7 +96,7 @@ pub const COMPOSITOR_TIMEOUT: Duration = Duration::from_millis(250);
 pub const AUTHORITY_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Client preference order: `skwd-helm` first, then `skwd-wall-v2`.
-/// Mirrors the delegation order in `noctalia.rs::delegate_to_skwd_walld`.
+/// Mirrors the delegation order in `skwd_engine::delegate_to_skwd_walld`.
 pub const AUTHORITY_BINARIES: [&str; 2] = ["skwd-helm", "skwd-wall-v2"];
 
 /// The kind of background currently on screen, as reported by the authority.
@@ -1859,17 +1860,22 @@ mod tests {
     #[test]
     fn docs_state_the_real_freeze_bound_by_construction() {
         // D3: the authority-snapshot budget (~1 s) must never be sold as
-        // the whole-save bound while save() also performs unbounded
-        // `noctalia_msg` calls. The module docs must name them.
+        // the whole-save bound while save() also performs `noctalia_msg`
+        // calls. R1 bounded those calls, so the docs must now name the
+        // deadline instead of an unbounded hang.
         let src = std::fs::read_to_string("src/providers/wallpaper_authority.rs")
             .expect("src/providers/wallpaper_authority.rs must exist");
         assert!(
-            src.contains("UNBOUNDED `noctalia_msg`"),
-            "docs must flag the unbounded noctalia_msg calls"
+            src.contains("NOCTALIA_MSG_TIMEOUT"),
+            "docs must name the runtime seam's deadline for the noctalia_msg calls"
+        );
+        assert!(
+            !src.contains(&["UNBOUNDED `nocta", "lia_msg`"].concat()),
+            "the unbounded claim is false since R1 bounded the CLI: the docs must not repeat it"
         );
         assert!(
             src.contains("color-scheme-get") && src.contains("wallpaper-get"),
-            "docs must name the unbounded calls (color-scheme-get, wallpaper-get)"
+            "docs must still name the calls the bound covers (color-scheme-get, wallpaper-get)"
         );
     }
 

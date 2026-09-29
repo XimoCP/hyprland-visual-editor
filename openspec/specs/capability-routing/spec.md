@@ -50,11 +50,21 @@ between them. Bidirectional calls between backends are forbidden.
 - THEN it is treated as a defect: the shared need becomes a routed
   capability and the direct call is deleted
 
-**Known debt**: `providers/noctalia.rs` calls the skwd engine and drives
-mpvpaper while `providers/mpvpaper.rs` calls back into Noctalia
-(bidirectional); `color_watcher.sh` runs `noctalia templates-apply` into
-`assemble.sh` into the reload queue into `hyprctl reload`, four adapters
-in sequence. Phase 2 breaks these chains.
+**Known debt**: `providers/noctalia.rs` still CONFIGURES the skwd backend —
+it reads and writes the engine's `config.json` through
+`providers/skwd_policy.rs` (the colour-authority yield) and reaches the
+engine's daemon through `providers/wallpaper_authority.rs`. That is the
+remaining half of the chain: the direct calls to the engine adapter and to
+the mpvpaper plugin API are gone (Phase 2), the configuration coupling is
+not. Phase 3 or 4 owns it.
+
+**Closed in Phase 2**: `providers/noctalia.rs` no longer calls the skwd
+engine adapter (`providers/skwd_engine.rs`) nor the mpvpaper plugin API
+(`providers/mpvpaper.rs`); `providers/mpvpaper.rs` no longer calls back
+into Noctalia — its supervisor IPC moved to the neutral
+`providers/noctalia_runtime.rs` seam. `apply-background` is routed by
+`providers/background.rs`, which the Noctalia provider invokes as its
+backend role rather than calling its siblings.
 
 ### Requirement: Capability Vocabulary (decided contract)
 
@@ -135,11 +145,13 @@ which palette name, which backend).
 - THEN no core file and no central script changes behaviour for existing
   backends
 
-**Known debt**: `colors.sh` hardcodes a five-source chain with cross-fill
-paths (Noctalia v4 tertiary filling v5, kitty palette filling Noctalia)
-and `color_watcher.sh` hardcodes every watch path. Phase 1 converts the
-chain into a loader over backend colour modules and moves the watch paths
-into backend declarations.
+**Closed in Phase 1**: `colors.sh` is a loader over the colour modules in
+`assets/scripts/color_sources.d/` (priority 10 stays inline as the
+applied-theme snapshot), the cross-fill paths are gone, and
+`color_watcher.sh` reads the watch paths each module declares instead of
+naming sources. What remains is the priority-10 step's Noctalia-shaped
+palette knowledge (`dark` / `mPrimary` — residual R7) and the empty-list
+fallback that still names `manual_hypr.sh` by id.
 
 ### Requirement: Definition of Done (decided contract)
 
