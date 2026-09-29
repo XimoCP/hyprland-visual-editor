@@ -1,7 +1,7 @@
 // HVE 2 — GallerySlot (theme-gallery PR4 Slot + Integration + Polish).
 // Implements Slot trait, prewarm/cleanup, instant apply two-pass, no-op pulse S8,
 // ExpandToSettings 1300x900, Back/Esc S10/11, empty S18, delete/rename S19/20,
-// shader flicker overlay S21 ~3s, hyprmod yield S22, reduced-motion S23,
+// shader flicker overlay S21 ~3s, reduced-motion S23,
 // MIT footer R7, LRU200 R8, headless 22steps 350ms OutCubic.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
@@ -59,9 +59,6 @@ pub struct GallerySlot {
     // shader suppression: while PanelState != Closed OR for 3s after Mutating (R5)
     panel_closed: AtomicBool,
     shader_suppress_until: Mutex<Option<Instant>>,
-    // hyprmod yield S22
-    #[cfg_attr(not(test), allow(dead_code))] // test assertion counter
-    hyprmod_yield: AtomicBool,
     // reduced-motion S23
     reduced_motion: AtomicBool,
     // settings panel mutation S9/4.4
@@ -96,7 +93,6 @@ impl GallerySlot {
             shader_gen: AtomicU64::new(0),
             panel_closed: AtomicBool::new(true),
             shader_suppress_until: Mutex::new(None),
-            hyprmod_yield: AtomicBool::new(false),
             reduced_motion: AtomicBool::new(false),
             settings_open: AtomicBool::new(false),
             last_apply_ms: AtomicU64::new(0),
@@ -124,7 +120,6 @@ impl GallerySlot {
             shader_gen: AtomicU64::new(0),
             panel_closed: AtomicBool::new(true),
             shader_suppress_until: Mutex::new(None),
-            hyprmod_yield: AtomicBool::new(false),
             reduced_motion: AtomicBool::new(false),
             settings_open: AtomicBool::new(false),
             last_apply_ms: AtomicU64::new(0),
@@ -401,34 +396,6 @@ impl GallerySlot {
     }
     fn is_global_shader_suppressed() -> bool {
         crate::shell::Shell::is_shader_suppressed_global()
-    }
-
-    // ── hyprmod yield S22 (5.2) ───────────────────────────────────────
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn detect_hyprmod(&self) -> bool {
-        // Process check: env HYPRMOD_RUNNING=1 or process list contains hyprmod
-        if std::env::var("HYPRMOD_RUNNING").map(|v| v == "1").unwrap_or(false) {
-            self.hyprmod_yield.store(true, Ordering::SeqCst);
-            return true;
-        }
-        // Check if hyprmod binary is reachable
-        if std::process::Command::new("pgrep").arg("hyprmod").output().map(|o| !o.stdout.is_empty()).unwrap_or(false) {
-            self.hyprmod_yield.store(true, Ordering::SeqCst);
-            return true;
-        }
-        false
-    }
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn set_hyprmod_yield(&self, yield_anims: bool) {
-        self.hyprmod_yield.store(yield_anims, Ordering::SeqCst);
-    }
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn is_hyprmod_yield(&self) -> bool {
-        self.hyprmod_yield.load(Ordering::SeqCst)
-    }
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn should_yield_animations(&self) -> bool {
-        self.is_hyprmod_yield()
     }
 
     // ── reduced-motion S23 (5.3) ─────────────────────────────────────
@@ -780,10 +747,10 @@ mod tests {
         assert_eq!(slot.delete_calls(), 2);
     }
 
-    // ── 5.2 Threats shader flicker overlay + hyprmod yield S22 test shader_yield ──
+    // ── 5.2 Shader flicker overlay S21 test shader_yield_flicker_overlay ──
 
     #[test]
-    fn shader_yield_flicker_overlay_and_hyprmod() {
+    fn shader_yield_flicker_overlay() {
         let (tm, _dir) = temp_manager();
         let slot = GallerySlot::new(tm.clone());
         // Create shader theme
@@ -805,18 +772,39 @@ mod tests {
         // Dismiss after ~3s (simulate timer)
         slot.dismiss_shader_overlay();
         assert!(!slot.is_shader_overlay_visible(), "overlay dismissed after 3s");
-        // hyprmod yield S22
-        assert!(!slot.is_hyprmod_yield(), "initial no yield");
-        slot.set_hyprmod_yield(true);
-        assert!(slot.is_hyprmod_yield());
-        assert!(slot.should_yield_animations(), "yield animations when hyprmod open S22");
-        slot.set_hyprmod_yield(false);
-        assert!(!slot.should_yield_animations());
-        // detect via env
-        std::env::set_var("HYPRMOD_RUNNING", "1");
-        assert!(slot.detect_hyprmod(), "detect hyprmod via env");
-        std::env::remove_var("HYPRMOD_RUNNING");
-        slot.set_hyprmod_yield(false);
+    }
+
+    // ── Phase-4 guard (odd/tasks/hve-capability-routing.md): the `yield to
+    //    another app` probe was production-dead — no caller existed outside
+    //    its own test — so it was deleted instead of grown into a trait
+    //    method. `src/architecture_contract.rs` does NOT scan this file, so
+    //    this source scan is the only tripwire keeping it gone.
+    #[test]
+    fn slot_source_contains_no_dead_yield_probe() {
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shell/gallery/slot.rs"),
+        )
+        .expect("slot.rs must exist");
+        // Production body only — full-line and trailing comments are dropped
+        // and the scan stops at the test module (which holds this guard and
+        // its literals), same cut as `src/architecture_contract.rs`.
+        let production: String = source
+            .lines()
+            .take_while(|line| !line.contains("mod tests"))
+            .filter_map(|line| line.split("//").next())
+            .filter(|code| !code.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_lowercase();
+        // Needles are assembled so this guard's own literals never appear in
+        // the source (the test-module cut already excludes them, belt and
+        // braces).
+        for token in [concat!("hy", "prmod"), concat!("p", "grep")] {
+            assert!(
+                !production.contains(token),
+                "the deleted dead yield probe is back in slot.rs production code (`{token}`)"
+            );
+        }
     }
 
     // ── 5.3 Reduced-motion S23 + MIT footer R7 + LRU200 R8 test reduced_lru ──
