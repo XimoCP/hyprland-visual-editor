@@ -56,9 +56,9 @@ else
 fi
 
 # --- CALL THE MASTER ASSEMBLER ---
+# The reload path is the coalescer's alone (`hve_reload_queue`, queued by
+# assemble.sh): without the assembler there is no overlay to re-read, so a
+# bare compositor reload here could not apply the fragment anyway.
 if [ -f "$HVE_SCRIPTS_DIR/assemble.sh" ]; then
     bash "$HVE_SCRIPTS_DIR/assemble.sh"
-else
-    # Fallback in case assemble.sh is missing for some reason
-    hyprctl reload
 fi

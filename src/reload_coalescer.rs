@@ -845,6 +845,29 @@ fn sandboxed_no_loss_under_idle_exit_stress() {
     assert!(!sb.claim_path().exists(), "no claim may be left behind");
 }
 
+// ── An apply script NEVER reloads the compositor beside the coalescer ───
+// With `assemble.sh` missing, `shader.sh` used to fall back to a bare
+// `hyprctl reload`: an uncoupled, uncoalesced fire that could not even apply
+// what it had just written (the fragment only reaches the compositor through
+// the overlay assemble.sh builds). The fallback is gone; the other three
+// apply scripts already do nothing without the assembler.
+
+#[test]
+fn sandboxed_shader_without_assembler_fires_no_direct_reload() {
+    let sb = Sandbox::build();
+    std::fs::remove_file(sb.scripts().join("assemble.sh")).unwrap();
+
+    sb.run_apply("shader.sh", &["test.frag"], true, "1", DRAIN);
+
+    std::thread::sleep(Duration::from_millis(1200));
+    assert_eq!(
+        sb.reload_count(),
+        0,
+        "without assemble.sh no reload may fire: the coalescer is the only fire path"
+    );
+    assert!(!sb.marker_path().exists(), "no marker may be queued");
+}
+
 fn apply_four_fragments_with_path(sb: &Sandbox, path: &str) -> Vec<String> {
     use std::process::{Command, Stdio};
     let mut warns = Vec::new();

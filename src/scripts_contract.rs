@@ -210,6 +210,47 @@ fn color_helpers_drop_conf_paths() {
     );
 }
 
+// ── Capability routing: the colour pipeline reloads through ONE seam ────
+//
+// `reload-config` (openspec/specs/capability-routing/spec.md): the script
+// side's RELOAD reaches the base compositor in exactly one place — the
+// coalescer. (Other base mutations in the scripts, such as `shader.sh`'s
+// `hyprctl keyword`, are a separate, unpoliced surface: this pin guards the
+// reload path only.)
+// `assemble.sh` → `reload_coalescer.sh` → `hyprctl reload` is the core's OWN
+// pipeline (central scripts writing HVE's own overlay) asking the base to
+// re-read it; no declared backend sits in that sequence, so the siblings
+// rule ("a backend never calls another backend") does not apply to it. The
+// pin keeps that property true: a burst stays coalesced (one reload in, at
+// most one out, never lost) because no script can fire a second, uncoupled
+// reload beside the drainer.
+#[test]
+fn colour_pipeline_reloads_only_through_the_coalescer() {
+    for name in [
+        "color_watcher.sh",
+        "assemble.sh",
+        "border.sh",
+        "apply_animation.sh",
+        "shader.sh",
+        "geometry.sh",
+    ] {
+        let src = read_script(name);
+        assert!(
+            !src.contains("hyprctl reload"),
+            "{name} must not fire `hyprctl reload` itself — the colour pipeline's \
+             reload belongs to reload_coalescer.sh (the single fire path)"
+        );
+    }
+    assert!(
+        read_script("reload_coalescer.sh").contains("hyprctl reload"),
+        "reload_coalescer.sh must keep the single `hyprctl reload` fire path"
+    );
+    assert!(
+        read_script("assemble.sh").contains("hve_reload_queue"),
+        "assemble.sh must queue the reload through the coalescer after the overlay write"
+    );
+}
+
 // ── Tertiary completion: never alias the secondary ──────────────────────
 
 /// Run the colour extractor in a hermetic HOME laid out by the caller and

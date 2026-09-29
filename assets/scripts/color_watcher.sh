@@ -248,8 +248,8 @@ while true; do
         fi
 
         # Theme authority first: re-assert the applied theme's palette before
-        # the settings/templates branch, so templates-apply and assemble.sh
-        # afterwards both render the theme's colours.
+        # the declared refreshes below, so each module's refresh and
+        # assemble.sh afterwards both render the theme's colours.
         _reassert_theme_authority
 
         # Declared backend refreshes, once per owning module, before the

@@ -31,10 +31,14 @@ interchangeable.
 - THEN the test fails until the call moves behind `Composer`
 
 **Known debt**: raw `hyprctl` still lives outside `Composer` in
-`src/main.rs`, `src/settings.rs` and `src/providers/shell.rs`;
+`src/providers/shell.rs` (1× — its declared `reload_command`, no
+production caller) and `src/providers/wallpaper_authority.rs` (2× —
+read-only `hyprctl -j layers` / `-j monitors` queries);
 `src/hypr_ipc.rs` (event socket) and `src/config_guard.rs` (reads
-`hyprland.lua` to gate mutations) are Hyprland-native but unnamed. Phase 3
-and Phase 4 re-home them; the pins count every occurrence until then.
+`hyprland.lua` to gate mutations) are Hyprland-native but unnamed.
+`src/main.rs` and `src/settings.rs` measure 0 since Phase 3 (the
+settings reload goes through `Composer::reload_config`); Phase 4
+re-homes what remains, and the pins count every occurrence until then.
 
 ### Requirement: Backends Are Siblings, Never a Chain (decided contract)
 
@@ -73,8 +77,11 @@ each capability now, so phases know what to re-home.
   the HVE window. Today: `Composer` (`HyprlandComposer`); the one
   capability already flowing through its seam end to end.
 - `reload-config` — re-read the compositor configuration after files
-  changed. Today: raw `hyprctl reload` in core files plus the
-  `assemble.sh` / reload-coalescer queue.
+  changed. Today: the app side through `Composer::reload_config`
+  (`src/settings.rs`); the script side through `assemble.sh`, which
+  queues `hve_reload_queue` and lets `reload_coalescer.sh`'s
+  single-owner drainer fire the one reload per change burst; plus
+  `init.sh` enable/disable's one-shot structural reload.
 - `read-config-option` — query one live compositor option value. Today:
   raw `hyprctl getoption` and workspace queries in `src/main.rs`.
 - `write-config-option` — change one live compositor option value. Today:
@@ -101,6 +108,30 @@ each capability now, so phases know what to re-home.
   `shell/gallery/slot.rs`).
 - `read-preview-source` — provide the files a theme preview renders from.
   Today: hardcoded provider layouts in `src/shell/gallery/thumbs.rs`.
+
+**Not a chain — decided 2026-09-29** (read from the code, pinned by
+`colour_pipeline_reloads_only_through_the_coalescer`): the sequence
+`color_watcher.sh` / an apply script → `assemble.sh` →
+`reload_coalescer.sh` → `hyprctl reload` was recorded as "four adapters
+in a row". The RELOAD suffix holds no backend: `assemble.sh` writes HVE's
+own overlay, the coalescer is that pipeline's own helper, and `hyprctl`
+talks to the base — so "a backend never calls another backend" cannot
+apply to it, and there is nothing for a router to re-home. The watcher
+pass around it DOES execute a backend — each colour module's own declared
+refresh (unit 1d4), which is the core asking a backend to do its own work,
+the permitted direction. The coalescer
+stays the script side's sanctioned seam: its marker file plus
+single-owner drainer are what make a change burst cost at most one
+reload with none lost, a guarantee an IPC hop through the app cannot
+make while the socket is down — and the app already learns of colour
+changes separately (`_write_color_signal` plus `hve-ipc
+refresh-theme`), which repaints HVE's UI and never was the reload
+path. The one genuinely chained step this sequence once held — a
+backend's CLI run from inside the watcher — left `color_watcher.sh`
+when each declared refresh moved into its own colour module (unit
+1d4). Genuine debt left under this capability: the raw fires in
+`init.sh` enable/disable (one-shot, outside any burst) and the
+uncalled `reload_command` in `src/providers/shell.rs`.
 
 #### Scenario: Core wants something outside the vocabulary
 
