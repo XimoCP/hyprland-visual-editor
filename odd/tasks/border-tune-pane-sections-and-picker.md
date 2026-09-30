@@ -141,30 +141,45 @@ monitors/HDR.
       Deferred, not defects: the `glow-add` label chain is now dead in three
       places (property, i18n setter, generated getter) and the title swaps
       font-family/weight by state to preserve each state's previous look.
-- [ ] **T2 — Thin-block reveal behaviour (B)** SCOPE APPROVED 2026-09-30: the GLOW BODY
-      fold only. It becomes always-mounted and animates open with the same
-      `states` / `in-out` idiom the picker card already uses in this pane (`:796-810`) —
-      that card is the in-repo proof the pattern works here, so the C feasibility study
-      (T4) is NOT a prerequisite for this slice. The keyboard stop count MUST NOT change:
-      `tune-count: 9 + slot-stops + (glow ? 4 : 0)` and `borders_tune_stop_count()` stay
-      as they are; a collapsed body simply has no stops while it is off.
-      The colour strip is explicitly OUT of this slice (see Decisions).
-      Checks: a render test that captures a MID-FLIGHT frame (a real animation, not an
-      instant jump) plus the settled frame, read the PNGs; the T3a scroll-follow tests
-      stay green with the body's new parent.
-- [ ] **T3 — Block delimitation (D)** Sliced into T3a (done), T3b and T3c (see the T3
-      slicing section). T3b is the next slice: the Geometry group end to end.
-      Checks: render test of the whole pane before/after; read the PNGs.
-- [ ] **T4 — Picker anchored to the edited field (C)** Feasibility study first:
-      report what plumbing an anchor needs (a reported row rect travelling up, an
-      absolute overlay or a `PopupWindow` idiom), what it costs, and what it breaks
-      in `border-color-strip` R3/R5/R10. Then implement only what the keeper approves,
-      or report honestly that it is not worth it.
-- [ ] **T5 — Specs and tests brought level** Update `border-tune-pane` and
-      `border-color-strip` requirements that the change makes false; update or add
-      tests that pin the new behaviour. Neither spec may be left describing the old UI.
-- [ ] **T6 — Close** Full `cargo test` green, zero build warnings, and a final
-      headless render of the pane in its new shape that the keeper reads live.
+- [x] **T2 — Thin-block reveal behaviour (B)** DONE — commits `13e015c` (the fold) and
+      `ce2ea8d` (the fixes cross-model verification demanded). The glow body is always
+      mounted inside `glow-body-clip`, whose height animates 0 → the inner layout's own
+      `preferred-height` (250ms ease-in-out-back in, 150ms ease-in out, `clip: true`), and
+      the OFF-state description folds too, in BOTH directions. Height only, no opacity and
+      no scale: `clip` is only provable at full opacity and the software renderer the
+      headless tests use does not implement transforms. Cross-model verification: PASS,
+      with two refutations (a false claim in a test comment, and the instant appearance of
+      the description when glow turned OFF) — both fixed and spot-checked by the
+      orchestrator on the frames. Suite `1193 passed / 0 failed` at that point.
+- [x] **T3 — Block delimitation (D)** DONE across three slices: T3a `9fe052f` (the honest
+      scroll-follow, the prerequisite), T3b `34ba472` (the Geometry container, pattern
+      proven end to end), T3c-1 `85002c3` (Angle, Inactive, Save) and T3c-2 `b9ea81a`
+      (Active colours, Slot add/remove, Glow). All SEVEN blocks now live in a container
+      with its own surface and a title + description header; three new strings were
+      registered for real in all five points; four `focus-block-y()` sums gained their
+      container's live `y`. See the T3 slicing section for the evidence and the residuals.
+- [x] **T4 — Picker anchored to the edited field (C)** DONE — STUDY ONLY, and it REFUTES
+      the anchored picker. The mechanism exists in the pinned Slint (`PopupWindow`, and it
+      DOES render in the headless software backend — the "unverifiable" objection was
+      checked and is false), but the geometry kills it: the picker card is ~819×380px and
+      the tune pane is ~879px wide, so it cannot sit next to a 48px row without covering
+      the pane and the row's neighbours; it would also rewrite R3/R5/R10/R11 and move the
+      always-mounted card out of its animated in-flow slot. The strip case already IS
+      adjacent (the card opens directly above it). One real gap found, NOT implemented
+      because it changes visible behaviour and contradicts the freshly-written R10:
+      for channels 8/9/10 `follow-focus()` pins the card to the top of the pane and scrolls
+      the edited row out of sight. See Decisions for the two cheaper options.
+- [x] **T5 — Specs and tests brought level** DONE — commit `fd75057`. Both specs audited
+      requirement by requirement; the false ones rewritten (the glow "addable empty state",
+      the animation-leaf and rule-toggle editing surfaces that an earlier change had
+      removed, R8's stop-count values, R9's literal index, R10's wording) and four new
+      requirements added for genuinely new behaviour (containers, the glow switch, the
+      glow fold, the label-sourcing contract). C was NOT written into the specs because it
+      is not delivered. R3/R5/R11 still describe the shipped in-flow picker and were left.
+- [x] **T6 — Close** DONE 2026-10-01: full suite `1201 passed / 0 failed`, `cargo build`
+      with zero warnings, and a final headless render of the pane in its new shape read by
+      the orchestrator and shown to the keeper (per-run dir `/tmp/opencode/final-t6/`).
+      Every acceptance criterion below is either met or answered in writing.
 
 ## Acceptance criteria
 
@@ -294,6 +309,33 @@ only in a test comment).**
   `repaint > 60` (measured far above, directionally sound; the description assertion WAS
   red-proved by the verifier).
 
+**More residuals recorded at T6 close (2026-10-01), none of them blockers.**
+
+- `borders_tune_full_focus_reaches_last_and_middle` does NOT discriminate the Save stops'
+  sum: with `save-group.y + save-wrap.y` removed it still passes, because its
+  `count_icy_pixels > 200` is satisfied by the left pane's own ink. The new Save container
+  test is the real discriminator. That older test is weaker than its comment suggests.
+- The fold test's row reader (`glow_row_boxes`) is layout-DEPENDENT: it returns 0/2/4 on the
+  shipped layout and 0/1/3 pre-container, because the enable row only falls inside its
+  40..60px pair window once its title moved to the header. Corrected in `ff2846d`. Also, the
+  settled count includes the ENABLE row's box (it enters via the focus flip), so the delta
+  is 3 fold rows plus one focus-dependent box.
+- `borders_strip_picker_opens_above_strip` can only run at a window of ~1250: below ~1120
+  the chips are clipped, above ~1420 R10's "flush with the pane top" clause degenerates
+  because `follow-focus()`'s picker branch bottom-pins content that does not overflow. That
+  is PRE-EXISTING (the pre-rollout pane failed harder at 1440: card top 400 vs 263) and the
+  card is still fully visible, so R10's intent holds; the window bound is a test artefact.
+- The zero-colour pane is ~16px taller than before (two layout gaps from the gated
+  containers); the gated containers paint no hollow card at zero colours (verified in frame).
+- Two authored `beside` floors in the container tests (`> 150` strip, `> 3000` slots) are
+  presence thresholds; the strip's pre-container value was measured 0, the slots row's was
+  never measured. Documented in the assertion messages themselves.
+- Budget: five commits of this document exceed the 400-line review heuristic (510, 604,
+  1036, 1094, 2159 changed lines), most of it mechanical re-indentation of blocks into
+  their containers and measured-mechanism prose. None was shrunk by deleting comments or
+  tests. If the keeper wants smaller review units in future, slice by container, not by
+  commit type.
+
 **T3a — what the fix rests on, and its honest limits (2026-09-30).**
 
 - The conditional blocks (strip, add/remove row, glow body and its sliders) cannot be
@@ -354,3 +396,45 @@ only in a test comment).**
   over 54 files (fully reverted, nothing stray committed), one false claim in a test
   comment, one undisclosed behaviour change — all caught by cross-model verification, none
   by the writer itself. Watch it: prefer tight scopes and always verify.
+- 2026-10-01 — **T3c-1 closed** (`85002c3`): Angle, Inactive and Save containers; the ONE
+  new string (`save-desc`) registered in all five points. Three chip tests maintained
+  (window only, teeth re-proved) and the fold test narrowed from the whole pane to the glow
+  block's own span with an explicit delta assertion. Suite `1198 passed / 0 failed`.
+- 2026-10-01 — **T3c-2 closed** (`b9ea81a`): Active colours, Slot add/remove and Glow
+  containers; `slots-title` and `glow-desc` registered in all five points (table 63 rows);
+  four sums gained their container's live `y`, each proved by removal. Suite
+  `1201 passed / 0 failed`. Cross-model verification: PASS on what ships, with ONE
+  refutation — the author claimed the replaced row reader returned the same counts on the
+  pre-container layout (0/2/4); measured, it returns 0/1/3, because the enable row only
+  falls inside the reader's 40..60px window once T3c-2 moved its title out. The claim lived
+  in the commit message and in the docstring; the docstring was corrected by the
+  orchestrator in `ff2846d` (the commit message stands as written — history is not
+  rewritten).
+- 2026-10-01 — **T4 closed as a study that REFUTES the anchored picker** (see the T4 entry).
+- 2026-10-01 — **T5 closed** (`fd75057`): both specs levelled with the shipped pane.
+- 2026-10-01 — **T6 closed**: suite `1201 passed / 0 failed`, build with zero warnings, and
+  the pane's new shape rendered (`/tmp/opencode/final-t6/`) and read by the orchestrator.
+  Every commit of this whole document is on `hve2-visual-rewrite`; nothing was pushed.
+
+## Keeper decisions pending (nothing below is implemented)
+
+1. **The glow enable row is now a wide, empty-looking row with only the switch on the
+   right** (its title moved up into the container header). Cross-model verification called
+   it "reads unlabelled". Visible in `/tmp/opencode/final-t6/borders_strip_flow_closed.png`.
+   Options: leave it, or give the row a short inline label. Changing its height would touch
+   the T1 ring window, so it is not free.
+2. **Inside a container the rows share the container's fill** (`bg-card` on `bg-card`,
+   contrast ratio 1.0): block boundaries are carried by the hairline only. The real lever
+   is making the rows transparent inside the container — `bg-surface` was measured and is
+   WORSE, so it is not the answer.
+3. **C, the cheaper version.** The anchored picker is refuted, but the study found one real
+   gap: for channels 8/9/10 (inactive, glow, glow-inactive) `follow-focus()` pins the
+   picker card to the top of the pane and the edited row scrolls out of sight. A small
+   change to that branch would keep the edited row visible next to the card. It was NOT
+   implemented because it changes visible behaviour and contradicts R10 as T5 has just
+   written it. The other option — wrapping the card and the strip in one `HorizontalLayout`
+   so the card sits BESIDE the strip in flow — serves only the gradient chips.
+4. **The walked-down ~16-17px centring bias** (recorded above): fix it in its own slice, or
+   accept it. It is cosmetic, non-cumulative, and only affects stepping down.
+5. **The two specs quote shipped constants** (250ms/150ms, 12px padding, `bg-card`), which
+   can drift from the `.slint`. The tests, not the prose, are the guard.
