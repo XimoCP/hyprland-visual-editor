@@ -323,6 +323,15 @@ component BordersTunePane inherits Rectangle {
     // those two sums removed the three unclamped stops land 200px apart
     // (gap-out=577, angle=778, inactive=930 on the test fixture) and the T3a
     // centring test fails; with them they share one screen y.
+    //
+    // T3c-2 (this slice) wrapped the three CONDITIONAL groups, and each of them
+    // adds its container to a sum that already had a live parent:
+    //   * the strip lives inside `picker-block` inside the Active-colours
+    //     container — two live parents, both read at call time;
+    //   * the add/remove row and the glow header row report their own `y` from
+    //     inside their containers, so each gains one term;
+    //   * the four glow sliders keep coming through `glow-body-y`, whose two
+    //     writers now include the Glow container's live `y` as well.
     function focus-block-y() -> length {
         let f = root.local-focus;
         if (f < 0) { return -1px; }
@@ -336,13 +345,16 @@ component BordersTunePane inherits Rectangle {
             // `strip-y` is picker-block-relative; the picker card above the
             // strip grows 380px, which moves `picker-block.y` without moving
             // the strip inside it, so the parent is read live rather than
-            // folded into the reported value.
-            return root.slot-count > 0 ? picker-block.y + root.strip-y : -1px;
+            // folded into the reported value. T3c-2 put `picker-block` inside
+            // the Active-colours container, which is the second live parent.
+            return root.slot-count > 0 ? active-group.y + picker-block.y + root.strip-y : -1px;
         }
         if (f == root.idx-add || f == root.idx-remove) {
-            return root.slot-count > 0 ? root.slots-y : -1px;
+            // T3c-2: the row reports its own `y` from inside the Slot
+            // add/remove container, so the container's live `y` is added here.
+            return root.slot-count > 0 ? slots-group.y + root.slots-y : -1px;
         }
-        if (f == root.idx-glow-en) { return glow-wrap.y; }
+        if (f == root.idx-glow-en) { return glow-group.y + glow-wrap.y; }
         if (root.glow-enabled) {
             // The four glow sliders live inside `glow-body`; their reported `y`
             // is relative to it, so the body's live `y` is added here.
@@ -468,7 +480,7 @@ component BordersTunePane inherits Rectangle {
         public function follow-focus() {
             if (root.picker-visible) {
                 self.viewport-y = max(self.height - tune-col.height,
-                    min(0px, 0px - picker-block.y));
+                    min(0px, 0px - (active-group.y + picker-block.y)));
                 return;
             }
             if (root.follow && root.local-focus >= 0) {
@@ -863,705 +875,806 @@ component BordersTunePane inherits Rectangle {
             // Separator
             Rectangle { height: 1px; background: HveColors.border; }
 
-            // ── Dynamic gradient colours: one strip, one stop ──
-            if root.slot-count > 0 : Text {
-                text: BordersText.active-colors-label + " (" + root.slot-count + BordersText.active-colors-slots + ")";
-                font-family: SkwdTokens.font-heading;
-                font-size: SkwdTokens.size-12;
-                font-weight: 600;
-                color: HveColors.text-muted;
-            }
+            // ── Active colours group ─────────────────────────────────────
+            // T3c-2: the strip lives behind `slot-count > 0` (and inside
+            // `picker-block`, which stays mounted for the picker card's entry
+            // animation), so this group is the first container whose CONTENT can
+            // be absent. The frame is gated with it: with zero gradient colours
+            // there is no strip to delimit, and an empty card around the picker's
+            // parking space would be a boundary around nothing. Same surface and
+            // same header idiom as the four containers above it.
+            active-group := Rectangle {
+                border-width: root.slot-count > 0 ? 1px : 0px;
+                border-color: HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: root.slot-count > 0 ? HveColors.bg-card : transparent;
 
-            // ── Shared picker card + gradient strip (R1/R2/R3/R15) ──
-            // ONE picker for every colour channel, IN THE FLOW directly above
-            // the strip it edits: the colour and the chip it came from stay in
-            // one glance, and closing it (editing-slot = -1) leaves no dead gap
-            // behind (R4).
-            //
-            // `picker-block` stays UNCONDITIONAL on purpose: the scroll helper
-            // anchors on its top edge to bring the card and the chips into view
-            // together (R10).
-            picker-block := VerticalLayout {
-                spacing: 8px;
+                VerticalLayout {
+                    padding: root.slot-count > 0 ? SkwdTokens.spacing-12 : 0px;
+                    spacing: SkwdTokens.spacing-8;
 
-                // The card is ALWAYS mounted and animates its own HEIGHT from
-                // 0px (closed) to 380px (open) — the same expand/collapse idiom
-                // every other tune control uses (`size-wrap`,
-                // `BorderCompactColorRow`). A bare `if picker-visible` CANNOT
-                // animate: Slint only tweens a property when it CHANGES on a
-                // live element, and an element created by the `if` comes up at
-                // its target values (opacity 1, full height) with no "from"
-                // frame. Keeping the card mounted is what makes the entry real
-                // and the exit possible at all.
-                //
-                // Entry (R5, 250ms ease-in-out-back): height 0→380 and opacity
-                // 0→1. Exit (150ms ease-in): height 380→0 and opacity 1→0,
-                // WITHOUT the spec's -8px y-shift. The card is an in-flow
-                // layout child, so its `y` is owned by the layout and a y-shift
-                // cannot render; the collapse is what moves the strip, and it
-                // moves it smoothly instead of jumping. `transform-scale-x/y`
-                // (0.95→1.0) is declared for the GPU renderer only — the
-                // software renderer used by the headless tests does not
-                // implement transforms, so no render assertion depends on it.
-                // 380px fits header + token row + HSV area without clipping the
-                // picker's own hint line (the 344px it had before the token row
-                // moved in here).
-                Rectangle {
-                    // Closed rest state: no flow space, no ink (R4). The state
-                    // below overrides both while the picker is open.
-                    height: 0px;
-                    opacity: 0.0;
-                    transform-scale-x: 0.95;
-                    transform-scale-y: 0.95;
-                    // R10: the card now GROWS over 250ms, so the single deferred
-                    // `follow-focus` tick the old `if` version used would run
-                    // while the content is still short, clamp against it and
-                    // strand the card mid-pane (measured: card top 444px vs the
-                    // pane top 217px). Following on every height step keeps the
-                    // card anchored at the top for the whole entry.
-                    changed height => {
-                        if (root.picker-visible) { tune-scroll.follow-focus(); }
-                    }
-                    states [
-                        picker-shown when root.picker-visible: {
-                            height: 380px;
-                            opacity: 1.0;
-                            transform-scale-x: 1.0;
-                            transform-scale-y: 1.0;
-                            in {
-                                animate height { duration: 250ms; easing: ease-in-out-back; }
-                                animate opacity { duration: 250ms; easing: ease-in-out-back; }
-                                animate transform-scale-x { duration: 250ms; easing: ease-in-out-back; }
-                                animate transform-scale-y { duration: 250ms; easing: ease-in-out-back; }
-                            }
-                            out {
-                                animate height { duration: 150ms; easing: ease-in; }
-                                animate opacity { duration: 150ms; easing: ease-in; }
-                            }
-                        }
-                    ]
-                    border-width: 1px;
-                    border-color: HveColors.accent-cyan;
-                    border-radius: SkwdTokens.radius-8;
-                    background: HveColors.bg-surface;
-                    clip: true;
+                    // Header: the group's title and its description, both MOVED
+                    // from the loose lines they were (the heading floated above
+                    // the strip, the description below it) so a reader meets each
+                    // string once.
+                    if root.slot-count > 0 : VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
 
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 8px;
-
-                        // Header: names the channel being edited, so the card is
-                        // never ambiguous, plus the Done button (R15.1).
-                        HorizontalLayout {
-                            spacing: 8px;
-
-                            Text {
-                                text: BordersText.picker-title-prefix + root.channel-name(root.editing-slot);
-                                font-family: SkwdTokens.font-body;
-                                font-size: SkwdTokens.size-13;
-                                font-weight: 600;
-                                color: HveColors.accent-cyan;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                            }
-
-                            Rectangle {
-                                width: 64px;
-                                height: 22px;
-                                border-radius: SkwdTokens.radius-4;
-                                background: picker-done.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
-                                border-width: 1px;
-                                border-color: HveColors.border;
-
-                                Text {
-                                    text: BordersText.picker-done;
-                                    color: HveColors.text;
-                                    font-family: SkwdTokens.font-body;
-                                    font-size: SkwdTokens.size-11;
-                                    font-weight: 600;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-
-                                picker-done := TouchArea {
-                                    width: 100%;
-                                    height: 100%;
-                                    mouse-cursor: pointer;
-                                    clicked => { root.request-edit-slot(-1); }
-                                }
-                            }
-                        }
-
-                        // Six palette tokens (R15.2): the fast path. They used to
-                        // live in every BorderColorSlot card; there is now ONE
-                        // picker, so the tokens live in it and apply to whichever
-                        // channel it is editing.
-                        HorizontalLayout {
-                            spacing: 6px;
-                            alignment: start;
-
-                            for token-name in ["primary", "secondary", "tertiary", "error", "surface", "surface_lowest"] : Rectangle {
-                                width: 46px;
-                                height: 40px;
-                                border-radius: SkwdTokens.radius-8;
-                                background: token-name == "primary" ? HveColors.token-primary
-                                    : token-name == "secondary" ? HveColors.token-secondary
-                                    : token-name == "tertiary" ? HveColors.token-tertiary
-                                    : token-name == "error" ? HveColors.token-error
-                                    : token-name == "surface" ? HveColors.token-surface
-                                    : HveColors.token-surface-lowest;
-                                // The token the channel already holds is outlined,
-                                // so the current pick is readable, not guessed.
-                                border-width: 2px;
-                                border-color: root.editing-value() == ("p:" + token-name) ? HveColors.accent-cyan : transparent;
-
-                                Text {
-                                    text: token-name == "surface_lowest" ? "lowest" : token-name;
-                                    color: HveColors.text;
-                                    font-family: SkwdTokens.font-body;
-                                    font-size: 8px;
-                                    font-weight: 600;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-
-                                TouchArea {
-                                    width: 100%;
-                                    height: 100%;
-                                    mouse-cursor: pointer;
-                                    clicked => { root.choose-token(root.editing-slot, "p:" + token-name); }
-                                }
-                            }
-                        }
-
-                        // HSV custom colour (R15.3). Seeded from the resolved
-                        // colour, so opening the picker on a stored custom value
-                        // shows THAT colour and not a default.
-                        col-picker := HveColorPicker {
-                            width: 100%;
-                            seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
-                            // Footer hint copy (B4): the control names and the
-                            // tail of the line come from the Borders text global.
-                            part-name-saturation: BordersText.picker-part-saturation;
-                            part-name-brightness: BordersText.picker-part-brightness;
-                            part-name-hue: BordersText.picker-part-hue;
-                            part-name-alpha: BordersText.picker-part-alpha;
-                            hint-change: BordersText.picker-hint-change;
-                            // Keyboard command channel from the section (task 3.7).
-                            cmd-seq: root.picker-cmd;
-                            cmd-kind: root.picker-cmd-kind;
-                            // D4: never notify per drag step. `changed` only moves
-                            // the local value so the preview follows; `committed`
-                            // (pointer up) is what writes the live draft.
-                            changed => { root.custom-color-preview(root.editing-slot, col-picker.hex8); }
-                            committed => { root.custom-color-changed(root.editing-slot, col-picker.hex8); }
-                        }
-                    }
-                }
-
-                // ── Gradient colour strip (R1/R2) ──
-                // ONE horizontal strip of numbered chips — one per gradient slot —
-                // replaces the N × BorderColorSlot card stack: the gradient reads
-                // as a single row at a glance, and the whole strip is ONE keyboard
-                // stop (R8) instead of N.
-                if root.slot-count > 0 : strip-wrap := HorizontalLayout {
-                    // Picker-block-relative, read live by `focus-block-y()`;
-                    // `init` is what reports the mount value (see the note on
-                    // the pane properties above).
-                    changed y => { root.strip-y = self.y; }
-                    init => { root.strip-y = self.y; }
-                    spacing: 6px;
-                    alignment: start;
-
-                for i in root.slot-count : Rectangle {
-                    property <bool> is-active-chip: i == root.strip-active-chip && root.has-focus;
-                    width: 40px;
-                    height: 32px;
-                    border-radius: SkwdTokens.radius-4;
-                    border-width: self.is-active-chip ? 2px : 1px;
-                    border-color: self.is-active-chip ? #8fd8ff : HveColors.border;
-                    // R2: hover highlight, same ink as every other hoverable
-                    // control in the pane.
-                    background: self.is-active-chip || chip-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
-
-                    HorizontalLayout {
-                        spacing: 4px;
-                        alignment: center;
-
-                        // The resolved colour (token or custom — Rust resolves
-                        // both, since Slint cannot parse "#rrggbbaa").
-                        Rectangle {
-                            width: 16px;
-                            height: 16px;
-                            border-radius: SkwdTokens.radius-4;
-                            border-width: 1px;
-                            border-color: HveColors.border;
-                            background: root.tune-colors-resolved[i];
-                        }
-
-                        // 1-indexed, matching the slot position: the chip says
-                        // WHICH colour this is, the swatch says what it looks
-                        // like.
+                        // The heading keeps its own string (title + the slot
+                        // count it always carried) and its 12px/600 voice, and
+                        // takes the container header's accent ink: as a loose
+                        // line over the strip it was `text-muted`, and a block
+                        // title quieter than the six other block titles reads as
+                        // a lower rank of heading.
                         Text {
-                            text: "" + (i + 1);
+                            text: BordersText.active-colors-label + " (" + root.slot-count + BordersText.active-colors-slots + ")";
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+                        Text {
+                            text: BordersText.active-colors-desc;
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-11;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                // ── Shared picker card + gradient strip (R1/R2/R3/R15) ──
+                // ONE picker for every colour channel, IN THE FLOW directly above
+                // the strip it edits: the colour and the chip it came from stay in
+                // one glance, and closing it (editing-slot = -1) leaves no dead gap
+                // behind (R4).
+                //
+                // `picker-block` stays UNCONDITIONAL on purpose: the scroll helper
+                // anchors on its top edge to bring the card and the chips into view
+                // together (R10).
+                picker-block := VerticalLayout {
+                    spacing: 8px;
+
+                    // The card is ALWAYS mounted and animates its own HEIGHT from
+                    // 0px (closed) to 380px (open) — the same expand/collapse idiom
+                    // every other tune control uses (`size-wrap`,
+                    // `BorderCompactColorRow`). A bare `if picker-visible` CANNOT
+                    // animate: Slint only tweens a property when it CHANGES on a
+                    // live element, and an element created by the `if` comes up at
+                    // its target values (opacity 1, full height) with no "from"
+                    // frame. Keeping the card mounted is what makes the entry real
+                    // and the exit possible at all.
+                    //
+                    // Entry (R5, 250ms ease-in-out-back): height 0→380 and opacity
+                    // 0→1. Exit (150ms ease-in): height 380→0 and opacity 1→0,
+                    // WITHOUT the spec's -8px y-shift. The card is an in-flow
+                    // layout child, so its `y` is owned by the layout and a y-shift
+                    // cannot render; the collapse is what moves the strip, and it
+                    // moves it smoothly instead of jumping. `transform-scale-x/y`
+                    // (0.95→1.0) is declared for the GPU renderer only — the
+                    // software renderer used by the headless tests does not
+                    // implement transforms, so no render assertion depends on it.
+                    // 380px fits header + token row + HSV area without clipping the
+                    // picker's own hint line (the 344px it had before the token row
+                    // moved in here).
+                    Rectangle {
+                        // Closed rest state: no flow space, no ink (R4). The state
+                        // below overrides both while the picker is open.
+                        height: 0px;
+                        opacity: 0.0;
+                        transform-scale-x: 0.95;
+                        transform-scale-y: 0.95;
+                        // R10: the card now GROWS over 250ms, so the single deferred
+                        // `follow-focus` tick the old `if` version used would run
+                        // while the content is still short, clamp against it and
+                        // strand the card mid-pane (measured: card top 444px vs the
+                        // pane top 217px). Following on every height step keeps the
+                        // card anchored at the top for the whole entry.
+                        changed height => {
+                            if (root.picker-visible) { tune-scroll.follow-focus(); }
+                        }
+                        states [
+                            picker-shown when root.picker-visible: {
+                                height: 380px;
+                                opacity: 1.0;
+                                transform-scale-x: 1.0;
+                                transform-scale-y: 1.0;
+                                in {
+                                    animate height { duration: 250ms; easing: ease-in-out-back; }
+                                    animate opacity { duration: 250ms; easing: ease-in-out-back; }
+                                    animate transform-scale-x { duration: 250ms; easing: ease-in-out-back; }
+                                    animate transform-scale-y { duration: 250ms; easing: ease-in-out-back; }
+                                }
+                                out {
+                                    animate height { duration: 150ms; easing: ease-in; }
+                                    animate opacity { duration: 150ms; easing: ease-in; }
+                                }
+                            }
+                        ]
+                        border-width: 1px;
+                        border-color: HveColors.accent-cyan;
+                        border-radius: SkwdTokens.radius-8;
+                        background: HveColors.bg-surface;
+                        clip: true;
+
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+
+                            // Header: names the channel being edited, so the card is
+                            // never ambiguous, plus the Done button (R15.1).
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                Text {
+                                    text: BordersText.picker-title-prefix + root.channel-name(root.editing-slot);
+                                    font-family: SkwdTokens.font-body;
+                                    font-size: SkwdTokens.size-13;
+                                    font-weight: 600;
+                                    color: HveColors.accent-cyan;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+
+                                Rectangle {
+                                    width: 64px;
+                                    height: 22px;
+                                    border-radius: SkwdTokens.radius-4;
+                                    background: picker-done.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
+                                    border-width: 1px;
+                                    border-color: HveColors.border;
+
+                                    Text {
+                                        text: BordersText.picker-done;
+                                        color: HveColors.text;
+                                        font-family: SkwdTokens.font-body;
+                                        font-size: SkwdTokens.size-11;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    picker-done := TouchArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.request-edit-slot(-1); }
+                                    }
+                                }
+                            }
+
+                            // Six palette tokens (R15.2): the fast path. They used to
+                            // live in every BorderColorSlot card; there is now ONE
+                            // picker, so the tokens live in it and apply to whichever
+                            // channel it is editing.
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+
+                                for token-name in ["primary", "secondary", "tertiary", "error", "surface", "surface_lowest"] : Rectangle {
+                                    width: 46px;
+                                    height: 40px;
+                                    border-radius: SkwdTokens.radius-8;
+                                    background: token-name == "primary" ? HveColors.token-primary
+                                        : token-name == "secondary" ? HveColors.token-secondary
+                                        : token-name == "tertiary" ? HveColors.token-tertiary
+                                        : token-name == "error" ? HveColors.token-error
+                                        : token-name == "surface" ? HveColors.token-surface
+                                        : HveColors.token-surface-lowest;
+                                    // The token the channel already holds is outlined,
+                                    // so the current pick is readable, not guessed.
+                                    border-width: 2px;
+                                    border-color: root.editing-value() == ("p:" + token-name) ? HveColors.accent-cyan : transparent;
+
+                                    Text {
+                                        text: token-name == "surface_lowest" ? "lowest" : token-name;
+                                        color: HveColors.text;
+                                        font-family: SkwdTokens.font-body;
+                                        font-size: 8px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.choose-token(root.editing-slot, "p:" + token-name); }
+                                    }
+                                }
+                            }
+
+                            // HSV custom colour (R15.3). Seeded from the resolved
+                            // colour, so opening the picker on a stored custom value
+                            // shows THAT colour and not a default.
+                            col-picker := HveColorPicker {
+                                width: 100%;
+                                seed: root.tune-colors-resolved[clamp(root.editing-slot, 0, 10)];
+                                // Footer hint copy (B4): the control names and the
+                                // tail of the line come from the Borders text global.
+                                part-name-saturation: BordersText.picker-part-saturation;
+                                part-name-brightness: BordersText.picker-part-brightness;
+                                part-name-hue: BordersText.picker-part-hue;
+                                part-name-alpha: BordersText.picker-part-alpha;
+                                hint-change: BordersText.picker-hint-change;
+                                // Keyboard command channel from the section (task 3.7).
+                                cmd-seq: root.picker-cmd;
+                                cmd-kind: root.picker-cmd-kind;
+                                // D4: never notify per drag step. `changed` only moves
+                                // the local value so the preview follows; `committed`
+                                // (pointer up) is what writes the live draft.
+                                changed => { root.custom-color-preview(root.editing-slot, col-picker.hex8); }
+                                committed => { root.custom-color-changed(root.editing-slot, col-picker.hex8); }
+                            }
+                        }
+                    }
+
+                    // ── Gradient colour strip (R1/R2) ──
+                    // ONE horizontal strip of numbered chips — one per gradient slot —
+                    // replaces the N × BorderColorSlot card stack: the gradient reads
+                    // as a single row at a glance, and the whole strip is ONE keyboard
+                    // stop (R8) instead of N.
+                    if root.slot-count > 0 : strip-wrap := HorizontalLayout {
+                        // Picker-block-relative, read live by `focus-block-y()`;
+                        // `init` is what reports the mount value (see the note on
+                        // the pane properties above).
+                        changed y => { root.strip-y = self.y; }
+                        init => { root.strip-y = self.y; }
+                        spacing: 6px;
+                        alignment: start;
+
+                    for i in root.slot-count : Rectangle {
+                        property <bool> is-active-chip: i == root.strip-active-chip && root.has-focus;
+                        width: 40px;
+                        height: 32px;
+                        border-radius: SkwdTokens.radius-4;
+                        border-width: self.is-active-chip ? 2px : 1px;
+                        border-color: self.is-active-chip ? #8fd8ff : HveColors.border;
+                        // R2: hover highlight, same ink as every other hoverable
+                        // control in the pane.
+                        background: self.is-active-chip || chip-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface;
+
+                        HorizontalLayout {
+                            spacing: 4px;
+                            alignment: center;
+
+                            // The resolved colour (token or custom — Rust resolves
+                            // both, since Slint cannot parse "#rrggbbaa").
+                            Rectangle {
+                                width: 16px;
+                                height: 16px;
+                                border-radius: SkwdTokens.radius-4;
+                                border-width: 1px;
+                                border-color: HveColors.border;
+                                background: root.tune-colors-resolved[i];
+                            }
+
+                            // 1-indexed, matching the slot position: the chip says
+                            // WHICH colour this is, the swatch says what it looks
+                            // like.
+                            Text {
+                                text: "" + (i + 1);
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                font-weight: 600;
+                                color: HveColors.text;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        chip-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            // A click both selects the chip and opens the shared
+                            // picker on it: one picker, always the one you clicked
+                            // (R3 — clicking another chip moves the same card).
+                            clicked => {
+                                root.strip-active-chip = i;
+                                root.request-edit-slot(i);
+                            }
+                        }
+                    }
+                }
+                }
+                }
+            }
+
+            // ── Slot add/remove group ────────────────────────────────────
+            // T3c-2: the row AND its description share one condition
+            // (`slot-count > 0`), so the frame is gated with them — with zero
+            // colours this group paints nothing at all, exactly as it did. The
+            // title is this slice's first NEW string, registered in all five
+            // places the i18n landmine covers; the description MOVED up from the
+            // loose line under the row.
+            slots-group := Rectangle {
+                border-width: root.slot-count > 0 ? 1px : 0px;
+                border-color: HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: root.slot-count > 0 ? HveColors.bg-card : transparent;
+
+                VerticalLayout {
+                    padding: root.slot-count > 0 ? SkwdTokens.spacing-12 : 0px;
+                    spacing: SkwdTokens.spacing-8;
+
+                    if root.slot-count > 0 : VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
+
+                        Text {
+                            text: BordersText.slots-title;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
                             font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+        Text {
+                        text: BordersText.slots-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+        }
+                    }
+
+                if root.slot-count > 0 : slots-wrap := HorizontalLayout {
+                    changed y => { root.slots-y = self.y; }
+                    init => { root.slots-y = self.y; }
+                    spacing: 8px;
+                    alignment: center;
+
+                    Rectangle {
+                        property <bool> lit: root.local-focus == root.idx-remove && root.has-focus;
+                        width: 36px;
+                        height: 28px;
+                        border-radius: SkwdTokens.radius-4;
+                        background: self.lit ? HveColors.bg-hover : (root.slot-count > 2 && remove-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
+                        border-width: 1px;
+                        border-color: self.lit ? #8fd8ff : (root.slot-count > 2 ? HveColors.border : HveColors.border.transparentize(0.5));
+                        opacity: root.slot-count > 2 ? 1.0 : 0.4;
+
+                        Text {
+                            text: "−";
                             color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: 16px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
                             vertical-alignment: center;
                         }
+
+                        remove-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { if (root.slot-count > 2) { root.remove-color-slot(); } }
+                        }
                     }
 
-                    chip-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        // A click both selects the chip and opens the shared
-                        // picker on it: one picker, always the one you clicked
-                        // (R3 — clicking another chip moves the same card).
-                        clicked => {
-                            root.strip-active-chip = i;
-                            root.request-edit-slot(i);
+                    Text {
+                        text: root.slot-count + BordersText.slots-count-suffix;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        property <bool> lit: root.local-focus == root.idx-add && root.has-focus;
+                        width: 36px;
+                        height: 28px;
+                        border-radius: SkwdTokens.radius-4;
+                        background: self.lit ? HveColors.bg-hover : (root.slot-count < 8 && add-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
+                        border-width: 1px;
+                        border-color: self.lit ? #8fd8ff : (root.slot-count < 8 ? HveColors.border : HveColors.border.transparentize(0.5));
+                        opacity: root.slot-count < 8 ? 1.0 : 0.4;
+
+                        Text {
+                            text: "+";
+                            color: HveColors.text;
+                            font-family: SkwdTokens.font-body;
+                            font-size: 16px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        add-ta := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { if (root.slot-count < 8) { root.add-color-slot(); } }
                         }
                     }
                 }
-            }
-            }
-
-            // ── Description: gradient colours ──
-            Text {
-                text: BordersText.active-colors-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // ── Add / Remove slot controls ──
-            if root.slot-count > 0 : slots-wrap := HorizontalLayout {
-                changed y => { root.slots-y = self.y; }
-                init => { root.slots-y = self.y; }
-                spacing: 8px;
-                alignment: center;
-
-                Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-remove && root.has-focus;
-                    width: 36px;
-                    height: 28px;
-                    border-radius: SkwdTokens.radius-4;
-                    background: self.lit ? HveColors.bg-hover : (root.slot-count > 2 && remove-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
-                    border-width: 1px;
-                    border-color: self.lit ? #8fd8ff : (root.slot-count > 2 ? HveColors.border : HveColors.border.transparentize(0.5));
-                    opacity: root.slot-count > 2 ? 1.0 : 0.4;
-
-                    Text {
-                        text: "−";
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: 16px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    remove-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        clicked => { if (root.slot-count > 2) { root.remove-color-slot(); } }
-                    }
-                }
-
-                Text {
-                    text: root.slot-count + BordersText.slots-count-suffix;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-11;
-                    color: HveColors.text-muted;
-                    vertical-alignment: center;
-                }
-
-                Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-add && root.has-focus;
-                    width: 36px;
-                    height: 28px;
-                    border-radius: SkwdTokens.radius-4;
-                    background: self.lit ? HveColors.bg-hover : (root.slot-count < 8 && add-ta.has-hover ? HveColors.bg-hover : HveColors.bg-surface);
-                    border-width: 1px;
-                    border-color: self.lit ? #8fd8ff : (root.slot-count < 8 ? HveColors.border : HveColors.border.transparentize(0.5));
-                    opacity: root.slot-count < 8 ? 1.0 : 0.4;
-
-                    Text {
-                        text: "+";
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: 16px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    add-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        clicked => { if (root.slot-count < 8) { root.add-color-slot(); } }
-                    }
                 }
             }
 
-            // ── Description: dynamic slots ──
-            if root.slot-count > 0 : Text {
-                text: BordersText.slots-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
 
             // Separator
             Rectangle { height: 1px; background: HveColors.border; }
 
-            // ── Glow group ──
-            // ONE header row, mounted in BOTH states (glow off and on): the
-            // title, and the on/off switch. The switch IS the glow-enable
-            // control — the same 40×22 pill, animated background and travelling
-            // knob the left preset cards paint (`SavedPresetCard.apply-switch`)
-            // — so its colour reads the state at a glance. It replaced the old
-            // cyan "Add" rectangle (glow off) and the separate ✕ (glow on),
-            // which each existed in only one state and so made the row jump.
-            // Only the BODY below differs by state.
-            glow-wrap := Rectangle {
-                property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
-                height: self.lit ? 64px : 56px;
+            // ── Glow group ──────────────────────────────────────────────
+            // T3c-2: the glow block's content is ALWAYS mounted (the switch row
+            // and the fold's wrapper both exist in both states), so this
+            // container is unconditional — what is conditional is the body the
+            // fold reveals. The header carries the title the enable row used to
+            // paint (`glow-title`, MOVED out of the row, which now holds the
+            // switch alone) plus this slice's second NEW string, the line saying
+            // what the block controls. The OFF-state description keeps folding
+            // under the row: it is a different string, and its fold is pinned by
+            // `borders_glow_off_description_folds_instead_of_popping`.
+            glow-group := Rectangle {
                 border-width: 1px;
-                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-color: HveColors.border;
                 border-radius: SkwdTokens.radius-8;
-                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                background: HveColors.bg-card;
 
-                HorizontalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-                    alignment: space-between;
+                VerticalLayout {
+                    padding: SkwdTokens.spacing-12;
+                    spacing: SkwdTokens.spacing-8;
 
-                    Text {
-                        text: BordersText.glow-title;
-                        // Same title, the copy each state already used: muted
-                        // body face while off, accented heading while on.
-                        color: root.glow-enabled ? HveColors.accent-cyan : HveColors.text-muted;
-                        font-family: root.glow-enabled ? SkwdTokens.font-heading : SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-13;
-                        font-weight: root.glow-enabled ? 600 : 400;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-
-                    // The switch: grey/left = off, accent-green/right = on. Both
-                    // faces and the knob travel are the left preset cards'
-                    // exact language, reused rather than reinvented.
-                    glow-switch := Rectangle {
-                        width: 40px;
-                        height: 22px;
-                        border-radius: 11px;
-                        background: root.glow-enabled ? HveColors.accent-green : HveColors.border;
-                        animate background { duration: 250ms; easing: ease-in-out; }
-
-                        Rectangle {
-                            width: 16px;
-                            height: 16px;
-                            border-radius: 8px;
-                            background: HveColors.bg-dark;
-                            x: root.glow-enabled ? parent.width - self.width - 3px : 3px;
-                            y: 3px;
-                            animate x { duration: 350ms; easing: ease-in-out-back; }
-                        }
-
-                        glow-switch-ta := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            mouse-cursor: pointer;
-                            clicked => { root.glow-changed(!root.glow-enabled, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
-                        }
-                    }
-                }
-            }
-
-            // ── Glow fold: the empty-state description AND the body ──
-            // ONE layout holds the glow group's two folded children, and its
-            // `spacing: 0` is what keeps the column's geometry EXACTLY where it
-            // was before either fold existed:
-            //
-            //   • the body's target height is what it always was, so the body's
-            //     own `y` (and with it `glow-body-y`, which `focus-block-y()`
-            //     sums the four slider offsets into — T3a) lands in the same
-            //     place in both states, and every block below the group keeps
-            //     the same scroll geometry it had;
-            //   • the description carries the pane's own 8px gap inside its own
-            //     height (`SkwdTokens.spacing-8`, the same gap `tune-col` spaces
-            //     its children with), because as a layout child it cannot have a
-            //     gap that only exists while it is open — and a slot that costs
-            //     8px while shut would push the body down by 8px the moment the
-            //     switch went on, moving a block the keyboard's scroll-follow
-            //     has already been told about.
-            //
-            // Each child animates its own height, so the shared layout simply
-            // follows their sum: no third animation, and the separator below
-            // moves smoothly because its position is a sum of two live rates.
-            glow-fold := VerticalLayout {
-                spacing: 0;
-                // The body's own `changed y` cannot see a reflow ABOVE the
-                // group: inside this layout the body's `y` does not move when the
-                // whole group does, and `glow-body-y` is what `focus-block-y()`
-                // aims the scroll at. So the sum is recomputed here too, on every
-                // move of the group's own top edge.
-                init => { root.glow-body-y = self.y + glow-body-clip.y; }
-                changed y => { root.glow-body-y = self.y + glow-body-clip.y; }
-
-                // ── Description: glow (empty state) ──
-                // Task 3.4 requires the addable state to explain itself, not just
-                // show a button.
-                //
-                // Mounted in BOTH states and folded, instead of the
-                // `if !root.glow-enabled : Text` it used to be: an element
-                // created by the `if` came up at its full size on the frame the
-                // glow turned OFF, while the body below it was still folding
-                // closed — the exact mirror of the defect the body's own fold
-                // fixed, and the acceptance criterion ("no activated block
-                // appears instantly where its sibling animates") reads both
-                // ways. The wrapper's height runs 0 → the line's own height plus
-                // the gap above the body, with the picker card's durations, so
-                // the description closes (150ms) while the body opens and opens
-                // (250ms) while the body closes: nothing jumps to full size in
-                // either direction. Its inner layout is what reports that target
-                // height — the same reason the body below needs one, and the
-                // height of a wrapped line is not a constant that could be
-                // written here.
-                //
-                // `clip: true` for the same purpose as the body's wrapper, and
-                // `opacity` without a transform for the same reason (the
-                // headless tests' software renderer has no transforms).
-                glow-empty-desc-clip := Rectangle {
-                    height: 0px;
-                    opacity: 0.0;
-                    clip: true;
-                    states [
-                        desc-shown when !root.glow-enabled: {
-                            height: glow-empty-desc-layout.preferred-height + SkwdTokens.spacing-8;
-                            opacity: 1.0;
-                            in {
-                                animate height { duration: 250ms; easing: ease-in-out-back; }
-                                animate opacity { duration: 250ms; easing: ease-in-out-back; }
-                            }
-                            out {
-                                animate height { duration: 150ms; easing: ease-in; }
-                                animate opacity { duration: 150ms; easing: ease-in; }
-                            }
-                        }
-                    ]
-
-                    glow-empty-desc-layout := VerticalLayout {
-                        width: 100%;
+                    VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
 
                         Text {
-                            text: BordersText.glow-empty-desc;
+                            text: BordersText.glow-title;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+                        Text {
+                            text: BordersText.glow-desc;
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-11;
                             color: HveColors.text-muted;
                             wrap: word-wrap;
                         }
                     }
-                }
 
-                // ── Glow body: folds open ──
-                // This was `if root.glow-enabled : glow-body := VerticalLayout`, an
-                // element CREATED by the `if`, so it came up at its final size with
-                // no "from" frame and the block below it moved in one jump. Slint
-                // only tweens a property when it CHANGES on a live element (the
-                // note on the picker card above says the same), so the body is
-                // mounted in BOTH states and the fold is a WRAPPER whose height
-                // goes from 0 to the body's own content height: a VerticalLayout
-                // derives its height from its children, so it can never be the
-                // animated element. The wrapper's target height is the inner
-                // layout's own `preferred-height` (the sum of its children's) rather
-                // than a literal like the picker card's 380px, because these nine
-                // children are text that wraps — a constant would go stale the
-                // moment a label or a pane width moved. It cannot be the layout's
-                // `height`, which is by default the space its parent gives it and
-                // would close a binding loop with the wrapper's own height.
-                //
-                // HEIGHT ONLY, deliberately, unlike the picker:
-                //   • `clip: true` is the guard that keeps a collapsed body from
-                //     leaking its four rows under the switch, and it can only be
-                //     PROVEN if the rest state paints at full opacity — an
-                //     opacity-0 rest state would hide a leak and make the guard
-                //     untestable (borders_glow_body_folds_open_instead_of_jumping).
-                //   • no `transform-scale`: the software renderer the headless
-                //     tests draw with does not implement transforms, so a scale
-                //     here would be an unverifiable claim, and nine stacked rows
-                //     growing while they also scale around their own centres reads
-                //     worse than the single card that motivated the picker's.
-                glow-body-clip := Rectangle {
-                    // Reported from the WRAPPER, summed with its parent's own `y`:
-                    // `glow-body-y` keeps the `tune-col` coordinates
-                    // `focus-block-y()` needs (the wrapper is the direct child of
-                    // `tune-col`, the body a child of `glow-fold`), and the four
-                    // slider offsets below it (relative to the inner layout, which
-                    // sits at y=0 in here) still add up to the same sum (T3a). The
-                    // sum is recomputed on every move of either term, so a reflow
-                    // above the group cannot leave it stale.
-                    init => { root.glow-body-y = glow-fold.y + self.y; }
-                    changed y => { root.glow-body-y = glow-fold.y + self.y; }
-                    // The fold moves every block BELOW it on every step, and the
-                    // keyboard can be parked on one of those while the body is still
-                    // growing — a target read mid-flight would scroll to a position
-                    // the content is about to leave. The picker card re-follows on
-                    // every height step for the same reason (its own `changed height`
-                    // above); this is that idiom, not the one-shot
-                    // `picker-anchor-pending` tick, which answers a different
-                    // question (a height the ScrollView has not got yet).
-                    //
-                    // GUARDED, and the guard is the whole point: only a stop the
-                    // fold actually moves is worth following. Unguarded, turning the
-                    // switch on scrolled the pane ~265px with the keyboard parked on
-                    // the glow HEADER — a block that does not move at all, so nothing
-                    // needed following; what moved it was the ScrollView's bottom
-                    // clamp relaxing as the content grew, so the pane snapped to the
-                    // position follow-focus had always wanted (measured, and it moved
-                    // the header row between the switch's two states, which
-                    // `borders_glow_switch_renders_off_and_on` reads as "the same
-                    // box"). `local-focus > idx-glow-en` is exactly "the focused
-                    // block is one the fold pushes": the four body rows, and the save
-                    // row below them.
-                    changed height => {
-                        if (root.glow-enabled && root.local-focus > root.idx-glow-en) {
-                            tune-scroll.follow-focus();
+                // ONE enable row, mounted in BOTH states (glow off and on), and it
+                // holds the on/off switch alone now: T3c-2 MOVED the row's title
+                // (`glow-title`) up into the container's header, where every other
+                // block's title lives, so the string is painted once. The switch IS
+                // the glow-enable control — the same 40×22 pill, animated background
+                // and travelling knob the left preset cards paint
+                // (`SavedPresetCard.apply-switch`) — so its colour reads the state at
+                // a glance. It replaced the old cyan "Add" rectangle (glow off) and
+                // the separate ✕ (glow on), which each existed in only one state and
+                // so made the row jump. `alignment: end` keeps the switch on the
+                // right edge the row has always parked it on: with a single child,
+                // `space-between` would pin it to the LEFT instead. Only the BODY
+                // below differs by state.
+                glow-wrap := Rectangle {
+                    property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
+                    height: self.lit ? 64px : 56px;
+                    border-width: 1px;
+                    border-color: self.lit ? #8fd8ff : HveColors.border;
+                    border-radius: SkwdTokens.radius-8;
+                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        alignment: end;
+
+                        // The switch: grey/left = off, accent-green/right = on. Both
+                        // faces and the knob travel are the left preset cards'
+                        // exact language, reused rather than reinvented.
+                        glow-switch := Rectangle {
+                            width: 40px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: root.glow-enabled ? HveColors.accent-green : HveColors.border;
+                            animate background { duration: 250ms; easing: ease-in-out; }
+
+                            Rectangle {
+                                width: 16px;
+                                height: 16px;
+                                border-radius: 8px;
+                                background: HveColors.bg-dark;
+                                x: root.glow-enabled ? parent.width - self.width - 3px : 3px;
+                                y: 3px;
+                                animate x { duration: 350ms; easing: ease-in-out-back; }
+                            }
+
+                            glow-switch-ta := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => { root.glow-changed(!root.glow-enabled, root.glow-range, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                            }
                         }
                     }
-                    height: 0px;
-                    clip: true;
-                    states [
-                        glow-shown when root.glow-enabled: {
-                                height: glow-body-layout.preferred-height;
+                }
+
+                // ── Glow fold: the empty-state description AND the body ──
+                // ONE layout holds the glow group's two folded children, and its
+                // `spacing: 0` is what keeps the column's geometry EXACTLY where it
+                // was before either fold existed:
+                //
+                //   • the body's target height is what it always was, so the body's
+                //     own `y` (and with it `glow-body-y`, which `focus-block-y()`
+                //     sums the four slider offsets into — T3a) lands in the same
+                //     place in both states, and every block below the group keeps
+                //     the same scroll geometry it had;
+                //   • the description carries the pane's own 8px gap inside its own
+                //     height (`SkwdTokens.spacing-8`, the same gap `tune-col` spaces
+                //     its children with), because as a layout child it cannot have a
+                //     gap that only exists while it is open — and a slot that costs
+                //     8px while shut would push the body down by 8px the moment the
+                //     switch went on, moving a block the keyboard's scroll-follow
+                //     has already been told about.
+                //
+                // Each child animates its own height, so the shared layout simply
+                // follows their sum: no third animation, and the separator below
+                // moves smoothly because its position is a sum of two live rates.
+                glow-fold := VerticalLayout {
+                    spacing: 0;
+                    // The body's own `changed y` cannot see a reflow ABOVE the
+                    // group: inside this layout the body's `y` does not move when the
+                    // whole group does, and `glow-body-y` is what `focus-block-y()`
+                    // aims the scroll at. So the sum is recomputed here too, on every
+                    // move of the group's own top edge. T3c-2 made the Glow container
+                    // the outermost term: `glow-fold` is a child of the container's
+                    // layout now, so its own `y` is container-relative and the
+                    // container's live `y` is what turns the sum back into the
+                    // `tune-col` coordinate `viewport-y` scrolls in.
+                    init => { root.glow-body-y = glow-group.y + self.y + glow-body-clip.y; }
+                    changed y => { root.glow-body-y = glow-group.y + self.y + glow-body-clip.y; }
+
+                    // ── Description: glow (empty state) ──
+                    // Task 3.4 requires the addable state to explain itself, not just
+                    // show a button.
+                    //
+                    // Mounted in BOTH states and folded, instead of the
+                    // `if !root.glow-enabled : Text` it used to be: an element
+                    // created by the `if` came up at its full size on the frame the
+                    // glow turned OFF, while the body below it was still folding
+                    // closed — the exact mirror of the defect the body's own fold
+                    // fixed, and the acceptance criterion ("no activated block
+                    // appears instantly where its sibling animates") reads both
+                    // ways. The wrapper's height runs 0 → the line's own height plus
+                    // the gap above the body, with the picker card's durations, so
+                    // the description closes (150ms) while the body opens and opens
+                    // (250ms) while the body closes: nothing jumps to full size in
+                    // either direction. Its inner layout is what reports that target
+                    // height — the same reason the body below needs one, and the
+                    // height of a wrapped line is not a constant that could be
+                    // written here.
+                    //
+                    // `clip: true` for the same purpose as the body's wrapper, and
+                    // `opacity` without a transform for the same reason (the
+                    // headless tests' software renderer has no transforms).
+                    glow-empty-desc-clip := Rectangle {
+                        height: 0px;
+                        opacity: 0.0;
+                        clip: true;
+                        states [
+                            desc-shown when !root.glow-enabled: {
+                                height: glow-empty-desc-layout.preferred-height + SkwdTokens.spacing-8;
+                                opacity: 1.0;
                                 in {
                                     animate height { duration: 250ms; easing: ease-in-out-back; }
+                                    animate opacity { duration: 250ms; easing: ease-in-out-back; }
                                 }
                                 out {
                                     animate height { duration: 150ms; easing: ease-in; }
+                                    animate opacity { duration: 150ms; easing: ease-in; }
                                 }
-                        }
-                    ]
-
-                    glow-body-layout := VerticalLayout {
-                        width: 100%;
-                        spacing: 8px;
-
-                        // Range slider
-                        glow-range-wrap := Rectangle {
-                            // Glow-body-relative: this is the body's FIRST child, so
-                            // the offset is 0 and `init` is what reports it at all.
-                            changed y => { root.glow-range-y = self.y; }
-                            init => { root.glow-range-y = self.y; }
-                            property <bool> lit: root.local-focus == root.idx-glow-range && root.has-focus;
-                            property <bool> grabbed: root.engaged-slider == root.idx-glow-range && root.has-focus;
-                            height: self.lit ? 64px : 56px;
-                            border-width: 1px;
-                            border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                            border-radius: SkwdTokens.radius-8;
-                            background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                            GeometrySlider {
-                                width: 100%;
-                                y: (parent.height - self.height) / 2;
-                                engaged: root.engaged-slider == root.idx-glow-range;
-                                focused: root.local-focus == root.idx-glow-range && root.has-focus;
-                                label: BordersText.glow-range-label;
-                                value: root.glow-range;
-                                min: 5;
-                                max: 40;
-                                changed(v) => { root.glow-changed(root.glow-enabled, v, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
                             }
-                        }
+                        ]
 
-                        Text {
-                            text: BordersText.glow-range-desc;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-11;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
-                        }
+                        glow-empty-desc-layout := VerticalLayout {
+                            width: 100%;
 
-                        // Render power slider
-                        glow-power-wrap := Rectangle {
-                            changed y => { root.glow-power-y = self.y; }
-                            init => { root.glow-power-y = self.y; }
-                            property <bool> lit: root.local-focus == root.idx-glow-power && root.has-focus;
-                            property <bool> grabbed: root.engaged-slider == root.idx-glow-power && root.has-focus;
-                            height: self.lit ? 64px : 56px;
-                            border-width: 1px;
-                            border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                            border-radius: SkwdTokens.radius-8;
-                            background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                            GeometrySlider {
-                                width: 100%;
-                                y: (parent.height - self.height) / 2;
-                                engaged: root.engaged-slider == root.idx-glow-power;
-                                focused: root.local-focus == root.idx-glow-power && root.has-focus;
-                                label: BordersText.glow-power-label;
-                                value: root.glow-render-power;
-                                min: 1;
-                                max: 8;
-                                changed(v) => { root.glow-changed(root.glow-enabled, root.glow-range, v, root.glow-color, root.glow-color-inactive); }
+                            Text {
+                                text: BordersText.glow-empty-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
                             }
-                        }
-
-                        Text {
-                            text: BordersText.glow-power-desc;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-11;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
-                        }
-
-                        // Glow color — compact row, same pattern as the inactive row (R7).
-                        glow-color-wrap := BorderCompactColorRow {
-                            changed y => { root.glow-color-y = self.y; }
-                            init => { root.glow-color-y = self.y; }
-                            label: BordersText.glow-color-label;
-                            value-label: root.value-label(root.glow-color);
-                            resolved-color: root.tune-colors-resolved[9];
-                            lit: root.local-focus == root.idx-glow-color && root.has-focus;
-                            editing: root.editing-slot == 9;
-                            picker-requested() => { root.request-edit-slot(9); }
-                        }
-
-                        Text {
-                            text: BordersText.glow-color-desc;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-11;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
-                        }
-
-                        // Glow inactive color — compact row (R7).
-                        glow-inactive-wrap := BorderCompactColorRow {
-                            changed y => { root.glow-inactive-y = self.y; }
-                            init => { root.glow-inactive-y = self.y; }
-                            label: BordersText.glow-inactive-label;
-                            value-label: root.value-label(root.glow-color-inactive);
-                            resolved-color: root.tune-colors-resolved[10];
-                            lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
-                            editing: root.editing-slot == 10;
-                            picker-requested() => { root.request-edit-slot(10); }
-                        }
-
-                        Text {
-                            text: BordersText.glow-inactive-desc;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-11;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
                         }
                     }
+
+                    // ── Glow body: folds open ──
+                    // This was `if root.glow-enabled : glow-body := VerticalLayout`, an
+                    // element CREATED by the `if`, so it came up at its final size with
+                    // no "from" frame and the block below it moved in one jump. Slint
+                    // only tweens a property when it CHANGES on a live element (the
+                    // note on the picker card above says the same), so the body is
+                    // mounted in BOTH states and the fold is a WRAPPER whose height
+                    // goes from 0 to the body's own content height: a VerticalLayout
+                    // derives its height from its children, so it can never be the
+                    // animated element. The wrapper's target height is the inner
+                    // layout's own `preferred-height` (the sum of its children's) rather
+                    // than a literal like the picker card's 380px, because these nine
+                    // children are text that wraps — a constant would go stale the
+                    // moment a label or a pane width moved. It cannot be the layout's
+                    // `height`, which is by default the space its parent gives it and
+                    // would close a binding loop with the wrapper's own height.
+                    //
+                    // HEIGHT ONLY, deliberately, unlike the picker:
+                    //   • `clip: true` is the guard that keeps a collapsed body from
+                    //     leaking its four rows under the switch, and it can only be
+                    //     PROVEN if the rest state paints at full opacity — an
+                    //     opacity-0 rest state would hide a leak and make the guard
+                    //     untestable (borders_glow_body_folds_open_instead_of_jumping).
+                    //   • no `transform-scale`: the software renderer the headless
+                    //     tests draw with does not implement transforms, so a scale
+                    //     here would be an unverifiable claim, and nine stacked rows
+                    //     growing while they also scale around their own centres reads
+                    //     worse than the single card that motivated the picker's.
+                    glow-body-clip := Rectangle {
+                        // Reported from the WRAPPER, summed with its parent's own `y`:
+                        // `glow-body-y` keeps the `tune-col` coordinates
+                        // `focus-block-y()` needs (the wrapper is a child of
+                        // `glow-fold`, `glow-fold` a child of the Glow container and
+                        // the container a child of `tune-col`), and the four
+                        // slider offsets below it (relative to the inner layout, which
+                        // sits at y=0 in here) still add up to the same sum (T3a). The
+                        // sum is recomputed on every move of either term, so a reflow
+                        // above the group cannot leave it stale.
+                        init => { root.glow-body-y = glow-group.y + glow-fold.y + self.y; }
+                        changed y => { root.glow-body-y = glow-group.y + glow-fold.y + self.y; }
+                        // The fold moves every block BELOW it on every step, and the
+                        // keyboard can be parked on one of those while the body is still
+                        // growing — a target read mid-flight would scroll to a position
+                        // the content is about to leave. The picker card re-follows on
+                        // every height step for the same reason (its own `changed height`
+                        // above); this is that idiom, not the one-shot
+                        // `picker-anchor-pending` tick, which answers a different
+                        // question (a height the ScrollView has not got yet).
+                        //
+                        // GUARDED, and the guard is the whole point: only a stop the
+                        // fold actually moves is worth following. Unguarded, turning the
+                        // switch on scrolled the pane ~265px with the keyboard parked on
+                        // the glow HEADER — a block that does not move at all, so nothing
+                        // needed following; what moved it was the ScrollView's bottom
+                        // clamp relaxing as the content grew, so the pane snapped to the
+                        // position follow-focus had always wanted (measured, and it moved
+                        // the header row between the switch's two states, which
+                        // `borders_glow_switch_renders_off_and_on` reads as "the same
+                        // box"). `local-focus > idx-glow-en` is exactly "the focused
+                        // block is one the fold pushes": the four body rows, and the save
+                        // row below them.
+                        changed height => {
+                            if (root.glow-enabled && root.local-focus > root.idx-glow-en) {
+                                tune-scroll.follow-focus();
+                            }
+                        }
+                        height: 0px;
+                        clip: true;
+                        states [
+                            glow-shown when root.glow-enabled: {
+                                    height: glow-body-layout.preferred-height;
+                                    in {
+                                        animate height { duration: 250ms; easing: ease-in-out-back; }
+                                    }
+                                    out {
+                                        animate height { duration: 150ms; easing: ease-in; }
+                                    }
+                            }
+                        ]
+
+                        glow-body-layout := VerticalLayout {
+                            width: 100%;
+                            spacing: 8px;
+
+                            // Range slider
+                            glow-range-wrap := Rectangle {
+                                // Glow-body-relative: this is the body's FIRST child, so
+                                // the offset is 0 and `init` is what reports it at all.
+                                changed y => { root.glow-range-y = self.y; }
+                                init => { root.glow-range-y = self.y; }
+                                property <bool> lit: root.local-focus == root.idx-glow-range && root.has-focus;
+                                property <bool> grabbed: root.engaged-slider == root.idx-glow-range && root.has-focus;
+                                height: self.lit ? 64px : 56px;
+                                border-width: 1px;
+                                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                                border-radius: SkwdTokens.radius-8;
+                                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                                GeometrySlider {
+                                    width: 100%;
+                                    y: (parent.height - self.height) / 2;
+                                    engaged: root.engaged-slider == root.idx-glow-range;
+                                    focused: root.local-focus == root.idx-glow-range && root.has-focus;
+                                    label: BordersText.glow-range-label;
+                                    value: root.glow-range;
+                                    min: 5;
+                                    max: 40;
+                                    changed(v) => { root.glow-changed(root.glow-enabled, v, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                                }
+                            }
+
+                            Text {
+                                text: BordersText.glow-range-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
+                            }
+
+                            // Render power slider
+                            glow-power-wrap := Rectangle {
+                                changed y => { root.glow-power-y = self.y; }
+                                init => { root.glow-power-y = self.y; }
+                                property <bool> lit: root.local-focus == root.idx-glow-power && root.has-focus;
+                                property <bool> grabbed: root.engaged-slider == root.idx-glow-power && root.has-focus;
+                                height: self.lit ? 64px : 56px;
+                                border-width: 1px;
+                                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                                border-radius: SkwdTokens.radius-8;
+                                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                                GeometrySlider {
+                                    width: 100%;
+                                    y: (parent.height - self.height) / 2;
+                                    engaged: root.engaged-slider == root.idx-glow-power;
+                                    focused: root.local-focus == root.idx-glow-power && root.has-focus;
+                                    label: BordersText.glow-power-label;
+                                    value: root.glow-render-power;
+                                    min: 1;
+                                    max: 8;
+                                    changed(v) => { root.glow-changed(root.glow-enabled, root.glow-range, v, root.glow-color, root.glow-color-inactive); }
+                                }
+                            }
+
+                            Text {
+                                text: BordersText.glow-power-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
+                            }
+
+                            // Glow color — compact row, same pattern as the inactive row (R7).
+                            glow-color-wrap := BorderCompactColorRow {
+                                changed y => { root.glow-color-y = self.y; }
+                                init => { root.glow-color-y = self.y; }
+                                label: BordersText.glow-color-label;
+                                value-label: root.value-label(root.glow-color);
+                                resolved-color: root.tune-colors-resolved[9];
+                                lit: root.local-focus == root.idx-glow-color && root.has-focus;
+                                editing: root.editing-slot == 9;
+                                picker-requested() => { root.request-edit-slot(9); }
+                            }
+
+                            Text {
+                                text: BordersText.glow-color-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
+                            }
+
+                            // Glow inactive color — compact row (R7).
+                            glow-inactive-wrap := BorderCompactColorRow {
+                                changed y => { root.glow-inactive-y = self.y; }
+                                init => { root.glow-inactive-y = self.y; }
+                                label: BordersText.glow-inactive-label;
+                                value-label: root.value-label(root.glow-color-inactive);
+                                resolved-color: root.tune-colors-resolved[10];
+                                lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
+                                editing: root.editing-slot == 10;
+                                picker-requested() => { root.request-edit-slot(10); }
+                            }
+
+                            Text {
+                                text: BordersText.glow-inactive-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-11;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
                 }
             }
 

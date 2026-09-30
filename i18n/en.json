@@ -190,11 +190,13 @@
       "desc": "←→ select gradient colour, Enter to edit, Esc to close."
     },
     "slots": {
+      "title": "Color Slots",
       "count_suffix": " of 8",
       "desc": "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland."
     },
     "glow": {
       "title": "Glow (shadow decoration)",
+      "group_desc": "Color and reach of the shadow, and its variant for unfocused windows.",
       "add": "Add",
       "empty_desc": "This preset has no glow. Add one to give the border a coloured shadow around focused windows.",
       "range": {

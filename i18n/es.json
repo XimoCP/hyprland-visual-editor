@@ -190,11 +190,13 @@
       "desc": "←→ elige un color del degradado, Enter para editar, Esc para cerrar."
     },
     "slots": {
+      "title": "Ranuras de Color",
       "count_suffix": " de 8",
       "desc": "Cada ranura es un color del degradado del borde activo. El orden coincide con el archivo del preajuste. Hyprland admite de 2 a 8 ranuras."
     },
     "glow": {
       "title": "Brillo (decoración de sombra)",
+      "group_desc": "Color y alcance de la sombra, y su variante para ventanas sin foco.",
       "add": "Añadir",
       "empty_desc": "Este preajuste no tiene brillo. Añade uno para dar al borde una sombra de color alrededor de las ventanas con foco.",
       "range": {

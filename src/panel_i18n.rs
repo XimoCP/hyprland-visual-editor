@@ -82,6 +82,7 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
         "←→ select gradient colour, Enter to edit, Esc to close.",
     ));
     t.set_slots_count_suffix(tr.tr_shared("borders.slots.count_suffix", " of 8"));
+    t.set_slots_title(tr.tr_shared("borders.slots.title", "Color Slots"));
     t.set_slots_desc(tr.tr_shared(
         "borders.slots.desc",
         "Each slot is one color in the active border gradient. Order matches the preset file. 2-8 slots supported by Hyprland.",
@@ -89,6 +90,10 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
 
     // Glow / shadow group
     t.set_glow_title(tr.tr_shared("borders.glow.title", "Glow (shadow decoration)"));
+    t.set_glow_desc(tr.tr_shared(
+        "borders.glow.group_desc",
+        "Color and reach of the shadow, and its variant for unfocused windows.",
+    ));
     t.set_glow_add(tr.tr_shared("borders.glow.add", "Add"));
     t.set_glow_empty_desc(tr.tr_shared(
         "borders.glow.empty_desc",
