@@ -1067,6 +1067,29 @@ impl OverlaySandbox {
     fn write_scheme(&self, body: &str) {
         std::fs::write(self.home.join(".config/hypr/noctalia.lua"), body).unwrap();
     }
+
+    /// Add a token to the roster in the sandbox copy of `colors.sh` — the way a
+    /// future role would be added — WITHOUT adding its fallback. That is the
+    /// wiring bug the loud refusal exists to catch: a roster entry the fallback
+    /// function does not answer must never reach the overlay as an empty value.
+    fn plant_unknown_roster_token(&self, token: &str) {
+        let path = self.root.join("assets/scripts/colors.sh");
+        let src = std::fs::read_to_string(&path).unwrap();
+        let needle = "HVE_PALETTE_TOKENS=\"";
+        let start = src
+            .find(needle)
+            .expect("colors.sh must declare the palette roster");
+        let rest = &src[start + needle.len()..];
+        let end = rest
+            .find('"')
+            .expect("the roster declaration must be closed");
+        let new_src = format!(
+            "{} {token}{}",
+            &src[..start + needle.len()],
+            &rest[end..]
+        );
+        std::fs::write(&path, new_src).unwrap();
+    }
 }
 
 /// A bare Lua identifier: a palette token, never a literal colour or a path.
@@ -1124,17 +1147,27 @@ fn preset_locals(overlay: &str) -> BTreeSet<String> {
 }
 
 /// Every bare palette identifier the overlay's body references: the items of a
-/// `colors = { … }` gradient list, plus a bare `inactive_border` value. Those
-/// are the positions where a token, not a literal colour, is written.
+/// `colors = { … }` gradient list (any spacing around the `=`), plus a bare
+/// `inactive_border` value. Those are the positions where a token, not a
+/// literal colour, is written.
 fn referenced_tokens(overlay: &str, locals: &BTreeSet<String>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for (idx, _) in overlay.match_indices("colors =") {
+    for (idx, _) in overlay.match_indices("colors") {
         let rest = &overlay[idx..];
-        let Some(open) = rest.find('{') else { continue };
-        let Some(close) = rest[open..].find('}') else {
+        let Some(after) = rest.strip_prefix("colors") else {
             continue;
         };
-        for item in rest[open + 1..open + close].split(',') {
+        // Tolerate any whitespace between `colors` and `=`: `colors={…}` and
+        // `colors  = {…}` are the same gradient list. `colors_lowest` is not.
+        let after = after.trim_start();
+        let Some(after) = after.strip_prefix('=') else {
+            continue;
+        };
+        let Some(open) = after.find('{') else { continue };
+        let Some(close) = after[open..].find('}') else {
+            continue;
+        };
+        for item in after[open + 1..open + close].split(',') {
             let item = item.trim();
             if is_bare_identifier(item) && !locals.contains(item) {
                 out.insert(item.to_owned());
@@ -1285,5 +1318,69 @@ fn overlay_palette_values_come_from_the_colour_pipeline() {
         None,
         "assemble.sh must not hardcode a palette value — the theme owns the \
          palette, and colors.sh is where its values live"
+    );
+}
+
+/// A roster token the fallback function does not answer is a wiring bug. The
+/// pipeline must refuse loudly — non-zero exit, no overlay written — instead of
+/// exporting an empty value that the compositor would reject.
+#[test]
+fn unknown_roster_token_is_refused_before_it_reaches_the_overlay() {
+    let sb = OverlaySandbox::build();
+    // A valid overlay first, so a refused run has something to leave intact.
+    let good = sb.assemble();
+    assert!(
+        !good.contains("bogus"),
+        "sanity: the good overlay must not mention the undeclared token"
+    );
+
+    sb.plant_unknown_roster_token("bogus");
+    let out = sb.run("assemble.sh", &[]);
+    assert!(
+        !out.status.success(),
+        "assemble.sh must refuse to emit when a roster token has no fallback: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let overlay = sb.overlay();
+    assert!(
+        !overlay.contains("bogus"),
+        "an undeclared token must never reach the overlay, not even as an empty \
+         value — the compositor rejects a gradient list containing an empty \
+         string and drops the WHOLE overlay"
+    );
+}
+
+/// A preset reformatted without spaces around `=` (`colors={…}`) must still be
+/// scanned: the reference detector tolerates arbitrary whitespace, or a
+/// formatting change silently blinds the whole palette check.
+#[test]
+fn preset_without_spaces_around_equals_is_still_scanned() {
+    let sb = OverlaySandbox::build();
+    sb.write_fragment(
+        "border",
+        "hl.config({ general = { col = { active_border = \
+         { colors={primary,secondary,tertiary}, angle = 45 } } } })\n",
+    );
+    let overlay = sb.assemble();
+
+    let locals = preset_locals(&overlay);
+    let refs = referenced_tokens(&overlay, &locals);
+    assert!(
+        refs.contains("primary")
+            && refs.contains("secondary")
+            && refs.contains("tertiary"),
+        "the scanner must find palette references written as `colors={{…}}`: {refs:?}"
+    );
+
+    let defined = overlay_palette(&overlay);
+    let missing: Vec<String> = refs
+        .iter()
+        .filter(|t| !defined.contains_key(*t))
+        .cloned()
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "referenced token(s) {missing:?} are not defined in the overlay"
     );
 }

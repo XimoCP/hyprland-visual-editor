@@ -615,12 +615,17 @@ hve_load_colors() {
 
     # Final fallbacks and export, both driven by the roster: a role can never
     # be exported without a value, nor have a value the overlay cannot print.
-    local tok var
+    local tok var fallback
     # shellcheck disable=SC2086  # the roster is one space-separated list
     for tok in ${HVE_PALETTE_TOKENS:-}; do
         var=$(hve_palette_token_var "$tok")
         if [ -z "${!var:-}" ]; then
-            printf -v "$var" '%s' "$(hve_palette_token_fallback "$tok")" || return 1
+            fallback=$(hve_palette_token_fallback "$tok") || return 1
+            if [ -z "$fallback" ]; then
+                echo "[HVE] palette token '$tok' has no fallback value" >&2
+                return 1
+            fi
+            printf -v "$var" '%s' "$fallback" || return 1
         fi
         export "$var"
     done

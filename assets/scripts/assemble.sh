@@ -26,7 +26,11 @@ mkdir -p "$HVE_SAFE_DIR"
 
 # --- SYSTEM: COLORS (from the applied theme / live colour pipeline) ---
 # shellcheck source=/dev/null
-source "$HVE_SCRIPTS_DIR/colors.sh"
+source "$HVE_SCRIPTS_DIR/colors.sh" || {
+    echo "❌ [HVE ERROR] colors.sh failed to resolve the palette; the overlay was not modified."
+    rm -f "$TEMP_FILE"
+    exit 1
+}
 
 # The palette is the theme's, never this file's: colors.sh declares the roster
 # and owns every value. An empty roster means colors.sh could not declare what
