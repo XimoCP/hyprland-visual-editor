@@ -205,49 +205,46 @@ When glow is enabled, the glow colour and inactive glow colour rows MUST each be
 
 ### R8 — Keyboard: Strip as Single Stop
 
-The tune pane keyboard navigation MUST treat the entire chip strip as a single focus stop (index 3 in the tune-local index space). The stop count formula for `borders_tune_stop_count` MUST change from:
+The tune pane keyboard navigation MUST treat the entire chip strip as a single focus stop. The stop count function `borders_tune_stop_count` MUST accept `(slot_count, glow_enabled)` and MUST count the strip as ONE stop regardless of slot count.
+
+The stop sequence is:
 
 ```
-3 + n + 2 + 1  (where n = slot_count, i.e. N stops for N slots)
+size (0) + radius (1) + gap-in (2) + gap-out (3) + angle (4) + inactive (5)
++ [strip (6) + add (7) + remove (8) ONLY while slot_count > 0]
++ glow-enable + (range, power, color, inactive while glow is on)
++ save-name + save-button
 ```
 
-to:
-
-```
-3 + 1 + 2 + 1  (where 1 = the strip stop, regardless of slot count)
-```
-
-Concretely: `size (0) + angle (1) + inactive (2) + strip (3) + add (4) + remove (5) + glow... + anim... + rule + save-name + save-button`.
-
-The `slot_count` parameter MUST still be accepted for backward compatibility but MUST be ignored in the count formula (the strip always contributes exactly 1 stop).
+`slot_count` no longer adds one stop per slot, but ZERO colours still removes the three slot-management stops (the strip, add and remove controls mount only while colours exist).
 
 #### Scenario: Stop count with 2 slots no glow
 
-- GIVEN `slot_count = 2`, glow disabled, no animations
-- WHEN `borders_tune_stop_count(2, false, false, false, false)` is called
-- THEN the return value is 13 (3 + 1 + 2 + 1 + 1 [rule] + 1 [save-name] + 1 [save-button] = … verify exact count)
+- GIVEN `slot_count = 2`, glow disabled
+- WHEN `borders_tune_stop_count(2, false)` is called
+- THEN the return value is 12 (9 fixed stops + 3 slot-management stops)
 - AND the strip occupies exactly 1 stop in the sequence
 
-#### Scenario: Stop count with 8 slots glow + all animations
+#### Scenario: Stop count with 8 slots and glow on
 
-- GIVEN `slot_count = 8`, glow enabled, all 3 animations enabled
-- WHEN `borders_tune_stop_count(8, true, true, true, true)` is called
-- THEN the return value reflects the strip as 1 stop (not 8)
-- AND the total is significantly lower than the old formula's 33
+- GIVEN `slot_count = 8`, glow enabled
+- WHEN `borders_tune_stop_count(8, true)` is called
+- THEN the return value reflects the strip as 1 stop (not 8): 9 + 3 + 4 = 16
 
 #### Scenario: Stop count with 0 slots
 
 - GIVEN `slot_count = 0`
-- WHEN `borders_tune_stop_count(0, false, false, false, false)` is called
-- THEN the strip still contributes 1 stop (the strip stop is always present)
+- WHEN `borders_tune_stop_count(0, false)` is called
+- THEN the three slot-management stops are absent and the count is 9
+- AND the strip stop is absent too, because no colours means no strip to focus
 
 ---
 
 ### R9 — Keyboard: Sub-Navigation Within Strip
 
-When the keyboard focus is on the strip stop (index 3), LEFT and RIGHT arrow keys MUST navigate the active chip within the strip. This is internal sub-navigation, not a PanelRoot concern — PanelRoot only sees stop index 3.
+When the keyboard focus is on the strip stop, LEFT and RIGHT arrow keys MUST navigate the active chip within the strip. This is internal sub-navigation, not a PanelRoot concern — PanelRoot only sees the strip stop.
 
-**Dispatch note (2026-09-20, change design Open Question #2).** `PanelRoot` owns the keyboard map, so it is `PanelRoot` that recognises "tune-local stop 3, with colours present" and calls `strip-cycle`; the chip cycling itself stays inside the section. A `strip-engaged` boolean — letting the section decide and report whether the strip stop holds the keyboard — was considered and rejected: it would move a navigation decision into the layer that `PanelRoot.slint` declares presentational ("sections ... own no FocusScope and no key handling"). The coupling between `PanelRoot`'s literal `3` and this section's stop order is guarded end to end by `borders_strip_keyboard_sub_navigation` in `src/shell/ui_tests.rs`, which drives real key events through the production `FocusScope`. The stop number still has no named constant while the section names its other stops; that is a known minor legibility item, not a correctness gap.
+**Dispatch note (2026-09-20, change design Open Question #2).** `PanelRoot` owns the keyboard map, so it is `PanelRoot` that recognises "the strip stop, with colours present" and calls `strip-cycle`; the chip cycling itself stays inside the section. A `strip-engaged` boolean — letting the section decide and report whether the strip stop holds the keyboard — was considered and rejected: it would move a navigation decision into the layer that `PanelRoot.slint` declares presentational ("sections ... own no FocusScope and no key handling"). The coupling between `PanelRoot`'s read of the section's named `idx-strip` stop and this section's stop order is guarded end to end by `borders_strip_keyboard_sub_navigation` in `src/shell/ui_tests.rs`, which drives real key events through the production `FocusScope`.
 
 - LEFT arrow: move active chip index left (wraps from 0 to `slot-count - 1`).
 - RIGHT arrow: move active chip index right (wraps from `slot-count - 1` to 0).
@@ -286,14 +283,14 @@ When the keyboard focus is on the strip stop (index 3), LEFT and RIGHT arrow key
 
 ### R10 — Scroll-to-Strip When Picker Opens
 
-When the picker opens (editing-slot transitions from -1 to ≥ 0), the ScrollView MUST scroll to position the strip at the top of the visible area, ensuring the picker card above the strip is fully visible. This MUST use `follow-focus()` or equivalent scroll positioning. The viewport MUST NOT animate during scroll positioning.
+When the picker opens (editing-slot transitions from -1 to ≥ 0), the ScrollView MUST scroll so the picker card lands at the top of the pane's content area, with the strip immediately below it. This MUST use `follow-focus()` or equivalent scroll positioning. The viewport MUST NOT animate during scroll positioning.
 
 #### Scenario: Picker opens at top of scroll
 
 - GIVEN the tune pane is scrolled down past the strip
 - WHEN the user clicks a chip to open the picker
-- THEN the viewport scrolls to show the picker card and strip at the top
-- AND the picker card is fully visible (no clipping)
+- THEN the viewport scrolls so the picker card lands at the top of the pane's content area
+- AND the strip sits immediately below the card, and the picker card is fully visible (no clipping)
 
 ---
 

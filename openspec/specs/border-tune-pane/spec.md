@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the borders tune pane: loading every parameter of the selected border preset, full-schema saving, per-control descriptions, dynamic colour slots, the dual-mode colour input, the glow group, border animation leaves and the floating-window rule toggle.
+Defines the borders tune pane: loading every parameter of the selected border preset, full-schema saving, per-control descriptions, dynamic colour slots, the dual-mode colour input, the glow group (its enable switch and its folding body), one delimited container per block, and the label-sourcing contract that keeps every pane string translated.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ When the user clicks a border preset card, the tune pane MUST load ALL of that p
 
 - GIVEN the tune pane showing preset A with 3 colors and glow on
 - WHEN the user clicks preset B (2 colors, no glow)
-- THEN the pane shows exactly 2 color slots, angle/inactive/size of B, glow in the addable empty state, B's leaves and rule state
+- THEN the pane shows exactly 2 color slots, angle/inactive/size of B, and the glow switch OFF with its empty-state line shown, and B's leaves and rule state load into the tune state
 
 #### Scenario: Missing size keeps current value
 
@@ -20,27 +20,43 @@ When the user clicks a border preset card, the tune pane MUST load ALL of that p
 - WHEN the user clicks `13_the_joker.lua` (no `border_size` key)
 - THEN the size slider stays at 3 and all other params load from the file
 
-Save MUST write a user preset containing the complete tuned schema: active colors + angle, inactive color, border size, glow block (only when present), the fixed `windowrulev2` pair (only when the rule toggle is on), file-local curve definitions for every referenced non-`default` bezier, and the three animation leaves. Re-selecting the saved preset MUST reproduce the tuned parameters (round-trip). Tokens MUST re-emit bare (`primary`); custom colors MUST emit `"rgba(rrggbbaa)"`.
+Save MUST write a user preset containing the complete tuned schema: active colors + angle, inactive color, border size, glow block (only when present), the fixed `windowrulev2` pair (only when the rule state is on), file-local curve definitions for every referenced non-`default` bezier, and the three animation leaves. Re-selecting the saved preset MUST reproduce the tuned parameters (round-trip). Tokens MUST re-emit bare (`primary`); custom colors MUST emit `"rgba(rrggbbaa)"`.
 
 #### Scenario: Save round-trips
 
 - GIVEN a tuned state (3 custom colors, angle 45, glow on, rule on)
 - WHEN the user saves as "My Glow" and clicks its card
-- THEN the tune pane shows the identical 3 colors, angle, glow fields, and rule state
+- THEN the tune pane shows the identical 3 colors, angle, and glow fields, and the rule state survives the round-trip
 
 #### Scenario: Toggles omit blocks
 
-- GIVEN glow absent and rule toggle off
+- GIVEN glow absent and rule state off
 - WHEN the user saves
 - THEN the file contains no `decoration.shadow` block and no `windowrulev2` block
 
-EVERY tune control MUST carry a clear human-readable description rendered next to it: each color slot, angle, inactive color, size, each glow field, each animation leaf field, the rule toggle, slot add/remove, and the live-vs-saved status. Descriptions MUST state what the control does in plain language (no bare parameter names as the only label).
+EVERY tune control MUST carry a clear human-readable description rendered next to it: each color slot, angle, inactive color, size, each glow field, slot add/remove, and the live-vs-saved status. Descriptions MUST state what the control does in plain language (no bare parameter names as the only label).
 
 #### Scenario: Descriptions present
 
 - GIVEN the rebuilt tune pane
 - WHEN inspected control by control
-- THEN each of slots, angle, inactive, size, glow fields, leaf fields, rule toggle, add/remove, and status shows its description
+- THEN each of slots, angle, inactive, size, glow fields, add/remove, and status shows its description
+
+Every block of the pane MUST live in its OWN container carrying the block's title and one description line saying what the block controls. Each container MUST paint its own surface (the pane's `bg-card` fill, a 1px `border` hairline, `radius-8` corners and 12px padding) so a reader can tell where a block ends and the next begins. A container MUST NOT add, remove or reorder a keyboard stop, and a container whose block is absent MUST paint nothing.
+
+#### Scenario: Every block is delimited
+
+- GIVEN the tune pane is open
+- WHEN it is inspected block by block
+- THEN Geometry, Gradient angle, Inactive colour, Active colours, Slot add/remove, Glow and Save each render inside their own surface with a title and a description
+
+Every user-visible string in the tune pane MUST be read from the `BordersText` global, never hardcoded in the section. Each label MUST be registered in the text global, the `en` and `es` message maps, the panel i18n applier and the label table that pins the pane's strings, so the pane renders in English and neutral Spanish without a hardcoded fallback.
+
+#### Scenario: Labels come from the text global
+
+- GIVEN the tune pane with a language applied
+- WHEN the section is inspected for a hardcoded label
+- THEN every label is read from `BordersText` and switching the language repaints the pane
 
 The pane MUST render one color slot per preset color (2..8). Add/remove controls MUST clamp to 2..8 and explain the range. Slot order MUST match file order.
 
@@ -58,28 +74,36 @@ Each slot MUST offer **Follow theme** (6 large palette-token swatches: primary, 
 - WHEN the user picks the tertiary swatch, then switches to Custom and drags hue
 - THEN the slot value updates in both modes and the preview tracks live
 
-Presets with `decoration.shadow` MUST show the full glow field set (enabled, range, render_power, color, color_inactive). Presets without it MUST show an addable empty state; adding creates default glow state, removing returns to the empty state.
+The glow block MUST always be present, headed by its title and description. Its enable control MUST be a switch — the same pill switch the preset cards use, with its animated background and travelling knob — mounted in BOTH states so the row never jumps. Turning the switch ON MUST create the default glow state; turning it OFF MUST return to the empty state.
 
 #### Scenario: Addable glow
 
-- GIVEN `01_cascade.lua` loaded (no glow)
-- WHEN the user adds glow, sets range, and saves
-- THEN the saved file contains a `decoration.shadow` block with that range
+- GIVEN `01_cascade.lua` loaded (no glow, the switch OFF and the empty-state line shown)
+- WHEN the user turns the glow switch ON, sets range, and saves
+- THEN the body folds open and the saved file contains a `decoration.shadow` block with that range
 
-The pane MUST expose the three leaves (`borderangle`, `border`, `fadeShadow`) with enabled, speed, bezier (the preset's own curves plus `default`), and style. Curve names are file-local: the bezier list MUST come from the loaded preset, never a global list.
+The glow body MUST be always mounted inside a wrapper whose height animates from 0 to the body's own content height, so enabling the glow unfolds the body (250ms `ease-in-out-back` in, 150ms `ease-in` out) instead of appearing at full size. With the glow on the body MUST carry range, render_power, color and color_inactive. The OFF-state line MUST fold the same way in BOTH directions. The fold MUST NOT change the keyboard stop count: a collapsed body has no reachable stops while the glow is off.
 
-#### Scenario: File-local curves
+#### Scenario: Glow body folds open
+
+- GIVEN the glow switch OFF
+- WHEN the user turns it ON
+- THEN the body unfolds to its content height instead of appearing at full size, and the OFF-state line folds closed
+
+The pane MUST NOT expose an editing surface for the three animation leaves (`borderangle`, `border`, `fadeShadow`). Their enabled, speed, bezier and style values MUST still round-trip through the tune state and the saved preset unchanged. Curve names are file-local: any bezier list the tune state carries MUST come from the loaded preset, never a global list.
+
+#### Scenario: Leaves round-trip without a surface
 
 - GIVEN `12_neon_cyberpunk.lua` loaded
-- WHEN the borderangle bezier list is inspected
-- THEN it offers `nv_neon_flow` and `default`, not curves from other files
+- WHEN the tune pane renders
+- THEN it shows no animation-leaf controls, and saving the preset keeps that file's own leaves
 
-The rule MUST be a single boolean toggle emitting the fixed pair (`"noshadow, focus:0"` + `"dim_around, floating:1"`) when on and nothing when off. Free-text rule editing is FORBIDDEN.
+The pane MUST NOT expose a floating-window rule control. The rule MUST remain a single boolean in the tune state that emits the fixed pair (`"noshadow, focus:0"` + `"dim_around, floating:1"`) when on and nothing when off. Free-text rule editing is FORBIDDEN.
 
-#### Scenario: Rule toggle
+#### Scenario: Rule round-trips without a surface
 
 - GIVEN a preset without `windowrulev2` (`01`-`05` shape)
-- WHEN the toggle is on and the preset is saved
+- WHEN its rule state is on and the preset is saved
 - THEN the file contains exactly the fixed pair and nothing else
 
 Every tune edit MUST apply live, honoring the product vision rule "everything instant". Edits MUST be written to a single hidden draft preset and applied through the existing file-based `apply_border` path. The draft MUST be invisible to the preset list at all times, MUST be written debounced (never on every drag step), and MUST be removed when the user saves, leaves the section, or deselects the preset. The pane MUST label working state as live but not persisted until Save.
