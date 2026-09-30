@@ -10389,7 +10389,9 @@ fn borders_glow_body_folds_open_instead_of_jumping() {
 /// the block work added. T3c-1 measured that span's honest values — closed 0,
 /// settled 4, which is also why [`GLOW_BODY_ROWS`] is asserted separately — and
 /// T3c-2 re-measured them with the Glow container in place: the instrument
-/// changed ([`glow_row_boxes`]), the values did not.
+/// changed ([`glow_row_boxes`]) and so did its pre-container counts (0/1/3
+/// there against 0/2/4 here — see that reader's docstring), but every constant
+/// below is the value measured on the shipped layout.
 const CLOSED_ROWS: usize = 0;
 
 /// …and with it settled: the now-unfocused glow header, plus the body's rows
@@ -10578,11 +10580,19 @@ fn block_below_top(
 /// `bg-card` bands are closed 1, mid 2, settled 2, which makes the mid-flight and
 /// settled counts EQUAL and kills the fold's central assertion. What a reader
 /// actually sees inside the container is the row's hairline against the
-/// container's fill, so that is what this reads. The counts it returns are
-/// exactly the ones the constants below were measured on — 0 closed, 2 mid, 4
-/// settled, delta 4 — and it was re-measured against the pre-container layout
-/// too (same 0 / 2 / 4 with the container reverted), so the instrument is
-/// layout-independent and nothing was re-baselined to fit the new shape.
+/// container's fill, so that is what this reads.
+///
+/// This instrument is NOT layout-independent, and an earlier version of this
+/// comment wrongly claimed it was. Measured with the container reverted, it
+/// returns 0 closed / 1 mid / 3 settled, not 0 / 2 / 4: the enable row carried
+/// its title then and measured 64px, outside this reader's 40..60px pair window,
+/// while T3c-2's switch-only row is 55px and falls inside it. The counts below
+/// are the ones measured on the SHIPPED layout and are honest there — an instant
+/// jump paints all four boxes mid-flight and fails. One precision, so the numbers
+/// are not read as more than they are: the settled count includes the ENABLE
+/// row's box, which the fold did not paint; it enters through the focus flip
+/// (its hairline goes icy when the header holds the keyboard), so the delta is
+/// 3 fold rows plus that one focus-dependent box.
 fn glow_row_boxes(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     y0: usize,
