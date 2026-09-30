@@ -7958,16 +7958,22 @@ fn borders_glow_switch_renders_off_and_on() {
         "the ON switch pill must paint accent-green (pixels={on_green})"
     );
 
-    // The pill's grey face on the OFF frame, at the OFF frame's OWN y. The row
-    // is allowed to sit lower or higher in the two frames: T2's fold mounts the
-    // glow body in both states, and a zero-height layout item still takes its
-    // spacing, so the collapsed pane reflows 8px (measured) and the header moves
-    // with it. Comparing one box across the two frames would be testing the
-    // pane's layout instead of the switch. What is NOT given up is the
-    // anti-false-green: the pill is located inside the OFF frame's own focus
-    // ring and proved by its ink, not by the absence of green. The x extent IS
-    // shared — the row's width does not reflow, only its position down the
-    // column does.
+    // The pill's grey face on the OFF frame, at the OFF frame's OWN y. The two
+    // frames are not aligned, but NOT because flipping the switch reflows
+    // anything above the fold — nothing above the fold reflows, and
+    // `borders_glow_body_folds_open_instead_of_jumping` pins that. It is the
+    // pane's own T2 collapsed-to-expanded delta: the always-mounted body wrapper
+    // takes one extra 8px spacing slot and the ScrollView is bottom-clamped, so
+    // the collapsed pane sits 8px higher than it did before T2 (measured: the
+    // OFF header focus ring was 850..913, it is 842..905). Before T2 the OFF and
+    // ON frames both showed that ring at 850..913 — flipping the switch moved
+    // the header by nothing — and after it the header moves only through the
+    // guarded `changed height` scroll-follow, in step with the block it belongs
+    // to. Comparing one box across the two frames would be testing the pane's
+    // layout instead of the switch. What is NOT given up is the anti-false-green:
+    // the pill is located inside the OFF frame's own focus ring and proved by
+    // its ink, not by the absence of green. The x extent IS shared — the row's
+    // width does not reflow.
     let (off_hx0, off_hx1) = focused_row_span(&off, 60, 68).unwrap_or_else(|| {
         panic!(
             "the OFF frame must paint the lit glow header's ring: wide icy bands={:?}",
@@ -8787,6 +8793,71 @@ fn borders_glow_body_folds_open_instead_of_jumping() {
         SETTLED_ROWS - CLOSED_ROWS,
         gap_settled - gap_mid
     );
+
+    // ── nothing ABOVE the fold may move between the two states ──
+    // The two frames are scrolled to different offsets by follow-focus (the
+    // keyboard walks from the glow header into the Range row), so a raw y says
+    // nothing; the DISTANCES between landmarks that both sit above the glow
+    // body do, because a scroll cancels out of them. Two of them, spanning the
+    // whole above-fold stack — the angle card down to the inactive-colour row,
+    // and on down to the glow header's own top edge:
+    //
+    //   * the first landmark is the pane's topmost accent-cyan block read by
+    //     `cyan_block_ends`, identical in both frames;
+    //   * the second is the inactive-colour row's card top (`bg-card`), the
+    //     first row either frame paints between those two y's;
+    //   * the third is the glow header's top edge, read twice by the only
+    //     signal each frame offers: the icy FOCUS RING's top while the header
+    //     holds the keyboard (CLOSED), and the 1px `border` line painted over
+    //     its card interior once the keyboard has walked into the body
+    //     (SETTLED) — hence the 2px slop on that one read, not on the others.
+    let above_fold_btn_to_inactive_closed = rows_closed[0].0 - chip_closed;
+    let above_fold_btn_to_inactive_settled = rows_settled[0].0 - chip_settled;
+    assert!(
+        (above_fold_btn_to_inactive_closed as i64 - above_fold_btn_to_inactive_settled as i64)
+            .abs()
+            <= 2,
+        "the angle card and the inactive-colour row sit ABOVE the glow fold and must not move \
+         when the switch flips: that distance is {}px closed against {}px settled",
+        above_fold_btn_to_inactive_closed,
+        above_fold_btn_to_inactive_settled
+    );
+
+    let (header_ring_closed, _) = focused_row_span(&closed, 60, 68).unwrap_or_else(|| {
+        panic!(
+            "the closed frame parks the keyboard on the glow header, so its 64px icy ring must \
+             paint; icy bands={:?}",
+            color_row_bands(&closed, ICY, 40, 300)
+        )
+    });
+    assert!(
+        rows_settled.len() >= 2,
+        "the settled frame must paint the inactive row and then the header row as its first two \
+         cards, so the header's top edge can be read: {rows_settled:?}"
+    );
+    let above_fold_inactive_to_header_closed = header_ring_closed - rows_closed[0].0;
+    let above_fold_inactive_to_header_settled = (rows_settled[1].0 - 1) - rows_settled[0].0;
+    assert!(
+        (above_fold_inactive_to_header_closed as i64
+            - above_fold_inactive_to_header_settled as i64)
+            .abs()
+            <= 2,
+        "the inactive-colour row and the glow header's top edge sit ABOVE the fold, so their \
+         distance must not change when the switch flips: {}px closed against {}px settled \
+         (inactive row at {} closed / {} settled, header top at {} closed / {} settled)",
+        above_fold_inactive_to_header_closed,
+        above_fold_inactive_to_header_settled,
+        rows_closed[0].0,
+        rows_settled[0].0,
+        header_ring_closed,
+        rows_settled[1].0 - 1
+    );
+    println!(
+        "[T2] above the fold, closed vs settled: button→inactive \
+         {above_fold_btn_to_inactive_closed}/{above_fold_btn_to_inactive_settled}px, \
+         inactive→header-top {above_fold_inactive_to_header_closed}/\
+         {above_fold_inactive_to_header_settled}px"
+    );
 }
 
 /// How many card rows sit between the strip's active chip and the Save button
@@ -8878,6 +8949,153 @@ fn wide_icy_bands_between(
         // row's own border paints a single icy row, which is not a track.
         .filter(|(top, bottom)| *top > y0 && *top < y1 && bottom - top >= 3)
         .collect()
+}
+
+// ── The glow OFF-state description folds, in BOTH directions ─────────
+// `if !root.glow-enabled : Text` (the description that explains an empty glow
+// block) made the text APPEAR at full size the instant the switch went off,
+// while the body folded closed — the mirror of the defect the fold itself
+// fixed, and the acceptance criterion's "no activated block appears instantly
+// where its sibling animates" read the other way round. It is now mounted in
+// both states behind a wrapper whose height animates 0 → the line's own height
+// with `animate opacity`, gated on `!root.glow-enabled`.
+//
+// How the two directions are read off the render: as the description's own ink
+// in a window hung under the glow HEADER's ring. Every frame of this test keeps
+// the keyboard parked on that stop, so the header is always mounted and lit, and
+// the description — the glow group's first folded child, right under it — keeps
+// the same distance below the ring in every frame whatever its sibling body is
+// doing. The one other `text-muted` run that can reach that window is the body's
+// own first row, and only while the body is open: a stable ~40px against the
+// ~420px the line paints, which is the margin the thresholds below are built on.
+// The `off mid` render below is the frame the panel is part-way through the
+// entry, and it is the reason the mid count is read with the same tolerance for
+// all three frames: the half-way line is painted alpha-blended towards the pane
+// behind it.
+
+#[test]
+fn borders_glow_off_description_folds_instead_of_popping() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_glow_fixture();
+    win.set_panel_kbd_preview_index(1 + 9); // 1 preset card + the glow header
+    settle_frames(80);
+    assert!(
+        win.get_tune_glow_enabled(),
+        "the fixture mounts the glow body ON so the four body rows have geometry"
+    );
+    let on_settled = win.window().take_snapshot().expect("glow on, settled");
+    save_slice_png(on_settled.clone(), "borders_glow_desc_1_on_settled.png");
+
+    // The switch goes off: ONE frame later the description must still be shut.
+    win.set_tune_glow_enabled(false);
+    settle_frames(1);
+    let off_tick = win.window().take_snapshot().expect("glow off, first frame");
+    save_slice_png(off_tick.clone(), "borders_glow_desc_2_off_tick1.png");
+    // …then well inside the fold (8 frames ≈ 128ms of the 250ms entry).
+    settle_frames(7);
+    let off_mid = win.window().take_snapshot().expect("glow off, mid-fold");
+    save_slice_png(off_mid.clone(), "borders_glow_desc_2b_off_mid.png");
+    settle_frames(72);
+    let off_settled = win.window().take_snapshot().expect("glow off, settled");
+    save_slice_png(off_settled.clone(), "borders_glow_desc_3_off_settled.png");
+
+    // …and back on: ONE frame later it must still be almost all there.
+    win.set_tune_glow_enabled(true);
+    settle_frames(1);
+    let on_tick = win.window().take_snapshot().expect("glow on, first frame");
+    save_slice_png(on_tick.clone(), "borders_glow_desc_4_on_tick1.png");
+
+    let ink_off_tick = glow_desc_ink(&off_tick, 30);
+    let ink_off_settled = glow_desc_ink(&off_settled, 30);
+    let ink_on_tick = glow_desc_ink(&on_tick, 30);
+    let ink_off_tick_loose = glow_desc_ink(&off_tick, 70);
+    let ink_off_mid_loose = glow_desc_ink(&off_mid, 70);
+    let ink_off_settled_loose = glow_desc_ink(&off_settled, 70);
+    println!(
+        "[desc] ink: off settled={ink_off_settled} off first frame={ink_off_tick} on first \
+         frame={ink_on_tick}; loose: off settled={ink_off_settled_loose} off first frame=\
+         {ink_off_tick_loose} off mid={ink_off_mid_loose}"
+    );
+
+    // The window really does hold the description when it is open, so neither
+    // assertion below is measuring an empty strip of pane.
+    assert!(
+        ink_off_settled > 200,
+        "the glow-off frame must paint the empty-state description inside the window: \
+         {ink_off_settled} text-muted pixels in the {DESC_WINDOW}px under the header ring"
+    );
+
+    // OFF, one frame in: the description must still be SHUT — it may not even
+    // reach half of what it paints when open. With the old `if` the text was
+    // created at its full size on this very frame, so the window was already
+    // full of it.
+    assert!(
+        ink_off_tick * 2 < ink_off_settled,
+        "the description must FOLD OPEN when the glow turns off, not appear at full size: one \
+         frame in the window holds {ink_off_tick} text-muted pixels against {ink_off_settled} \
+         when open. A first-frame count at the settled one means the whole line appeared at once \
+         while its sibling body was folding"
+    );
+
+    // ON, one frame in: it must still be almost all there — the same "nothing
+    // jumps to full size" rule, read the other way.
+    assert!(
+        ink_on_tick * 2 > ink_off_settled,
+        "the description must FOLD SHUT when the glow turns on, not vanish: one frame in the \
+         window holds {ink_on_tick} text-muted pixels against {ink_off_settled} while it is \
+         open. A first-frame count of zero means the line left in one step"
+    );
+
+    // …and eight frames in, the fold is genuinely part-way rather than at either
+    // end. The three counts are taken with the SAME tolerance: the half-way
+    // frame paints its glyphs alpha-blended towards the pane behind them, which
+    // a tolerance tight enough for a settled frame reads as bare background.
+    assert!(
+        ink_off_tick_loose < ink_off_mid_loose && ink_off_mid_loose < ink_off_settled_loose,
+        "eight frames after the switch goes off the description must be VISIBLY opening — the \
+         window holds {ink_off_tick_loose} painted pixels on the first frame, \
+         {ink_off_mid_loose} eight frames in and {ink_off_settled_loose} settled. Equal \
+         first-frame and eight-frame counts mean no animation; an eight-frame count already at \
+         the settled one means it jumped"
+    );
+}
+
+/// `HveColors.text-muted` (#7d8590) — the ink of every description line in the
+/// pane, the glow block's OFF-state description included.
+const TEXT_MUTED: (u8, u8, u8) = (125, 133, 144);
+
+/// How deep the window under the glow header's ring reaches. The description is
+/// one wrapped 11px line (~12px tall, measured) with the pane's 8px gap above
+/// it, so this covers the line whole; the body's first row starts below the
+/// window once the body is open, and its own centred text lands past it.
+const DESC_WINDOW: usize = 32;
+
+/// `text-muted` pixels the description paints in that window. `tol` is the
+/// caller's: a mid-fold frame paints the same glyphs alpha-blended towards the
+/// pane behind them, so a tolerance tight enough for a settled frame reads those
+/// rows as bare background.
+fn glow_desc_ink(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, tol: i16) -> usize {
+    let (_, header_bottom) = glow_header_ring(buf);
+    count_color_in_box(
+        buf,
+        TEXT_MUTED,
+        tol,
+        360,
+        header_bottom + 1,
+        buf.width() as usize,
+        header_bottom + 1 + DESC_WINDOW,
+    )
+}
+
+/// The glow header's own ring in a frame: `(top, bottom)`.
+fn glow_header_ring(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize, usize) {
+    focused_row_span(buf, 60, 68).unwrap_or_else(|| {
+        panic!(
+            "the lit glow header must paint its 64px icy ring in every frame of this test; \
+             icy bands={:?}",
+            color_row_bands(buf, ICY, 40, 300)
+        )
+    })
 }
 
 // ── Borders custom colour picker (task 3.6) ───────────────────────────
