@@ -98,22 +98,29 @@ Out: the border presets themselves, the tune-pane UI work (separate document:
 
 ## Tasks
 
-- [ ] **F1 — RED: a test that fails today.** In `src/scripts_contract.rs` (or the
-      existing sandbox harness style), run the **real** `assemble.sh` over every file in
-      `assets/borders/` and assert that every bare palette token each preset references
-      is defined in the emitted `[SYSTEM: COLORS]` block. It must fail on the current
-      code for the right reason. Generate the fragment directory inside the sandbox —
-      `assets/fragments/` is gitignored, so the test must not depend on it.
-- [ ] **F2 — GREEN: make the emission data-driven.** Emit every token the presets and
-      the specs promise (`primary`, `secondary`, `tertiary`, `error`, `surface`,
-      `surface_lowest`, `accent`), driven from one declared list rather than repeated
-      literal lines. Give `HVE_ERROR` the same lifecycle treatment as the others in
-      `colors.sh` (reset, failed-step cleanup, fallback, export) so "forgot to reset or
-      export one" cannot recur. No value may be hardcoded in `assemble.sh`.
-- [ ] **F3 — Verify by regenerating.** Confirm the emitted overlay defines every
-      referenced token, and hand the keeper the exact command to regenerate the live
-      overlay so the Hyprland error disappears. The keeper's own reload is the only
-      valid proof that Hyprland now accepts the file.
+- [x] **F1 — RED: a test that fails today.** — commit `e678323`
+      `src/scripts_contract.rs` gained an `OverlaySandbox` (the house pattern from
+      `reload_coalescer.rs`) that runs the REAL `border.sh` → `assemble.sh` over all
+      fourteen presets plus a UI-shaped draft fragment, with the fragment directory
+      built inside the sandbox because `assets/fragments/` is gitignored.
+      RED output named exactly the predicted offenders: `04_tri` tertiary, `05_spectrum`
+      tertiary+error, `07_infinity` tertiary+error, `09_glitch` error, `14_looper`
+      tertiary.
+- [x] **F2 — GREEN: make the emission data-driven.** — commit `e678323`
+      `colors.sh` declares ONE roster (`HVE_PALETTE_TOKENS`, `:19`) plus
+      `hve_palette_token_var`, and derives the reset, the failed-step cleanup, the
+      fallbacks, the export and the extractor's accepted names from it. `HVE_ERROR`
+      gained the lifecycle it lacked, with its own fallback `#f38ba8` (distinct from
+      every sibling, honouring the file's own rule). `assemble.sh` emits one line per
+      declared role through indirection and carries no palette name or value of its own.
+- [x] **F3 — Verify by regenerating.** — the live install was the real surprise; see
+      below. `hyprctl configerrors` now returns EMPTY, which is the compositor's own
+      verdict rather than our assumption.
+- [x] **F4 — Audit follow-ups.** — commit `1bb0c13`. The independent audit refuted two
+      things, both real: `colors.sh` promised a loud refusal the code did not implement
+      (the `||` bound to `printf`, so an unknown token exported an empty value), and the
+      test's reference scanner required exactly `colors = ` so `colors={…}` slipped past.
+      Both fixed; two tests prove them, each failing when the fix is reverted.
 
 ## Acceptance criteria
 
@@ -129,4 +136,50 @@ Out: the border presets themselves, the tune-pane UI work (separate document:
 ## Progress
 
 - 2026-09-30 — Defect found live by the keeper, root-caused by a read-only
-  investigation, documented here. No source file touched yet.
+  investigation, documented here.
+- 2026-09-30 — F1/F2 landed as `e678323`. Full suite 1186 passed, architecture ratchet
+  7 passed, build clean. Independent cross-model audit returned PASS with two refuted
+  findings, both then fixed in `1bb0c13` (suite 1188).
+- 2026-09-30 — **LIVE FIX APPLIED AND PROVEN.** The repo fix alone did not repair the
+  desktop: the running watcher assembles the overlay from an INSTALLED copy at
+  `~/.local/bin/assets/scripts/`, dated 2026-09-26, which predated the colour-module
+  split and had no `color_sources.d/` at all. Copying only the emitter would have made
+  the roster guard refuse loudly and leave the old overlay in place.
+  What was done: backed the installed tree up to
+  `~/.local/bin/assets.bak-20260930-052601-pre-palette-fix`; copied `assemble.sh`,
+  `colors.sh` and `color_sources.d/` into the installed tree; deliberately did NOT
+  overwrite `color_watcher.sh`, because it is a RUNNING process (PID 4552) and replacing
+  a script under a live bash interpreter corrupts it. `utils.sh` was not needed: the new
+  `colors.sh` resolves its own cache path (`colors.sh:102,179`). Then ran the installed
+  `assemble.sh`, which wrote the overlay and queued the coalesced reload.
+  Result: the palette now carries all seven roles with the THEME's real colours
+  (`tertiary = "#9566cc"`, `error = "#c16f31"`, not the fallbacks), the log line still
+  reads `Colors from: applied theme snapshot`, and `hyprctl configerrors` returns empty.
+  The desktop no longer rejects its config.
+
+## Known debt (named, not fixed)
+
+1. **`assets/scripts/get_colors.sh:10` keeps a second hand-written token list** — six
+   names, and it omits `error`. It feeds the JSON that Rust deserialises into
+   `ColorScheme`, which has no `error` field, so it is not broken; but it is a second
+   list that will age at the roster's pace. Deriving it from the roster would be honest
+   with the agnostic norm.
+2. **`first_palette_literal` only recognises `#rrggbb`.** A value written as `0xff…` or
+   `rgba(…)` inside `assemble.sh` would escape the structural guard. The value test would
+   still catch a KNOWN name; an unknown one would slip.
+3. **No script under `assets/scripts/` actually enables `set -u`.** The safety the fix
+   preserves is a written contract, not an active mechanism. Worth deciding whether to
+   make it real.
+4. **`HVE_OUTLINE` / `HVE_SHADOW`** are set by the descriptor file mappings but sit
+   outside the roster, so the reset does not govern them. Cosmetic today (they are never
+   emitted); they are surviving step variables.
+5. **The whole class lives in a blind spot**: `assemble.sh` and `color_sources.d/` are
+   not in `SCANNED_FILES` (`src/architecture_contract.rs`), so the architecture test does
+   not watch that path. This is the same item the capability-routing closure record
+   already names (`odd/tasks/hve-capability-routing-closure.md`, open item 4).
+
+## Install lesson worth remembering
+
+A defect fixed in `assets/` is NOT fixed on the keeper's machine until the installed copy
+under `~/.local/bin/assets/` is updated. The install is a snapshot; the repo is the
+source. Any live verification must first confirm WHICH copy the running process reads.
