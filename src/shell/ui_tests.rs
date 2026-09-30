@@ -5627,6 +5627,12 @@ fn focused_row_span(
 fn borders_strip_renders_correct_chip_count() {
     use slint::ComponentHandle as _;
     let win = borders_tune_pane_fixture(&["p:primary", "p:secondary", "p:tertiary"]);
+    // T3c-1 maintenance: the pane grew ~112px of block headers, which moved the
+    // strip past the panel's content box in the suite's 1080px window and clipped
+    // the swatches this test measures. Only the WINDOW is taller; every
+    // assertion, threshold and tolerance below is unchanged.
+    win.window().set_size(slint::PhysicalSize::new(1920, 1440));
+    settle_frames(8);
 
     let shot = win.window().take_snapshot().expect("strip snapshot");
     save_slice_png(shot.clone(), "borders_strip_closed_3chips.png");
@@ -6244,7 +6250,7 @@ type BordersLabel = (
 );
 
 #[rustfmt::skip]
-fn borders_labels() -> [BordersLabel; 60] {
+fn borders_labels() -> [BordersLabel; 61] {
     [
         ("header-title", |t| t.get_header_title().to_string(),
             "Borders", "Bordes"),
@@ -6334,6 +6340,9 @@ fn borders_labels() -> [BordersLabel; 60] {
 
         ("save-title", |t| t.get_save_title().to_string(),
             "Save as Preset", "Guardar como Preajuste"),
+        ("save-desc", |t| t.get_save_desc().to_string(),
+            "Name the preset and save it to your own list.",
+            "Pon un nombre al preajuste y guárdalo en tu lista."),
         ("save-placeholder", |t| t.get_save_placeholder().to_string(),
             "Border preset name…", "Nombre del preajuste…"),
         ("save-button", |t| t.get_save_button().to_string(),
@@ -7686,7 +7695,11 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     ));
 
     let win = crate::MainWindow::new().unwrap();
-    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    // T3c-1 maintenance: the pane grew ~112px of block headers, which moved the
+    // strip past the panel's content box in the suite's 1080px window and clipped
+    // the swatches this test measures. Only the WINDOW is taller; every
+    // assertion, threshold and tolerance below is unchanged.
+    win.window().set_size(slint::PhysicalSize::new(1920, 1440));
     win.set_mounted_screen(1);
     win.set_expanded(true);
     win.set_gallery_empty(false);
@@ -8689,6 +8702,573 @@ fn borders_geometry_container_keeps_its_stops_reachable_and_in_order() {
     );
 }
 
+// ── T3c-1 — the angle and inactive groups are containers with headers (D) ──
+// The treatment T3b gave Geometry, applied to the two groups of this slice that
+// hold no conditional child: each lives in a container painting the pane's OWN
+// card surface (`HveColors.bg-card`, 1px `HveColors.border`, `radius-8`, 12px
+// padding — the compact-row / glow-header idiom, reused) and carries a header.
+//
+// Both headers reuse the title the group ALREADY had — the label of its own
+// control card ("Gradient Angle", "Inactive") — MOVED up rather than
+// duplicated, and the loose description line that sat under each control moved
+// in with it. So this slice introduces no new copy and touches none of the five
+// registration points the i18n landmine covers; what it does change is where
+// each string is painted, and that is what the tests below read in pixels.
+//
+// Per group they pin: the control keeps its keyboard seat and its focus ring,
+// inset from the pane's content edge by the container's 1px border plus its
+// 12px padding (a direct child of `tune-col` shows no inset at all); the
+// header's title renders as real accent-cyan ink in the strip above the control;
+// and marking the `BordersText` global repaints that strip while leaving the
+// strip UNDER the control untouched — the loose line that used to be painted
+// there would land in the lower window instead, which is how a copy that moved
+// is told apart from a copy that was duplicated or left behind.
+
+/// How far LEFT of `TUNE_CONTENT_LEFT` the container's own box edge sits. That
+/// constant was measured on the rounded icy span of a direct child of `tune-col`
+/// (the 8px corner rounding pulls the span in from the box edge), while the
+/// container's 1px border plus its 12px padding start a few px outside it. Read
+/// from that slack leftwards, the strip beside a row is the container's own
+/// fill: measured 1057 (border) .. 1069 (row edge) in the angle group's frame.
+const CONTAINER_EDGE_SLACK: usize = 12;
+
+/// The rows of the two windows one moved copy is read in, relative to the
+/// control's own focus ring: the container's header above it, and the strip
+/// under it where the loose line used to be painted.
+fn t3c1_copy_windows(
+    before: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    after: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    top: usize,
+    bottom: usize,
+) -> (usize, usize) {
+    (
+        count_buffer_diff_region(
+            before,
+            after,
+            1060,
+            top.saturating_sub(HEADER_WINDOW),
+            1900,
+            top,
+        ),
+        count_buffer_diff_region(before, after, 1060, bottom + 6, 1900, bottom + HEADER_WINDOW + 6),
+    )
+}
+
+/// Assert the pane's stop inventory is exactly what it was before T3c-1: the
+/// containers add no seat, and both mirrors of the count still agree.
+fn assert_tune_inventory_untouched(section: &str) {
+    let flat: String = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "out property <int> tune-count: 9 + root.slot-stops + (root.tune-glow-enabled ? 4 : 0);"
+        ),
+        "a container must not add or move a keyboard stop: the pane's tune-count expression changed"
+    );
+    assert_eq!(
+        crate::callbacks::borders_tune_stop_count(2, true),
+        16,
+        "a container must not add a keyboard stop: 9 fixed + 3 slot + 4 glow"
+    );
+}
+
+/// T3c-1 — the Gradient-angle group lives in a container with a header, and its
+/// control sits inside that container instead of reaching the pane's edge.
+#[test]
+fn borders_angle_group_paints_a_container_with_a_header_around_its_control() {
+    use slint::{ComponentHandle as _, Global as _};
+
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+    assert_tune_inventory_untouched(SECTION);
+    // The header's title is the group's EXISTING label, read once (a second
+    // read, or a second title string, is the duplicate the keeper refused), and
+    // the description is read from the global exactly once — inside the header.
+    let code: String = SECTION
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        code.matches("BordersText.angle-label").count(),
+        1,
+        "the angle container's header must carry the group's existing title ONCE"
+    );
+    assert_eq!(
+        code.matches("BordersText.angle-desc").count(),
+        1,
+        "the angle description must be read once, from the text global, inside the header"
+    );
+
+    let win = borders_tune_glow_fixture();
+    // Tune-local 4 is the angle row (size, radius, gap-in, gap-out, angle…).
+    let en = render_tune_local_stop(&win, 4);
+    save_slice_png(en.clone(), "borders_t3c1_angle_group.png");
+
+    let (top, bottom) = focused_row_span(&en, 88, 104).unwrap_or_else(|| {
+        panic!(
+            "the angle stop must still paint the 96px ring of its lit row: icy bands={:?}",
+            color_row_bands(&en, ICY, 40, 300)
+        )
+    });
+    let (left, right) = icy_span_at(&en, top).expect("the angle ring must paint its top edge");
+    let y0 = top.saturating_sub(HEADER_WINDOW);
+    let (card, cyan) = (
+        count_color_in_box(&en, BG_CARD, 4, 1060, y0, 1900, top),
+        count_color_in_box(&en, ACCENT_CYAN, 30, 1060, y0, 1900, top),
+    );
+    // …and the surface the container paints BESIDE the control: the 11px strip
+    // between the pane's content edge and the ring is the container's fill. It
+    // is card BEFORE the container only if the row has moved inside one — a
+    // direct child of `tune-col` reaches the edge and paints its own lit
+    // `bg-hover` there (which is not `bg-card`, 9/12/16 apart), so this count is
+    // the container itself, not the row.
+    let beside = count_color_in_box(
+        &en,
+        BG_CARD,
+        4,
+        TUNE_CONTENT_LEFT - CONTAINER_EDGE_SLACK,
+        top + 4,
+        left,
+        bottom - 4,
+    );
+    println!(
+        "[T3c-1 angle] ring y={top}..{bottom} x={left}..{right}; window y={y0}..{top}: \
+         bg-card={card} accent-cyan={cyan}; container fill left of the ring={beside}"
+    );
+    assert!(
+        left >= TUNE_CONTENT_LEFT + CONTAINER_INSET_MIN,
+        "the angle control must sit INSIDE the container: its ring starts at x={left}, while a row \
+         that is a direct child of `tune-col` starts at {TUNE_CONTENT_LEFT} — the container's 1px \
+         border plus its 12px padding must push it to {}+",
+        TUNE_CONTENT_LEFT + CONTAINER_INSET_MIN
+    );
+    assert!(
+        right <= TUNE_CONTENT_RIGHT - CONTAINER_INSET_MIN,
+        "…and inside it on the right edge too: the ring ends at x={right}, the pane's content edge \
+         is {TUNE_CONTENT_RIGHT}"
+    );
+    assert!(
+        beside > 300,
+        "the container must paint its own surface BESIDE the control: only {beside} `bg-card` \
+         pixels in the strip between the pane's content edge and the ring, where the container's \
+         border and its 12px padding are (measured 4 before the container, against 957 with it: a \
+         direct child of `tune-col` fills that strip with its own lit `bg-hover`)"
+    );
+    assert!(
+        cyan > 40,
+        "the container's header must RENDER its title above the control: {cyan} accent-cyan pixels \
+         in the {HEADER_WINDOW}px window above the ring, against 0 measured there before the \
+         container. The header's title is the only accent-cyan ink that can sit there"
+    );
+
+    // The title and the description MOVED: marking the global must repaint the
+    // header window, and must leave the strip under the row alone — the loose
+    // line that used to live there would be repainted instead.
+    let t = crate::BordersText::get(&win);
+    t.set_angle_desc(slint::SharedString::from("MARKER-T3C1-ANGLE-DESC"));
+    settle_frames(8);
+    let marked = win.window().take_snapshot().expect("angle header marked");
+    save_slice_png(marked.clone(), "borders_t3c1_angle_group_marked.png");
+    let (marked_top, marked_bottom) = focused_row_span(&marked, 88, 104)
+        .unwrap_or_else(|| panic!("the marked frame must still paint the lit angle row"));
+    assert!(
+        marked_top.abs_diff(top) <= 8,
+        "marking the description must not reflow the pane: the ring moved {top} → {marked_top}"
+    );
+    let (header, below) = t3c1_copy_windows(&en, &marked, marked_top, marked_bottom);
+    println!("[T3c-1 angle] description marker: header={header} under-the-row={below}");
+    assert!(
+        header > 60,
+        "the description must paint INSIDE the container's header: marking it changed only \
+         {header} pixels in the window above the control"
+    );
+    assert!(
+        below < 20,
+        "the old loose description line must be GONE from under the control: marking it changed \
+         {below} pixels below the row"
+    );
+
+    // The title, the same way — and once: a title left in the control as well
+    // as in the header (the duplicate) would repaint inside the row's own ring.
+    t.set_angle_label(slint::SharedString::from("MARKER-T3C1-ANGLE-TITLE"));
+    settle_frames(8);
+    let titled = win.window().take_snapshot().expect("angle title marked");
+    save_slice_png(titled.clone(), "borders_t3c1_angle_title_marked.png");
+    let (t_top, t_bottom) = focused_row_span(&titled, 88, 104)
+        .unwrap_or_else(|| panic!("the titled frame must still paint the lit angle row"));
+    let (title_header, _) = t3c1_copy_windows(&marked, &titled, t_top, t_bottom);
+    let title_in_row = count_buffer_diff_region(&marked, &titled, 1060, t_top + 4, 1900, t_bottom - 4);
+    println!("[T3c-1 angle] title marker: header={title_header} inside-the-row={title_in_row}");
+    assert!(
+        title_header > 60,
+        "the title must paint INSIDE the container's header: marking it changed only \
+         {title_header} pixels above the control"
+    );
+    assert!(
+        title_in_row < 30,
+        "the control may not paint the group's title a SECOND time: marking it changed \
+         {title_in_row} pixels inside the row's own ring — that is the duplicate label the \
+         container exists to avoid"
+    );
+
+    // …and the copy is the one the language selects: the Spanish frame renders
+    // the header's own translated line, through the production path `main()`
+    // uses (`panel_i18n::apply_borders`), not a claim about the JSON.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("angle container, Spanish");
+    save_slice_png(es.clone(), "borders_t3c1_angle_group_es.png");
+    let es_top = focused_row_span(&es, 88, 104)
+        .expect("the Spanish frame must still paint the lit angle row")
+        .0;
+    let es_muted = count_color_in_box(
+        &es,
+        TEXT_MUTED,
+        30,
+        1060,
+        es_top.saturating_sub(HEADER_WINDOW),
+        1900,
+        es_top,
+    );
+    println!("[T3c-1 angle] Spanish header window: text-muted={es_muted}");
+    assert!(
+        es_muted > 150,
+        "the Spanish copy must render in the container's header too: {es_muted} text-muted pixels \
+         above the ring. A missing `es` key falls back to the English default"
+    );
+}
+
+/// T3c-1 — the Inactive-colour group lives in a container with a header, its
+/// compact row sits inside it, and the row's own title is GONE from the row
+/// (moved up) instead of being painted twice.
+#[test]
+fn borders_inactive_group_paints_a_container_with_a_header_around_its_control() {
+    use slint::{ComponentHandle as _, Global as _};
+
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+    assert_tune_inventory_untouched(SECTION);
+    let code: String = SECTION
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        code.matches("BordersText.inactive-label").count(),
+        1,
+        "the inactive container's header must carry the group's existing title ONCE — the compact \
+         row below it may not paint the same label a second time"
+    );
+    assert_eq!(
+        code.matches("BordersText.inactive-desc").count(),
+        1,
+        "the inactive description must be read once, from the text global, inside the header"
+    );
+
+    let win = borders_tune_glow_fixture();
+    // Tune-local 5 is the inactive-colour row.
+    let en = render_tune_local_stop(&win, 5);
+    save_slice_png(en.clone(), "borders_t3c1_inactive_group.png");
+
+    let (top, bottom) = focused_row_span(&en, 48, 62).unwrap_or_else(|| {
+        panic!(
+            "the inactive stop must still paint the 56px ring of its lit compact row: icy bands={:?}",
+            color_row_bands(&en, ICY, 40, 300)
+        )
+    });
+    let (left, right) = icy_span_at(&en, top).expect("the inactive ring must paint its top edge");
+    let y0 = top.saturating_sub(HEADER_WINDOW);
+    let (card, cyan) = (
+        count_color_in_box(&en, BG_CARD, 4, 1060, y0, 1900, top),
+        count_color_in_box(&en, ACCENT_CYAN, 30, 1060, y0, 1900, top),
+    );
+    // NOT asserted, and stated so it is not mistaken for proof: the ink counts
+    // of the window above this row do not separate the two layouts — BEFORE the
+    // container that window already held part of the angle control's selected
+    // 60x32 cyan pill (measured 168 cyan px, against 87 after: the pill left the
+    // window when the angle container moved it above). What DOES separate them
+    // is where the group's own copy paints, read below by marking the global.
+    let beside = count_color_in_box(
+        &en,
+        BG_CARD,
+        4,
+        TUNE_CONTENT_LEFT - CONTAINER_EDGE_SLACK,
+        top + 4,
+        left,
+        bottom - 4,
+    );
+    println!(
+        "[T3c-1 inactive] ring y={top}..{bottom} x={left}..{right}; window y={y0}..{top}: \
+         bg-card={card} accent-cyan={cyan}; container fill left of the ring={beside}"
+    );
+    assert!(
+        left >= TUNE_CONTENT_LEFT + CONTAINER_INSET_MIN,
+        "the inactive row must sit INSIDE the container: its ring starts at x={left}, while a row \
+         that is a direct child of `tune-col` starts at {TUNE_CONTENT_LEFT}"
+    );
+    assert!(
+        right <= TUNE_CONTENT_RIGHT - CONTAINER_INSET_MIN,
+        "…and inside it on the right edge too: the ring ends at x={right}, the pane's content edge \
+         is {TUNE_CONTENT_RIGHT}"
+    );
+    assert!(
+        beside > 300,
+        "the container must paint its own surface BESIDE the row: only {beside} `bg-card` pixels \
+         in the strip between the pane's content edge and the ring, where the container's border \
+         and its 12px padding are (measured 0 before the container: a direct child of `tune-col` \
+         fills that strip with its own lit `bg-hover`)"
+    );
+
+    // The title MOVED out of the row: marking it must repaint the header window
+    // and must leave the row's own interior alone. A title left in the row — the
+    // duplicate — paints in the ring instead, which is the window below.
+    let t = crate::BordersText::get(&win);
+    t.set_inactive_label(slint::SharedString::from("MARKER-T3C1-INACTIVE-TITLE"));
+    settle_frames(8);
+    let titled = win.window().take_snapshot().expect("inactive title marked");
+    save_slice_png(titled.clone(), "borders_t3c1_inactive_title_marked.png");
+    let (t_top, t_bottom) = focused_row_span(&titled, 48, 62)
+        .unwrap_or_else(|| panic!("the marked frame must still paint the lit inactive row"));
+    let (title_header, _) = t3c1_copy_windows(&en, &titled, t_top, t_bottom);
+    let title_in_row = count_buffer_diff_region(&en, &titled, 1060, t_top + 4, 1900, t_bottom - 4);
+    println!(
+        "[T3c-1 inactive] title marker: header={title_header} inside-the-row={title_in_row}"
+    );
+    assert!(
+        title_header > 60,
+        "the title must paint INSIDE the container's header: marking it changed only \
+         {title_header} pixels above the row"
+    );
+    assert!(
+        title_in_row < 30,
+        "the row may not paint the group's title a SECOND time: marking it changed \
+         {title_in_row} pixels inside the row's own ring — that is the duplicate label the \
+         container exists to avoid"
+    );
+
+    // …and the description, the same way.
+    t.set_inactive_desc(slint::SharedString::from("MARKER-T3C1-INACTIVE-DESC"));
+    settle_frames(8);
+    let described = win.window().take_snapshot().expect("inactive description marked");
+    save_slice_png(described.clone(), "borders_t3c1_inactive_desc_marked.png");
+    let (d_top, d_bottom) = focused_row_span(&described, 48, 62)
+        .unwrap_or_else(|| panic!("the described frame must still paint the lit inactive row"));
+    let (desc_header, desc_below) = t3c1_copy_windows(&titled, &described, d_top, d_bottom);
+    println!("[T3c-1 inactive] description marker: header={desc_header} under-the-row={desc_below}");
+    assert!(
+        desc_header > 60,
+        "the description must paint INSIDE the container's header: marking it changed only \
+         {desc_header} pixels above the row"
+    );
+    assert!(
+        desc_below < 20,
+        "the old loose description line must be GONE from under the row: marking it changed \
+         {desc_below} pixels below it"
+    );
+
+    // Spanish, through the production i18n path.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("inactive container, Spanish");
+    save_slice_png(es.clone(), "borders_t3c1_inactive_group_es.png");
+    let es_top = focused_row_span(&es, 48, 62)
+        .expect("the Spanish frame must still paint the lit inactive row")
+        .0;
+    let es_muted = count_color_in_box(
+        &es,
+        TEXT_MUTED,
+        30,
+        1060,
+        es_top.saturating_sub(HEADER_WINDOW),
+        1900,
+        es_top,
+    );
+    println!("[T3c-1 inactive] Spanish header window: text-muted={es_muted}");
+    assert!(
+        es_muted > 150,
+        "the Spanish copy must render in the container's header too: {es_muted} text-muted pixels \
+         above the ring"
+    );
+}
+
+/// T3c-1 — the Save group lives in a container with a header, and BOTH of its
+/// keyboard stops (the preset-name field and the Save button) sit inside it.
+///
+/// The header's title is the heading the group already painted above its form
+/// (`save-title`, "Save as Preset"), MOVED into the header and read once; its
+/// description is the one NEW string of this slice, so it carries the whole i18n
+/// landmine — the property on the text global, the two JSON keys, the
+/// `panel_i18n` setter and the fixed-size `borders_labels()` table all have to
+/// name it, and the test below reads it in pixels in both languages.
+#[test]
+fn borders_save_group_paints_a_container_with_a_header_around_its_form() {
+    use slint::{ComponentHandle as _, Global as _};
+
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+    assert_tune_inventory_untouched(SECTION);
+    let code: String = SECTION
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        code.matches("BordersText.save-title").count(),
+        1,
+        "the save container's header must carry the group's EXISTING heading once"
+    );
+    assert_eq!(
+        code.matches("BordersText.save-desc").count(),
+        1,
+        "the save description must be read once, from the text global, inside the header"
+    );
+
+    let win = borders_tune_glow_fixture();
+    // Tune-local 14 is the preset-name field, 15 the Save button; both belong to
+    // this group (idx-save-name / idx-save-btn).
+    let en = render_tune_local_stop(&win, 14);
+    save_slice_png(en.clone(), "borders_t3c1_save_group.png");
+
+    let (top, bottom) = focused_row_span(&en, 28, 40).unwrap_or_else(|| {
+        panic!(
+            "the preset-name stop must still paint the 36px ring of its lit field: icy bands={:?}",
+            color_row_bands(&en, ICY, 40, 300)
+        )
+    });
+    let (left, right) = icy_span_at(&en, top).expect("the name field's ring must paint its top edge");
+    let y0 = top.saturating_sub(HEADER_WINDOW);
+    let (card, cyan, beside) = (
+        count_color_in_box(&en, BG_CARD, 4, 1060, y0, 1900, top),
+        count_color_in_box(&en, ACCENT_CYAN, 30, 1060, y0, 1900, top),
+        count_color_in_box(
+            &en,
+            BG_CARD,
+            4,
+            TUNE_CONTENT_LEFT - CONTAINER_EDGE_SLACK,
+            top + 4,
+            left,
+            bottom - 4,
+        ),
+    );
+    println!(
+        "[T3c-1 save] name-field ring y={top}..{bottom} x={left}..{right}; window y={y0}..{top}: \
+         bg-card={card} accent-cyan={cyan}; container fill left of the ring={beside}"
+    );
+    assert!(
+        left >= TUNE_CONTENT_LEFT + CONTAINER_INSET_MIN,
+        "the save form must sit INSIDE the container: the field's ring starts at x={left}, while a \
+         row that is a direct child of `tune-col` starts at {TUNE_CONTENT_LEFT}"
+    );
+    assert!(
+        right <= TUNE_CONTENT_RIGHT - CONTAINER_INSET_MIN,
+        "…and inside it on the right edge too: the ring ends at x={right}, the pane's content edge \
+         is {TUNE_CONTENT_RIGHT}"
+    );
+    assert!(
+        beside > 100,
+        "the container must paint its own surface BESIDE the form: only {beside} `bg-card` pixels \
+         in the strip between the pane's content edge and the field's ring, where the container's \
+         border and its 12px padding are (measured 0 before the container: a direct child of \
+         `tune-col` fills that strip with its own lit `bg-hover`)"
+    );
+
+    // The heading and the new description paint from the text global, INSIDE the
+    // header: marking either one repaints the strip above the form and leaves the
+    // form's own interior alone.
+    let t = crate::BordersText::get(&win);
+    t.set_save_desc(slint::SharedString::from("MARKER-T3C1-SAVE-DESC"));
+    settle_frames(8);
+    let marked = win.window().take_snapshot().expect("save header marked");
+    save_slice_png(marked.clone(), "borders_t3c1_save_desc_marked.png");
+    let (m_top, m_bottom) = focused_row_span(&marked, 28, 40)
+        .unwrap_or_else(|| panic!("the marked frame must still paint the lit name field"));
+    let (header, below) = t3c1_copy_windows(&en, &marked, m_top, m_bottom);
+    println!("[T3c-1 save] description marker: header={header} under-the-row={below}");
+    assert!(
+        header > 60,
+        "the new description must paint INSIDE the container's header: marking it changed only \
+         {header} pixels above the form"
+    );
+    assert!(
+        below < 20,
+        "…and only there: marking it changed {below} pixels under the form"
+    );
+
+    t.set_save_title(slint::SharedString::from("MARKER-T3C1-SAVE-TITLE"));
+    settle_frames(8);
+    let titled = win.window().take_snapshot().expect("save heading marked");
+    save_slice_png(titled.clone(), "borders_t3c1_save_title_marked.png");
+    let (t_top, t_bottom) = focused_row_span(&titled, 28, 40)
+        .unwrap_or_else(|| panic!("the titled frame must still paint the lit name field"));
+    let (title_header, _) = t3c1_copy_windows(&marked, &titled, t_top, t_bottom);
+    let title_in_row = count_buffer_diff_region(&marked, &titled, 1060, t_top + 40, 1900, t_bottom);
+    println!(
+        "[T3c-1 save] heading marker: header={title_header} inside-the-form={title_in_row}"
+    );
+    assert!(
+        title_header > 60,
+        "the heading must paint INSIDE the container's header: marking it changed only \
+         {title_header} pixels above the form"
+    );
+
+    // The Save BUTTON is the group's second stop, and the container must hold it
+    // too: its ring has to stay off the pane's right edge. Its 84x36 ring is
+    // NARROWER than the pane-wide bands `focused_row_span` looks for — that
+    // helper's per-row floor is 300 icy pixels and the button's border row
+    // carries ~68 — so the narrow-band reader is the one that can see it. The
+    // floor is 60 rather than 20 because the pane paints one other narrow icy
+    // mark (measured 20..36 icy pixels per row, in the geometry block, bands 30px
+    // apart) that a lower floor would mistake for the button.
+    let button_ring_top = |frame: &slint::SharedPixelBuffer<slint::Rgba8Pixel>| -> usize {
+        let bands = narrow_icy_bands(frame, 60, 200);
+        bands
+            .as_slice()
+            .windows(2)
+            .find_map(|w| {
+                let gap = w[1].0.saturating_sub(w[0].0);
+                (28..=40).contains(&gap).then_some(w[0].0)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the Save button stop must still paint its 84x36 ring (two narrow icy bands \
+                     34px apart): narrow icy bands={bands:?}"
+                )
+            })
+    };
+
+    let btn = render_tune_local_stop(&win, 15);
+    save_slice_png(btn.clone(), "borders_t3c1_save_button.png");
+    let b_top = button_ring_top(&btn);
+    let (_b_left, b_right) =
+        icy_span_at(&btn, b_top).expect("the button ring must paint its top edge");
+    println!("[T3c-1 save] button ring top={b_top} right={b_right}");
+    assert!(
+        b_right <= TUNE_CONTENT_RIGHT - CONTAINER_INSET_MIN,
+        "the Save button must sit inside the container too: its ring ends at x={b_right}, the \
+         pane's content edge is {TUNE_CONTENT_RIGHT}"
+    );
+
+    // Spanish, through the production i18n path — the ONE new string has to
+    // arrive from `i18n/es.json`, or the header paints English forever.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("save container, Spanish");
+    save_slice_png(es.clone(), "borders_t3c1_save_group_es.png");
+    let es_top = button_ring_top(&es);
+    let es_muted = count_color_in_box(
+        &es,
+        TEXT_MUTED,
+        30,
+        1060,
+        es_top.saturating_sub(HEADER_WINDOW),
+        1900,
+        es_top,
+    );
+    println!("[T3c-1 save] Spanish header window: text-muted={es_muted}");
+    assert!(
+        es_muted > 150,
+        "the Spanish copy must render in the container's header too: {es_muted} text-muted pixels \
+         above the form. A missing `es` key falls back to the English default"
+    );
+}
+
 /// How many panel pixels two frames may differ by before the pane counts as
 /// having MOVED. Measured 1983 pixels for the Add/Remove pair with the block
 /// geometry (two focus rings), against the whole panel; a rule that estimates a
@@ -8923,10 +9503,12 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
 /// * SETTLED — the fold finished; all four body rows and both tracks paint.
 ///
 /// The keyboard is parked on a DIFFERENT stop in each state, and both choices
-/// are about the landmarks rather than about the fold: the strip's active chip
-/// above it and the Save button below it are the two accent-cyan blocks that
-/// straddle the fold, so their distance is the pane's own measure of how tall
-/// the body currently is — a viewport scroll cancels out of it instead of
+/// are about the landmarks rather than about the fold: the angle control's
+/// selected pill above it and the Save button below it are the two accent-cyan
+/// blocks that straddle the fold (see `cyan_block_ends` — the locals below are
+/// named `chip_*` after earlier prose that called the first one the strip's
+/// chip, which it never was), so their distance is the pane's own measure of how
+/// tall the body currently is — a viewport scroll cancels out of it instead of
 /// counting as motion. Closed, the keyboard sits on the glow HEADER, which the
 /// fold does not move at all; open, it sits on the Range row, a real
 /// `local-focus > idx-glow-en` case for the fold's re-follow, which keeps both
@@ -8935,10 +9517,19 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
 /// which is no longer the exact colour this test reads. The stop NUMBER moves by
 /// one because opening the body is what creates the Range row — the pane's own
 /// `base-tail` arithmetic.
+///
+/// The window is 1440 tall, not the fixture's 1080, and that is the only thing
+/// this test's maintenance changed (T3c-1): the pane grew ~112px of block
+/// headers, so at 1080 the pill left the frame in the SETTLED state (measured
+/// clipped to 15 of its 32 rows against `CYAN_BLOCK_MIN_H` 28, which made
+/// `cyan_block_ends` find one block where it demands two). Every assertion,
+/// threshold and tolerance below is unchanged.
 #[test]
 fn borders_glow_body_folds_open_instead_of_jumping() {
     use slint::ComponentHandle as _;
     let win = borders_tune_glow_fixture();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1440));
+    settle_frames(8);
     // The fixture mounts the body ON (the four glow rows need real geometry);
     // this test starts collapsed and opens it. `borders_tune_stop_count(2, ..)`
     // is the map both states are checked against — `9 + slot-stops + (glow ? 4
@@ -8966,47 +9557,78 @@ fn borders_glow_body_folds_open_instead_of_jumping() {
     let settled = win.window().take_snapshot().expect("glow body settled");
     save_slice_png(settled.clone(), "borders_glow_fold_3_settled.png");
 
-    // ── the two landmarks that straddle the fold ──
-    let (chip_closed, save_closed) = cyan_block_ends(&closed);
-    let (chip_mid, save_mid) = cyan_block_ends(&mid);
-    let (chip_settled, save_settled) = cyan_block_ends(&settled);
-    let (gap_closed, gap_mid, gap_settled) = (
-        save_closed.saturating_sub(chip_closed),
-        save_mid.saturating_sub(chip_mid),
-        save_settled.saturating_sub(chip_settled),
+    // ── the landmarks, each read from the thing it belongs to ──
+    // Three anchor pairs, and the counts are read INSIDE the glow block only, so
+    // that a container elsewhere in the pane — one added above the glow block, or
+    // the save group's own surface below it — cannot move a count again:
+    //
+    //   * `pill` and `save` are the two accent-cyan blocks that straddle the fold
+    //     (`cyan_block_ends`); their distance is the pane's own measure of how
+    //     tall the body currently is, and a scroll cancels out of it;
+    //   * `glow` is the glow block's own top edge (`glow_block_top`);
+    //   * `below` is the top of the block under it, i.e. the save group's surface
+    //     (`block_below_top`) — the window's end, never the Save button inside it.
+    let (pill_closed, save_closed) = cyan_block_ends(&closed);
+    let (pill_mid, save_mid) = cyan_block_ends(&mid);
+    let (pill_settled, save_settled) = cyan_block_ends(&settled);
+    let (glow_closed, glow_mid, glow_settled) = (
+        glow_block_top(&closed, true),
+        glow_block_top(&mid, false),
+        glow_block_top(&settled, false),
     );
-    // ── what each frame paints between them ──
-    let rows_closed = body_card_rows(&closed, chip_closed, save_closed);
-    let rows_mid = body_card_rows(&mid, chip_mid, save_mid);
-    let rows_settled = body_card_rows(&settled, chip_settled, save_settled);
-    let tracks_closed = wide_icy_bands_between(&closed, chip_closed, save_closed);
-    let tracks_mid = wide_icy_bands_between(&mid, chip_mid, save_mid);
-    let tracks_settled = wide_icy_bands_between(&settled, chip_settled, save_settled);
+    let (below_closed, below_mid, below_settled) = (
+        block_below_top(&closed, pill_closed, save_closed),
+        block_below_top(&mid, pill_mid, save_mid),
+        block_below_top(&settled, pill_settled, save_settled),
+    );
+    let (gap_closed, gap_mid, gap_settled) = (
+        save_closed.saturating_sub(pill_closed),
+        save_mid.saturating_sub(pill_mid),
+        save_settled.saturating_sub(pill_settled),
+    );
+    // ── what each frame paints INSIDE the glow block ──
+    let rows_closed = body_card_rows(&closed, glow_closed, below_closed);
+    let rows_mid = body_card_rows(&mid, glow_mid, below_mid);
+    let rows_settled = body_card_rows(&settled, glow_settled, below_settled);
+    let tracks_closed = wide_icy_bands_between(&closed, glow_closed, below_closed);
+    let tracks_mid = wide_icy_bands_between(&mid, glow_mid, below_mid);
+    let tracks_settled = wide_icy_bands_between(&settled, glow_settled, below_settled);
     println!(
         "[T2] chip→save gap closed={gap_closed}px mid={gap_mid}px settled={gap_settled}px; \
-         card rows closed={rows_closed:?} mid={rows_mid:?} settled={rows_settled:?}; \
-         slider tracks closed={tracks_closed:?} mid={tracks_mid:?} settled={tracks_settled:?}"
+         glow block closed {glow_closed}..{below_closed} mid {glow_mid}..{below_mid} settled \
+         {glow_settled}..{below_settled}; card rows closed={rows_closed:?} mid={rows_mid:?} \
+         settled={rows_settled:?}; slider tracks closed={tracks_closed:?} mid={tracks_mid:?} \
+         settled={tracks_settled:?}"
     );
 
-    // ── CLOSED: nothing of the body paints ──
+    // ── CLOSED: the glow block paints no card row and no track ──
     assert!(
         tracks_closed.is_empty() && rows_closed.len() == CLOSED_ROWS,
-        "a collapsed glow body must paint NOTHING between the switch and the block below it. \
-         Only the two cards that are there with the glow off are: the inactive colour row and \
-         the glow header itself. A body that leaks would add its own four rows and both slider \
-         tracks. rows={rows_closed:?} tracks={tracks_closed:?} \
-         (all wide icy bands {:?}, all card bands {:?})",
-        color_row_bands(&closed, ICY, 40, 300),
-        color_row_bands(&closed, BG_CARD, 4, 300)
+        "a collapsed glow body must paint NOTHING inside the glow block: the header is the \
+         focused stop there, so it paints `bg-hover` rather than the card surface the count \
+         reads, and behind it there is an empty-state description and a zero-height body. A body \
+         that leaks would add its own rows and both slider tracks. rows={rows_closed:?} \
+         tracks={tracks_closed:?} (pane rows {:?})",
+        body_card_rows(&closed, 0, closed.height() as usize)
     );
 
-    // ── SETTLED: the whole body is there ──
+    // ── SETTLED: the header, plus every body row that is not the focused one ──
     assert_eq!(
         (rows_settled.len(), tracks_settled.len()),
         (SETTLED_ROWS, 2),
-        "the opened glow body must paint its four rows on top of the two cards that are there \
-         with the glow off, plus both knob-slider fill tracks: rows={rows_settled:?} \
+        "the opened glow body must paint its four rows — the focused Range row paints `bg-hover`, \
+         so it is not one of them — plus both knob-slider fill tracks: rows={rows_settled:?} \
          tracks={tracks_settled:?}"
+    );
+    // …and the DELTA the test exists to prove, stated on its own: opening the
+    // body adds the body, whatever else the pane paints inside this block. A
+    // container that wraps the glow block moves BOTH baselines together, and this
+    // is the assertion that keeps that visible instead of silent.
+    assert_eq!(
+        rows_settled.len() - rows_closed.len(),
+        GLOW_BODY_ROWS,
+        "opening the glow body must add exactly its own rows: closed={rows_closed:?} \
+         settled={rows_settled:?}"
     );
 
     // ── MID-FLIGHT: the body is PARTLY open ──
@@ -9046,60 +9668,52 @@ fn borders_glow_body_folds_open_instead_of_jumping() {
     // ── nothing ABOVE the fold may move between the two states ──
     // The two frames are scrolled to different offsets by follow-focus (the
     // keyboard walks from the glow header into the Range row), so a raw y says
-    // nothing; the DISTANCES between landmarks that both sit above the glow
-    // body do, because a scroll cancels out of them. Two of them, spanning the
-    // whole above-fold stack — the angle card down to the inactive-colour row,
-    // and on down to the glow header's own top edge:
+    // nothing; the DISTANCES between landmarks that all sit above the glow body
+    // do, because a scroll cancels out of them. Two of them, spanning the whole
+    // above-fold stack — the angle card down to the block above the glow block,
+    // and on down to the glow block's own top edge:
     //
     //   * the first landmark is the pane's topmost accent-cyan block read by
     //     `cyan_block_ends`, identical in both frames;
-    //   * the second is the inactive-colour row's card top (`bg-card`), the
-    //     first row either frame paints between those two y's;
-    //   * the third is the glow header's top edge, read twice by the only
-    //     signal each frame offers: the icy FOCUS RING's top while the header
-    //     holds the keyboard (CLOSED), and the 1px `border` line painted over
-    //     its card interior once the keyboard has walked into the body
-    //     (SETTLED) — hence the 2px slop on that one read, not on the others.
-    let above_fold_btn_to_inactive_closed = rows_closed[0].0 - chip_closed;
-    let above_fold_btn_to_inactive_settled = rows_settled[0].0 - chip_settled;
+    //   * the second is the card row immediately above the glow block
+    //     (`row_top_above`), anchored to the glow block rather than to a position
+    //     in the row list, so a new container above it cannot re-point the read;
+    //   * the third is the glow block's own top edge (`glow_block_top`) — the
+    //     header's icy ring while it holds the keyboard, its card row once the
+    //     keyboard has walked into the body, which is the 1px the 2px slop on
+    //     that read absorbs.
+    let (inactive_closed, inactive_settled) = (
+        row_top_above(&closed, glow_closed),
+        row_top_above(&settled, glow_settled),
+    );
+    let above_fold_btn_to_inactive_closed = inactive_closed - pill_closed;
+    let above_fold_btn_to_inactive_settled = inactive_settled - pill_settled;
     assert!(
         (above_fold_btn_to_inactive_closed as i64 - above_fold_btn_to_inactive_settled as i64)
             .abs()
             <= 2,
-        "the angle card and the inactive-colour row sit ABOVE the glow fold and must not move \
+        "the angle card and the block above the glow block sit ABOVE the fold and must not move \
          when the switch flips: that distance is {}px closed against {}px settled",
         above_fold_btn_to_inactive_closed,
         above_fold_btn_to_inactive_settled
     );
 
-    let (header_ring_closed, _) = focused_row_span(&closed, 60, 68).unwrap_or_else(|| {
-        panic!(
-            "the closed frame parks the keyboard on the glow header, so its 64px icy ring must \
-             paint; icy bands={:?}",
-            color_row_bands(&closed, ICY, 40, 300)
-        )
-    });
-    assert!(
-        rows_settled.len() >= 2,
-        "the settled frame must paint the inactive row and then the header row as its first two \
-         cards, so the header's top edge can be read: {rows_settled:?}"
-    );
-    let above_fold_inactive_to_header_closed = header_ring_closed - rows_closed[0].0;
-    let above_fold_inactive_to_header_settled = (rows_settled[1].0 - 1) - rows_settled[0].0;
+    let above_fold_inactive_to_header_closed = glow_closed - inactive_closed;
+    let above_fold_inactive_to_header_settled = glow_settled - inactive_settled;
     assert!(
         (above_fold_inactive_to_header_closed as i64
             - above_fold_inactive_to_header_settled as i64)
             .abs()
             <= 2,
-        "the inactive-colour row and the glow header's top edge sit ABOVE the fold, so their \
-         distance must not change when the switch flips: {}px closed against {}px settled \
-         (inactive row at {} closed / {} settled, header top at {} closed / {} settled)",
+        "the block above the glow block and the glow block's own top edge sit ABOVE the fold, so \
+         their distance must not change when the switch flips: {}px closed against {}px settled \
+         (row above at {} closed / {} settled, glow top at {} closed / {} settled)",
         above_fold_inactive_to_header_closed,
         above_fold_inactive_to_header_settled,
-        rows_closed[0].0,
-        rows_settled[0].0,
-        header_ring_closed,
-        rows_settled[1].0 - 1
+        inactive_closed,
+        inactive_settled,
+        glow_closed,
+        glow_settled
     );
     println!(
         "[T2] above the fold, closed vs settled: button→inactive \
@@ -9109,24 +9723,45 @@ fn borders_glow_body_folds_open_instead_of_jumping() {
     );
 }
 
-/// How many card rows sit between the strip's active chip and the Save button
-/// with the glow body COLOSED: only the inactive colour row, because the glow
-/// header is the focused stop there and a focused row paints `bg-hover` instead
-/// of the card surface this reads. Every further row in the open frames is a row
-/// the fold put there.
-const CLOSED_ROWS: usize = 1;
+/// How many card rows the glow block paints with the glow body CLOSED: none. The
+/// header is the focused stop there, and a focused row paints `bg-hover` instead
+/// of the card surface this reads; behind it there is only the empty-state
+/// description and a zero-height body. Every row in the open frames is a row the
+/// fold put there.
+///
+/// Read inside the GLOW BLOCK's own span (its top edge down to the top of the
+/// block below it), not across the pane: the earlier whole-pane window counted
+/// the inactive colour row as its closed baseline and picked up every container
+/// the block work added. T3c-1 measured that spans's honest values — closed 0,
+/// settled 4, which is also why [`GLOW_BODY_ROWS`] is asserted separately.
+const CLOSED_ROWS: usize = 0;
 
-/// …and with it settled: the inactive row and the now-unfocused glow header,
-/// plus the body's four rows (Range, Power, Glow Color, Inactive Glow).
-const SETTLED_ROWS: usize = 5;
+/// …and with it settled: the now-unfocused glow header, plus the body's rows
+/// except the focused Range one (Power, Glow Color, Inactive Glow).
+const SETTLED_ROWS: usize = 4;
 
-/// The strip's ACTIVE chip (40x32 of `accent-cyan`) and the Save button
-/// (84x36 of `accent-cyan`) are the only two accent-cyan BLOCKS in the pane —
-/// every other accent-cyan mark (the segmented angle buttons, the sliders'
-/// "20px" readouts, the save field's placeholder) is text or a short bar. They
-/// sit on either side of the glow fold, which is what makes their distance a
-/// measure of how tall the folded body currently is. Returns
-/// `(chip_top, save_top)`.
+/// The glow body's own rows (Range, Power, Glow Color, Inactive Glow). The
+/// invariant the fold test exists to prove, asserted on its own so that a
+/// container wrapping the glow block — which shifts BOTH baselines by its own
+/// surface — cannot move one of them silently. Stated once here because the pane
+/// cannot be asked how many rows it paints: they are four `.slint` children, two
+/// sliders and two compact colour rows.
+const GLOW_BODY_ROWS: usize = 4;
+
+/// The pane's TWO accent-cyan blocks, in screen order: the segmented angle
+/// control's SELECTED pill (60x32 of `accent-cyan`) above the fold, and the
+/// Save button (84x36 of `accent-cyan`) below it. Every other accent-cyan mark
+/// (the sliders' "20px" readouts, the save field's placeholder, the block
+/// titles) is text or a short bar, which is what `CYAN_BLOCK_MIN_H` filters out.
+/// Their distance is a measure of how tall the folded body currently is.
+/// Returns `(pill_top, save_top)`.
+///
+/// The first landmark is NOT the strip's active chip, which earlier prose here
+/// claimed: that chip paints `bg-hover` with a 2px icy border and is never
+/// accent-cyan, so this read cannot see it at all. The pill is what the pane
+/// actually paints first, and it is why this test needs a window tall enough to
+/// keep the whole above-the-fold stack inside the frame (T3c-1: measured with
+/// the pill clipped at the suite's 1080px window, whole at 1440px).
 fn cyan_block_ends(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize, usize) {
     let blocks: Vec<(usize, usize)> = color_row_bands(buf, ACCENT_CYAN, 40, 30)
         .into_iter()
@@ -9135,11 +9770,11 @@ fn cyan_block_ends(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize,
     assert_eq!(
         blocks.len(),
         2,
-        "the strip's active chip and the Save button must both paint in every frame — they are \
-         what the fold is measured between. One of them missing means the fold moved a block more \
-         than the viewport can give, which is what a body that arrives at full size does: nothing \
-         re-follows a height that jumps (the `changed height` re-follow is part of the fix), so \
-         the block below it leaves the frame in one step. blocks={blocks:?} \
+        "the angle control's selected pill and the Save button must both paint in every frame — \
+         they are what the fold is measured between. One of them missing means either that a block \
+         was pushed out of the viewport, or that the fold moved a block more than the viewport can \
+         give (which is what a body that arrives at full size does: nothing re-follows a height \
+         that jumps, so the block below it leaves the frame in one step). blocks={blocks:?} \
          (every accent-cyan band: {:?})",
         color_row_bands(buf, ACCENT_CYAN, 40, 30)
     );
@@ -9147,22 +9782,39 @@ fn cyan_block_ends(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize,
 }
 
 /// How tall an accent-cyan band must be to count as a BLOCK rather than text or
-/// a bar. Measured: the strip's active chip is 32px and the Save button 36px,
-/// while the next tallest accent-cyan marks in the pane are 6px, 4px and 1px.
+/// a bar. Measured: the angle control's selected pill is 32px and the Save
+/// button 36px, while the next tallest accent-cyan marks in the pane are 6px,
+/// 4px and 1px.
 const CYAN_BLOCK_MIN_H: usize = 28;
 
-/// The card rows (`bg-card`) painted between two screen y's, one entry per row.
-/// A row's own interior is split by its content — a slider track cuts a row's
-/// fill in two — so bands closer than [`CARD_ROW_SPLIT`] belong to the same row.
+/// The card rows (`bg-card`) the PANE paints, one entry per row: the tune
+/// column's own columns only, because the shared `color_row_bands` sweep starts
+/// at x=360 and would take the left pane's preset cards with it (they sit at the
+/// same y's as the save block). A row's own interior is split by its content — a
+/// slider track cuts a row's fill in two — so bands closer than
+/// [`CARD_ROW_SPLIT`] belong to the same row.
 fn body_card_rows(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     y0: usize,
     y1: usize,
 ) -> Vec<(usize, usize)> {
+    const PANE_X0: usize = 1060;
+    const PANE_X1: usize = 1904;
+    /// Same per-row floor the shared reader's callers pass.
+    const PANE_ROW_MIN_INK: usize = 300;
     let mut rows: Vec<(usize, usize)> = Vec::new();
-    for band in color_row_bands(buf, BG_CARD, 4, 300) {
-        // Strictly between: the lower landmark is the Save button, which sits
-        // INSIDE the save row, so that row's own card is not part of the span.
+    let mut open: Option<(usize, usize)> = None;
+    for y in 0..buf.height() as usize {
+        let ink = count_color_in_box(buf, BG_CARD, 4, PANE_X0, y, PANE_X1, y + 1);
+        if ink >= PANE_ROW_MIN_INK {
+            open = match open {
+                Some((top, _)) => Some((top, y)),
+                None => Some((y, y)),
+            };
+            continue;
+        }
+        let Some(band) = open.take() else { continue };
+        // Strictly between: the caller's window ends where the next block starts.
         if band.0 < y0 || band.0 >= y1 {
             continue;
         }
@@ -9171,7 +9823,86 @@ fn body_card_rows(
             _ => rows.push(band),
         }
     }
+    if let Some(band) = open {
+        if band.0 >= y0 && band.0 < y1 {
+            match rows.last_mut() {
+                Some(last) if band.0 <= last.1 + CARD_ROW_SPLIT => last.1 = last.1.max(band.1),
+                _ => rows.push(band),
+            }
+        }
+    }
     rows
+}
+
+/// The top edge of the glow block: the top of the glow HEADER, read the one way
+/// each frame offers.
+///
+///   • `header_holds_keyboard` (the CLOSED frame): the header is the focused stop
+///     and paints its lit 64px icy ring, which is the only 60..68px icy pair a
+///     collapsed pane has — so the ring's top edge.
+///   • otherwise (the keyboard is inside the body): the header paints an ordinary
+///     `bg-card` row, and the row to read is the last one above the focused body
+///     row's own ring. Anchored to that ring rather than to a position in the row
+///     list, which is what let a container elsewhere in the pane move this test's
+///     landmarks (T3c-1: closed 856/561 for the same read).
+fn glow_block_top(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, header_holds_keyboard: bool) -> usize {
+    let ring_top = focused_row_span(buf, 60, 68)
+        .unwrap_or_else(|| {
+            panic!(
+                "the glow header (CLOSED) or the focused body row must paint its 64px icy ring; \
+                 icy bands={:?}",
+                color_row_bands(buf, ICY, 40, 300)
+            )
+        })
+        .0;
+    if header_holds_keyboard {
+        return ring_top;
+    }
+    body_card_rows(buf, 0, ring_top)
+        .last()
+        .map(|row| row.0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the glow header must paint a `bg-card` row above the focused body row (ring top \
+                 {ring_top}): pane rows={:?}",
+                body_card_rows(buf, 0, buf.height() as usize)
+            )
+        })
+}
+
+/// The top edge of the pane's card row immediately above `y` — the block ABOVE
+/// the one whose top edge is `y`, read the same way in every frame.
+fn row_top_above(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, y: usize) -> usize {
+    body_card_rows(buf, 0, y)
+        .last()
+        .map(|row| row.0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the pane must paint a card row above y={y}: pane rows={:?}",
+                body_card_rows(buf, 0, buf.height() as usize)
+            )
+        })
+}
+
+/// The top edge of the block BELOW the glow block, which is the save group's own
+/// surface: the last card row that starts above the Save button. The count window
+/// ends here — not at the button — so the save group's surface can never be
+/// counted as a row the fold painted.
+fn block_below_top(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    pill_top: usize,
+    save_top: usize,
+) -> usize {
+    body_card_rows(buf, pill_top, save_top)
+        .last()
+        .map(|row| row.0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the block below the glow block must paint a card row between the pill (y={pill_top}) \
+                 and the Save button (y={save_top}): pane rows={:?}",
+                body_card_rows(buf, 0, buf.height() as usize)
+            )
+        })
 }
 
 /// How close two `bg-card` bands must be to count as ONE row's split interior
@@ -9766,7 +10497,11 @@ fn borders_tune_renders_eight_slots() {
     ));
 
     let win = crate::MainWindow::new().unwrap();
-    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    // T3c-1 maintenance: the pane grew ~112px of block headers, which moved the
+    // strip past the panel's content box in the suite's 1080px window and clipped
+    // the swatches this test measures. Only the WINDOW is taller; every
+    // assertion, threshold and tolerance below is unchanged.
+    win.window().set_size(slint::PhysicalSize::new(1920, 1440));
     win.set_mounted_screen(1);
     // Expanded + gallery state: without them the shell keeps the panel in its
     // translucent rail-preview state and no exact-colour assertion can read the

@@ -317,6 +317,12 @@ component BordersTunePane inherits Rectangle {
     // container is not conditional, but a folded block ABOVE it (T2's glow fold
     // is below it; the picker card grows above the strip) can still move it, and
     // the live read is what keeps the sum true when it does.
+    //
+    // T3c-1 wrapped the angle row and the inactive row the same way, so their
+    // stops sum their own container's live `y` too — measured, not assumed: with
+    // those two sums removed the three unclamped stops land 200px apart
+    // (gap-out=577, angle=778, inactive=930 on the test fixture) and the T3a
+    // centring test fails; with them they share one screen y.
     function focus-block-y() -> length {
         let f = root.local-focus;
         if (f < 0) { return -1px; }
@@ -324,8 +330,8 @@ component BordersTunePane inherits Rectangle {
         if (f == 1) { return geometry-group.y + radius-wrap.y; }
         if (f == 2) { return geometry-group.y + gap-in-wrap.y; }
         if (f == 3) { return geometry-group.y + gap-out-wrap.y; }
-        if (f == 4) { return angle-wrap.y; }
-        if (f == 5) { return inactive-wrap.y; }
+        if (f == 4) { return angle-group.y + angle-wrap.y; }
+        if (f == 5) { return inactive-group.y + inactive-wrap.y; }
         if (f == root.idx-strip) {
             // `strip-y` is picker-block-relative; the picker card above the
             // strip grows 380px, which moves `picker-block.y` without moving
@@ -345,7 +351,7 @@ component BordersTunePane inherits Rectangle {
             if (f == root.idx-glow-color) { return root.glow-body-y + root.glow-color-y; }
             if (f == root.idx-glow-inactive) { return root.glow-body-y + root.glow-inactive-y; }
         }
-        if (f == root.idx-save-name || f == root.idx-save-btn) { return save-wrap.y; }
+        if (f == root.idx-save-name || f == root.idx-save-btn) { return save-group.y + save-wrap.y; }
         return -1px;
     }
 
@@ -695,96 +701,163 @@ component BordersTunePane inherits Rectangle {
             // ── Separator: geometry ends, colours begin ──
             Rectangle { height: 1px; background: HveColors.border; }
 
-            // ── Angle segmented control (30 / 45 / 90) ──
-            angle-wrap := Rectangle {
-                property <bool> lit: root.local-focus == 4 && root.has-focus;
-                property <bool> grabbed: root.engaged-slider == 4 && root.has-focus;
-                height: self.lit ? 96px : 80px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
+            // ── Angle group ─────────────────────────────────────────────
+            // T3c-1 (block delimitation, D): the segmented control lives in a
+            // container now, the same shape T3b gave Geometry — the pane's own
+            // card surface (`HveColors.bg-card` fill, `HveColors.border`
+            // hairline, `SkwdTokens.radius-8`, 12px padding) with a header.
+            //
+            // The header carries the title the control ALREADY painted inside
+            // itself (`angle-label`, "Gradient Angle") and the description that
+            // sat loose under it (`angle-desc`). Both MOVED: the control no
+            // longer paints the title, and nothing else in the pane paints the
+            // description, so a reader meets each string once. No copy was
+            // added, which is why this group needs no new i18n registration.
+            //
+            // The container adds NO keyboard stop: the control keeps its seat
+            // and order (`tune-count` and `callbacks::borders_tune_stop_count`
+            // are untouched). It does change the control's PARENT, so its
+            // reported `y` is container-relative now — `focus-block-y()` sums
+            // this container's live `y` for exactly that reason (T3a).
+            angle-group := Rectangle {
                 border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-color: HveColors.border;
                 border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
+                background: HveColors.bg-card;
 
                 VerticalLayout {
-                    padding: 16px;
-                    spacing: 8px;
+                    padding: SkwdTokens.spacing-12;
+                    spacing: SkwdTokens.spacing-8;
 
-                    Text {
-                        text: BordersText.angle-label;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: 13px;
-                        font-weight: 600;
-                        vertical-alignment: center;
+                    VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
+
+                        Text {
+                            text: BordersText.angle-label;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+                        Text {
+                            text: BordersText.angle-desc;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-11;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
                     }
 
-                    HorizontalLayout {
-                        spacing: 4px;
+                    // ── Angle segmented control (30 / 45 / 90) ──
+                    angle-wrap := Rectangle {
+                        property <bool> lit: root.local-focus == 4 && root.has-focus;
+                        property <bool> grabbed: root.engaged-slider == 4 && root.has-focus;
+                        height: self.lit ? 96px : 80px;
+                        animate height { duration: 250ms; easing: ease-in-out-back; }
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                        animate background { duration: 200ms; easing: ease-in-out; }
 
-                        for angle-val in [30, 45, 90] : Rectangle {
-                            width: 60px;
-                            height: 32px;
-                            border-radius: SkwdTokens.radius-4;
-                            background: root.tune-angle == angle-val ? HveColors.accent-cyan : HveColors.bg-surface;
-                            border-width: 1px;
-                            border-color: root.tune-angle == angle-val ? HveColors.accent-cyan : HveColors.border;
+                        VerticalLayout {
+                            padding: 16px;
+                            // The row's own title moved to the container's
+                            // header, so this layout holds ONE child now; the
+                            // main-axis alignment is what keeps the segmented
+                            // control across the middle of the row instead of
+                            // pinning it under the top padding.
+                            alignment: center;
 
-                            Text {
-                                text: angle-val + "°";
-                                color: root.tune-angle == angle-val ? HveColors.bg-dark : HveColors.text-muted;
-                                font-family: SkwdTokens.font-body;
-                                font-size: 12px;
-                                font-weight: 600;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                            HorizontalLayout {
+                                spacing: 4px;
 
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                // Was a bare `root.tune-angle = angle-val`, which
-                                // moved the segmented control and nothing else —
-                                // there was no path from the angle to Rust at all,
-                                // so neither the mouse nor the keyboard could ever
-                                // apply an angle. Travels up as a callback so the
-                                // section can notify in ONE place.
-                                clicked => { root.angle-changed(angle-val); }
+                                for angle-val in [30, 45, 90] : Rectangle {
+                                    width: 60px;
+                                    height: 32px;
+                                    border-radius: SkwdTokens.radius-4;
+                                    background: root.tune-angle == angle-val ? HveColors.accent-cyan : HveColors.bg-surface;
+                                    border-width: 1px;
+                                    border-color: root.tune-angle == angle-val ? HveColors.accent-cyan : HveColors.border;
+
+                                    Text {
+                                        text: angle-val + "°";
+                                        color: root.tune-angle == angle-val ? HveColors.bg-dark : HveColors.text-muted;
+                                        font-family: SkwdTokens.font-body;
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        // Was a bare `root.tune-angle = angle-val`, which
+                                        // moved the segmented control and nothing else —
+                                        // there was no path from the angle to Rust at all,
+                                        // so neither the mouse nor the keyboard could ever
+                                        // apply an angle. Travels up as a callback so the
+                                        // section can notify in ONE place.
+                                        clicked => { root.angle-changed(angle-val); }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // ── Description: angle ──
-            Text {
-                text: BordersText.angle-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
+            // ── Inactive colour group ───────────────────────────────────
+            // T3c-1: the same container as the angle group above, and the same
+            // reason. The compact row's own title ("Inactive") moved up into
+            // the header — the row paints no label at all now, so the group's
+            // title appears ONCE — and the loose description under it moved in
+            // with it. No new copy, no new registration point.
+            inactive-group := Rectangle {
+                border-width: 1px;
+                border-color: HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: HveColors.bg-card;
 
-            // ── Inactive color row (R6) ──
-            // A compact single row — chip + label + "Custom…" — instead of the
-            // 110px slot card. The token swatches live in the shared picker now.
-            inactive-wrap := BorderCompactColorRow {
-                label: BordersText.inactive-label;
-                value-label: root.value-label(root.tune-inactive-color);
-                resolved-color: root.tune-colors-resolved[8];
-                lit: root.focused-index == root.split + 5 && root.has-focus;
-                editing: root.editing-slot == 8;
-                picker-requested() => { root.request-edit-slot(8); }
-            }
+                VerticalLayout {
+                    padding: SkwdTokens.spacing-12;
+                    spacing: SkwdTokens.spacing-8;
 
-            // ── Description: inactive ──
-            Text {
-                text: BordersText.inactive-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
+                    VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
+
+                        Text {
+                            text: BordersText.inactive-label;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+                        Text {
+                            text: BordersText.inactive-desc;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-11;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    // ── Inactive color row (R6) ──
+                    // A compact single row — chip + value + "Custom…" — instead
+                    // of the 110px slot card. The token swatches live in the
+                    // shared picker now. `label` is deliberately left at its
+                    // default "": the title is the container's header above.
+                    inactive-wrap := BorderCompactColorRow {
+                        value-label: root.value-label(root.tune-inactive-color);
+                        resolved-color: root.tune-colors-resolved[8];
+                        lit: root.focused-index == root.split + 5 && root.has-focus;
+                        editing: root.editing-slot == 8;
+                        picker-requested() => { root.request-edit-slot(8); }
+                    }
+                }
             }
 
             // Separator
@@ -1495,70 +1568,115 @@ component BordersTunePane inherits Rectangle {
             // Separator
             Rectangle { height: 1px; background: HveColors.border; }
 
-            // Save form: LineEdit + Save button
-            Text {
-                text: BordersText.save-title;
-                font-family: SkwdTokens.font-heading;
-                font-size: SkwdTokens.size-14;
-                font-weight: 700;
-                color: HveColors.accent-cyan;
-            }
+            // ── Save group ──────────────────────────────────────────────
+            // T3c-1: the last of the slice's three plain groups, in the same
+            // container as the two above — the pane's own card surface with a
+            // header. The header's title is the heading the group already
+            // painted above its form (`save-title`, "Save as Preset"), MOVED in
+            // and read once; its description is this slice's ONE new string, so
+            // it is the only copy that had to be registered in all five places
+            // (the text global, both JSON maps, `panel_i18n` and the fixed-size
+            // `borders_labels()` table).
+            //
+            // The error line and the pane's keyboard hint stay OUTSIDE on
+            // purpose: the error is conditional and the hint belongs to the
+            // whole pane, not to this block.
+            //
+            // Both of the group's stops (the name field and the Save button)
+            // come inside, so `focus-block-y()` sums this container's live `y`
+            // for them, exactly as it does for the geometry and angle rows.
+            save-group := Rectangle {
+                border-width: 1px;
+                border-color: HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: HveColors.bg-card;
 
-            save-wrap := HorizontalLayout {
-                spacing: SkwdTokens.spacing-8;
-                height: 36px;
+                VerticalLayout {
+                    padding: SkwdTokens.spacing-12;
+                    spacing: SkwdTokens.spacing-8;
 
-                save-line-wrap := Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-save-name && root.has-focus;
-                    horizontal-stretch: 1;
-                    height: 36px;
-                    background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                    border-radius: SkwdTokens.radius-8;
-                    border-width: save-input.has-focus || self.lit ? 1px : 0px;
-                    border-color: #8fd8ff;
+                    VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
 
-                    save-input := LineEdit {
-                        x: 4px;
-                        y: 4px;
-                        width: parent.width - 8px;
-                        height: parent.height - 8px;
-                        placeholder-text: BordersText.save-placeholder;
-                        text <=> root.preset-name;
-                        font-size: SkwdTokens.size-13;
-                        accepted(text) => {
-                            if (text != "") {
-                                root.save-preset(text);
-                            }
+                        // The group heading, in the same voice as every other
+                        // container's title (it was 14px/700 loose above the
+                        // form; a block title that is louder than the pane's
+                        // other titles read as a different rank of heading).
+                        Text {
+                            text: BordersText.save-title;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+                        Text {
+                            text: BordersText.save-desc;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-11;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
                         }
                     }
-                }
 
-                save-btn := Rectangle {
-                    property <bool> lit: root.local-focus == root.idx-save-btn && root.has-focus;
-                    width: 84px;
-                    height: 36px;
-                    background: save-ta.has-hover || self.lit ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
-                    border-radius: SkwdTokens.radius-8;
-                    border-width: self.lit ? 2px : 0px;
-                    border-color: #8fd8ff;
+                    // ── Save form: LineEdit + Save button ──
+                    save-wrap := HorizontalLayout {
+                        spacing: SkwdTokens.spacing-8;
+                        height: 36px;
 
-                    Text {
-                        text: BordersText.save-button;
-                        color: HveColors.bg-dark;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-13;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
+                        save-line-wrap := Rectangle {
+                            property <bool> lit: root.local-focus == root.idx-save-name && root.has-focus;
+                            horizontal-stretch: 1;
+                            height: 36px;
+                            background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                            border-radius: SkwdTokens.radius-8;
+                            border-width: save-input.has-focus || self.lit ? 1px : 0px;
+                            border-color: #8fd8ff;
 
-                    save-ta := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        clicked => {
-                            if (root.preset-name != "") {
-                                root.save-preset(root.preset-name);
+                            save-input := LineEdit {
+                                x: 4px;
+                                y: 4px;
+                                width: parent.width - 8px;
+                                height: parent.height - 8px;
+                                placeholder-text: BordersText.save-placeholder;
+                                text <=> root.preset-name;
+                                font-size: SkwdTokens.size-13;
+                                accepted(text) => {
+                                    if (text != "") {
+                                        root.save-preset(text);
+                                    }
+                                }
+                            }
+                        }
+
+                        save-btn := Rectangle {
+                            property <bool> lit: root.local-focus == root.idx-save-btn && root.has-focus;
+                            width: 84px;
+                            height: 36px;
+                            background: save-ta.has-hover || self.lit ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
+                            border-radius: SkwdTokens.radius-8;
+                            border-width: self.lit ? 2px : 0px;
+                            border-color: #8fd8ff;
+
+                            Text {
+                                text: BordersText.save-button;
+                                color: HveColors.bg-dark;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-13;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            save-ta := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if (root.preset-name != "") {
+                                        root.save-preset(root.preset-name);
+                                    }
+                                }
                             }
                         }
                     }

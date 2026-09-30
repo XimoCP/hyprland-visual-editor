@@ -215,6 +215,7 @@
       }
     },
     "save": {
+      "group_desc": "Name the preset and save it to your own list.",
       "title": "Save as Preset",
       "placeholder": "Border preset name…",
       "button": "Save"

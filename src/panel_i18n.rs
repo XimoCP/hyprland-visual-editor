@@ -117,6 +117,10 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
 
     // Save form and keyboard hint
     t.set_save_title(tr.tr_shared("borders.save.title", "Save as Preset"));
+    t.set_save_desc(tr.tr_shared(
+        "borders.save.group_desc",
+        "Name the preset and save it to your own list.",
+    ));
     t.set_save_placeholder(tr.tr_shared("borders.save.placeholder", "Border preset name…"));
     t.set_save_button(tr.tr_shared("borders.save.button", "Save"));
     t.set_kbd_hint(tr.tr_shared(

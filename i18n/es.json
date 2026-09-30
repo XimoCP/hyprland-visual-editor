@@ -215,6 +215,7 @@
       }
     },
     "save": {
+      "group_desc": "Pon un nombre al preajuste y guárdalo en tu lista.",
       "title": "Guardar como Preajuste",
       "placeholder": "Nombre del preajuste…",
       "button": "Guardar"
