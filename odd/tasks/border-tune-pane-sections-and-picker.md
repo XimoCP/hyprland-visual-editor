@@ -146,7 +146,8 @@ monitors/HDR.
       and whether the keyboard stop count must change. Implement the fold.
       Checks: a render test that captures a mid-flight frame (a real animation, not
       an instant jump), plus the settled frame; read the PNGs.
-- [ ] **T3 — Block delimitation (D)** Depends on the keeper's choice of treatment.
+- [ ] **T3 — Block delimitation (D)** Sliced into T3a (done), T3b and T3c (see the T3
+      slicing section). T3b is the next slice: the Geometry group end to end.
       Checks: render test of the whole pane before/after; read the PNGs.
 - [ ] **T4 — Picker anchored to the edited field (C)** Feasibility study first:
       report what plumbing an anchor needs (a reported row rect travelling up, an
@@ -213,21 +214,61 @@ fixed-size array and the source-text test `the_borders_section_reads_every_label
 both break if the table and the pane drift apart.
 
 **Prerequisite found before touching geometry (the reason T3 is sliced).**
-`BordersSection.slint:349` positions the keyboard's scroll-follow with
+`BordersSection.slint` positioned the keyboard's scroll-follow with
 `property <length> focus-y: root.local-focus * 96px;` — one hardcoded height per stop,
-consumed by `follow-focus()` (`:358-368`). It works today only because 96px happens to be
-the real average. A header on every group raises that average, and the error compounds per
+consumed by `follow-focus()`. It worked only because 96px happened to be the
+real average. A header on every group raises that average, and the error compounds per
 stop, so the last controls would start scrolling short. A magic constant is also exactly
-what the keeper's agnostic norm forbids. So the slices are:
+what the keeper's agnostic norm forbids. T3a removed it (commit `9fe052f`); the slices are:
 
-- **T3a — make the scroll-follow honest.** Derive the focused block's position from the
-  real geometry of the block that owns that stop instead of multiplying an index by a
-  constant. Must be proven by a render test that navigates to a LATE stop and shows it
-  fully in view, and by the existing focus/scroll tests staying green.
-- **T3b — the container pattern, one group.** Geometry first, end to end: container with
+- [x] **T3a — make the scroll-follow honest.** DONE — commit `9fe052f`. The dead
+  `focus-y: local-focus * 96px` property was deleted and `follow-focus()` now reads
+  `focus-block-y()`, which maps each keyboard stop to the real laid-out `y` of the
+  block that owns it; a stop with no mounted block returns `-1px` and the pane leaves
+  the viewport alone instead of scrolling to a wrong place.
+  Evidence: the old test (`borders_tune_focus_reaches_late_stops_from_real_geometry`)
+  was a FALSE GREEN — it passed with the constant still wired — and was replaced by
+  three invariant-based tests. Independently reproduced RED/GREEN on a different model
+  (glm-5.3-flash): with the constant restored the two discriminating tests FAIL
+  (`324136` panel pixels differ between two stops of the SAME block; the geometry stops
+  land on three different screen y's), and pass with the derived geometry; md5s
+  identical before/after the temporary patch. Full suite `1191 passed / 0 failed`,
+  `cargo build` warning-free, neighbours and `picker_scale_animation_stays_declared_by_construction`
+  green, the keyboard stop count and `glow-changed` untouched, engine files untouched,
+  fresh per-run PNGs read by both models. Honest limits recorded below.
+- [ ] **T3b — the container pattern, one group.** Geometry first, end to end: container with
   its own surface, heading, description, plus all five text/i18n/table registrations. This
   is the slice that proves the pattern.
 - **T3c — the remaining groups**, same pattern, in the table's order.
+
+**T3a — what the fix rests on, and its honest limits (2026-09-30).**
+
+- The conditional blocks (strip, add/remove row, glow body and its sliders) cannot be
+  referenced from outside their `if`, so each reports its own `y` through `init` (which
+  *does* see the post-layout value) **plus** `changed y` for later reflows. `changed y`
+  alone was NOT enough: it fires only on a change, never for the value an element is
+  created with, so the strip sat at `-1px` for a whole session while mounted and the
+  pane silently refused to scroll to that stop.
+- Element `y` is parent-relative, so the strip's (picker-block-relative) and the glow
+  sliders' (glow-body-relative) offsets are summed with the **live** parent `y` at call
+  time. Pre-folding them would go stale when the picker card grows its 380px.
+- `focus-centre-inset` (48px) remains a constant, named and justified: the only
+  derivable source is the focused block's rendered height, and that height ANIMATES
+  (250ms ease-in-out-back), so a derived inset would compute the target from a
+  mid-flight value and make the scroll jump.
+- The late glow stops and Save cannot discriminate old vs new: the ScrollView's bottom
+  clamp (`height - content`) pins them under both rules, measured at the suite's
+  1920×1080 fixture. The discrimination therefore comes from the glow-ENABLE row and
+  the geometry stops. Outside that fixture this is unverified.
+- Unconfirmed, stated so it is not mistaken for proof: the exact root-cause narrative
+  for the `changed y` failure (that a real 16px move fired nothing) could not be
+  reproduced independently. The shipped `init` + `changed` mechanism is correct under
+  either reading, but the narrative is a hypothesis, not a measured fact. Also reasoned
+  rather than exercised: the two-col instance flip re-running `init`, and window-resize
+  reflow.
+- Process deviation, recorded honestly: the commit is 510 authored changed lines, over
+  the 400-line review budget. It was NOT shrunk by deleting the prose that explains the
+  mechanism, and splitting it would separate the fix from the tests that prove it.
 
 ## Progress
 
@@ -237,3 +278,12 @@ what the keeper's agnostic norm forbids. So the slices are:
 - 2026-09-29 — Next: the container-per-block treatment (T3) and the animated fold
   (T2), both still pending the keeper's pick of order. The C feasibility study on
   the anchored picker (T4) has not run yet.
+- 2026-09-30 — **T3a closed and committed (`9fe052f`)**: the scroll-follow now derives the
+  focused block's real `y` instead of an index times a constant. The test that was
+  supposed to prove it was a FALSE GREEN (passed with the constant wired) and was
+  replaced; RED/GREEN reproduced independently on a different model. Suite
+  `1191 passed / 0 failed`, build warning-free. Honest limits and the 510-line budget
+  deviation recorded in the T3a section above. **No commit was made for T3b, T2 or T4.**
+- 2026-09-30 — Next blocker to keep in mind: the fix is verified at the suite's 1920×1080
+  fixture only. A `focus-centre-inset` constant (48px) remains, justified because the
+  focused block's height animates.
