@@ -1167,117 +1167,193 @@ component BordersTunePane inherits Rectangle {
                 wrap: word-wrap;
             }
 
-            if root.glow-enabled : glow-body := VerticalLayout {
-                changed y => { root.glow-body-y = self.y; }
+            // ── Glow body: folds open ──
+            // This was `if root.glow-enabled : glow-body := VerticalLayout`, an
+            // element CREATED by the `if`, so it came up at its final size with
+            // no "from" frame and the block below it moved in one jump. Slint
+            // only tweens a property when it CHANGES on a live element (the
+            // note on the picker card above says the same), so the body is
+            // mounted in BOTH states and the fold is a WRAPPER whose height
+            // goes from 0 to the body's own content height: a VerticalLayout
+            // derives its height from its children, so it can never be the
+            // animated element. The wrapper's target height is the inner
+            // layout's own `preferred-height` (the sum of its children's) rather
+            // than a literal like the picker card's 380px, because these nine
+            // children are text that wraps — a constant would go stale the
+            // moment a label or a pane width moved. It cannot be the layout's
+            // `height`, which is by default the space its parent gives it and
+            // would close a binding loop with the wrapper's own height.
+            //
+            // HEIGHT ONLY, deliberately, unlike the picker:
+            //   • `clip: true` is the guard that keeps a collapsed body from
+            //     leaking its four rows under the switch, and it can only be
+            //     PROVEN if the rest state paints at full opacity — an
+            //     opacity-0 rest state would hide a leak and make the guard
+            //     untestable (borders_glow_body_folds_open_instead_of_jumping).
+            //   • no `transform-scale`: the software renderer the headless
+            //     tests draw with does not implement transforms, so a scale
+            //     here would be an unverifiable claim, and nine stacked rows
+            //     growing while they also scale around their own centres reads
+            //     worse than the single card that motivated the picker's.
+            glow-body-clip := Rectangle {
+                // Reported from the WRAPPER, which is the direct child of
+                // `tune-col` — so `glow-body-y` keeps the `tune-col`
+                // coordinates `focus-block-y()` needs and the four slider
+                // offsets below it (relative to the inner layout, which sits at
+                // y=0 in here) still add up to the same sum (T3a).
                 init => { root.glow-body-y = self.y; }
-                spacing: 8px;
-
-                // Range slider
-                glow-range-wrap := Rectangle {
-                    // Glow-body-relative: this is the body's FIRST child, so
-                    // the offset is 0 and `init` is what reports it at all.
-                    changed y => { root.glow-range-y = self.y; }
-                    init => { root.glow-range-y = self.y; }
-                    property <bool> lit: root.local-focus == root.idx-glow-range && root.has-focus;
-                    property <bool> grabbed: root.engaged-slider == root.idx-glow-range && root.has-focus;
-                    height: self.lit ? 64px : 56px;
-                    border-width: 1px;
-                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                    GeometrySlider {
-                        width: 100%;
-                        y: (parent.height - self.height) / 2;
-                        engaged: root.engaged-slider == root.idx-glow-range;
-                        focused: root.local-focus == root.idx-glow-range && root.has-focus;
-                        label: BordersText.glow-range-label;
-                        value: root.glow-range;
-                        min: 5;
-                        max: 40;
-                        changed(v) => { root.glow-changed(root.glow-enabled, v, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                changed y => { root.glow-body-y = self.y; }
+                // The fold moves every block BELOW it on every step, and the
+                // keyboard can be parked on one of those while the body is still
+                // growing — a target read mid-flight would scroll to a position
+                // the content is about to leave. The picker card re-follows on
+                // every height step for the same reason (its own `changed height`
+                // above); this is that idiom, not the one-shot
+                // `picker-anchor-pending` tick, which answers a different
+                // question (a height the ScrollView has not got yet).
+                //
+                // GUARDED, and the guard is the whole point: only a stop the
+                // fold actually moves is worth following. Unguarded, turning the
+                // switch on scrolled the pane ~265px with the keyboard parked on
+                // the glow HEADER — a block that does not move at all, so nothing
+                // needed following; what moved it was the ScrollView's bottom
+                // clamp relaxing as the content grew, so the pane snapped to the
+                // position follow-focus had always wanted (measured, and it moved
+                // the header row between the switch's two states, which
+                // `borders_glow_switch_renders_off_and_on` reads as "the same
+                // box"). `local-focus > idx-glow-en` is exactly "the focused
+                // block is one the fold pushes": the four body rows, and the save
+                // row below them.
+                changed height => {
+                    if (root.glow-enabled && root.local-focus > root.idx-glow-en) {
+                        tune-scroll.follow-focus();
                     }
                 }
-
-                Text {
-                    text: BordersText.glow-range-desc;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-11;
-                    color: HveColors.text-muted;
-                    wrap: word-wrap;
-                }
-
-                // Render power slider
-                glow-power-wrap := Rectangle {
-                    changed y => { root.glow-power-y = self.y; }
-                    init => { root.glow-power-y = self.y; }
-                    property <bool> lit: root.local-focus == root.idx-glow-power && root.has-focus;
-                    property <bool> grabbed: root.engaged-slider == root.idx-glow-power && root.has-focus;
-                    height: self.lit ? 64px : 56px;
-                    border-width: 1px;
-                    border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                    border-radius: SkwdTokens.radius-8;
-                    background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-
-                    GeometrySlider {
-                        width: 100%;
-                        y: (parent.height - self.height) / 2;
-                        engaged: root.engaged-slider == root.idx-glow-power;
-                        focused: root.local-focus == root.idx-glow-power && root.has-focus;
-                        label: BordersText.glow-power-label;
-                        value: root.glow-render-power;
-                        min: 1;
-                        max: 8;
-                        changed(v) => { root.glow-changed(root.glow-enabled, root.glow-range, v, root.glow-color, root.glow-color-inactive); }
+                height: 0px;
+                clip: true;
+                states [
+                    glow-shown when root.glow-enabled: {
+                            height: glow-body-layout.preferred-height;
+                            in {
+                                animate height { duration: 250ms; easing: ease-in-out-back; }
+                            }
+                            out {
+                                animate height { duration: 150ms; easing: ease-in; }
+                            }
                     }
-                }
+                ]
 
-                Text {
-                    text: BordersText.glow-power-desc;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-11;
-                    color: HveColors.text-muted;
-                    wrap: word-wrap;
-                }
+                glow-body-layout := VerticalLayout {
+                    width: 100%;
+                    spacing: 8px;
 
-                // Glow color — compact row, same pattern as the inactive row (R7).
-                glow-color-wrap := BorderCompactColorRow {
-                    changed y => { root.glow-color-y = self.y; }
-                    init => { root.glow-color-y = self.y; }
-                    label: BordersText.glow-color-label;
-                    value-label: root.value-label(root.glow-color);
-                    resolved-color: root.tune-colors-resolved[9];
-                    lit: root.local-focus == root.idx-glow-color && root.has-focus;
-                    editing: root.editing-slot == 9;
-                    picker-requested() => { root.request-edit-slot(9); }
-                }
+                    // Range slider
+                    glow-range-wrap := Rectangle {
+                        // Glow-body-relative: this is the body's FIRST child, so
+                        // the offset is 0 and `init` is what reports it at all.
+                        changed y => { root.glow-range-y = self.y; }
+                        init => { root.glow-range-y = self.y; }
+                        property <bool> lit: root.local-focus == root.idx-glow-range && root.has-focus;
+                        property <bool> grabbed: root.engaged-slider == root.idx-glow-range && root.has-focus;
+                        height: self.lit ? 64px : 56px;
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
 
-                Text {
-                    text: BordersText.glow-color-desc;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-11;
-                    color: HveColors.text-muted;
-                    wrap: word-wrap;
-                }
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == root.idx-glow-range;
+                            focused: root.local-focus == root.idx-glow-range && root.has-focus;
+                            label: BordersText.glow-range-label;
+                            value: root.glow-range;
+                            min: 5;
+                            max: 40;
+                            changed(v) => { root.glow-changed(root.glow-enabled, v, root.glow-render-power, root.glow-color, root.glow-color-inactive); }
+                        }
+                    }
 
-                // Glow inactive color — compact row (R7).
-                glow-inactive-wrap := BorderCompactColorRow {
-                    changed y => { root.glow-inactive-y = self.y; }
-                    init => { root.glow-inactive-y = self.y; }
-                    label: BordersText.glow-inactive-label;
-                    value-label: root.value-label(root.glow-color-inactive);
-                    resolved-color: root.tune-colors-resolved[10];
-                    lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
-                    editing: root.editing-slot == 10;
-                    picker-requested() => { root.request-edit-slot(10); }
-                }
+                    Text {
+                        text: BordersText.glow-range-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
 
-                Text {
-                    text: BordersText.glow-inactive-desc;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-11;
-                    color: HveColors.text-muted;
-                    wrap: word-wrap;
+                    // Render power slider
+                    glow-power-wrap := Rectangle {
+                        changed y => { root.glow-power-y = self.y; }
+                        init => { root.glow-power-y = self.y; }
+                        property <bool> lit: root.local-focus == root.idx-glow-power && root.has-focus;
+                        property <bool> grabbed: root.engaged-slider == root.idx-glow-power && root.has-focus;
+                        height: self.lit ? 64px : 56px;
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == root.idx-glow-power;
+                            focused: root.local-focus == root.idx-glow-power && root.has-focus;
+                            label: BordersText.glow-power-label;
+                            value: root.glow-render-power;
+                            min: 1;
+                            max: 8;
+                            changed(v) => { root.glow-changed(root.glow-enabled, root.glow-range, v, root.glow-color, root.glow-color-inactive); }
+                        }
+                    }
+
+                    Text {
+                        text: BordersText.glow-power-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    // Glow color — compact row, same pattern as the inactive row (R7).
+                    glow-color-wrap := BorderCompactColorRow {
+                        changed y => { root.glow-color-y = self.y; }
+                        init => { root.glow-color-y = self.y; }
+                        label: BordersText.glow-color-label;
+                        value-label: root.value-label(root.glow-color);
+                        resolved-color: root.tune-colors-resolved[9];
+                        lit: root.local-focus == root.idx-glow-color && root.has-focus;
+                        editing: root.editing-slot == 9;
+                        picker-requested() => { root.request-edit-slot(9); }
+                    }
+
+                    Text {
+                        text: BordersText.glow-color-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    // Glow inactive color — compact row (R7).
+                    glow-inactive-wrap := BorderCompactColorRow {
+                        changed y => { root.glow-inactive-y = self.y; }
+                        init => { root.glow-inactive-y = self.y; }
+                        label: BordersText.glow-inactive-label;
+                        value-label: root.value-label(root.glow-color-inactive);
+                        resolved-color: root.tune-colors-resolved[10];
+                        lit: root.local-focus == root.idx-glow-inactive && root.has-focus;
+                        editing: root.editing-slot == 10;
+                        picker-requested() => { root.request-edit-slot(10); }
+                    }
+
+                    Text {
+                        text: BordersText.glow-inactive-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
                 }
             }
 

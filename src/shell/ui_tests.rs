@@ -5359,6 +5359,10 @@ const ICY: (u8, u8, u8) = (143, 216, 255);
 const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
 /// Default structural border (`HveColors.border`), used to find card edges.
 const BORDER_INK: (u8, u8, u8) = (48, 54, 61);
+/// The card surface (`HveColors.bg-card`), used to count the pane's card ROWS:
+/// every block in the tune column paints its surface with this one colour, so a
+/// full-width band of it is a row and its height is that row's interior.
+const BG_CARD: (u8, u8, u8) = (28, 33, 40);
 
 /// The 11-entry resolved-colour model the tune pane indexes into: 0..7 are the
 /// gradient slots, 8 the inactive colour, 9 the glow colour, 10 the inactive
@@ -7954,23 +7958,54 @@ fn borders_glow_switch_renders_off_and_on() {
         "the ON switch pill must paint accent-green (pixels={on_green})"
     );
 
-    // The SAME box on the OFF frame is the pill's grey face — and the pill IS
-    // there (grey pixels inside it), so the zero-green result cannot come from
-    // the row having scrolled away between the two frames.
+    // The pill's grey face on the OFF frame, at the OFF frame's OWN y. The row
+    // is allowed to sit lower or higher in the two frames: T2's fold mounts the
+    // glow body in both states, and a zero-height layout item still takes its
+    // spacing, so the collapsed pane reflows 8px (measured) and the header moves
+    // with it. Comparing one box across the two frames would be testing the
+    // pane's layout instead of the switch. What is NOT given up is the
+    // anti-false-green: the pill is located inside the OFF frame's own focus
+    // ring and proved by its ink, not by the absence of green. The x extent IS
+    // shared — the row's width does not reflow, only its position down the
+    // column does.
+    let (off_hx0, off_hx1) = focused_row_span(&off, 60, 68).unwrap_or_else(|| {
+        panic!(
+            "the OFF frame must paint the lit glow header's ring: wide icy bands={:?}",
+            color_row_bands(&off, ICY, 40, 300)
+        )
+    });
     let off_in_box = count_color_in_box(&off, GREEN, 6, x0, y0, x1 + 1, y1 + 1);
     assert_eq!(
         off_in_box, 0,
         "the switch box must be grey when glow is off, but {off_in_box} green pixels sit in it"
     );
-    let off_grey = count_color_in_box(&off, BORDER_INK, 6, x0, y0, x1 + 1, y1 + 1);
+    // The pill is vertically centred in the header row (`alignment: center`),
+    // so the ring's own span places it: no y is carried over from the ON frame.
+    let pill_h = y1 - y0 + 1;
+    let off_y0 = off_hx0 + (off_hx1 - off_hx0 + 1 - pill_h) / 2;
+    let off_y1 = off_y0 + pill_h - 1;
+    let off_grey = count_color_in_box(&off, BORDER_INK, 6, x0, off_y0, x1 + 1, off_y1 + 1);
     assert!(
         off_grey > 200,
-        "the OFF switch must paint its grey face in the same box, got {off_grey} pixels"
+        "the OFF switch must paint its grey face inside the lit glow header (ring {off_hx0}..{off_hx1}, \
+         so the pill spans y {off_y0}..{off_y1} at x {x0}..{x1}), got {off_grey} pixels"
+    );
+
+    // The knob travels BOTH ways: parked left while the glow is off (so the
+    // pill's right half keeps more grey than its left) and parked right while it
+    // is on (so the green does the opposite). Reading the two halves of the same
+    // pill in the same frame is what proves which way the knob sits.
+    let mid_x = (x0 + x1) / 2;
+    let off_left = count_color_in_box(&off, BORDER_INK, 6, x0, off_y0, mid_x, off_y1 + 1);
+    let off_right = count_color_in_box(&off, BORDER_INK, 6, mid_x, off_y0, x1 + 1, off_y1 + 1);
+    assert!(
+        off_right > off_left,
+        "the dark knob must sit LEFT when the switch is off (grey left={off_left}, \
+         right={off_right})"
     );
 
     // The knob travels: with glow ON and the knob parked right, the pill's left
     // half keeps more green than its right half (the dark knob covers it).
-    let mid_x = (x0 + x1) / 2;
     let on_left = count_color_in_box(&on, GREEN, 6, x0, y0, mid_x, y1 + 1);
     let on_right = count_color_in_box(&on, GREEN, 6, mid_x, y0, x1 + 1, y1 + 1);
     assert!(
@@ -8610,6 +8645,240 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     );
 }
 
+
+/// T2 — the glow body FOLDS open. It used to be `if root.glow-enabled : glow-body
+/// := VerticalLayout { … }`, an element CREATED by the `if`, so it came up at
+/// its final size with no "from" frame: flipping the switch moved the whole
+/// block below it in one jump. The fold mounts the body in both states and
+/// animates a wrapper's height — the picker's own idiom in this pane.
+///
+/// Three frames off the render, and every landmark in them is something the
+/// pane already paints:
+///
+/// * CLOSED — glow off. Nothing of the body may paint between the two
+///   landmarks. The rest state paints at full opacity precisely so that a
+///   wrapper which failed to clip could not hide behind it, and the body's own
+///   marks are unmistakable: two knob-slider fill tracks (full-width icy bands)
+///   and four card rows (`bg-card` blocks).
+/// * MID-FLIGHT — the switch flipped, 8 ticks (128ms) into the 250ms fold. The
+///   rows between the landmarks must be PART of the way to the settled count,
+///   and the distance between the landmarks part of the way too. An instant jump
+///   makes this frame identical to the settled one, which is the false green
+///   this test is built to refuse.
+/// * SETTLED — the fold finished; all four body rows and both tracks paint.
+///
+/// The keyboard is parked on a DIFFERENT stop in each state, and both choices
+/// are about the landmarks rather than about the fold: the strip's active chip
+/// above it and the Save button below it are the two accent-cyan blocks that
+/// straddle the fold, so their distance is the pane's own measure of how tall
+/// the body currently is — a viewport scroll cancels out of it instead of
+/// counting as motion. Closed, the keyboard sits on the glow HEADER, which the
+/// fold does not move at all; open, it sits on the Range row, a real
+/// `local-focus > idx-glow-en` case for the fold's re-follow, which keeps both
+/// landmarks clear of the frame's edges. Neither stop is a save stop, and that
+/// matters: a focused Save button paints `accent-cyan.transparentize(0.2)`,
+/// which is no longer the exact colour this test reads. The stop NUMBER moves by
+/// one because opening the body is what creates the Range row — the pane's own
+/// `base-tail` arithmetic.
+#[test]
+fn borders_glow_body_folds_open_instead_of_jumping() {
+    use slint::ComponentHandle as _;
+    let win = borders_tune_glow_fixture();
+    // The fixture mounts the body ON (the four glow rows need real geometry);
+    // this test starts collapsed and opens it. `borders_tune_stop_count(2, ..)`
+    // is the map both states are checked against — `9 + slot-stops + (glow ? 4
+    // : 0)`, unchanged by this task.
+    assert_eq!(crate::callbacks::borders_tune_stop_count(2, false), 12);
+    assert_eq!(crate::callbacks::borders_tune_stop_count(2, true), 16);
+    win.set_tune_glow_enabled(false);
+    win.set_panel_kbd_preview_index(1 + 9); // 1 preset card + the glow header
+    settle_frames(80);
+    let closed = win.window().take_snapshot().expect("glow body closed");
+    save_slice_png(closed.clone(), "borders_glow_fold_1_closed.png");
+
+    // The switch, flipped, and the keyboard walks onto the Range row the body
+    // has just created. Measured off the render, the fold is still shut around
+    // tick 6 and has both slider tracks by tick 8 while the block below it is
+    // still well short of its settled place — tick 8 is where the body is
+    // unambiguously half-way rather than closed or all but there.
+    win.set_tune_glow_enabled(true);
+    win.set_panel_kbd_preview_index(1 + 10);
+    settle_frames(8);
+    let mid = win.window().take_snapshot().expect("glow body mid-flight");
+    save_slice_png(mid.clone(), "borders_glow_fold_2_mid.png");
+
+    settle_frames(60);
+    let settled = win.window().take_snapshot().expect("glow body settled");
+    save_slice_png(settled.clone(), "borders_glow_fold_3_settled.png");
+
+    // ── the two landmarks that straddle the fold ──
+    let (chip_closed, save_closed) = cyan_block_ends(&closed);
+    let (chip_mid, save_mid) = cyan_block_ends(&mid);
+    let (chip_settled, save_settled) = cyan_block_ends(&settled);
+    let (gap_closed, gap_mid, gap_settled) = (
+        save_closed.saturating_sub(chip_closed),
+        save_mid.saturating_sub(chip_mid),
+        save_settled.saturating_sub(chip_settled),
+    );
+    // ── what each frame paints between them ──
+    let rows_closed = body_card_rows(&closed, chip_closed, save_closed);
+    let rows_mid = body_card_rows(&mid, chip_mid, save_mid);
+    let rows_settled = body_card_rows(&settled, chip_settled, save_settled);
+    let tracks_closed = wide_icy_bands_between(&closed, chip_closed, save_closed);
+    let tracks_mid = wide_icy_bands_between(&mid, chip_mid, save_mid);
+    let tracks_settled = wide_icy_bands_between(&settled, chip_settled, save_settled);
+    println!(
+        "[T2] chip→save gap closed={gap_closed}px mid={gap_mid}px settled={gap_settled}px; \
+         card rows closed={rows_closed:?} mid={rows_mid:?} settled={rows_settled:?}; \
+         slider tracks closed={tracks_closed:?} mid={tracks_mid:?} settled={tracks_settled:?}"
+    );
+
+    // ── CLOSED: nothing of the body paints ──
+    assert!(
+        tracks_closed.is_empty() && rows_closed.len() == CLOSED_ROWS,
+        "a collapsed glow body must paint NOTHING between the switch and the block below it. \
+         Only the two cards that are there with the glow off are: the inactive colour row and \
+         the glow header itself. A body that leaks would add its own four rows and both slider \
+         tracks. rows={rows_closed:?} tracks={tracks_closed:?} \
+         (all wide icy bands {:?}, all card bands {:?})",
+        color_row_bands(&closed, ICY, 40, 300),
+        color_row_bands(&closed, BG_CARD, 4, 300)
+    );
+
+    // ── SETTLED: the whole body is there ──
+    assert_eq!(
+        (rows_settled.len(), tracks_settled.len()),
+        (SETTLED_ROWS, 2),
+        "the opened glow body must paint its four rows on top of the two cards that are there \
+         with the glow off, plus both knob-slider fill tracks: rows={rows_settled:?} \
+         tracks={tracks_settled:?}"
+    );
+
+    // ── MID-FLIGHT: the body is PARTLY open ──
+    assert!(
+        rows_mid.len() > rows_closed.len() && rows_mid.len() < rows_settled.len(),
+        "the mid-flight frame must show the body PARTLY open: it holds {} card rows against {} \
+         closed and {} settled, so an instant jump (which paints every row at once) cannot pass \
+         here. rows mid={rows_mid:?} closed={rows_closed:?} settled={rows_settled:?}",
+        rows_mid.len(),
+        rows_closed.len(),
+        rows_settled.len()
+    );
+    assert!(
+        !tracks_mid.is_empty(),
+        "the mid-flight frame must show the body opening — a knob-slider fill track must already \
+         paint: {tracks_mid:?} (all wide icy bands {:?})",
+        color_row_bands(&mid, ICY, 40, 300)
+    );
+    assert!(
+        gap_mid > gap_closed && gap_mid < gap_settled,
+        "the block below the fold must be part of the way to its settled place: the chip→Save \
+         distance is {gap_closed}px closed, {gap_mid}px mid-flight and {gap_settled}px settled. A \
+         mid frame equal to the settled one means the body is created by an `if` and jumps, which \
+         is exactly the defect this test guards"
+    );
+    // …and not merely one row in, nor all but there: both margins are wide
+    // enough that neither a crawling fold nor a nearly-finished one passes.
+    assert!(
+        rows_mid.len() + 1 <= rows_settled.len() && gap_settled - gap_mid >= 80,
+        "the mid-flight frame must be well inside the fold: {} of the body's {} rows revealed, \
+         and the block below is {}px short of its settled place",
+        rows_mid.len() - CLOSED_ROWS,
+        SETTLED_ROWS - CLOSED_ROWS,
+        gap_settled - gap_mid
+    );
+}
+
+/// How many card rows sit between the strip's active chip and the Save button
+/// with the glow body COLOSED: only the inactive colour row, because the glow
+/// header is the focused stop there and a focused row paints `bg-hover` instead
+/// of the card surface this reads. Every further row in the open frames is a row
+/// the fold put there.
+const CLOSED_ROWS: usize = 1;
+
+/// …and with it settled: the inactive row and the now-unfocused glow header,
+/// plus the body's four rows (Range, Power, Glow Color, Inactive Glow).
+const SETTLED_ROWS: usize = 5;
+
+/// The strip's ACTIVE chip (40x32 of `accent-cyan`) and the Save button
+/// (84x36 of `accent-cyan`) are the only two accent-cyan BLOCKS in the pane —
+/// every other accent-cyan mark (the segmented angle buttons, the sliders'
+/// "20px" readouts, the save field's placeholder) is text or a short bar. They
+/// sit on either side of the glow fold, which is what makes their distance a
+/// measure of how tall the folded body currently is. Returns
+/// `(chip_top, save_top)`.
+fn cyan_block_ends(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize, usize) {
+    let blocks: Vec<(usize, usize)> = color_row_bands(buf, ACCENT_CYAN, 40, 30)
+        .into_iter()
+        .filter(|(top, bottom)| bottom - top >= CYAN_BLOCK_MIN_H)
+        .collect();
+    assert_eq!(
+        blocks.len(),
+        2,
+        "the strip's active chip and the Save button must both paint in every frame — they are \
+         what the fold is measured between. One of them missing means the fold moved a block more \
+         than the viewport can give, which is what a body that arrives at full size does: nothing \
+         re-follows a height that jumps (the `changed height` re-follow is part of the fix), so \
+         the block below it leaves the frame in one step. blocks={blocks:?} \
+         (every accent-cyan band: {:?})",
+        color_row_bands(buf, ACCENT_CYAN, 40, 30)
+    );
+    (blocks[0].0, blocks[1].0)
+}
+
+/// How tall an accent-cyan band must be to count as a BLOCK rather than text or
+/// a bar. Measured: the strip's active chip is 32px and the Save button 36px,
+/// while the next tallest accent-cyan marks in the pane are 6px, 4px and 1px.
+const CYAN_BLOCK_MIN_H: usize = 28;
+
+/// The card rows (`bg-card`) painted between two screen y's, one entry per row.
+/// A row's own interior is split by its content — a slider track cuts a row's
+/// fill in two — so bands closer than [`CARD_ROW_SPLIT`] belong to the same row.
+fn body_card_rows(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    y0: usize,
+    y1: usize,
+) -> Vec<(usize, usize)> {
+    let mut rows: Vec<(usize, usize)> = Vec::new();
+    for band in color_row_bands(buf, BG_CARD, 4, 300) {
+        // Strictly between: the lower landmark is the Save button, which sits
+        // INSIDE the save row, so that row's own card is not part of the span.
+        if band.0 < y0 || band.0 >= y1 {
+            continue;
+        }
+        match rows.last_mut() {
+            Some(last) if band.0 <= last.1 + CARD_ROW_SPLIT => last.1 = last.1.max(band.1),
+            _ => rows.push(band),
+        }
+    }
+    rows
+}
+
+/// How close two `bg-card` bands must be to count as ONE row's split interior
+/// rather than two rows. Measured on this fixture, both sliders and all three
+/// states: a knob-slider track cuts its own row's fill 5px below the band above
+/// it, while the gap between two rows is 11px (glow header → Range row) to 32px
+/// (Range → Power). 8 sits between the two, with both measurements above it.
+const CARD_ROW_SPLIT: usize = 8;
+
+/// The knob-slider fill tracks of the glow body that lie strictly between two
+/// screen y's: each is a 4px `accent` line as wide as the column, and nothing
+/// else in the pane paints one — a focused row's 1px icy edge is excluded by
+/// the height filter, and a compact colour row's 16x16 swatch is far under the
+/// 300-pixels-per-row floor. So their presence is a direct read of how much of
+/// the body the wrapper is showing.
+fn wide_icy_bands_between(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    y0: usize,
+    y1: usize,
+) -> Vec<(usize, usize)> {
+    color_row_bands(buf, ICY, 40, 300)
+        .into_iter()
+        // A knob track is 4px tall (`HveKnobSlider.track.height`); a focused
+        // row's own border paints a single icy row, which is not a track.
+        .filter(|(top, bottom)| *top > y0 && *top < y1 && bottom - top >= 3)
+        .collect()
+}
 
 // ── Borders custom colour picker (task 3.6) ───────────────────────────
 // Exactly ONE picker is mounted, open for the channel being edited (index
@@ -10043,5 +10312,3 @@ fn focus_restore_bumps_are_bounded_in_count_and_time() {
         "every ping lands inside the ~2-6 s re-assert window with margin"
     );
 }
-
-
