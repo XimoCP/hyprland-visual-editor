@@ -185,6 +185,50 @@ monitors/HDR.
   only be used from within OpenCode". Work continues on the cheap Go lane
   (deepseek-v4-flash) with verification on a different family (glm-5.3-flash).
 
+## T3 slicing (container per block)
+
+Inventory from a read-only pass: `tune-col` (`BordersSection.slint:374`) holds **29
+first-level children** across 2128 lines. Four thin separators already exist
+(`:531`, `:626`, `:977`, `:1157`). Some blocks already carry their own frame
+(`size/radius/gap-in/gap-out/angle-wrap`, the compact colour rows, the picker card, the
+glow header and its sliders, the save row and button); the rest are bare text or
+loose controls. Only two headings exist today (`geometry-heading`, `active-colors-label`).
+
+Natural containers, and the insertion points:
+
+| Group | Wrap lines | Notes |
+| --- | --- | --- |
+| Geometry | before 386 → after 528 | contains the existing heading |
+| Gradient angle | before 534 → after 602 | |
+| Inactive colour | before 607 → after 623 | |
+| Active colours | before 629 → after 895 | sliceable on its own |
+| Slot add/remove | before 898 → after 974 | |
+| Glow | before 988 → after 1154 | header row added in T1 |
+| Save | before 1160 → after 1245 | |
+
+Adding a heading is NOT a one-file edit: a new text property must be registered in
+`ui/panel/sections/borders_text.slint`, `i18n/en.json`, `i18n/es.json`,
+`src/panel_i18n.rs`, and `src/shell/ui_tests.rs`'s `borders_labels()` table — whose
+fixed-size array and the source-text test `the_borders_section_reads_every_label_from_the_text_global`
+both break if the table and the pane drift apart.
+
+**Prerequisite found before touching geometry (the reason T3 is sliced).**
+`BordersSection.slint:349` positions the keyboard's scroll-follow with
+`property <length> focus-y: root.local-focus * 96px;` — one hardcoded height per stop,
+consumed by `follow-focus()` (`:358-368`). It works today only because 96px happens to be
+the real average. A header on every group raises that average, and the error compounds per
+stop, so the last controls would start scrolling short. A magic constant is also exactly
+what the keeper's agnostic norm forbids. So the slices are:
+
+- **T3a — make the scroll-follow honest.** Derive the focused block's position from the
+  real geometry of the block that owns that stop instead of multiplying an index by a
+  constant. Must be proven by a render test that navigates to a LATE stop and shows it
+  fully in view, and by the existing focus/scroll tests staying green.
+- **T3b — the container pattern, one group.** Geometry first, end to end: container with
+  its own surface, heading, description, plus all five text/i18n/table registrations. This
+  is the slice that proves the pattern.
+- **T3c — the remaining groups**, same pattern, in the table's order.
+
 ## Progress
 
 - 2026-09-29 — Document opened. Exploration done (two read-only passes).
