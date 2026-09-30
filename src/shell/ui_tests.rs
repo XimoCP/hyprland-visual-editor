@@ -8130,6 +8130,350 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     assert!(count_icy_pixels(&end) > 200, "last focus must carry the icy ring");
 }
 
+// ── T3a — the tune scroll-follow must follow REAL block geometry ──────
+// `follow-focus()` used to place the focused stop with ONE hardcoded height
+// per keyboard stop: `property <length> focus-y: root.local-focus * 96px`.
+// That is only right while every block happens to average 96px tall, and the
+// error COMPOUNDS per stop — so the "container per block" work (T3b puts a
+// header on every group) would have started scrolling late controls short. The
+// pane now reads the laid-out `y` of the block that OWNS the stop.
+//
+// How these tests tell the two rules apart. An index times a constant is an
+// estimate per STOP; a block's `y` is a fact per BLOCK, so the geometry has to
+// match two things the estimate cannot:
+//
+//   * two stops that own the SAME block land on the same screen y, and
+//   * every stop that is not pinned against the content's top or bottom lands
+//     its row on the SAME screen y, because the pane centres the focused row
+//     (`focus-centre-inset` puts the row across the middle of the viewport).
+//
+// Both are read off the render. Measured on this fixture (glow on, 2 colour
+// slots, 1920x1080) the constant walks the three geometry stops 567 → 677 →
+// 690 and puts the add/remove pair 96px apart, while the real geometry holds
+// those at 560/560/560 and 747/747. The tolerances below come from those
+// numbers: they absorb the up-to-16px a focused row's own height animation can
+// shift a LATER row by after the target was computed, and nothing more.
+//
+// NOT asserted here, on purpose: "the LAST stop is visible". The ScrollView
+// clamps its target at `height - content`, so the last few stops (the glow
+// sliders and Save) are pinned at the bottom under BOTH rules — measured
+// identical frames. Visibility there proves nothing; the tests below use the
+// last stop the constant still gets wrong, which is the glow-enable row.
+
+/// The pane the T3a focus tests need: glow ON, so the four glow rows the
+/// keyboard can reach are really mounted and the late stops have geometry the
+/// `index * 96px` estimate cannot reproduce. Two colour slots — the strip is
+/// ONE keyboard stop whatever the slot count — and one preset card, so the tune
+/// stops start at global index 1.
+fn borders_tune_glow_fixture() -> crate::MainWindow {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let win = crate::MainWindow::new().unwrap();
+    // Expanded, opaque panel: without it the shell keeps the panel translucent
+    // and every content colour alpha-blends over the background, so no icy ring
+    // can be measured from the frame.
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_border_size(2);
+    win.set_tune_glow_enabled(true);
+    win.set_tune_glow_range(20);
+    win.set_tune_glow_render_power(4);
+    win.set_tune_glow_color(SharedString::from("p:primary"));
+    win.set_tune_glow_color_inactive(SharedString::from("p:surface_lowest"));
+    focus_settle();
+    win
+}
+
+/// Drives the keyboard to tune-local stop `local` (global = 1 preset card +
+/// local), settles every height animation, and returns the rendered frame.
+fn render_tune_local_stop(
+    win: &crate::MainWindow,
+    local: i32,
+) -> slint::SharedPixelBuffer<slint::Rgba8Pixel> {
+    use slint::ComponentHandle as _;
+    let tune = crate::callbacks::borders_tune_stop_count(2, true);
+    assert!(
+        (0..tune).contains(&local),
+        "tune-local stop {local} is outside the {tune}-stop inventory"
+    );
+    win.set_panel_kbd_preview_index(1 + local);
+    settle_frames(80);
+    win.window().take_snapshot().expect("tune stop snapshot")
+}
+
+/// Screen y of the one icy band pair `min_gap..=max_gap` apart, i.e. the
+/// viewport position read in pixels. The window is the caller's landmark: a
+/// focused row paints its two horizontal edges exactly its lit height apart
+/// (96px for a geometry row, 56px for a compact row, 64px for the glow header),
+/// while the Add/Remove pair needs a landmark that has nothing to do with the
+/// focus ring — the glow group's two slider tracks, ~85px apart and just as
+/// wide as the pane.
+fn icy_band_pair_top(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    min_gap: usize,
+    max_gap: usize,
+) -> usize {
+    focused_row_span(buf, min_gap, max_gap)
+        .map(|(top, _)| top)
+        .unwrap_or_else(|| {
+            panic!(
+                "the focused row must paint both of its icy edges {min_gap}..={max_gap}px apart \
+                 inside the viewport; icy bands={:?}",
+                color_row_bands(buf, ICY, 40, 300)
+            )
+        })
+}
+
+/// T3a — the Add row and the Remove row are two keyboard stops of ONE block
+/// (the two buttons of the same `HorizontalLayout`), so moving the keyboard
+/// between them must leave the pane exactly where it was. `index * 96px` moves
+/// it a full stop height, because the STOP NUMBER changed while the block did
+/// not: it is the clearest single proof that the target comes from the block.
+///
+/// Two reads, both off the render. First the pane must not move: the two
+/// frames may only differ where the focus ring travelled from one button to the
+/// other. Then the landmark that makes that quantitative — the glow group's two
+/// slider tracks, full-width icy bands ~85px apart that do not move by
+/// themselves — must land on the same screen y in both frames.
+#[test]
+fn borders_tune_focus_puts_two_stops_of_one_block_on_one_screen_y() {
+    let win = borders_tune_glow_fixture();
+
+    // Tune order: 0..5 geometry/colour, 6 the strip, 7 Add, 8 Remove, 9.. glow.
+    let add = render_tune_local_stop(&win, 7);
+    save_slice_png(add.clone(), "borders_tune_focus_add_row_real_geometry.png");
+    let remove = render_tune_local_stop(&win, 8);
+    save_slice_png(
+        remove.clone(),
+        "borders_tune_focus_remove_row_real_geometry.png",
+    );
+
+    // The viewport itself: the panel content is identical between the two
+    // frames except for the ring. Measured 1983 pixels with the geometry (two
+    // ~40px rings) against the whole panel; `index * 96px` scrolls the content
+    // a full stop height, which changes the panel far beyond this bound.
+    let moved = count_buffer_diff_region(&add, &remove, 360, 100, 1920, 1080);
+    println!("[T3a] add/remove frame difference over the panel = {moved} pixels");
+    assert!(
+        moved < SAME_BLOCK_MAX_MOVED,
+        "the Add and Remove stops own the SAME block, so the pane must not move between them: \
+         {moved} panel pixels differ (budget {SAME_BLOCK_MAX_MOVED}, measured 1108 for the ring \
+         alone). An estimate per stop number scrolls the content one stop height and blows past it"
+    );
+
+    // …and the same thing in pixels: the glow sliders' two icy tracks are a
+    // landmark ~85px apart (measured), so they read the viewport position.
+    let add_top = icy_band_pair_top(&add, 78, 92);
+    let remove_top = icy_band_pair_top(&remove, 78, 92);
+    assert!(
+        add_top.abs_diff(remove_top) <= 8,
+        "the Add and Remove stops own the SAME block, so every fixed landmark must stay put: \
+         landmark top={add_top} then {remove_top} ({}px apart)",
+        add_top.abs_diff(remove_top)
+    );
+}
+
+/// T3a — the pane centres the focused row, so every stop that is not pinned
+/// against the content's ends must land its row on the same screen y, whatever
+/// height the blocks above it are. The glow group is where `index * 96px` is
+/// demonstrably wrong: those four rows are 56–64px tall each, so by the
+/// glow-ENABLE row the estimate has over-counted by ~75px and the row drifts
+/// off the band the geometry stops share.
+#[test]
+fn borders_tune_focus_centres_stops_from_real_geometry_not_an_index() {
+    let win = borders_tune_glow_fixture();
+
+    // Three stops that are unclamped under BOTH rules (their targets sit
+    // inside [height - content, 0]), each read with its own lit height: the
+    // geometry rows are 96px when focused, the compact inactive row 56px.
+    let gap_out = render_tune_local_stop(&win, 3);
+    save_slice_png(
+        gap_out.clone(),
+        "borders_tune_focus_gap_out_real_geometry.png",
+    );
+    let angle = render_tune_local_stop(&win, 4);
+    save_slice_png(angle.clone(), "borders_tune_focus_angle_real_geometry.png");
+    let inactive = render_tune_local_stop(&win, 5);
+    save_slice_png(
+        inactive.clone(),
+        "borders_tune_focus_inactive_real_geometry.png",
+    );
+
+    let band = icy_band_pair_top(&gap_out, 88, 104);
+    let angle_top = icy_band_pair_top(&angle, 88, 104);
+    let inactive_top = icy_band_pair_top(&inactive, 48, 62);
+    assert!(
+        band.abs_diff(angle_top) <= 8 && band.abs_diff(inactive_top) <= 8,
+        "every unclamped stop is centred, so all three rows must land on ONE screen y: \
+         gap-out={band}, angle={angle_top}, inactive={inactive_top}. `index * 96px` walks them \
+         apart by a full stop height each ({}, {} px between neighbours)",
+        band.abs_diff(angle_top),
+        band.abs_diff(inactive_top)
+    );
+
+    // The late GLOW stop: the first row of the glow group, and the last stop
+    // whose target the constant still gets wrong before the bottom clamp takes
+    // over. Its row is 64px while focused (measured 63px between its edges).
+    let glow_en = render_tune_local_stop(&win, 9);
+    save_slice_png(
+        glow_en.clone(),
+        "borders_tune_focus_glow_en_real_geometry.png",
+    );
+    let glow_top = icy_band_pair_top(&glow_en, 60, 68);
+    assert!(
+        glow_top.abs_diff(band) <= 30,
+        "the glow-ENABLE row (tune-local 9) must join the band every centred stop shares: \
+         glow-en={glow_top}, band={band} ({}px apart). The four glow rows are 56–64px tall, so \
+         `index * 96px` over-estimates this stop by ~75px and leaves the row off-centre",
+        glow_top.abs_diff(band)
+    );
+}
+
+/// T3a — the strip is the one stop whose block is created by an `if`, so the
+/// pane cannot read its `y` from outside and the strip reports it through
+/// `init` + `changed y`. `init` is the half that matters at mount: Slint fires
+/// `changed` only on a CHANGE, never for the value an element is created with,
+/// and the strip's offset inside `picker-block` does not move while the picker
+/// is closed — so without the mount write the strip kept reporting -1px, and
+/// `follow-focus` refuses to scroll to a stop that owns no block. The pane then
+/// silently stopped following the keyboard on this stop.
+///
+/// The observable is the strip's own focus ring: the ACTIVE chip (40x32, 2px
+/// icy border) lands on the band every centred stop shares, exactly like the
+/// rows above and below it.
+///
+/// This test does NOT separate the two scroll rules — the constant scrolls to
+/// the strip too. It guards the plumbing that reports a conditional block's
+/// position, where a missing mount value would silently turn "scroll to this
+/// block" into "do not scroll at all".
+#[test]
+fn borders_tune_focus_scrolls_to_the_strip_block_reported_at_mount() {
+    let win = borders_tune_glow_fixture();
+
+    let inactive = render_tune_local_stop(&win, 5);
+    let band = icy_band_pair_top(&inactive, 48, 62);
+    let strip = render_tune_local_stop(&win, 6);
+    save_slice_png(strip.clone(), "borders_tune_focus_strip_real_geometry.png");
+
+    let chip_top = strip_chip_ring_top(&strip).unwrap_or_else(|| {
+        panic!(
+            "the active chip must paint its icy focus ring inside the viewport; icy rows with a \
+             chip-sized ink count={:?}",
+            narrow_icy_bands(&strip, CHIP_RING_MIN_INK, CHIP_RING_MAX_INK)
+        )
+    });
+    assert!(
+        chip_top.abs_diff(band) <= 30,
+        "the strip stop must scroll to the strip's own block, like every other stop: chip ring \
+         top={chip_top}, shared band={band} ({}px apart). A stale -1px for a mounted strip leaves \
+         the viewport where it was and the strip nowhere near the middle",
+        chip_top.abs_diff(band)
+    );
+}
+
+/// How many panel pixels two frames may differ by before the pane counts as
+/// having MOVED. Measured 1983 pixels for the Add/Remove pair with the block
+/// geometry (two focus rings), against the whole panel; a rule that estimates a
+/// position per stop number scrolls the content a full stop height and changes
+/// tens of thousands of pixels.
+const SAME_BLOCK_MAX_MOVED: usize = 20000;
+
+/// A focused row's icy edge paints ~830 icy pixels per row (measured) and a
+/// slider's icy track fill ~340, which is why `color_row_bands` asks for 300.
+/// The strip's active chip is a 40x32 rectangle with a 2px icy border, so its
+/// edge rows carry only 20-36 icy pixels (measured) and a 300-per-row scan
+/// cannot see it at all. These bounds are that chip's own ink count.
+const CHIP_RING_MIN_INK: usize = 12;
+const CHIP_RING_MAX_INK: usize = 320;
+
+/// Rows carrying `min_per_row..=max_per_row` icy pixels in the content area.
+fn narrow_icy_bands(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    min_per_row: usize,
+    max_per_row: usize,
+) -> Vec<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut bands: Vec<(usize, usize)> = Vec::new();
+    let mut open: Option<(usize, usize)> = None;
+    for y in 0..h {
+        let mut row = 0usize;
+        for x in 360..w {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - ICY.0 as i16).abs() <= 40
+                && (bytes[idx + 1] as i16 - ICY.1 as i16).abs() <= 40
+                && (bytes[idx + 2] as i16 - ICY.2 as i16).abs() <= 40
+            {
+                row += 1;
+            }
+        }
+        if (min_per_row..=max_per_row).contains(&row) {
+            open = match open {
+                Some((start, _)) => Some((start, y)),
+                None => Some((y, y)),
+            };
+        } else if let Some(band) = open.take() {
+            bands.push(band);
+        }
+    }
+    if let Some(band) = open {
+        bands.push(band);
+    }
+    bands
+}
+
+/// Top edge of the strip's active chip: the upper member of the one narrow icy
+/// band pair that is a chip's own height (32px, plus its 2px borders) apart.
+fn strip_chip_ring_top(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> Option<usize> {
+    let bands = narrow_icy_bands(buf, CHIP_RING_MIN_INK, CHIP_RING_MAX_INK);
+    let mut best: Option<(usize, usize)> = None;
+    for i in 0..bands.len() {
+        for j in (i + 1)..bands.len() {
+            let gap = bands[j].0.saturating_sub(bands[i].0);
+            if (30..=38).contains(&gap) {
+                let candidate = (bands[i].0, bands[j].0);
+                best = Some(match best {
+                    Some((t, b)) if b - t <= gap => (t, b),
+                    _ => candidate,
+                });
+            }
+        }
+    }
+    best.map(|(top, _)| top)
+}
+
 // ── Borders glow colour rows must render inside their box ─────────────
 // Regression guard for two real defects, both about a row overflowing the
 // space the layout gave it:

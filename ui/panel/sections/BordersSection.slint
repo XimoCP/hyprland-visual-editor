@@ -243,6 +243,10 @@ component BordersTunePane inherits Rectangle {
     // callbacks::borders_tune_stop_count and BordersSection.tune-enter.
     property <int> idx-add: root.slot-stops > 0 ? 7 : -1;
     property <int> idx-remove: root.slot-stops > 0 ? 8 : -1;
+    // The strip is the ONE stop after the six fixed geometry / colour stops,
+    // so it is `idx-add - 1` while colours exist and -1 when they do not.
+    // Mirrors the section's `idx-strip` and callbacks::borders_tune_stop_count.
+    property <int> idx-strip: root.slot-stops > 0 ? 6 : -1;
     property <int> idx-glow-en: root.slot-stops + 6;
     property <int> idx-glow-range: root.idx-glow-en + 1;
     property <int> idx-glow-power: root.idx-glow-en + 2;
@@ -251,6 +255,92 @@ component BordersTunePane inherits Rectangle {
     property <int> base-tail: root.idx-glow-en + (root.glow-enabled ? 5 : 1);
     property <int> idx-save-name: root.base-tail;
     property <int> idx-save-btn: root.base-tail + 1;
+
+    // T3a — a block created by an `if` cannot be referenced from outside it
+    // (Slint forbids that), so the blocks that come and go report their own
+    // `y` into the pane through these properties. Two mechanisms, and BOTH are
+    // needed:
+    //
+    //   * `init` writes the value the element gets from the layout when it is
+    //     created. It runs after that element's own geometry is known, so a
+    //     block that mounts while the pane is idle still reports a real `y`.
+    //   * `changed y` keeps the value fresh while the pane reflows (a slider
+    //     grows 8px when it takes focus, so every block below it moves).
+    //
+    // `changed` alone is NOT enough and that is a measured fact, not a
+    // precaution: Slint fires `changed` only on a CHANGE, never for the value
+    // an element is created with, so a block whose `y` never moved after
+    // mounting kept reporting the -1px sentinel and the pane silently refused
+    // to scroll to it. `init` alone is not enough either: it cannot follow a
+    // later reflow. Measured with a debug build: the strip reported `init`
+    // y=8 and then nothing for the rest of the session, even while the rows
+    // above it moved it by 16px.
+    //
+    // -1px means "no value yet" (the block's `if` is false, or it mounted in
+    // this very frame); the caller degrades to no scroll.
+    //
+    // ORIGIN: these are `y` values as the element sees them, i.e. relative to
+    // its own PARENT — the strip's parent is `picker-block` and the sliders'
+    // parent is `glow-body`. `focus-block-y()` adds the live parent `y`, so the
+    // result is always in `tune-col` coordinates, which is the space
+    // `viewport-y` scrolls in. The strip's own offset stays constant while the
+    // picker is closed, so a relative value plus a live parent is the only
+    // combination that does not go stale when the picker card grows above it.
+    property <length> strip-y: -1px;
+    property <length> slots-y: -1px;
+    property <length> glow-body-y: -1px;
+    property <length> glow-range-y: -1px;
+    property <length> glow-power-y: -1px;
+    property <length> glow-color-y: -1px;
+    property <length> glow-inactive-y: -1px;
+
+    // T3a — the scroll-follow derives the focused block's position from the
+    // REAL geometry of the block that owns the stop, instead of multiplying
+    // the index by a hardcoded height. Every stop the pane can focus maps to
+    // the named block that owns it; the dynamic glue (glow on/off, slots
+    // present/absent) is derived from the SAME conditions that mount the
+    // blocks, so a stop that maps to nothing returns -1px and the caller
+    // leaves the viewport where it is rather than scroll to a wrong position.
+    // Reading a named block's `y` is layout-correct: `y` is the offset from
+    // the parent's top-left corner (Slint geometry reference), and a
+    // VerticalLayout assigns each child its real laid-out `y`. The blocks
+    // that are ALWAYS mounted (the six geometry / colour stops, the glow
+    // header, the save row) are read directly. The CONDITIONAL blocks (the
+    // strip, the add/remove row, the glow body and its sliders) come through
+    // the properties above; the two that sit one level deeper add their live
+    // parent's `y` here, because only the parent chain turns their relative
+    // `y` into the `tune-col` coordinate `viewport-y` scrolls in.
+    function focus-block-y() -> length {
+        let f = root.local-focus;
+        if (f < 0) { return -1px; }
+        if (f == 0) { return size-wrap.y; }
+        if (f == 1) { return radius-wrap.y; }
+        if (f == 2) { return gap-in-wrap.y; }
+        if (f == 3) { return gap-out-wrap.y; }
+        if (f == 4) { return angle-wrap.y; }
+        if (f == 5) { return inactive-wrap.y; }
+        if (f == root.idx-strip) {
+            // `strip-y` is picker-block-relative; the picker card above the
+            // strip grows 380px, which moves `picker-block.y` without moving
+            // the strip inside it, so the parent is read live rather than
+            // folded into the reported value.
+            return root.slot-count > 0 ? picker-block.y + root.strip-y : -1px;
+        }
+        if (f == root.idx-add || f == root.idx-remove) {
+            return root.slot-count > 0 ? root.slots-y : -1px;
+        }
+        if (f == root.idx-glow-en) { return glow-wrap.y; }
+        if (root.glow-enabled) {
+            // The four glow sliders live inside `glow-body`; their reported `y`
+            // is relative to it, so the body's live `y` is added here.
+            if (f == root.idx-glow-range) { return root.glow-body-y + root.glow-range-y; }
+            if (f == root.idx-glow-power) { return root.glow-body-y + root.glow-power-y; }
+            if (f == root.idx-glow-color) { return root.glow-body-y + root.glow-color-y; }
+            if (f == root.idx-glow-inactive) { return root.glow-body-y + root.glow-inactive-y; }
+        }
+        if (f == root.idx-save-name || f == root.idx-save-btn) { return save-wrap.y; }
+        return -1px;
+    }
 
     // Slint has no substring op, so the encoded value ("p:primary", "c:rrggbbaa")
     // is mapped to a readable label explicitly. Raw encodings must never reach
@@ -342,11 +432,18 @@ component BordersTunePane inherits Rectangle {
     }
 
     tune-scroll := ScrollView {
-        // Linear estimate keeps every stop scrollable: the viewport centers
-        // on the focused stop so it is always visible (no dead stops).
-        // Clamped to [height - content, 0] so the first and last stops can
-        // never scroll into the void, whatever the inventory mix.
-        property <length> focus-y: root.local-focus * 96px;
+        // How far above the viewport's middle the focused block's TOP edge is
+        // parked. A block that holds focus grows to 96px (the geometry rows:
+        // `self.lit ? (self.grabbed ? 112px : 96px) : 80px`, and the compact
+        // rows follow the same idiom), so half of that — 48px — puts the whole
+        // focused row across the middle of the viewport instead of hanging it
+        // off the top edge. It stays a CONSTANT on purpose: the only thing that
+        // could derive it is the focused block's rendered height, and that
+        // height ANIMATES (250ms ease-in-out-back), so a derived inset would
+        // compute the target from a mid-flight value and make the scroll jump
+        // before settling. Named instead of an anonymous 48px, so the number
+        // states what it is half of.
+        property <length> focus-centre-inset: 48px;
         // IMPERATIVE, not a binding — see the note on the list pane: a wheel
         // writes `viewport-y`, which drops a binding and would leave the tune
         // pane unable to follow the keyboard for the rest of the session.
@@ -362,8 +459,20 @@ component BordersTunePane inherits Rectangle {
                 return;
             }
             if (root.follow && root.local-focus >= 0) {
-                self.viewport-y = max(self.height - tune-col.height,
-                    min(0px, 0px - max(0px, self.focus-y + 48px - self.height / 2)));
+                // The focused block's REAL position (T3a), not an index times a
+                // hardcoded height: the old `local-focus * 96px` was only right
+                // while every block happened to average 96px tall, and a group
+                // header on any block (T3b) moves every later stop. Here the
+                // target is the laid-out `y` of the block that OWNS the stop,
+                // so a taller block costs the stops below it nothing.
+                let block-y = root.focus-block-y();
+                // -1px: this stop owns no mounted block (out of range, or the
+                // strip with no colours). Leaving the viewport where the user
+                // left it beats scrolling to a position nothing occupies.
+                if (block-y >= 0px) {
+                    self.viewport-y = max(self.height - tune-col.height,
+                        min(0px, 0px - max(0px, block-y + self.focus-centre-inset - self.height / 2)));
+                }
             }
         }
         // NEVER animated. `viewport-y` is the property the wheel writes, so an
@@ -604,7 +713,7 @@ component BordersTunePane inherits Rectangle {
             // ── Inactive color row (R6) ──
             // A compact single row — chip + label + "Custom…" — instead of the
             // 110px slot card. The token swatches live in the shared picker now.
-            BorderCompactColorRow {
+            inactive-wrap := BorderCompactColorRow {
                 label: BordersText.inactive-label;
                 value-label: root.value-label(root.tune-inactive-color);
                 resolved-color: root.tune-colors-resolved[8];
@@ -826,9 +935,14 @@ component BordersTunePane inherits Rectangle {
                 // replaces the N × BorderColorSlot card stack: the gradient reads
                 // as a single row at a glance, and the whole strip is ONE keyboard
                 // stop (R8) instead of N.
-                if root.slot-count > 0 : HorizontalLayout {
-                spacing: 6px;
-                alignment: start;
+                if root.slot-count > 0 : strip-wrap := HorizontalLayout {
+                    // Picker-block-relative, read live by `focus-block-y()`;
+                    // `init` is what reports the mount value (see the note on
+                    // the pane properties above).
+                    changed y => { root.strip-y = self.y; }
+                    init => { root.strip-y = self.y; }
+                    spacing: 6px;
+                    alignment: start;
 
                 for i in root.slot-count : Rectangle {
                     property <bool> is-active-chip: i == root.strip-active-chip && root.has-focus;
@@ -895,7 +1009,9 @@ component BordersTunePane inherits Rectangle {
             }
 
             // ── Add / Remove slot controls ──
-            if root.slot-count > 0 : HorizontalLayout {
+            if root.slot-count > 0 : slots-wrap := HorizontalLayout {
+                changed y => { root.slots-y = self.y; }
+                init => { root.slots-y = self.y; }
                 spacing: 8px;
                 alignment: center;
 
@@ -985,7 +1101,7 @@ component BordersTunePane inherits Rectangle {
             // cyan "Add" rectangle (glow off) and the separate ✕ (glow on),
             // which each existed in only one state and so made the row jump.
             // Only the BODY below differs by state.
-            Rectangle {
+            glow-wrap := Rectangle {
                 property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
                 height: self.lit ? 64px : 56px;
                 border-width: 1px;
@@ -1051,11 +1167,17 @@ component BordersTunePane inherits Rectangle {
                 wrap: word-wrap;
             }
 
-            if root.glow-enabled : VerticalLayout {
+            if root.glow-enabled : glow-body := VerticalLayout {
+                changed y => { root.glow-body-y = self.y; }
+                init => { root.glow-body-y = self.y; }
                 spacing: 8px;
 
                 // Range slider
-                Rectangle {
+                glow-range-wrap := Rectangle {
+                    // Glow-body-relative: this is the body's FIRST child, so
+                    // the offset is 0 and `init` is what reports it at all.
+                    changed y => { root.glow-range-y = self.y; }
+                    init => { root.glow-range-y = self.y; }
                     property <bool> lit: root.local-focus == root.idx-glow-range && root.has-focus;
                     property <bool> grabbed: root.engaged-slider == root.idx-glow-range && root.has-focus;
                     height: self.lit ? 64px : 56px;
@@ -1086,7 +1208,9 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 // Render power slider
-                Rectangle {
+                glow-power-wrap := Rectangle {
+                    changed y => { root.glow-power-y = self.y; }
+                    init => { root.glow-power-y = self.y; }
                     property <bool> lit: root.local-focus == root.idx-glow-power && root.has-focus;
                     property <bool> grabbed: root.engaged-slider == root.idx-glow-power && root.has-focus;
                     height: self.lit ? 64px : 56px;
@@ -1117,7 +1241,9 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 // Glow color — compact row, same pattern as the inactive row (R7).
-                BorderCompactColorRow {
+                glow-color-wrap := BorderCompactColorRow {
+                    changed y => { root.glow-color-y = self.y; }
+                    init => { root.glow-color-y = self.y; }
                     label: BordersText.glow-color-label;
                     value-label: root.value-label(root.glow-color);
                     resolved-color: root.tune-colors-resolved[9];
@@ -1135,7 +1261,9 @@ component BordersTunePane inherits Rectangle {
                 }
 
                 // Glow inactive color — compact row (R7).
-                BorderCompactColorRow {
+                glow-inactive-wrap := BorderCompactColorRow {
+                    changed y => { root.glow-inactive-y = self.y; }
+                    init => { root.glow-inactive-y = self.y; }
                     label: BordersText.glow-inactive-label;
                     value-label: root.value-label(root.glow-color-inactive);
                     resolved-color: root.tune-colors-resolved[10];
@@ -1165,7 +1293,7 @@ component BordersTunePane inherits Rectangle {
                 color: HveColors.accent-cyan;
             }
 
-            HorizontalLayout {
+            save-wrap := HorizontalLayout {
                 spacing: SkwdTokens.spacing-8;
                 height: 36px;
 
