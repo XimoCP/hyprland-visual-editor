@@ -252,10 +252,47 @@ what the keeper's agnostic norm forbids. T3a removed it (commit `9fe052f`); the 
   `cargo build` warning-free, neighbours and `picker_scale_animation_stays_declared_by_construction`
   green, the keyboard stop count and `glow-changed` untouched, engine files untouched,
   fresh per-run PNGs read by both models. Honest limits recorded below.
-- [ ] **T3b — the container pattern, one group.** Geometry first, end to end: container with
-  its own surface, heading, description, plus all five text/i18n/table registrations. This
-  is the slice that proves the pattern.
-- **T3c — the remaining groups**, same pattern, in the table's order.
+- [x] **T3b — the container pattern, one group.** DONE — commit `34ba472`. The Geometry
+  group lives in one `geometry-group` container (the pane's own card idiom: `bg-card`
+  fill, 1px `border` hairline, `radius-8`, `spacing-12` padding) with a header carrying
+  the EXISTING `geometry-heading` title plus a new `geometry-desc` description, whose
+  label is registered for real in all five points (`borders_text.slint`, `i18n/en.json`,
+  `i18n/es.json`, `src/panel_i18n.rs`, the `borders_labels()` table) — EN and neutral ES,
+  the Spanish frame proven rendered. `focus-block-y()` now sums the container's LIVE `y`
+  for the four geometry stops; no stop was added, moved or reordered; `tune-count` and
+  `borders_tune_stop_count()` untouched. Evidence: two new render tests RED first then
+  GREEN, full suite `1195 passed / 0 failed`, build warning-free, PNGs read in both
+  languages. Independent verification on a different model: PASS, no refutations, and it
+  red-proved the pixel assertion itself (patched the description to invisible ink → FAIL).
+- [ ] **T3c-1 — the three plain groups** (Gradient angle, Inactive colour, Save): no
+  conditional children, so no geometry sum changes. Same pattern as T3b, several new
+  labels.
+- [ ] **T3c-2 — the three conditional-bearing groups** (Active colours [the strip], Slot
+  add/remove [+/− row], Glow [the fold and its sliders]): each wraps a block that reports
+  its own `y`, so every `focus-block-y()` sum must gain its container's LIVE `y`. One
+  coherent change, one verification.
+
+**Recorded residuals from T3b/T3a (not defects of T3b; tracked here so they stop living
+only in a test comment).**
+
+- **The walked-down centring bias (~16-17px), real and pre-existing.** `follow-focus()`
+  reads the geometry synchronously on `changed local-focus`, when the row LEAVING focus is
+  still lit at +16px. Measured on the T3b pane: 560 (read after walking down from the row
+  above) vs 577 (fresh pane) for the same stop. Stepping down therefore parks every
+  focused row ~17px above the centre; stepping UP is unbiased. Non-cumulative, cosmetic,
+  but it contradicts the centring intent. T3b exposed it by adding a header (T3a's clamp
+  had hidden it) and the honest fix (re-trigger `follow-focus` from the rows'
+  `changed height`, whose final fire carries settled geometry) is a behaviour change of
+  its own. **Untested and untracked until now**: no test covers the walked-down path.
+  Candidate for its own slice.
+- **The container's fill has no contrast against the rows inside it** (both `bg-card`,
+  ratio 1.0). The container edge is carried by its 1px `border` hairline and the
+  container-vs-pane contrast (~1.17:1). Verification measured that `bg-surface` would be
+  WEAKER, so the real lever, if the keeper wants more separation, is making the rows
+  transparent inside the container.
+- **Never red-proven pixel assertions** in the new T3b test: `card > 1500` and
+  `repaint > 60` (measured far above, directionally sound; the description assertion WAS
+  red-proved by the verifier).
 
 **T3a — what the fix rests on, and its honest limits (2026-09-30).**
 
@@ -303,3 +340,17 @@ what the keeper's agnostic norm forbids. T3a removed it (commit `9fe052f`); the 
 - 2026-09-30 — Next blocker to keep in mind: the fix is verified at the suite's 1920×1080
   fixture only. A `focus-centre-inset` constant (48px) remains, justified because the
   focused block's height animates.
+- 2026-09-30 — **T2 closed** (`13e015c` fold, `ce2ea8d` fixes after verification): the glow
+  body folds open instead of appearing at full size, and the OFF-state description folds
+  too, in both directions. Cross-model verification found the fold PASS with two
+  corrections (a false claim in a test comment, and an undisclosed instant appearance of
+  the description when glow turns OFF); both fixed and spot-checked by the orchestrator on
+  the frames. Full suite `1193 passed / 0 failed`. The colour strip stays OUT of T2 by the
+  keeper's decision; it is T3c-2's business.
+- 2026-09-30 — **T3b closed** (`34ba472`). Pattern proven; residual risk is the recorded
+  walked-down 16px bias above.
+- 2026-09-30 — Writer lane for this work is `space-bunny-free` (the keeper's choice) with
+  verification on `glm-5.3-flash`. Its track record so far: one accidental `cargo fmt`
+  over 54 files (fully reverted, nothing stray committed), one false claim in a test
+  comment, one undisclosed behaviour change — all caught by cross-model verification, none
+  by the writer itself. Watch it: prefer tight scopes and always verify.
