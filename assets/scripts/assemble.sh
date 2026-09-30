@@ -24,18 +24,31 @@ mkdir -p "$HVE_SAFE_DIR"
     echo ""
 } > "$TEMP_FILE"
 
-# --- SYSTEM: COLORS (from Hyprland IPC) ---
+# --- SYSTEM: COLORS (from the applied theme / live colour pipeline) ---
 # shellcheck source=/dev/null
 source "$HVE_SCRIPTS_DIR/colors.sh"
+
+# The palette is the theme's, never this file's: colors.sh declares the roster
+# and owns every value. An empty roster means colors.sh could not declare what
+# the overlay must define, so the previous overlay is kept rather than
+# replaced by one whose gradients the compositor would reject wholesale.
+if [ -z "${HVE_PALETTE_TOKENS:-}" ]; then
+    echo "❌ [HVE ERROR] colors.sh declared no palette roster; the overlay was not modified."
+    rm -f "$TEMP_FILE"
+    exit 1
+fi
 
 {
     echo "${COMMENT} [SYSTEM: COLORS]"
     echo "${COMMENT} Source: auto-detected (Noctalia/pywal/matugen/manual)"
-    echo "primary = \"${HVE_PRIMARY}\""
-    echo "secondary = \"${HVE_SECONDARY}\""
-    echo "surface = \"${HVE_SURFACE}\""
-    echo "surface_lowest = \"${HVE_SURFACE_LOWEST}\""
-    echo "accent = \"${HVE_ACCENT}\""
+    # One line per declared role, derived from the roster: a role the presets
+    # reference can no longer be missing from this block, and no value is
+    # written here by hand.
+    # shellcheck disable=SC2086  # the roster is one space-separated list
+    for TOKEN in $HVE_PALETTE_TOKENS; do
+        VAR=$(hve_palette_token_var "$TOKEN")
+        echo "${TOKEN} = \"${!VAR:-}\""
+    done
     echo ""
 } >> "$TEMP_FILE"
 # --- IMMORTAL CURVE ---

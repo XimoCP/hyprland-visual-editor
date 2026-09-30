@@ -7,6 +7,7 @@
 //! compositor during a test run.
 #![cfg(test)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -907,5 +908,382 @@ fn install_sh_has_preflight_before_build() {
     assert!(
         src.contains("hyprland.lua"),
         "the preflight must inspect hyprland.lua"
+    );
+}
+
+// ── The overlay palette: every referenced token must be defined ─────────
+//
+// Live defect (2026-09-30, `odd/tasks/overlay-palette-token-emission.md`):
+// the assembler emitted five palette lines by hand while four presets
+// reference `tertiary` and several reference `error`. An undefined name in
+// Lua is `nil`, so the gradient list was invalid and the compositor rejected
+// the WHOLE overlay — every border and decoration setting in the file, not
+// just the offending line.
+//
+// This closes the CLASS, not the instance: the REAL assembler runs, driven by
+// the REAL `border.sh` (the apply path the UI and the engine use), over EVERY
+// preset in `assets/borders/`, and every bare palette identifier a preset or
+// a default UI colour slot can reference must be defined by the emitted
+// `[SYSTEM: COLORS]` block. The fragment directory is generated inside the
+// sandbox: `assets/fragments/` is gitignored and must never be relied on.
+
+/// Hermetic tree with the real scripts (plus their colour-source modules) and
+/// the real border presets behind an inert stub `bin/`, so the real
+/// `border.sh` → `assemble.sh` path runs end to end without touching the
+/// developer's compositor, their presets or their `~/.cache/hve`
+/// (house pattern: `reload_coalescer.rs`, `Sandbox::build`).
+struct OverlaySandbox {
+    _tmp: tempfile::TempDir,
+    root: PathBuf,
+    home: PathBuf,
+    cache: PathBuf,
+    bin: PathBuf,
+}
+
+impl OverlaySandbox {
+    fn build() -> OverlaySandbox {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        let home = root.join("home");
+        let cache = root.join("cache");
+        let scripts = root.join("assets/scripts");
+        std::fs::create_dir_all(scripts.join("color_sources.d")).unwrap();
+        std::fs::create_dir_all(home.join(".config/hypr")).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        for name in [
+            "assemble.sh",
+            "border.sh",
+            "utils.sh",
+            "colors.sh",
+            "reload_coalescer.sh",
+        ] {
+            std::fs::copy(scripts_dir().join(name), scripts.join(name))
+                .unwrap_or_else(|e| panic!("cannot stage {name}: {e}"));
+        }
+        for entry in std::fs::read_dir(scripts_dir().join("color_sources.d")).unwrap().flatten() {
+            if entry.path().extension().is_some_and(|e| e == "sh") {
+                std::fs::copy(entry.path(), scripts.join("color_sources.d").join(entry.file_name()))
+                    .unwrap();
+            }
+        }
+
+        // The real preset set the UI presents, so the test covers exactly what
+        // a user can apply.
+        let borders = root.join("assets/borders");
+        std::fs::create_dir_all(&borders).unwrap();
+        for entry in std::fs::read_dir(repo_root().join("assets/borders")).unwrap().flatten() {
+            std::fs::copy(entry.path(), borders.join(entry.file_name())).unwrap();
+        }
+
+        // Inert `pgrep` (exit 1) is what keeps assemble.sh from queueing a
+        // reload: no coalescer drainer is ever spawned here.
+        let bin = fake_bin_dir(&root);
+
+        OverlaySandbox {
+            _tmp: tmp,
+            root,
+            home,
+            cache,
+            bin,
+        }
+    }
+
+    fn env(&self) -> Vec<(String, String)> {
+        vec![
+            ("HOME".to_owned(), self.home.to_string_lossy().into_owned()),
+            ("HVE_CACHE_DIR".to_owned(), self.cache.to_string_lossy().into_owned()),
+            (
+                "PATH".to_owned(),
+                format!(
+                    "{}:{}",
+                    self.bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            ),
+        ]
+    }
+
+    fn run(&self, script: &str, args: &[&str]) -> Output {
+        std::process::Command::new("bash")
+            .arg(self.root.join("assets/scripts").join(script))
+            .args(args)
+            .envs(self.env())
+            .current_dir(&self.home)
+            .output()
+            .expect("bash must be available")
+    }
+
+    /// Apply one border preset through the real `border.sh`, which writes the
+    /// fragment and runs the real `assemble.sh`, then return the overlay.
+    fn apply_border_preset(&self, name: &str) -> String {
+        let out = self.run("border.sh", &[name]);
+        assert!(
+            out.status.success(),
+            "border.sh {name} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        self.overlay()
+    }
+
+    fn assemble(&self) -> String {
+        let out = self.run("assemble.sh", &[]);
+        assert!(
+            out.status.success(),
+            "assemble.sh failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        self.overlay()
+    }
+
+    fn overlay(&self) -> String {
+        std::fs::read_to_string(self.cache.join("overlay.lua"))
+            .expect("assemble.sh must write overlay.lua into the sandbox cache")
+    }
+
+    /// Every preset name, sorted, as the border picker lists them.
+    fn preset_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.root.join("assets/borders"))
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                (path.extension().is_some_and(|x| x == "lua"))
+                    .then(|| path.file_stem().unwrap().to_string_lossy().into_owned())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Write a fragment the way the UI's draft path does, inside the sandbox.
+    fn write_fragment(&self, module: &str, body: &str) {
+        let dir = self.root.join("assets/fragments");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{module}.lua")), body).unwrap();
+    }
+
+    /// Plant a scheme file at the path the colour source reads.
+    fn write_scheme(&self, body: &str) {
+        std::fs::write(self.home.join(".config/hypr/noctalia.lua"), body).unwrap();
+    }
+}
+
+/// A bare Lua identifier: a palette token, never a literal colour or a path.
+fn is_bare_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// The palette the overlay's `[SYSTEM: COLORS]` block defines: name → value.
+fn overlay_palette(overlay: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut inside = false;
+    for line in overlay.lines() {
+        let line = line.trim();
+        if line.contains("[SYSTEM: COLORS]") {
+            inside = true;
+            continue;
+        }
+        if inside && line.starts_with("--") && line.contains('[') {
+            break; // the next section header ends the block
+        }
+        if !inside {
+            continue;
+        }
+        if let Some((name, value)) = line.split_once('=') {
+            let name = name.trim();
+            if is_bare_identifier(name) {
+                out.insert(name.to_owned(), value.trim().trim_matches('"').to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Names a preset declares itself (`local joker_green = …`): those are its own
+/// colours, not palette references.
+fn preset_locals(overlay: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in overlay.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("local ") {
+            let name = rest
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or("");
+            if !name.is_empty() {
+                out.insert(name.to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Every bare palette identifier the overlay's body references: the items of a
+/// `colors = { … }` gradient list, plus a bare `inactive_border` value. Those
+/// are the positions where a token, not a literal colour, is written.
+fn referenced_tokens(overlay: &str, locals: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for (idx, _) in overlay.match_indices("colors =") {
+        let rest = &overlay[idx..];
+        let Some(open) = rest.find('{') else { continue };
+        let Some(close) = rest[open..].find('}') else {
+            continue;
+        };
+        for item in rest[open + 1..open + close].split(',') {
+            let item = item.trim();
+            if is_bare_identifier(item) && !locals.contains(item) {
+                out.insert(item.to_owned());
+            }
+        }
+    }
+    for (idx, _) in overlay.match_indices("inactive_border") {
+        let rest = &overlay[idx..];
+        let Some(eq) = rest.find('=') else { continue };
+        let value = rest[eq + 1..]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches(',')
+            .trim();
+        if is_bare_identifier(value) && !locals.contains(value) {
+            out.insert(value.to_owned());
+        }
+    }
+    out
+}
+
+/// The first hardcoded palette value in a script: `#` followed by six hex
+/// digits. The palette belongs to the colour pipeline; no script may pin a
+/// value of its own beside it.
+fn first_palette_literal(script: &str) -> Option<&str> {
+    for (idx, _) in script.match_indices('#') {
+        let hex: String = script[idx + 1..]
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect();
+        if hex.len() >= 6 {
+            return Some(&script[idx..idx + 7]);
+        }
+    }
+    None
+}
+
+/// Every preset the UI can apply must assemble into an overlay that DEFINES
+/// every palette token it references.
+#[test]
+fn every_preset_token_is_defined_in_the_assembled_overlay() {
+    let sb = OverlaySandbox::build();
+    let presets = sb.preset_names();
+    assert!(
+        presets.len() >= 14,
+        "the sandbox must hold the real preset set, found {presets:?}"
+    );
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut references = 0usize;
+    for preset in &presets {
+        let overlay = sb.apply_border_preset(preset);
+        let defined = overlay_palette(&overlay);
+        let locals = preset_locals(&overlay);
+        for token in referenced_tokens(&overlay, &locals) {
+            references += 1;
+            if !defined.contains_key(&token) {
+                missing.push(format!("{preset}: `{token}`"));
+            }
+        }
+    }
+
+    assert!(
+        references > 0,
+        "the scanner found no palette reference at all — it is blind, not green"
+    );
+    assert!(
+        missing.is_empty(),
+        "the assembled overlay never defines palette token(s) the presets \
+         reference. Lua reads an undefined name as nil, which makes the gradient \
+         list invalid and makes the compositor reject the WHOLE overlay — every \
+         border and decoration setting in the file is dropped, not just this \
+         one. Undefined token, by preset:\n  {}",
+        missing.join("\n  ")
+    );
+}
+
+/// The UI can put a token into a draft fragment without touching a preset:
+/// `src/main.rs` `BORDER_SLOT_CYCLE` seeds new colour slots with
+/// `p:tertiary` / `p:error`, and the tune pane offers all six roles. That path
+/// must be covered by the same guarantee.
+#[test]
+fn every_ui_default_token_is_defined_in_the_assembled_overlay() {
+    let sb = OverlaySandbox::build();
+    sb.write_fragment(
+        "border",
+        "hl.config({ general = { col = { active_border = \
+         { colors = { primary, secondary, tertiary, error, surface, surface_lowest, accent }, \
+         angle = 45 } } } })\n",
+    );
+    let overlay = sb.assemble();
+
+    let defined = overlay_palette(&overlay);
+    let locals = preset_locals(&overlay);
+    let missing: Vec<String> = referenced_tokens(&overlay, &locals)
+        .into_iter()
+        .filter(|t| !defined.contains_key(t))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "a colour slot the UI can create references undefined palette token(s) \
+         {missing:?}; the emitted palette defines {defined:?}"
+    );
+}
+
+/// The emitted values come from the colour pipeline and NOWHERE else: a scheme
+/// declaring every role must reach the overlay verbatim, so the assembler can
+/// never pin a palette value of its own (that would make it a second palette
+/// authority beside the theme).
+#[test]
+fn overlay_palette_values_come_from_the_colour_pipeline() {
+    let sb = OverlaySandbox::build();
+    sb.write_scheme(
+        "local primary = \"rgb(67abe4)\"\n\
+         local secondary = \"rgb(d6915c)\"\n\
+         local tertiary = \"rgb(9566cc)\"\n\
+         local error = \"rgb(f38ba8)\"\n\
+         local surface = \"rgb(11202c)\"\n",
+    );
+
+    let overlay = sb.assemble();
+    let palette = overlay_palette(&overlay);
+    for (token, value) in [
+        ("primary", "#67abe4"),
+        ("secondary", "#d6915c"),
+        ("tertiary", "#9566cc"),
+        ("error", "#f38ba8"),
+        ("surface", "#11202c"),
+        // Roles the scheme does not carry keep the pipeline's own documented
+        // fallbacks: surface_lowest from the surface, accent from the primary.
+        ("surface_lowest", "#11202c"),
+        ("accent", "#67abe4"),
+    ] {
+        assert_eq!(
+            palette.get(token).map(String::as_str),
+            Some(value),
+            "`{token}` must carry the colour pipeline's value, not a literal \
+             written in the assembler: {palette:?}"
+        );
+    }
+
+    // Structural half of the same rule: the assembler must not carry a palette
+    // value in ANY form, not even one no scenario above would exercise.
+    assert_eq!(
+        first_palette_literal(&read_script("assemble.sh")),
+        None,
+        "assemble.sh must not hardcode a palette value — the theme owns the \
+         palette, and colors.sh is where its values live"
     );
 }

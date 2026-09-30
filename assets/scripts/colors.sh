@@ -5,6 +5,26 @@
 
 HVE_HYPR_DIR="${HVE_HYPR_DIR:-$HOME/.config/hypr}"
 
+# --- The palette roster: ONE declaration, consumed everywhere ----------
+# Every colour role the overlay may reference, in emission order. This list
+# is the single source of the whole role lifecycle: the reset, the
+# failed-step cleanup, the final fallbacks, the export, the variable-name
+# derivation, the extractor's accepted names and the palette lines the
+# assembler prints. A further role is added HERE (plus its value in
+# hve_palette_token_fallback) and nowhere else — a role that is emitted but
+# never reset, or reset but never exported, is exactly the live defect this
+# roster exists to make impossible.
+# The border presets and the tune-pane specs promise all of these:
+# primary, secondary, tertiary, error, surface, surface_lowest, accent.
+HVE_PALETTE_TOKENS="primary secondary tertiary error surface surface_lowest accent"
+
+# Variable holding one role's value ("surface_lowest" → HVE_SURFACE_LOWEST).
+# A derived name can never disagree with the roster it came from, unlike a
+# second hand-written list of variable names.
+hve_palette_token_var() {
+    printf 'HVE_%s\n' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
+}
+
 # --- Color format converters ---
 
 _hve_rgba_to_hex() {
@@ -34,9 +54,14 @@ _hve_normalize_color() {
 # --- Extractors per format ---
 
 # Lua variable: primary = "rgb(2ec436)" or local primary = "rgb(2ec436)" (v5)
+# The accepted names ARE the roster (see HVE_PALETTE_TOKENS): a role the
+# overlay can reference is therefore extractable from a backend rendering,
+# and a new role needs no edit here.
 _hve_extract_lua_vars() {
-    local file="$1"
-    grep -E "^[[:space:]]*(local[[:space:]]+)?(primary|secondary|tertiary|surface|surface_lowest|accent|error)\s*=" "$file" 2>/dev/null | while IFS='=' read -r var val; do
+    local file="$1" names
+    names=$(printf '%s' "${HVE_PALETTE_TOKENS:-}" | tr ' ' '|')
+    [ -n "$names" ] || return 0
+    grep -E "^[[:space:]]*(local[[:space:]]+)?(${names})\s*=" "$file" 2>/dev/null | while IFS='=' read -r var val; do
         # Strip 'local' prefix and whitespace from variable name
         var=$(echo "$var" | sed 's/^[[:space:]]*local[[:space:]]*//' | tr -d ' ')
         val=$(echo "$val" | tr -d ' "')
@@ -325,10 +350,50 @@ _hve_complete_tertiary() {
     hve_colour_source_tertiary
 }
 
-# Documented fallback when no real tertiary source exists at all. Catppuccin
-# Mocha teal, deliberately distinct from the primary (#cba6f7) and secondary
-# (#89b4fa) fallbacks below, and never a silent alias of either.
+# Documented fallbacks used only when NO source supplied a role (a tier of the
+# palette's own, since this file is the palette authority for the overlay).
+# Catppuccin Mocha, the set HVE's colours are drawn from. Each is deliberately
+# distinct from its siblings — a missing role is never satisfied by silently
+# aliasing another one — except where the role is defined as a derivative of
+# another (surface_lowest of the surface, accent of the primary).
+HVE_PRIMARY_FALLBACK="#cba6f7"
+HVE_SECONDARY_FALLBACK="#89b4fa"
+# Tertiary: Mocha teal, deliberately distinct from the primary and secondary
+# fallbacks above, and never a silent alias of either.
 HVE_TERTIARY_FALLBACK="#94e2d5"
+# Error: Mocha red. Distinct from every role above, so `error` in a preset
+# narrows to a real alert colour instead of repeating the accent.
+HVE_ERROR_FALLBACK="#f38ba8"
+HVE_SURFACE_FALLBACK="#1e1e2e"
+
+# The final fallback of one declared role. A role the roster declares but this
+# function does not answer is a wiring bug: the caller refuses it loudly
+# instead of writing an empty value into the overlay.
+hve_palette_token_fallback() {
+    case "${1:-}" in
+        primary) printf '%s\n' "$HVE_PRIMARY_FALLBACK" ;;
+        secondary) printf '%s\n' "$HVE_SECONDARY_FALLBACK" ;;
+        tertiary) printf '%s\n' "$HVE_TERTIARY_FALLBACK" ;;
+        error) printf '%s\n' "$HVE_ERROR_FALLBACK" ;;
+        surface) printf '%s\n' "$HVE_SURFACE_FALLBACK" ;;
+        # Derivate roles: the surface and the primary own their values, so
+        # their fallbacks are those values — resolved, not re-listed.
+        surface_lowest) printf '%s\n' "${HVE_SURFACE:-$HVE_SURFACE_FALLBACK}" ;;
+        accent) printf '%s\n' "${HVE_PRIMARY:-$HVE_PRIMARY_FALLBACK}" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Clears every declared role, so no step ever leaves partial state behind for
+# the next one. Driven by the roster: a role can never be half-reset.
+_hve_reset_palette() {
+    local tok var
+    # shellcheck disable=SC2086  # the roster is one space-separated list
+    for tok in ${HVE_PALETTE_TOKENS:-}; do
+        var=$(hve_palette_token_var "$tok")
+        printf -v "$var" '%s' ""
+    done
+}
 
 # --- Theme colour ownership (read-only predicate) ---------------------------
 # Answers "does the applied theme own its colours?": the descriptor is
@@ -517,12 +582,9 @@ _hve_colour_module_refresh() {
 # --- Main ---
 
 hve_load_colors() {
-    HVE_PRIMARY=""
-    HVE_SECONDARY=""
-    HVE_TERTIARY=""
-    HVE_SURFACE=""
-    HVE_SURFACE_LOWEST=""
-    HVE_ACCENT=""
+    # Every declared role starts empty: the roster drives the reset, so a role
+    # added to it can never be forgotten here.
+    _hve_reset_palette
     _HVE_COLOUR_WINNER=""
 
     # Detection priority:
@@ -542,12 +604,7 @@ hve_load_colors() {
             source "$step_payload" >/dev/null 2>&1 && hve_colour_source_try && { _HVE_COLOUR_WINNER="$step_payload"; break; }
         fi
         # A failed step never leaves partial state for the next one.
-        HVE_PRIMARY=""
-        HVE_SECONDARY=""
-        HVE_TERTIARY=""
-        HVE_SURFACE=""
-        HVE_SURFACE_LOWEST=""
-        HVE_ACCENT=""
+        _hve_reset_palette
     done <<< "$steps"
 
     # A scheme with no tertiary gets one from a real same-scheme source when
@@ -555,14 +612,18 @@ hve_load_colors() {
     # final fallbacks run — and the tertiary fallback is its OWN documented
     # colour, never the secondary's.
     _hve_complete_tertiary || true
-    : "${HVE_PRIMARY:=#cba6f7}"
-    : "${HVE_SECONDARY:=#89b4fa}"
-    : "${HVE_TERTIARY:=${HVE_TERTIARY_FALLBACK}}"
-    : "${HVE_SURFACE:=#1e1e2e}"
-    : "${HVE_SURFACE_LOWEST:=${HVE_SURFACE}}"
-    : "${HVE_ACCENT:=${HVE_PRIMARY}}"
 
-    export HVE_PRIMARY HVE_SECONDARY HVE_TERTIARY HVE_SURFACE HVE_SURFACE_LOWEST HVE_ACCENT
+    # Final fallbacks and export, both driven by the roster: a role can never
+    # be exported without a value, nor have a value the overlay cannot print.
+    local tok var
+    # shellcheck disable=SC2086  # the roster is one space-separated list
+    for tok in ${HVE_PALETTE_TOKENS:-}; do
+        var=$(hve_palette_token_var "$tok")
+        if [ -z "${!var:-}" ]; then
+            printf -v "$var" '%s' "$(hve_palette_token_fallback "$tok")" || return 1
+        fi
+        export "$var"
+    done
 }
 
 # Auto-load on source
