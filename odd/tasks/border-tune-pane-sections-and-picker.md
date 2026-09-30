@@ -141,11 +141,17 @@ monitors/HDR.
       Deferred, not defects: the `glow-add` label chain is now dead in three
       places (property, i18n setter, generated getter) and the title swaps
       font-family/weight by state to preserve each state's previous look.
-- [ ] **T2 — Thin-block reveal behaviour (B)** Decide, from the C study, whether the
-      glow block can fold with the `states`/`in-out` pattern while staying mounted,
-      and whether the keyboard stop count must change. Implement the fold.
-      Checks: a render test that captures a mid-flight frame (a real animation, not
-      an instant jump), plus the settled frame; read the PNGs.
+- [ ] **T2 — Thin-block reveal behaviour (B)** SCOPE APPROVED 2026-09-30: the GLOW BODY
+      fold only. It becomes always-mounted and animates open with the same
+      `states` / `in-out` idiom the picker card already uses in this pane (`:796-810`) —
+      that card is the in-repo proof the pattern works here, so the C feasibility study
+      (T4) is NOT a prerequisite for this slice. The keyboard stop count MUST NOT change:
+      `tune-count: 9 + slot-stops + (glow ? 4 : 0)` and `borders_tune_stop_count()` stay
+      as they are; a collapsed body simply has no stops while it is off.
+      The colour strip is explicitly OUT of this slice (see Decisions).
+      Checks: a render test that captures a MID-FLIGHT frame (a real animation, not an
+      instant jump) plus the settled frame, read the PNGs; the T3a scroll-follow tests
+      stay green with the body's new parent.
 - [ ] **T3 — Block delimitation (D)** Sliced into T3a (done), T3b and T3c (see the T3
       slicing section). T3b is the next slice: the Geometry group end to end.
       Checks: render test of the whole pane before/after; read the PNGs.
@@ -185,6 +191,16 @@ monitors/HDR.
   forcing the free model onto a registered agent answers "OpenCode's free tier can
   only be used from within OpenCode". Work continues on the cheap Go lane
   (deepseek-v4-flash) with verification on a different family (glm-5.3-flash).
+
+- 2026-09-30 — **T2 scope: the glow body fold only.** The keeper asked whether other
+  blocks answer to the same "activating it shows extra parameters" system. Measured
+  answer: in the whole of `ui/` the glow body is the ONLY switch-driven reveal
+  (`BordersSection.slint:1170` is the sole `if root.<something>enabled` reveal in the
+  tree). The colour strip and the +/− row are the same FAMILY but not the same gesture:
+  they appear because a "+" was clicked and disappear when the list empties, and they
+  sit behind the same `slot-count > 0` condition, so animating them touches the "add a
+  first colour" path, not just the look. Deferred: decide it later, with a render in
+  front of us. The picker card is excluded because it already animates.
 
 ## T3 slicing (container per block)
 
