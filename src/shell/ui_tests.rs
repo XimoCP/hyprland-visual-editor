@@ -6244,7 +6244,7 @@ type BordersLabel = (
 );
 
 #[rustfmt::skip]
-fn borders_labels() -> [BordersLabel; 59] {
+fn borders_labels() -> [BordersLabel; 60] {
     [
         ("header-title", |t| t.get_header_title().to_string(),
             "Borders", "Bordes"),
@@ -6258,6 +6258,9 @@ fn borders_labels() -> [BordersLabel; 59] {
 
         ("geometry-heading", |t| t.get_geometry_heading().to_string(),
             "Geometry", "Geometría"),
+        ("geometry-desc", |t| t.get_geometry_desc().to_string(),
+            "Size, corner radius and the gaps between windows.",
+            "Tamaño, radio de las esquinas y los espacios entre ventanas."),
         ("thickness-label", |t| t.get_thickness_label().to_string(),
             "Border Thickness", "Grosor del Borde"),
         ("thickness-desc", |t| t.get_thickness_desc().to_string(),
@@ -8350,19 +8353,29 @@ fn borders_tune_focus_puts_two_stops_of_one_block_on_one_screen_y() {
 /// off the band the geometry stops share.
 #[test]
 fn borders_tune_focus_centres_stops_from_real_geometry_not_an_index() {
-    let win = borders_tune_glow_fixture();
+    // ONE FRESH PANE PER STOP. The scroll-follow reads the block geometry at the
+    // instant the keyboard moves, and the row that is LEAVING focus is still at
+    // its lit height at that instant (96px against its resting 80px). Reading
+    // stop k in a window that was just on k-1 therefore reports the block 16px
+    // lower than the settled layout and the pane scrolls exactly that much
+    // further. Measured on the T3b pane: stops 3, 4 and 5 each land on y=560
+    // when reached from the row above, and on y=577 when read from a freshly
+    // mounted pane — the SAME rule, read with and without the leaving row's
+    // animation. This test asserts the rule, so every stop is read unbiased; a
+    // mixed read compares 577 against 560 and measures the animation, not the
+    // centring.
 
     // Three stops that are unclamped under BOTH rules (their targets sit
     // inside [height - content, 0]), each read with its own lit height: the
     // geometry rows are 96px when focused, the compact inactive row 56px.
-    let gap_out = render_tune_local_stop(&win, 3);
+    let gap_out = render_tune_local_stop(&borders_tune_glow_fixture(), 3);
     save_slice_png(
         gap_out.clone(),
         "borders_tune_focus_gap_out_real_geometry.png",
     );
-    let angle = render_tune_local_stop(&win, 4);
+    let angle = render_tune_local_stop(&borders_tune_glow_fixture(), 4);
     save_slice_png(angle.clone(), "borders_tune_focus_angle_real_geometry.png");
-    let inactive = render_tune_local_stop(&win, 5);
+    let inactive = render_tune_local_stop(&borders_tune_glow_fixture(), 5);
     save_slice_png(
         inactive.clone(),
         "borders_tune_focus_inactive_real_geometry.png",
@@ -8383,7 +8396,7 @@ fn borders_tune_focus_centres_stops_from_real_geometry_not_an_index() {
     // The late GLOW stop: the first row of the glow group, and the last stop
     // whose target the constant still gets wrong before the bottom clamp takes
     // over. Its row is 64px while focused (measured 63px between its edges).
-    let glow_en = render_tune_local_stop(&win, 9);
+    let glow_en = render_tune_local_stop(&borders_tune_glow_fixture(), 9);
     save_slice_png(
         glow_en.clone(),
         "borders_tune_focus_glow_en_real_geometry.png",
@@ -8437,6 +8450,242 @@ fn borders_tune_focus_scrolls_to_the_strip_block_reported_at_mount() {
          top={chip_top}, shared band={band} ({}px apart). A stale -1px for a mounted strip leaves \
          the viewport where it was and the strip nowhere near the middle",
         chip_top.abs_diff(band)
+    );
+}
+
+// ── T3b — the Geometry group is a container with a header (D) ─────────
+// The keeper's block-delimitation decision: each block of the right tune pane
+// lives inside a container that paints its own surface and carries a header —
+// the block's title plus a line saying what the block controls — so a reader
+// sees where a block starts and ends without guessing. Geometry is the first
+// block converted, and this is the slice that proves the pattern end to end.
+
+/// The tune pane's own content box at the suite's 1920x1080 fixture, read off
+/// the render: a control that is a DIRECT child of `tune-col` paints its 1px
+/// border box from x=1065 to x=1895 (measured on the focused Size row before the
+/// container existed, and on the T3a frames). A control inside the T3b container
+/// starts 13px further in — the container's own 1px border plus its 12px padding
+/// — which is how the two are told apart in pixels.
+const TUNE_CONTENT_LEFT: usize = 1065;
+const TUNE_CONTENT_RIGHT: usize = 1895;
+/// The least inset a Geometry row shows from the pane's content edge once it
+/// lives inside the container. Measured: the focused Size row's ring moved from
+/// x=1065..1895 (a direct child of `tune-col`) to x=1077..1883 (inside the
+/// container) — exactly the 1px border plus the 12px padding. The floor is left
+/// at 10 so a pixel of renderer difference cannot turn the correct container
+/// into a failure, while a row that is still a direct child of `tune-col` shows
+/// zero inset and fails by ten.
+const CONTAINER_INSET_MIN: usize = 10;
+
+/// `(left, right)` of the icy ink on row `y`: the horizontal extent of a focused
+/// row's edge band, i.e. how far that row reaches across the pane.
+fn icy_span_at(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    y: usize,
+) -> Option<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    if y >= h {
+        return None;
+    }
+    let bytes = buf.as_bytes();
+    let (mut left, mut right) = (usize::MAX, 0usize);
+    for x in 360..w {
+        let idx = (y * w + x) * 4;
+        if bytes[idx + 3] < 200 {
+            continue;
+        }
+        if (bytes[idx] as i16 - ICY.0 as i16).abs() <= 40
+            && (bytes[idx + 1] as i16 - ICY.1 as i16).abs() <= 40
+            && (bytes[idx + 2] as i16 - ICY.2 as i16).abs() <= 40
+        {
+            left = left.min(x);
+            right = right.max(x);
+        }
+    }
+    (left != usize::MAX).then_some((left, right))
+}
+
+/// The strip of pane immediately above the Geometry group's FIRST control, read
+/// in the pixels. The pane is parked at its top on that stop (the focused row's
+/// centre sits above the viewport's middle, so the scroll clamps to 0), which is
+/// the only place the container's header can be read whole.
+const HEADER_WINDOW: usize = 40;
+
+/// T3b — the Geometry group paints its own container surface with a header above
+/// its controls, and the header's description is real rendered ink.
+///
+/// Two reads of the SAME frame, with the keyboard parked on the group's first
+/// stop (the Size row):
+///   • `bg-card` in the strip between the group's title and its first control.
+///     Before the container that strip is the PANE'S OWN background crossed by
+///     an 8px layout gap (measured: 0 card pixels in a 40px window), and after
+///     it is the container's fill, because the header and the padding around it
+///     are painted by it.
+///   • `text-muted` ink in that same strip: the description's own ink. The
+///     group's title is accent-cyan, nothing else in the pane sits above the
+///     Size row, and the cyan→background ramp cannot land inside the muted
+///     tolerance (its red channel tops out at 56), so the count is the
+///     description or nothing.
+#[test]
+fn borders_geometry_group_paints_a_container_and_a_description_above_its_controls() {
+    use slint::ComponentHandle as _;
+
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+    // Structural half, cheap and unmissable: the description is a REGISTERED
+    // label (own property, read from the text global, so the i18n table and the
+    // pane cannot drift), and the header's title is still the ONE
+    // `geometry-heading` label the group already had — a second title string
+    // would silently duplicate copy that the i18n table pins.
+    let code: String = SECTION
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        code.matches("BordersText.geometry-heading").count(),
+        1,
+        "the container's header must reuse the group's existing title label, not add a second one"
+    );
+    assert!(
+        code.contains("BordersText.geometry-desc"),
+        "the container's description must be read from the BordersText global, or the panel paints \
+         it in English forever (this is the label the i18n table registers)"
+    );
+
+    let win = borders_tune_glow_fixture();
+    // Stop 0 is the Size row — the first control of the group.
+    let en = render_tune_local_stop(&win, 0);
+    save_slice_png(en.clone(), "borders_geometry_container_header.png");
+
+    let en_top = icy_band_pair_top(&en, 88, 104);
+    let en_y0 = en_top.saturating_sub(HEADER_WINDOW);
+    let (card, muted) = (
+        count_color_in_box(&en, BG_CARD, 4, 1060, en_y0, 1900, en_top),
+        count_color_in_box(&en, TEXT_MUTED, 30, 1060, en_y0, 1900, en_top),
+    );
+    println!(
+        "[T3b] above the first Geometry row (y {en_y0}..{en_top}): bg-card={card} text-muted={muted}"
+    );
+    assert!(
+        card > 1500,
+        "the Geometry container must paint its own surface above the group's controls: {card} \
+         bg-card pixels in the {HEADER_WINDOW}px strip above the Size row's ring. A bare stack of \
+         rows leaves the pane's own background there (measured 0), and the reader is back to \
+         guessing where the block starts"
+    );
+    assert!(
+        muted > 150,
+        "the container's header must RENDER its description above the group's controls: {muted} \
+         text-muted pixels in that strip. Zero means the copy was registered everywhere and never \
+         painted — the defect the `glow-add` label shipped with"
+    );
+
+    // …and it is real copy: switching the panel to Spanish must repaint it. The
+    // harness reaches the production path here (`panel_i18n::apply_borders`, the
+    // function `main()` calls), so this is the Spanish render, not a claim.
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("geometry container, Spanish");
+    save_slice_png(es.clone(), "borders_geometry_container_header_es.png");
+
+    let es_top = icy_band_pair_top(&es, 88, 104);
+    let es_y0 = es_top.saturating_sub(HEADER_WINDOW);
+    let es_muted = count_color_in_box(&es, TEXT_MUTED, 30, 1060, es_y0, 1900, es_top);
+    let repaint = count_buffer_diff_region(&en, &es, 1060, en_y0.min(es_y0), 1900, en_top.max(es_top));
+    println!("[T3b] Spanish header strip: text-muted={es_muted} repaint vs English={repaint}");
+    assert!(
+        es_muted > 150,
+        "the Spanish copy must render in the container's header too: {es_muted} text-muted pixels \
+         in the strip above the Size row. A missing `es` key falls back to the English default, so \
+         this is the half that catches an untranslated description"
+    );
+    assert!(
+        repaint > 60,
+        "the description must be the string the language selects: the header strip only repainted \
+         {repaint} pixels for Spanish. Equal copy in both languages would leave the English frame \
+         untouched"
+    );
+}
+
+/// T3b — the container is a FRAME around the group's controls, not a keyboard
+/// seat of its own. Wrapping the four rows must not swallow, move or reorder a
+/// stop, and the rows must end up inside the new frame.
+///
+/// Read off four renders, one per Geometry stop, each with its own measured ring:
+///   • every stop still paints its 96px lit ring (a swallowed stop or a row that
+///     left the layout paints no ring at all and fails here);
+///   • the ring is inset from the pane's content edge on BOTH sides by the
+///     container's border plus padding — the direct children of `tune-col` reach
+///     the edge itself (measured 1056..1904 on the T3a frames), so this is what
+///     says the rows really moved INSIDE the container;
+///   • the four rings come in the group's own order, top to bottom.
+#[test]
+fn borders_geometry_container_keeps_its_stops_reachable_and_in_order() {
+    const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
+    // The pane's own stop inventory, whitespace-normalised: the container adds
+    // no seat. It is the pair of `callbacks::borders_tune_stop_count`, asserted
+    // below against the same numbers.
+    let flat: String = SECTION.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("out property <int> tune-count: 9 + root.slot-stops + (root.tune-glow-enabled ? 4 : 0);"),
+        "the Geometry container must not add or move a keyboard stop: the pane's tune-count \
+         expression changed"
+    );
+
+    let win = borders_tune_glow_fixture();
+    // The container itself is not a stop: 9 fixed + 3 slot + 4 glow, as before.
+    assert_eq!(
+        crate::callbacks::borders_tune_stop_count(2, true),
+        16,
+        "the Geometry container must not add a keyboard stop"
+    );
+
+    let mut tops: Vec<usize> = Vec::new();
+    for local in 0..4 {
+        let frame = render_tune_local_stop(&win, local);
+        save_slice_png(
+            frame.clone(),
+            &format!("borders_geometry_container_stop_{local}.png"),
+        );
+        let (top, bottom) = focused_row_span(&frame, 88, 104).unwrap_or_else(|| {
+            panic!(
+                "Geometry stop {local} must still paint the 96px ring of a focused slider row: the \
+                 container swallowed the stop (icy bands={:?})",
+                color_row_bands(&frame, ICY, 40, 300)
+            )
+        });
+        assert!(
+            bottom + 8 < frame.height() as usize,
+            "Geometry stop {local}'s whole ring must be inside the viewport, not half off it: \
+             row {top}..{bottom} of {}px",
+            frame.height()
+        );
+        let (left, right) = icy_span_at(&frame, top).unwrap_or_else(|| {
+            panic!("Geometry stop {local}'s ring must paint icy ink on its top edge")
+        });
+        println!("[T3b] Geometry stop {local}: ring y={top}..{bottom}, x={left}..{right}");
+        assert!(
+            left >= TUNE_CONTENT_LEFT + CONTAINER_INSET_MIN,
+            "Geometry stop {local} must sit INSIDE the container: its ring starts at x={left}, and \
+             a row that is a direct child of `tune-col` starts at {TUNE_CONTENT_LEFT} (the \
+             container's border plus its 12px padding must push it to {}+)",
+            TUNE_CONTENT_LEFT + CONTAINER_INSET_MIN
+        );
+        assert!(
+            right <= TUNE_CONTENT_RIGHT - CONTAINER_INSET_MIN,
+            "Geometry stop {local} must sit inside the container on its right edge too: ring ends \
+             at x={right}, the pane's content edge is {TUNE_CONTENT_RIGHT}"
+        );
+        tops.push(top);
+    }
+
+    assert!(
+        tops.windows(2).all(|w| w[1] >= w[0]),
+        "the four Geometry stops must keep the group's own order, top to bottom: ring tops \
+         {tops:?} (measured 269, 378, 487, 560 on the container). A container that reordered the \
+         rows (or one row pinned above the others) shows up here as a ring that moved BACK up the \
+         pane"
     );
 }
 

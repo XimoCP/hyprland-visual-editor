@@ -310,13 +310,20 @@ component BordersTunePane inherits Rectangle {
     // the properties above; the two that sit one level deeper add their live
     // parent's `y` here, because only the parent chain turns their relative
     // `y` into the `tune-col` coordinate `viewport-y` scrolls in.
+    //
+    // T3b moved the four geometry rows inside the Geometry container, so their
+    // own `y` is now container-relative: `geometry-group.y` is that live parent
+    // and it is added here, exactly like the glow sliders' `glow-body-y`. The
+    // container is not conditional, but a folded block ABOVE it (T2's glow fold
+    // is below it; the picker card grows above the strip) can still move it, and
+    // the live read is what keeps the sum true when it does.
     function focus-block-y() -> length {
         let f = root.local-focus;
         if (f < 0) { return -1px; }
-        if (f == 0) { return size-wrap.y; }
-        if (f == 1) { return radius-wrap.y; }
-        if (f == 2) { return gap-in-wrap.y; }
-        if (f == 3) { return gap-out-wrap.y; }
+        if (f == 0) { return geometry-group.y + size-wrap.y; }
+        if (f == 1) { return geometry-group.y + radius-wrap.y; }
+        if (f == 2) { return geometry-group.y + gap-in-wrap.y; }
+        if (f == 3) { return geometry-group.y + gap-out-wrap.y; }
         if (f == 4) { return angle-wrap.y; }
         if (f == 5) { return inactive-wrap.y; }
         if (f == root.idx-strip) {
@@ -488,152 +495,201 @@ component BordersTunePane inherits Rectangle {
             padding-bottom: 12px;
             spacing: 8px;
 
-            // ── Geometry ─────────────────────────────────────────────────
-            // The keeper asked to keep these four together at the top of
-            // Borders: he put them there because he did not know where else
+            // ── Geometry group ───────────────────────────────────────────
+            // The keeper asked to keep these four controls together at the top
+            // of Borders: he put them there because he did not know where else
             // they belonged, and this is home for them now.
-            Text {
-                text: BordersText.geometry-heading;
-                font-family: SkwdTokens.font-heading;
-                font-size: SkwdTokens.size-12;
-                font-weight: 600;
-                color: HveColors.accent-cyan;
-            }
-
-            // ── Size 1-5 ──
-            size-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-size.has-hover;
-                property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
+            //
+            // T3b (block delimitation, D): the four controls now live inside ONE
+            // container that paints its own surface and carries the group's
+            // header — the title it already had, plus one line saying what the
+            // group controls — so a reader sees where the block starts and ends
+            // instead of guessing from the gaps. The surface is the pane's OWN
+            // card idiom, reused rather than reinvented: the same
+            // `HveColors.bg-card` fill, `HveColors.border` hairline,
+            // `SkwdTokens.radius-8` corner and 12px padding the compact colour
+            // rows and the glow header paint, at the same `SkwdTokens.spacing-8`
+            // cadence `tune-col` spaces its children with.
+            //
+            // The container adds NO keyboard stop: the group's controls keep
+            // their seats and their order (`tune-count` in the section and
+            // `callbacks::borders_tune_stop_count` in Rust are untouched). What
+            // it does change is the rows' PARENT, so their reported `y` is now
+            // container-relative — `focus-block-y()` sums this container's live
+            // `y` for exactly that reason (T3a).
+            geometry-group := Rectangle {
                 border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-color: HveColors.border;
                 border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
-                hover-size := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 0;
-                    focused: size-wrap.lit;
-                    label: BordersText.thickness-label;
-                    value: root.size;
-                    min: 1;
-                    max: 5;
-                    changed(v) => { root.slider-changed(0, v); }
+                background: HveColors.bg-card;
+
+                VerticalLayout {
+                    padding: SkwdTokens.spacing-12;
+                    spacing: SkwdTokens.spacing-8;
+
+                    // Header: the group's title and what the group controls. The
+                    // title is the SAME `geometry-heading` label the group
+                    // already carried — a second title string would drift from
+                    // the i18n table that pins every label of this pane.
+                    VerticalLayout {
+                        spacing: SkwdTokens.spacing-4;
+
+                        Text {
+                            text: BordersText.geometry-heading;
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-12;
+                            font-weight: 600;
+                            color: HveColors.accent-cyan;
+                        }
+
+                        // The description is plain copy, not a tooltip: it says
+                        // what the block is for before the reader has to read
+                        // four labels to work it out.
+                        Text {
+                            text: BordersText.geometry-desc;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-11;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    // ── Size 1-5 ──
+                    size-wrap := Rectangle {
+                        property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-size.has-hover;
+                        property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
+                        height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                        animate height { duration: 250ms; easing: ease-in-out-back; }
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                        animate background { duration: 200ms; easing: ease-in-out; }
+                        hover-size := TouchArea { width: 100%; height: 100%; clicked => { } }
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == 0;
+                            focused: size-wrap.lit;
+                            label: BordersText.thickness-label;
+                            value: root.size;
+                            min: 1;
+                            max: 5;
+                            changed(v) => { root.slider-changed(0, v); }
+                        }
+                    }
+
+                    // ── Description: size ──
+                    Text {
+                        text: BordersText.thickness-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    // ── Radius 0-100 ──
+                    radius-wrap := Rectangle {
+                        property <bool> lit: (root.local-focus == 1 && root.has-focus) || hover-radius.has-hover;
+                        property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
+                        height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                        animate height { duration: 250ms; easing: ease-in-out-back; }
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                        animate background { duration: 200ms; easing: ease-in-out; }
+                        hover-radius := TouchArea { width: 100%; height: 100%; clicked => { } }
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == 1;
+                            focused: radius-wrap.lit;
+                            label: BordersText.radius-label;
+                            value: root.radius;
+                            min: 0;
+                            max: 100;
+                            changed(v) => { root.slider-changed(1, v); }
+                        }
+                    }
+
+                    // ── Description: radius ──
+                    Text {
+                        text: BordersText.radius-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    // ── Gap In 0-30 ──
+                    gap-in-wrap := Rectangle {
+                        property <bool> lit: (root.local-focus == 2 && root.has-focus) || hover-gap-in.has-hover;
+                        property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
+                        height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                        animate height { duration: 250ms; easing: ease-in-out-back; }
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                        animate background { duration: 200ms; easing: ease-in-out; }
+                        hover-gap-in := TouchArea { width: 100%; height: 100%; clicked => { } }
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == 2;
+                            focused: gap-in-wrap.lit;
+                            label: BordersText.gap-in-label;
+                            value: root.gap-in;
+                            min: 0;
+                            max: 30;
+                            changed(v) => { root.slider-changed(2, v); }
+                        }
+                    }
+
+                    // ── Description: gap-in ──
+                    Text {
+                        text: BordersText.gap-in-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    // ── Gap Out 0-30 ──
+                    gap-out-wrap := Rectangle {
+                        property <bool> lit: (root.local-focus == 3 && root.has-focus) || hover-gap-out.has-hover;
+                        property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
+                        height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
+                        animate height { duration: 250ms; easing: ease-in-out-back; }
+                        border-width: 1px;
+                        border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                        border-radius: SkwdTokens.radius-8;
+                        background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                        animate background { duration: 200ms; easing: ease-in-out; }
+                        hover-gap-out := TouchArea { width: 100%; height: 100%; clicked => { } }
+                        GeometrySlider {
+                            width: 100%;
+                            y: (parent.height - self.height) / 2;
+                            engaged: root.engaged-slider == 3;
+                            focused: gap-out-wrap.lit;
+                            label: BordersText.gap-out-label;
+                            value: root.gap-out;
+                            min: 0;
+                            max: 30;
+                            changed(v) => { root.slider-changed(3, v); }
+                        }
+                    }
+
+                    // ── Description: gap-out ──
+                    Text {
+                        text: BordersText.gap-out-desc;
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-11;
+                        color: HveColors.text-muted;
+                        wrap: word-wrap;
+                    }
                 }
-            }
-
-            // ── Description: size ──
-            Text {
-                text: BordersText.thickness-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // ── Radius 0-100 ──
-            radius-wrap := Rectangle {
-                property <bool> lit: (root.local-focus == 1 && root.has-focus) || hover-radius.has-hover;
-                property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
-                hover-radius := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 1;
-                    focused: radius-wrap.lit;
-                    label: BordersText.radius-label;
-                    value: root.radius;
-                    min: 0;
-                    max: 100;
-                    changed(v) => { root.slider-changed(1, v); }
-                }
-            }
-
-            // ── Description: radius ──
-            Text {
-                text: BordersText.radius-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // ── Gap In 0-30 ──
-            gap-in-wrap := Rectangle {
-                property <bool> lit: (root.local-focus == 2 && root.has-focus) || hover-gap-in.has-hover;
-                property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
-                hover-gap-in := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 2;
-                    focused: gap-in-wrap.lit;
-                    label: BordersText.gap-in-label;
-                    value: root.gap-in;
-                    min: 0;
-                    max: 30;
-                    changed(v) => { root.slider-changed(2, v); }
-                }
-            }
-
-            // ── Description: gap-in ──
-            Text {
-                text: BordersText.gap-in-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
-            }
-
-            // ── Gap Out 0-30 ──
-            gap-out-wrap := Rectangle {
-                property <bool> lit: (root.local-focus == 3 && root.has-focus) || hover-gap-out.has-hover;
-                property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
-                height: self.lit ? (self.grabbed ? 112px : 96px) : 80px;
-                animate height { duration: 250ms; easing: ease-in-out-back; }
-                border-width: 1px;
-                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
-                border-radius: SkwdTokens.radius-8;
-                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
-                animate background { duration: 200ms; easing: ease-in-out; }
-                hover-gap-out := TouchArea { width: 100%; height: 100%; clicked => { } }
-                GeometrySlider {
-                    width: 100%;
-                    y: (parent.height - self.height) / 2;
-                    engaged: root.engaged-slider == 3;
-                    focused: gap-out-wrap.lit;
-                    label: BordersText.gap-out-label;
-                    value: root.gap-out;
-                    min: 0;
-                    max: 30;
-                    changed(v) => { root.slider-changed(3, v); }
-                }
-            }
-
-            // ── Description: gap-out ──
-            Text {
-                text: BordersText.gap-out-desc;
-                font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-11;
-                color: HveColors.text-muted;
-                wrap: word-wrap;
             }
 
             // ── Separator: geometry ends, colours begin ──

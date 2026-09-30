@@ -156,6 +156,7 @@
     "live_clean": "Live preview — no unsaved changes",
     "geometry": {
       "heading": "Geometry",
+      "group_desc": "Size, corner radius and the gaps between windows.",
       "title": "Border Thickness",
       "desc": "Border width in pixels (1 thin, 5 thick)."
     },

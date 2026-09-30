@@ -156,6 +156,7 @@
     "live_clean": "Vista previa en vivo — sin cambios pendientes",
     "geometry": {
       "heading": "Geometría",
+      "group_desc": "Tamaño, radio de las esquinas y los espacios entre ventanas.",
       "title": "Grosor del Borde",
       "desc": "Ancho del borde en píxeles (1 fino, 5 grueso)."
     },

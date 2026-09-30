@@ -37,6 +37,10 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
 
     // Geometry block
     t.set_geometry_heading(tr.tr_shared("borders.geometry.heading", "Geometry"));
+    t.set_geometry_desc(tr.tr_shared(
+        "borders.geometry.group_desc",
+        "Size, corner radius and the gaps between windows.",
+    ));
     t.set_thickness_label(tr.tr_shared("borders.geometry.title", "Border Thickness"));
     t.set_thickness_desc(tr.tr_shared(
         "borders.geometry.desc",
