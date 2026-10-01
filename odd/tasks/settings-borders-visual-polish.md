@@ -2,7 +2,7 @@
 
 Feature name: `settings-borders-visual-polish`
 Branch: `hve2-visual-rewrite` (current; not the default branch)
-Status: open — items 1 and 2 closed by the writer batch (T1..T3), T4 is the keeper's live look
+Status: open — items 1, 2 and 3 closed by the writer batch (T1..T3), T4 is the keeper's live look
 Batch: this is the FIRST item of a polish series the keeper is about to send ("vamos a pulir unas
 cuantas cosas visuales"). Keep the document open and append the next items as they arrive; do not
 close it per item.
@@ -269,4 +269,112 @@ the extended render test. This document lands in the `docs(odd)` commit that rec
 ### Not verified for item 2
 
 The keeper's live desktop look (T4): headless frames only. Nothing else in the section was touched.
+
+---
+
+## Item 3 — the preset card's apply switch (keeper's screenshot, "COCO")
+
+Keeper's report: the apply switch of their USER preset card **COCO** in "Mis Preajustes de Borde"
+(active, single-line, ★ badge + ✎/✕ buttons, sitting under the built-in cards) is off-centre upwards;
+the built-in cards' switches "also look high, aligned with the name line". Reproduced at their own
+geometry and language: **1280x800, Spanish UI**, six built-in cards (the ones they named) above the
+active user card.
+
+### T1 — measured before touching anything
+
+Two new render tests, both reading the numbers off the frame:
+
+* `preset_card_apply_switch_is_vertically_centred_in_the_card` — the keeper's frame. The card's box is
+  read from its own border (3px accent when active, 1px `HveColors.border` when not); the controls from
+  the ink only they paint in that card (the pill's face, the ✕ button's red, and the name/badge ink,
+  the last two split by their column gap because the active USER card paints both in the same accent).
+* `sibling_card_lists_keep_their_apply_control_centred` — Motion (the same `SavedPresetCard`, user card
+  active) and the Save section's `SavedThemeCard`.
+
+Measured, card centre against the control's centre (RED):
+
+| surface | card box (centre) | apply switch | name line | ★ badge | ✎/✕ buttons |
+|---|---|---|---|---|---|
+| COCO (user, active) | 656..755 (705) | 690..711 → **700 (5px high)** | 700..709 → 704 | 703..707 → 705 | 690..721 → 705 |
+| Looper (built-in) | 553..608 (580) | 570..591 → **580 (centred)** | 566..578 → 572¹ | — | — |
+| Motion user card | 656..755 (705) | 690..711 → **700 (5px high)** | 700..709 → 704 | 703..707 → 705 | 690..721 → 705 |
+| Save theme card | 219..318 (268) | 253..284 → **268 (centred)** | not measured² | — | ✕ 253..284 → 268 |
+
+¹ A card WITH a description centres its whole text block, so the name — its first line — legitimately
+sits ~8px above the card's centre. That is not a defect and is asserted as such (the name is only
+required on the centre line of a single-line card).
+
+² The theme card is a different component and its name is not the subject of this item; its apply
+control is what the keeper's report is about.
+
+**Verdict, plainly:** the switch was **high by 5px on the USER card** (COCO and Motion) — the keeper's
+report is right. On the **built-in card it was already centred (0px)**: a built-in card has the pill
+ALONE in its action row, so the row is 22px tall and the pill fills it, while a user card's two 32px
+IconButtons set the row to 32px and the 22px pill is parked at its top. The keeper's "the built-in
+switches also look high" is a perception the numbers do not support: their switch is on the card's
+centre line, and the name they compared it against is the *upper* of the block's two lines (8px above
+the centre), not a line at the centre.
+
+### T2 — the fix
+
+`cross-axis-alignment: center` on the action row's `HorizontalLayout` in
+`ui/panel/sections/SavedPresetCard.slint` — one property, no pixel value, no restructuring, and it is
+the same rule already justified for the glow row.
+
+GREEN, the same frames re-measured:
+
+| surface | card box (centre) | apply switch | name line | ★ badge | ✎/✕ buttons |
+|---|---|---|---|---|---|
+| COCO (user, active) | 656..755 (705) | 695..716 → **705 (0)** | 700..709 → 704 | 703..707 → 705 | 690..721 → 705 |
+| Looper (built-in) | 553..608 (580) | 570..591 → 580 (unchanged) | 566..578 → 572¹ | — | — |
+| Motion user card | 656..755 (705) | 695..716 → **705 (0)** | 700..709 → 704 | 703..707 → 705 | 690..721 → 705 |
+| Save theme card | 219..318 (268) | 253..284 → 268 (unchanged) | — | — | 268 |
+
+### Sibling surfaces — what was fixed and what was left alone
+
+* **Motion list — fixed** (same `SavedPresetCard`, same 5px offset, measured). The one-property change
+  in the shared component covers it; the test asserts it on Motion's own frame.
+* **Save section `SavedThemeCard` — left alone, measured centred.** Its apply control is a **32x32
+  square**, the same height as the three IconButtons beside it, so the row has no fixed-size child to
+  park at the top. Measured 253..284 against a card centred at 268 → 0px. Nothing to fix, and the test
+  keeps it that way.
+
+### T3 — render and read the PNGs
+
+```
+HVE_RENDER_DIR=/tmp/opencode/render-verify-card cargo test --bin hve -- --nocapture
+→ render artifacts for this run: /tmp/opencode/render-verify-card
+→ test result: ok. 1224 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 76.99s
+
+cargo build → Finished `dev` profile … (0 warnings)
+```
+
+Frames read from THAT directory with my own inspection: `preset_card_centring_1280x800_es.png` (the
+keeper's state — COCO's ✓ check, amber name, ★ badge, green switch, ✎ and ✕ all on one centre line,
+with the six built-in cards above), `sibling_motion_card_centring.png` and
+`sibling_save_card_centring.png` (the green apply square, the purple refresh and the amber rename all
+the same height and centred). Before the fix the pill on COCO sat visibly high, with its top edge
+level with the buttons' tops.
+
+RED runs kept for the record: `/tmp/opencode/render-card-red3` (COCO + Looper) and
+`/tmp/opencode/render-sib-red` (Motion + Save).
+
+### Size note
+
+The production change is ONE property. The 690-odd authored lines of this item are the two render
+tests and the measurement helpers they need (card box, pill rows, ink spans, column clusters): reading
+a card's centring off pixels is what the item asked for, and the helpers are the smallest honest way
+to do it. Splitting them from the fix would separate the verification from what it verifies, so it
+stays one work unit and the count is reported instead of hidden.
+
+### Commit — item 3
+
+`fix(borders): centre the preset card's apply switch on the card` — **`2b9a17e`**, one work-unit
+commit holding the fix and both render tests. This document lands in the `docs(odd)` commit that
+records it.
+
+### Not verified for item 3
+
+The keeper's live look at 1280x800 (T4): headless frames only. The preset apply/resolution scripts
+(`assets/scripts/border.sh`, `assets/scripts/utils.sh`) were NOT touched — separate, unauthorised bug.
 
