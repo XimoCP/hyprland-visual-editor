@@ -6865,6 +6865,368 @@ fn the_preset_card_apply_hover_help_renders() {
     );
 }
 
+// ── The apply switch must sit on the preset card's own centre line ─────
+// The keeper's screenshot: the apply switch of their USER preset card ("COCO",
+// active, single-line) in "Mis Preajustes de Borde" rides high — aligned with
+// the name line instead of the card's centre — and the built-in cards above it
+// look the same. Reproduced at the keeper's own geometry and language
+// (1280x800, Spanish).
+//
+// The cause is the rule the glow row already met, one level down: the apply
+// pill is 22px and its fixed size cannot stretch, so the layout's default
+// cross-axis alignment parks it at the TOP of the 32px action row the
+// IconButtons set — 5px above that row's centre, which is the card's centre.
+//
+// The card box is read from its own border (3px accent when active, 1px
+// `HveColors.border` when not); every control is read from the ink only it
+// paints in that card: the pill's face (accent-green / grey), the ✕ button's
+// red, and the name/badge ink, the last two split by their column gap because
+// the active USER card paints both in the same accent.
+#[test]
+fn preset_card_apply_switch_is_vertically_centred_in_the_card() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    // The keeper's own window and UI language.
+    win.window().set_size(slint::PhysicalSize::new(1280, 800));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(1);
+    // The keeper's own list: the six built-in cards they named, then their USER
+    // card COCO, which is the active one.
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Cyber Glitch"),
+        SharedString::from("Golden Luxury"),
+        SharedString::from("Verde Tóxico"),
+        SharedString::from("Neón Cyber-Glow"),
+        SharedString::from("El Joker"),
+        SharedString::from("Looper"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Efecto de fallo digital agresivo."),
+        SharedString::from("Oro de 24 quilates."),
+        SharedString::from("Verde radiactivo intenso."),
+        SharedString::from("Simulación de brillo de dos colores."),
+        SharedString::from("Estética Joker."),
+        SharedString::from("Estética Looper."),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("09_glitch.lua"),
+        SharedString::from("10_golden.lua"),
+        SharedString::from("11_toxic.lua"),
+        SharedString::from("12_neon_cyberpunk.lua"),
+        SharedString::from("13_the_joker.lua"),
+        SharedString::from("14_looper.lua"),
+    ])));
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from("COCO")])));
+    win.set_user_border_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from("USUARIO")])));
+    win.set_active_border_index(6);
+    // Minimal tune state, so the tune pane beside the list renders.
+    win.set_border_size(2);
+    win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
+        SharedString::from("p:primary"),
+        SharedString::from("p:secondary"),
+    ])));
+    win.set_tune_color_count(2);
+    win.set_tune_angle(90);
+    win.set_tune_inactive_color(SharedString::from("p:surface_lowest"));
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(borders_chip_resolved())));
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+    settle_frames(80);
+
+    // The keeper's list is scrolled by a few pixels: at exactly 1280x800 the six
+    // built-in cards push the expanded COCO card's bottom edge 12px past the
+    // pane, and they can see it whole. One small wheel tick over the LIST pane
+    // (the left half) reproduces that scroll.
+    win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(400.0, 500.0),
+        delta_x: 0.0,
+        delta_y: -60.0,
+    });
+    settle_frames(80);
+
+    let shot = win.window().take_snapshot().expect("preset card snapshot");
+    save_slice_png(shot.clone(), "preset_card_centring_1280x800_es.png");
+    let (frame_w, frame_h) = (shot.width() as usize, shot.height() as usize);
+    // The rail is ~165px wide at every window size this suite renders, and the
+    // panel's content starts right after it: the card searches begin at 170, NOT
+    // at the 360 the tune-pane helpers use, or the card's left half — its ✓
+    // check and the whole name — falls outside the window.
+    const PANE_LEFT: usize = 170;
+
+    // ── The active USER card: its 3px accent border spans it, so the wide
+    // amber rows are its top and bottom edges and their x extent is the card.
+    let amber_rows = wide_ink_rows(
+        &shot,
+        ACCENT_AMBER,
+        8,
+        200,
+        0,
+        frame_h - 1,
+        PANE_LEFT,
+        frame_w - 1,
+    );
+    let user_top = *amber_rows
+        .first()
+        .expect("the active user card must paint its amber border");
+    let user_bottom = *amber_rows
+        .last()
+        .expect("the active user card must paint its amber border");
+    let (card_left, card_right) = ink_x_span(
+        &shot,
+        ACCENT_AMBER,
+        8,
+        user_top,
+        user_bottom,
+        PANE_LEFT,
+        frame_w - 1,
+    )
+    .expect("the amber border must span the card");
+    assert!(
+        card_right - card_left >= 300,
+        "the card's own border must span it: measured x {card_left}..{card_right}"
+    );
+    assert!(
+        (96..=104).contains(&(user_bottom - user_top + 1)),
+        "the active card must be the 100px expanded one, got {}..{}",
+        user_top,
+        user_bottom
+    );
+
+    // ── The built-in card right above it (Looper): 1px `HveColors.border`
+    // edges, 56px apart.
+    let border_rows = wide_ink_rows(
+        &shot,
+        BORDER_INK,
+        4,
+        (card_right - card_left).saturating_sub(20),
+        0,
+        user_top - 1,
+        card_left,
+        card_right,
+    );
+    let builtin_bottom = *border_rows
+        .last()
+        .expect("the built-in card above COCO must paint its 1px border");
+    let builtin_top = *border_rows
+        .iter()
+        .filter(|y| **y + 40 < builtin_bottom)
+        .max()
+        .expect("the built-in card's own top edge must be above its bottom edge");
+
+    let user = measure_card(
+        &shot,
+        "COCO (user, active)",
+        user_top,
+        user_bottom,
+        card_left,
+        card_right,
+        SWITCH_ON_INK,
+        116,
+        ACCENT_AMBER,
+        true,
+        true,
+    );
+    let builtin = measure_card(
+        &shot,
+        "Looper (built-in)",
+        builtin_top,
+        builtin_bottom,
+        card_left,
+        card_right,
+        BORDER_INK,
+        40,
+        TEXT_INK,
+        false,
+        false,
+    );
+
+    let mut wrong = user.problems("COCO (user, active)", true);
+    wrong.extend(builtin.problems("Looper (built-in)", false));
+    assert!(
+        wrong.is_empty(),
+        "these preset cards' controls are not on their card's centre line: {wrong:#?}"
+    );
+}
+
+/// The sibling surfaces that share the card pattern, measured the same way and
+/// off their own frames.
+///
+/// * Motion's list is the SAME `SavedPresetCard`, so it carries the same defect
+///   and takes the same fix.
+/// * The Save section's `SavedThemeCard` is a DIFFERENT component whose apply
+///   control is a 32x32 square — the same height as the three IconButtons beside
+///   it — so it has no fixed-size child to park at the top of the row. Expected
+///   centred; measured rather than assumed, because "same pattern" is a claim
+///   about a shared rule and not about the code being shared.
+#[test]
+fn sibling_card_lists_keep_their_apply_control_centred() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1280, 800));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
+
+    // ── Motion (section 2): the SAME component, a USER card active ──────
+    win.set_panel_section(2);
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Suave"),
+        SharedString::from("Rebote"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Curva suave."),
+        SharedString::from("Curva con rebote."),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_suave.lua"),
+        SharedString::from("02_rebote.lua"),
+    ])));
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "MI CURVA",
+    )])));
+    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "USUARIO",
+    )])));
+    win.set_active_anim_index(2);
+    settle_frames(80);
+    let motion_shot = win.window().take_snapshot().expect("motion card snapshot");
+    save_slice_png(motion_shot.clone(), "sibling_motion_card_centring.png");
+    let (mw, mh) = (motion_shot.width() as usize, motion_shot.height() as usize);
+    const PANE_LEFT: usize = 170;
+    let amber_rows = wide_ink_rows(&motion_shot, ACCENT_AMBER, 8, 200, 0, mh - 1, PANE_LEFT, mw - 1);
+    let m_top = *amber_rows
+        .first()
+        .expect("Motion's active user card must paint its amber border");
+    let m_bottom = *amber_rows
+        .last()
+        .expect("Motion's active user card must paint its amber border");
+    let (m_left, m_right) = ink_x_span(&motion_shot, ACCENT_AMBER, 8, m_top, m_bottom, PANE_LEFT, mw - 1)
+        .expect("Motion's amber border must span the card");
+    let motion = measure_card(
+        &motion_shot,
+        "Motion MI CURVA (user, active)",
+        m_top,
+        m_bottom,
+        m_left,
+        m_right,
+        SWITCH_ON_INK,
+        116,
+        ACCENT_AMBER,
+        true,
+        true,
+    );
+
+    // ── Save (section 0): a DIFFERENT component, apply square + ✕ only ──
+    win.set_panel_section(0);
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Nord"),
+        SharedString::from("Cyber"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-08-01"),
+        SharedString::from("2026-08-02"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![true, false])));
+    win.set_active_theme_index(0);
+    win.set_panel_save_search_placeholder(SharedString::from("Buscar temas..."));
+    win.set_panel_save_empty_text(SharedString::from("No hay temas."));
+    win.set_panel_save_apply_text(SharedString::from("Aplicar"));
+    win.set_panel_save_refresh_text(SharedString::from("Refrescar"));
+    win.set_panel_save_rename_text(SharedString::from("Renombrar"));
+    win.set_panel_save_delete_text(SharedString::from("Eliminar"));
+    settle_frames(80);
+    let save_shot = win.window().take_snapshot().expect("save card snapshot");
+    save_slice_png(save_shot.clone(), "sibling_save_card_centring.png");
+    let (sw, sh) = (save_shot.width() as usize, save_shot.height() as usize);
+    let pink_rows = wide_ink_rows(&save_shot, ACCENT_PINK, 8, 200, 0, sh - 1, PANE_LEFT, sw - 1);
+    let s_top = *pink_rows
+        .first()
+        .expect("the active theme card must paint its pink border");
+    let s_bottom = *pink_rows
+        .last()
+        .expect("the active theme card must paint its pink border");
+    let (s_left, s_right) = ink_x_span(&save_shot, ACCENT_PINK, 8, s_top, s_bottom, PANE_LEFT, sw - 1)
+        .expect("the pink border must span the theme card");
+    let s_centre = (s_top + s_bottom) / 2;
+    let apply = ink_span_in_band(&save_shot, SWITCH_ON_INK, 8, s_top, s_bottom, s_left, s_right)
+        .unwrap_or_else(|| {
+            panic!(
+                "the active theme card must paint its 32x32 accent-green apply square inside \
+                 {s_top}..{s_bottom}"
+            )
+        });
+    let delete = ink_span_in_band(&save_shot, ACCENT_RED, 8, s_top, s_bottom, s_left, s_right)
+        .expect("the active theme card must paint its red ✕ button");
+    println!(
+        "[card] Save Nord (theme, active): card {s_top}..{s_bottom} centre={s_centre}, apply \
+         {apply:?}, ✕ {delete:?}"
+    );
+
+    let mut wrong = motion.problems("Motion MI CURVA (user, active)", true);
+    for (what, span, bound) in [("apply square", apply, 1usize), ("✕ button", delete, 1usize)] {
+        let got = (span.0 + span.1) / 2;
+        if got.abs_diff(s_centre) > bound {
+            wrong.push(format!(
+                "the Save theme card's {what}: centre {got} against the card's {s_centre} \
+                 (card {s_top}..{s_bottom}, ink {}..{})",
+                span.0, span.1
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these sibling cards' apply controls are not on their card's centre line: {wrong:#?}"
+    );
+}
+
 /// Same help, same wire, on the OTHER card: the Save section's apply square,
 /// whose text comes from `themes.apply` (a window property), not from
 /// `BordersText`. Two cards, one component, two plumbings — both reach pixels.
@@ -10193,6 +10555,14 @@ fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
 const TEXT_INK: (u8, u8, u8) = (230, 237, 243);
 /// `HveColors.accent-green` — the switch pill's face while the glow is ON.
 const SWITCH_ON_INK: (u8, u8, u8) = (16, 185, 129);
+/// `HveColors.accent-amber` — the accent of a USER preset card (its border,
+/// its name, its ★ badge and its ✎ button) and `HveColors.accent-red`, the ✕
+/// button's own ink, the one thing in the card that belongs to the action row
+/// alone.
+const ACCENT_AMBER: (u8, u8, u8) = (251, 191, 36);
+const ACCENT_RED: (u8, u8, u8) = (248, 113, 113);
+/// `HveColors.accent-pink` — the active Save-section theme card's border ink.
+const ACCENT_PINK: (u8, u8, u8) = (244, 114, 182);
 
 /// Horizontal span `(left, right)` of one row's icy ink, scanned across the
 /// WHOLE frame. The shared `icy_span_at` starts at x=360, which is where the
@@ -10315,6 +10685,323 @@ fn ink_span_in_band(
         }
     }
     (top != usize::MAX).then_some((top, bottom))
+}
+
+// ── Preset card centring (the keeper's COCO card) ──────────────────────
+// The same rule, one level down the panel: the apply pill is 22px, the
+// IconButtons beside it are 32px, and a fixed-size child cannot stretch — so
+// the pill is parked at the TOP of the action row, 5px above the row's centre.
+// These helpers read a card's box and the vertical centres of the controls
+// inside it straight off the frame.
+
+/// Rows of `y0..=y1` where `rgb` paints at least `min_run` pixels inside
+/// `x0..=x1`: a card's own border (full width) is such a row, and no control
+/// inside a card ever is.
+fn wide_ink_rows(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    min_run: usize,
+    y0: usize,
+    y1: usize,
+    x0: usize,
+    x1: usize,
+) -> Vec<usize> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut rows: Vec<usize> = Vec::new();
+    for y in y0..=y1.min(h - 1) {
+        let mut n = 0usize;
+        for x in x0..=x1.min(w - 1) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                n += 1;
+            }
+        }
+        if n >= min_run {
+            rows.push(y);
+        }
+    }
+    rows
+}
+
+/// Longest contiguous run of rows in `y0..=y1` where `rgb` paints between
+/// `min_w` and `max_w` pixels inside `x0..=x1`: one small control's face (the
+/// apply pill's 40x22 rounded rectangle), never a row of the card's own border,
+/// which spans the whole window.
+fn narrow_ink_row_run(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    y0: usize,
+    y1: usize,
+    x0: usize,
+    x1: usize,
+    min_w: usize,
+    max_w: usize,
+) -> Option<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut best: Option<(usize, usize)> = None;
+    let mut open: Option<(usize, usize)> = None;
+    for y in y0..=y1.min(h - 1) {
+        let mut n = 0usize;
+        for x in x0..=x1.min(w - 1) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                n += 1;
+            }
+        }
+        if (min_w..=max_w).contains(&n) {
+            open = match open {
+                Some((start, _)) => Some((start, y)),
+                None => Some((y, y)),
+            };
+        } else if let Some(band) = open.take() {
+            best = match best {
+                Some((t, b)) if b - t >= band.1 - band.0 => Some((t, b)),
+                _ => Some(band),
+            };
+        }
+    }
+    if let Some(band) = open.take() {
+        best = match best {
+            Some((t, b)) if b - t >= band.1 - band.0 => Some((t, b)),
+            _ => Some(band),
+        };
+    }
+    best
+}
+
+/// Horizontal span `(left, right)` of `rgb` ink inside a row band and an x
+/// window, or `None`.
+fn ink_x_span(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    y0: usize,
+    y1: usize,
+    x0: usize,
+    x1: usize,
+) -> Option<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let (mut left, mut right) = (usize::MAX, 0usize);
+    for y in y0..=y1.min(h - 1) {
+        for x in x0..=x1.min(w - 1) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                left = left.min(x);
+                right = right.max(x);
+            }
+        }
+    }
+    (left != usize::MAX).then_some((left, right))
+}
+
+/// Column clusters `(left, right)` of `rgb` ink inside `x0..=x1` and a row
+/// band, split wherever two painted columns are `min_gap` apart or more. The
+/// active USER card paints its name AND its ★ badge in the same accent ink, so
+/// this is what tells the two apart: the badge is the last cluster.
+fn ink_column_clusters(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    y0: usize,
+    y1: usize,
+    x0: usize,
+    x1: usize,
+    min_gap: usize,
+) -> Vec<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut painted: Vec<usize> = Vec::new();
+    for x in x0..=x1.min(w - 1) {
+        let mut any = false;
+        for y in y0..=y1.min(h - 1) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                any = true;
+                break;
+            }
+        }
+        if any {
+            painted.push(x);
+        }
+    }
+    let mut clusters: Vec<(usize, usize)> = Vec::new();
+    for x in painted {
+        match clusters.last_mut() {
+            Some((_, right)) if x - *right <= min_gap => *right = x,
+            _ => clusters.push((x, x)),
+        }
+    }
+    clusters
+}
+
+/// A preset card's own box plus the vertical spans of the controls inside it,
+/// all read off one frame.
+#[derive(Debug)]
+struct CardCentring {
+    box_top: usize,
+    box_bottom: usize,
+    switch: (usize, usize),
+    name: Option<(usize, usize)>,
+    badge: Option<(usize, usize)>,
+    buttons: Option<(usize, usize)>,
+}
+
+impl CardCentring {
+    fn centre(&self) -> usize {
+        (self.box_top + self.box_bottom) / 2
+    }
+
+    /// `state` names the card in the messages; `name_centred` says whether the
+    /// name line is EXPECTED on the card's centre line — it is on a single-line
+    /// card, while a card with a description centres its whole text BLOCK, which
+    /// leaves the name (its first line) legitimately above the centre.
+    fn problems(&self, state: &str, name_centred: bool) -> Vec<String> {
+        let mut problems: Vec<String> = Vec::new();
+        let centre = self.centre();
+        let switch_centre = (self.switch.0 + self.switch.1) / 2;
+        if switch_centre.abs_diff(centre) > 1 {
+            problems.push(format!(
+                "the {state} card's apply switch: centre {switch_centre} against the card's \
+                 {centre} (card {}..{}, switch {}..{})",
+                self.box_top, self.box_bottom, self.switch.0, self.switch.1
+            ));
+        }
+        for (what, span, bound) in [
+            ("name line", if name_centred { self.name } else { None }, 3usize),
+            ("★ badge", self.badge, 3usize),
+            ("action buttons", self.buttons, 1usize),
+        ] {
+            if let Some((top, bottom)) = span {
+                let got = (top + bottom) / 2;
+                if got.abs_diff(centre) > bound {
+                    problems.push(format!(
+                        "the {state} card's {what}: centre {got} against the card's {centre} \
+                         (card {}..{}, ink {top}..{bottom})",
+                        self.box_top, self.box_bottom
+                    ));
+                }
+            }
+        }
+        problems
+    }
+}
+
+/// The pill is the action row's FIRST control, so its 40px window starts at the
+/// row's left edge: the card's content edge minus the row's own width (40px for
+/// a built-in card, 40+6+32+6+32 for a user card, whose two IconButtons sit
+/// beside it). `face` is the pill's colour in this frame: accent-green while the
+/// card is the active one, `HveColors.border` while it is not.
+fn measure_card(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    state: &str,
+    box_top: usize,
+    box_bottom: usize,
+    box_left: usize,
+    box_right: usize,
+    face: (u8, u8, u8),
+    row_w: usize,
+    name_ink: (u8, u8, u8),
+    user: bool,
+    check_leading: bool,
+) -> CardCentring {
+    let row_right = box_right - 14;
+    let row_left = row_right + 1 - row_w;
+    let switch = narrow_ink_row_run(
+        buf, face, 4, box_top, box_bottom, row_left, row_left + 39, 8, 34,
+    )
+    .unwrap_or_else(|| {
+        panic!(
+            "the {state} card's apply pill must paint its face inside {row_left}..{} of the card \
+             {box_top}..{box_bottom}",
+            row_left + 39
+        )
+    });
+    // The text block sits between the leading ✓ check (padding 14 + the 24px
+    // check + the outer 12px spacing; the check is painted by the ACTIVE card
+    // only) and the action row.
+    let text_left = box_left + 14 + if check_leading { 36 } else { 0 };
+    let text_right = row_left - 13;
+    let (name, badge) = if user {
+        // Name and ★ badge are the same accent ink: split the line's columns.
+        let clusters = ink_column_clusters(
+            buf,
+            name_ink,
+            8,
+            box_top + 8,
+            box_bottom - 8,
+            text_left,
+            text_right,
+            8,
+        );
+        let badge_cols = clusters.last().copied();
+        let name_cols = clusters.first().copied();
+        let name = name_cols.and_then(|(l, r)| {
+            ink_span_in_band(buf, name_ink, 8, box_top + 8, box_bottom - 8, l, r)
+        });
+        let badge = if clusters.len() >= 2 {
+            badge_cols.and_then(|(l, r)| {
+                ink_span_in_band(buf, name_ink, 8, box_top + 8, box_bottom - 8, l, r)
+            })
+        } else {
+            None
+        };
+        (name, badge)
+    } else {
+        (
+            ink_span_in_band(buf, name_ink, 12, box_top, box_bottom, text_left, text_right),
+            None,
+        )
+    };
+    let buttons = if user {
+        // The ✕ button's red is the one ink in the card that belongs to the
+        // action row alone; the ✎ beside it is the same accent as the name.
+        ink_span_in_band(buf, ACCENT_RED, 8, box_top, box_bottom, box_left, box_right)
+    } else {
+        None
+    };
+    let card = CardCentring {
+        box_top,
+        box_bottom,
+        switch,
+        name,
+        badge,
+        buttons,
+    };
+    println!("[card] {state}: {card:?} centre={}", card.centre());
+    card
 }
 
 /// Every way the glow header row's two fixed-size children can be off-centre or

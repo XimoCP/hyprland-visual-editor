@@ -128,6 +128,16 @@ export component SavedPresetCard inherits Rectangle {
 
             HorizontalLayout {
                 spacing: 6px;
+                // The apply pill is 22px while the IconButtons beside it are
+                // 32px, and a fixed-size child cannot stretch: with the default
+                // cross-axis alignment (`stretch`) Slint parks the pill at the
+                // TOP of this row, 5px above the centre the buttons and the card
+                // share (measured on the keeper's own frame, 1280x800: pill
+                // 690..711 against a card centred at 705). A built-in card has
+                // the pill alone in this row, so it was already centred — the
+                // offset shows on the USER cards, which is where the keeper saw
+                // it. Same rule, same fix as the glow row's switch.
+                cross-axis-alignment: center;
 
                 // Apply + active state, as ONE animated on/off switch — the same
                 // language the Filters and Motion cards already use. It reads
