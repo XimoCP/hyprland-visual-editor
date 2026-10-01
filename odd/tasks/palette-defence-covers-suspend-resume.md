@@ -162,10 +162,12 @@ resume permission), `src/ipc.rs` (the gate: one entry point + the decision log +
   poll: the reads reuse the wake-ups the listener already had. The DECISION itself is only ever taken
   on demand, as required.
 - **T1/T2/T3 evidence.** RED: 52 compile errors. GREEN: `cargo test` → **`ok. 1221 passed; 0 failed;
-  0 ignored`** (baseline before this change: 1209 passed, so **+12 = the 12 new tests**), 5 consecutive
-  full runs green plus 25 stress runs of the two touched modules. `cargo build` → `Finished dev profile
-  … in 50.18s`, **warning-free** (no warning lines at all). Throwaway probes falsified every new
-  assertion (see T1). No test sleeps; the only clock reads in tests are synthesized values.
+  0 ignored`** (baseline before this change: 1209 passed, so **+12 = the 12 new tests**), **8 consecutive
+  full-suite runs green** afterwards (every one captured as `1221 passed / 0 failed`), plus 25 stress
+  runs of the two touched modules (46 tests each, 0 failures). `cargo build` → `Finished dev profile`,
+  **warning-free** (`grep -c warning` = 0, both on the full build and on the final revision).
+  Throwaway probes falsified every new assertion (see T1). No test sleeps; the only clock reads in
+  tests are synthesized values.
 - **Honest note.** One full-suite run during the writing session reported `1220 passed; 1 failed`. Its
   name was lost to an output filter and it did **not** reproduce in 4 later full runs nor in 25 stress
   runs of `hypr_ipc::tests::` + `ipc::tests::` (46 tests). Reported rather than hidden; the failing
@@ -173,8 +175,15 @@ resume permission), `src/ipc.rs` (the gate: one entry point + the decision log +
 - **Not changed:** the colour provider, the watcher script, `MONITOR_PERMIT`/`defence_permits_reassert`
   and their tests, the engine, skwd, monitors/HDR. No `.slint` file was touched, so the headless render
   check does not apply.
-- **Commit:** recorded by the closing docs commit (see its message); the work-unit commit carries the
-  code, the tests and this document.
+- **Commit:** `750afc0a1c207a719a0eb31af66230441757177b` — 3 files, +742/−13 (of which this document is
+  +201). It carries the code, the 12 tests and this document. Measured Rust-authored lines: **239
+  production + 302 tests + 15 deletions = 556** — above the ~400 advisory, see the note below.
+- **Why the advisory overage (556 authored Rust lines vs ~400):** the design the task prescribed needs
+  four pure pieces (sample, gap test, grace decision, one entry point) each with the house's mandatory
+  doc comment, and T1 asks for five distinct sub-cases whose boundary behaviour ("the first sample
+  grants nothing", "the second pass is still inside the grace", "there is no permanent permission") is
+  only provable with separate tests. Nothing was trimmed to fit: no comment, test or assertion was
+  removed, and `cargo fmt` was never run.
 
 ## Follow-ups (not this change)
 
