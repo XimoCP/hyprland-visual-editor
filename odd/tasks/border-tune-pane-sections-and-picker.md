@@ -180,6 +180,13 @@ monitors/HDR.
       with zero warnings, and a final headless render of the pane in its new shape read by
       the orchestrator and shown to the keeper (per-run dir `/tmp/opencode/final-t6/`).
       Every acceptance criterion below is either met or answered in writing.
+      **The keeper then read the shipped pane LIVE and approved the look
+      ("ha quedado muy chulo… me gusta", 2026-10-01)** — per this project's rules the
+      keeper's own live test is the strongest check for visible behaviour, so the visual
+      acceptance is closed by him, not by the renders. The two cosmetic items in the
+      pending list (the wide switch-only glow row, and the rows sharing the container's
+      fill) were NOT raised by him as problems; they stay recorded as optional, not as
+      defects.
 
 ## Acceptance criteria
 
