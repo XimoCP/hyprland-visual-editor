@@ -14,8 +14,9 @@ if [ "$PRESET_NAME" == "none" ] || [ -z "$PRESET_NAME" ]; then
     rm -f "$TARGET_FRAGMENT"
     echo "Animations disabled."
 else
-    # 2. LOADING - presets resolve to `$HVE_ANIMATIONS_DIR/$name.lua`
-    TARGET_FILE=$(hve_resolve_preset "$HVE_ANIMATIONS_DIR" "$PRESET_NAME")
+    # 2. LOADING - built-ins from `$HVE_ANIMATIONS_DIR`, saved presets from
+    # the user directory (built-in first; see hve_resolve_preset).
+    TARGET_FILE=$(hve_resolve_preset "$HVE_ANIMATIONS_DIR" "$PRESET_NAME" "$HVE_USER_PRESETS_DIR/animations")
 
     if [ $? -eq 0 ] && [ -n "$TARGET_FILE" ]; then
         # Copy the preset content to the dynamic fragment

@@ -11,6 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use crate::border_preset::{AnimLeaf, BorderColor, BorderParams, GlowParams};
+use crate::preset_store::PresetStore;
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -954,6 +957,7 @@ impl OverlaySandbox {
         for name in [
             "assemble.sh",
             "border.sh",
+            "apply_animation.sh",
             "utils.sh",
             "colors.sh",
             "reload_coalescer.sh",
@@ -976,6 +980,14 @@ impl OverlaySandbox {
             std::fs::copy(entry.path(), borders.join(entry.file_name())).unwrap();
         }
 
+        // Same for the built-in animations: the animation apply path is
+        // covered with the same realism as borders.
+        let animations = root.join("assets/animations");
+        std::fs::create_dir_all(&animations).unwrap();
+        for entry in std::fs::read_dir(repo_root().join("assets/animations")).unwrap().flatten() {
+            std::fs::copy(entry.path(), animations.join(entry.file_name())).unwrap();
+        }
+
         // Inert `pgrep` (exit 1) is what keeps assemble.sh from queueing a
         // reload: no coalescer drainer is ever spawned here.
         let bin = fake_bin_dir(&root);
@@ -992,6 +1004,15 @@ impl OverlaySandbox {
     fn env(&self) -> Vec<(String, String)> {
         vec![
             ("HOME".to_owned(), self.home.to_string_lossy().into_owned()),
+            // The scripts must locate `hve/presets/…` through the same rule
+            // `PresetStore::new` uses (`dirs::config_dir()`): XDG first, then
+            // `$HOME/.config`. Deliberately NOT `$HOME/.config`: a resolver
+            // that hardcoded the home path would pass by accident, so the
+            // preset directory lives under a distinct XDG root.
+            (
+                "XDG_CONFIG_HOME".to_owned(),
+                self.root.join("xdg").to_string_lossy().into_owned(),
+            ),
             ("HVE_CACHE_DIR".to_owned(), self.cache.to_string_lossy().into_owned()),
             (
                 "PATH".to_owned(),
@@ -1024,6 +1045,28 @@ impl OverlaySandbox {
             String::from_utf8_lossy(&out.stderr)
         );
         self.overlay()
+    }
+
+    /// Apply one animation preset through the real `apply_animation.sh`,
+    /// then return the overlay.
+    fn apply_animation_preset(&self, name: &str) -> String {
+        let out = self.run("apply_animation.sh", &[name]);
+        assert!(
+            out.status.success(),
+            "apply_animation.sh {name} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        self.overlay()
+    }
+
+    /// Write a preset into the USER directory exactly where `PresetStore::save`
+    /// puts it: `$XDG_CONFIG_HOME/hve/presets/<category>/<name>.lua`
+    /// (`src/preset_store.rs:23-29`). The sandbox's `XDG_CONFIG_HOME` is
+    /// `<root>/xdg`, deliberately distinct from `$HOME/.config`.
+    fn write_user_preset(&self, category: &str, name: &str, content: &str) {
+        let dir = self.root.join("xdg/hve/presets").join(category);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.lua")), content).unwrap();
     }
 
     fn assemble(&self) -> String {
@@ -1382,5 +1425,170 @@ fn preset_without_spaces_around_equals_is_still_scanned() {
     assert!(
         missing.is_empty(),
         "referenced token(s) {missing:?} are not defined in the overlay"
+    );
+}
+
+// ── Saved presets must apply: the USER directory is a real location ────
+//
+// Live defect (2026-10-01,
+// `odd/tasks/apply-saved-presets-borders-and-animations.md`): `border.sh` and
+// `apply_animation.sh` resolved presets against the BUILT-IN directory only,
+// so a preset the keeper SAVED under `$XDG_CONFIG_HOME/hve/presets/…` never
+// reached the fragment — the desktop got the security fallback while the panel
+// showed the saved values (the Rust read-back, `PresetStore::read_border_file`,
+// checks both directories; the shell checked one).
+//
+// Decisions under test: the resolver takes the user directory as an optional
+// second location, BUILT-IN FIRST (D2: a user preset never shadows a
+// built-in), and an unknown name still yields the safe fallback (D3: that is
+// a security property).
+
+/// The params the save path builds (`tune_params_from_window` →
+/// `generate_border_lua_full`): a keeper's own angle, gradient colours,
+/// inactive colour and glow — none of which any built-in carries.
+fn keeper_saved_border_params() -> BorderParams {
+    BorderParams {
+        active_colors: vec![
+            BorderColor::Custom { r: 0x11, g: 0x22, b: 0x33, a: 0xff },
+            BorderColor::Custom { r: 0x44, g: 0x55, b: 0x66, a: 0xff },
+        ],
+        angle: 77,
+        inactive: BorderColor::Custom { r: 0x77, g: 0x88, b: 0x99, a: 0xff },
+        border_size: Some(3),
+        glow: Some(GlowParams {
+            enabled: true,
+            range: 21,
+            render_power: 6,
+            color: BorderColor::Custom { r: 0xaa, g: 0xbb, b: 0xcc, a: 0xff },
+            color_inactive: BorderColor::Custom { r: 0x01, g: 0x02, b: 0x03, a: 0xff },
+            offset: (3, 4),
+        }),
+        rule_enabled: false,
+        animations: vec![AnimLeaf {
+            leaf: "borderangle".to_string(),
+            enabled: true,
+            speed: Some(200),
+            bezier: None,
+            style: None,
+        }],
+        curves: Vec::new(),
+    }
+}
+
+/// A border preset the keeper SAVED must reach the desktop fragment with its
+/// own values — not the plain-`primary` security fallback. The content is
+/// generated by the very function the save path calls, so this proves the
+/// save format → resolver → fragment → overlay chain end to end.
+#[test]
+fn saved_user_border_preset_reaches_the_overlay() {
+    let sb = OverlaySandbox::build();
+    let content = PresetStore::generate_border_lua_full("keeper_saved", &keeper_saved_border_params());
+    sb.write_user_preset("borders", "keeper_saved", &content);
+
+    let overlay = sb.apply_border_preset("keeper_saved");
+
+    for needle in [
+        // Gradient colours and angle the keeper tuned.
+        "colors = { \"rgba(112233ff)\", \"rgba(445566ff)\" }",
+        "angle = 77",
+        // Inactive colour.
+        "inactive_border = \"rgba(778899ff)\"",
+        // Glow (decoration.shadow).
+        "range = 21",
+        "color = \"rgba(aabbccff)\"",
+        // The tune's animation leaf.
+        "hl.animation({ leaf = \"borderangle\", enabled = true, speed = 200 })",
+    ] {
+        assert!(
+            overlay.contains(needle),
+            "the saved border preset's `{needle}` never reached the overlay — \
+             the preset resolved to the security fallback instead:\n{overlay}"
+        );
+    }
+    assert!(
+        !overlay.contains("hl.config({ general = { [\"col.active_border\"] = primary } })"),
+        "a SAVED preset must never fall back to the plain-primary border: {overlay}"
+    );
+}
+
+/// Same contract for animations: a saved animation preset must deliver its
+/// bezier/speed to the animation module of the overlay.
+#[test]
+fn saved_user_animation_preset_reaches_the_overlay() {
+    let sb = OverlaySandbox::build();
+    let content = PresetStore::generate_animation_lua("keeper_saved_anim", 0.25, 0.1, 0.25, 1.0);
+    sb.write_user_preset("animations", "keeper_saved_anim", &content);
+
+    let overlay = sb.apply_animation_preset("keeper_saved_anim");
+
+    assert!(
+        overlay.contains("bezier = ({ 0.25, 0.1, 0.25, 1 })"),
+        "the saved animation preset's bezier never reached the overlay:\n{overlay}"
+    );
+    assert!(
+        overlay.contains("-- @Source: user"),
+        "the overlay must carry the keeper's saved animation file, not a built-in: {overlay}"
+    );
+    assert!(
+        !overlay.contains("hl.config({ animations = { enabled = true } })"),
+        "a SAVED animation preset must never take the safe-animation fallback: {overlay}"
+    );
+}
+
+/// An unknown name must still produce the safe fallback for BOTH callers:
+/// that behaviour is a security property (D3), not an accident of the bug.
+#[test]
+fn unknown_preset_name_still_takes_the_safe_fallback() {
+    let sb = OverlaySandbox::build();
+
+    let overlay = sb.apply_border_preset("no_such_preset_anywhere");
+    assert!(
+        overlay.contains("hl.config({ general = { [\"col.active_border\"] = primary } })"),
+        "an unknown border preset must yield the safe fallback:\n{overlay}"
+    );
+
+    let overlay = sb.apply_animation_preset("no_such_preset_anywhere");
+    assert!(
+        overlay.contains("hl.config({ animations = { enabled = true } })"),
+        "an unknown animation preset must yield the safe animation fallback:\n{overlay}"
+    );
+}
+
+/// Search order is BUILT-IN FIRST (D2): a user preset must never shadow a
+/// built-in of the same name, in either category.
+#[test]
+fn built_in_preset_wins_over_user_preset_with_the_same_name() {
+    let sb = OverlaySandbox::build();
+    sb.write_user_preset(
+        "borders",
+        "02_diagonal",
+        "-- USER SHADOW MARKER (border)\n\
+         hl.config({ general = { col = { active_border = { angle = 77 } } } })\n",
+    );
+    sb.write_user_preset(
+        "animations",
+        "07_lineal",
+        "-- USER SHADOW MARKER (animation)\n\
+         hl.config({ animations = { speed = 999 } })\n",
+    );
+
+    let overlay = sb.apply_border_preset("02_diagonal");
+    assert!(
+        overlay.contains("-- @Title: Diagonal"),
+        "the BUILT-IN border preset must win the resolution: {overlay}"
+    );
+    assert!(
+        !overlay.contains("USER SHADOW MARKER"),
+        "a user preset must never shadow a built-in of the same name: {overlay}"
+    );
+
+    let overlay = sb.apply_animation_preset("07_lineal");
+    assert!(
+        overlay.contains("-- @Title: Linear"),
+        "the BUILT-IN animation preset must win the resolution: {overlay}"
+    );
+    assert!(
+        !overlay.contains("USER SHADOW MARKER"),
+        "a user preset must never shadow a built-in of the same name: {overlay}"
     );
 }

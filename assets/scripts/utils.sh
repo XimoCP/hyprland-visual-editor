@@ -25,6 +25,13 @@ HVE_BORDERS_DIR="$HVE_ASSETS_DIR/borders"
 HVE_ANIMATIONS_DIR="$HVE_ASSETS_DIR/animations"
 HVE_SHADERS_DIR="$HVE_ASSETS_DIR/shaders"
 
+# User preset root, mirroring `PresetStore::new` (src/preset_store.rs):
+# `dirs::config_dir()` → `$XDG_CONFIG_HOME` when set, else `$HOME/.config`,
+# plus `hve/presets`. Saved presets live in `<root>/borders` and
+# `<root>/animations`. An explicit `HVE_USER_PRESETS_DIR` (sandbox/test
+# override) wins, same rule as `HVE_CACHE_DIR`.
+HVE_USER_PRESETS_DIR="${HVE_USER_PRESETS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hve/presets}"
+
 # Safe cache directory (outside plugin, survives plugin deletion for cleanup).
 # Cache-dir convention (capability-routing unit 1e, F5): the default mirrors
 # Rust's `src/config.rs::hve_cache_dir()` — `$XDG_CACHE_HOME` when set, else
@@ -36,10 +43,9 @@ HVE_SAFE_DIR="${HVE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
 # Hyprland config directory
 HVE_HYPR_DIR="$HOME/.config/hypr"
 
-# Resolve a preset file. Lua-only: HVE never detects config format at runtime,
-# so a preset name always resolves to `$dir/$name.lua`.
-# Usage: _resolved_file=$(hve_resolve_preset "$PRESETS_DIR" "$PRESET_NAME")
-hve_resolve_preset() {
+# Look for a preset inside ONE directory. Lua-only: HVE never detects config
+# format at runtime, so a preset name always resolves to `$dir/$name.lua`.
+_hve_preset_in_dir() {
     local dir="$1"
     local name="$2"
 
@@ -55,6 +61,35 @@ hve_resolve_preset() {
     if [ -f "$dir/$name.lua" ]; then
         echo "$dir/$name.lua"
         return 0
+    fi
+
+    return 1
+}
+
+# Resolve a preset file. The first argument is the BUILT-IN directory and is
+# searched FIRST: a user preset must never shadow a built-in of the same name.
+# The optional third argument is the USER preset directory (a saved preset at
+# `$XDG_CONFIG_HOME/hve/presets/<category>/<name>.lua`), searched only when
+# the built-in directory has no match — the same order as
+# `PresetStore::read_border_file` (src/preset_store.rs), so shell and Rust
+# agree. Returns 1 when neither directory holds the name: the caller's safe
+# fallback depends on that.
+# Usage: _resolved_file=$(hve_resolve_preset "$PRESETS_DIR" "$PRESET_NAME" "$HVE_USER_PRESETS_DIR/borders")
+hve_resolve_preset() {
+    local dir="$1"
+    local name="$2"
+    local user_dir="${3:-}"
+
+    # Built-in directory first.
+    if _hve_preset_in_dir "$dir" "$name"; then
+        return 0
+    fi
+
+    # Then the documented user directory.
+    if [ -n "$user_dir" ] && [ "$user_dir" != "$dir" ]; then
+        if _hve_preset_in_dir "$user_dir" "$name"; then
+            return 0
+        fi
     fi
 
     return 1
