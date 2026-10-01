@@ -94,6 +94,7 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
         "borders.glow.group_desc",
         "Color and reach of the shadow, and its variant for unfocused windows.",
     ));
+    t.set_glow_enable_label(tr.tr_shared("borders.glow.enable_label", "Enable Glow"));
     t.set_glow_add(tr.tr_shared("borders.glow.add", "Add"));
     t.set_glow_empty_desc(tr.tr_shared(
         "borders.glow.empty_desc",

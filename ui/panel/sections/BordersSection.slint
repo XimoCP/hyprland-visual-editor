@@ -56,6 +56,15 @@ component BorderCompactColorRow inherits Rectangle {
     HorizontalLayout {
         padding: 12px;
         spacing: 8px;
+        // The chip is the only fixed-size child here, and a layout's default
+        // cross-axis alignment (`stretch`) cannot stretch it: Slint then parks
+        // it at the TOP of the row's content box, 4px above the centre the
+        // texts and the "Custom…" button already sit on (measured on the
+        // render: chip centre 460 against the row's 464). Centring the cross
+        // axis is what the keeper's "the colour modules are not vertically
+        // centred in their containers" asks for, and it moves the 16px chip
+        // back onto the row's centre line — no pixel value, no new container.
+        cross-axis-alignment: center;
 
         Rectangle {
             width: 16px;
@@ -1138,6 +1147,13 @@ component BordersTunePane inherits Rectangle {
                         HorizontalLayout {
                             spacing: 4px;
                             alignment: center;
+                            // Same rule as the compact colour row: the 16px
+                            // swatch has an explicit size, so `stretch` cannot
+                            // grow it and Slint parks it at the TOP of the
+                            // 32px chip — 8px above the centre the number text
+                            // already sits on (measured on the render: swatch
+                            // centre 585 against the chip's 593).
+                            cross-axis-alignment: center;
 
                             // The resolved colour (token or custom — Rust resolves
                             // both, since Slint cannot parse "#rrggbbaa").
@@ -1335,19 +1351,25 @@ component BordersTunePane inherits Rectangle {
                         }
                     }
 
-                // ONE enable row, mounted in BOTH states (glow off and on), and it
-                // holds the on/off switch alone now: T3c-2 MOVED the row's title
-                // (`glow-title`) up into the container's header, where every other
-                // block's title lives, so the string is painted once. The switch IS
-                // the glow-enable control — the same 40×22 pill, animated background
-                // and travelling knob the left preset cards paint
-                // (`SavedPresetCard.apply-switch`) — so its colour reads the state at
-                // a glance. It replaced the old cyan "Add" rectangle (glow off) and
-                // the separate ✕ (glow on), which each existed in only one state and
-                // so made the row jump. `alignment: end` keeps the switch on the
-                // right edge the row has always parked it on: with a single child,
-                // `space-between` would pin it to the LEFT instead. Only the BODY
-                // below differs by state.
+                // ONE enable row, mounted in BOTH states (glow off and on): T3c-2
+                // MOVED the row's title (`glow-title`) up into the container's
+                // header, where every other block's title lives, so the string is
+                // painted once — and that left the row holding the switch alone,
+                // which read as an empty box. The row now carries its OWN label
+                // (`glow-enable-label`), the action the switch performs, so the
+                // control names itself the way the System pane's switch row does
+                // (label left, switch right). The switch IS the glow-enable
+                // control — the same 40×22 pill, animated background and
+                // travelling knob the left preset cards paint
+                // (`SavedPresetCard.apply-switch`) — so its colour reads the state
+                // at a glance. It replaced the old cyan "Add" rectangle (glow off)
+                // and the separate ✕ (glow on), which each existed in only one
+                // state and so made the row jump. `alignment: space-between` is
+                // what parks the two children on the row's two edges: it was
+                // `end` while the switch was the ONLY child (with one child,
+                // `space-between` pins it to the LEFT), and with the label back it
+                // would instead push the label up against the switch. Only the
+                // BODY below differs by state.
                 glow-wrap := Rectangle {
                     property <bool> lit: root.local-focus == root.idx-glow-en && root.has-focus;
                     height: self.lit ? 64px : 56px;
@@ -1359,7 +1381,24 @@ component BordersTunePane inherits Rectangle {
                     HorizontalLayout {
                         padding: 12px;
                         spacing: 8px;
-                        alignment: end;
+                        alignment: space-between;
+
+                        // The row's label: it names the ACTION the switch
+                        // performs, so the row reads as a control instead of an
+                        // empty box with a lone pill at its right edge. It is
+                        // the same voice as the pane's other row labels (13px,
+                        // 600, `HveColors.text`); the stretch gives a long
+                        // translation the room to reach the switch instead of
+                        // being clipped.
+                        Text {
+                            text: BordersText.glow-enable-label;
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 600;
+                            color: HveColors.text;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
 
                         // The switch: grey/left = off, accent-green/right = on. Both
                         // faces and the knob travel are the left preset cards'

@@ -48,6 +48,11 @@ export global BordersText {
     // Tune pane — glow / shadow group
     in-out property <string> glow-title: "Glow (shadow decoration)";
     in-out property <string> glow-desc: "Color and reach of the shadow, and its variant for unfocused windows.";
+    // The switch row's own label: it names the ACTION the switch performs, so
+    // the row reads as a control instead of an empty box (the keeper's "Activar
+    // brillo"). Same voice and casing as its sibling row labels ("Glow Color",
+    // "Inactive Glow").
+    in-out property <string> glow-enable-label: "Enable Glow";
     in-out property <string> glow-add: "Add";
     in-out property <string> glow-empty-desc: "This preset has no glow. Add one to give the border a coloured shadow around focused windows.";
     in-out property <string> glow-range-label: "Range";

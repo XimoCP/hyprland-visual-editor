@@ -197,6 +197,7 @@
     "glow": {
       "title": "Glow (shadow decoration)",
       "group_desc": "Color and reach of the shadow, and its variant for unfocused windows.",
+      "enable_label": "Enable Glow",
       "add": "Add",
       "empty_desc": "This preset has no glow. Add one to give the border a coloured shadow around focused windows.",
       "range": {

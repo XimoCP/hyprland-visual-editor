@@ -197,6 +197,7 @@
     "glow": {
       "title": "Brillo (decoración de sombra)",
       "group_desc": "Color y alcance de la sombra, y su variante para ventanas sin foco.",
+      "enable_label": "Activar Brillo",
       "add": "Añadir",
       "empty_desc": "Este preajuste no tiene brillo. Añade uno para dar al borde una sombra de color alrededor de las ventanas con foco.",
       "range": {

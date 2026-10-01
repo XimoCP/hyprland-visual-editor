@@ -6287,7 +6287,7 @@ type BordersLabel = (
 );
 
 #[rustfmt::skip]
-fn borders_labels() -> [BordersLabel; 63] {
+fn borders_labels() -> [BordersLabel; 64] {
     [
         ("header-title", |t| t.get_header_title().to_string(),
             "Borders", "Bordes"),
@@ -6356,6 +6356,8 @@ fn borders_labels() -> [BordersLabel; 63] {
         ("glow-desc", |t| t.get_glow_desc().to_string(),
             "Color and reach of the shadow, and its variant for unfocused windows.",
             "Color y alcance de la sombra, y su variante para ventanas sin foco."),
+        ("glow-enable-label", |t| t.get_glow_enable_label().to_string(),
+            "Enable Glow", "Activar Brillo"),
         ("glow-empty-desc", |t| t.get_glow_empty_desc().to_string(),
             "This preset has no glow. Add one to give the border a coloured shadow around focused windows.",
             "Este preajuste no tiene brillo. Añade uno para dar al borde una sombra de color alrededor de las ventanas con foco."),
@@ -10005,6 +10007,112 @@ fn narrow_icy_bands(
 /// band pair that is a chip's own height (32px, plus its 2px borders) apart.
 fn strip_chip_ring_top(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> Option<usize> {
     strip_chip_ring_span(buf).map(|(top, _)| top)
+}
+
+// ── Colour swatches must be centred inside their own containers ────────
+// The keeper's live look: "the colour modules are not vertically centred in
+// their containers, they all sit too high" (~5px). The defect is real, and it
+// is ONE rule twice: a layout's default `cross-axis-alignment` is `stretch`,
+// and a child with an explicit size cannot stretch, so Slint parks it at the
+// TOP of the box it was given. Measured on this fixture BEFORE the fix: the
+// 16px chip of a compact colour row sat 4px above the centre of its 48px row,
+// and the strip chip's 16px swatch sat 8px above the centre of its 40x32 chip
+// — the same defect, scaled by the two containers' heights. Both are read off
+// the render: the swatch's own colour bbox against the box that contains it,
+// never the source text.
+#[test]
+fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+
+    const RED: (u8, u8, u8) = (255, 0, 0);
+    const MAGENTA: (u8, u8, u8) = (255, 0, 255);
+
+    let win = borders_tune_pane_fixture(&["p:primary", "p:secondary"]);
+    // Distinct saturated resolved colours, so each swatch is located by the
+    // colour it paints and by nothing else in the pane: red is strip chip 1,
+    // magenta is the inactive row's chip.
+    let mut resolved: Vec<slint::Color> = (0..8)
+        .map(|_| slint::Color::from_argb_u8(0, 0, 0, 0))
+        .collect();
+    resolved[0] = slint::Color::from_rgb_u8(RED.0, RED.1, RED.2);
+    resolved[1] = slint::Color::from_rgb_u8(0, 255, 0);
+    resolved.push(slint::Color::from_rgb_u8(MAGENTA.0, MAGENTA.1, MAGENTA.2)); // 8 — inactive row
+    resolved.push(slint::Color::from_rgb_u8(192, 132, 252)); // 9 — glow colour
+    resolved.push(slint::Color::from_rgb_u8(30, 41, 59)); // 10 — glow inactive
+    win.set_tune_colors_resolved(ModelRc::new(VecModel::from(resolved)));
+
+    // Park the pane where BOTH containers are inside the viewport: the glow
+    // header stop, the same seat `borders_glow_switch_renders_off_and_on` uses.
+    win.set_panel_kbd_preview_index(1 + 9);
+    settle_frames(80);
+    let shot = win.window().take_snapshot().expect("colour swatch snapshot");
+    save_slice_png(shot.clone(), "borders_colour_swatches.png");
+
+    // (1) A compact colour row: its own 1px `HveColors.border` hairlines are the
+    // nearest full-width border bands above and below the chip.
+    let (cx0, cy0, cx1, cy1) = exact_color_bbox(&shot, MAGENTA, 6)
+        .expect("the inactive row's chip must paint its resolved colour");
+    let hairlines = color_row_bands(&shot, BORDER_INK, 6, 700);
+    let row_top = hairlines
+        .iter()
+        .filter(|(_, end)| *end < cy0)
+        .map(|(_, end)| *end)
+        .max()
+        .expect("a full-width hairline must sit above the inactive chip");
+    let row_bottom = hairlines
+        .iter()
+        .filter(|(start, _)| *start > cy1)
+        .map(|(start, _)| *start)
+        .min()
+        .expect("a full-width hairline must sit below the inactive chip");
+    let row_height = row_bottom - row_top + 1;
+    assert!(
+        (46..=50).contains(&row_height),
+        "the chip at x {cx0}..{cx1} must sit inside a compact colour row: the nearest full-width \
+         hairlines are {row_top}..{row_bottom} ({row_height}px)"
+    );
+    let row_centre = (row_top + row_bottom) / 2;
+    let chip_centre = (cy0 + cy1) / 2;
+    let mut wrong: Vec<String> = Vec::new();
+    if chip_centre.abs_diff(row_centre) > 1 {
+        wrong.push(format!(
+            "the compact colour row's chip: centre {chip_centre} against the row's {row_centre} \
+             (row {row_top}..{row_bottom}, chip {cy0}..{cy1} at x {cx0}..{cx1})"
+        ));
+    }
+
+    // (2) The strip chip: its 2px icy ring is the box the swatch lives in.
+    let (sx0, sy0, sx1, sy1) = exact_color_bbox(&shot, RED, 6)
+        .expect("the first strip chip must paint its resolved colour");
+    let (chip_top, chip_bottom) = strip_chip_ring_span(&shot)
+        .expect("the active strip chip must paint its 2px icy ring");
+    let chip_height = chip_bottom - chip_top + 2;
+    assert!(
+        (30..=34).contains(&chip_height),
+        "the icy ring pair {chip_top}..{chip_bottom} must be a 40x32 strip chip ({chip_height}px)"
+    );
+    let strip_centre = (chip_top + chip_bottom + 1) / 2;
+    let swatch_centre = (sy0 + sy1) / 2;
+    if swatch_centre.abs_diff(strip_centre) > 1 {
+        wrong.push(format!(
+            "the strip chip's swatch: centre {swatch_centre} against the chip's {strip_centre} \
+             (chip {chip_top}..{}, swatch {sy0}..{sy1} at x {sx0}..{sx1})",
+            chip_bottom + 1
+        ));
+    }
+
+    println!(
+        "[swatch] compact row {row_top}..{row_bottom} centre={row_centre}, chip {cy0}..{cy1} \
+         centre={chip_centre}; strip chip {chip_top}..{} centre={strip_centre}, swatch \
+         {sy0}..{sy1} centre={swatch_centre}",
+        chip_bottom + 1
+    );
+    assert!(
+        wrong.is_empty(),
+        "these colour swatches are NOT vertically centred in their containers: {wrong:#?} — a \
+         fixed-size child cannot stretch, and the layout's default cross-axis alignment parks it \
+         at the TOP of the box"
+    );
 }
 
 // ── Borders glow colour rows must render inside their box ─────────────
