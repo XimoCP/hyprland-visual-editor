@@ -1382,6 +1382,15 @@ component BordersTunePane inherits Rectangle {
                         padding: 12px;
                         spacing: 8px;
                         alignment: space-between;
+                        // The pill is a 22px fixed-size child and the label a
+                        // single line, so the layout's default cross-axis
+                        // alignment (`stretch`) leaves both parked at the TOP of
+                        // the row's content box — the pill 9px above the row's
+                        // centre while the row is lit, in both switch states
+                        // (measured on the render). Centring the cross axis is
+                        // the same fix the colour swatches got, and it is what
+                        // makes the label and the switch share one centre line.
+                        cross-axis-alignment: center;
 
                         // The row's label: it names the ACTION the switch
                         // performs, so the row reads as a control instead of an

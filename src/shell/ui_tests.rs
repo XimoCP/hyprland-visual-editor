@@ -10107,12 +10107,286 @@ fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
          {sy0}..{sy1} centre={swatch_centre}",
         chip_bottom + 1
     );
+
+    // (3) The glow switch pill — the row's other fixed-size child, and the
+    // sibling defect the first item reported: same rule, same row the label
+    // above sits in. Focus is parked on the glow-enable stop, so the row is LIT
+    // in every frame below and its own 64px icy ring is the box the pill must be
+    // centred in. OFF first (the frame above), then ON, then the STACKED width
+    // (820px is below the 852px two-column breakpoint), where the pane is
+    // narrowest and a clipped label or pill would show.
+    let (glow_off_top, glow_off_bottom) = focused_ring_span(&shot, 60, 68).unwrap_or_else(|| {
+        panic!(
+            "the glow-off frame must paint the lit glow row's 64px ring: icy bands={:?}",
+            color_row_bands(&shot, ICY, 40, 300)
+        )
+    });
+    wrong.extend(glow_row_centring_problems(
+        &shot,
+        "glow-off",
+        BORDER_INK,
+        glow_off_top,
+        glow_off_bottom,
+    ));
+
+    win.set_tune_glow_enabled(true);
+    settle_frames(80);
+    let glow_on = win.window().take_snapshot().expect("glow-on snapshot");
+    save_slice_png(glow_on.clone(), "borders_colour_swatches_glow_on.png");
+    let (glow_on_top, glow_on_bottom) = focused_ring_span(&glow_on, 60, 68).unwrap_or_else(|| {
+        panic!(
+            "the glow-on frame must paint the lit glow row's 64px ring: icy bands={:?}",
+            color_row_bands(&glow_on, ICY, 40, 300)
+        )
+    });
+    wrong.extend(glow_row_centring_problems(
+        &glow_on,
+        "glow-on",
+        SWITCH_ON_INK,
+        glow_on_top,
+        glow_on_bottom,
+    ));
+
+    // The stacked width: resize, then walk the pane's own seat off the row and
+    // back so the follow-focus re-aims at it after the reflow.
+    win.window().set_size(slint::PhysicalSize::new(820, 1080));
+    win.set_panel_kbd_preview_index(1 + 8);
+    settle_frames(4);
+    win.set_panel_kbd_preview_index(1 + 9);
+    settle_frames(80);
+    let stacked = win.window().take_snapshot().expect("stacked glow row snapshot");
+    save_slice_png(stacked.clone(), "borders_colour_swatches_stacked.png");
+    // `focused_row_span`, not `focused_ring_span`: the narrow pane's ring is
+    // ~460px wide, under the 600-icy-pixels-per-row the wider helper demands,
+    // and `color_row_bands` still finds it at its own 300 minimum.
+    let (stacked_top, stacked_bottom) = focused_row_span(&stacked, 60, 68).unwrap_or_else(|| {
+        panic!(
+            "the stacked frame must paint the lit glow row's 64px ring: icy bands={:?}",
+            color_row_bands(&stacked, ICY, 40, 300)
+        )
+    });
+    wrong.extend(glow_row_centring_problems(
+        &stacked,
+        "stacked",
+        SWITCH_ON_INK,
+        stacked_top,
+        stacked_bottom,
+    ));
+
     assert!(
         wrong.is_empty(),
         "these colour swatches are NOT vertically centred in their containers: {wrong:#?} — a \
          fixed-size child cannot stretch, and the layout's default cross-axis alignment parks it \
          at the TOP of the box"
     );
+}
+
+// ── The glow switch pill must be centred in its row ────────────────────
+// The sibling defect the first item reported and deliberately left out: the
+// pill is a 22px fixed-size child of the glow header row's layout, and the same
+// rule parks it at the TOP (measured: 9px above the row's centre while the row
+// is lit, in BOTH switch states). These helpers read it off the frame in either
+// state, plus the row's own label, which must share the pill's centre line.
+
+/// `HveColors.text` — the glow row's label ink, and the only such ink inside
+/// that row (the group title above is accent-cyan, its description text-muted).
+const TEXT_INK: (u8, u8, u8) = (230, 237, 243);
+/// `HveColors.accent-green` — the switch pill's face while the glow is ON.
+const SWITCH_ON_INK: (u8, u8, u8) = (16, 185, 129);
+
+/// Horizontal span `(left, right)` of one row's icy ink, scanned across the
+/// WHOLE frame. The shared `icy_span_at` starts at x=360, which is where the
+/// rail ends in the 1920px frames — at the stacked width (820px) the pane
+/// starts further left, so a helper that stops at 360 cannot see the row.
+fn icy_row_x_span(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    y: usize,
+) -> Option<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    if y >= h {
+        return None;
+    }
+    let bytes = buf.as_bytes();
+    let (mut left, mut right) = (usize::MAX, 0usize);
+    for x in 0..w {
+        let idx = (y * w + x) * 4;
+        if bytes[idx + 3] < 200 {
+            continue;
+        }
+        if (bytes[idx] as i16 - ICY.0 as i16).abs() <= 40
+            && (bytes[idx + 1] as i16 - ICY.1 as i16).abs() <= 40
+            && (bytes[idx + 2] as i16 - ICY.2 as i16).abs() <= 40
+        {
+            left = left.min(x);
+            right = right.max(x);
+        }
+    }
+    (left != usize::MAX).then_some((left, right))
+}
+
+/// Vertical span `(top, bottom)` of the glow switch pill's face inside the row
+/// band `row_top..=row_bottom`, bounded to the row's own `x0..=x1`. The pill is
+/// the only thing in that band that paints a tall run of `face`: grey
+/// (`HveColors.border`) while the glow is off, accent-green while it is on. Its
+/// rows carry the pill's own width minus the dark knob, which is 18-32 pixels
+/// per row whatever state the switch is in (measured), against 0 for every other
+/// row of the band — so a threshold of 8 separates the pill's 22 rows without
+/// depending on where the knob sits.
+fn glow_pill_span(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    row_top: usize,
+    row_bottom: usize,
+    x0: usize,
+    x1: usize,
+    face: (u8, u8, u8),
+) -> Option<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut span: Option<(usize, usize)> = None;
+    let mut open: Option<(usize, usize)> = None;
+    for y in row_top..=row_bottom.min(h - 1) {
+        let mut row = 0usize;
+        for x in x0..=x1.min(w - 1) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - face.0 as i16).abs() <= 4
+                && (bytes[idx + 1] as i16 - face.1 as i16).abs() <= 4
+                && (bytes[idx + 2] as i16 - face.2 as i16).abs() <= 4
+            {
+                row += 1;
+            }
+        }
+        if row >= 8 {
+            open = match open {
+                Some((start, _)) => Some((start, y)),
+                None => Some((y, y)),
+            };
+        } else if let Some(band) = open.take() {
+            // Keep the LONGEST run: the pill's 22 rows, never a stray line.
+            span = match span {
+                Some((t, b)) if b - t >= band.1 - band.0 => Some((t, b)),
+                _ => Some(band),
+            };
+        }
+    }
+    if let Some(band) = open.take() {
+        span = match span {
+            Some((t, b)) if b - t >= band.1 - band.0 => Some((t, b)),
+            _ => Some(band),
+        };
+    }
+    span
+}
+
+/// Vertical span `(top, bottom)` of `rgb` ink inside one row band, bounded to
+/// `x0..=x1`, or `None`. [`exact_color_bbox`] cannot be used for the row's
+/// label: the pane paints the same `HveColors.text` ink in every other row label
+/// it has, so the search has to stay inside the row's own box.
+fn ink_span_in_band(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    y0: usize,
+    y1: usize,
+    x0: usize,
+    x1: usize,
+) -> Option<(usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let (mut top, mut bottom) = (usize::MAX, 0usize);
+    for y in y0..=y1.min(h - 1) {
+        for x in x0..=x1.min(w - 1) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                top = top.min(y);
+                bottom = bottom.max(y);
+            }
+        }
+    }
+    (top != usize::MAX).then_some((top, bottom))
+}
+
+/// Every way the glow header row's two fixed-size children can be off-centre or
+/// clipped, as sentences. `face` is the pill's own colour in this frame, `state`
+/// names the frame for the message, and `row_top..=row_bottom` is the row's box
+/// read from its own icy ring.
+fn glow_row_centring_problems(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    state: &str,
+    face: (u8, u8, u8),
+    row_top: usize,
+    row_bottom: usize,
+) -> Vec<String> {
+    let mut problems: Vec<String> = Vec::new();
+    let row_centre = (row_top + row_bottom) / 2;
+    // Both searches stay inside the row's own box, so nothing else in the frame
+    // that happens to paint the same ink can be mistaken for its children.
+    let (x0, x1) = icy_row_x_span(buf, row_top).unwrap_or((0, buf.width() as usize - 1));
+    let pill = glow_pill_span(buf, row_top, row_bottom, x0, x1, face);
+    let label = ink_span_in_band(buf, TEXT_INK, 12, row_top, row_bottom, x0, x1);
+    println!(
+        "[glow-row] {state}: row {row_top}..{row_bottom} centre={row_centre} x {x0}..{x1}; \
+         pill={pill:?}; label ink={label:?}"
+    );
+    match pill {
+        Some((pill_top, pill_bottom)) => {
+            let pill_centre = (pill_top + pill_bottom) / 2;
+            if pill_centre.abs_diff(row_centre) > 1 {
+                problems.push(format!(
+                    "the {state} glow switch pill: centre {pill_centre} against the row's \
+                     {row_centre} (row {row_top}..{row_bottom}, pill {pill_top}..{pill_bottom})"
+                ));
+            }
+            if pill_bottom - pill_top + 1 != 22 || pill_top <= row_top || pill_bottom >= row_bottom {
+                problems.push(format!(
+                    "the {state} glow switch pill must paint its whole 22px face INSIDE the row, \
+                     but it spans {pill_top}..{pill_bottom} in {row_top}..{row_bottom}"
+                ));
+            }
+        }
+        None => problems.push(format!(
+            "the {state} frame must paint the glow switch pill's face inside the row \
+             {row_top}..{row_bottom}"
+        )),
+    }
+    // The label must keep the pill's centre line: the layout's cross-axis
+    // alignment is what sizes it now, and a label pushed to the top or the
+    // bottom of the row is the regression this guards. Its glyph box is not
+    // symmetric (ascenders, no descenders), hence the wider bound.
+    match label {
+        Some((label_top, label_bottom)) => {
+            let label_centre = (label_top + label_bottom) / 2;
+            if label_centre.abs_diff(row_centre) > 3 {
+                problems.push(format!(
+                    "the {state} glow row's label: centre {label_centre} against the row's \
+                     {row_centre} (row {row_top}..{row_bottom}, label ink \
+                     {label_top}..{label_bottom})"
+                ));
+            }
+            if label_top <= row_top || label_bottom >= row_bottom {
+                problems.push(format!(
+                    "the {state} glow row's label must paint inside the row, but its ink spans \
+                     {label_top}..{label_bottom} in {row_top}..{row_bottom}"
+                ));
+            }
+        }
+        None => problems.push(format!(
+            "the {state} glow row must paint its label inside {row_top}..{row_bottom} \
+             (row x {x0}..{x1})"
+        )),
+    }
+    problems
 }
 
 // ── Borders glow colour rows must render inside their box ─────────────
