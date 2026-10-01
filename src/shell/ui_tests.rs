@@ -127,6 +127,11 @@ fn panel_deadzone_click_reseeds_focus_by_construction() {
 /// the app actually had a border loaded. Every panel/section entry — rail
 /// clicks, top menu, FilterBar and keyboard — flows through the single
 /// `on_panel_section_selected` handler, so the re-seed must live there.
+///
+/// The handler now seeds the marker AND the tune pane through one funnel
+/// (`seed_borders_pane_from_persisted`), which is what keeps entry and startup
+/// from drifting; the reseed call itself lives in the funnel, so this asserts
+/// the funnel is invoked on entry and that the funnel performs the reseed.
 #[test]
 fn entering_borders_reseeds_active_index_by_construction() {
     let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
@@ -145,8 +150,21 @@ fn entering_borders_reseeds_active_index_by_construction() {
         .next()
         .unwrap_or(handler);
     assert!(
-        handler.contains("reseed_active_border_index"),
-        "the border index re-seed must happen inside on_panel_section_selected"
+        handler.contains("seed_borders_pane_from_persisted"),
+        "entering Borders must seed the marker and tune pane from persisted state"
+    );
+    assert!(
+        handler.contains("borders_entry_should_seed"),
+        "the entry seed must be guarded so re-selecting the open section cannot wipe a live draft"
+    );
+    let funnel = main
+        .split("fn seed_borders_pane_from_persisted")
+        .nth(1)
+        .expect("main.rs must define the entry/startup seed funnel");
+    let funnel = funnel.split("\n}").next().unwrap_or(funnel);
+    assert!(
+        funnel.contains("reseed_active_border_index"),
+        "the entry seed must re-seed the border index from the persisted file"
     );
 }
 
@@ -6022,7 +6040,12 @@ fn animation_bearing_preset_round_trips_through_the_tune_model() {
 
     // 13_the_joker.lua carries THREE leaves (borderangle + border + fadeShadow)
     // and a floating-window rule.
-    crate::sync_border_tune_pane(&win, &proj, "13_the_joker.lua");
+    crate::sync_border_tune_pane(
+        &win,
+        &proj,
+        "13_the_joker.lua",
+        crate::callbacks::BorderGeometry::default(),
+    );
     let loaded = win.get_tune_animations().to_string();
     assert!(loaded.contains("borderangle"), "the angle leaf must load: {loaded}");
     assert!(loaded.contains("fadeShadow"), "the shadow leaf must load: {loaded}");
@@ -11758,8 +11781,9 @@ fn theme_apply_paths_sync_tune_pane_by_construction() {
 // Fixture: the pane holds the PREVIOUS manual border's values (2 chips,
 // 40 degrees); syncing the theme's border (13_the_joker.lua: 3 colours,
 // angle 45) must replace them with exactly what a manual click on that
-// same card would show — chips, angle, inactive, glow, and the geometry
-// sliders the manual path snaps.
+// same card would show — chips, angle, inactive, glow — and must show the
+// PERSISTED geometry it is handed, not the retired hard-coded table's
+// 2/32/5/5.
 #[test]
 fn theme_border_sync_replaces_stale_tune_pane_like_manual_pick() {
     use slint::{Model, ModelRc, SharedString, VecModel};
@@ -11779,7 +11803,9 @@ fn theme_border_sync_replaces_stale_tune_pane_like_manual_pick() {
     win.set_gap_in(9);
     win.set_gap_out(9);
 
-    crate::sync_border_tune_pane(&win, &proj, "13_the_joker.lua");
+    // Persisted geometry as the loaded theme wrote it into Config.
+    let persisted = crate::callbacks::BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 };
+    crate::sync_border_tune_pane(&win, &proj, "13_the_joker.lua", persisted);
 
     assert_eq!(win.get_tune_color_count(), 3, "joker carries 3 gradient colours");
     assert_eq!(win.get_tune_active_colors().row_count(), 3);
@@ -11790,12 +11816,17 @@ fn theme_border_sync_replaces_stale_tune_pane_like_manual_pick() {
     );
     assert!(!win.get_tune_glow().is_empty(), "glow must come from the preset");
     assert!(win.get_tune_glow_enabled(), "joker shadow is enabled");
-    // Geometry sliders snap exactly like the manual path.
-    let snap = crate::callbacks::preset_geometry_for("13_the_joker.lua");
-    assert_eq!(win.get_border_size(), snap.size);
-    assert_eq!(win.get_corner_radius(), snap.radius);
-    assert_eq!(win.get_gap_in(), snap.gap_in);
-    assert_eq!(win.get_gap_out(), snap.gap_out);
+    // Geometry comes from persisted state, not a preset lookup: the pane must
+    // agree with what the theme wrote into Config (and Hyprland renders).
+    assert_eq!(win.get_border_size(), 5);
+    assert_eq!(win.get_corner_radius(), 20);
+    assert_eq!(win.get_gap_in(), 10);
+    assert_eq!(win.get_gap_out(), 10);
+    assert_ne!(
+        (win.get_border_size(), win.get_corner_radius(), win.get_gap_in(), win.get_gap_out()),
+        (2, 32, 5, 5),
+        "the retired hard-coded default must never come back"
+    );
 }
 
 /// Deactivated/empty border: the shared sync keeps exactly what the manual
@@ -11813,8 +11844,14 @@ fn theme_empty_border_clears_tune_pane_like_manual_deselect() {
     ])));
     win.set_tune_color_count(3);
     win.set_tune_angle(45);
+    // Deselect must NOT touch geometry: those sliders hold persisted state.
+    win.set_border_size(7);
+    win.set_corner_radius(11);
+    win.set_gap_in(3);
+    win.set_gap_out(4);
 
-    crate::sync_border_tune_pane(&win, &proj, "");
+    let persisted = crate::callbacks::BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 };
+    crate::sync_border_tune_pane(&win, &proj, "", persisted);
 
     assert_eq!(win.get_tune_color_count(), 0);
     assert_eq!(win.get_tune_angle(), 90);
@@ -11822,6 +11859,141 @@ fn theme_empty_border_clears_tune_pane_like_manual_deselect() {
     assert!(win.get_tune_glow().is_empty());
     assert!(!win.get_tune_glow_enabled());
     assert!(!win.get_tune_dirty());
+    assert_eq!(
+        (win.get_border_size(), win.get_corner_radius(), win.get_gap_in(), win.get_gap_out()),
+        (7, 11, 3, 4),
+        "clearing the pane is about the border, not the geometry sliders"
+    );
+}
+
+// ── Entering Borders seeds the pane from the loaded theme ────────────
+// Defect (fresh launch): the tune pane was filled ONLY by the three apply
+// paths, so opening Settings -> Borders right after launch showed Slint
+// defaults — no chips, glow off, and the retired table's 2/32/5/5 — while
+// the desktop rendered the loaded theme. `seed_borders_pane_from_persisted`
+// is the one entry/startup funnel the section callback and `main` share; this
+// pins its observable effect on the window.
+#[test]
+fn borders_entry_seed_fills_pane_from_persisted_state() {
+    use slint::{Model, ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // The preset list the entry path reseeds the marker against.
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("12_blue.lua"),
+        SharedString::from("13_the_joker.lua"),
+    ])));
+    // A stale pane from an earlier session (as a fresh launch would not have —
+    // but the seed must overwrite whatever was there).
+    win.set_tune_color_count(0);
+    win.set_tune_glow_enabled(false);
+    win.set_border_size(2);
+    win.set_corner_radius(32);
+    win.set_gap_in(5);
+    win.set_gap_out(5);
+
+    // Persisted state: the theme's border identity + the geometry it wrote.
+    let persisted = crate::callbacks::BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 };
+    crate::seed_borders_pane_from_persisted(&win, &proj, "13_the_joker.lua", persisted);
+
+    assert!(win.get_tune_color_count() > 0, "colour chips must come from the loaded border");
+    assert_eq!(win.get_tune_active_colors().row_count(), 3);
+    assert_eq!(win.get_tune_angle(), 45, "angle comes from the preset .lua");
+    assert!(win.get_tune_glow_enabled(), "glow state comes from the preset .lua");
+    assert_eq!(win.get_active_border_index(), 1, "the active card marker is reseeded");
+    assert_eq!(
+        (win.get_border_size(), win.get_corner_radius(), win.get_gap_in(), win.get_gap_out()),
+        (5, 20, 10, 10),
+        "geometry shown equals the persisted values"
+    );
+}
+
+// ── Startup seed: wiring + ordering (needs main()'s live window) ─────
+// The startup push cannot be staged without running the real `main`, so the
+// wiring is asserted by construction, the same pattern the theme-apply sync
+// guards above use. What matters here: the seed EXISTS, it reads the
+// persisted active border, it is guarded on a non-empty file, and it runs
+// AFTER `refresh_visual_state` — resolving `token-*` into concrete colours
+// before the theme push would freeze the default accent in the pane.
+#[test]
+fn startup_seeds_borders_pane_after_token_refresh_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let code_only: String = main
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let refresh = code_only
+        .find("refresh_visual_state(&window")
+        .expect("main must push the visual state at startup");
+    // Scope to the startup region only: from the visual-state push up to the
+    // point Config is moved into AppState. Searching the whole file would hit
+    // the funnel's own definition (earlier) and the entry call site (later),
+    // neither of which proves the STARTUP ordering.
+    let state_new = code_only
+        .find("let state = Arc::new(")
+        .expect("main must build AppState");
+    assert!(refresh < state_new, "refresh_visual_state must precede AppState::new");
+    let startup_region = &code_only[refresh..state_new];
+    assert!(
+        startup_region.contains("seed_borders_pane_from_persisted"),
+        "the startup path must seed the Borders pane AFTER refresh_visual_state \
+         (token refresh bakes the accent; seeding earlier freezes the default)"
+    );
+    assert!(
+        startup_region.contains("active_border_file.is_empty()"),
+        "the startup seed must be guarded on a non-empty active border file"
+    );
+    // Anti-ping-pong: the seed only pushes into the window. It has no state or
+    // engine access, so assert the funnel's body cannot apply or persist.
+    let funnel = code_only
+        .split("fn seed_borders_pane_from_persisted")
+        .nth(1)
+        .expect("main.rs must define the seed funnel");
+    let funnel = funnel.split("\n}").next().unwrap_or(funnel);
+    for forbidden in ["cfg_mut", "apply_border", "apply_geometry", ".save(", "hypr_eval"] {
+        assert!(
+            !funnel.contains(forbidden),
+            "seeding must not {forbidden}: it only pushes values into the window"
+        );
+    }
+}
+
+// ── A border card click carries identity only ───────────────────────
+// `on_panel_apply_border` used to treat the retired lookup table as truth and
+// overwrite `cfg` (and Hyprland) with 2/32/5/5 whenever the card differed
+// from the persisted geometry. A click now changes the border identity and
+// leaves the persisted geometry alone. The closure lives inside `main`, so
+// the wiring is asserted by construction.
+#[test]
+fn border_card_click_preserves_persisted_geometry_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let manual = main
+        .split("window.on_panel_apply_border")
+        .nth(1)
+        .expect("main.rs must wire on_panel_apply_border");
+    let manual = manual
+        .split("window.on_panel_apply_animation")
+        .next()
+        .unwrap_or(manual);
+    let code_only = manual
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code_only.contains("sync_border_tune_pane"),
+        "the manual path must still route through the shared tune sync"
+    );
+    assert!(
+        !code_only.contains("preset_geometry_for"),
+        "a card click must not source geometry from a preset lookup table"
+    );
+    assert!(
+        !code_only.contains("apply_geometry"),
+        "a card click must not re-apply geometry: persisted state owns it (D3)"
+    );
 }
 
 // ── U6: Enter stays alive after a theme apply (gallery focus reseed) ──

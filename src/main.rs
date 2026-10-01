@@ -172,23 +172,29 @@ fn refresh_resolved_colors(w: &crate::MainWindow) {
 /// Sync the Borders tune pane from a border preset file — the ONE shared
 /// path every border apply uses to populate the right-hand tune controls
 /// (colour chips, gradient angle, inactive colour, glow, animation leaves,
-/// and the geometry sliders the manual path snaps).
+/// and the geometry sliders).
 ///
 /// Callers: the manual card click (`on_panel_apply_border`, which the IPC
-/// `next-border` path routes through) and both theme-apply paths (gallery
-/// card click, panel Save). Sharing this body is what keeps the theme
-/// paths from drifting behind the manual one again.
+/// `next-border` path routes through), both theme-apply paths (gallery
+/// card click, panel Save), and the entry/startup seed
+/// (`seed_borders_pane_from_persisted`). Sharing this body is what keeps the
+/// theme paths from drifting behind the manual one again.
 ///
 /// `border_file` is the preset file name with extension (e.g.
 /// `"13_the_joker.lua"`); empty means deactivated and clears the pane,
-/// exactly like a manual deselect. This only touches the window:
-/// engine/config writes stay with the callers (the manual apply owns its
-/// toggle + geometry apply; theme applies arrive with the provider's own
-/// apply already persisted on disk, which the caller reloaded first).
+/// exactly like a manual deselect. `geometry` is the PERSISTED geometry the
+/// caller read from `Config` (`BorderGeometry::from_config`) — the same values
+/// Hyprland renders. The pane must show those, not a per-preset lookup: a
+/// border preset's identity is not its geometry, and the old table's keys
+/// matched no shipped preset. This only touches the window: engine/config
+/// writes stay with the callers (the manual apply owns its toggle; theme
+/// applies arrive with the provider's own apply already persisted on disk,
+/// which the caller reloaded first).
 pub(crate) fn sync_border_tune_pane(
     w: &crate::MainWindow,
     proj: &std::path::Path,
     border_file: &str,
+    geometry: crate::callbacks::BorderGeometry,
 ) {
     // Picking a preset gives the tune pane its apply target, so the
     // "select a border preset first" refusal hint no longer applies.
@@ -196,7 +202,8 @@ pub(crate) fn sync_border_tune_pane(
         w.set_border_save_error(String::new().into());
     }
     if border_file.is_empty() {
-        // Deselect: clear tune properties
+        // Deselect: clear tune properties. Geometry is deliberately left
+        // alone — it is persisted state, not part of the border identity.
         w.set_tune_color_count(0);
         w.set_tune_active_colors(slint::ModelRc::default());
         w.set_tune_angle(90);
@@ -227,12 +234,11 @@ pub(crate) fn sync_border_tune_pane(
         refresh_resolved_colors(w);
         return;
     }
-    // snap sliders one-way (preset→tune, no reverse)
-    let snap = crate::callbacks::preset_geometry_for(border_file);
-    w.set_border_size(snap.size);
-    w.set_corner_radius(snap.radius);
-    w.set_gap_in(snap.gap_in);
-    w.set_gap_out(snap.gap_out);
+    // Geometry one-way (persisted state → sliders, never the reverse).
+    w.set_border_size(geometry.size);
+    w.set_corner_radius(geometry.radius);
+    w.set_gap_in(geometry.gap_in);
+    w.set_gap_out(geometry.gap_out);
     // Task 2.2: read .lua → parse → bulk-set tune properties
     let preset_name = border_file.strip_suffix(".lua").unwrap_or(border_file);
     if let Ok(content) = crate::preset_store::PresetStore::read_border_file(preset_name, proj) {
@@ -297,8 +303,43 @@ pub(crate) fn sync_border_tune_pane(
         w.set_tune_anim_curves(slint::ModelRc::from(curve_names.as_slice()));
         // Real colours for the pane's previews / picker seeds.
         refresh_resolved_colors(w);
-        // D3: missing border_size keeps current slider (already done via snap above)
+        // D2: a `border_size` inside the preset `.lua` stays unread — the
+        // persisted geometry set above is the pane's truth.
     }
+}
+
+/// Seed the Borders tune pane and its active-card marker from the persisted
+/// state — the one funnel the section-entry callback (`on_panel_section_selected`)
+/// and the startup seed both call. Extractable so the entry behaviour is
+/// testable without running `main`: a fresh launch followed by Settings ->
+/// Borders was showing Slint defaults because `sync_border_tune_pane` ran only
+/// on apply paths.
+///
+/// It receives no state or engine handle: it can only push values into the
+/// window. No apply, no config write, no watcher burst (acceptance criterion).
+pub(crate) fn seed_borders_pane_from_persisted(
+    w: &crate::MainWindow,
+    proj: &std::path::Path,
+    active_border_file: &str,
+    geometry: crate::callbacks::BorderGeometry,
+) {
+    crate::presets::reseed_active_border_index(w, active_border_file);
+    crate::sync_border_tune_pane(w, proj, active_border_file, geometry);
+}
+
+/// Whether a `section-selected(Borders)` event is a real entry that should seed
+/// the tune pane. PanelMenu fires `selected` on every click, including a click
+/// on the section that is already open, so a plain re-select arrives here too —
+/// and seeding on that would clear the pane's dirty marker (and repaint it from
+/// persisted state) while the user's live draft fragment is still assembled.
+/// `is_panel_closed` covers the panel being opened onto Borders, where the pane
+/// has nothing current to preserve; a different `prev_section` is a normal
+/// switch.
+pub(crate) fn borders_entry_should_seed(
+    is_panel_closed: bool,
+    prev_section: Option<crate::shell::nav::PanelSection>,
+) -> bool {
+    is_panel_closed || prev_section != Some(crate::shell::nav::PanelSection::Borders)
 }
 
 /// Build `BorderParams` from the window's current tune state (D4 live path).
@@ -3101,18 +3142,18 @@ fn main() -> Result<(), slint::PlatformError> {
                         // held only for the short clone below — the sync's
                         // file I/O runs unlocked, and the marker re-seed
                         // reads the window only.
-                        let applied_border = shared
+                        let (applied_border, geometry) = shared
                             .as_ref()
                             .map(|s| {
-                                s.lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .cfg()
-                                    .active_border_file
-                                    .clone()
+                                let st = s.lock().unwrap_or_else(|e| e.into_inner());
+                                (
+                                    st.cfg().active_border_file.clone(),
+                                    crate::callbacks::BorderGeometry::from_config(st.cfg()),
+                                )
                             })
                             .unwrap_or_default();
                         if let Some(w) = win.upgrade() {
-                            crate::sync_border_tune_pane(&w, &proj_c, &applied_border);
+                            crate::sync_border_tune_pane(&w, &proj_c, &applied_border, geometry);
                             crate::presets::reseed_active_border_index(&w, &applied_border);
                         }
                         let new_rows = to_gallery_cards(&tm.lock().unwrap());
@@ -3532,6 +3573,25 @@ fn main() -> Result<(), slint::PlatformError> {
     let tray_system_active = tray_handle.system_active.clone();
     tray::init_global(tray_handle);
 
+    // ── Seed the Borders tune pane from the loaded theme ──
+    // This runs once, strictly AFTER `refresh_visual_state` above: the sync
+    // bakes concrete `slint::Color`s from `token-*` (`refresh_resolved_colors`),
+    // so seeding before the theme push would freeze the default accent in the
+    // pane's chips and previews. Without this seed the ONLY writers of the
+    // pane are the apply paths, so a fresh launch showed Slint defaults (no
+    // chips, glow off, 2/32/5/5) while the desktop rendered the loaded theme.
+    // An empty active border deliberately clears the pane, so there is nothing
+    // to seed — skip it (same reason `sync_border_tune_pane` guards on empty).
+    if !cfg.active_border_file.is_empty() {
+        let geometry = crate::callbacks::BorderGeometry::from_config(&cfg);
+        crate::seed_borders_pane_from_persisted(
+            &window,
+            &proj,
+            &cfg.active_border_file,
+            geometry,
+        );
+    }
+
     // ── Central view-model: Config + Engine + ThemeManager behind one lock ──
     // The engine now lives inside AppState; the providers registered above
     // keep their own engine clones, so the outer Arc can be dropped.
@@ -3608,13 +3668,26 @@ fn main() -> Result<(), slint::PlatformError> {
             // The index is otherwise written only at startup and on apply, so
             // a preset list that changed after that seed (or was not ready
             // when it ran) left the board unmarked while a border was loaded.
+            // The tune pane is seeded here too: it is the only other place
+            // (besides startup) where the pane can be shown without an apply,
+            // and without this the pane kept the previous/empty values while
+            // the desktop rendered the loaded theme.
             if target == crate::shell::nav::PanelSection::Borders {
                 if let Some(w) = weak.upgrade() {
-                    let active_file = {
-                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                        st.cfg().active_border_file.clone()
-                    };
-                    crate::presets::reseed_active_border_index(&w, &active_file);
+                    // Re-selecting the open Borders section must not re-seed
+                    // (see `borders_entry_should_seed`): a live draft would be
+                    // wiped from the pane. The marker re-seed is equally safe
+                    // to skip there — the board is already correct.
+                    if borders_entry_should_seed(is_closed, prev_section) {
+                        let (active_file, geometry) = {
+                            let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                            (
+                                st.cfg().active_border_file.clone(),
+                                crate::callbacks::BorderGeometry::from_config(st.cfg()),
+                            )
+                        };
+                        crate::seed_borders_pane_from_persisted(&w, &proj_c, &active_file, geometry);
+                    }
                 }
             }
         });
@@ -3908,12 +3981,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 // (same chips/angle/glow/geometry), so entering Borders
                 // afterwards needs no restart. Short lock for the clone
                 // only; the sync's file I/O runs unlocked.
-                let applied_border = {
+                let (applied_border, geometry) = {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                    st.cfg().active_border_file.clone()
+                    (
+                        st.cfg().active_border_file.clone(),
+                        crate::callbacks::BorderGeometry::from_config(st.cfg()),
+                    )
                 };
                 if let Some(w) = weak.upgrade() {
-                    crate::sync_border_tune_pane(&w, &proj_c, &applied_border);
+                    crate::sync_border_tune_pane(&w, &proj_c, &applied_border, geometry);
                     crate::presets::reseed_active_border_index(&w, &applied_border);
                 }
                 if let Some(w) = weak.upgrade() {
@@ -4274,7 +4350,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            use crate::callbacks::{preset_geometry_for, BorderGeometry};
+            use crate::callbacks::BorderGeometry;
             let file_str = file.to_string();
             let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -4284,28 +4360,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 let _ = st.cfg().save();
                 let arg = if is_deact { "none" } else { &new };
                 let res = st.engine().apply_border(arg);
-                let snap = if is_deact { BorderGeometry::default() } else { preset_geometry_for(&file_str) };
-                if !is_deact {
-                    let geom_changed = snap.size != st.cfg().border_size || snap.radius != st.cfg().border_radius || snap.gap_in != st.cfg().gaps_in || snap.gap_out != st.cfg().gaps_out;
-                    if geom_changed {
-                        st.cfg_mut().border_size = snap.size;
-                        st.cfg_mut().border_radius = snap.radius;
-                        st.cfg_mut().gaps_in = snap.gap_in;
-                        st.cfg_mut().gaps_out = snap.gap_out;
-                        let _ = st.apply_geometry();
-                    }
-                }
+                // D3: a card carries border IDENTITY only. Geometry is
+                // persisted state the loaded theme wrote (and Hyprland
+                // renders), so a click preserves it — the retired lookup
+                // table used to overwrite it with 2/32/5/5 on every pick.
                 (is_deact, res)
             };
             if let Err(e) = result {
                 tracing::error!("[HVE] Border error: {}", e);
             }
+            // Read the geometry AFTER the identity toggle: deactivation and
+            // activation both leave it untouched, so the pane shows what the
+            // desktop actually has.
+            let geometry = {
+                let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                BorderGeometry::from_config(st.cfg())
+            };
             if let Some(w) = weak.upgrade() {
                 w.set_active_border_index(if is_deact { -1 } else { idx });
                 // Tune pane population lives in the single shared sync (used
                 // by the manual path and both theme-apply paths alike).
                 let file = if is_deact { String::new() } else { file_str.clone() };
-                crate::sync_border_tune_pane(&w, &proj_c, &file);
+                crate::sync_border_tune_pane(&w, &proj_c, &file, geometry);
             }
         });
     }
@@ -5349,14 +5425,32 @@ mod tests {
         assert!(d.has_pending());
     }
 
+    // ── Entry seed must not run on a re-select of the active section ─────
+    // Clicking the Borders rail item while Borders is already open re-emits
+    // `section-selected` (PanelMenu always fires on click). Re-seeding there
+    // would clear the pane's dirty marker and show persisted values while the
+    // user's live draft fragment is still assembled — a silent draft wipe. Only
+    // a real entry (panel opening onto Borders, or switching from another
+    // section) seeds.
     #[test]
-    fn test_pick_snaps_sliders() {
-        use crate::callbacks::{preset_geometry_for, BorderGeometry};
-        let snapped = preset_geometry_for("thin-rounded.ron");
-        assert_eq!(snapped, BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 });
-        assert_eq!(preset_geometry_for("sharp.ron"), BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 });
-        assert_eq!(preset_geometry_for("thick.ron"), BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 });
-        assert_eq!(preset_geometry_for("unknown.ron"), BorderGeometry::default());
+    fn borders_entry_seed_skips_a_reselect_of_the_active_section() {
+        use crate::shell::nav::PanelSection;
+        assert!(
+            super::borders_entry_should_seed(true, Some(PanelSection::Borders)),
+            "opening the panel onto Borders is an entry, even from a previous Borders"
+        );
+        assert!(
+            super::borders_entry_should_seed(false, Some(PanelSection::Save)),
+            "switching to Borders from another section is an entry"
+        );
+        assert!(
+            super::borders_entry_should_seed(false, None),
+            "no previous section means the panel is being entered"
+        );
+        assert!(
+            !super::borders_entry_should_seed(false, Some(PanelSection::Borders)),
+            "re-clicking the active Borders section must not wipe the live draft"
+        );
     }
 
     // ── B5/B7: the deferred persist must not be dropped on shutdown ──────

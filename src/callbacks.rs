@@ -841,18 +841,24 @@ impl Default for BorderGeometry {
     }
 }
 
-/// Preset → slider snap (one-way, no reverse write). Returns geometry that
-/// sliders should snap to when a border preset is picked. Hard-coded for
-/// the tune demo; real preset files do not store geometry, so we use a
-/// deterministic mapping and fall back to defaults.
-#[allow(dead_code)]
-pub fn preset_geometry_for(file: &str) -> BorderGeometry {
-    match file {
-        "thin-rounded.ron" => BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 },
-        "sharp.ron" => BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 },
-        "thick.ron" => BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 },
-        "01_cascade.conf" => BorderGeometry { size: 3, radius: 12, gap_in: 4, gap_out: 6 },
-        _ => BorderGeometry::default(),
+impl BorderGeometry {
+    /// The one conversion from the persisted geometry the loaded theme wrote
+    /// (`Config.border_size/border_radius/gaps_in/gaps_out`) into the shape the
+    /// Borders sliders read. This is the pane's geometry source: the values
+    /// here are exactly what Hyprland renders, so the pane cannot drift from
+    /// the desktop and a border card click cannot invent new ones.
+    ///
+    /// The former `preset_geometry_for` lookup table was retired (D1): its keys
+    /// (`thin-rounded.ron`, `sharp.ron`, `thick.ron`, `01_cascade.conf`) match
+    /// no shipped preset — every one of them is `*.lua` — so it always fell
+    /// back to `Default` and lied about the desktop.
+    pub fn from_config(cfg: &crate::config::Config) -> Self {
+        Self {
+            size: cfg.border_size,
+            radius: cfg.border_radius,
+            gap_in: cfg.gaps_in,
+            gap_out: cfg.gaps_out,
+        }
     }
 }
 
@@ -1411,9 +1417,27 @@ exit 0
 #[cfg(test)]
 mod geometry_tune_tests {
     use super::{
-        geometry_lua_chunk, preset_geometry_for, BorderGeometry, GeometryDebouncer,
+        geometry_lua_chunk, BorderGeometry, GeometryDebouncer,
         GeometryPersistCoalescer, should_apply_geometry,
     };
+
+    // ── Geometry source of truth: persisted state, never a preset lookup ──
+    // The Borders pane must show the geometry the loaded theme actually wrote
+    // into `Config` (the same values Hyprland renders). `BorderGeometry` is the
+    // one shape both the sliders and `Config` share, so this conversion is the
+    // single place the pane reads geometry from.
+    #[test]
+    fn border_geometry_reads_persisted_config() {
+        let mut cfg = crate::config::Config::default();
+        cfg.border_size = 5;
+        cfg.border_radius = 20;
+        cfg.gaps_in = 10;
+        cfg.gaps_out = 10;
+        assert_eq!(
+            BorderGeometry::from_config(&cfg),
+            BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 }
+        );
+    }
 
     // ── B1: hot apply pushes ONLY the options that actually changed ──────
     // The live path is one `hl.config({...})` chunk through `hyprctl eval`;
@@ -1535,27 +1559,6 @@ mod geometry_tune_tests {
         // second push is real user interaction — must schedule
         assert!(d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }));
         assert!(d.has_pending());
-    }
-
-    #[test]
-    fn test_pick_snaps_sliders() {
-        // GIVEN sliders 2/10/5/5
-        let before = BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 };
-        // WHEN pick thin-rounded
-        let snapped = preset_geometry_for("thin-rounded.ron");
-        assert_eq!(snapped, BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 }, "thin-rounded preset → 2/10/5/5");
-        // sharp preset
-        let sharp = preset_geometry_for("sharp.ron");
-        assert_eq!(sharp, BorderGeometry { size: 1, radius: 0, gap_in: 0, gap_out: 0 });
-        // sliders snap one-way: preset→slider, not reverse
-        assert_ne!(before, sharp, "snap changes sliders to preset values");
-        // thick preset also
-        let thick = preset_geometry_for("thick.ron");
-        assert_eq!(thick.size, 5);
-        assert_eq!(thick.radius, 20);
-        // fallback unknown → defaults, no panic
-        let fallback = preset_geometry_for("unknown.ron");
-        assert_eq!(fallback, BorderGeometry::default());
     }
 }
 
