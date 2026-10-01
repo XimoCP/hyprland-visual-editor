@@ -138,6 +138,14 @@ impl HyprIpc {
                         if payload.trim_start_matches('>').starts_with('1') {
                             crate::theme_fullscreen_signal();
                         }
+                    } else if monitor_event_arms(&line) {
+                        // A monitor coming or going makes the wallpaper engine
+                        // re-apply the same wallpaper and recompute the theme a
+                        // moment later; that is the permission for the palette
+                        // defence. Arming is line-local and cheap.
+                        let mut slot =
+                            MONITOR_PERMIT.lock().unwrap_or_else(|e| e.into_inner());
+                        arm_monitor_permit(&mut slot, Instant::now());
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
@@ -207,6 +215,72 @@ fn on_configreloaded_line() {
             e
         );
     }
+}
+
+// ─── Monitor-event colour-defence window ───────────────────────────
+//
+// odd/tasks/palette-defence-on-monitor-events.md: the palette FILE is the
+// detector, the MONITOR event is the permission. A monitor hotplug makes the
+// wallpaper engine re-apply the same wallpaper and recompute the theme a
+// moment later, so HVE arms a short one-shot window; a palette change inside
+// it may be corrected back. A change with no armed window is presumed
+// legitimate (the keeper's own edit) and is never touched.
+
+/// How long a monitor hotplug keeps the colour-defence window open.
+///
+/// Evidence, measured on this machine (`~/.cache/skwd-wall-v2/skwd-walld.log`,
+/// 2026-09-30/10-01): every noctalia hotplug logged `theme apply` and its
+/// palette write in the SAME second, and the slowest hotplug->theme chain
+/// measured was 1198 ms (the render handoff). HVE's watcher then detects the
+/// write sub-second (`~/.cache/hve/color_watcher.log`). The whole chain is
+/// ~2 s end to end, so 5 s gives ~2.5x margin and matches the watcher's own
+/// `HVE_THEME_ASSERT_COOLDOWN` (5 s): one burst, one window.
+const MONITOR_REASSERT_WINDOW: Duration = Duration::from_secs(5);
+
+/// One-shot permission to re-assert, armed by a monitor hotplug.
+#[derive(Clone, Copy, Debug)]
+struct MonitorPermit {
+    until: Instant,
+    consumed: bool,
+}
+
+/// The single armed permit, process-wide: the compositor listener thread
+/// arms it, the IPC thread consumes it. `None` means no monitor event is
+/// pending, so a palette change is presumed legitimate.
+static MONITOR_PERMIT: Mutex<Option<MonitorPermit>> = Mutex::new(None);
+
+/// Whether a socket2 line is a monitor hotplug. Only these arm the permit.
+/// The prefix match also catches the `v2` spellings of both events.
+fn monitor_event_arms(line: &str) -> bool {
+    line.starts_with("monitoradded") || line.starts_with("monitorremoved")
+}
+
+/// Arm the one-shot permit at `now`, replacing any previous one.
+fn arm_monitor_permit(slot: &mut Option<MonitorPermit>, now: Instant) {
+    *slot = Some(MonitorPermit {
+        until: now + MONITOR_REASSERT_WINDOW,
+        consumed: false,
+    });
+}
+
+/// Whether this palette change may re-assert. One-shot: the first permitted
+/// change consumes the window, so a second change inside the same window
+/// (the echo of HVE's own write) can never stack a second re-assert.
+fn defence_permits_reassert(slot: &mut Option<MonitorPermit>, now: Instant) -> bool {
+    match slot {
+        Some(permit) if !permit.consumed && now < permit.until => {
+            permit.consumed = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Consume the monitor permit, if one is armed and unused. The palette
+/// defence re-asserts only when this returns true.
+pub fn consume_monitor_permit() -> bool {
+    let mut slot = MONITOR_PERMIT.lock().unwrap_or_else(|e| e.into_inner());
+    defence_permits_reassert(&mut slot, Instant::now())
 }
 
 /// Start the IPC listener that auto-refreshes colors on config reload.
@@ -466,6 +540,95 @@ mod tests {
         assert!(
             body.contains("tracing::debug!") || body.contains("tracing::warn!"),
             "the hop failure must be logged at debug or warn"
+        );
+    }
+
+    // ── Monitor-event colour-defence window ─────────────────────────
+    //
+    // odd/tasks/palette-defence-on-monitor-events.md: the palette file stays
+    // the detector, the monitor event is the permission. These pin the line
+    // classifier and the one-shot window so a change with no window is a
+    // no-op, a change inside the window re-asserts exactly once, and a second
+    // change in the same window never stacks a second re-assert.
+
+    #[test]
+    fn monitor_events_arm_the_window_and_other_events_do_not() {
+        for line in [
+            "monitoradded>>DP-1",
+            "monitoraddedv2>>1,DP-1,Some Monitor",
+            "monitorremoved>>DP-1",
+            "monitorremovedv2>>1,DP-1",
+        ] {
+            assert!(monitor_event_arms(line), "{line:?} must arm the window");
+        }
+        for line in [
+            "activewindow>>kitty,term",
+            "configreloaded>>",
+            "fullscreen>>1",
+            "workspace>>2",
+            "openwindow>>123,1,kitty,term",
+            "monitor",
+            "",
+            "garbage line",
+        ] {
+            assert!(!monitor_event_arms(line), "{line:?} must NOT arm the window");
+        }
+    }
+
+    #[test]
+    fn a_palette_change_with_no_armed_window_does_not_reassert() {
+        let mut slot: Option<MonitorPermit> = None;
+        assert!(
+            !defence_permits_reassert(&mut slot, Instant::now()),
+            "with no monitor event the palette change is presumed legitimate"
+        );
+    }
+
+    #[test]
+    fn a_palette_change_inside_the_window_reasserts_exactly_once() {
+        let t0 = Instant::now();
+        let mut slot = None;
+        arm_monitor_permit(&mut slot, t0);
+        let mut reasserts = 0;
+        for step in 1..=3u64 {
+            if defence_permits_reassert(&mut slot, t0 + Duration::from_millis(step)) {
+                reasserts += 1;
+            }
+        }
+        assert_eq!(
+            reasserts, 1,
+            "the window must permit exactly one re-assert (no ping-pong)"
+        );
+    }
+
+    #[test]
+    fn a_palette_change_after_the_window_expires_does_not_reassert() {
+        let t0 = Instant::now();
+        let mut slot = None;
+        arm_monitor_permit(&mut slot, t0);
+        assert!(
+            !defence_permits_reassert(
+                &mut slot,
+                t0 + MONITOR_REASSERT_WINDOW + Duration::from_millis(1)
+            ),
+            "a change past the window must not re-assert"
+        );
+    }
+
+    #[test]
+    fn each_monitor_event_arms_a_fresh_one_shot_window() {
+        let t0 = Instant::now();
+        let mut slot = None;
+        arm_monitor_permit(&mut slot, t0);
+        assert!(defence_permits_reassert(&mut slot, t0 + Duration::from_millis(1)));
+        assert!(
+            !defence_permits_reassert(&mut slot, t0 + Duration::from_millis(2)),
+            "the first window is spent"
+        );
+        arm_monitor_permit(&mut slot, t0 + Duration::from_millis(3));
+        assert!(
+            defence_permits_reassert(&mut slot, t0 + Duration::from_millis(4)),
+            "a second monitor event permits one more re-assert"
         );
     }
 }

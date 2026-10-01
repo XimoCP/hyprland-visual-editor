@@ -214,6 +214,7 @@ fn dispatch_command(
         "quit" => cmd_quit(window),
         "refresh-theme" => cmd_refresh_theme(window, proj),
         "assert-color-authority" => cmd_assert_color_authority(proj),
+        "repair-color-authority" => cmd_repair_color_authority(proj),
         _ => format!("error: unknown command '{}'\n", cmd),
     }
 }
@@ -464,11 +465,33 @@ fn resolve_assert_color_authority(
     format_response(Ok("ok".to_string()))
 }
 
+/// The palette-defence re-assert: gated on an armed monitor window.
+///
+/// The file watch stays the detector; a monitor hotplug is the permission
+/// (`odd/tasks/palette-defence-on-monitor-events.md`). With no armed window
+/// the change is presumed legitimate (the keeper's own wallpaper/theme
+/// change) and HVE does nothing, so a manual change is never reverted.
 fn cmd_assert_color_authority(proj: &Path) -> String {
-    // File-based state, like cmd_refresh_theme: the IPC thread must never
-    // lock SharedState (see its invariant in app_state.rs), so the applied
-    // theme comes from the on-disk config and the providers from a fresh
-    // file-based manager, exactly as main() builds it.
+    if !crate::hypr_ipc::consume_monitor_permit() {
+        return "noop\n".to_string();
+    }
+    resolve_applied_authority(proj)
+}
+
+/// The startup repair: a hijack that happened while HVE was off is not a
+/// palette change, so it is not gated by the monitor window. It routes
+/// through the same providers, only without the permission check.
+fn cmd_repair_color_authority(proj: &Path) -> String {
+    resolve_applied_authority(proj)
+}
+
+/// Route the applied theme's colour authority to the providers that own it.
+///
+/// File-based state, like cmd_refresh_theme: the IPC thread must never
+/// lock SharedState (see its invariant in app_state.rs), so the applied
+/// theme comes from the on-disk config and the providers from a fresh
+/// file-based manager, exactly as main() builds it.
+fn resolve_applied_authority(proj: &Path) -> String {
     let cfg = Config::load();
     let config_dir = dirs::config_dir()
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))

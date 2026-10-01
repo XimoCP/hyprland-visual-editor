@@ -159,8 +159,19 @@ _reassert_theme_authority() {
     mkdir -p "$safe_dir" 2>/dev/null
     printf '%s' "$now" > "$stamp_file"
     if [ -x "$HVE_SCRIPTS_DIR/hve-ipc" ]; then
-        "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- assert-color-authority 2>/dev/null || true
-        _log "Asked HVE to re-assert colour authority (assert-color-authority)"
+        # Two verbs: a change burst asks `assert-color-authority`, which the
+        # app gates on a monitor-event window (the palette file is the
+        # detector, the monitor event is the permission —
+        # odd/tasks/palette-defence-on-monitor-events.md). The startup repair
+        # is NOT a palette change: it must never wait for a monitor event, so
+        # it goes through the ungated `repair-color-authority`.
+        if [ "$force" = "force" ]; then
+            "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- repair-color-authority 2>/dev/null || true
+            _log "Asked HVE to repair colour authority (repair-color-authority)"
+        else
+            "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- assert-color-authority 2>/dev/null || true
+            _log "Asked HVE to re-assert colour authority (assert-color-authority)"
+        fi
     fi
 }
 
