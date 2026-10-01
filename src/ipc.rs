@@ -465,16 +465,32 @@ fn resolve_assert_color_authority(
     format_response(Ok("ok".to_string()))
 }
 
-/// The palette-defence re-assert: gated on an armed monitor window.
+/// The palette-defence re-assert: gated on an armed monitor window OR a
+/// recent resume from suspend.
 ///
-/// The file watch stays the detector; a monitor hotplug is the permission
-/// (`odd/tasks/palette-defence-on-monitor-events.md`). With no armed window
-/// the change is presumed legitimate (the keeper's own wallpaper/theme
-/// change) and HVE does nothing, so a manual change is never reverted.
+/// The file watch stays the detector; the permission is a monitor hotplug
+/// (`odd/tasks/palette-defence-on-monitor-events.md`) or a resume from
+/// suspend (`odd/tasks/palette-defence-covers-suspend-resume.md`). With
+/// neither, the change is presumed legitimate (the keeper's own
+/// wallpaper/theme change) and HVE does nothing, so a manual change is never
+/// reverted.
+///
+/// Both sources funnel through one entry point, and the decision is logged
+/// (D4): a refusal used to be completely invisible, which is why the 18:29
+/// suspend diagnosis took hours. One line per decision, never more.
 fn cmd_assert_color_authority(proj: &Path) -> String {
-    if !crate::hypr_ipc::consume_monitor_permit() {
+    let permit = crate::hypr_ipc::consume_reassert_permit();
+    if permit == crate::hypr_ipc::ReassertPermit::None {
+        tracing::info!(
+            "[colour-defence] re-assert REFUSED (no monitor event, no resume grace): \
+             the palette change is presumed legitimate, leaving it alone"
+        );
         return "noop\n".to_string();
     }
+    tracing::info!(
+        "[colour-defence] re-assert GRANTED (source={})",
+        permit.as_str()
+    );
     resolve_applied_authority(proj)
 }
 
@@ -996,6 +1012,55 @@ mod tests {
         assert!(
             response.starts_with("error: "),
             "a missing theme dir must be an error line, got: {response}"
+        );
+    }
+
+    /// T3 (odd/tasks/palette-defence-covers-suspend-resume.md): a refused
+    /// re-assert was invisible on 2026-10-01 (only `noop` in the watcher log),
+    /// which is why the resume bug took hours to diagnose. The gate must log
+    /// its decision — a grant WITH its source, a refusal WITH its reason —
+    /// through the one entry point. Scoped to the function body and
+    /// comment-stripped, like the house precedent for logging contracts, so
+    /// neither this text nor a commented-out call can satisfy it.
+    #[test]
+    fn the_reassert_gate_logs_its_decision_with_source_and_reason() {
+        let src = std::fs::read_to_string("src/ipc.rs").expect("src/ipc.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let start = code
+            .find("fn cmd_assert_color_authority")
+            .expect("cmd_assert_color_authority must exist");
+        let body = &code[start..];
+        let end = body.find("\nfn ").unwrap_or(body.len());
+        let body = &body[..end];
+
+        assert!(
+            body.contains("consume_reassert_permit"),
+            "the gate must use the single entry point that reports the source"
+        );
+        assert!(
+            body.contains("ReassertPermit::None"),
+            "the refusal must be distinguished from a grant"
+        );
+        assert_eq!(
+            body.matches("tracing::").count(),
+            2,
+            "exactly one log line per decision (a grant and a refusal)"
+        );
+        assert!(
+            body.contains("source={}"),
+            "a grant must name its source (monitor | resume)"
+        );
+        assert!(
+            body.contains("REFUSED"),
+            "a refusal must say so, with its reason, next time"
+        );
+        assert!(
+            body.contains("\"noop\\n\""),
+            "the refusal must still answer noop to the watcher"
         );
     }
 }

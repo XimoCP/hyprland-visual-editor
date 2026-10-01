@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 pub struct HyprIpc {
     socket_path: PathBuf,
@@ -101,6 +101,13 @@ impl HyprIpc {
 
         // socket2.sock auto-subscribes — no handshake needed
 
+        // Resume-detection baseline (see the resume-permission block below).
+        // The listener is the process's long-lived thread, so a sample here
+        // means a suspend that happens before the next palette change is
+        // still measurable. A sample never grants on its own: only the
+        // on-demand decision in `consume_reassert_permit` does.
+        note_clock_sample();
+
         // Throttle config reload — assemble.sh triggers another reload event
         let last_reload: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -108,6 +115,13 @@ impl HyprIpc {
         for line in reader.lines() {
             match line {
                 Ok(line) => {
+                    // Resume-detection baseline: one sample per event line.
+                    // Together with the timeout sample below this makes the
+                    // baseline at most 30 s of RUNNING time stale, always:
+                    // either a line arrived, or the read timed out. That
+                    // bound is what keeps an edit made long after a resume
+                    // from looking like a hijack that followed one.
+                    note_clock_sample();
                     // Events come as: "eventname>>data"
                     if line.starts_with("configreloaded") {
                         // Line-level handling, BEFORE the throttle: masks +
@@ -151,7 +165,13 @@ impl HyprIpc {
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
                 {
-                    // Timeout is normal — just continue listening
+                    // Timeout is normal — just continue listening. Re-take the
+                    // resume baseline here (free: the read already woke us, no
+                    // timer of our own) so the pre-suspend sample is never
+                    // stale by more than 30 s of RUNNING time. That bound is
+                    // what keeps a legitimate edit made long after a resume
+                    // from being mistaken for a hijack that followed one.
+                    note_clock_sample();
                     continue;
                 }
                 Err(e) => {
@@ -276,11 +296,201 @@ fn defence_permits_reassert(slot: &mut Option<MonitorPermit>, now: Instant) -> b
     }
 }
 
-/// Consume the monitor permit, if one is armed and unused. The palette
-/// defence re-asserts only when this returns true.
-pub fn consume_monitor_permit() -> bool {
-    let mut slot = MONITOR_PERMIT.lock().unwrap_or_else(|e| e.into_inner());
-    defence_permits_reassert(&mut slot, Instant::now())
+// ─── Resume-from-suspend colour-defence permission ─────────────────
+//
+// odd/tasks/palette-defence-covers-suspend-resume.md, decisions D1/D2:
+// resume from suspend is a SECOND permission source, beside the monitor
+// event. A suspend shows up as the wall clock advancing far more than
+// monotonic time between two samples, because `SystemTime` keeps running
+// while the machine sleeps and `Instant` does not.
+//
+// No D-Bus client and no timer. Samples are taken
+//   - once when the listener connects, as the baseline;
+//   - on every socket2 event line, and on the listener's OWN 30 s read
+//     timeout. Either a line arrived or the read timed out, so the baseline
+//     is never more than 30 s of RUNNING time stale — and that bound is what
+//     keeps an edit made long after a resume from looking like one;
+//   - on demand, when a re-assert is requested.
+// Only the DECISION is on demand; nothing polls for a suspend.
+
+/// How far the wall clock must outrun the monotonic clock, between two
+/// samples, before the step counts as a suspend. Ordinary clock drift is
+/// milliseconds and NTP slews instead of stepping, so 2 s leaves a wide
+/// margin while still catching every real sleep. An NTP STEP larger than
+/// this can open one false grace window; accepted, bounded and documented
+/// in the task file (D1).
+const SUSPEND_GAP_TOLERANCE: Duration = Duration::from_secs(2);
+
+/// How long a detected resume keeps the colour defence open.
+///
+/// A GRACE WINDOW, not a one-shot (D2), because the measured chain needs
+/// more than one pass: suspend ended 18:28:55 on 2026-10-01, the palette
+/// hijack landed at 18:29:13 (18 s later) and a second burst pass at
+/// 18:29:24 (11 s after the first) — both were refused under the one-shot
+/// monitor rule, at 18:29:13 and 18:29:24 (`~/.cache/hve/color_watcher.log`).
+/// 60 s covers both with margin. It cannot loop: the provider only writes
+/// when the live palette differs from the snapshot
+/// (`palette_needs_reassert`) and the watcher throttles its asks to one per
+/// 5 s.
+const RESUME_GRACE: Duration = Duration::from_secs(60);
+
+/// Both clocks read at one instant. Plain values, so every decision below
+/// is testable without touching a real clock.
+#[derive(Clone, Copy, Debug)]
+struct ClockSample {
+    mono: Instant,
+    wall: SystemTime,
+}
+
+/// Whether the step between two samples is a suspend: the wall clock
+/// advanced `SUSPEND_GAP_TOLERANCE` more than the monotonic clock. A wall
+/// clock that moved backwards (an NTP step) is not a suspend.
+fn suspend_gap(wall_advanced: Duration, mono_advanced: Duration) -> bool {
+    wall_advanced.saturating_sub(mono_advanced) > SUSPEND_GAP_TOLERANCE
+}
+
+/// Whether a resume grace ending at `until` is still open at `now`. The
+/// boundary is exclusive: at `until` the grace is over.
+fn resume_grace_open(until: Option<Instant>, now: Instant) -> bool {
+    until.is_some_and(|end| now < end)
+}
+
+/// The resume permission's state: the previous sample (the baseline) and the
+/// grace window a detected suspend opened.
+#[derive(Debug, Default)]
+struct ResumeState {
+    last: Option<ClockSample>,
+    until: Option<Instant>,
+}
+
+impl ResumeState {
+    /// Fold one sample in and report whether the step was a suspend.
+    ///
+    /// The FIRST sample only establishes the baseline: one sample cannot
+    /// show a gap, so it never detects and never grants. A sample that is NOT
+    /// a suspend never closes an open grace window — the grace runs from the
+    /// resume, not from the last sample.
+    fn observe(&mut self, sample: ClockSample) -> bool {
+        let suspended = self.last.is_some_and(|before| {
+            suspend_gap(
+                sample
+                    .wall
+                    .duration_since(before.wall)
+                    .unwrap_or(Duration::ZERO),
+                sample.mono.saturating_duration_since(before.mono),
+            )
+        });
+        self.last = Some(sample);
+        if suspended {
+            self.until = Some(sample.mono + RESUME_GRACE);
+        }
+        suspended
+    }
+}
+
+/// Which source permitted a re-assert, so the caller can log it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReassertPermit {
+    Monitor,
+    Resume,
+    None,
+}
+
+impl ReassertPermit {
+    /// The source's name as it appears in the log.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReassertPermit::Monitor => "monitor",
+            ReassertPermit::Resume => "resume",
+            ReassertPermit::None => "none",
+        }
+    }
+}
+
+/// One decision, with the detection kept so it can be logged once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReassertDecision {
+    permit: ReassertPermit,
+    suspend_detected: bool,
+}
+
+/// The single decision, over injected clock values.
+///
+/// Order matters for reporting only: an armed monitor window is the more
+/// specific cause, so it is checked first and still consumes its one-shot
+/// exactly as before; the resume grace is checked second and is never
+/// consumed by asking.
+fn decide_reassert(
+    monitor: &mut Option<MonitorPermit>,
+    resume: &mut ResumeState,
+    sample: ClockSample,
+) -> ReassertDecision {
+    let suspend_detected = resume.observe(sample);
+    let permit = if defence_permits_reassert(monitor, sample.mono) {
+        ReassertPermit::Monitor
+    } else if resume_grace_open(resume.until, sample.mono) {
+        ReassertPermit::Resume
+    } else {
+        ReassertPermit::None
+    };
+    ReassertDecision {
+        permit,
+        suspend_detected,
+    }
+}
+
+/// The single armed resume state, process-wide, beside `MONITOR_PERMIT`.
+static RESUME_STATE: Mutex<ResumeState> = Mutex::new(ResumeState {
+    last: None,
+    until: None,
+});
+
+/// Read both clocks now.
+fn clock_sample() -> ClockSample {
+    ClockSample {
+        mono: Instant::now(),
+        wall: SystemTime::now(),
+    }
+}
+
+/// One cheap line per detected resume (D4). This is the event whose absence
+/// made the 18:29 refusal invisible; it is logged once per detection.
+fn log_resume_detected() {
+    tracing::info!(
+        "[colour-defence] resume from suspend detected: re-asserts permitted for {}s",
+        RESUME_GRACE.as_secs()
+    );
+}
+
+/// Fold a sample in off the request path (the listener's baseline, its event
+/// lines and its 30 s read timeout). It never grants by itself, except by
+/// opening the grace a real resume deserves: the GRANT is taken on demand in
+/// `consume_reassert_permit`.
+fn note_clock_sample() {
+    let mut resume = RESUME_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    if resume.observe(clock_sample()) {
+        log_resume_detected();
+    }
+}
+
+/// The one entry point the assert path uses: take an on-demand sample and
+/// decide whether this palette change may re-assert, reporting which source
+/// granted it.
+///
+/// Cheap and non-blocking on the change burst: two clock reads and two
+/// mutexes, no I/O, no IPC, no sleep. A refusal is logged by the caller,
+/// with its reason.
+pub fn consume_reassert_permit() -> ReassertPermit {
+    let sample = clock_sample();
+    let decision = {
+        let mut monitor = MONITOR_PERMIT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut resume = RESUME_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        decide_reassert(&mut monitor, &mut resume, sample)
+    };
+    if decision.suspend_detected {
+        log_resume_detected();
+    }
+    decision.permit
 }
 
 /// Start the IPC listener that auto-refreshes colors on config reload.
@@ -629,6 +839,259 @@ mod tests {
         assert!(
             defence_permits_reassert(&mut slot, t0 + Duration::from_millis(4)),
             "a second monitor event permits one more re-assert"
+        );
+    }
+
+    // ── Resume-from-suspend colour-defence permission ───────────────
+    //
+    // odd/tasks/palette-defence-covers-suspend-resume.md: resume is a SECOND
+    // permission source. A suspend shows up as the wall clock advancing far
+    // more than monotonic time between two samples, because `SystemTime`
+    // keeps running while the machine sleeps and `Instant` does not.
+    // Detecting one opens a GRACE window, not a one-shot: the measured burst
+    // needs two passes. Every sample below is synthesized, so no test sleeps.
+
+    /// A long sleep for the synthesized samples: three hours. The measured
+    /// chain's suspend was shorter, but the detector only sees the gap.
+    const SUSPENDED_MS: u64 = 3 * 3600 * 1000;
+
+    /// A synthesized sample: absolute monotonic/wall offsets from the test's
+    /// own base. Never reads a real clock.
+    fn sample_at(base: Instant, mono_ms: u64, wall_ms: u64) -> ClockSample {
+        ClockSample {
+            mono: base + Duration::from_millis(mono_ms),
+            wall: SystemTime::UNIX_EPOCH + Duration::from_millis(wall_ms),
+        }
+    }
+
+    /// (a) The gap itself: wall ≫ monotonic is a suspend, ordinary drift and a
+    /// small skew are not.
+    #[test]
+    fn a_suspend_is_detected_when_wall_advances_far_more_than_monotonic() {
+        assert!(
+            suspend_gap(
+                Duration::from_millis(SUSPENDED_MS + 18_000),
+                Duration::from_millis(18_000)
+            ),
+            "the wall clock carrying the whole sleep, monotonic only the awake part, is a resume"
+        );
+    }
+
+    #[test]
+    fn normal_drift_and_a_small_skew_are_not_a_suspend() {
+        for (wall_ms, mono_ms) in [
+            (30_000u64, 30_000u64), // both clocks advance together
+            (30_000, 28_000),       // 2 s of skew, inside the tolerance
+            (1_000, 0),             // a sub-tolerance step
+        ] {
+            assert!(
+                !suspend_gap(
+                    Duration::from_millis(wall_ms),
+                    Duration::from_millis(mono_ms)
+                ),
+                "wall +{wall_ms}ms vs monotonic +{mono_ms}ms must not look like a suspend"
+            );
+        }
+        assert!(
+            !suspend_gap(Duration::ZERO, Duration::from_secs(30)),
+            "a wall clock stepped backwards (NTP) is not a suspend"
+        );
+    }
+
+    #[test]
+    fn the_suspend_tolerance_is_two_seconds() {
+        assert!(
+            !suspend_gap(SUSPEND_GAP_TOLERANCE, Duration::ZERO),
+            "a gap exactly at the tolerance is ordinary drift"
+        );
+        assert!(
+            suspend_gap(
+                SUSPEND_GAP_TOLERANCE + Duration::from_millis(1),
+                Duration::ZERO
+            ),
+            "a gap just past the tolerance is a suspend"
+        );
+    }
+
+    #[test]
+    fn the_resume_grace_is_sixty_seconds() {
+        assert_eq!(
+            RESUME_GRACE,
+            Duration::from_secs(60),
+            "the measured chain needs ~29 s (18 s to the first hijack + an 11 s second pass)"
+        );
+    }
+
+    #[test]
+    fn the_grace_boundary_is_exclusive() {
+        let base = Instant::now();
+        assert!(
+            !resume_grace_open(Some(base + RESUME_GRACE), base + RESUME_GRACE),
+            "at the boundary the grace is over"
+        );
+        assert!(
+            resume_grace_open(
+                Some(base + RESUME_GRACE),
+                base + RESUME_GRACE - Duration::from_millis(1)
+            ),
+            "just inside the boundary it is open"
+        );
+        assert!(!resume_grace_open(None, base), "no window is never open");
+    }
+
+    /// (b) The measured chain: first sample is only a baseline, the detected
+    /// suspend grants (source = resume), and the burst's second pass is still
+    /// inside the grace.
+    #[test]
+    fn a_detected_suspend_permits_the_reassert_and_the_second_burst_pass() {
+        let base = Instant::now();
+        let mut monitor: Option<MonitorPermit> = None;
+        let mut resume = ResumeState::default();
+
+        // The FIRST sample only establishes the baseline: one sample cannot
+        // show a gap, so it grants nothing.
+        let first = decide_reassert(&mut monitor, &mut resume, sample_at(base, 0, 0));
+        assert!(!first.suspend_detected, "one sample cannot show a gap");
+        assert_eq!(first.permit, ReassertPermit::None);
+
+        // 18 s awake after the suspend: the measured first hijack (18:29:13).
+        let hijack = decide_reassert(
+            &mut monitor,
+            &mut resume,
+            sample_at(base, 18_000, SUSPENDED_MS + 18_000),
+        );
+        assert!(hijack.suspend_detected, "the gap is detected on demand");
+        assert_eq!(
+            hijack.permit,
+            ReassertPermit::Resume,
+            "a detected resume permits the re-assert"
+        );
+
+        // The measured second pass, 11 s later. The monitor permit is absent
+        // and one-shot, so only the grace can grant it.
+        let second = decide_reassert(
+            &mut monitor,
+            &mut resume,
+            sample_at(base, 29_000, SUSPENDED_MS + 29_000),
+        );
+        assert!(
+            !second.suspend_detected,
+            "the machine is awake: both clocks advance together now"
+        );
+        assert_eq!(
+            second.permit,
+            ReassertPermit::Resume,
+            "the grace permits the burst's second pass"
+        );
+    }
+
+    /// (c) No monitor event, no suspend, no permanent permission.
+    #[test]
+    fn with_no_monitor_event_and_no_suspend_the_reassert_is_refused() {
+        let base = Instant::now();
+        let mut monitor: Option<MonitorPermit> = None;
+        let mut resume = ResumeState::default();
+        let _ = decide_reassert(&mut monitor, &mut resume, sample_at(base, 0, 0));
+
+        let quiet = decide_reassert(&mut monitor, &mut resume, sample_at(base, 5_000, 5_000));
+        assert!(!quiet.suspend_detected);
+        assert_eq!(
+            quiet.permit,
+            ReassertPermit::None,
+            "a quiet machine grants nothing"
+        );
+
+        let later = decide_reassert(&mut monitor, &mut resume, sample_at(base, 600_000, 600_000));
+        assert_eq!(
+            later.permit,
+            ReassertPermit::None,
+            "and it stays refused: there is no permanent permission"
+        );
+    }
+
+    /// (d) The grace expires: far beyond it the change is refused again.
+    #[test]
+    fn a_request_far_beyond_the_grace_is_refused() {
+        let base = Instant::now();
+        let mut monitor: Option<MonitorPermit> = None;
+        let mut resume = ResumeState::default();
+        let _ = decide_reassert(&mut monitor, &mut resume, sample_at(base, 0, 0));
+        let hijack = decide_reassert(
+            &mut monitor,
+            &mut resume,
+            sample_at(base, 18_000, SUSPENDED_MS + 18_000),
+        );
+        assert_eq!(hijack.permit, ReassertPermit::Resume);
+
+        let late_mono = 18_000 + RESUME_GRACE.as_millis() as u64 + 1;
+        let late = decide_reassert(
+            &mut monitor,
+            &mut resume,
+            sample_at(base, late_mono, SUSPENDED_MS + late_mono),
+        );
+        assert!(
+            !late.suspend_detected,
+            "an awake machine shows no gap, however long it has been awake"
+        );
+        assert_eq!(
+            late.permit,
+            ReassertPermit::None,
+            "the grace expires; the change is refused again"
+        );
+    }
+
+    /// (e) The monitor path is unchanged and reachable through the same entry
+    /// point, reported with its own source.
+    #[test]
+    fn a_monitor_event_grants_through_the_same_entry_point_and_is_reported() {
+        let base = Instant::now();
+        let mut monitor: Option<MonitorPermit> = None;
+        let mut resume = ResumeState::default();
+        arm_monitor_permit(&mut monitor, base);
+
+        let granted = decide_reassert(&mut monitor, &mut resume, sample_at(base, 1_000, 1_000));
+        assert_eq!(granted.permit, ReassertPermit::Monitor);
+        assert!(!granted.suspend_detected);
+
+        // One-shot, exactly as before: the next change in the same window is
+        // refused.
+        let again = decide_reassert(&mut monitor, &mut resume, sample_at(base, 2_000, 2_000));
+        assert_eq!(again.permit, ReassertPermit::None, "the window is spent");
+    }
+
+    #[test]
+    fn a_spent_monitor_window_does_not_block_the_resume_grace() {
+        let base = Instant::now();
+        let mut monitor: Option<MonitorPermit> = None;
+        let mut resume = ResumeState::default();
+        arm_monitor_permit(&mut monitor, base);
+        // Spend the monitor one-shot.
+        let spent = decide_reassert(&mut monitor, &mut resume, sample_at(base, 1_000, 1_000));
+        assert_eq!(spent.permit, ReassertPermit::Monitor);
+
+        // The resume grace is a separate source and is not consumed by it.
+        let hijack = decide_reassert(
+            &mut monitor,
+            &mut resume,
+            sample_at(base, 18_000, SUSPENDED_MS + 18_000),
+        );
+        assert_eq!(
+            hijack.permit,
+            ReassertPermit::Resume,
+            "a spent monitor window must not block the resume permission"
+        );
+    }
+
+    /// The production entry point grants nothing on a quiet machine. No
+    /// listener runs in a test process, so nothing armed a monitor window and
+    /// the machine did not suspend. The first call only sets the baseline.
+    #[test]
+    fn the_production_entry_point_refuses_without_a_permission() {
+        assert_eq!(consume_reassert_permit(), ReassertPermit::None);
+        assert_eq!(
+            consume_reassert_permit(),
+            ReassertPermit::None,
+            "still refused: the detector must not leak a permanent permission"
         );
     }
 }
