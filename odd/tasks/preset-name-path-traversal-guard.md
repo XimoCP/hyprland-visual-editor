@@ -108,6 +108,23 @@ contains NUL, equals `.` or `..`, or starts with `.`. Interior dots are allowed.
   - `src/scripts_contract.rs` — traversal/leading-dot/interior-dot contract tests.
 - **Commit**: `fix(security): reject path traversal in preset names`.
 
+## Residual bypass (2026-10-02, verifier finding)
+
+The name guard closed the traversal name, but the single top-level containment
+call in `_hve_preset_in_dir` canonicalized `$dir/$name` only. For a bare STEM
+(no dot) the resolver then probes `$dir/$name.lua`, so a symlink planted inside
+the preset dir (`plain.lua -> /etc/whatever`) was echoed and `cat` by the caller
+— the comment claiming escaping symlinks are refused was false for that branch.
+
+Fixed by checking containment of the EXACT candidate path in each branch
+(`$dir/$name` for dotted names, `$dir/$name.lua` for bare stems). Regression
+test: `scripts_contract::symlinked_preset_inside_the_dir_takes_the_safe_fallback`.
+
+- **RED**: the symlinked preset's `SYMLINK_SENTINEL_TOKEN` and `angle = 424242`
+  reached the overlay.
+- **GREEN** (`cargo test`, full): `1237 passed; 0 failed; 0 ignored; 0 measured`.
+- **Commit**: `fix(security): contain the resolved preset path in every branch`.
+
 ## Next step
 
 Delegate T1-T5 to a single bounded writer on branch `hve2-visual-rewrite`.

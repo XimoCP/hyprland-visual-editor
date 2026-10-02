@@ -1710,3 +1710,39 @@ fn leading_dot_preset_name_takes_the_safe_fallback() {
         "a leading-dot border name must take the safe fallback:\n{overlay}"
     );
 }
+
+/// A symlink planted INSIDE the preset directory must not escape it. The
+/// attacker names the link after the bare STEM (`plain.lua`) and applies by
+/// the bare stem (`plain`, no extension): the name itself is safe and the
+/// single top-level containment check canonicalizes `$dir/plain`, which never
+/// touches the link. The containment check must cover the EXACT candidate path
+/// of each branch — here `$dir/plain.lua` — or the resolver echoes the
+/// symlink and the caller `cat`s the outside target into the overlay.
+#[test]
+fn symlinked_preset_inside_the_dir_takes_the_safe_fallback() {
+    let sb = OverlaySandbox::build();
+    sb.write_outside_file(
+        "symlink_sentinel.lua",
+        "-- SYMLINK_SENTINEL_TOKEN\n\
+         hl.config({ general = { col = { active_border = { angle = 424242 } } } })\n",
+    );
+    let link = sb.root.join("assets/borders/plain.lua");
+    std::os::unix::fs::symlink(sb.root.join("symlink_sentinel.lua"), &link).unwrap();
+
+    let overlay = sb.apply_border_preset("plain");
+
+    assert!(
+        !overlay.contains("SYMLINK_SENTINEL_TOKEN"),
+        "a symlink inside the preset dir must never `cat` its outside target \
+         into the overlay:\n{overlay}"
+    );
+    assert!(
+        !overlay.contains("424242"),
+        "the outside file's content reached the overlay through a symlinked \
+         preset:\n{overlay}"
+    );
+    assert!(
+        overlay.contains("hl.config({ general = { [\"col.active_border\"] = primary } })"),
+        "a symlinked preset must take the safe fallback:\n{overlay}"
+    );
+}

@@ -87,10 +87,17 @@ _hve_preset_in_dir() {
     # unsanitized from the UI and a `..`/absolute component would otherwise
     # `cat` an arbitrary local file into the assembled Hyprland fragment.
     _hve_preset_name_is_safe "$name" || return 1
-    _hve_preset_path_is_contained "$dir" "$name" || return 1
+
+    # Containment must cover the EXACT candidate path of each branch. Checking
+    # only `$dir/$name` once is not enough: for a bare stem the resolver probes
+    # `$dir/$name.lua`, and a symlink planted there (e.g. `plain.lua ->
+    # /etc/whatever`) would be echoed and `cat` by the caller. `realpath -m`
+    # follows symlinks, so each branch below refuses a candidate that escapes
+    # `$dir`.
 
     # If the name already carries an extension, honour it only if it exists.
     if [[ "$name" == *.* ]]; then
+        _hve_preset_path_is_contained "$dir" "$name" || return 1
         if [ -f "$dir/$name" ]; then
             echo "$dir/$name"
             return 0
@@ -98,6 +105,7 @@ _hve_preset_in_dir() {
         return 1
     fi
 
+    _hve_preset_path_is_contained "$dir" "$name.lua" || return 1
     if [ -f "$dir/$name.lua" ]; then
         echo "$dir/$name.lua"
         return 0
