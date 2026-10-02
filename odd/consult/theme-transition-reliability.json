@@ -1,0 +1,348 @@
+{
+  "meta": {
+    "id": "hve2-theme-transition-reliability",
+    "title": "HVE 2 — theme-apply transition: keep the desktop reveal, make it deterministic",
+    "version": "1.0",
+    "generated_at": "2026-09-25",
+    "generated_by": "HVE project orchestrator (with the keeper / product owner)",
+    "language": "English (this is a technical artifact; the project's chat language is Spanish)",
+    "purpose": "Consult several AI systems for independent architectural alternatives on ONE bounded problem: making the HVE theme-apply transition reliable on any machine, without losing its deliberate visual effect.",
+    "status_of_contents": "Mixed. Every claim is tagged: `verified` (read from code or measured live), `reported` (stated by the product owner), `inferred` (reasoning, not measured). Do not treat `inferred` as fact.",
+    "how_to_use": "You are being asked for engineering judgement, not for a patch. Read `constraints_for_any_solution` and `product_decisions_locked` BEFORE proposing anything. Then answer `questions_for_you` in the shape of `expected_response_shape`."
+  },
+
+  "expected_response_shape": {
+    "instructions": "Return a structured answer, not prose advice. Be explicit about what you do not know.",
+    "required_fields": [
+      "alternatives: array of 2-5 DISTINCT architectural alternatives, each with { name, one_line, mechanism, why_it_removes_the_race_or_the_need_for_it, tradeoffs, risk, effort (S/M/L), what_could_still_fail, testability }",
+      "recommended_alternative: which one and WHY, with the strongest argument AGAINST your own recommendation",
+      "minimum_incremental_path: the smallest first step that reduces risk without a rewrite",
+      "assumptions_you_had_to_make: list; mark each as checkable-in-code or needs-live-experiment",
+      "what_you_would_measure_live_to_falsify_your_recommendation",
+      "explicit_non_answers: things you refuse to answer without more data, and exactly what data you need"
+    ],
+    "ranking_rule": "Rank alternatives by the probability that the bug CANNOT recur, not by the size of the diff."
+  },
+
+  "project_and_stack": {
+    "name": "HVE (Hyprland Visual Editor) — version 2, 'visual rewrite'",
+    "what_it_is": "A Rust + Slint desktop application that edits the LOOK of a Hyprland desktop: theme gallery (wallpaper, palette, borders, shaders), curve/border/colour workshop, and transformable window. It is a VISUAL-ONLY editor.",
+    "repo": "/home/ximo/Proyectos/hve",
+    "branch": "hve2-visual-rewrite",
+    "head_commit": "79ca9df",
+    "tree_state": "clean at the time of writing (this document is the only new untracked file)",
+    "language_and_ui": "Rust 2021, Slint 1.17.1, single window that MUTATES (never stacks windows), binary name `hve`, MIT license",
+    "test_runner": "cargo test — strict TDD (failing test first). Last known suite state: 976 passed / 0 failed",
+    "engine_is_sealed": [
+      "src/engine.rs",
+      "src/config.rs",
+      "src/settings.rs",
+      "src/theme_manager.rs",
+      "src/app_state.rs",
+      "src/watcher.rs",
+      "src/utils.rs",
+      "all of src/providers/"
+    ],
+    "engine_note": "Those modules are REUSED, not rewritten. An engine change requires explicit renegotiation of scope with the product owner.",
+    "artifacts_language": "Code, comments, docs and UI copy are English. Chat is Spanish."
+  },
+
+  "environment_facts_verified_live": {
+    "compositor": {
+      "name": "Hyprland",
+      "version": "0.56.2",
+      "commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+      "build_date": "2026-08-05",
+      "config_style": "Lua-config runtime (dispatch calls are routed through a Lua shim, so `hyprctl dispatch` payloads must be valid Lua)"
+    },
+    "shell": "Noctalia v5 — provides the bar, the wallpaper layer, desktop widgets, palettes and a plugin system (mpvpaper plugin).",
+    "wallpaper_engine": "skwd (external, GPL-3.0; visual ideas may be translated, code may NOT be copied). Current background is a VIDEO, rendered by `skwd-wall-vk`.",
+    "observed_layer_stack": {
+      "verified": true,
+      "layers_by_level": [
+        "level 0: noctalia-wallpaper",
+        "level 1: skwd-wall-vk (the video) on one monitor; noctalia-desktop-widget on the other",
+        "level 2: noctalia-bar-default and noctalia-bar-barra_lateral"
+      ],
+      "bar_geometry": "vertical, 63 px wide, full monitor height, hugging the left edge (the product owner renamed it 'barra_lateral')",
+      "meaning": "The Noctalia bar is a layer-shell surface at level 2. HVE can only cover it while it is in Hyprland's IMMERSIVE fullscreen (mode 2). In normal fullscreen (mode 1) or windowed state, the bar draws ABOVE HVE."
+    },
+    "hve_client_as_seen_by_hyprctl": {
+      "verified": true,
+      "title": "Hyprland Visual Editor",
+      "class": "(empty string)",
+      "hidden_state": "when parked, HVE sits on workspace `special:minimized` (note: a NORMAL workspace, unlike Hyprland's usual `special:*` naming is not used here as a normal workspace — it is a dedicated park target)",
+      "fullscreen_while_parked": 2
+    },
+    "active_wallpaper_process": {
+      "verified": true,
+      "command_shape": "skwd-wall-vk * <mp4> --transition-from <png> --shader random --duration-ms 600 --fill-mode fill --layer bottom --mute true --volume 100 --persist",
+      "note": "The engine already receives a still image (`--transition-from <png>`) as part of the video transition. Relevant if the fix touches the wallpaper hand-off."
+    },
+    "compositor_keyword_state_at_rest": {
+      "verified": true,
+      "decoration:blur:enabled": "bool=true, set=true (compositor config default = blur ON)",
+      "animations:enabled": "bool=true, set=false (config default ON)"
+    }
+  },
+
+  "product_decisions_locked": [
+    {
+      "id": "D1",
+      "decision": "The desktop reveal during a theme apply MUST be preserved.",
+      "reason_reported_by_owner": "The reveal exists because the bar used to stay on top when loading a new theme. The owner reports that hiding the bar hid the actual result: you could not see how the theme landed — where the bar moved to, whether the corners were rounded, which colours were applied. Once it worked, he found the effect genuinely attractive ('muy chulo') and says removing it now would cost him a lot. He considers the effect a hit.",
+      "consequence": "Any solution that removes, hides or shortens the reveal to invisibility is OUT OF SCOPE. The target is: same effect, reliable on slower machines.",
+      "tag": "reported"
+    },
+    {
+      "id": "D2",
+      "decision": "New timing offsets must not be introduced as the reliability mechanism.",
+      "reason": "The owner explicitly called absolute timing 'a bit of a hack' and asked whether it would fail on a slower computer. It would, and the analysis below explains exactly why.",
+      "tag": "reported"
+    }
+  ],
+
+  "feature_under_discussion": {
+    "name": "Theme apply transition (a.k.a. the 'theme interlude')",
+    "what_the_user_sees": "The user clicks a theme card. HVE fades out, the desktop is briefly revealed so the new wallpaper/palette/bar arrangement can be seen, then HVE fades back in over the finished result, now fully immersive over the bar again.",
+    "sequence_of_actors": [
+      "HVE (the Slint app, UI thread + Hyprland IPC listener thread)",
+      "Hyprland (reloads its config on request; resets runtime keyword overrides on every reload; re-floats windows)",
+      "Noctalia (bar + wallpaper layer, receives palette/config changes and reloads)",
+      "skwd wallpaper engine (receives the new wallpaper/video)",
+      "several shell scripts and providers that each run `hyprctl reload` (see `reload_emitters`)"
+    ],
+    "reload_emitters": {
+      "verified": true,
+      "files_that_issue_reloads": [
+        "assets/scripts/init.sh",
+        "assets/scripts/shader.sh",
+        "assets/scripts/reload_coalescer.sh",
+        "src/providers/mpvpaper.rs",
+        "src/providers/noctalia.rs",
+        "src/settings.rs",
+        "src/countdown.rs",
+        "src/main.rs",
+        "src/reload_coalescer.rs"
+      ],
+      "history": "A previous work unit (W5) coalesced a measured burst of 7 Hyprland reloads per single theme apply down to fewer (scripts routed through `assets/scripts/reload_coalescer.sh`). It is NOT reduced to exactly one, and the arrival times of the remaining reloads are not bounded.",
+      "tag": "verified"
+    }
+  },
+
+  "current_implementation": {
+    "design_shape": "A one-shot timer cascade. HVE assumes the rest of the system settles within fixed offsets counted from the moment the user clicks apply. The end of the transition is decided by a clock, not by an observed event.",
+    "timer_cascade": {
+      "verified": true,
+      "note": "12 `Timer::single_shot` calls exist in src/main.rs; these five are the theme-apply path.",
+      "steps": [
+        {
+          "at_ms": 0,
+          "action": "Capture the pre-apply values of four compositor keywords, then mask them to 0 (animations, blur, border size, shadow). Set THEME_TRANSITIONING_FLAG = true. Capture the original workspace. Increment THEME_GEN. Engage Do-Not-Disturb. Suppress auto-minimize for 6 s. Ask Slint to fade out (420 ms).",
+          "code": "src/main.rs:2330-2378"
+        },
+        {
+          "at_ms": 560,
+          "action": "Find an empty workspace and move the compositor VIEW there (no window moves). This is what reveals the desktop. Gated on generation and on 'should_move'.",
+          "code": "src/main.rs:2388-2416 (helper `hypr_switch_view` at 1363-1373, `interlude_view_script` at 1348-1359)"
+        },
+        {
+          "at_ms": 1500,
+          "action": "'Finale'. If the view was staged, a masked unset->set fullscreen cycle is DELIBERATELY SKIPPED (because focusing HVE by title would drag the view back and flash the floating window + the user's windows). Otherwise `reassert_gallery_fullscreen()` runs. Then it schedules the fade-in.",
+          "code": "src/main.rs:2417-2484; staged branch 2430-2440; unstaged branch 2441-2447"
+        },
+        {
+          "at_ms": 1900,
+          "action": "Fade in. Clear THEME_TRANSITIONING_FLAG (i.e. HVE STOPS DEFENDING ITSELF HERE). Return the view to the original workspace and re-set fullscreen with a bare window-targeted `set` (only if the view actually moved).",
+          "code": "src/main.rs:2450-2472; the bare set is `reassert_hve_fullscreen_targeted` (1381-1388 -> composer::hyprland::v5_set_fullscreen)"
+        },
+        {
+          "at_ms": 2470,
+          "action": "Restore the four masked keywords to their captured PRE-APPLY values, and release Do-Not-Disturb.",
+          "code": "src/main.rs:2478-2482, `restore_theme_masks` at 845-862"
+        },
+        {
+          "at_ms": 3500,
+          "action": "Hard watchdog: force the fade-in, clear the flag, restore masks, return the view, re-set fullscreen, release DND. Never stay transparent forever.",
+          "code": "src/main.rs:2485-2513"
+        }
+      ]
+    },
+    "masks": {
+      "verified": true,
+      "what_they_are": "Four compositor keywords that HVE zeroes during the transition, plus their captured originals.",
+      "state_variables": "four loose globals: THEME_ORIG_ANIM, THEME_ORIG_BLUR, THEME_ORIG_BORDER, THEME_ORIG_SHADOW (src/main.rs:754-757) plus one boolean THEME_TRANSITIONING_FLAG",
+      "reapply_rule": "`reapply_theme_masks` (src/main.rs:869-878) re-zeros all four keywords, but ONLY if THEME_TRANSITIONING_FLAG is still true. Called from the reload path.",
+      "restore_rule": "`restore_theme_masks` (src/main.rs:845-862) writes back the captured pre-apply values. Since the compositor config has blur ON and animations ON, the restored (steady) value is ON.",
+      "note": "There is no RAII guard for this state. The same codebase DOES contain the correct pattern elsewhere: `YieldGuard` (src/providers/skwd_policy.rs:133, with `Drop` at 155), used by noctalia.rs:1478-1490.",
+      "tag": "verified"
+    },
+    "reload_reaction": {
+      "verified": true,
+      "listener": "HVE's Hyprland IPC listener handles exactly TWO events: `configreloaded` (src/hypr_ipc.rs:112) and `activewindow>>` (src/hypr_ipc.rs:341). It does not subscribe to any fullscreen or window-state event.",
+      "on_configreloaded": "src/hypr_ipc.rs:183-191 — (a) call `reapply_theme_masks()` (flag-gated), (b) hop to the UI thread and call `reassert_fullscreen_after_reload()`. If the hop fails (reload arrives before the Slint event loop exists) the restore is simply lost.",
+      "decision_function": "src/main.rs:984-1007 `reload_fs_action(transition_in_flight, hve_supposed_visible, immersive_expected, hve_fullscreen, since_last_cycle)`. This IS a pure function with a pure test around it — a good existing pattern worth preserving.",
+      "the_explicit_hole": "src/main.rs:991-993 — if a theme transition is in flight, the decision returns `Nothing(ThemeTransitionInFlight)` and NO fullscreen restore happens. The comment states the finale is supposed to own the cycle in that window.",
+      "delayed_reconsult": "src/main.rs:1115-1128, 1155-1201 — when debounced, a single-shot re-consult is armed to re-read live state and re-run the decision.",
+      "restore_scope": "The W3 restore path (src/main.rs:1026-1034, 1139-1147) restores FULLSCREEN ONLY. It never re-applies the masks."
+    },
+    "the_no_op_trap": {
+      "verified": true,
+      "quote_from_the_code_itself": "src/main.rs:893-898 — 'a bare `set` on a window Hyprland already believes is fullscreen is a compositor NO-OP — it answers ok but fires no state transition, so the shell bar (Noctalia/Waybar) never receives the fullscreen event and stays visible. Manual SUPER+F works because it is a `toggle` (real transition) and SUPER+H remaps the window (fresh state). Fix: cycle unset -> set with a short gap to force a real transition.'",
+      "consequence": "The staged finale's only fullscreen lever is exactly the construct the codebase documents as unreliable."
+    },
+    "existing_prior_art": {
+      "work_unit": "W3 — `odd/tasks/fullscreen-survives-config-reload.md` (commits c6ddf9f + correction 9488448).",
+      "what_W3_did": "After a plain config reload, re-run the unset->set fullscreen cycle, debounced, decision-gated, and EXCLUDED from the theme-transition window.",
+      "what_W3_did_not_do": "It did not cover the theme-apply path, and it never re-masks the keywords. The document itself records this at lines 36-40.",
+      "live_confirmation_history": "The product owner visually confirmed on 2026-09-24 that 'provoking reloads' no longer leaves the window bordered / the desktop blurred / the bar on top. That test exercised the RELOAD path, not the THEME-APPLY path. This distinction is central to the whole problem."
+    }
+  },
+
+  "observed_problems": [
+    {
+      "id": "P1",
+      "symptom": "While applying a theme, the Noctalia bar draws ABOVE HVE (HVE is not immersive).",
+      "when": "During the transition window; potentially persisting.",
+      "mechanism_inferred": "A reload from the apply burst re-floats HVE, dropping it from immersive mode 2. The reload-driven restore refuses to act (transition in flight, src/main.rs:991-993). The staged finale skips the unset->set cycle on purpose (2430-2440) and relies on a bare `set` at T+1900 (2466) that the compositor may treat as a no-op. Visible window: roughly T+700 ms until T+1900 ms; unbounded if the bare set no-ops or if the view never moved.",
+      "tag": "inferred (strongly supported by code)"
+    },
+    {
+      "id": "P2",
+      "symptom": "The desktop blur comes back during (and after) the transition, so the desktop looks blurred behind the semi-transparent, fading HVE window.",
+      "mechanism_inferred": "Two independent causes. (a) `reapply_theme_masks` is flag-gated, but the flag is cleared at T+1900 while the masks are only restored at T+2470: any reload landing in that ~570 ms tail resets the keywords to the config default (blur ON) and is NOT re-masked, while HVE is still fading in. (b) `restore_theme_masks` writes the PRE-APPLY value, which is ON by config, and the W3 restore never re-masks — so a reload after T+2470 also leaves blur ON.",
+      "tag": "inferred (strongly supported by code)"
+    },
+    {
+      "id": "P3",
+      "symptom": "The owner reports a pattern: 'we fix it, and after a while it comes back'.",
+      "mechanism_inferred": "A race cannot be fixed by tuning. Every previous round ADDED state (globals, booleans, timers, a watchdog) instead of removing the timing assumption, which widens the space of interleavings in which the race can be lost again.",
+      "tag": "inferred"
+    },
+    {
+      "id": "P4",
+      "symptom": "The fix would fail on a slower computer / a busier machine.",
+      "mechanism_inferred": "All five offsets are ABSOLUTE from T+0. A slower machine pushes the reloads of the apply burst PAST T+1900, i.e. past the moment HVE stops re-masking and stops repairing fullscreen. The owner predicted this himself before any measurement. It is the same hole as P2, triggered by latency instead of chance.",
+      "tag": "inferred"
+    }
+  ],
+
+  "verified_evidence": {
+    "live_probe": {
+      "tool": "/tmp/opencode/hve-theme-probe.py (v2, ~200 lines, Python 3, read-only)",
+      "what_it_does": "Polls `hyprctl clients -j`, `hyprctl layers -j`, `hyprctl getoption decoration:blur:enabled -j` and `hyprctl getoption animations:enabled -j` at ~10 Hz. It WAITS for the apply (first sample where blur or animations reads 0 — the mask engaging) up to 120 s, then samples 12 s more, then prints a compressed timeline anchored at the apply.",
+      "output_markers": [
+        "BAR ABOVE HVE — HVE visible but fullscreen != 2",
+        "DESKTOP BLUR ON — HVE visible and immersive but blur keyword back to 1",
+        "RELOAD MID-TRANS — a masked keyword jumped back to 1 while the masks were on, i.e. a Hyprland reload landed inside the transition"
+      ],
+      "verdict_line": "seconds with HVE visible but not immersive; seconds with blur ON; count and timestamps of reloads landing while masked",
+      "csv": "/tmp/opencode/hve-theme-probe.csv",
+      "known_limitation": "It cannot read HVE's internal transition flag; it infers the phase from compositor keywords. It can only see what the compositor actually did — which is precisely what matters."
+    },
+    "first_probe_run": {
+      "result": "Inconclusive by pacing, not by tooling: HVE was parked on `special:minimized` for 15.3 s of the 16 s window and became visible only in the last 684 ms. No apply occurred inside the window, so no blur ON->OFF edge was seen. This is why v2 waits for the apply instead of running on a fixed clock.",
+      "incidental_finding": "Even parked (fullscreen=2), the measured blur keyword was 1 and animations 1 — the compositor defaults, as expected."
+    },
+    "code_reads": "Every file:line reference in this document was read from the current tree at commit 79ca9df."
+  },
+
+  "open_unknowns": [
+    {
+      "question": "Does Hyprland 0.56.2 emit a socket2 `fullscreen` event that HVE could subscribe to?",
+      "status": "UNVERIFIED. `strings` on /usr/bin/Hyprland shows `configreloaded`, `activewindowv2`, `openwindow`, `closewindow`, `windowtitlev2`, `movewindowv2`, `openlayer`, `closelayer`, `activespecial`, `monitoradded/removed`, `create/destroy/moveworkspace` as exact literals, but NOT `fullscreen`. That is INCONCLUSIVE because compilers share storage for string literals, so an exact match can be absent even when the event exists. Do not assert it exists; if you rely on it, say how you would verify it live.",
+      "how_to_verify": "Subscribe to the socket2 stream and toggle a window's fullscreen state while watching the event names."
+    },
+    {
+      "question": "How long is the reload burst, and how is it distributed in time, on a slow machine?",
+      "status": "UNMEASURED. W5 coalesced 7 -> fewer; the distribution is unknown. This is the single most valuable missing dataset, because it decides whether 'wait for the last reload event' is sufficient or whether a quiescence/debounce on real events is needed.",
+      "how_to_verify": "Log every `configreloaded` arrival with a timestamp during one apply, on the owner's machine and, ideally, under artificial load."
+    },
+    {
+      "question": "Where does HVE's own tracing output go when it is launched by the owner?",
+      "status": "PARTIAL. The owner's instance runs from a tty with `--tray`, so its stdout is not captured to a file. `~/.cache/hve/color_watcher.log` only holds the colour watcher's output. Making the main log capturable is likely a prerequisite for cheap live diagnosis.",
+      "how_to_verify": "Check how HVE is launched at login and whether a log file can be added without touching the sealed engine modules."
+    },
+    {
+      "question": "Is there a supported way to change the bar's position/appearance and the palette WITHOUT a Hyprland reload at all?",
+      "status": "UNKNOWN. If the bar can be reconfigured live through a Noctalia IPC message, part of the reload burst may be unnecessary, which would shrink the whole problem.",
+      "how_to_verify": "Inspect Noctalia's `msg` surface and the plugin system for live reconfiguration entry points."
+    }
+  ],
+
+  "constraints_for_any_solution": [
+    "The reveal must stay (D1). Solving it by hiding the desktop is rejected by the product owner.",
+    "No new absolute timing offsets as the reliability mechanism (D2). Debouncing or quiescence on REAL events is acceptable; guessing another process's latency is not.",
+    "No test may depend on wall-clock sleeps. The decision layer must remain a pure function of observed state (the existing `reload_fs_action` is the model to follow).",
+    "The sealed engine modules must not be rewritten (see project_and_stack.engine_is_sealed).",
+    "Never copy GPL code from skwd / hyprmod / skwd-wall; translate visual ideas only, with credit.",
+    "Strict TDD, runner `cargo test`. Visual changes additionally require a headless render test whose PNG is inspected visually.",
+    "The tree must keep compiling with the full suite green, and each work unit closes before the next starts (the product owner approves each phase).",
+    "Do not regress the already-confirmed reload behaviour (W3) or the reload coalescing (W5).",
+    "The solution must behave correctly when HVE is HIDDEN, when the gallery is closed, when a second theme is applied during the first transition (generation supersede), and when the apply is a no-op because the theme is already active.",
+    "Assume the user may be on a machine 2-4x slower than the development one, or with the GPU/CPU busy with a video wallpaper."
+  ],
+
+  "questions_for_you": [
+    {
+      "id": "Q1",
+      "question": "Given that Hyprland resets runtime keyword overrides on EVERY reload, and that HVE's immersive fullscreen (mode 2) is its only lever above a layer-shell bar: how would you make this transition DETERMINISTIC and machine-independent, while the desktop is deliberately revealed for a visible interval?",
+      "why_it_matters": "This is the core ask. A patch that adds one more timer is not an answer."
+    },
+    {
+      "id": "Q2",
+      "question": "Should HVE OWN the reveal explicitly — i.e. deliberately leave immersive fullscreen for a bounded, event-driven interval and come back with a REAL unset->set cycle — instead of the reveal being an emergent side effect of (view switch + an unbounded reload burst)? What breaks if HVE owns it?",
+      "why_it_matters": "The current reveal is a side effect of several actors. Owning it would make the visible interval a first-class, inspectable state instead of a race."
+    },
+    {
+      "id": "Q3",
+      "question": "Can the need for the four masks be eliminated rather than made reliable? Options to evaluate: reducing the apply to exactly one deterministic reload; persisting the overrides so a reload cannot wipe them; changing bar/palette live through IPC without a reload; making HVE's own window opaque so blur behind it never matters; anything else.",
+      "why_it_matters": "Removing a requirement beats satisfying it. If the masks become unnecessary, P2 disappears as a class."
+    },
+    {
+      "id": "Q4",
+      "question": "How would you make this genuinely TESTABLE without wall-clock sleeps — both the pure decision layer and the live compositor outcome — such that a slower machine is covered by the test suite rather than by luck?",
+      "why_it_matters": "The owner explicitly asked for something provable, and asked whether the current approach is a hack."
+    },
+    {
+      "id": "Q5",
+      "question": "What is the minimum-risk INCREMENTAL path from the current code (commit 79ca9df) that strictly reduces the probability of recurrence, without rewriting the transition?",
+      "why_it_matters": "This is a working desktop the owner uses daily. A big-bang rewrite of the transition is a hard sell."
+    },
+    {
+      "id": "Q6",
+      "question": "What would you REFUSE to do here, and what would you delete rather than add?",
+      "why_it_matters": "The failure mode so far has been growth: each round added state. A credible answer should be willing to remove something."
+    }
+  ],
+
+  "acceptance_criteria_for_the_eventual_fix": [
+    "Applying a theme on a machine 2-4x slower than the development one (or under heavy load) still ends with HVE immersive and the blur keywords in their intended state — measured, not assumed.",
+    "The desktop reveal remains visible for its intended interval and looks the same as it does today.",
+    "The probe reports 0 s of 'HVE visible but not immersive' and 0 reloads landing while masked, or explains any residual window with a bounded, event-driven reason.",
+    "No test in the suite depends on a sleep.",
+    "The reload path confirmed by W3 and the coalescing confirmed by W5 do not regress.",
+    "Applying a second theme mid-transition still converges (generation supersede), and applying the already-active theme remains a clean no-op.",
+    "HVE hidden, gallery closed, and no-Noctalia environments behave correctly."
+  ],
+
+  "out_of_scope": [
+    "Monitors, HDR and display layout (that belongs to a different project, hyprmod).",
+    "The separate, already-designed issue of syncing Noctalia's static wallpaper to a video's POSTER frame (when the background is a video, HVE deliberately skips handing a still image to Noctalia, so Noctalia keeps its previous static image). That is a different work front with its own design; do not merge it into this question unless your proposal makes them share a mechanism.",
+    "Rewriting the sealed engine modules."
+  ],
+
+  "glossary": {
+    "immersive fullscreen": "Hyprland fullscreen mode 2. Unlike mode 1 it also covers layer-shell surfaces, which is why it is the only way HVE can sit above the Noctalia bar.",
+    "layer-shell": "The Wayland protocol desktop shells use for bars, panels and wallpapers. Such surfaces live ABOVE normal windows unless a window uses immersive fullscreen.",
+    "configreloaded": "A Hyprland IPC event emitted when the compositor finishes reloading its config. HVE already listens to it.",
+    "runtime keyword override": "A compositor setting changed live (e.g. `hyprctl keyword decoration:blur:enabled 0`). It is NOT persisted and is discarded on the next reload.",
+    "the masks": "HVE's four live keyword overrides (animations, blur, border size, shadow) set to 0 during the transition to keep the swap visually clean.",
+    "the interlude / the reveal": "The deliberate move of the compositor VIEW to an empty workspace so the desktop (wallpaper, palette, bar) is visible while the theme is applied.",
+    "no-op": "A command the compositor accepts and answers `ok` to, but that changes nothing because the state is already what was asked. A fullscreen `set` on a window the compositor already believes is fullscreen is exactly this.",
+    "unset -> set cycle": "The reliable way to force a real fullscreen state transition: leave fullscreen, then enter it again, so the compositor emits the event the bar needs.",
+    "RAII guard": "A value whose constructor acquires a state and whose destructor releases it. The codebase already uses one (`YieldGuard` in src/providers/skwd_policy.rs:133); the masks do NOT use one.",
+    "quiescence / debounce on real events": "Waiting until no further EVENTS arrive for a short interval. Unlike an absolute offset, it adapts to the machine, because it measures the machine instead of assuming it.",
+    "generation (THEME_GEN)": "A counter incremented per theme apply. Stale timers from a previous apply compare their generation and bail out."
+  }
+}
