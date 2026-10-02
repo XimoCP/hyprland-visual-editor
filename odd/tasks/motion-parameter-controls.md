@@ -125,7 +125,7 @@ New file `src/animation_preset.rs`:
 - [x] Phase 3
 - [x] Phase 4
 - [x] Phase 5
-- [ ] Phase 6
+- [x] Phase 6
 
 ## Evidence
 
@@ -217,7 +217,34 @@ New file `src/animation_preset.rs`:
   read-back itself is pure window-state, covered by the unit tests.
 - Rollback: revert this work unit; no engine/provider/Borders file was touched.
 
-## Next step
+## Phase 6 — verification
 
-Phases 4 and 5 committed (read-back on apply + always-visible curve indicator).
-Phase 6 (verification: render tests + PNG review + cross-model Tier 3) remains.
+- Cross-model verification (Tier 3), written by `deepseek-v4-flash`, verified by
+  `glm-5.3-flash`: **PASS with warnings**. All 8 claims verified; full suite
+  `1256 passed; 0 failed`.
+- Orchestrator visual verification: re-ran the motion render suite and read the
+  PNGs — the enlarged curve preview stays fixed in the header while the tune pane
+  is scrolled, and the Speed slider + Animation Style segmented row render.
+- Parity gap found by the verifier and closed: the keyboard could reach the
+  Motion save-form stop but not trigger save (Borders could). Fixed in
+  `MotionSection.tune-enter()` (local 6 → `save-animation-preset` when the name
+  is non-empty), commit `5cf786d`; suite `1257 passed; 0 failed`.
+
+### Warnings / follow-ups (not blocking)
+
+1. `PresetStore::generate_animation_lua` (`src/preset_store.rs:265`) has no
+   production caller left (only a contract test uses it) — candidate for cleanup
+   by migrating that test to `animation_preset::generate`.
+2. `parse` falls back to `speed = 0.0` for a file with no speed key anywhere;
+   `0.0` is below the slider minimum (0.5) — clamp in `sync_motion_tune_pane` if a
+   malformed file ever shows up.
+3. `slidefade` / `slidefadevert` styles map to `None` (not one of the three
+   families); a preset whose only style is one of those leaves the pane untouched.
+4. Delivery budget: `3827d98` is 527 changed lines (>400); plan a PR slice or a
+   `size:exception` before any PR.
+
+## Final state
+
+Commits on `hve2-visual-rewrite`: `ee589ea` (Phase 1), `3827d98` (Phases 2-3),
+`6cb31b6` (Phases 4-5), `5cf786d` (keyboard-save parity). Suite 1257/0. Not
+pushed. Installed binary rebuilt with the Motion work.
