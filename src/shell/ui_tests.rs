@@ -4275,7 +4275,13 @@ fn motion_style_row_has_a_fourth_slidefade_button_that_selects() {
     let slide = highlight_x("slide");
     let popin = highlight_x("popin");
     let blend = highlight_x("slidefade 20%");
-    // Evidence for the visual check: the row with the 4th family selected.
+    // The apply read-back writes the emitted Lua form ("popin 80%"); the row
+    // must normalize it back to the Popin family and keep that segment lit.
+    let popin_param = highlight_x("popin 80%");
+    // Evidence for the visual check: put the 4th family back so the snapshot
+    // matches its name.
+    win.set_anim_style("slidefade 20%".into());
+    settle_frames(80);
     let shot = win.window().take_snapshot().expect("slidefade selected snapshot");
     save_slice_png(shot, "motion_style_slidefade_selected.png");
 
@@ -4287,6 +4293,11 @@ fn motion_style_row_has_a_fourth_slidefade_button_that_selects() {
         blend > popin,
         "the 4th Slide + Fade button must own a highlight to the right of Popin: \
          popin={popin} blend={blend}"
+    );
+    assert!(
+        (popin_param - popin).abs() < 40.0,
+        "the parameterized read-back \"popin 80%\" must highlight the same Popin \
+         segment as \"popin\": popin={popin} popin_param={popin_param}"
     );
 }
 
@@ -4317,6 +4328,42 @@ fn motion_style_cycle_covers_the_fourth_family() {
         seen,
         vec!["slide", "fade", "popin", "slidefade 20%", "slide"],
         "Enter on the style stop must cycle all four families"
+    );
+}
+
+/// The always-visible Motion curve preview is fixed in the section header and
+/// must sit on the RIGHT, over the tune pane (sliders + save form), not centred
+/// across the whole section. The panel content centre splits the header band: a
+/// centred preview straddles it, a right-aligned one lives entirely to its
+/// right.
+#[test]
+fn motion_curve_preview_sits_on_the_right_of_the_header() {
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_panel_section(2); // Motion
+    settle_frames(80);
+
+    let shot = win.window().take_snapshot().expect("motion header snapshot");
+    save_slice_png(shot.clone(), "motion_curve_preview_header.png");
+
+    // bg-card (#1c2128) is the preview's fill. The panel's own 56px top header
+    // is also bg-card and sits just below the shell chrome, so the band starts
+    // below it (y >= 120) and stops above the panes (y < 315); x >= 360 keeps
+    // the rail out.
+    const BG_CARD: (u8, u8, u8) = (0x1c, 0x21, 0x28);
+    const CONTENT_CENTER: usize = 1140; // (360 + 1920) / 2
+    let left = count_color_in_box(&shot, BG_CARD, 6, 360, 120, CONTENT_CENTER, 315);
+    let right = count_color_in_box(&shot, BG_CARD, 6, CONTENT_CENTER, 120, 1920, 315);
+
+    assert!(
+        right > 10_000,
+        "the curve preview must render in the header band — got {right} bg-card pixels"
+    );
+    assert!(
+        right > left * 3,
+        "the curve preview must be right-aligned over the tune pane: \
+         left={left} right={right} bg-card pixels around the content centre"
     );
 }
 
@@ -5112,19 +5159,20 @@ fn motion_curve_preview_stays_visible_in_header_when_tune_scrolls() {
     save_slice_png(scrolled.clone(), "motion_curve_header_scrolled.png");
 
     // The fixed section-header band: below the title/subtitle, above the panes,
-    // horizontally centred so the left-aligned header text is out of frame.
+    // on the RIGHT where the preview is aligned (over the tune pane), so the
+    // left-aligned header text is out of frame.
     // Curve stroke is HveColors.accent-cyan (#38bdf8). With the preview inside
     // the ScrollView this band held at most a few slider-label pixels (the
     // enlarged 260×120 curve paints far more).
     const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
-    let header_cyan = count_color_in_box(&scrolled, ACCENT_CYAN, 24, 900, 165, 1180, 305);
+    let header_cyan = count_color_in_box(&scrolled, ACCENT_CYAN, 24, 1600, 165, 1910, 305);
     assert!(
         header_cyan > 250,
         "the curve preview must stay painted in the fixed header while the tune \
          is scrolled to its last stop — header_cyan={header_cyan}"
     );
 
-    let drift = count_buffer_diff_region(&top, &scrolled, 900, 165, 1180, 305);
+    let drift = count_buffer_diff_region(&top, &scrolled, 1600, 165, 1910, 305);
     assert!(
         drift < 200,
         "the fixed header preview must not scroll away with the tune — drift={drift}"
@@ -5133,7 +5181,9 @@ fn motion_curve_preview_stays_visible_in_header_when_tune_scrolls() {
 
 /// Phase 4 — applying a preset must read it back into the Motion pane, the way
 /// Borders syncs its tune pane from the applied file. `19_stylized2.5D.lua` is
-/// the fixture: bezier [0.4, -0.3, 0.2, 1.15], speed 4.5, style popin.
+/// the fixture: bezier [0.4, -0.3, 0.2, 1.15], speed 4.5, style popin. The pane
+/// carries the emitted Lua form (`as_lua()` = "popin 80%"); the segmented row
+/// normalizes it back to the "popin" family token for its highlight.
 #[test]
 fn motion_apply_sync_reflects_preset_curve_speed_style() {
     init_test_platform();
@@ -5154,7 +5204,7 @@ fn motion_apply_sync_reflects_preset_curve_speed_style() {
     assert_eq!(win.get_bezier_c(), 0.2);
     assert_eq!(win.get_bezier_d(), 1.15);
     assert_eq!(win.get_anim_speed(), 4.5);
-    assert_eq!(win.get_anim_style(), "popin");
+    assert_eq!(win.get_anim_style(), "popin 80%");
     assert!(
         !win.get_motion_dirty(),
         "reading back the applied preset is not a user edit and must not mark motion dirty"

@@ -87,6 +87,13 @@ component MotionTunePane inherits Rectangle {
     in-out property <string> preset-name: "";
     callback save-preset(string);
 
+    // The tune's style string may carry a parameter — the apply read-back writes
+    // `as_lua()`, so a Popin preset lands here as "popin 80%". The segmented row
+    // compares the FAMILY token instead of the raw value. Slint 1.17 strings
+    // have no prefix test, so normalize the single parameterized form the emit
+    // path produces.
+    property <string> style-family: root.anim-style == "popin 80%" ? "popin" : root.anim-style;
+
     property <length> saved-scroll-y: 0px;
     // 0..3 = bezier sliders; 4 = speed; 5 = style; 6 = save form
     property <int> local-focus: root.focused-index - root.split;
@@ -262,9 +269,9 @@ component MotionTunePane inherits Rectangle {
                             horizontal-stretch: 1;
                             height: 32px;
                             border-radius: SkwdTokens.radius-4;
-                            background: root.anim-style == style-val ? HveColors.accent-cyan : HveColors.bg-surface;
+                            background: root.style-family == style-val ? HveColors.accent-cyan : HveColors.bg-surface;
                             border-width: 1px;
-                            border-color: root.anim-style == style-val ? HveColors.accent-cyan : HveColors.border;
+                            border-color: root.style-family == style-val ? HveColors.accent-cyan : HveColors.border;
                             Text {
                                 text: style-val == "slide" ? MotionText.style-slide
                                     : (style-val == "fade" ? MotionText.style-fade
@@ -617,9 +624,10 @@ export component MotionSection inherits Rectangle {
             // Phase 5 — always-visible curve indicator. Fixed header, OUTSIDE
             // both panes' ScrollViews (same idiom as the Borders dirty
             // indicator), so it never scrolls out of sight while in Motion.
-            // Enlarged from 120×48 to 260×120, centred.
+            // Enlarged from 120×48 to 260×120, right-aligned so it sits over
+            // the tune pane (sliders + save form) rather than the section title.
             HorizontalLayout {
-                alignment: center;
+                alignment: end;
                 // Fixed height: without this the layout claims the section's
                 // spare vertical space and floats the preview mid-header.
                 vertical-stretch: 0;

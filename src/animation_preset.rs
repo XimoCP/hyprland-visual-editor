@@ -20,11 +20,15 @@ pub enum AnimationStyle {
 
 impl AnimationStyle {
     /// Canonical Lua family name.
+    ///
+    /// `Popin` carries an explicit percentage: bare `popin` is valid for the
+    /// `layers` leaf but not for windows, so the emitted form must always be
+    /// the parameterized one.
     pub fn as_lua(&self) -> &'static str {
         match self {
             AnimationStyle::Slide => "slide",
             AnimationStyle::Fade => "fade",
-            AnimationStyle::Popin => "popin",
+            AnimationStyle::Popin => "popin 80%",
             AnimationStyle::SlideFade => "slidefade 20%",
         }
     }
@@ -69,13 +73,32 @@ pub struct AnimationParams {
 /// Canonical leaves a generated user preset drives.
 const CANONICAL_LEAVES: [&str; 4] = ["windowsIn", "windowsOut", "windowsMove", "workspaces"];
 
+/// The Lua style Hyprland accepts for one leaf, given the chosen global family.
+///
+/// Hyprland validates the style PER LEAF, so one global family cannot be
+/// copied verbatim onto every leaf (this is what made Hyprland reject a
+/// popin-based user preset):
+/// - `windowsIn` / `windowsOut` accept the chosen family.
+/// - `windowsMove` accepts slide only — every one of the 19 built-in presets
+///   uses `slide` there and Hyprland rejects anything else.
+/// - `workspaces` rejects `popin`, so it falls back to `fade`.
+pub fn style_for_leaf(style: AnimationStyle, leaf: &str) -> &'static str {
+    match leaf {
+        "windowsMove" => "slide",
+        "workspaces" => match style {
+            AnimationStyle::Popin => "fade",
+            other => other.as_lua(),
+        },
+        _ => style.as_lua(),
+    }
+}
+
 /// Emit the user preset in the built-in schema the reader understands.
 ///
 /// Floats use Rust's shortest round-tripping `Display`, so
 /// `parse(generate(p)) == Some(p)` holds exactly.
 pub fn generate(name: &str, p: &AnimationParams) -> String {
     let [x1, y1, x2, y2] = p.bezier;
-    let style = p.style.as_lua();
     let mut out = String::new();
     out.push_str(&format!("-- @Title: {name}\n"));
     out.push_str("-- @Source: user\n");
@@ -89,6 +112,7 @@ pub fn generate(name: &str, p: &AnimationParams) -> String {
         "hl.animation({ leaf = \"global\", enabled = true, speed = 1, bezier = \"default\" })\n\n",
     );
     for leaf in CANONICAL_LEAVES {
+        let style = style_for_leaf(p.style, leaf);
         out.push_str(&format!(
             "hl.animation({{ leaf = \"{leaf}\", enabled = true, speed = {}, bezier = \"hve_user\", style = \"{style}\" }})\n",
             p.speed
@@ -417,6 +441,120 @@ mod tests {
         assert_eq!(parse(""), None);
     }
 
+    /// Extract `(leaf, style)` pairs from generated Lua, in file order.
+    fn emitted_leaf_styles(lua: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for line in lua.lines() {
+            let leaf = match quoted_after(line, "leaf") {
+                Some(v) => v,
+                None => continue,
+            };
+            if let Some(style) = quoted_after(line, "style") {
+                out.push((leaf, style));
+            }
+        }
+        out
+    }
+
+    /// Read the quoted value assigned to `key` on a single Lua line.
+    fn quoted_after(line: &str, key: &str) -> Option<String> {
+        let key_pos = line.find(key)?;
+        let after = &line[key_pos + key.len()..];
+        let eq = after.find('=')?;
+        let rest = after[eq + 1..].trim_start();
+        if !rest.starts_with('"') {
+            return None;
+        }
+        let body = &rest[1..];
+        let end = body.find('"')?;
+        Some(body[..end].to_string())
+    }
+
+    /// Styles Hyprland accepts for a generated leaf. Derived from the 19 real
+    /// presets in `assets/animations/`: `windowsMove` is slide-only, and
+    /// `workspaces` never uses popin.
+    fn allowed_styles_for(leaf: &str) -> &'static [&'static str] {
+        match leaf {
+            "windowsIn" | "windowsOut" => &["slide", "fade", "popin 80%", "slidefade 20%"],
+            "windowsMove" => &["slide"],
+            "workspaces" => &["slide", "fade", "slidefade 20%"],
+            other => panic!("unexpected leaf {other}"),
+        }
+    }
+
+    #[test]
+    fn generate_emits_a_style_valid_for_each_leaf() {
+        for style in [
+            AnimationStyle::Slide,
+            AnimationStyle::Fade,
+            AnimationStyle::Popin,
+            AnimationStyle::SlideFade,
+        ] {
+            let p = AnimationParams {
+                bezier: [0.4, -0.3, 0.2, 1.15],
+                speed: 2.0,
+                style,
+            };
+            let lua = generate("Leaf Map", &p);
+            let emitted = emitted_leaf_styles(&lua);
+            assert_eq!(
+                emitted.len(),
+                4,
+                "four canonical leaves must carry a style (style {style:?})\n{lua}"
+            );
+            for (leaf, value) in &emitted {
+                assert!(
+                    allowed_styles_for(leaf).contains(&value.as_str()),
+                    "style {value:?} is invalid for leaf {leaf:?} (style {style:?})\n{lua}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn popin_never_reaches_workspaces_or_windows_move() {
+        let p = AnimationParams {
+            bezier: [0.4, -0.3, 0.2, 1.15],
+            speed: 2.0,
+            style: AnimationStyle::Popin,
+        };
+        let lua = generate("Popin Map", &p);
+        for (leaf, value) in emitted_leaf_styles(&lua) {
+            if leaf == "workspaces" || leaf == "windowsMove" {
+                assert!(
+                    !value.starts_with("popin"),
+                    "popin landed on {leaf}: {value:?}\n{lua}"
+                );
+            }
+        }
+        assert!(
+            lua.contains(
+                r#"leaf = "workspaces", enabled = true, speed = 2, bezier = "hve_user", style = "fade""#
+            ),
+            "workspaces must fall back to fade\n{lua}"
+        );
+        assert!(
+            lua.contains(
+                r#"leaf = "windowsMove", enabled = true, speed = 2, bezier = "hve_user", style = "slide""#
+            ),
+            "windowsMove must stay slide\n{lua}"
+        );
+        assert!(
+            lua.contains(
+                r#"leaf = "windowsIn", enabled = true, speed = 2, bezier = "hve_user", style = "popin 80%""#
+            ),
+            "windowsIn must keep the chosen popin\n{lua}"
+        );
+    }
+
+    #[test]
+    fn popin_lua_style_carries_a_percentage() {
+        assert_eq!(AnimationStyle::Popin.as_lua(), "popin 80%");
+        assert_eq!(AnimationStyle::SlideFade.as_lua(), "slidefade 20%");
+        assert_eq!(AnimationStyle::Slide.as_lua(), "slide");
+        assert_eq!(AnimationStyle::Fade.as_lua(), "fade");
+    }
+
     #[test]
     fn generate_emits_canonical_schema() {
         let p = AnimationParams {
@@ -436,12 +574,19 @@ mod tests {
         assert!(lua.contains(
             r#"hl.animation({ leaf = "global", enabled = true, speed = 1, bezier = "default" })"#
         ));
-        for leaf in ["windowsIn", "windowsOut", "windowsMove", "workspaces"] {
+        // Per-leaf styles: windowsIn/Out keep the chosen popin (with its
+        // percentage), windowsMove stays slide, workspaces falls back to fade.
+        for (leaf, expected) in [
+            ("windowsIn", "popin 80%"),
+            ("windowsOut", "popin 80%"),
+            ("windowsMove", "slide"),
+            ("workspaces", "fade"),
+        ] {
             assert!(
                 lua.contains(&format!(
-                    r#"leaf = "{leaf}", enabled = true, speed = 4.5, bezier = "hve_user", style = "popin""#
+                    r#"leaf = "{leaf}", enabled = true, speed = 4.5, bezier = "hve_user", style = "{expected}""#
                 )),
-                "missing leaf {leaf}\n{lua}"
+                "missing leaf {leaf} with style {expected}\n{lua}"
             );
         }
     }
