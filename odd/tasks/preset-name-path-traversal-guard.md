@@ -125,6 +125,34 @@ test: `scripts_contract::symlinked_preset_inside_the_dir_takes_the_safe_fallback
 - **GREEN** (`cargo test`, full): `1237 passed; 0 failed; 0 ignored; 0 measured`.
 - **Commit**: `fix(security): contain the resolved preset path in every branch`.
 
+## Cross-model verification (Tier 3 — path handling)
+
+Written by `deepseek-v4-flash`; verified by `glm-5.3-flash` (different model).
+
+- `dd9e494` — **PASS with warnings**. Reproduced the pre-fix leak live; confirmed
+  the guard is reached on both apply paths and the Rust mirror covers every
+  mutation entry point; full suite 1236/0. Warning: the stem + in-dir symlink
+  bypass (closed in `0fefb27`).
+- `0fefb27` — **PASS**. Both branches now containment-check the exact candidate
+  path; the symlink bypass no longer leaks; `19_stylized2.5D.lua` and normal
+  presets still resolve; full suite 1237/0.
+
+## Install
+
+- `cargo build --release` → `target/release/hve`.
+- `~/.local/bin/hve` updated (34825248 bytes, 2026-10-02 05:04).
+- `~/.local/bin/assets/scripts/` synced from the repo; installed `utils.sh`
+  identical to the fixed source.
+- `hve --version` → `hve 1.0.0`.
+
+## Follow-ups (not part of this security fix)
+
+- Functional (pre-existing): a dotted user-preset stem applied by bare stem via
+  the shell path falls back (the UI passes stems for user cards). Not introduced
+  here; tracked separately.
+- TOCTOU between the containment check and `cat` needs same-user write access to
+  the preset dir; no privilege escalation.
+
 ## Next step
 
-Delegate T1-T5 to a single bounded writer on branch `hve2-visual-rewrite`.
+Closed. Security hole fixed, cross-model verified, binary and scripts installed.
