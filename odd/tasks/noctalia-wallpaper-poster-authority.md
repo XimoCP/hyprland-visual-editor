@@ -81,11 +81,14 @@ At apply time, classify the background and set Noctalia accordingly:
 
 ## Progress
 
-- [ ] Phase 1
-- [ ] Phase 2
-- [ ] Phase 3
-- [ ] Phase 4
+- [x] Phase 1 — poster hand-off for the video case (commit `f8a1180`).
+- [x] Phase 2 — neutralize the rotation (commit `f8a1180`).
+- [ ] Phase 3 — apply-time ownership query (optional; the theme records cover the reported cases).
+- [x] Phase 4 — verification.
 
-## Next step
+## Live confirmation (2026-10-03)
 
-Implement Phase 1 + 2, then the keeper live-verifies before Phase 3.
+The keeper restarted HVE from the installed binary and applied the video theme
+("Animation"): Noctalia now shows a frame of the video and its rotation is
+neutralized. Front closed. (The earlier "didn't work" was a stale HVE process
+started before `f8a1180`.)
