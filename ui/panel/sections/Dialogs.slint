@@ -1,0 +1,137 @@
+// HVE 2 — Shared section dialogs (Save / Borders / Motion).
+//
+// The floating confirm and rename dialogs used to live inline in
+// SaveSection. They are extracted here so the Borders and Motion preset
+// lists reuse the SAME markup instead of duplicating it.
+//
+// Old-style look (master:ui/modules.slint 1:1): 300px card on a dim overlay.
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { LineEdit } from "std-widgets.slint";
+import { HveColors } from "../../theme.slint";
+
+// Confirm dialog: title + message + cancel/confirm. Three instances in the
+// Save section (delete red, refresh purple, overwrite pink) plus the preset
+// delete confirmations.
+export component ConfirmDialog inherits Rectangle {
+    in property <string> title;
+    in property <color> title-color;
+    in property <string> message;
+    in property <string> cancel-text;
+    in property <string> confirm-text;
+    in property <color> confirm-color;
+    callback confirm();
+    callback cancel();
+
+    width: 100%;
+    height: 100%;
+    background: #00000060;
+
+    Rectangle {
+        width: 300px;
+        height: 160px;
+        border-radius: 12px;
+        background: HveColors.bg-surface;
+        border-width: 1px;
+        border-color: HveColors.border;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: #00000060;
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: root.title; color: root.title-color; font-size: 15px; font-weight: 700; }
+            Text { text: root.message; color: HveColors.text-muted; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Rectangle {
+                    width: 80px; height: 30px; border-radius: 6px;
+                    background: cancel-cd.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                    border-width: 1px; border-color: HveColors.border;
+                    Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    cancel-cd := TouchArea { width: 100%; height: 100%; clicked => { root.cancel(); } }
+                }
+                Rectangle {
+                    width: 80px; height: 30px; border-radius: 6px;
+                    background: apply-cd.has-hover ? root.confirm-color : root.confirm-color.transparentize(0.2);
+                    Text { text: root.confirm-text; color: HveColors.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    apply-cd := TouchArea { width: 100%; height: 100%; clicked => { root.confirm(); } }
+                }
+            }
+        }
+    }
+}
+
+// Rename dialog: title + LineEdit + error + cancel/confirm. Extracted from
+// the inline block that used to sit in SaveSection (300x180, master 1:1).
+// The owner decides the guard (non-empty, changed) inside its `confirm`
+// handler, so the same component serves themes and both preset kinds.
+export component RenameDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> placeholder;
+    in property <string> cancel-text;
+    in property <string> confirm-text;
+    in property <color> confirm-color;
+    in property <string> error-text;
+    in-out property <string> value;
+    callback confirm(string);
+    callback cancel();
+
+    width: 100%;
+    height: 100%;
+    background: #00000060;
+
+    Rectangle {
+        width: 300px;
+        height: 180px;
+        border-radius: 12px;
+        background: HveColors.bg-surface;
+        border-width: 1px;
+        border-color: HveColors.border;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: #00000060;
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: root.title; color: HveColors.text; font-size: 15px; font-weight: 700; }
+            LineEdit {
+                height: 32px;
+                placeholder-text: root.placeholder;
+                font-size: 13px;
+                text <=> root.value;
+            }
+            if (root.error-text != "") : Text {
+                text: root.error-text;
+                color: HveColors.accent-red;
+                font-size: 11px;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Rectangle {
+                    width: 80px; height: 30px; border-radius: 6px;
+                    background: cancel-rn.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                    border-width: 1px; border-color: HveColors.border;
+                    Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    cancel-rn := TouchArea { width: 100%; height: 100%; clicked => { root.cancel(); } }
+                }
+                Rectangle {
+                    width: 80px; height: 30px; border-radius: 6px;
+                    background: apply-rn.has-hover ? root.confirm-color.transparentize(0.2) : root.confirm-color;
+                    Text { text: root.confirm-text; color: HveColors.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    apply-rn := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.confirm(root.value); }
+                    }
+                }
+            }
+        }
+    }
+}

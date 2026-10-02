@@ -18,61 +18,7 @@ import { LineEdit, HorizontalBox, VerticalBox, ScrollView } from "std-widgets.sl
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { SavedThemeCard } from "SavedThemeCard.slint";
-
-// Old-style confirm dialog (master:ui/modules.slint 1:1 look — 300px card on
-// dim overlay, title + message + cancel/confirm). One component, three
-// instances (delete red, refresh purple, overwrite pink).
-component ConfirmDialog inherits Rectangle {
-    in property <string> title;
-    in property <color> title-color;
-    in property <string> message;
-    in property <string> cancel-text;
-    in property <string> confirm-text;
-    in property <color> confirm-color;
-    callback confirm();
-    callback cancel();
-
-    width: 100%;
-    height: 100%;
-    background: #00000060;
-
-    Rectangle {
-        width: 300px;
-        height: 160px;
-        border-radius: 12px;
-        background: HveColors.bg-surface;
-        border-width: 1px;
-        border-color: HveColors.border;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        drop-shadow-blur: 20px;
-        drop-shadow-color: #00000060;
-
-        VerticalLayout {
-            padding: 20px;
-            spacing: 12px;
-            Text { text: root.title; color: root.title-color; font-size: 15px; font-weight: 700; }
-            Text { text: root.message; color: HveColors.text-muted; font-size: 12px; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 8px;
-                alignment: end;
-                Rectangle {
-                    width: 80px; height: 30px; border-radius: 6px;
-                    background: cancel-cd.has-hover ? HveColors.bg-hover : HveColors.bg-card;
-                    border-width: 1px; border-color: HveColors.border;
-                    Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                    cancel-cd := TouchArea { width: 100%; height: 100%; clicked => { root.cancel(); } }
-                }
-                Rectangle {
-                    width: 80px; height: 30px; border-radius: 6px;
-                    background: apply-cd.has-hover ? root.confirm-color : root.confirm-color.transparentize(0.2);
-                    Text { text: root.confirm-text; color: HveColors.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    apply-cd := TouchArea { width: 100%; height: 100%; clicked => { root.confirm(); } }
-                }
-            }
-        }
-    }
-}
+import { ConfirmDialog, RenameDialog } from "Dialogs.slint";
 
 // ─── Form pane: save-current-look input. Own ScrollView. ───
 component SaveFormPane inherits Rectangle {
@@ -498,67 +444,22 @@ export component SaveSection inherits Rectangle {
         }
     }
 
-    // ── Rename dialog (old-style 300x180, master 1:1) ──
-    if root.dialog-mode == "rename" : Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #00000060;
-
-        Rectangle {
-            width: 300px;
-            height: 180px;
-            border-radius: 12px;
-            background: HveColors.bg-surface;
-            border-width: 1px;
-            border-color: HveColors.border;
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            drop-shadow-blur: 20px;
-            drop-shadow-color: #00000060;
-
-            VerticalLayout {
-                padding: 20px;
-                spacing: 12px;
-                Text { text: root.rename-title; color: HveColors.text; font-size: 15px; font-weight: 700; }
-                LineEdit {
-                    height: 32px;
-                    placeholder-text: root.placeholder;
-                    font-size: 13px;
-                    text <=> root.rename-input;
-                }
-                if (root.error-text != "") : Text {
-                    text: root.error-text;
-                    color: HveColors.accent-red;
-                    font-size: 11px;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    Rectangle {
-                        width: 80px; height: 30px; border-radius: 6px;
-                        background: cancel-rn.has-hover ? HveColors.bg-hover : HveColors.bg-card;
-                        border-width: 1px; border-color: HveColors.border;
-                        Text { text: root.cancel-text; color: HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                        cancel-rn := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-trace("save-dialog-cancelled"); root.dialog-mode = ""; } }
-                    }
-                    Rectangle {
-                        width: 80px; height: 30px; border-radius: 6px;
-                        background: apply-rn.has-hover ? HveColors.accent-pink.transparentize(0.2) : HveColors.accent-pink;
-                        Text { text: root.rename-text; color: HveColors.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                        apply-rn := TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => {
-                                if (root.rename-input != "" && root.rename-input != root.dialog-target) {
-                                    root.rename-theme(root.dialog-target, root.rename-input);
-                                }
-                                root.dialog-mode = "";
-                            }
-                        }
-                    }
-                }
+    // ── Rename dialog (shared 300x180) ──
+    if root.dialog-mode == "rename" : RenameDialog {
+        title: root.rename-title;
+        placeholder: root.placeholder;
+        cancel-text: root.cancel-text;
+        confirm-text: root.rename-text;
+        confirm-color: HveColors.accent-pink;
+        error-text: root.error-text;
+        value <=> root.rename-input;
+        confirm(value) => {
+            if (value != "" && value != root.dialog-target) {
+                root.rename-theme(root.dialog-target, value);
             }
+            root.dialog-mode = "";
         }
+        cancel => { root.mouse-trace("save-dialog-cancelled"); root.dialog-mode = ""; }
     }
 
     // ── Delete / refresh / overwrite confirms (old-style 300x160) ──
