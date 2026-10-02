@@ -267,9 +267,9 @@ component SaveListPane inherits Rectangle {
                     open-rename(theme-name) => { root.open-rename(theme-name); }
                     open-delete(theme-name) => { root.open-delete(theme-name); }
                     open-refresh(theme-name) => { root.open-refresh(theme-name); }
-                    // Intentionally unwired: the card body is trace-only and never
-                    // emits focus-requested, so the mouse cannot steal the
-                    // keyboard's focused-index.
+                    // Keyboard == mouse (D8): both the card body and its apply
+                    // switch emit focus-requested, so a mouse click converges
+                    // the keyboard cursor on that card.
                     focus-requested(idx) => { root.focus-requested(idx); }
                     mouse-trace(reason) => { root.mouse-trace(reason); }
                 }

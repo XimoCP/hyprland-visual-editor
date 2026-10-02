@@ -48,8 +48,8 @@ export component SavedPresetCard inherits Rectangle {
     visible: true;
 
     // Body click: move the keyboard cursor to this card (keyboard == mouse),
-    // then re-seed the panel-kbd scope. The switch keeps being the apply
-    // control; the body only converges focus.
+    // then re-seed the panel-kbd scope. The switch stays the apply control and
+    // converges the cursor the same way (see switch-ta below).
     card-ta := TouchArea {
         width: 100%;
         height: 100%;
@@ -172,6 +172,7 @@ export component SavedPresetCard inherits Rectangle {
                         mouse-cursor: pointer;
                         clicked => {
                             root.apply-preset(root.index, root.apply-value);
+                            root.focus-requested(root.index);
                             root.refocus();
                         }
                     }

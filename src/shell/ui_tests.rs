@@ -6392,6 +6392,217 @@ fn filters_card_click_moves_keyboard_cursor() {
     );
 }
 
+/// Save: the ▶ apply switch is a control of its own, not the card body, so it
+/// must converge the keyboard cursor too (same D8 contract the body already
+/// honours). Click the SECOND card's apply switch: the switch applies index 1
+/// AND the cursor must move to 1, so Enter re-applies the same theme.
+#[test]
+fn save_apply_switch_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-01-01"),
+        SharedString::from("2026-01-02"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false, false])));
+    win.set_panel_section(0);
+    win.set_panel_kbd_preview_index(-1);
+    win.set_panel_save_focused_index(-1);
+
+    let w = win.as_weak();
+    win.on_panel_save_focus_requested(move |idx| {
+        if let Some(w) = w.upgrade() {
+            w.set_panel_save_focused_index(idx);
+        }
+    });
+    let applied: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_saved_theme({
+        let applied = applied.clone();
+        move |idx| applied.borrow_mut().push(idx)
+    });
+    settle_frames(30);
+
+    let shot = win.window().take_snapshot().expect("save cards snapshot");
+    let first = first_color_band_bbox(&shot, BG_CARD, 8, 170, 210, 1040, 1080, 300, None)
+        .expect("the Save list must paint its first card");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, first.3 + 1, 1040, 1080, 300, None)
+        .expect("the Save list must paint its second card");
+    // The inactive apply switch is the only `bg-surface` square inside the
+    // card (the other three actions are purple/amber/red), so its band pins
+    // the exact click target instead of guessing the trailing-row offset.
+    let switch = first_color_band_bbox(
+        &shot,
+        BG_SURFACE,
+        4,
+        second.0,
+        second.1,
+        second.2 + 1,
+        second.3 + 1,
+        20,
+        None,
+    )
+    .expect("the Save card must paint its apply switch (bg-surface)");
+    let switch_x = ((switch.0 + switch.2) / 2) as f32;
+    let switch_y = ((switch.1 + switch.3) / 2) as f32;
+
+    dispatch_pointer(&win, switch_x, switch_y, PointerEventButton::Left);
+    settle_frames(30);
+
+    // Landing on the switch (not the body) is proven by the switch's own
+    // apply firing — the body never applies on its own.
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[1],
+        "the apply switch click must apply the clicked theme (index 1)"
+    );
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        1,
+        "the apply switch click must move the keyboard cursor to index 1"
+    );
+
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[1, 1],
+        "Enter after the switch click must re-apply the same theme (index 1)"
+    );
+}
+
+/// Borders: a built-in card's only action is the 40x22 apply pill, and it must
+/// converge the keyboard cursor too (D8), not just the card body. Click the
+/// second card's pill, then Enter must apply the SAME preset.
+#[test]
+fn borders_apply_switch_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(1);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(30);
+
+    // Card 0 owns the keyboard cursor by default, so the first bg-card band in
+    // the list pane is the unfocused SECOND card.
+    let shot = win.window().take_snapshot().expect("borders cards snapshot");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
+        .expect("the Borders list must paint its unfocused card");
+    // The built-in card's only action is the 40x22 apply pill trailing the
+    // text, so its centre sits 34px left of the card's right edge.
+    let switch_x = second.2 as f32 - 34.0;
+    let switch_y = ((second.1 + second.3) / 2) as f32;
+
+    let applied: Rc<RefCell<Vec<(i32, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_border({
+        let applied = applied.clone();
+        move |idx, file| applied.borrow_mut().push((idx, file.to_string()))
+    });
+
+    dispatch_pointer(&win, switch_x, switch_y, PointerEventButton::Left);
+    settle_frames(30);
+    assert_eq!(
+        applied.borrow().last().map(|(i, _)| *i),
+        Some(1),
+        "the apply pill click must apply the clicked preset: {:?}",
+        applied.borrow()
+    );
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().last().map(|(i, _)| *i),
+        Some(1),
+        "after the pill click, Enter must apply the same preset — the cursor must have converged: {:?}",
+        applied.borrow()
+    );
+}
+
+/// Motion: same contract as Borders — the apply pill click must converge the
+/// keyboard cursor, so Enter re-applies the clicked preset.
+#[test]
+fn motion_apply_switch_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(2);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(30);
+
+    let shot = win.window().take_snapshot().expect("motion cards snapshot");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
+        .expect("the Motion list must paint its unfocused card");
+    let switch_x = second.2 as f32 - 34.0;
+    let switch_y = ((second.1 + second.3) / 2) as f32;
+
+    let applied: Rc<RefCell<Vec<(i32, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_animation({
+        let applied = applied.clone();
+        move |idx, file| applied.borrow_mut().push((idx, file.to_string()))
+    });
+
+    dispatch_pointer(&win, switch_x, switch_y, PointerEventButton::Left);
+    settle_frames(30);
+    assert_eq!(
+        applied.borrow().last().map(|(i, _)| *i),
+        Some(1),
+        "the apply pill click must apply the clicked preset: {:?}",
+        applied.borrow()
+    );
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().last().map(|(i, _)| *i),
+        Some(1),
+        "after the pill click, Enter must apply the same preset — the cursor must have converged: {:?}",
+        applied.borrow()
+    );
+}
+
 /// Visual proof for the keeper's report: after a card body click the keyboard
 /// focus ring (icy #8fd8ff) paints on the CLICKED card, not the old cursor.
 /// Renders before/after and pins the ring with a colour count; the PNG is the
@@ -6752,6 +6963,9 @@ const BORDER_INK: (u8, u8, u8) = (48, 54, 61);
 /// every block in the tune column paints its surface with this one colour, so a
 /// full-width band of it is a row and its height is that row's interior.
 const BG_CARD: (u8, u8, u8) = (28, 33, 40);
+/// The raised surface (`HveColors.bg-surface`, #161b22), the inactive apply
+/// switch's fill; unique inside a Save card and used to pin the switch target.
+const BG_SURFACE: (u8, u8, u8) = (22, 27, 34);
 
 /// The 11-entry resolved-colour model the tune pane indexes into: 0..7 are the
 /// gradient slots, 8 the inactive colour, 9 the glow colour, 10 the inactive

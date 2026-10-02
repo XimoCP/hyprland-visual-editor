@@ -158,6 +158,7 @@ export component SavedThemeCard inherits Rectangle {
                         clicked => {
                             if (!(root.is-busy || root.apply-in-progress)) {
                                 root.apply-theme(root.theme-name);
+                                root.focus-requested(root.index);
                                 root.refocus();
                             }
                         }
