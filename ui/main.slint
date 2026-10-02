@@ -2,6 +2,7 @@ import { HveColors } from "./theme.slint";
 import { CloseButton, AboutItem } from "./components.slint";
 import { ShellRoot, SkwdTokens } from "./shell.slint";
 import { BordersText } from "panel/sections/borders_text.slint";
+import { MotionText } from "panel/sections/motion_text.slint";
 import { PanelText } from "panel/panel_text.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
@@ -16,6 +17,9 @@ export { BordersText }
 // And the shared panel chrome (nav rail + header hint): Rust fills it from the
 // same map through `panel_i18n::apply_panel_chrome`.
 export { PanelText }
+// Motion's new tune controls (speed + style): same channel, same map, filled by
+// `panel_i18n::apply_motion`.
+export { MotionText }
 
 
 // ─── MAIN WINDOW ────────────────────────────────────────────────────
@@ -323,6 +327,11 @@ export component MainWindow inherits Window {
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
+    // Motion tune — global model (Phase 2): one speed, one style family, and a
+    // Motion-owned dirty flag (distinct from Borders' `tune-dirty`).
+    in-out property <float> anim-speed: 2.0;
+    in-out property <string> anim-style: "slide";
+    in-out property <bool> motion-dirty: false;
     callback panel-back();
     callback panel-section-selected(int);
     callback panel-mouse-trace(string);
@@ -526,6 +535,9 @@ export component MainWindow inherits Window {
         panel-bezier-b <=> root.bezier-b;
         panel-bezier-c <=> root.bezier-c;
         panel-bezier-d <=> root.bezier-d;
+        panel-anim-speed <=> root.anim-speed;
+        panel-anim-style <=> root.anim-style;
+        panel-motion-dirty <=> root.motion-dirty;
         panel-shader-titles: root.shader-titles;
         panel-shader-descs: root.shader-descs;
         panel-shader-tags: root.shader-tags;

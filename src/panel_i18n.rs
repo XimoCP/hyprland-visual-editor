@@ -172,6 +172,25 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
     t.set_picker_hint_change(tr.tr_shared("borders.picker.hint_change", "   ·   ←→ change"));
 }
 
+/// Fill every `MotionText` string from `tr` for the selected language.
+///
+/// Only the NEW Motion tune controls (Phase 2) live in this global: the speed
+/// and style labels and the three style-family button labels. The existing
+/// hardcoded Motion chrome is out of scope and untouched. English is the
+/// fallback, exactly as `apply_borders` does.
+pub fn apply_motion(window: &MainWindow, tr: &Tr) {
+    let t = crate::MotionText::get(window);
+
+    t.set_speed_label(tr.tr_shared("animations.controls.speed_label", "Speed"));
+    t.set_style_label(tr.tr_shared(
+        "animations.controls.style_label",
+        "Animation Style",
+    ));
+    t.set_style_slide(tr.tr_shared("animations.controls.style_slide", "Slide"));
+    t.set_style_fade(tr.tr_shared("animations.controls.style_fade", "Fade"));
+    t.set_style_popin(tr.tr_shared("animations.controls.style_popin", "Popin"));
+}
+
 /// Fill every `PanelText` string from `tr` for the selected language.
 ///
 /// The panel chrome — the left nav rail and the header hint — is shared by all

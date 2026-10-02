@@ -70,6 +70,13 @@
   "animations": {
     "header_title": "Motion Library",
     "header_subtitle": "Select the animation style for your desktop",
+    "controls": {
+      "speed_label": "Speed",
+      "style_label": "Animation Style",
+      "style_slide": "Slide",
+      "style_fade": "Fade",
+      "style_popin": "Popin"
+    },
     "rename_dialog": {
       "title": "Rename animation preset",
       "placeholder": "Animation preset name…"

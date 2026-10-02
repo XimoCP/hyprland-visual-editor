@@ -231,6 +231,10 @@ export component ShellRoot inherits Rectangle {
     in-out property <float> panel-bezier-b: 0.1;
     in-out property <float> panel-bezier-c: 0.25;
     in-out property <float> panel-bezier-d: 1.0;
+    // Motion tune — global model (Phase 2).
+    in-out property <float> panel-anim-speed: 2.0;
+    in-out property <string> panel-anim-style: "slide";
+    in-out property <bool> panel-motion-dirty: false;
     // Filters pick layer (R5) — shader cards from scan("shaders")
     in property <[string]> panel-shader-titles;
     in property <[string]> panel-shader-descs;
@@ -668,6 +672,9 @@ export component ShellRoot inherits Rectangle {
                     bezier-b <=> root.panel-bezier-b;
                     bezier-c <=> root.panel-bezier-c;
                     bezier-d <=> root.panel-bezier-d;
+                    anim-speed <=> root.panel-anim-speed;
+                    anim-style <=> root.panel-anim-style;
+                    motion-dirty <=> root.panel-motion-dirty;
                     shader-titles: root.panel-shader-titles;
                     shader-descs: root.panel-shader-descs;
                     shader-tags: root.panel-shader-tags;

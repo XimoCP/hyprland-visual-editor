@@ -364,6 +364,25 @@ fn tune_params_from_window(w: &crate::MainWindow, size: i32) -> crate::border_pr
     }
 }
 
+/// Build `AnimationParams` from the window's current Motion tune state
+/// (Phase 2/3 global model): the four bezier floats, the speed slider and the
+/// style family. `AnimationStyle::from_lua` matches the family prefix and
+/// falls back to `Slide` for an unknown value, so the save path can never write
+/// a style the parser would reject.
+fn animation_params_from_window(w: &crate::MainWindow) -> crate::animation_preset::AnimationParams {
+    use crate::animation_preset::{AnimationParams, AnimationStyle};
+    AnimationParams {
+        bezier: [
+            w.get_bezier_a(),
+            w.get_bezier_b(),
+            w.get_bezier_c(),
+            w.get_bezier_d(),
+        ],
+        speed: w.get_anim_speed(),
+        style: AnimationStyle::from_lua(&w.get_anim_style()).unwrap_or(AnimationStyle::Slide),
+    }
+}
+
 /// Shown in the tune pane when an edit is refused because no border preset is
 /// active. The pane is fully operable in that state (every control moves, the
 /// dirty dot lights), so a silent no-op is indistinguishable from a broken
@@ -2511,6 +2530,8 @@ fn main() -> Result<(), slint::PlatformError> {
     // The shared chrome — the left nav rail and the panel header hint — is not
     // Borders-specific, so it lives in its own global and gets its own pass.
     panel_i18n::apply_panel_chrome(&window, &tr);
+    // Motion's new tune controls (speed + style) use the same channel.
+    panel_i18n::apply_motion(&window, &tr);
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
@@ -4677,18 +4698,17 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // ── Animation preset CRUD ──
     {
+        let state_c = state.clone();
         let weak = window.as_weak();
         window.on_panel_save_animation_preset(move |name| {
             let name_str = name.to_string();
             tracing::debug!("[motion][preset] save name={}", name_str);
             let result = if let Some(w) = weak.upgrade() {
-                let a = w.get_bezier_a() as f64;
-                let b = w.get_bezier_b() as f64;
-                let c = w.get_bezier_c() as f64;
-                let d = w.get_bezier_d() as f64;
-                let content = crate::preset_store::PresetStore::generate_animation_lua(
-                    &name_str, a, b, c, d,
-                );
+                // Phase 3: build the COMPLETE user preset from the global model
+                // (curve + speed + style), write it, refresh the list, clear the
+                // dirty flag and re-apply — mirroring Borders.
+                let params = animation_params_from_window(&w);
+                let content = crate::animation_preset::generate(&name_str, &params);
                 let store = crate::preset_store::PresetStore::new("animations");
                 let r = store.save(&name_str, &content);
                 if r.is_ok() {
@@ -4702,6 +4722,19 @@ fn main() -> Result<(), slint::PlatformError> {
                     w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
                     w.set_animation_save_error(String::new().into());
                     w.set_animation_preset_name(String::new().into());
+                    // The working state is now the saved preset.
+                    w.set_motion_dirty(false);
+                    // Re-apply the just-saved preset so the desktop matches it.
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Err(e) = st.engine().apply_animation(&name_str) {
+                        tracing::error!("[motion][preset] re-apply after save failed: {}", e);
+                        drop(st);
+                        if let Some(w) = weak.upgrade() {
+                            w.set_animation_save_error(slint::SharedString::from(
+                                &format!("Animation apply failed: {}", e),
+                            ));
+                        }
+                    }
                 }
                 r
             } else {

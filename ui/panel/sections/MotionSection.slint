@@ -1,9 +1,10 @@
 // HVE 2 — MotionSection (tune + preset list, two-pane).
 //
 // Two INDEPENDENT scroll regions:
-//   • Tune pane  — CurvePreview + 4 bezier sliders a,b,c,d (x1,y1,x2,y2)
-//     → 80ms debounce → apply_bezier, plus save form (LineEdit + Save button)
-//     at the bottom for saving current curve as a user preset.
+//   • Tune pane  — CurvePreview + 4 bezier sliders a,b,c,d (x1,y1,x2,y2),
+//     then the global-model SPEED slider and STYLE family segmented row, plus
+//     the save form (LineEdit + Save button) at the bottom for saving the
+//     current curve/speed/style as a user preset.
 //   • List pane  — Built-in presets (apply only) + user presets (apply,
 //     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
 // Wide section → panes side by side; narrow → stacked. Each pane owns its own
@@ -21,6 +22,7 @@ import { HveColors } from "../../theme.slint";
 import { HveKnobSlider } from "../../components.slint";
 import { CurvePreview } from "../CurvePreview.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
+import { MotionText } from "motion_text.slint";
 import { ConfirmDialog, RenameDialog } from "Dialogs.slint";
 
 component BezierSlider inherits Rectangle {
@@ -70,6 +72,10 @@ component MotionTunePane inherits Rectangle {
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
+    // Phase 2 — global model: one speed, one style family, one dirty flag.
+    in-out property <float> anim-speed: 2.0;
+    in-out property <string> anim-style: "slide";
+    in-out property <bool> motion-dirty: false;
     in property <int> focused-index: 0;
     in property <int> split: 0;
     in property <bool> has-focus: false;
@@ -81,15 +87,15 @@ component MotionTunePane inherits Rectangle {
     callback save-preset(string);
 
     property <length> saved-scroll-y: 0px;
-    // 0..3 = bezier sliders; 4 = save form
+    // 0..3 = bezier sliders; 4 = speed; 5 = style; 6 = save form
     property <int> local-focus: root.focused-index - root.split;
     background: transparent;
     clip: true;
 
     ScrollView {
-        property <length> focus-y: local-focus <= 3
-            ? 70px + root.local-focus * 80px
-            : 70px + 3 * 80px + 60px;
+        // All seven stops sit on an 80px pitch, so the follow target is a
+        // single linear expression again (bezier a..d, speed, style, save).
+        property <length> focus-y: 70px + root.local-focus * 80px;
         viewport-y: root.follow ? (root.local-focus >= 0
             ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
             : 0px) : root.saved-scroll-y;
@@ -138,7 +144,7 @@ component MotionTunePane inherits Rectangle {
                     value: root.bezier-a;
                     min: 0.0;
                     max: 1.0;
-                    changed(v) => { root.bezier-a = v; }
+                    changed(v) => { root.bezier-a = v; root.motion-dirty = true; }
                 }
             }
             b-wrap := Rectangle {
@@ -161,7 +167,7 @@ component MotionTunePane inherits Rectangle {
                     value: root.bezier-b;
                     min: -1.0;
                     max: 2.0;
-                    changed(v) => { root.bezier-b = v; }
+                    changed(v) => { root.bezier-b = v; root.motion-dirty = true; }
                 }
             }
             c-wrap := Rectangle {
@@ -184,7 +190,7 @@ component MotionTunePane inherits Rectangle {
                     value: root.bezier-c;
                     min: 0.0;
                     max: 1.0;
-                    changed(v) => { root.bezier-c = v; }
+                    changed(v) => { root.bezier-c = v; root.motion-dirty = true; }
                 }
             }
             d-wrap := Rectangle {
@@ -207,7 +213,88 @@ component MotionTunePane inherits Rectangle {
                     value: root.bezier-d;
                     min: -1.0;
                     max: 2.0;
-                    changed(v) => { root.bezier-d = v; }
+                    changed(v) => { root.bezier-d = v; root.motion-dirty = true; }
+                }
+            }
+
+            // ── Speed (local 4) — global model, 0.5..6.0, step 0.5 ──
+            speed-wrap := Rectangle {
+                property <bool> lit: (root.local-focus == 4 && root.has-focus) || hover-speed.has-hover;
+                property <bool> grabbed: root.engaged-slider == 4 && root.has-focus;
+                height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.grabbed ? #ffffff : (self.lit ? #8fd8ff : HveColors.border);
+                border-radius: SkwdTokens.radius-8;
+                background: self.grabbed || self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-speed := TouchArea { width: 100%; height: 100%; clicked => { } }
+                BezierSlider {
+                    width: 100%;
+                    y: (parent.height - self.height) / 2;
+                    engaged: root.engaged-slider == 4;
+                    focused: speed-wrap.lit;
+                    label: MotionText.speed-label;
+                    value: root.anim-speed;
+                    min: 0.5;
+                    max: 6.0;
+                    changed(v) => {
+                        root.anim-speed = v;
+                        root.motion-dirty = true;
+                    }
+                }
+            }
+
+            // ── Style family (local 5) — segmented row, acts at once ──
+            style-wrap := Rectangle {
+                property <bool> lit: (root.local-focus == 5 && root.has-focus) || hover-style.has-hover;
+                height: self.lit ? 88px : 72px;
+                animate height { duration: 250ms; easing: ease-in-out-back; }
+                border-width: 1px;
+                border-color: self.lit ? #8fd8ff : HveColors.border;
+                border-radius: SkwdTokens.radius-8;
+                background: self.lit ? HveColors.bg-hover : HveColors.bg-card;
+                animate background { duration: 200ms; easing: ease-in-out; }
+                hover-style := TouchArea { width: 100%; height: 100%; clicked => { } }
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 6px;
+                    Text {
+                        text: MotionText.style-label;
+                        color: style-wrap.lit ? #ffffff : HveColors.accent-cyan;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        for style-val in ["slide", "fade", "popin"] : Rectangle {
+                            horizontal-stretch: 1;
+                            height: 32px;
+                            border-radius: SkwdTokens.radius-4;
+                            background: root.anim-style == style-val ? HveColors.accent-cyan : HveColors.bg-surface;
+                            border-width: 1px;
+                            border-color: root.anim-style == style-val ? HveColors.accent-cyan : HveColors.border;
+                            Text {
+                                text: style-val == "slide" ? MotionText.style-slide
+                                    : (style-val == "fade" ? MotionText.style-fade : MotionText.style-popin);
+                                color: root.anim-style == style-val ? HveColors.bg-dark : HveColors.text-muted;
+                                font-family: SkwdTokens.font-body;
+                                font-size: 12px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.anim-style = style-val;
+                                    root.motion-dirty = true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -228,9 +315,9 @@ component MotionTunePane inherits Rectangle {
                 height: 36px;
 
                 save-line-wrap := Rectangle {
-                    // Tune-local stop 4 is the save form; light it so the
+                    // Tune-local stop 6 is the save form; light it so the
                     // keyboard cursor is visible when it lands there.
-                    property <bool> lit: root.local-focus == 4 && root.has-focus;
+                    property <bool> lit: root.local-focus == 6 && root.has-focus;
                     horizontal-stretch: 1;
                     height: 36px;
                     background: HveColors.bg-card;
@@ -255,7 +342,7 @@ component MotionTunePane inherits Rectangle {
                 }
 
                 save-btn := Rectangle {
-                    property <bool> lit: root.local-focus == 4 && root.has-focus;
+                    property <bool> lit: root.local-focus == 6 && root.has-focus;
                     width: 84px;
                     height: 36px;
                     background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
@@ -296,7 +383,7 @@ component MotionTunePane inherits Rectangle {
 
             // Keyboard hint
             Text {
-                text: "↑↓ navigate • ←→ switch panel • Enter/Space apply • arrows ±0.05 • Esc back";
+                text: "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted.transparentize(0.4);
@@ -436,11 +523,14 @@ export component MotionSection inherits Rectangle {
     in property <string> delete-message: "Are you sure you want to delete";
     in property <string> cancel-text: "Cancel";
 
-    // Tune layer — 4 bezier values
+    // Tune layer — 4 bezier values + the global speed / style model
     in-out property <float> bezier-a: 0.25;
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
+    in-out property <float> anim-speed: 2.0;
+    in-out property <string> anim-style: "slide";
+    in-out property <bool> motion-dirty: false;
 
     background: transparent;
     clip: true;
@@ -453,24 +543,51 @@ export component MotionSection inherits Rectangle {
     // subtracts the split.
     property <int> list-count: root.anim-files.length + root.user-preset-names.length;
     property <int> split: root.list-count;
-    // 4 bezier sliders + the save form. Mirrors PanelRoot's motion-total.
-    out property <int> tune-count: 5;
+    // 4 bezier sliders + speed + style + the save form. Mirrors PanelRoot's
+    // motion-total.
+    out property <int> tune-count: 7;
 
-    // Slider adjust (keyboard arrows, ±0.05 clamped)
+    // Slider adjust (keyboard arrows: bezier ±0.05, speed ±0.5, clamped).
+    // Any edit marks the Motion tune dirty, mirroring Borders' notify.
     public function adjust-slider(up: bool) {
         if (root.engaged-slider == 0) {
             let next = up ? min(root.bezier-a + 0.05, 1.0) : max(root.bezier-a - 0.05, 0.0);
-            if (next != root.bezier-a) { root.bezier-a = next; }
+            if (next != root.bezier-a) { root.bezier-a = next; root.motion-dirty = true; }
         } else if (root.engaged-slider == 1) {
             let next = up ? min(root.bezier-b + 0.05, 2.0) : max(root.bezier-b - 0.05, -1.0);
-            if (next != root.bezier-b) { root.bezier-b = next; }
+            if (next != root.bezier-b) { root.bezier-b = next; root.motion-dirty = true; }
         } else if (root.engaged-slider == 2) {
             let next = up ? min(root.bezier-c + 0.05, 1.0) : max(root.bezier-c - 0.05, 0.0);
-            if (next != root.bezier-c) { root.bezier-c = next; }
+            if (next != root.bezier-c) { root.bezier-c = next; root.motion-dirty = true; }
         } else if (root.engaged-slider == 3) {
             let next = up ? min(root.bezier-d + 0.05, 2.0) : max(root.bezier-d - 0.05, -1.0);
-            if (next != root.bezier-d) { root.bezier-d = next; }
+            if (next != root.bezier-d) { root.bezier-d = next; root.motion-dirty = true; }
+        } else if (root.engaged-slider == 4) {
+            let next = up ? min(root.anim-speed + 0.5, 6.0) : max(root.anim-speed - 0.5, 0.5);
+            if (next != root.anim-speed) { root.anim-speed = next; root.motion-dirty = true; }
         }
+    }
+
+    // The STYLE stop (local 5) acts at once: Enter/Space cycles the family.
+    // PanelRoot calls this and leaves `engaged-slider` untouched, so arrows keep
+    // cycling the family afterwards.
+    public function cycle-style() {
+        if (root.anim-style == "slide") {
+            root.anim-style = "fade";
+        } else if (root.anim-style == "fade") {
+            root.anim-style = "popin";
+        } else {
+            root.anim-style = "slide";
+        }
+        root.motion-dirty = true;
+    }
+
+    // Tune-enter seat map, mirroring BordersSection.tune-enter: returns 1 when
+    // the stop acted at once (the style stop), 0 when PanelRoot must engage it.
+    public function tune-enter() -> int {
+        let local = root.focused-index - root.list-count;
+        if (local == 5) { root.cycle-style(); return 1; }
+        return 0;
     }
 
     VerticalLayout {
@@ -533,6 +650,9 @@ export component MotionSection inherits Rectangle {
                 bezier-b <=> root.bezier-b;
                 bezier-c <=> root.bezier-c;
                 bezier-d <=> root.bezier-d;
+                anim-speed <=> root.anim-speed;
+                anim-style <=> root.anim-style;
+                motion-dirty <=> root.motion-dirty;
                 // Tune-local index: the pane subtracts the split internally.
                 focused-index: root.focused-index - root.split;
                 split: 0;
@@ -580,6 +700,9 @@ export component MotionSection inherits Rectangle {
                 bezier-b <=> root.bezier-b;
                 bezier-c <=> root.bezier-c;
                 bezier-d <=> root.bezier-d;
+                anim-speed <=> root.anim-speed;
+                anim-style <=> root.anim-style;
+                motion-dirty <=> root.motion-dirty;
                 // Tune-local index: the pane subtracts the split internally.
                 focused-index: root.focused-index - root.split;
                 split: 0;

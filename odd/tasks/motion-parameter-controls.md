@@ -121,8 +121,8 @@ New file `src/animation_preset.rs`:
 ## Progress
 
 - [x] Phase 1
-- [ ] Phase 2
-- [ ] Phase 3
+- [x] Phase 2
+- [x] Phase 3
 - [ ] Phase 4
 - [ ] Phase 5
 - [ ] Phase 6
@@ -148,8 +148,44 @@ New file `src/animation_preset.rs`:
 - Rollback: delete `src/animation_preset.rs` and its `mod` line in
   `src/main.rs`; no engine/provider/UI/preset_store files were touched.
 
+### Phase 2 + 3 — Motion speed/style controls + save like Borders
+
+- Files:
+  - `ui/panel/sections/motion_text.slint` (new) — `MotionText` global for the
+    new labels (speed, style, slide/fade/popin).
+  - `ui/panel/sections/MotionSection.slint` — `anim-speed` / `anim-style` /
+    `motion-dirty` on the section and its tune pane; SPEED slider (0.5..6.0) and
+    STYLE segmented row (slide/fade/popin) after bezier d; `tune-count: 7`;
+    `adjust-slider` handles local 4; `cycle-style()` and `tune-enter()`.
+  - `ui/panel/PanelRoot.slint` — Motion properties + MotionSection bindings;
+    Enter/Space on the style stop calls `motion.tune-enter()`.
+  - `ui/shell.slint`, `ui/main.slint` — `panel-anim-speed` /
+    `panel-anim-style` / `panel-motion-dirty` threaded exactly like
+    `bezier-a..d`; `MotionText` imported/re-exported.
+  - `src/panel_i18n.rs` — `apply_motion` fills `MotionText`.
+  - `src/main.rs` — `animation_params_from_window`; the save handler now builds
+    `AnimationParams`, calls `crate::animation_preset::generate`, saves through
+    `PresetStore::new("animations").save`, then refreshes names/tags, clears
+    error/name and `motion-dirty`, and re-applies the saved animation.
+  - `i18n/en.json`, `i18n/es.json` — `animations.controls.*` keys.
+  - `src/shell/ui_tests.rs` — 5 new tests (model round-trip, keyboard edit,
+    tune-count, i18n labels, render).
+- RED: `cargo test motion_save_model` failed to compile — 10 errors
+  (`animation_params_from_window` not found; `set_anim_speed`, `get_anim_speed`,
+  `get_anim_style`, `set_anim_style`, `get_motion_dirty` missing).
+- GREEN: `cargo test` -> 1252 passed, 0 failed, 0 ignored (was 1247; +5 new).
+- Round-trip: `parse(generate(animation_params_from_window(win)))` equals the
+  window model for bezier `[0.4, -0.3, 0.2, 1.15]`, speed `4.5`, style `Popin`.
+- Visual: `HVE_RENDER_DIR=/tmp/opencode/render-verify-motion-phase2 cargo test
+  motion_ -- --nocapture` -> PNGs read and inspected: speed slider + style row
+  render, both paint a focus ring, and the segmented highlight follows the
+  selection (slide -> fade).
+- Runtime harness: headless render above (the panel's visual boundary); the
+  save path's engine re-apply is the same call `on_panel_apply_animation` uses.
+- Rollback: revert this work unit; no engine/provider/Borders file was touched.
+
 ## Next step
 
-Phase 1 committed. Phase 2 (Motion controls: speed slider + style dropdown,
-wired into the Motion model with a `motion-dirty` flag) needs the keeper's
-approval before launch.
+Phases 2 and 3 committed (Motion speed/style controls + complete save). Phase 4
+(read-back on apply: sync the pane's curve/speed/style from the parsed preset)
+needs the keeper's approval before launch.

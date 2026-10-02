@@ -4156,6 +4156,72 @@ fn motion_last_slider_renders_unclipped() {
     );
 }
 
+/// Phase 2 — the new SPEED (local 4) and STYLE (local 5) tune stops must render
+/// with a visible focus ring, and the style row must show which family is
+/// selected. Cards-first: the global index is list-len + local.
+#[test]
+fn motion_speed_and_style_stops_render() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+        SharedString::from("Stylized 2.5D"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("smooth"),
+        SharedString::from("bouncy"),
+        SharedString::from("stylized"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("17_ease.lua"),
+        SharedString::from("18_spring.lua"),
+        SharedString::from("19_stylized2.5D.lua"),
+    ])));
+    win.set_panel_section(2);
+
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(80);
+    let idle = win.window().take_snapshot().expect("motion idle snapshot");
+    save_slice_png(idle.clone(), "motion_speed_style_idle.png");
+
+    // Speed stop: list-len 3 + local 4 = 7.
+    win.set_panel_kbd_preview_index(3 + 4);
+    settle_frames(80);
+    let speed = win.window().take_snapshot().expect("motion speed snapshot");
+    save_slice_png(speed.clone(), "motion_speed_stop_focus.png");
+    assert!(
+        count_buffer_diff(&idle, &speed) > 200,
+        "the speed stop must paint a focus ring"
+    );
+
+    // Style stop: list-len 3 + local 5 = 8.
+    win.set_panel_kbd_preview_index(3 + 5);
+    settle_frames(80);
+    let style = win.window().take_snapshot().expect("motion style snapshot");
+    save_slice_png(style.clone(), "motion_style_stop_focus.png");
+    assert!(
+        count_buffer_diff(&speed, &style) > 200,
+        "the style stop must paint a focus ring"
+    );
+
+    // Selecting another family must visibly move the segmented highlight.
+    win.set_anim_style("fade".into());
+    settle_frames(80);
+    let fade = win.window().take_snapshot().expect("motion style fade snapshot");
+    save_slice_png(fade.clone(), "motion_style_fade_selected.png");
+    assert!(
+        count_buffer_diff(&style, &fade) > 100,
+        "the style highlight must follow the selected family"
+    );
+}
+
 // ── Settings panel focus (rail ↔ content spatial model) ───────────────
 // Regression tests: Left hands the keyboard cursor to the rail and
 // Enter/Right re-enters the section, never stranding the cursor.
@@ -4773,6 +4839,110 @@ fn motion_keyboard_walks_cards_then_user_presets_then_tune() {
     );
 }
 
+/// Phase 2/3 — the Motion save model. The window's tune state (curve + speed +
+/// style) must round-trip through the animation preset writer/parser, so a
+/// saved user preset reads back exactly what the pane shows. This is the model
+/// the save handler builds (`animation_params_from_window`), not a copy.
+#[test]
+fn motion_save_model_round_trips_through_the_preset_parser() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.set_bezier_a(0.4);
+    win.set_bezier_b(-0.3);
+    win.set_bezier_c(0.2);
+    win.set_bezier_d(1.15);
+    win.set_anim_speed(4.5);
+    win.set_anim_style("popin".into());
+
+    let params = crate::animation_params_from_window(&win);
+    let lua = crate::animation_preset::generate("Roundtrip", &params);
+    assert_eq!(
+        crate::animation_preset::parse(&lua),
+        Some(params),
+        "the save model must round-trip through generate/parse:\n{lua}"
+    );
+}
+
+/// Phase 2 — the Motion tune pane exposes the SPEED stop (local 4) and the
+/// STYLE stop (local 5) after the four bezier sliders, and any edit marks
+/// `motion-dirty` (the Borders `tune-dirty` analogue).
+#[test]
+fn motion_speed_and_style_controls_edit_and_mark_dirty() {
+    use slint::platform::Key;
+    let win = focus_open_system_panel();
+    win.set_panel_section(2);
+    settle_frames(20);
+
+    // No cards: the tune starts at global index 0 (bezier-a), so four Downs
+    // land on the speed stop (local 4).
+    for _ in 0..4 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    assert!(!win.get_motion_dirty(), "no edit has happened yet");
+    let before_speed = win.get_anim_speed();
+    focus_press_key(&win, Key::Return); // engage the speed stop
+    focus_press_key(&win, Key::RightArrow); // +0.5
+    assert!(
+        win.get_anim_speed() > before_speed,
+        "Right on the speed stop must raise the speed"
+    );
+    assert!(
+        win.get_motion_dirty(),
+        "editing the speed must mark motion dirty"
+    );
+
+    // Down exits the engagement and moves to the style stop (local 5); Enter
+    // cycles the family at once, with no engagement.
+    focus_press_key(&win, Key::DownArrow);
+    let before_style = win.get_anim_style();
+    focus_press_key(&win, Key::Return);
+    assert_ne!(
+        win.get_anim_style(),
+        before_style,
+        "Enter on the style stop must cycle the animation style"
+    );
+    assert!(
+        win.get_motion_dirty(),
+        "cycling the style must mark motion dirty"
+    );
+}
+
+/// Phase 2 — the Motion tune sequence is bezier a..d, speed, style, save form.
+#[test]
+fn motion_tune_count_covers_the_new_controls() {
+    let src = std::fs::read_to_string("ui/panel/sections/MotionSection.slint")
+        .expect("MotionSection.slint must exist");
+    assert!(
+        src.contains("out property <int> tune-count: 7;"),
+        "MotionSection tune-count must be 7 (4 bezier + speed + style + save form)"
+    );
+}
+
+/// Phase 2 — the new Motion labels must resolve from the embedded map in both
+/// languages. A missing Spanish key would fall back to English and hide there.
+#[test]
+fn motion_control_labels_resolve_in_both_languages() {
+    use slint::Global as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+
+    crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("es"));
+    let t = crate::MotionText::get(&win);
+    assert_eq!(t.get_speed_label(), "Velocidad");
+    assert_eq!(t.get_style_label(), "Estilo de Animación");
+    assert_eq!(t.get_style_slide(), "Deslizar");
+    assert_eq!(t.get_style_fade(), "Fundido");
+    assert_eq!(t.get_style_popin(), "Aparecer");
+
+    crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("en"));
+    let t = crate::MotionText::get(&win);
+    assert_eq!(t.get_speed_label(), "Speed");
+    assert_eq!(t.get_style_label(), "Animation Style");
+    assert_eq!(t.get_style_slide(), "Slide");
+    assert_eq!(t.get_style_fade(), "Fade");
+    assert_eq!(t.get_style_popin(), "Popin");
+}
+
 /// Entry focus must RENDER on the first list card, never on the tune pane. The
 /// tune-first index space lit bezier-a on entry (index 0) while the list pane
 /// received a negative local index and lit nothing; this pins the cards-first
@@ -4823,9 +4993,9 @@ fn motion_entry_focus_renders_on_first_list_card() {
     );
 }
 
-/// The last tune stop (local 4) is the save form: reaching it must paint a
+/// The last tune stop (local 6) is the save form: reaching it must paint a
 /// focus ring so the keyboard cursor is visible. Cards-first: the global index
-/// is list-len + 4. Without the ring the save form was an invisible dead stop.
+/// is list-len + 6. Without the ring the save form was an invisible dead stop.
 #[test]
 fn motion_save_form_focus_renders_ring() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
@@ -4859,8 +5029,9 @@ fn motion_save_form_focus_renders_ring() {
     let idle = win.window().take_snapshot().expect("motion idle snapshot");
     save_slice_png(idle.clone(), "motion_save_form_idle.png");
 
-    // Cursor on the save form: list-len 3 + local 4 = 7.
-    win.set_panel_kbd_preview_index(3 + 4);
+    // Cursor on the save form: list-len 3 + local 6 = 9 (the save form is the
+    // last tune stop after the four bezier sliders, speed and style).
+    win.set_panel_kbd_preview_index(3 + 6);
     settle_frames(80);
     let save = win.window().take_snapshot().expect("motion save form snapshot");
     save_slice_png(save.clone(), "motion_save_form_focus.png");

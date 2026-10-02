@@ -119,6 +119,10 @@ export component PanelRoot inherits Rectangle {
     in-out property <float> bezier-b: 0.1;
     in-out property <float> bezier-c: 0.25;
     in-out property <float> bezier-d: 1.0;
+    // Motion tune — global model (Phase 2).
+    in-out property <float> anim-speed: 2.0;
+    in-out property <string> anim-style: "slide";
+    in-out property <bool> motion-dirty: false;
     // Animation preset state
     in-out property <string> animation-preset-name: "";
     in property <string> animation-save-error: "";
@@ -628,7 +632,12 @@ export component PanelRoot inherits Rectangle {
                                         root.apply-animation(root.motion-focused-index, root.user-animation-preset-names[root.motion-focused-index - root.anim-files.length]);
                                     }
                                 } else {
-                                    root.motion-engaged-slider = root.motion-focused-index - root.motion-list-len;
+                                    // The STYLE stop (local 5) acts at once and
+                                    // never engages; every other tune stop engages
+                                    // (the Borders `tune-enter` pattern).
+                                    if (motion.tune-enter() == 0) {
+                                        root.motion-engaged-slider = root.motion-focused-index - root.motion-list-len;
+                                    }
                                 }
                                 return accept;
                             }
@@ -863,6 +872,9 @@ export component PanelRoot inherits Rectangle {
                         bezier-b <=> root.bezier-b;
                         bezier-c <=> root.bezier-c;
                         bezier-d <=> root.bezier-d;
+                        anim-speed <=> root.anim-speed;
+                        anim-style <=> root.anim-style;
+                        motion-dirty <=> root.motion-dirty;
                         apply-animation(idx, file) => { root.apply-animation(idx, file); }
                         save-animation-preset(name) => { root.save-animation-preset(name); }
                         rename-animation-preset(old, new) => { root.rename-animation-preset(old, new); }

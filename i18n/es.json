@@ -70,6 +70,13 @@
   "animations": {
     "header_title": "Biblioteca de Movimiento",
     "header_subtitle": "Selecciona el estilo de animación para tu escritorio",
+    "controls": {
+      "speed_label": "Velocidad",
+      "style_label": "Estilo de Animación",
+      "style_slide": "Deslizar",
+      "style_fade": "Fundido",
+      "style_popin": "Aparecer"
+    },
     "rename_dialog": {
       "title": "Renombrar preajuste de animación",
       "placeholder": "Nombre del preajuste de animación…"
