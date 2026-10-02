@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use crate::animation_preset::{AnimationParams, AnimationStyle};
 use crate::border_preset::{AnimLeaf, BorderColor, BorderParams, GlowParams};
 use crate::preset_store::PresetStore;
 
@@ -1519,18 +1520,33 @@ fn saved_user_border_preset_reaches_the_overlay() {
 }
 
 /// Same contract for animations: a saved animation preset must deliver its
-/// bezier/speed to the animation module of the overlay.
+/// curve and its styled leaves to the animation module of the overlay.
 #[test]
 fn saved_user_animation_preset_reaches_the_overlay() {
     let sb = OverlaySandbox::build();
-    let content = PresetStore::generate_animation_lua("keeper_saved_anim", 0.25, 0.1, 0.25, 1.0);
+    let content = crate::animation_preset::generate(
+        "keeper_saved_anim",
+        &AnimationParams {
+            bezier: [0.25, 0.1, 0.25, 1.0],
+            speed: 2.0,
+            style: AnimationStyle::Slide,
+        },
+    );
     sb.write_user_preset("animations", "keeper_saved_anim", &content);
 
     let overlay = sb.apply_animation_preset("keeper_saved_anim");
 
     assert!(
-        overlay.contains("bezier = ({ 0.25, 0.1, 0.25, 1 })"),
-        "the saved animation preset's bezier never reached the overlay:\n{overlay}"
+        overlay.contains(
+            r#"hl.curve("hve_user", { type = "bezier", points = { { 0.25, 0.1 }, { 0.25, 1 } } })"#
+        ),
+        "the saved animation preset's curve never reached the overlay:\n{overlay}"
+    );
+    assert!(
+        overlay.contains(
+            r#"hl.animation({ leaf = "windowsIn", enabled = true, speed = 2, bezier = "hve_user", style = "slide" })"#
+        ),
+        "the saved animation preset's styled leaves never reached the overlay:\n{overlay}"
     );
     assert!(
         overlay.contains("-- @Source: user"),

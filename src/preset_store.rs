@@ -262,35 +262,6 @@ impl PresetStore {
         line.push_str(" })\n");
         line
     }
-    pub fn generate_animation_lua(
-        name: &str,
-        bezier_a: f64,
-        bezier_b: f64,
-        bezier_c: f64,
-        bezier_d: f64,
-    ) -> String {
-        format!(
-            r#"-- @Title: {name}
--- @Source: user
--- @Tag: CUSTOM
--- @Desc: User-created animation preset.
----@diagnostic disable: undefined-global
-
-hl.config({{
-    animations = {{
-        bezier = ({{ {a}, {b}, {c}, {d} }}),
-        speed = 0,
-    }}
-}})
-"#,
-            name = name,
-            a = bezier_a,
-            b = bezier_b,
-            c = bezier_c,
-            d = bezier_d,
-        )
-    }
-
     /// Read a border preset Lua file from the built-in or user preset directory.
     /// `project_dir` is the resolved project root (see `project_dir()` in main.rs).
     /// Returns the file content if found, or an error message.
@@ -647,14 +618,6 @@ mod tests {
         assert!(!store.exists(""));
 
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn generate_animation_lua_content() {
-        let content = PresetStore::generate_animation_lua("Bounce", 0.25, 0.1, 0.25, 1.0);
-        assert!(content.contains("-- @Title: Bounce"));
-        assert!(content.contains("-- @Source: user"));
-        assert!(content.contains("0.25, 0.1, 0.25, 1"));
     }
 
     #[test]
