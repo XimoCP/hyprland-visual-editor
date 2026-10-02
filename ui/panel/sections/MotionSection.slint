@@ -1,10 +1,11 @@
 // HVE 2 — MotionSection (tune + preset list, two-pane).
 //
 // Two INDEPENDENT scroll regions:
-//   • Tune pane  — CurvePreview + 4 bezier sliders a,b,c,d (x1,y1,x2,y2),
-//     then the global-model SPEED slider and STYLE family segmented row, plus
-//     the save form (LineEdit + Save button) at the bottom for saving the
-//     current curve/speed/style as a user preset.
+//   • Fixed header — the enlarged CurvePreview (260×120), always visible.
+//   • Tune pane  — 4 bezier sliders a,b,c,d (x1,y1,x2,y2), then the
+//     global-model SPEED slider and STYLE family segmented row, plus the save
+//     form (LineEdit + Save button) at the bottom for saving the current
+//     curve/speed/style as a user preset.
 //   • List pane  — Built-in presets (apply only) + user presets (apply,
 //     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
 // Wide section → panes side by side; narrow → stacked. Each pane owns its own
@@ -95,7 +96,10 @@ component MotionTunePane inherits Rectangle {
     ScrollView {
         // All seven stops sit on an 80px pitch, so the follow target is a
         // single linear expression again (bezier a..d, speed, style, save).
-        property <length> focus-y: 70px + root.local-focus * 80px;
+        // The curve preview now lives in the section header, so the first stop
+        // starts at the ScrollView's 16px top padding (14px keeps the previous
+        // 2px slop that centred a stop's 44px half-height).
+        property <length> focus-y: 14px + root.local-focus * 80px;
         viewport-y: root.follow ? (root.local-focus >= 0
             ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
             : 0px) : root.saved-scroll-y;
@@ -110,19 +114,6 @@ component MotionTunePane inherits Rectangle {
             padding-top: 16px;
             padding-bottom: 28px;
             spacing: 8px;
-
-            // Curve preview 120×48
-            HorizontalLayout {
-                alignment: center;
-                CurvePreview {
-                    a: root.bezier-a;
-                    b: root.bezier-b;
-                    c: root.bezier-c;
-                    d: root.bezier-d;
-                    width: 120px;
-                    height: 48px;
-                }
-            }
 
             a-wrap := Rectangle {
                 property <bool> lit: (root.local-focus == 0 && root.has-focus) || hover-a.has-hover;
@@ -610,6 +601,25 @@ export component MotionSection inherits Rectangle {
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
                 wrap: word-wrap;
+            }
+
+            // Phase 5 — always-visible curve indicator. Fixed header, OUTSIDE
+            // both panes' ScrollViews (same idiom as the Borders dirty
+            // indicator), so it never scrolls out of sight while in Motion.
+            // Enlarged from 120×48 to 260×120, centred.
+            HorizontalLayout {
+                alignment: center;
+                // Fixed height: without this the layout claims the section's
+                // spare vertical space and floats the preview mid-header.
+                vertical-stretch: 0;
+                CurvePreview {
+                    a: root.bezier-a;
+                    b: root.bezier-b;
+                    c: root.bezier-c;
+                    d: root.bezier-d;
+                    width: 260px;
+                    height: 120px;
+                }
             }
         }
 

@@ -12,6 +12,10 @@ export component CurvePreview inherits Rectangle {
     in property <float> b: 0.1;
     in property <float> c: 0.25;
     in property <float> d: 1.0;
+    // Control-point dot diameter. Defaults to a value derived from the element
+    // height so the dots stay visible when the preview is enlarged (e.g. the
+    // 260×120 Motion header preview gets ~10px dots instead of the old 6px).
+    in property <length> dot-size: max(6px, self.height / 12);
 
     width: 120px;
     height: 48px;
@@ -58,21 +62,22 @@ export component CurvePreview inherits Rectangle {
         }
     }
 
-    // control points dots (icy-cyan)
+    // control points dots (icy-cyan), sized from the element so they scale
+    // with the preview instead of staying at a fixed 6px.
     Rectangle {
-        width: 6px;
-        height: 6px;
-        border-radius: 3px;
+        width: root.dot-size;
+        height: root.dot-size;
+        border-radius: root.dot-size / 2;
         background: #8fd8ff;
-        x: parent.width * root.a - 3px;
-        y: parent.height * (1.0 - root.b) - 3px;
+        x: parent.width * root.a - root.dot-size / 2;
+        y: parent.height * (1.0 - root.b) - root.dot-size / 2;
     }
     Rectangle {
-        width: 6px;
-        height: 6px;
-        border-radius: 3px;
+        width: root.dot-size;
+        height: root.dot-size;
+        border-radius: root.dot-size / 2;
         background: #8fd8ff;
-        x: parent.width * root.c - 3px;
-        y: parent.height * (1.0 - root.d) - 3px;
+        x: parent.width * root.c - root.dot-size / 2;
+        y: parent.height * (1.0 - root.d) - root.dot-size / 2;
     }
 }

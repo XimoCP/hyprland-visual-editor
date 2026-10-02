@@ -123,8 +123,8 @@ New file `src/animation_preset.rs`:
 - [x] Phase 1
 - [x] Phase 2
 - [x] Phase 3
-- [ ] Phase 4
-- [ ] Phase 5
+- [x] Phase 4
+- [x] Phase 5
 - [ ] Phase 6
 
 ## Evidence
@@ -184,8 +184,40 @@ New file `src/animation_preset.rs`:
   save path's engine re-apply is the same call `on_panel_apply_animation` uses.
 - Rollback: revert this work unit; no engine/provider/Borders file was touched.
 
+### Phase 4 + 5 — read-back on apply + always-visible curve indicator
+
+- Files:
+  - `src/preset_store.rs` — `read_animation_file` (built-in `assets/animations/`
+    then user `PresetStore::new("animations")`), mirroring `read_border_file`.
+  - `src/main.rs` — `sync_motion_tune_pane` (parse the applied file → set
+    `bezier-a..d`, `anim-speed`, `anim-style`; empty/missing/unparseable leaves
+    the pane untouched and never touches `motion-dirty`); the manual apply
+    callback now calls it, so `ipc`/`tray` applies inherit the read-back too.
+  - `ui/panel/sections/MotionSection.slint` — CurvePreview moved OUT of the
+    tune pane's `ScrollView` into the fixed section header (260×120, centred,
+    `vertical-stretch: 0`); `focus-y` rebased to `14px + local*80px`.
+  - `ui/panel/CurvePreview.slint` — `dot-size` property derived from the element
+    height (`max(6px, height/12)`) replaces the fixed 6px dots.
+  - `src/shell/ui_tests.rs` — 4 new tests (read-back, no-op guard, callback
+    wiring pin, header render) + retimed `motion_save_form_focus_renders_ring`
+    to compare the same scroll position.
+- RED: `cargo test motion_curve_preview_stays_visible_in_header_when_tune_scrolls`
+  -> failed, `header_cyan=107` (< 250). `cargo test motion_apply_sync` ->
+  compile error, `cannot find function sync_motion_tune_pane` (3 errors).
+- GREEN: `cargo test` -> 1256 passed, 0 failed, 0 ignored (was 1252; +4).
+- Read-back: `19_stylized2.5D.lua` -> bezier `[0.4, -0.3, 0.2, 1.15]`,
+  speed `4.5`, style `popin`, `motion-dirty` still false. Empty name and a
+  missing file leave the pane at its prior values.
+- Visual: `HVE_RENDER_DIR=/tmp/opencode/render-verify-motion-phase45 cargo test
+  motion_curve_preview_stays_visible -- --nocapture` -> PNGs read: the enlarged
+  preview sits in the header at the top AND when the tune is scrolled to its
+  last stop (identical header band, `drift` < 200); dots scale to ~10px.
+  `render-verify-motion-stacked` (820px): the preview fits the stacked header.
+- Runtime harness: headless renders above (the panel's visual boundary); the
+  read-back itself is pure window-state, covered by the unit tests.
+- Rollback: revert this work unit; no engine/provider/Borders file was touched.
+
 ## Next step
 
-Phases 2 and 3 committed (Motion speed/style controls + complete save). Phase 4
-(read-back on apply: sync the pane's curve/speed/style from the parsed preset)
-needs the keeper's approval before launch.
+Phases 4 and 5 committed (read-back on apply + always-visible curve indicator).
+Phase 6 (verification: render tests + PNG review + cross-model Tier 3) remains.

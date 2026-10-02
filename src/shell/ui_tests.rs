@@ -4943,6 +4943,135 @@ fn motion_control_labels_resolve_in_both_languages() {
     assert_eq!(t.get_style_popin(), "Popin");
 }
 
+/// Phase 5 — the curve preview must live in the Motion section's FIXED header,
+/// not inside the tune pane's ScrollView, so it stays visible while the tune
+/// scrolls. The tune is scrolled to its LAST stop and the fixed header band is
+/// sampled for the accent-cyan curve: while the preview sat inside the
+/// ScrollView it scrolled away and the band held no curve. The preview must
+/// also not drift between the top and the bottom of the tune scroll.
+#[test]
+fn motion_curve_preview_stays_visible_in_header_when_tune_scrolls() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    // 19 cards force the tune ScrollView to travel (same fixture as the
+    // last-slider clipping test).
+    let titles: Vec<SharedString> = (0..19)
+        .map(|i| SharedString::from(format!("Anim {i:02}")))
+        .collect();
+    win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![SharedString::from("ease curve"); 19])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from(""); 19])));
+    win.set_anim_files(ModelRc::new(VecModel::from(
+        (0..19).map(|i| SharedString::from(format!("a{i}.lua"))).collect::<Vec<_>>(),
+    )));
+    win.set_panel_section(2);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(20);
+    let top = win.window().take_snapshot().expect("motion header top snapshot");
+    save_slice_png(top.clone(), "motion_curve_header_top.png");
+
+    // Last tune stop (save form): list-len 19 + local 6 = 25. The tune
+    // ScrollView follows and scrolls to the bottom.
+    win.set_panel_kbd_preview_index(19 + 6);
+    settle_frames(80);
+    let scrolled = win.window().take_snapshot().expect("motion header scrolled snapshot");
+    save_slice_png(scrolled.clone(), "motion_curve_header_scrolled.png");
+
+    // The fixed section-header band: below the title/subtitle, above the panes,
+    // horizontally centred so the left-aligned header text is out of frame.
+    // Curve stroke is HveColors.accent-cyan (#38bdf8). With the preview inside
+    // the ScrollView this band held at most a few slider-label pixels (the
+    // enlarged 260×120 curve paints far more).
+    const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
+    let header_cyan = count_color_in_box(&scrolled, ACCENT_CYAN, 24, 900, 165, 1180, 305);
+    assert!(
+        header_cyan > 250,
+        "the curve preview must stay painted in the fixed header while the tune \
+         is scrolled to its last stop — header_cyan={header_cyan}"
+    );
+
+    let drift = count_buffer_diff_region(&top, &scrolled, 900, 165, 1180, 305);
+    assert!(
+        drift < 200,
+        "the fixed header preview must not scroll away with the tune — drift={drift}"
+    );
+}
+
+/// Phase 4 — applying a preset must read it back into the Motion pane, the way
+/// Borders syncs its tune pane from the applied file. `19_stylized2.5D.lua` is
+/// the fixture: bezier [0.4, -0.3, 0.2, 1.15], speed 4.5, style popin.
+#[test]
+fn motion_apply_sync_reflects_preset_curve_speed_style() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Stale pane values, as if another preset was active before the apply.
+    win.set_bezier_a(0.25);
+    win.set_bezier_b(0.1);
+    win.set_bezier_c(0.25);
+    win.set_bezier_d(1.0);
+    win.set_anim_speed(2.0);
+    win.set_anim_style("slide".into());
+
+    crate::sync_motion_tune_pane(&win, &proj, "19_stylized2.5D.lua");
+
+    assert_eq!(win.get_bezier_a(), 0.4);
+    assert_eq!(win.get_bezier_b(), -0.3);
+    assert_eq!(win.get_bezier_c(), 0.2);
+    assert_eq!(win.get_bezier_d(), 1.15);
+    assert_eq!(win.get_anim_speed(), 4.5);
+    assert_eq!(win.get_anim_style(), "popin");
+    assert!(
+        !win.get_motion_dirty(),
+        "reading back the applied preset is not a user edit and must not mark motion dirty"
+    );
+}
+
+/// Phase 4 — deactivation and a missing/unparseable file leave the pane exactly
+/// as it was: never panic, never clear the controls to garbage.
+#[test]
+fn motion_apply_sync_leaves_pane_unchanged_without_parseable_curve() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    win.set_bezier_a(0.3);
+    win.set_bezier_b(0.2);
+    win.set_bezier_c(0.7);
+    win.set_bezier_d(0.9);
+    win.set_anim_speed(3.5);
+    win.set_anim_style("fade".into());
+
+    // Empty file (deactivation) and a missing file both leave the values alone.
+    crate::sync_motion_tune_pane(&win, &proj, "");
+    crate::sync_motion_tune_pane(&win, &proj, "does_not_exist.lua");
+
+    assert_eq!(win.get_bezier_a(), 0.3);
+    assert_eq!(win.get_bezier_b(), 0.2);
+    assert_eq!(win.get_bezier_c(), 0.7);
+    assert_eq!(win.get_bezier_d(), 0.9);
+    assert_eq!(win.get_anim_speed(), 3.5);
+    assert_eq!(win.get_anim_style(), "fade");
+}
+
+/// Phase 4 — the manual apply path must use the shared read-back, exactly like
+/// the Borders apply path uses `sync_border_tune_pane` (source-level pin so the
+/// callback cannot drift back to a toggle-only no-op).
+#[test]
+fn motion_apply_callback_syncs_the_tune_pane() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let manual = main
+        .split("window.on_panel_apply_animation")
+        .nth(1)
+        .expect("the Motion apply callback must exist");
+    // Bound to the callback body: up to the next handler block.
+    let body = manual.split("// ── Border preset CRUD").next().unwrap_or(manual);
+    assert!(
+        body.contains("sync_motion_tune_pane"),
+        "on_panel_apply_animation must read the applied preset back into the pane"
+    );
+}
+
 /// Entry focus must RENDER on the first list card, never on the tune pane. The
 /// tune-first index space lit bezier-a on entry (index 0) while the list pane
 /// received a negative local index and lit nothing; this pins the cards-first
@@ -5023,12 +5152,6 @@ fn motion_save_form_focus_renders_ring() {
     ])));
     win.set_panel_section(2);
 
-    // Baseline: no keyboard focus anywhere in the panel.
-    win.set_panel_kbd_preview_index(-1);
-    settle_frames(80);
-    let idle = win.window().take_snapshot().expect("motion idle snapshot");
-    save_slice_png(idle.clone(), "motion_save_form_idle.png");
-
     // Cursor on the save form: list-len 3 + local 6 = 9 (the save form is the
     // last tune stop after the four bezier sliders, speed and style).
     win.set_panel_kbd_preview_index(3 + 6);
@@ -5036,10 +5159,18 @@ fn motion_save_form_focus_renders_ring() {
     let save = win.window().take_snapshot().expect("motion save form snapshot");
     save_slice_png(save.clone(), "motion_save_form_focus.png");
 
-    // The save form is the lower block of the tune (right) pane. Sampling the
-    // bottom band of the right pane isolates its ring from the slider labels.
-    let idle_icy = count_color_in_box(&idle, ICY, 40, 1080, 560, 1900, 1050);
-    let save_icy = count_color_in_box(&save, ICY, 40, 1080, 560, 1900, 1050);
+    // Same scroll position, no cursor: clearing the focus keeps the tune's
+    // `saved-scroll-y`, so the save form stays put and its focus ring is the
+    // only pixel difference in its band.
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(80);
+    let idle = win.window().take_snapshot().expect("motion save form idle snapshot");
+    save_slice_png(idle.clone(), "motion_save_form_idle.png");
+
+    // The save form is the lower block of the tune (right) pane. Sampling its
+    // band isolates the ring from the slider labels above it.
+    let idle_icy = count_color_in_box(&idle, ICY, 40, 1080, 700, 1900, 800);
+    let save_icy = count_color_in_box(&save, ICY, 40, 1080, 700, 1900, 800);
     assert!(
         save_icy > idle_icy + 200,
         "the save form must paint a focus ring when it owns the cursor — \

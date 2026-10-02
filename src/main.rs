@@ -383,6 +383,44 @@ fn animation_params_from_window(w: &crate::MainWindow) -> crate::animation_prese
     }
 }
 
+/// Phase 4 — read-back on apply. Mirror of `sync_border_tune_pane`: when a
+/// built-in or user animation preset is applied, parse the applied file and
+/// push its curve / speed / style into the Motion pane so the controls show
+/// what is running (user presets round-trip exactly; built-ins show their
+/// primary curve). `anim_file` is the file name with extension (e.g.
+/// `"19_stylized2.5D.lua"`); empty means deactivated.
+///
+/// A file that is missing or has no parseable curve/style leaves the pane
+/// untouched — never panics, never clears the controls to garbage. This only
+/// touches the window; the engine toggle stays with the caller. It deliberately
+/// does NOT set `motion-dirty`: the values reflect the applied preset, not a
+/// user edit.
+pub(crate) fn sync_motion_tune_pane(
+    w: &crate::MainWindow,
+    proj: &std::path::Path,
+    anim_file: &str,
+) {
+    if anim_file.is_empty() {
+        // Deactivation keeps the current curve/speed/style: the pane's model
+        // persists with the active animation by design (tuning applies to the
+        // active preset), so it must not snap back to defaults.
+        return;
+    }
+    let preset_name = anim_file.strip_suffix(".lua").unwrap_or(anim_file);
+    let Ok(content) = crate::preset_store::PresetStore::read_animation_file(preset_name, proj) else {
+        return;
+    };
+    let Some(params) = crate::animation_preset::parse(&content) else {
+        return;
+    };
+    w.set_bezier_a(params.bezier[0]);
+    w.set_bezier_b(params.bezier[1]);
+    w.set_bezier_c(params.bezier[2]);
+    w.set_bezier_d(params.bezier[3]);
+    w.set_anim_speed(params.speed);
+    w.set_anim_style(params.style.as_lua().into());
+}
+
 /// Shown in the tune pane when an edit is refused because no border preset is
 /// active. The pane is fully operable in that state (every control moves, the
 /// dirty dot lights), so a silent no-op is indistinguishable from a broken
@@ -4443,6 +4481,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
+        let proj_c = proj.clone();
         let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_animation(move |idx, file| {
@@ -4470,8 +4509,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             if let Some(w) = weak.upgrade() {
                 w.set_active_anim_index(if is_deact { -1 } else { idx });
-                // bezier persists with active animation per design — keep current bezier values
-                // (no snap; tuning applies to active). Future: per-animation bezier map.
+                // Phase 4 — reflect the applied preset's curve/speed/style in
+                // the pane (shared read-back, mirroring the Borders apply path).
+                // Deactivation passes an empty name, which leaves the pane as-is.
+                let file = if is_deact { String::new() } else { file_str.clone() };
+                crate::sync_motion_tune_pane(&w, &proj_c, &file);
             }
         });
     }

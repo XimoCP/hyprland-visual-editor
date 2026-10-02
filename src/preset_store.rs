@@ -314,6 +314,29 @@ hl.config({{
         Err(format!("Preset '{}' not found in built-in or user dirs", name))
     }
 
+    /// Read an animation preset Lua file from the built-in or user preset
+    /// directory. Mirrors [`Self::read_border_file`]; the Motion read-back
+    /// (Phase 4) is its only consumer.
+    pub fn read_animation_file(name: &str, project_dir: &std::path::Path) -> Result<String, String> {
+        Self::validate_name(name)?;
+        // Built-in directory (assets/animations/)
+        let builtin = project_dir
+            .join("assets")
+            .join("animations")
+            .join(format!("{}.lua", name));
+        if builtin.exists() {
+            return fs::read_to_string(&builtin)
+                .map_err(|e| format!("Cannot read {}: {}", builtin.display(), e));
+        }
+        // User preset directory
+        let user = Self::new("animations").base.join(format!("{}.lua", name));
+        if user.exists() {
+            return fs::read_to_string(&user)
+                .map_err(|e| format!("Cannot read {}: {}", user.display(), e));
+        }
+        Err(format!("Preset '{}' not found in built-in or user dirs", name))
+    }
+
     /// Write a draft border Lua file to the fragments directory.
     /// This is the D4 live-draft path: it bypasses `apply_border`
     /// (which resolves names inside scanned dirs) and writes directly
