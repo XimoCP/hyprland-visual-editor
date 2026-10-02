@@ -375,6 +375,133 @@ fn mpvpaper_enabled_in_settings(raw: &str) -> bool {
     found
 }
 
+/// Flip `[wallpaper.automation] enabled` to `false` in a Noctalia
+/// settings.toml text, preserving every other byte.
+///
+/// Phase 2 of the wallpaper-authority unit: applying a theme restores the
+/// whole settings.toml, which re-arms Noctalia's own static rotation
+/// (`[wallpaper.automation] enabled = true`, every N seconds). While a
+/// video owns the screen that rotation paints a stale image over the
+/// poster apply pinned, so the live flag is turned off after the restore.
+/// Line-based like [`mpvpaper_enabled_in_settings`] (there is no toml
+/// crate): only the `[wallpaper.automation]` section counts, a trailing
+/// comment survives, and an already-`false` or missing flag returns `None`
+/// so the caller stays idempotent.
+fn disable_wallpaper_automation(raw: &str) -> Option<String> {
+    let mut in_section = false;
+    let mut changed = false;
+    let mut out = String::with_capacity(raw.len() + 1);
+    for (i, line) in raw.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let stripped = line.trim_start();
+        // Machine-written file: a '#' always starts a trailing comment.
+        let code = stripped.split('#').next().unwrap_or("").trim();
+        if let Some(header) = code.strip_prefix('[') {
+            let header = header.split(']').next().unwrap_or("").trim();
+            in_section = header == "wallpaper.automation";
+            out.push_str(line);
+            continue;
+        }
+        if in_section && !changed {
+            if let Some(rest) = code.strip_prefix("enabled") {
+                let rest = rest.trim_start();
+                if let Some(value) = rest.strip_prefix('=') {
+                    if value.trim() == "true" {
+                        // Replace the value token in the ORIGINAL line,
+                        // keeping indentation and any trailing comment.
+                        if let Some(eq_at) = line.find('=') {
+                            let after = &line[eq_at + 1..];
+                            if let Some(rel) = after.find("true") {
+                                let abs = eq_at + 1 + rel;
+                                out.push_str(&line[..abs]);
+                                out.push_str("false");
+                                out.push_str(&line[abs + 4..]);
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    if changed {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Whether a settings.toml text carries a `[wallpaper.automation]` section.
+/// Keeps the neutralize step's log honest: a MISSING section is a warning
+/// (there is nothing to neutralize), while a section already carrying
+/// `enabled = false` is the idempotent no-op and stays quiet.
+fn has_wallpaper_automation_section(raw: &str) -> bool {
+    raw.lines().any(|line| {
+        let stripped = line.trim_start();
+        let code = stripped.split('#').next().unwrap_or("").trim();
+        code.strip_prefix('[')
+            .and_then(|h| h.split(']').next())
+            .map(|h| h.trim() == "wallpaper.automation")
+            .unwrap_or(false)
+    })
+}
+
+/// Phase 2 wiring: turn off Noctalia's own static-wallpaper rotation in the
+/// LIVE settings.toml after the theme restore re-armed it, then ask
+/// Noctalia to reload. Best-effort and idempotent: a missing file, a
+/// missing section, or an already-off flag warns and continues — never
+/// fails the apply.
+fn neutralize_noctalia_wallpaper_rotation() {
+    let Some(settings_path) = noctalia_state_dir().map(|d| d.join("settings.toml")) else {
+        tracing::warn!(
+            "[noctalia-v5] Cannot resolve the Noctalia state dir; wallpaper rotation left as restored"
+        );
+        return;
+    };
+    let raw = match fs::read_to_string(&settings_path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot read live settings.toml to neutralize the wallpaper rotation: {}",
+                e
+            );
+            return;
+        }
+    };
+    let Some(edited) = disable_wallpaper_automation(&raw) else {
+        if has_wallpaper_automation_section(&raw) {
+            tracing::debug!(
+                "[noctalia-v5] [wallpaper.automation] already disabled; nothing to neutralize"
+            );
+        } else {
+            tracing::warn!(
+                "[noctalia-v5] No [wallpaper.automation] section in the live settings.toml; wallpaper rotation left as restored"
+            );
+        }
+        return;
+    };
+    if let Err(e) = fs::write(&settings_path, edited) {
+        tracing::warn!(
+            "[noctalia-v5] Cannot write live settings.toml to neutralize the wallpaper rotation: {}",
+            e
+        );
+        return;
+    }
+    tracing::info!(
+        "[noctalia-v5] Neutralized Noctalia wallpaper rotation ([wallpaper.automation] enabled -> false)"
+    );
+    if let Err(e) = noctalia_msg(&["msg", "config-reload"]) {
+        tracing::warn!(
+            "[noctalia-v5] Config reload after neutralizing the wallpaper rotation failed: {}",
+            e
+        );
+    }
+}
+
 /// What apply must do to `noctalia/mpvpaper` after `config-reload` so the
 /// theme cannot change whether the plugin is enabled (D4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1386,12 +1513,14 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    after the reload; the rest of the settings restore is
         //    untouched.
         let plugin_was_enabled = live_mpvpaper_plugin_enabled();
+        let mut settings_restored = false;
         let saved_settings = provider_dir.join("settings.toml");
         if saved_settings.exists() {
             if let Some(state_dir) = noctalia_state_dir() {
                 let dst = state_dir.join("settings.toml");
                 fs::copy(&saved_settings, &dst)
                     .map_err(|e| format!("Cannot restore settings.toml: {}", e))?;
+                settings_restored = true;
                 tracing::info!("[noctalia-v5] Restored settings.toml");
 
                 noctalia_msg(&["msg", "config-reload"])
@@ -1441,6 +1570,10 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    screen. Best-effort throughout: a video problem must never fail
         //    the whole theme apply.
         let mut animated_applied = false;
+        // The exact video path restored through the painter record (video.txt),
+        // kept for the Phase 1 poster hand-off below. `None` when no painter
+        // video was restored (legacy manifest, static, or delegation failure).
+        let mut applied_video: Option<PathBuf> = None;
         let painter_record = provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE);
         // ── Colour-authority yield (W2 + W4) ────────────────────────────
         // The keeper's wallpaper engine owns the colour scheme
@@ -1528,6 +1661,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                 Some(path) if path.exists() => {
                     if background::hand_off_path(&path) {
                         animated_applied = true;
+                        applied_video = Some(path.clone());
                         tracing::info!(
                             "[noctalia-v5] Restored painter video (video.txt) via skwd: {}",
                             path.display()
@@ -1589,6 +1723,49 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
             background::RoutedLeg::ClearFailed(reason) => {
                 tracing::warn!("[noctalia-v5] clear-all warning: {}", reason);
+            }
+        }
+
+        // 1c. Phase 2 — neutralize Noctalia's own static rotation. The
+        //     settings.toml restore above re-armed `[wallpaper.automation]
+        //     enabled = true` (every saved theme carries it), which would
+        //     paint a stale image over the video every N seconds. Turn the
+        //     LIVE flag off and reload — best-effort and idempotent, never
+        //     failing the apply.
+        if animated_applied && settings_restored {
+            neutralize_noctalia_wallpaper_rotation();
+        }
+
+        // 1d. Phase 1 — pin Noctalia to the video POSTER. With a video on
+        //     top the static restore below is skipped, so Noctalia would
+        //     otherwise keep the stale image the restored settings.toml
+        //     names. A frame of the video is the only honest thing for its
+        //     static layer to show. Best-effort: no poster, no change.
+        if animated_applied {
+            if let Some(video) = applied_video.as_deref() {
+                match crate::shell::gallery::thumbs::extract_video_frame(
+                    video,
+                    &crate::shell::gallery::thumbs::cache_dir(),
+                ) {
+                    Some(poster) => {
+                        if let Some(poster) = poster.to_str() {
+                            match noctalia_msg(&["msg", "wallpaper-set", "", poster]) {
+                                Ok(_) => tracing::info!(
+                                    "[noctalia-v5] Pinned Noctalia static wallpaper to the video poster: {}",
+                                    poster
+                                ),
+                                Err(e) => tracing::warn!(
+                                    "[noctalia-v5] Cannot pin Noctalia to the video poster: {}",
+                                    e
+                                ),
+                            }
+                        }
+                    }
+                    None => tracing::warn!(
+                        "[noctalia-v5] Could not extract a poster frame from the video: {}",
+                        video.display()
+                    ),
+                }
             }
         }
 
@@ -2371,6 +2548,45 @@ mod tests {
         let other_section = "[other]\nenabled = [ \"noctalia/mpvpaper\" ]\n[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n";
         assert!(!mpvpaper_enabled_in_settings(other_section));
         assert!(!mpvpaper_enabled_in_settings(""));
+    }
+
+    /// Phase 2: the live settings.toml editor flips
+    /// `[wallpaper.automation] enabled` to false while preserving every
+    /// other byte, is idempotent on an already-off flag, and never touches
+    /// another section's `enabled`.
+    #[test]
+    fn wallpaper_automation_editor_flips_true_to_false_preserving_the_rest() {
+        let raw = "[wallpaper]\n\
+                   directory = \"/home/u/Pictures/Wallpapers/Cars\"\n\
+                   \n\
+                   [wallpaper.automation]\n\
+                   enabled = true\n\
+                   interval = 600\n\
+                   \n\
+                   [bar]\n\
+                   enabled = true\n";
+        let edited = disable_wallpaper_automation(raw)
+            .expect("an armed rotation must be turned off");
+        let expected = raw.replacen("enabled = true", "enabled = false", 1);
+        assert_eq!(
+            edited, expected,
+            "only the automation flag may change; every other byte must survive"
+        );
+        // Idempotent: an already-off flag reports nothing to change.
+        assert_eq!(
+            disable_wallpaper_automation(&edited),
+            None,
+            "an already-off flag must be a no-op"
+        );
+        // A missing section is a no-op, never a guess.
+        assert_eq!(
+            disable_wallpaper_automation("[bar]\nenabled = true\n"),
+            None,
+            "the editor must not touch a flag outside [wallpaper.automation]"
+        );
+        // Section presence is what keeps the caller's log honest.
+        assert!(has_wallpaper_automation_section(raw));
+        assert!(!has_wallpaper_automation_section("[bar]\nenabled = true\n"));
     }
 
     /// D4: the re-assert mapping is the proof a theme carrying the plugin
@@ -3522,6 +3738,109 @@ exit 0
         .unwrap();
         std::fs::write(dir.join("wallpaper.txt"), "/tmp/joker3.png").unwrap();
         theme
+    }
+
+    /// Phase 1: a video apply must hand Noctalia a POSTER frame via
+    /// `wallpaper-set` so its own static layer matches the video instead
+    /// of showing the stale image the restored settings.toml re-armed.
+    /// The poster is the video's cached frame (the same artifact the
+    /// gallery uses); the stale static Cars wallpaper must still NOT be
+    /// set while the video plays.
+    #[test]
+    #[serial]
+    fn v5_apply_video_pins_noctalia_to_the_poster_frame() {
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let theme = animated_theme(&stub);
+        let video = stub._tmp.path().join("loop.mp4");
+        // Pre-seed the deterministic frame cache so no ffmpeg run is needed
+        // (`extract_video_frame` short-circuits on an existing artifact).
+        let poster = crate::shell::gallery::thumbs::cached_frame_path(&video);
+        std::fs::create_dir_all(poster.parent().unwrap()).unwrap();
+        std::fs::write(&poster, b"cached frame").unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let log = std::fs::read_to_string(stub.state_dir.join("log")).unwrap_or_default();
+        let expected = format!("msg wallpaper-set  {}", poster.display());
+        assert!(
+            log.lines().any(|l| l == expected),
+            "the video apply must pin Noctalia to the poster `{expected}`, log was:\n{log}"
+        );
+        assert!(
+            !log.lines().any(|l| {
+                l.starts_with("msg wallpaper-set") && !l.ends_with("-frame.png")
+            }),
+            "the stale static wallpaper must not be set while a video plays, log was:\n{log}"
+        );
+        // Let the re-assert worker finish before the stub PATH goes away.
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// Phase 1 boundary: a static apply sets its OWN static wallpaper and
+    /// must never pin a video poster frame.
+    #[test]
+    #[serial]
+    fn v5_apply_static_never_pins_a_poster_frame() {
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let log = std::fs::read_to_string(stub.state_dir.join("log")).unwrap_or_default();
+        assert!(
+            log.lines().any(|l| l == "msg wallpaper-set  /tmp/joker3.png"),
+            "the static apply must set its own static wallpaper, log was:\n{log}"
+        );
+        assert!(
+            !log.contains("-frame.png"),
+            "a static apply must never pin a video poster, log was:\n{log}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// Phase 2 wiring: applying a video theme whose saved settings.toml
+    /// re-arms Noctalia's rotation must turn the LIVE flag off, keeping
+    /// every other restored byte intact.
+    #[test]
+    #[serial]
+    fn v5_apply_video_neutralizes_the_restored_rotation() {
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let theme = animated_theme(&stub);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let saved = "[wallpaper]\n\
+                     directory = \"/home/u/Pictures/Wallpapers/Cars\"\n\
+                     \n\
+                     [wallpaper.automation]\n\
+                     enabled = true\n\
+                     interval = 600\n";
+        std::fs::write(dir.join("settings.toml"), saved).unwrap();
+        // The live Noctalia state dir exists in production; create it so the
+        // restore (and the Phase 2 edit of the LIVE file) has a target.
+        let home = std::env::var("HOME").unwrap();
+        let live_dir = PathBuf::from(&home).join(".local/state/noctalia");
+        std::fs::create_dir_all(&live_dir).unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let live = std::fs::read_to_string(live_dir.join("settings.toml"))
+            .expect("the live settings.toml must exist after apply");
+        assert!(
+            live.contains("[wallpaper.automation]\nenabled = false\n"),
+            "apply must neutralize the rotation it restored, live was:\n{live}"
+        );
+        assert!(
+            live.contains("interval = 600") && live.contains("Wallpapers/Cars"),
+            "only the automation flag may change, live was:\n{live}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
     }
 
     #[test]
