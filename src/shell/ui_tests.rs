@@ -4124,8 +4124,12 @@ fn motion_last_slider_renders_unclipped() {
     let top = win.window().take_snapshot().expect("motion top snapshot");
     save_slice_png(top.clone(), "motion_top.png");
 
-    // Y2-d sits at tune pane index 3 (0-based: a=0, b=1, c=2, d=3).
-    win.set_panel_kbd_preview_index(3);
+    // Y2-d sits at tune-LOCAL index 3 (0-based: a=0, b=1, c=2, d=3). Motion is
+    // CARDS-FIRST: the 19 built-in cards occupy the GLOBAL [0, 19) range, so the
+    // preview index the window hook drives is list-len + local = 19 + 3 = 22.
+    // The tune-first mapping lit Y2-d at global 3, which the cards-first
+    // navigation no longer reaches as a slider.
+    win.set_panel_kbd_preview_index(19 + 3);
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -4661,6 +4665,15 @@ fn engaged_motion_slider_down_exits_and_moves_row() {
     focus_press_key(&win, Key::DownArrow);
     focus_press_key(&win, Key::DownArrow);
     focus_press_key(&win, Key::Return); // engage first bezier slider
+    // Cards-first: index 2 is the first tune stop (list-len = 2), and it must
+    // engage bezier-a, not a tune-first sibling. Right proves WHICH slider
+    // grabbed before ↓ exits it.
+    let before_a = win.get_bezier_a();
+    focus_press_key(&win, Key::RightArrow);
+    assert!(
+        win.get_bezier_a() > before_a,
+        "Return on the first tune stop must engage bezier-a"
+    );
     focus_press_key(&win, Key::DownArrow); // exit + move
     focus_press_key(&win, Key::LeftArrow); // tune → presets (left)
     focus_press_key(&win, Key::Return);
@@ -4668,6 +4681,198 @@ fn engaged_motion_slider_down_exits_and_moves_row() {
         applied.borrow().as_slice(),
         &[0],
         "↓ must exit the engaged Motion slider and move the cursor"
+    );
+}
+
+/// Motion navigation is CARDS-FIRST, mirroring Borders: index 0 is the first
+/// animation card, the built-in cards occupy `[0, anim-files.length)`, the user
+/// presets follow, and the tune stops come after both. Before the index-space
+/// fix the section rendered a tune-first space while PanelRoot drove a
+/// cards-first one, so Enter on a user-preset index engaged a bezier slider and
+/// the preset could never be applied by keyboard.
+#[test]
+fn motion_keyboard_walks_cards_then_user_presets_then_tune() {
+    use slint::platform::Key;
+    use slint::{ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+        SharedString::from("Stylized 2.5D"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("smooth"),
+        SharedString::from("bouncy"),
+        SharedString::from("stylized"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("17_ease.lua"),
+        SharedString::from("18_spring.lua"),
+        SharedString::from("19_stylized2.5D.lua"),
+    ])));
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "My Curve",
+    )])));
+    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "USER",
+    )])));
+    win.set_panel_section(2);
+    settle_frames(20);
+
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
+    win.on_panel_apply_animation({
+        let applied = applied.clone();
+        move |idx, _file| applied.borrow_mut().push(idx)
+    });
+
+    // Entry: index 0 is the FIRST built-in card, so Enter applies it (a
+    // tune-first section would have engaged bezier-a instead).
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[0],
+        "entering Motion must land on the first list card"
+    );
+
+    // Down twice → the last built-in card (index anim-files.length - 1 = 2,
+    // "19_stylized2.5D"): it must not be skipped.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[0, 2],
+        "Down must reach the last built-in card without skipping it"
+    );
+
+    // Down once → the user preset (index anim-files.length = 3). It must be
+    // reachable AND applicable.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[0, 2, 3],
+        "user presets must be reachable and applied by keyboard"
+    );
+
+    // Down once → the first tune stop (index motion-list-len = 4). Enter must
+    // engage bezier-a; Right raises it. The tune-first space engaged bezier-b
+    // at this index.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::Return);
+    let before_a = win.get_bezier_a();
+    focus_press_key(&win, Key::RightArrow);
+    assert!(
+        win.get_bezier_a() > before_a,
+        "the tune stops must be reachable after the cards, first stop = bezier-a"
+    );
+}
+
+/// Entry focus must RENDER on the first list card, never on the tune pane. The
+/// tune-first index space lit bezier-a on entry (index 0) while the list pane
+/// received a negative local index and lit nothing; this pins the cards-first
+/// mapping by sampling the two Motion panes in the rendered frame.
+#[test]
+fn motion_entry_focus_renders_on_first_list_card() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+        SharedString::from("Stylized 2.5D"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("smooth"),
+        SharedString::from("bouncy"),
+        SharedString::from("stylized"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("17_ease.lua"),
+        SharedString::from("18_spring.lua"),
+        SharedString::from("19_stylized2.5D.lua"),
+    ])));
+    win.set_panel_section(2);
+    win.set_panel_kbd_preview_index(0);
+    settle_frames(80);
+    let shot = win.window().take_snapshot().expect("motion entry snapshot");
+    save_slice_png(shot.clone(), "motion_entry_focus.png");
+
+    // The panel content starts at x=161 (160px rail + 1px divider); the
+    // two-column Motion split sits at the content midpoint (~x=1040). Sample
+    // the LIST pane only: the tune pane's bezier value labels are ALSO icy, so
+    // a whole-frame or tune-side count cannot isolate the focus ring. With the
+    // tune-first mapping the list received a negative local index and painted
+    // no ring at all (0 icy pixels); cards-first paints the first card.
+    let list_icy = count_color_in_box(&shot, ICY, 40, 170, 60, 1000, 1050);
+    let tune_icy = count_color_in_box(&shot, ICY, 40, 1080, 60, 1900, 1050);
+    assert!(
+        list_icy > 200,
+        "entering Motion must paint the icy focus ring on the first list card — \
+         list_icy={list_icy} (tune_icy={tune_icy} is dominated by the slider labels)"
+    );
+}
+
+/// The last tune stop (local 4) is the save form: reaching it must paint a
+/// focus ring so the keyboard cursor is visible. Cards-first: the global index
+/// is list-len + 4. Without the ring the save form was an invisible dead stop.
+#[test]
+fn motion_save_form_focus_renders_ring() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+        SharedString::from("Stylized 2.5D"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("smooth"),
+        SharedString::from("bouncy"),
+        SharedString::from("stylized"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("17_ease.lua"),
+        SharedString::from("18_spring.lua"),
+        SharedString::from("19_stylized2.5D.lua"),
+    ])));
+    win.set_panel_section(2);
+
+    // Baseline: no keyboard focus anywhere in the panel.
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(80);
+    let idle = win.window().take_snapshot().expect("motion idle snapshot");
+    save_slice_png(idle.clone(), "motion_save_form_idle.png");
+
+    // Cursor on the save form: list-len 3 + local 4 = 7.
+    win.set_panel_kbd_preview_index(3 + 4);
+    settle_frames(80);
+    let save = win.window().take_snapshot().expect("motion save form snapshot");
+    save_slice_png(save.clone(), "motion_save_form_focus.png");
+
+    // The save form is the lower block of the tune (right) pane. Sampling the
+    // bottom band of the right pane isolates its ring from the slider labels.
+    let idle_icy = count_color_in_box(&idle, ICY, 40, 1080, 560, 1900, 1050);
+    let save_icy = count_color_in_box(&save, ICY, 40, 1080, 560, 1900, 1050);
+    assert!(
+        save_icy > idle_icy + 200,
+        "the save form must paint a focus ring when it owns the cursor — \
+         idle_icy={idle_icy} save_icy={save_icy}"
     );
 }
 

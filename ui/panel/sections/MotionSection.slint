@@ -119,7 +119,7 @@ component MotionTunePane inherits Rectangle {
             }
 
             a-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split && root.has-focus) || hover-a.has-hover;
+                property <bool> lit: (root.local-focus == 0 && root.has-focus) || hover-a.has-hover;
                 property <bool> grabbed: root.engaged-slider == 0 && root.has-focus;
                 height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
@@ -142,7 +142,7 @@ component MotionTunePane inherits Rectangle {
                 }
             }
             b-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split + 1 && root.has-focus) || hover-b.has-hover;
+                property <bool> lit: (root.local-focus == 1 && root.has-focus) || hover-b.has-hover;
                 property <bool> grabbed: root.engaged-slider == 1 && root.has-focus;
                 height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
@@ -165,7 +165,7 @@ component MotionTunePane inherits Rectangle {
                 }
             }
             c-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split + 2 && root.has-focus) || hover-c.has-hover;
+                property <bool> lit: (root.local-focus == 2 && root.has-focus) || hover-c.has-hover;
                 property <bool> grabbed: root.engaged-slider == 2 && root.has-focus;
                 height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
@@ -188,7 +188,7 @@ component MotionTunePane inherits Rectangle {
                 }
             }
             d-wrap := Rectangle {
-                property <bool> lit: (root.focused-index == root.split + 3 && root.has-focus) || hover-d.has-hover;
+                property <bool> lit: (root.local-focus == 3 && root.has-focus) || hover-d.has-hover;
                 property <bool> grabbed: root.engaged-slider == 3 && root.has-focus;
                 height: self.lit ? (self.grabbed ? 104px : 88px) : 72px;
                 animate height { duration: 250ms; easing: ease-in-out-back; }
@@ -228,11 +228,14 @@ component MotionTunePane inherits Rectangle {
                 height: 36px;
 
                 save-line-wrap := Rectangle {
+                    // Tune-local stop 4 is the save form; light it so the
+                    // keyboard cursor is visible when it lands there.
+                    property <bool> lit: root.local-focus == 4 && root.has-focus;
                     horizontal-stretch: 1;
                     height: 36px;
                     background: HveColors.bg-card;
                     border-radius: SkwdTokens.radius-8;
-                    border-width: save-input.has-focus ? 1px : 0px;
+                    border-width: (save-input.has-focus || self.lit) ? 1px : 0px;
                     border-color: #8fd8ff;
 
                     save-input := LineEdit {
@@ -252,10 +255,13 @@ component MotionTunePane inherits Rectangle {
                 }
 
                 save-btn := Rectangle {
+                    property <bool> lit: root.local-focus == 4 && root.has-focus;
                     width: 84px;
                     height: 36px;
                     background: save-ta.has-hover ? HveColors.accent-cyan.transparentize(0.2) : HveColors.accent-cyan;
                     border-radius: SkwdTokens.radius-8;
+                    border-width: self.lit ? 1.5px : 0px;
+                    border-color: #8fd8ff;
 
                     Text {
                         text: "Save";
@@ -441,8 +447,14 @@ export component MotionSection inherits Rectangle {
 
     // Responsive split from window width (ShellRoot).
     in property <bool> two-col: false;
-    // split: 4 sliders + 1 save form = 5 items in tune pane
-    property <int> split: 5;
+    // Cards-first global sequence, mirroring BordersSection: 0..list-count-1
+    // are the built-in + user cards, then the tune stops. `split` is the tune
+    // start, so the list pane reads the GLOBAL focused index and the tune pane
+    // subtracts the split.
+    property <int> list-count: root.anim-files.length + root.user-preset-names.length;
+    property <int> split: root.list-count;
+    // 4 bezier sliders + the save form. Mirrors PanelRoot's motion-total.
+    out property <int> tune-count: 5;
 
     // Slider adjust (keyboard arrows, ±0.05 clamped)
     public function adjust-slider(up: bool) {
@@ -497,9 +509,10 @@ export component MotionSection inherits Rectangle {
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
                 active-index: root.active-index;
-                focused-index: root.focused-index - root.split;
+                focused-index: root.focused-index;
                 has-focus: root.has-focus;
-                follow: root.focused-index >= root.split;
+                // The list follows only while the focus is on a CARD.
+                follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-animation(idx, name); }
                 open-rename(name) => {
                     root.preset-rename-input = name;
@@ -520,11 +533,12 @@ export component MotionSection inherits Rectangle {
                 bezier-b <=> root.bezier-b;
                 bezier-c <=> root.bezier-c;
                 bezier-d <=> root.bezier-d;
-                focused-index: root.focused-index;
+                // Tune-local index: the pane subtracts the split internally.
+                focused-index: root.focused-index - root.split;
                 split: 0;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
+                follow: root.focused-index >= root.split;
                 error-text: root.save-error;
                 preset-name <=> root.preset-name;
                 save-preset(name) => { root.save-animation-preset(name); }
@@ -542,9 +556,10 @@ export component MotionSection inherits Rectangle {
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
                 active-index: root.active-index;
-                focused-index: root.focused-index - root.split;
+                focused-index: root.focused-index;
                 has-focus: root.has-focus;
-                follow: root.focused-index >= root.split;
+                // The list follows only while the focus is on a CARD.
+                follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-animation(idx, name); }
                 open-rename(name) => {
                     root.preset-rename-input = name;
@@ -565,11 +580,12 @@ export component MotionSection inherits Rectangle {
                 bezier-b <=> root.bezier-b;
                 bezier-c <=> root.bezier-c;
                 bezier-d <=> root.bezier-d;
-                focused-index: root.focused-index;
+                // Tune-local index: the pane subtracts the split internally.
+                focused-index: root.focused-index - root.split;
                 split: 0;
                 has-focus: root.has-focus;
                 engaged-slider: root.engaged-slider;
-                follow: root.focused-index < root.split;
+                follow: root.focused-index >= root.split;
                 error-text: root.save-error;
                 preset-name <=> root.preset-name;
                 save-preset(name) => { root.save-animation-preset(name); }
