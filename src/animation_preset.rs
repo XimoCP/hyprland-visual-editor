@@ -15,6 +15,7 @@ pub enum AnimationStyle {
     Slide,
     Fade,
     Popin,
+    SlideFade,
 }
 
 impl AnimationStyle {
@@ -24,11 +25,15 @@ impl AnimationStyle {
             AnimationStyle::Slide => "slide",
             AnimationStyle::Fade => "fade",
             AnimationStyle::Popin => "popin",
+            AnimationStyle::SlideFade => "slidefade 20%",
         }
     }
 
     /// Match the leading family token, ignoring parameters such as `70%`
-    /// or `right`. Unknown families (e.g. `slidefade`) resolve to `None`.
+    /// or `right`, then normalize the real built-in spellings onto the four
+    /// families. `slidefade*` is checked before `slide` so the blend is not
+    /// swallowed by the plain slide prefix (`slidefade`, `slidefadevert`).
+    /// Unknown families resolve to `None`.
     pub fn from_lua(raw: &str) -> Option<AnimationStyle> {
         let family: String = raw
             .trim()
@@ -36,12 +41,19 @@ impl AnimationStyle {
             .take_while(|c| c.is_ascii_alphabetic())
             .collect::<String>()
             .to_ascii_lowercase();
-        match family.as_str() {
-            "slide" => Some(AnimationStyle::Slide),
-            "fade" => Some(AnimationStyle::Fade),
-            "popin" => Some(AnimationStyle::Popin),
-            _ => None,
+        if family == "fade" {
+            return Some(AnimationStyle::Fade);
         }
+        if family == "popin" {
+            return Some(AnimationStyle::Popin);
+        }
+        if family.starts_with("slidefade") {
+            return Some(AnimationStyle::SlideFade);
+        }
+        if family.starts_with("slide") {
+            return Some(AnimationStyle::Slide);
+        }
+        None
     }
 }
 
@@ -367,6 +379,11 @@ mod tests {
                 speed: 3.0,
                 style: AnimationStyle::Fade,
             },
+            AnimationParams {
+                bezier: [0.4, -0.3, 0.2, 1.15],
+                speed: 4.5,
+                style: AnimationStyle::SlideFade,
+            },
         ];
         for p in cases {
             let lua = generate("Test", &p);
@@ -386,8 +403,11 @@ mod tests {
     fn style_from_lua_matches_family_prefix() {
         assert_eq!(AnimationStyle::from_lua("popin 70%"), Some(AnimationStyle::Popin));
         assert_eq!(AnimationStyle::from_lua("slide right"), Some(AnimationStyle::Slide));
+        assert_eq!(AnimationStyle::from_lua("slidevert"), Some(AnimationStyle::Slide));
         assert_eq!(AnimationStyle::from_lua("fade"), Some(AnimationStyle::Fade));
-        assert_eq!(AnimationStyle::from_lua("slidefade 15%"), None);
+        // The blend must not be swallowed by the plain `slide` prefix.
+        assert_eq!(AnimationStyle::from_lua("slidefade 15%"), Some(AnimationStyle::SlideFade));
+        assert_eq!(AnimationStyle::from_lua("slidefadevert 20%"), Some(AnimationStyle::SlideFade));
         assert_eq!(AnimationStyle::from_lua("loop"), None);
     }
 

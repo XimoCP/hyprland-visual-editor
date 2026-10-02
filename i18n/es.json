@@ -75,7 +75,8 @@
       "style_label": "Estilo de Animación",
       "style_slide": "Deslizar",
       "style_fade": "Fundido",
-      "style_popin": "Aparecer"
+      "style_popin": "Aparecer",
+      "style_slidefade": "Deslizar + Fundido"
     },
     "rename_dialog": {
       "title": "Renombrar preajuste de animación",

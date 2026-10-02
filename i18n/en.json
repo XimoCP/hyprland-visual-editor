@@ -75,7 +75,8 @@
       "style_label": "Animation Style",
       "style_slide": "Slide",
       "style_fade": "Fade",
-      "style_popin": "Popin"
+      "style_popin": "Popin",
+      "style_slidefade": "Slide + Fade"
     },
     "rename_dialog": {
       "title": "Rename animation preset",

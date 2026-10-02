@@ -5,16 +5,17 @@
 // `PanelText` (panel_text.slint) are exposed.
 //
 // Only the NEW Motion tune controls live here: the speed and style labels plus
-// the three style-family button labels. Rust fills them from the embedded i18n
+// the four style-family button labels. Rust fills them from the embedded i18n
 // map through `panel_i18n::apply_motion`; the defaults below are today's English
 // copy, so a run that never calls the i18n pass reads exactly as it always did.
 //
-// The style VALUES ("slide"/"fade"/"popin") are identifiers the Rust side
-// round-trips into the saved Lua, so they stay untranslated on purpose.
+// The style VALUES ("slide"/"fade"/"popin"/"slidefade 20%") are identifiers the
+// Rust side round-trips into the saved Lua, so they stay untranslated on purpose.
 export global MotionText {
     in-out property <string> speed-label: "Speed";
     in-out property <string> style-label: "Animation Style";
     in-out property <string> style-slide: "Slide";
     in-out property <string> style-fade: "Fade";
     in-out property <string> style-popin: "Popin";
+    in-out property <string> style-slidefade: "Slide + Fade";
 }

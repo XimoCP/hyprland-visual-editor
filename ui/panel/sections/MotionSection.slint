@@ -258,7 +258,7 @@ component MotionTunePane inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: 4px;
-                        for style-val in ["slide", "fade", "popin"] : Rectangle {
+                        for style-val in ["slide", "fade", "popin", "slidefade 20%"] : Rectangle {
                             horizontal-stretch: 1;
                             height: 32px;
                             border-radius: SkwdTokens.radius-4;
@@ -267,7 +267,8 @@ component MotionTunePane inherits Rectangle {
                             border-color: root.anim-style == style-val ? HveColors.accent-cyan : HveColors.border;
                             Text {
                                 text: style-val == "slide" ? MotionText.style-slide
-                                    : (style-val == "fade" ? MotionText.style-fade : MotionText.style-popin);
+                                    : (style-val == "fade" ? MotionText.style-fade
+                                    : (style-val == "popin" ? MotionText.style-popin : MotionText.style-slidefade));
                                 color: root.anim-style == style-val ? HveColors.bg-dark : HveColors.text-muted;
                                 font-family: SkwdTokens.font-body;
                                 font-size: 12px;
@@ -567,6 +568,8 @@ export component MotionSection inherits Rectangle {
             root.anim-style = "fade";
         } else if (root.anim-style == "fade") {
             root.anim-style = "popin";
+        } else if (root.anim-style == "popin") {
+            root.anim-style = "slidefade 20%";
         } else {
             root.anim-style = "slide";
         }

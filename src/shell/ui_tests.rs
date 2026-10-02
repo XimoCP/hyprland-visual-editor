@@ -4222,6 +4222,104 @@ fn motion_speed_and_style_stops_render() {
     );
 }
 
+/// Phase 6 — the style row must expose a 4th "Slide + Fade" family for the real
+/// built-in `slidefade*` styles. The three-family row parsed those styles to
+/// `None`, so applying such a preset left the row with no selected family at
+/// all. The highlight must march right as the selection does, which only holds
+/// when the 4th segment really exists.
+#[test]
+fn motion_style_row_has_a_fourth_slidefade_button_that_selects() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    // Existence: the segmented row iterates the four families, including the
+    // blend string the parser and save path round-trip.
+    let src = std::fs::read_to_string("ui/panel/sections/MotionSection.slint")
+        .expect("MotionSection.slint must exist");
+    assert!(
+        src.contains(r#"["slide", "fade", "popin", "slidefade 20%"]"#),
+        "the Motion style row must iterate the four families including slidefade 20%"
+    );
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+        SharedString::from("Stylized 2.5D"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("ease curve");
+        3
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from(""); 3])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("17_ease.lua"),
+        SharedString::from("18_spring.lua"),
+        SharedString::from("19_stylized2.5D.lua"),
+    ])));
+    win.set_panel_section(2);
+    // Focus the style stop (list-len 3 + local 5) so the tune scrolls the row
+    // into view; changing the family afterwards does not move the focus.
+    win.set_panel_kbd_preview_index(3 + 5);
+    settle_frames(80);
+
+    const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
+    let highlight_x = |style: &str| -> f32 {
+        win.set_anim_style(style.into());
+        settle_frames(80);
+        let shot = win.window().take_snapshot().expect("style row snapshot");
+        color_centroid_x(&shot, ACCENT_CYAN, 6, 1055, 640, 1905, 700)
+            .unwrap_or_else(|| panic!("no selected-segment highlight for style {style:?}"))
+    };
+
+    let slide = highlight_x("slide");
+    let popin = highlight_x("popin");
+    let blend = highlight_x("slidefade 20%");
+    // Evidence for the visual check: the row with the 4th family selected.
+    let shot = win.window().take_snapshot().expect("slidefade selected snapshot");
+    save_slice_png(shot, "motion_style_slidefade_selected.png");
+
+    assert!(
+        slide < popin,
+        "the highlight must march right: slide={slide} popin={popin}"
+    );
+    assert!(
+        blend > popin,
+        "the 4th Slide + Fade button must own a highlight to the right of Popin: \
+         popin={popin} blend={blend}"
+    );
+}
+
+/// Phase 6 — the keyboard cycle must cover all four families, not the old
+/// three. From the default `slide`, four Enter presses on the style stop must
+/// pass through fade, popin and slidefade before wrapping back to slide.
+#[test]
+fn motion_style_cycle_covers_the_fourth_family() {
+    use slint::platform::Key;
+    let win = focus_open_system_panel();
+    win.set_panel_section(2);
+    settle_frames(20);
+    assert_eq!(win.get_anim_style(), "slide", "the pane starts on slide");
+
+    // No cards: four Downs land on the speed stop (local 4), one more on the
+    // style stop (local 5).
+    for _ in 0..5 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+
+    let mut seen = vec![win.get_anim_style()];
+    for _ in 0..4 {
+        focus_press_key(&win, Key::Return);
+        seen.push(win.get_anim_style());
+    }
+    let seen: Vec<String> = seen.iter().map(|s| s.to_string()).collect();
+    assert_eq!(
+        seen,
+        vec!["slide", "fade", "popin", "slidefade 20%", "slide"],
+        "Enter on the style stop must cycle all four families"
+    );
+}
+
 // ── Settings panel focus (rail ↔ content spatial model) ───────────────
 // Regression tests: Left hands the keyboard cursor to the rail and
 // Enter/Right re-enters the section, never stranding the cursor.
@@ -4966,6 +5064,7 @@ fn motion_control_labels_resolve_in_both_languages() {
     assert_eq!(t.get_style_slide(), "Deslizar");
     assert_eq!(t.get_style_fade(), "Fundido");
     assert_eq!(t.get_style_popin(), "Aparecer");
+    assert_eq!(t.get_style_slidefade(), "Deslizar + Fundido");
 
     crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("en"));
     let t = crate::MotionText::get(&win);
@@ -4974,6 +5073,7 @@ fn motion_control_labels_resolve_in_both_languages() {
     assert_eq!(t.get_style_slide(), "Slide");
     assert_eq!(t.get_style_fade(), "Fade");
     assert_eq!(t.get_style_popin(), "Popin");
+    assert_eq!(t.get_style_slidefade(), "Slide + Fade");
 }
 
 /// Phase 5 — the curve preview must live in the Motion section's FIXED header,
@@ -5085,6 +5185,52 @@ fn motion_apply_sync_leaves_pane_unchanged_without_parseable_curve() {
     assert_eq!(win.get_bezier_d(), 0.9);
     assert_eq!(win.get_anim_speed(), 3.5);
     assert_eq!(win.get_anim_style(), "fade");
+}
+
+/// Phase 6 — the applied preset's speed must always land inside the speed
+/// slider's 0.5..6.0 range. A file with no `speed` key parses to `0.0` (the
+/// parser's missing sentinel), and pushing that straight into the window put
+/// the slider below its own minimum. A speed above 6.0 must clamp down.
+#[test]
+fn motion_apply_sync_guards_the_speed_slider_range() {
+    init_test_platform();
+    let proj = tempfile::TempDir::new().unwrap();
+    let dir = proj.path().join("assets").join("animations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, body: &str| {
+        std::fs::write(dir.join(format!("{name}.lua")), body).unwrap();
+    };
+
+    // No `speed` key anywhere: `parse` yields the 0.0 sentinel.
+    write(
+        "no_speed",
+        "hl.curve(\"c\", { type = \"bezier\", points = { { 0.25, 0.1 }, { 0.25, 1.0 } } })\n\
+         hl.animation({ leaf = \"windowsIn\", enabled = true, bezier = \"c\", style = \"fade\" })\n",
+    );
+    // Above the slider max.
+    write(
+        "too_fast",
+        "hl.curve(\"c\", { type = \"bezier\", points = { { 0.25, 0.1 }, { 0.25, 1.0 } } })\n\
+         hl.animation({ leaf = \"windowsIn\", enabled = true, speed = 10, bezier = \"c\", style = \"fade\" })\n",
+    );
+
+    let win = crate::MainWindow::new().unwrap();
+
+    win.set_anim_speed(3.0);
+    crate::sync_motion_tune_pane(&win, proj.path(), "no_speed.lua");
+    assert_eq!(
+        win.get_anim_speed(),
+        2.0,
+        "a missing/zero speed must fall back to 2.0, never 0.0 below the slider min"
+    );
+
+    win.set_anim_speed(3.0);
+    crate::sync_motion_tune_pane(&win, proj.path(), "too_fast.lua");
+    assert_eq!(
+        win.get_anim_speed(),
+        6.0,
+        "a speed above the slider max must clamp to 6.0"
+    );
 }
 
 /// Phase 4 — the manual apply path must use the shared read-back, exactly like
@@ -6268,6 +6414,44 @@ fn count_color_in_box(
         }
     }
     count
+}
+
+/// Mean x of `rgb` pixels inside an explicit box, or `None` when none match.
+/// Locates a segmented control's highlight block horizontally.
+fn color_centroid_x(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+) -> Option<f32> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut count = 0usize;
+    let mut sum_x = 0usize;
+    for y in y0.min(h)..y1.min(h) {
+        for x in x0..x1.min(w) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            if (bytes[idx] as i16 - rgb.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - rgb.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - rgb.2 as i16).abs() <= tol
+            {
+                count += 1;
+                sum_x += x;
+            }
+        }
+    }
+    if count == 0 {
+        None
+    } else {
+        Some(sum_x as f32 / count as f32)
+    }
 }
 
 /// Consecutive y-rows whose `rgb` pixel count reaches `min_per_row` (x ≥ 360).

@@ -417,7 +417,15 @@ pub(crate) fn sync_motion_tune_pane(
     w.set_bezier_b(params.bezier[1]);
     w.set_bezier_c(params.bezier[2]);
     w.set_bezier_d(params.bezier[3]);
-    w.set_anim_speed(params.speed);
+    // Guard the speed slider range (0.5..6.0). A preset without a `speed` key
+    // parses to the 0.0 missing-sentinel, and pushing that straight into the
+    // window would leave the slider below its own minimum.
+    let speed = if params.speed <= 0.0 {
+        2.0
+    } else {
+        params.speed.clamp(0.5, 6.0)
+    };
+    w.set_anim_speed(speed);
     w.set_anim_style(params.style.as_lua().into());
 }
 
