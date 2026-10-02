@@ -133,7 +133,8 @@ split, and `PanelRoot` uses `borders-list-len` / `borders-total`
     `motion_save_form_focus_renders_ring`; updated
     `motion_last_slider_renders_unclipped`,
     `engaged_motion_slider_down_exits_and_moves_row`.
-- **Commit**: pending.
+- **Commit**: `75cf447 fix(ui): align Motion keyboard navigation with the
+  cards-first index space`.
 
 ## Next step
 
