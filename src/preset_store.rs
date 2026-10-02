@@ -35,6 +35,34 @@ impl PresetStore {
             .map_err(|e| format!("Cannot create preset dir {}: {}", self.base.display(), e))
     }
 
+    /// A preset name is unsafe when it is empty, contains a path separator
+    /// (`/` or `\`), contains a NUL byte, equals `.` or `..`, or starts with
+    /// `.`. Interior dots are ALLOWED: the built-in `19_stylized2.5D.lua` and
+    /// user preset stems such as `keeper_saved` may carry them.
+    ///
+    /// The name arrives unsanitized from the UI; without this check a name
+    /// like `../../../../etc/passwd` would escape `base` and be read into the
+    /// assembled compositor config. Mirrors the shell guard
+    /// `_hve_preset_name_is_safe` in `assets/scripts/utils.sh`.
+    fn validate_name(name: &str) -> Result<(), String> {
+        if name.is_empty() {
+            return Err("Preset name must not be empty".to_string());
+        }
+        if name.contains('/') || name.contains('\\') || name.contains('\0') {
+            return Err(format!(
+                "Preset name '{}' must not contain a path separator",
+                name
+            ));
+        }
+        if name == "." || name == ".." || name.starts_with('.') {
+            return Err(format!(
+                "Preset name '{}' must not start with a dot or be a dot entry",
+                name
+            ));
+        }
+        Ok(())
+    }
+
     /// List user preset names (file stems, sorted).
     pub fn list(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
@@ -55,6 +83,7 @@ impl PresetStore {
     /// Load a user preset file content by name.
     #[allow(dead_code)] // used by Apply feature (upcoming)
     pub fn load(&self, name: &str) -> Result<String, String> {
+        Self::validate_name(name)?;
         let path = self.base.join(format!("{}.lua", name));
         fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read preset {}: {}", name, e))
@@ -63,6 +92,7 @@ impl PresetStore {
     /// Save a user preset. Overwrites if it already exists.
     /// `content` is the full Lua file content (header + config).
     pub fn save(&self, name: &str, content: &str) -> Result<(), String> {
+        Self::validate_name(name)?;
         self.init()?;
         let path = self.base.join(format!("{}.lua", name));
         fs::write(&path, content)
@@ -71,6 +101,8 @@ impl PresetStore {
 
     /// Rename a user preset. Returns error if target already exists.
     pub fn rename(&self, old_name: &str, new_name: &str) -> Result<(), String> {
+        Self::validate_name(old_name)?;
+        Self::validate_name(new_name)?;
         let old_path = self.base.join(format!("{}.lua", old_name));
         let new_path = self.base.join(format!("{}.lua", new_name));
 
@@ -88,6 +120,7 @@ impl PresetStore {
 
     /// Delete a user preset.
     pub fn delete(&self, name: &str) -> Result<(), String> {
+        Self::validate_name(name)?;
         let path = self.base.join(format!("{}.lua", name));
         if !path.exists() {
             return Err(format!("Preset '{}' not found", name));
@@ -99,6 +132,9 @@ impl PresetStore {
     /// Check if a user preset exists.
     #[allow(dead_code)] // used by Apply feature (upcoming)
     pub fn exists(&self, name: &str) -> bool {
+        if Self::validate_name(name).is_err() {
+            return false;
+        }
         self.base.join(format!("{}.lua", name)).exists()
     }
 
@@ -259,6 +295,7 @@ hl.config({{
     /// `project_dir` is the resolved project root (see `project_dir()` in main.rs).
     /// Returns the file content if found, or an error message.
     pub fn read_border_file(name: &str, project_dir: &std::path::Path) -> Result<String, String> {
+        Self::validate_name(name)?;
         // Built-in directory (assets/borders/)
         let builtin = project_dir
             .join("assets")
@@ -485,6 +522,106 @@ mod tests {
         assert!(store.exists("to_delete"));
         store.delete("to_delete").unwrap();
         assert!(!store.exists("to_delete"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The name rule: unsafe names are refused, legitimate ones (including
+    /// interior dots) pass. A preset name is unsafe when it is empty, contains
+    /// `/`, contains `\`, contains NUL, equals `.` or `..`, or starts with `.`.
+    #[test]
+    fn validate_name_rejects_unsafe_and_accepts_legitimate() {
+        for bad in [
+            "",
+            "/",
+            "\\",
+            ".",
+            "..",
+            ".hidden",
+            "../x",
+            "../../../../etc/passwd",
+            "a/b",
+            "a\\b",
+            "sub/../x",
+            "a\0b",
+        ] {
+            assert!(
+                PresetStore::validate_name(bad).is_err(),
+                "unsafe name {bad:?} must be rejected"
+            );
+        }
+        for good in [
+            "01_cascade",
+            "19_stylized2.5D",
+            "keeper_saved",
+            "a.b.c",
+            "-leading-dash",
+            "name with spaces",
+        ] {
+            assert!(
+                PresetStore::validate_name(good).is_ok(),
+                "legitimate name {good:?} must be accepted"
+            );
+        }
+    }
+
+    /// A traversal name must be refused BEFORE any filesystem write: the store
+    /// must never create or read a path outside `base`.
+    #[test]
+    fn save_rejects_traversal_and_writes_nothing_outside_base() {
+        let dir = temp_dir();
+        let store = PresetStore {
+            base: dir.join("borders"),
+        };
+        fs::create_dir_all(&store.base).unwrap();
+        let outside = dir.join("outside.lua");
+
+        let err = store.save("../outside", "-- evil");
+        assert!(err.is_err(), "traversal save must be refused");
+        assert!(
+            !outside.exists(),
+            "a traversal save must not create a file outside `base`"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `read_border_file` must refuse a traversal name even when it points at a
+    /// file that really exists outside the preset directories.
+    #[test]
+    fn read_border_file_rejects_traversal_outside_base() {
+        let dir = temp_dir();
+        let proj = dir.join("proj");
+        fs::create_dir_all(proj.join("assets/borders")).unwrap();
+        fs::write(proj.join("secret.lua"), "-- SECRET_SENTINEL").unwrap();
+
+        let result = PresetStore::read_border_file("../../secret", &proj);
+        assert!(
+            result.is_err(),
+            "a traversal name must be refused, got: {result:?}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `exists` must answer `false` for a traversal name instead of probing a
+    /// path outside `base`.
+    #[test]
+    fn exists_rejects_traversal_name() {
+        let dir = temp_dir();
+        let store = PresetStore {
+            base: dir.join("borders"),
+        };
+        fs::create_dir_all(&store.base).unwrap();
+        // A file that DOES exist one level above `base`: a traversal name must
+        // not report it as an existing preset.
+        fs::write(dir.join("outside.lua"), "-- outside").unwrap();
+        assert!(
+            !store.exists("../outside"),
+            "a traversal name must never resolve to a file outside `base`"
+        );
+        assert!(!store.exists(".."));
+        assert!(!store.exists(""));
 
         fs::remove_dir_all(&dir).unwrap();
     }

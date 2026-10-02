@@ -43,11 +43,51 @@ HVE_SAFE_DIR="${HVE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
 # Hyprland config directory
 HVE_HYPR_DIR="$HOME/.config/hypr"
 
+# A preset name is UNSAFE when it is empty, contains a path separator (`/`
+# or `\`), equals `.` or `..`, or starts with `.`. Interior dots are ALLOWED:
+# the built-in `19_stylized2.5D.lua` and user preset stems such as
+# `keeper_saved` may carry them. Returns 0 (true) when the name is safe.
+# A NUL byte cannot travel through a bash variable, so it is impossible here;
+# the Rust mirror (`PresetStore::validate_name`) rejects it explicitly.
+_hve_preset_name_is_safe() {
+    local name="$1"
+    [ -n "$name" ] || return 1
+    case "$name" in
+        */*) return 1 ;;
+        *\\*) return 1 ;;
+        .|..) return 1 ;;
+        .*) return 1 ;;
+    esac
+    return 0
+}
+
+# Confirm `$dir/$name` stays inside `$dir` after normalization. `realpath -m`
+# canonicalizes without requiring the file to exist, so `..` components and
+# symlinks that escape the directory are refused. `--` ends option parsing so
+# a hostile name can never be read as a flag. Returns 0 (true) when contained.
+_hve_preset_path_is_contained() {
+    local dir="$1"
+    local name="$2"
+    local resolved_dir resolved_path
+    resolved_dir="$(realpath -m -- "$dir" 2>/dev/null)" || return 1
+    resolved_path="$(realpath -m -- "$dir/$name" 2>/dev/null)" || return 1
+    case "$resolved_path" in
+        "$resolved_dir"/*) return 0 ;;
+    esac
+    return 1
+}
+
 # Look for a preset inside ONE directory. Lua-only: HVE never detects config
 # format at runtime, so a preset name always resolves to `$dir/$name.lua`.
 _hve_preset_in_dir() {
     local dir="$1"
     local name="$2"
+
+    # Reject a hostile name before touching the filesystem: the name arrives
+    # unsanitized from the UI and a `..`/absolute component would otherwise
+    # `cat` an arbitrary local file into the assembled Hyprland fragment.
+    _hve_preset_name_is_safe "$name" || return 1
+    _hve_preset_path_is_contained "$dir" "$name" || return 1
 
     # If the name already carries an extension, honour it only if it exists.
     if [[ "$name" == *.* ]]; then

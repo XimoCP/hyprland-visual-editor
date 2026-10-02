@@ -1069,6 +1069,13 @@ impl OverlaySandbox {
         std::fs::write(dir.join(format!("{name}.lua")), content).unwrap();
     }
 
+    /// Plant a file OUTSIDE both preset directories, reachable only through a
+    /// traversal name (`../../<file>`). Proves a hostile name cannot `cat` it
+    /// into the overlay.
+    fn write_outside_file(&self, name: &str, content: &str) {
+        std::fs::write(self.root.join(name), content).unwrap();
+    }
+
     fn assemble(&self) -> String {
         let out = self.run("assemble.sh", &[]);
         assert!(
@@ -1590,5 +1597,116 @@ fn built_in_preset_wins_over_user_preset_with_the_same_name() {
     assert!(
         !overlay.contains("USER SHADOW MARKER"),
         "a user preset must never shadow a built-in of the same name: {overlay}"
+    );
+}
+
+// ── A hostile preset name must never escape the preset directories ──────
+//
+// Live defect (2026-10-02, `odd/tasks/preset-name-path-traversal-guard.md`):
+// `_hve_preset_in_dir` treated any dotted name as already carrying an
+// extension and ran `[ -f "$dir/$name" ]` with NO containment check, so a
+// name like `../../secret.lua` resolved outside the preset dirs and `cat`
+// copied it into the assembled Hyprland fragment. The name arrives
+// unsanitized from the UI.
+
+/// A traversal border name must take the SAFE fallback: the file it points to
+/// lives outside both preset directories and its content must never reach the
+/// overlay.
+#[test]
+fn traversal_border_preset_name_takes_the_safe_fallback() {
+    let sb = OverlaySandbox::build();
+    sb.write_outside_file(
+        "traversal_sentinel.lua",
+        "-- TRAVERSAL_SENTINEL_TOKEN\n\
+         hl.config({ general = { col = { active_border = { angle = 424242 } } } })\n",
+    );
+
+    let overlay = sb.apply_border_preset("../../traversal_sentinel.lua");
+
+    assert!(
+        !overlay.contains("TRAVERSAL_SENTINEL_TOKEN"),
+        "a traversal border name must never `cat` a file outside the preset \
+         dirs into the overlay:\n{overlay}"
+    );
+    assert!(
+        !overlay.contains("424242"),
+        "the outside file's content reached the overlay through a traversal \
+         border name:\n{overlay}"
+    );
+    assert!(
+        overlay.contains("hl.config({ general = { [\"col.active_border\"] = primary } })"),
+        "a traversal border name must take the safe fallback:\n{overlay}"
+    );
+}
+
+/// Same contract for the animation apply path.
+#[test]
+fn traversal_animation_preset_name_takes_the_safe_fallback() {
+    let sb = OverlaySandbox::build();
+    sb.write_outside_file(
+        "traversal_sentinel.lua",
+        "-- TRAVERSAL_SENTINEL_TOKEN\n\
+         hl.config({ animations = { speed = 424242 } })\n",
+    );
+
+    let overlay = sb.apply_animation_preset("../../traversal_sentinel.lua");
+
+    assert!(
+        !overlay.contains("TRAVERSAL_SENTINEL_TOKEN"),
+        "a traversal animation name must never `cat` a file outside the preset \
+         dirs into the overlay:\n{overlay}"
+    );
+    assert!(
+        !overlay.contains("424242"),
+        "the outside file's content reached the overlay through a traversal \
+         animation name:\n{overlay}"
+    );
+    assert!(
+        overlay.contains("hl.config({ animations = { enabled = true } })"),
+        "a traversal animation name must take the safe animation fallback:\n{overlay}"
+    );
+}
+
+/// A built-in animation whose name carries an INTERIOR dot (`19_stylized2.5D.lua`)
+/// must keep resolving: the guard rejects path separators and a LEADING dot, not
+/// dots in general.
+#[test]
+fn interior_dot_preset_name_still_resolves() {
+    let sb = OverlaySandbox::build();
+    let overlay = sb.apply_animation_preset("19_stylized2.5D.lua");
+    assert!(
+        overlay.contains("-- @Title: Stylized 2.5D"),
+        "a legitimate interior-dot built-in must resolve, not fall back:\n{overlay}"
+    );
+    assert!(
+        !overlay.contains("hl.config({ animations = { enabled = true } })"),
+        "an interior-dot built-in must never take the safe animation fallback:\n{overlay}"
+    );
+}
+
+/// A name with a leading dot is unsafe and must fall back even when a matching
+/// hidden file exists inside the preset directory.
+#[test]
+fn leading_dot_preset_name_takes_the_safe_fallback() {
+    let sb = OverlaySandbox::build();
+    // A hidden file that DOES exist inside the built-in borders directory:
+    // a name-based guard must refuse it before any filesystem check.
+    let hidden = sb.root.join("assets/borders/.hidden_sentinel.lua");
+    std::fs::write(
+        &hidden,
+        "-- HIDDEN_SENTINEL_TOKEN\n\
+         hl.config({ general = { col = { active_border = { angle = 424242 } } } })\n",
+    )
+    .unwrap();
+
+    let overlay = sb.apply_border_preset(".hidden_sentinel.lua");
+
+    assert!(
+        !overlay.contains("HIDDEN_SENTINEL_TOKEN"),
+        "a leading-dot name must never resolve to a hidden preset file:\n{overlay}"
+    );
+    assert!(
+        overlay.contains("hl.config({ general = { [\"col.active_border\"] = primary } })"),
+        "a leading-dot border name must take the safe fallback:\n{overlay}"
     );
 }
