@@ -5744,7 +5744,9 @@ fn system_row_click_handlers_refocus_by_construction() {
         !src.contains("border-color: fs.has-focus"),
         "SystemSection must have no zone border leftovers"
     );
-    // 1:1 legacy: mouse NEVER moves keyboard focus — it only stamps mouse-row and acts
+    // System rows are NOT a card list: mouse clicks only stamp mouse-row and
+    // act; they never move keyboard focus (the card lists converge focus via
+    // focus-requested, D8, but System keeps the mouse-only mark).
     for row in [
         "root.mouse-row = 1;",
         "root.mouse-row = 3;",
@@ -5849,10 +5851,12 @@ fn system_row_click_handlers_refocus_by_construction() {
 
 /// Borders is presentational: no zone border on the root (it relayouted
 /// content on focus gain and ate the first click), fixed 1px slider
-/// borders with color-only states, and NO focus call in any mouse handler
-/// — the panel-kbd FocusScope owns all keyboard focus.
+/// borders with color-only states, and NO Slint focus call in any mouse
+/// handler — the panel-kbd FocusScope owns Slint focus. Keyboard == mouse
+/// (D8): a card body click emits `focus-requested(index)` and the list pane
+/// + section forward it up so PanelRoot moves the keyboard cursor there.
 #[test]
-fn borders_mouse_never_touches_focus_by_construction() {
+fn borders_mouse_converges_keyboard_focus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/BordersSection.slint")
         .expect("BordersSection.slint must exist");
     assert!(
@@ -5877,16 +5881,42 @@ fn borders_mouse_never_touches_focus_by_construction() {
         !code.contains(".focus()"),
         "BordersSection must never move Slint focus (presentational)"
     );
+    // NEW contract (D8): the card body emits focus-requested(index), and the
+    // list pane + section forward it up. PanelRoot owns the index.
+    assert!(
+        code.contains("focus-requested(idx) => { root.focus-requested(idx); }"),
+        "BordersListPane must forward the card's focus-requested up"
+    );
+    assert!(
+        code.contains("callback focus-requested(int);"),
+        "BordersSection must declare a section-level focus-requested(int)"
+    );
+    let card = std::fs::read_to_string("ui/panel/sections/SavedPresetCard.slint")
+        .expect("SavedPresetCard.slint must exist");
+    assert!(
+        card.contains("callback focus-requested(int);"),
+        "SavedPresetCard must declare focus-requested(int)"
+    );
+    assert!(
+        card.contains("root.focus-requested(root.index)"),
+        "SavedPresetCard body click must emit focus-requested(root.index)"
+    );
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
                 !line.contains(".focus()"),
-                "no Borders mouse handler may touch focus: {line}"
+                "no Borders mouse handler may touch Slint focus: {line}"
             );
         }
     }
+    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("PanelRoot.slint must exist");
+    assert!(
+        root.contains("focus-requested(idx) => { root.borders-focused-index = idx; }"),
+        "PanelRoot must move borders-focused-index on the section's focus-requested"
+    );
 }
 
 /// The picker card's entry scale (transform-scale-x/y 0.95 -> 1.0) is
@@ -5926,10 +5956,12 @@ fn picker_scale_animation_stays_declared_by_construction() {
     );
 }
 
-/// Filters is presentational: no zone border on the root and NO focus call
-/// — the panel-kbd FocusScope owns all keyboard focus.
+/// Filters is presentational: no zone border on the root and NO Slint focus
+/// call — the panel-kbd FocusScope owns Slint focus. Keyboard == mouse (D8):
+/// the PresetCard body click acts (toggled) AND emits focus-requested(index);
+/// the section forwards it up so PanelRoot moves the keyboard cursor there.
 #[test]
-fn filters_mouse_never_touches_focus_by_construction() {
+fn filters_mouse_converges_keyboard_focus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
     assert!(
@@ -5950,29 +5982,51 @@ fn filters_mouse_never_touches_focus_by_construction() {
         !code.contains(".focus()"),
         "FiltersSection must never move Slint focus (presentational)"
     );
+    // NEW contract (D8): the section forwards the card's focus-requested.
+    assert!(
+        code.contains("focus-requested(idx) => { root.focus-requested(idx); }"),
+        "FiltersSection must forward the card's focus-requested up"
+    );
+    assert!(
+        code.contains("callback focus-requested(int);"),
+        "FiltersSection must declare a section-level focus-requested(int)"
+    );
+    let card = std::fs::read_to_string("ui/components.slint")
+        .expect("ui/components.slint must exist");
+    assert!(
+        card.contains("root.focus-requested(root.index)"),
+        "PresetCard body click must emit focus-requested(root.index)"
+    );
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
                 !line.contains(".focus()"),
-                "no Filters mouse handler may touch focus: {line}"
+                "no Filters mouse handler may touch Slint focus: {line}"
             );
         }
     }
+    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("PanelRoot.slint must exist");
+    assert!(
+        root.contains("focus-requested(idx) => { root.filters-focused-index = idx; }"),
+        "PanelRoot must move filters-focused-index on the section's focus-requested"
+    );
 }
 
 /// Filters scroll follows KEYBOARD focus only (Borders/Motion pattern):
 /// arrows set focus-is-kbd, any mouse click clears it, and viewport-y is
 /// frozen while the mouse drives — so a click never yanks the viewport
 /// that follows the keyboard focus. Hover never moves keyboard focus
-/// (hover-moves-focus stays false, visual-only).
+/// (hover-moves-focus stays false, visual-only). A body click DOES converge
+/// the keyboard cursor (D8), but through focus-requested, not this freeze.
 #[test]
 fn filters_scroll_follows_keyboard_only_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
-    // 1:1 legacy: mouse NEVER moves keyboard focus — scroll freeze is kept
-    // for keyboard follow. fs.has-focus gates viewport scroll like other sections.
+    // Scroll freeze is kept for keyboard follow. fs.has-focus gates viewport
+    // scroll like other sections.
     for marker in [
         "property <length> saved-scroll-y: 0px;",
         "changed viewport-y => { root.saved-scroll-y = self.viewport-y; }",
@@ -5984,21 +6038,24 @@ fn filters_scroll_follows_keyboard_only_by_construction() {
         src.contains(": root.saved-scroll-y;"),
         "FiltersSection viewport-y must freeze while the mouse drives"
     );
-    // Mouse must not move keyboard focus — toggled is act-only
+    // Mouse acts through toggled (apply); it must not write focused-index
+    // directly — the cursor moves via the section's focus-requested callback.
     assert!(
         src.contains("toggled => { root.apply-shader"),
         "FiltersSection mouse toggled must be act-only without focused-index"
     );
     assert!(
         !src.contains("toggled => { root.focused-index"),
-        "FiltersSection mouse toggled must NOT move keyboard focus"
+        "FiltersSection mouse toggled must NOT move keyboard focus directly"
     );
 }
 
-/// Motion is presentational: no zone border on the root and NO focus call
-/// — the panel-kbd FocusScope owns all keyboard focus.
+/// Motion is presentational: no zone border on the root and NO Slint focus
+/// call — the panel-kbd FocusScope owns Slint focus. Keyboard == mouse (D8):
+/// a card body click emits `focus-requested(index)` and the list pane +
+/// section forward it up so PanelRoot moves the keyboard cursor there.
 #[test]
-fn motion_mouse_never_touches_focus_by_construction() {
+fn motion_mouse_converges_keyboard_focus_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/MotionSection.slint")
         .expect("MotionSection.slint must exist");
     assert!(
@@ -6023,23 +6080,47 @@ fn motion_mouse_never_touches_focus_by_construction() {
         !code.contains(".focus()"),
         "MotionSection must never move Slint focus (presentational)"
     );
+    // NEW contract (D8): the card body emits focus-requested(index), and the
+    // list pane + section forward it up. PanelRoot owns the index.
+    assert!(
+        code.contains("focus-requested(idx) => { root.focus-requested(idx); }"),
+        "MotionListPane must forward the card's focus-requested up"
+    );
+    assert!(
+        code.contains("callback focus-requested(int);"),
+        "MotionSection must declare a section-level focus-requested(int)"
+    );
+    let card = std::fs::read_to_string("ui/panel/sections/SavedPresetCard.slint")
+        .expect("SavedPresetCard.slint must exist");
+    assert!(
+        card.contains("root.focus-requested(root.index)"),
+        "SavedPresetCard body click must emit focus-requested(root.index)"
+    );
     for line in src.lines() {
         if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
                 !line.contains(".focus()"),
-                "no Motion mouse handler may touch focus: {line}"
+                "no Motion mouse handler may touch Slint focus: {line}"
             );
         }
     }
+    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("PanelRoot.slint must exist");
+    assert!(
+        root.contains("focus-requested(idx) => { root.motion-focused-index = idx; }"),
+        "PanelRoot must move motion-focused-index on the section's focus-requested"
+    );
 }
 
-/// Single-FocusScope contract: the mouse never moves keyboard focus.
+/// Single-FocusScope contract: the mouse never takes Slint focus.
 /// PanelMenu and every section own no FocusScope; PanelRoot's panel-kbd is
 /// the only scope, so a click that had previously stolen focus to a rail
 /// scope now stays on panel-kbd. Keyboard entry is programmatic only
-/// (`panel-kbd.focus()`), never a mouse handler.
+/// (`panel-kbd.focus()`), never a mouse handler. A card body click moves the
+/// keyboard CURSOR through the focus-requested callback (D8), not by touching
+/// Slint focus.
 #[test]
 fn panel_scopes_ignore_mouse_focus_by_construction() {
     for path in [
@@ -6071,6 +6152,305 @@ fn panel_scopes_ignore_mouse_focus_by_construction() {
     assert!(
         root.contains("panel-kbd.focus();"),
         "PanelRoot must keep the programmatic keyboard entry"
+    );
+}
+
+// ── Keyboard == mouse (D8): a card body click moves the keyboard cursor ──
+// The keeper's report: click a card with the mouse, then resume with the
+// keyboard, and the cursor stayed at the OLD keyboard position — you navigate
+// blindly until you reach where the mouse was. Each test clicks the SECOND
+// card's body, then drives the keyboard from there and asserts it acts on the
+// clicked card, proving the cursor converged on the click.
+
+/// Save: click the second theme card, then Enter must apply THAT theme.
+#[test]
+fn save_card_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-01-01"),
+        SharedString::from("2026-01-02"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false, false])));
+    win.set_panel_section(0);
+    win.set_panel_kbd_preview_index(-1);
+    win.set_panel_save_focused_index(-1);
+
+    // Production-equivalent wiring: the focus-requested callback moves the
+    // Rust-owned index (main.rs on_panel_save_focus_requested).
+    let w = win.as_weak();
+    win.on_panel_save_focus_requested(move |idx| {
+        if let Some(w) = w.upgrade() {
+            w.set_panel_save_focused_index(idx);
+        }
+    });
+    settle_frames(30);
+
+    // Locate the SECOND theme card by its bg-card band (none is focused, so
+    // the first band is Alpha and the next is Beta).
+    let shot = win.window().take_snapshot().expect("save cards snapshot");
+    let first = first_color_band_bbox(&shot, BG_CARD, 8, 170, 210, 1040, 1080, 300, None)
+        .expect("the Save list must paint its first card");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, first.3 + 1, 1040, 1080, 300, None)
+        .expect("the Save list must paint its second card");
+    let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
+
+    dispatch_pointer(&win, cx as f32, cy as f32, PointerEventButton::Left);
+    settle_frames(30);
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        1,
+        "clicking the second theme card must move the keyboard cursor to index 1"
+    );
+
+    let applied: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_saved_theme({
+        let applied = applied.clone();
+        move |idx| applied.borrow_mut().push(idx)
+    });
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[1],
+        "Enter after the click must apply the clicked theme (index 1), not the old cursor"
+    );
+}
+
+/// Borders: click the second preset card, then Enter must apply THAT preset.
+#[test]
+fn borders_card_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(1);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(30);
+
+    // Card 0 owns the keyboard cursor by default, so the first bg-card band in
+    // the list pane is the unfocused SECOND card.
+    let shot = win.window().take_snapshot().expect("borders cards snapshot");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
+        .expect("the Borders list must paint its unfocused card");
+    let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
+
+    let applied: Rc<RefCell<Vec<(i32, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_border({
+        let applied = applied.clone();
+        move |idx, file| applied.borrow_mut().push((idx, file.to_string()))
+    });
+
+    dispatch_pointer(&win, cx as f32, cy as f32, PointerEventButton::Left);
+    settle_frames(30);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[(1, "b.lua".to_string())],
+        "after clicking the second card, Enter must apply it — the cursor must have converged"
+    );
+}
+
+/// Motion: click the second preset card, then Enter must apply THAT preset.
+#[test]
+fn motion_card_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(2);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(30);
+
+    let shot = win.window().take_snapshot().expect("motion cards snapshot");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
+        .expect("the Motion list must paint its unfocused card");
+    let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
+
+    let applied: Rc<RefCell<Vec<(i32, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_animation({
+        let applied = applied.clone();
+        move |idx, file| applied.borrow_mut().push((idx, file.to_string()))
+    });
+
+    dispatch_pointer(&win, cx as f32, cy as f32, PointerEventButton::Left);
+    settle_frames(30);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        applied.borrow().as_slice(),
+        &[(1, "b.lua".to_string())],
+        "after clicking the second card, Enter must apply it — the cursor must have converged"
+    );
+}
+
+/// Filters: a card body click already applies the shader (toggled). After the
+/// click, the keyboard cursor must have converged too, so Enter re-applies the
+/// SAME card instead of the old cursor's card.
+#[test]
+fn filters_card_click_moves_keyboard_cursor() {
+    use slint::platform::{Key, PointerEventButton};
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_shader_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Blur"),
+        SharedString::from("Glow"),
+    ])));
+    win.set_shader_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_shader_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_shader_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.frag"),
+        SharedString::from("b.frag"),
+    ])));
+    win.set_panel_section(3);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(30);
+
+    let shot = win.window().take_snapshot().expect("filters cards snapshot");
+    let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1920, 1080, 300, None)
+        .expect("the Filters list must paint its unfocused card");
+    let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
+
+    let applied: Rc<RefCell<Vec<(i32, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_shader({
+        let applied = applied.clone();
+        move |idx, file| applied.borrow_mut().push((idx, file.to_string()))
+    });
+
+    dispatch_pointer(&win, cx as f32, cy as f32, PointerEventButton::Left);
+    settle_frames(30);
+    // The body click itself applies the clicked card (toggled) — expected.
+    let after_click = applied.borrow().clone();
+    assert_eq!(
+        after_click.last().map(|(i, _)| *i),
+        Some(1),
+        "the body click must still apply the clicked shader (toggled): {after_click:?}"
+    );
+
+    // Keyboard resumes: Enter must re-apply the clicked card, not the old one.
+    focus_press_key(&win, Key::Return);
+    let all = applied.borrow().clone();
+    assert_eq!(
+        all.last().map(|(i, _)| *i),
+        Some(1),
+        "after the click, Enter must apply the clicked card (index 1) — got {all:?}"
+    );
+}
+
+/// Visual proof for the keeper's report: after a card body click the keyboard
+/// focus ring (icy #8fd8ff) paints on the CLICKED card, not the old cursor.
+/// Renders before/after and pins the ring with a colour count; the PNG is the
+/// human-reviewable frame.
+#[test]
+fn card_click_focus_ring_renders_on_clicked_card() {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    use slint::{ComponentHandle as _, LogicalPosition, ModelRc, SharedString, VecModel};
+
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Alpha"),
+        SharedString::from("Beta"),
+    ])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a"),
+        SharedString::from("b"),
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a.lua"),
+        SharedString::from("b.lua"),
+    ])));
+    win.set_panel_section(1);
+    win.set_panel_kbd_preview_index(-1);
+    settle_frames(30);
+
+    let before = win.window().take_snapshot().expect("before click snapshot");
+    save_slice_png(before.clone(), "card_click_before.png");
+    let second = first_color_band_bbox(&before, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
+        .expect("the unfocused second card must paint bg-card");
+    let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
+
+    dispatch_pointer(&win, cx as f32, cy as f32, PointerEventButton::Left);
+    // Park the pointer on the panel header so the hover expansion cannot be
+    // mistaken for the keyboard ring.
+    win.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(1250.0, 30.0),
+    });
+    settle_frames(40);
+    let after = win.window().take_snapshot().expect("after click snapshot");
+    save_slice_png(after.clone(), "card_click_focus_ring.png");
+
+    // The unfocused card paints NO icy ring; the clicked one paints its 1px
+    // icy border (two full-width bands) once the cursor converges on it.
+    let before_icy = count_color_in_box(&before, ICY, 40, second.0, second.1, second.2 + 1, second.3 + 1);
+    let y0 = second.1.saturating_sub(70);
+    let after_icy = count_color_in_box(&after, ICY, 40, second.0, y0, second.2 + 1, second.3 + 1);
+    assert!(
+        before_icy < 50,
+        "the unfocused card must paint no icy ring before the click — icy={before_icy}"
+    );
+    assert!(
+        after_icy > 200,
+        "the clicked card must paint its icy keyboard ring after the click — icy={after_icy}"
     );
 }
 
@@ -14578,3 +14958,4 @@ fn focus_restore_bumps_are_bounded_in_count_and_time() {
         "every ping lands inside the ~2-6 s re-assert window with margin"
     );
 }
+

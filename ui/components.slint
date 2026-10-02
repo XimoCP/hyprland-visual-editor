@@ -176,13 +176,13 @@ export component PresetCard inherits Rectangle {
     }
 
     // ── TouchArea (toggle only, no pointer-event to avoid stuck focus) ──
-    // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
-    // Hover expands visually (height/bg/border) but never writes focus.
-    // Click applies directly without touching focused-index.
+    // Keyboard == mouse: a body click toggles the card AND moves the keyboard
+    // cursor to it, so arrows continue from where the mouse left off. Hover
+    // still expands visually without writing focus.
     ta := TouchArea {
         width: 100%;
         height: 100%;
-        clicked => { root.toggled(); root.refocus(); }
+        clicked => { root.toggled(); root.focus-requested(root.index); root.refocus(); }
     }
 }
 

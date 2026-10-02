@@ -1887,6 +1887,9 @@ component BordersListPane inherits Rectangle {
     callback apply-preset(int, string);
     callback open-rename(string);
     callback open-delete(string);
+    // A card body click moves the keyboard cursor to that card (keyboard ==
+    // mouse); the section forwards it up to PanelRoot, which owns the index.
+    callback focus-requested(int);
 
     property <length> saved-scroll-y: 0px;
     // Split index: built-in cards fill 0..builtin-count-1, user cards fill builtin-count..
@@ -1977,6 +1980,7 @@ component BordersListPane inherits Rectangle {
                 accent: #8fd8ff;
                 index: i;
                 apply-preset(idx, name) => { root.apply-preset(idx, name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 refocus() => { }
             }
 
@@ -2003,6 +2007,7 @@ component BordersListPane inherits Rectangle {
                 apply-preset(idx, name) => { root.apply-preset(idx, name); }
                 open-rename(name) => { root.open-rename(name); }
                 open-delete(name) => { root.open-delete(name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 refocus() => { }
             }
 
@@ -2044,6 +2049,9 @@ export component BordersSection inherits Rectangle {
     callback save-border-preset(string);
     callback rename-border-preset(string, string);
     callback delete-border-preset(string);
+    // Keyboard == mouse: a card body click asks PanelRoot to move the keyboard
+    // cursor to that card (PanelRoot owns `borders-focused-index`).
+    callback focus-requested(int);
     // Preset rename/delete dialogs (shared Dialogs.slint). The state lives on
     // the section root because the pane is instantiated twice (two-col /
     // stacked) behind a condition.
@@ -2569,6 +2577,7 @@ export component BordersSection inherits Rectangle {
                 // pane's focus, so navigating the tune dragged the list.
                 follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 open-rename(name) => {
                     root.preset-rename-input = name;
                     root.preset-dialog-target = name;
@@ -2679,6 +2688,7 @@ export component BordersSection inherits Rectangle {
                 // pane's focus, so navigating the tune dragged the list.
                 follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 open-rename(name) => {
                     root.preset-rename-input = name;
                     root.preset-dialog-target = name;

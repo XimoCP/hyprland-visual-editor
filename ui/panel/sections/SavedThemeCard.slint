@@ -29,12 +29,13 @@ export component SavedThemeCard inherits Rectangle {
     callback open-rename(string);
     callback open-delete(string);
     callback open-refresh(string);
-    // Dead by design: the card body is trace-only (apply goes through the
-    // ▶ button), so nothing here ever emits focus-requested. Hover/mouse
-    // never moves keyboard focus — parity with legacy navigation.
+    // Keyboard == mouse (D8): a click on the card BODY moves the keyboard
+    // cursor to this card, so arrows continue from where the mouse left off.
+    // The apply control is still the ▶ button; the body only converges focus.
     callback focus-requested(int);
     callback mouse-trace(string);
-    // 1:1 legacy: clicking a card must NOT steal keyboard focus.
+    // Re-seeds the panel-kbd FocusScope after a mouse click so the keyboard
+    // keeps working without moving focused-index by itself.
     callback refocus();
 
     property <bool> is-hovered: card-ta.has-hover || apply-ta.has-hover || ref-btn.has-hover || rn-btn.has-hover || del-btn.has-hover;
@@ -50,12 +51,13 @@ export component SavedThemeCard inherits Rectangle {
     visible: true;
 
     // 1. Background layer for the card TouchArea (hover events)
-    // Trace-only body click: no focus move, no visual change. Hover/mouse
-    // never moves keyboard focus — parity with legacy navigation.
+    // Body click: trace + move the keyboard cursor to this card (keyboard ==
+    // mouse), then re-seed the panel-kbd scope. The card's own apply control
+    // (the ▶ button) is untouched.
     card-ta := TouchArea {
         width: 100%;
         height: 100%;
-        clicked => { root.mouse-trace("save-card-body idx=" + root.index); root.refocus(); }
+        clicked => { root.mouse-trace("save-card-body idx=" + root.index); root.focus-requested(root.index); root.refocus(); }
     }
 
     // 2. Glow and shadows (visuals)

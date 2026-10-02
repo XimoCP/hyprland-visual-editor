@@ -427,6 +427,9 @@ component MotionListPane inherits Rectangle {
     callback apply-preset(int, string);
     callback open-rename(string);
     callback open-delete(string);
+    // A card body click moves the keyboard cursor to that card (keyboard ==
+    // mouse); the section forwards it up to PanelRoot, which owns the index.
+    callback focus-requested(int);
 
     property <length> saved-scroll-y: 0px;
     property <int> builtin-count: root.builtin-names.length;
@@ -468,6 +471,7 @@ component MotionListPane inherits Rectangle {
                 accent: #8fd8ff;
                 index: i;
                 apply-preset(idx, name) => { root.apply-preset(idx, name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 refocus() => { }
             }
 
@@ -491,6 +495,7 @@ component MotionListPane inherits Rectangle {
                 apply-preset(idx, name) => { root.apply-preset(idx, name); }
                 open-rename(name) => { root.open-rename(name); }
                 open-delete(name) => { root.open-delete(name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 refocus() => { }
             }
 
@@ -532,6 +537,9 @@ export component MotionSection inherits Rectangle {
     callback save-animation-preset(string);
     callback rename-animation-preset(string, string);
     callback delete-animation-preset(string);
+    // Keyboard == mouse: a card body click asks PanelRoot to move the keyboard
+    // cursor to that card (PanelRoot owns `motion-focused-index`).
+    callback focus-requested(int);
     // Preset rename/delete dialogs (shared Dialogs.slint). State on the root
     // because the pane is instantiated twice (two-col / stacked).
     in-out property <string> preset-dialog-mode: "";
@@ -661,6 +669,7 @@ export component MotionSection inherits Rectangle {
                 // The list follows only while the focus is on a CARD.
                 follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-animation(idx, name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 open-rename(name) => {
                     root.preset-rename-input = name;
                     root.preset-dialog-target = name;
@@ -711,6 +720,7 @@ export component MotionSection inherits Rectangle {
                 // The list follows only while the focus is on a CARD.
                 follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-animation(idx, name); }
+                focus-requested(idx) => { root.focus-requested(idx); }
                 open-rename(name) => {
                     root.preset-rename-input = name;
                     root.preset-dialog-target = name;

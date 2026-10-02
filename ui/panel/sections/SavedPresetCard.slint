@@ -33,6 +33,8 @@ export component SavedPresetCard inherits Rectangle {
     callback apply-preset(int, string);
     callback open-rename(string);
     callback open-delete(string);
+    // Keyboard == mouse: the card body click moves the keyboard cursor here.
+    callback focus-requested(int);
     callback refocus();
 
     property <bool> is-hovered: card-ta.has-hover || switch-ta.has-hover;
@@ -45,11 +47,13 @@ export component SavedPresetCard inherits Rectangle {
     border-color: (is-active && keyboard-focused) ? HveColors.text : (is-active ? accent : (keyboard-focused ? #8fd8ff : (is-hovered ? accent.transparentize(0.6) : HveColors.border)));
     visible: true;
 
-    // Trace-only body click: no focus move.
+    // Body click: move the keyboard cursor to this card (keyboard == mouse),
+    // then re-seed the panel-kbd scope. The switch keeps being the apply
+    // control; the body only converges focus.
     card-ta := TouchArea {
         width: 100%;
         height: 100%;
-        clicked => { root.refocus(); }
+        clicked => { root.focus-requested(root.index); root.refocus(); }
     }
 
     // Glow and shadows.

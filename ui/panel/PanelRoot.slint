@@ -854,6 +854,9 @@ export component PanelRoot inherits Rectangle {
                         tune-changed(colors, angle, inactive, glow, anims, rule) => { root.tune-changed(colors, angle, inactive, glow, anims, rule); }
                         add-color-slot => { root.add-color-slot(); }
                         remove-color-slot => { root.remove-color-slot(); }
+                        // Keyboard == mouse (D8): a card body click moves the
+                        // keyboard cursor to the clicked card.
+                        focus-requested(idx) => { root.borders-focused-index = idx; }
                     }
                     motion := MotionSection {
                         visible: root.section == 2;
@@ -891,6 +894,9 @@ export component PanelRoot inherits Rectangle {
                         preset-name <=> root.animation-preset-name;
                         user-preset-names: root.user-animation-preset-names;
                         user-preset-tags: root.user-animation-preset-tags;
+                        // Keyboard == mouse (D8): a card body click moves the
+                        // keyboard cursor to the clicked card.
+                        focus-requested(idx) => { root.motion-focused-index = idx; }
                     }
                     filters := FiltersSection {
                         visible: root.section == 3;
@@ -904,6 +910,9 @@ export component PanelRoot inherits Rectangle {
                         focused-index: root.kbd-preview-index >= 0 ? root.kbd-preview-index : root.filters-focused-index;
                         has-focus: (panel-kbd.has-focus && !root.menu-active) || root.kbd-preview-index >= 0;
                         apply-shader(idx, file) => { root.apply-shader(idx, file); }
+                        // Keyboard == mouse (D8): a card body click moves the
+                        // keyboard cursor to the clicked card.
+                        focus-requested(idx) => { root.filters-focused-index = idx; }
                     }
                     system := SystemSection {
                         visible: root.section == 4;

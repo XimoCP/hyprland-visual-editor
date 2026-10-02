@@ -8,8 +8,9 @@
 // Keyboard R11: arrows navigate cards, Enter/Space activates,
 // icy-cyan #8fd8ff focus. ALL keyboard dispatch lives in PanelRoot's
 // single `panel-kbd` FocusScope (HVE 1 pattern); this section is
-// presentational and owns no FocusScope. Mouse never steals focus —
-// clicks act only and never move `focused-index`.
+// presentational and owns no FocusScope. A mouse body click acts AND moves
+// the keyboard cursor to the clicked card (keyboard == mouse); hover stays
+// visual-only.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -28,6 +29,9 @@ export component FiltersSection inherits Rectangle {
     in property <int> focused-index: 0;
     in property <bool> has-focus: false;
     callback apply-shader(int, string);
+    // Keyboard == mouse: a card body click asks PanelRoot to move the keyboard
+    // cursor to that card (PanelRoot owns `filters-focused-index`).
+    callback focus-requested(int);
 
     background: transparent;
     clip: true;
@@ -104,9 +108,12 @@ export component FiltersSection inherits Rectangle {
                         active: i == root.active-index;
                         keyboard-focused: i == root.focused-index && root.has-focus;
                         index: i;
-                        // 1:1 legacy: mouse NEVER moves keyboard focus — it only acts.
+                        // Keyboard == mouse: the body click acts (toggled) AND
+                        // converges the keyboard cursor here. Hover stays
+                        // visual-only (never moves focus).
                         hover-moves-focus: false;
                         toggled => { root.apply-shader(i, root.shader-files[i]); }
+                        focus-requested(idx) => { root.focus-requested(idx); }
                     }
 
                     if root.shader-files.length == 0 : Text {
