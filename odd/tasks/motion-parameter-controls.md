@@ -230,18 +230,18 @@ New file `src/animation_preset.rs`:
   `MotionSection.tune-enter()` (local 6 → `save-animation-preset` when the name
   is non-empty), commit `5cf786d`; suite `1257 passed; 0 failed`.
 
-### Warnings / follow-ups (not blocking)
+### Warnings — all closed
 
-1. `PresetStore::generate_animation_lua` (`src/preset_store.rs:265`) has no
-   production caller left (only a contract test uses it) — candidate for cleanup
-   by migrating that test to `animation_preset::generate`.
-2. `parse` falls back to `speed = 0.0` for a file with no speed key anywhere;
-   `0.0` is below the slider minimum (0.5) — clamp in `sync_motion_tune_pane` if a
-   malformed file ever shows up.
-3. `slidefade` / `slidefadevert` styles map to `None` (not one of the three
-   families); a preset whose only style is one of those leaves the pane untouched.
-4. Delivery budget: `3827d98` is 527 changed lines (>400); plan a PR slice or a
-   `size:exception` before any PR.
+1. `PresetStore::generate_animation_lua` had no production caller: removed
+   (commit `8cd0ebd`), the contract test now uses `animation_preset::generate`.
+2. `parse` returned `speed = 0.0` for a file with no speed key: `sync_motion_tune_pane`
+   now defaults `<= 0.0` to `2.0` and clamps to `0.5..6.0` (commit `1567652`).
+3. `slidefade` / `slidefadevert` / `slidevert` were unmapped: added the
+   `SlideFade` family (`"slidefade 20%"`) and normalized every real style onto
+   the four families; a 4th "Slide + Fade" button and its i18n label shipped
+   (commit `1567652`).
+4. Delivery budget: `3827d98` is 527 changed lines (>400) — split into PR slices
+   or take a `size:exception` before any PR. This one is organizational, not code.
 
 ## Final state
 
