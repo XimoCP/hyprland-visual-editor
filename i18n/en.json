@@ -70,6 +70,14 @@
   "animations": {
     "header_title": "Motion Library",
     "header_subtitle": "Select the animation style for your desktop",
+    "rename_dialog": {
+      "title": "Rename animation preset",
+      "placeholder": "Animation preset name…"
+    },
+    "delete_dialog": {
+      "title": "Delete animation preset",
+      "message": "Are you sure you want to delete"
+    },
     "presets": {
       "01_relampago": {
         "title": "Lightning",
@@ -231,6 +239,13 @@
       "apply": "Apply",
       "rename": "Rename",
       "delete": "Delete"
+    },
+    "rename_dialog": {
+      "title": "Rename border preset"
+    },
+    "delete_dialog": {
+      "title": "Delete border preset",
+      "message": "Are you sure you want to delete"
     },
     "picker": {
       "custom": "Custom…",

@@ -1211,6 +1211,172 @@ fn save_dialogs_render_list_delete_and_rename() {
     assert!(diff_list_rename > 300, "rename dialog must overlay the list — got {diff_list_rename}");
 }
 
+// ── Preset rename/delete dialogs (Borders + Motion) ─────────────────────
+// A user preset's Rename must open the SAME floating dialog Save uses, and
+// Delete must confirm first. Construction check: the two sections route the
+// card callbacks into dialog state and only fire the Rust rename/delete from
+// the dialog's confirm handler; the shared Dialogs.slint is the single source
+// of the dialog markup (SaveSection no longer declares its own ConfirmDialog,
+// and neither section calls Rust with the old empty rename name).
+#[test]
+fn preset_rename_delete_use_shared_dialogs() {
+    let dialogs = std::fs::read_to_string("ui/panel/sections/Dialogs.slint")
+        .expect("ui/panel/sections/Dialogs.slint must exist");
+    assert!(
+        dialogs.contains("export component ConfirmDialog"),
+        "Dialogs.slint must export ConfirmDialog"
+    );
+    assert!(
+        dialogs.contains("export component RenameDialog"),
+        "Dialogs.slint must export RenameDialog"
+    );
+    assert!(
+        dialogs.contains("callback confirm(string)"),
+        "RenameDialog must emit confirm(string)"
+    );
+
+    let save = std::fs::read_to_string("ui/panel/sections/SaveSection.slint").unwrap();
+    assert!(
+        save.contains("from \"Dialogs.slint\""),
+        "SaveSection must import the shared dialogs"
+    );
+    assert!(
+        !save.contains("component ConfirmDialog inherits"),
+        "SaveSection must not declare its own ConfirmDialog"
+    );
+
+    for (path, rename_cb, delete_cb) in [
+        (
+            "ui/panel/sections/BordersSection.slint",
+            "rename-border-preset",
+            "delete-border-preset",
+        ),
+        (
+            "ui/panel/sections/MotionSection.slint",
+            "rename-animation-preset",
+            "delete-animation-preset",
+        ),
+    ] {
+        let src = std::fs::read_to_string(path).unwrap();
+        assert!(
+            src.contains("from \"Dialogs.slint\""),
+            "{path} must import the shared dialogs"
+        );
+        assert!(
+            !src.contains(&format!("{rename_cb}(name, \"\")")),
+            "{path} must not call {rename_cb} with an empty name"
+        );
+        assert!(
+            src.contains("preset-dialog-mode = \"rename\""),
+            "{path} must open the rename dialog on open-rename"
+        );
+        assert!(
+            src.contains("preset-dialog-mode = \"delete\""),
+            "{path} must open the delete confirm on open-delete"
+        );
+        assert!(
+            src.contains(&format!("{rename_cb}(root.preset-dialog-target, value)")),
+            "{path} must rename with the typed value from the dialog confirm"
+        );
+        assert!(
+            src.contains(&format!("{delete_cb}(root.preset-dialog-target)")),
+            "{path} must delete only from the confirm dialog"
+        );
+    }
+}
+
+// ── Preset dialogs render (headless) ────────────────────────────────────
+// The Borders/Motion preset rename + delete dialogs are the SAME shared
+// component Save uses. Snapshots go under this run's directory; each dialog
+// frame must differ from the plain list (dim overlay + 300px card).
+#[test]
+fn preset_dialogs_render_rename_and_delete() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(true);
+
+    // Borders: one user preset so the rename/delete controls exist.
+    win.set_panel_section(1);
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "COCO",
+    )])));
+    win.set_user_border_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "CUSTOM",
+    )])));
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let border_list = win.window().take_snapshot().expect("border list snapshot");
+    save_slice_png(border_list.clone(), "preset_border_list.png");
+
+    win.set_border_dialog_target(SharedString::from("COCO"));
+    win.set_border_rename_input(SharedString::from("COCO"));
+    win.set_border_dialog_mode(SharedString::from("rename"));
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let border_rename = win.window().take_snapshot().expect("border rename snapshot");
+    save_slice_png(border_rename.clone(), "preset_border_rename.png");
+
+    win.set_border_dialog_mode(SharedString::from("delete"));
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let border_delete = win.window().take_snapshot().expect("border delete snapshot");
+    save_slice_png(border_delete.clone(), "preset_border_delete.png");
+
+    assert!(
+        count_buffer_diff(&border_list, &border_rename) > 300,
+        "border rename dialog must overlay the list"
+    );
+    assert!(
+        count_buffer_diff(&border_list, &border_delete) > 300,
+        "border delete confirm must overlay the list"
+    );
+
+    // Motion: same shared dialogs behind the animation preset list.
+    win.set_panel_section(2);
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "EASE",
+    )])));
+    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "CUSTOM",
+    )])));
+    win.set_animation_dialog_target(SharedString::from("EASE"));
+    win.set_animation_rename_input(SharedString::from("EASE"));
+    for _ in 0..80 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let motion_list = win.window().take_snapshot().expect("motion list snapshot");
+    save_slice_png(motion_list.clone(), "preset_motion_list.png");
+
+    win.set_animation_dialog_mode(SharedString::from("rename"));
+    for _ in 0..4 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let motion_rename = win.window().take_snapshot().expect("motion rename snapshot");
+    save_slice_png(motion_rename.clone(), "preset_motion_rename.png");
+    assert!(
+        count_buffer_diff(&motion_list, &motion_rename) > 300,
+        "motion rename dialog must overlay the list"
+    );
+}
+
 // ── Keyboard R11 v2 (Settings) visual + wiring verification ────────────
 // The Save list is the section's primary keyboard group: arrows move ONE
 // Rust-owned focused index, Enter applies it, Tab/Shift+Tab cycle sections,

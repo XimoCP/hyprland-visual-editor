@@ -69,6 +69,14 @@ export component PanelRoot inherits Rectangle {
     in property <string> border-save-error: "";
     in property <[string]> user-border-preset-names;
     in property <[string]> user-border-preset-tags;
+    // Border preset rename/delete dialogs (shared Dialogs.slint)
+    in-out property <string> border-dialog-mode: "";
+    in-out property <string> border-dialog-target: "";
+    in-out property <string> border-rename-input: "";
+    in property <string> border-rename-title: "Rename border preset";
+    in property <string> border-delete-title: "Delete border preset";
+    in property <string> border-delete-msg: "Are you sure you want to delete";
+    in property <string> border-cancel-text: "Cancel";
     // Tune pane — dynamic (Unit 2)
     in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
@@ -116,6 +124,15 @@ export component PanelRoot inherits Rectangle {
     in property <string> animation-save-error: "";
     in property <[string]> user-animation-preset-names;
     in property <[string]> user-animation-preset-tags;
+    // Animation preset rename/delete dialogs (shared Dialogs.slint)
+    in-out property <string> animation-dialog-mode: "";
+    in-out property <string> animation-dialog-target: "";
+    in-out property <string> animation-rename-input: "";
+    in property <string> animation-rename-title: "Rename animation preset";
+    in property <string> animation-rename-placeholder: "Animation preset name…";
+    in property <string> animation-delete-title: "Delete animation preset";
+    in property <string> animation-delete-msg: "Are you sure you want to delete";
+    in property <string> animation-cancel-text: "Cancel";
     // Filters pick layer (R5) — shader cards from scan("shaders")
     in property <[string]> shader-titles;
     in property <[string]> shader-descs;
@@ -781,6 +798,13 @@ export component PanelRoot inherits Rectangle {
                         save-border-preset(name) => { root.save-border-preset(name); }
                         rename-border-preset(old, new) => { root.rename-border-preset(old, new); }
                         delete-border-preset(name) => { root.delete-border-preset(name); }
+                        preset-dialog-mode <=> root.border-dialog-mode;
+                        preset-dialog-target <=> root.border-dialog-target;
+                        preset-rename-input <=> root.border-rename-input;
+                        rename-title: root.border-rename-title;
+                        delete-title: root.border-delete-title;
+                        delete-message: root.border-delete-msg;
+                        cancel-text: root.border-cancel-text;
                         save-error: root.border-save-error;
                         preset-name <=> root.border-preset-name;
                         user-preset-names: root.user-border-preset-names;
@@ -838,6 +862,14 @@ export component PanelRoot inherits Rectangle {
                         save-animation-preset(name) => { root.save-animation-preset(name); }
                         rename-animation-preset(old, new) => { root.rename-animation-preset(old, new); }
                         delete-animation-preset(name) => { root.delete-animation-preset(name); }
+                        preset-dialog-mode <=> root.animation-dialog-mode;
+                        preset-dialog-target <=> root.animation-dialog-target;
+                        preset-rename-input <=> root.animation-rename-input;
+                        rename-title: root.animation-rename-title;
+                        rename-placeholder: root.animation-rename-placeholder;
+                        delete-title: root.animation-delete-title;
+                        delete-message: root.animation-delete-msg;
+                        cancel-text: root.animation-cancel-text;
                         save-error: root.animation-save-error;
                         preset-name <=> root.animation-preset-name;
                         user-preset-names: root.user-animation-preset-names;

@@ -26,6 +26,7 @@ import { GeometrySlider } from "../../components.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
 import { HveColorPicker } from "../ColorPicker.slint";
 import { BordersText } from "borders_text.slint";
+import { ConfirmDialog, RenameDialog } from "Dialogs.slint";
 
 
 // ─── Compact colour row (R6/R7) ───────────────────────────────────────
@@ -2043,6 +2044,16 @@ export component BordersSection inherits Rectangle {
     callback save-border-preset(string);
     callback rename-border-preset(string, string);
     callback delete-border-preset(string);
+    // Preset rename/delete dialogs (shared Dialogs.slint). The state lives on
+    // the section root because the pane is instantiated twice (two-col /
+    // stacked) behind a condition.
+    in-out property <string> preset-dialog-mode: "";
+    in-out property <string> preset-dialog-target: "";
+    in-out property <string> preset-rename-input: "";
+    in property <string> rename-title: "Rename border preset";
+    in property <string> delete-title: "Delete border preset";
+    in property <string> delete-message: "Are you sure you want to delete";
+    in property <string> cancel-text: "Cancel";
     // Slot management
     callback add-color-slot();
     callback remove-color-slot();
@@ -2558,8 +2569,15 @@ export component BordersSection inherits Rectangle {
                 // pane's focus, so navigating the tune dragged the list.
                 follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
-                open-rename(name) => { root.rename-border-preset(name, ""); }
-                open-delete(name) => { root.delete-border-preset(name); }
+                open-rename(name) => {
+                    root.preset-rename-input = name;
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "rename";
+                }
+                open-delete(name) => {
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "delete";
+                }
             }
 
             Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
@@ -2661,8 +2679,15 @@ export component BordersSection inherits Rectangle {
                 // pane's focus, so navigating the tune dragged the list.
                 follow: root.focused-index < root.split;
                 apply-preset(idx, name) => { root.apply-border(idx, name); }
-                open-rename(name) => { root.rename-border-preset(name, ""); }
-                open-delete(name) => { root.delete-border-preset(name); }
+                open-rename(name) => {
+                    root.preset-rename-input = name;
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "rename";
+                }
+                open-delete(name) => {
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "delete";
+                }
             }
 
             Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
@@ -2742,5 +2767,36 @@ export component BordersSection inherits Rectangle {
                 }
             }
         }
+    }
+
+    // ── Preset rename/delete dialogs (shared Dialogs.slint) ──
+    if root.preset-dialog-mode == "rename" : RenameDialog {
+        title: root.rename-title;
+        placeholder: BordersText.save-placeholder;
+        cancel-text: root.cancel-text;
+        confirm-text: BordersText.card-rename;
+        confirm-color: HveColors.accent-pink;
+        error-text: root.save-error;
+        value <=> root.preset-rename-input;
+        confirm(value) => {
+            if (value != "" && value != root.preset-dialog-target) {
+                root.rename-border-preset(root.preset-dialog-target, value);
+            }
+            root.preset-dialog-mode = "";
+        }
+        cancel => { root.preset-dialog-mode = ""; }
+    }
+    if root.preset-dialog-mode == "delete" : ConfirmDialog {
+        title: root.delete-title;
+        title-color: HveColors.accent-red;
+        message: root.delete-message + " \"" + root.preset-dialog-target + "\"?";
+        cancel-text: root.cancel-text;
+        confirm-text: BordersText.card-delete;
+        confirm-color: HveColors.accent-red;
+        confirm => {
+            root.delete-border-preset(root.preset-dialog-target);
+            root.preset-dialog-mode = "";
+        }
+        cancel => { root.preset-dialog-mode = ""; }
     }
 }

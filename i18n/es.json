@@ -70,6 +70,14 @@
   "animations": {
     "header_title": "Biblioteca de Movimiento",
     "header_subtitle": "Selecciona el estilo de animación para tu escritorio",
+    "rename_dialog": {
+      "title": "Renombrar preajuste de animación",
+      "placeholder": "Nombre del preajuste de animación…"
+    },
+    "delete_dialog": {
+      "title": "Eliminar preajuste de animación",
+      "message": "¿Seguro que quieres eliminar"
+    },
     "presets": {
       "01_relampago": {
         "title": "Relámpago",
@@ -231,6 +239,13 @@
       "apply": "Aplicar",
       "rename": "Renombrar",
       "delete": "Eliminar"
+    },
+    "rename_dialog": {
+      "title": "Renombrar preajuste de borde"
+    },
+    "delete_dialog": {
+      "title": "Eliminar preajuste de borde",
+      "message": "¿Seguro que quieres eliminar"
     },
     "picker": {
       "custom": "Personalizar…",

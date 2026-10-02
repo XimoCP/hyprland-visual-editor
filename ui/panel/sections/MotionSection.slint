@@ -21,6 +21,7 @@ import { HveColors } from "../../theme.slint";
 import { HveKnobSlider } from "../../components.slint";
 import { CurvePreview } from "../CurvePreview.slint";
 import { SavedPresetCard } from "SavedPresetCard.slint";
+import { ConfirmDialog, RenameDialog } from "Dialogs.slint";
 
 component BezierSlider inherits Rectangle {
     in property <float> value: 0.25;
@@ -418,6 +419,16 @@ export component MotionSection inherits Rectangle {
     callback save-animation-preset(string);
     callback rename-animation-preset(string, string);
     callback delete-animation-preset(string);
+    // Preset rename/delete dialogs (shared Dialogs.slint). State on the root
+    // because the pane is instantiated twice (two-col / stacked).
+    in-out property <string> preset-dialog-mode: "";
+    in-out property <string> preset-dialog-target: "";
+    in-out property <string> preset-rename-input: "";
+    in property <string> rename-title: "Rename animation preset";
+    in property <string> rename-placeholder: "Animation preset name…";
+    in property <string> delete-title: "Delete animation preset";
+    in property <string> delete-message: "Are you sure you want to delete";
+    in property <string> cancel-text: "Cancel";
 
     // Tune layer — 4 bezier values
     in-out property <float> bezier-a: 0.25;
@@ -490,8 +501,15 @@ export component MotionSection inherits Rectangle {
                 has-focus: root.has-focus;
                 follow: root.focused-index >= root.split;
                 apply-preset(idx, name) => { root.apply-animation(idx, name); }
-                open-rename(name) => { root.rename-animation-preset(name, ""); }
-                open-delete(name) => { root.delete-animation-preset(name); }
+                open-rename(name) => {
+                    root.preset-rename-input = name;
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "rename";
+                }
+                open-delete(name) => {
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "delete";
+                }
             }
 
             Rectangle { width: 1px; background: HveColors.border.transparentize(0.6); }
@@ -528,8 +546,15 @@ export component MotionSection inherits Rectangle {
                 has-focus: root.has-focus;
                 follow: root.focused-index >= root.split;
                 apply-preset(idx, name) => { root.apply-animation(idx, name); }
-                open-rename(name) => { root.rename-animation-preset(name, ""); }
-                open-delete(name) => { root.delete-animation-preset(name); }
+                open-rename(name) => {
+                    root.preset-rename-input = name;
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "rename";
+                }
+                open-delete(name) => {
+                    root.preset-dialog-target = name;
+                    root.preset-dialog-mode = "delete";
+                }
             }
 
             Rectangle { height: 1px; background: HveColors.border.transparentize(0.6); }
@@ -550,5 +575,36 @@ export component MotionSection inherits Rectangle {
                 save-preset(name) => { root.save-animation-preset(name); }
             }
         }
+    }
+
+    // ── Preset rename/delete dialogs (shared Dialogs.slint) ──
+    if root.preset-dialog-mode == "rename" : RenameDialog {
+        title: root.rename-title;
+        placeholder: root.rename-placeholder;
+        cancel-text: root.cancel-text;
+        confirm-text: "Rename";
+        confirm-color: HveColors.accent-pink;
+        error-text: root.save-error;
+        value <=> root.preset-rename-input;
+        confirm(value) => {
+            if (value != "" && value != root.preset-dialog-target) {
+                root.rename-animation-preset(root.preset-dialog-target, value);
+            }
+            root.preset-dialog-mode = "";
+        }
+        cancel => { root.preset-dialog-mode = ""; }
+    }
+    if root.preset-dialog-mode == "delete" : ConfirmDialog {
+        title: root.delete-title;
+        title-color: HveColors.accent-red;
+        message: root.delete-message + " \"" + root.preset-dialog-target + "\"?";
+        cancel-text: root.cancel-text;
+        confirm-text: "Delete";
+        confirm-color: HveColors.accent-red;
+        confirm => {
+            root.delete-animation-preset(root.preset-dialog-target);
+            root.preset-dialog-mode = "";
+        }
+        cancel => { root.preset-dialog-mode = ""; }
     }
 }

@@ -4258,6 +4258,38 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_panel_save_overwrite_title(tr.tr_shared("themes.overwrite_title", "Overwrite theme"));
         window.set_panel_save_overwrite_msg(tr.tr_shared("themes.overwrite_msg", "already exists. Overwrite it with the current setup?"));
         window.set_panel_save_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
+        // Preset rename/delete dialogs (Borders + Motion) — same shared dialog
+        // component as the theme Save section, with the section's own strings.
+        window.set_border_rename_title(tr.tr_shared(
+            "borders.rename_dialog.title",
+            "Rename border preset",
+        ));
+        window.set_border_delete_title(tr.tr_shared(
+            "borders.delete_dialog.title",
+            "Delete border preset",
+        ));
+        window.set_border_delete_msg(tr.tr_shared(
+            "borders.delete_dialog.message",
+            "Are you sure you want to delete",
+        ));
+        window.set_border_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
+        window.set_animation_rename_title(tr.tr_shared(
+            "animations.rename_dialog.title",
+            "Rename animation preset",
+        ));
+        window.set_animation_rename_placeholder(tr.tr_shared(
+            "animations.rename_dialog.placeholder",
+            "Animation preset name…",
+        ));
+        window.set_animation_delete_title(tr.tr_shared(
+            "animations.delete_dialog.title",
+            "Delete animation preset",
+        ));
+        window.set_animation_delete_msg(tr.tr_shared(
+            "animations.delete_dialog.message",
+            "Are you sure you want to delete",
+        ));
+        window.set_animation_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
     }
 
     // ── Panel Borders tune: INSTANT hot geometry + ONE deferred persist ──

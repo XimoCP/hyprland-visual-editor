@@ -168,6 +168,14 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-border-save-error: "";
     in property <[string]> panel-user-border-preset-names;
     in property <[string]> panel-user-border-preset-tags;
+    // Border preset rename/delete dialogs (shared Dialogs.slint)
+    in-out property <string> panel-border-dialog-mode: "";
+    in-out property <string> panel-border-dialog-target: "";
+    in-out property <string> panel-border-rename-input: "";
+    in property <string> panel-border-rename-title: "Rename border preset";
+    in property <string> panel-border-delete-title: "Delete border preset";
+    in property <string> panel-border-delete-msg: "Are you sure you want to delete";
+    in property <string> panel-border-cancel-text: "Cancel";
     // Tune pane — dynamic (Unit 2)
     in-out property <[string]> panel-tune-active-colors: [];
     in-out property <int> panel-tune-color-count: 0;
@@ -204,6 +212,15 @@ export component ShellRoot inherits Rectangle {
     in property <string> panel-animation-save-error: "";
     in property <[string]> panel-user-animation-preset-names;
     in property <[string]> panel-user-animation-preset-tags;
+    // Animation preset rename/delete dialogs (shared Dialogs.slint)
+    in-out property <string> panel-animation-dialog-mode: "";
+    in-out property <string> panel-animation-dialog-target: "";
+    in-out property <string> panel-animation-rename-input: "";
+    in property <string> panel-animation-rename-title: "Rename animation preset";
+    in property <string> panel-animation-rename-placeholder: "Animation preset name…";
+    in property <string> panel-animation-delete-title: "Delete animation preset";
+    in property <string> panel-animation-delete-msg: "Are you sure you want to delete";
+    in property <string> panel-animation-cancel-text: "Cancel";
     // Motion pick layer (R4) — 19 cards from scan("animations")
     in property <[string]> panel-anim-titles;
     in property <[string]> panel-anim-descs;
@@ -595,6 +612,13 @@ export component ShellRoot inherits Rectangle {
                     border-save-error: root.panel-border-save-error;
                     user-border-preset-names: root.panel-user-border-preset-names;
                     user-border-preset-tags: root.panel-user-border-preset-tags;
+                    border-dialog-mode <=> root.panel-border-dialog-mode;
+                    border-dialog-target <=> root.panel-border-dialog-target;
+                    border-rename-input <=> root.panel-border-rename-input;
+                    border-rename-title: root.panel-border-rename-title;
+                    border-delete-title: root.panel-border-delete-title;
+                    border-delete-msg: root.panel-border-delete-msg;
+                    border-cancel-text: root.panel-border-cancel-text;
                     tune-active-colors <=> root.panel-tune-active-colors;
                     tune-color-count <=> root.panel-tune-color-count;
                     tune-colors-resolved <=> root.panel-tune-colors-resolved;
@@ -627,6 +651,14 @@ export component ShellRoot inherits Rectangle {
                     animation-save-error: root.panel-animation-save-error;
                     user-animation-preset-names: root.panel-user-animation-preset-names;
                     user-animation-preset-tags: root.panel-user-animation-preset-tags;
+                    animation-dialog-mode <=> root.panel-animation-dialog-mode;
+                    animation-dialog-target <=> root.panel-animation-dialog-target;
+                    animation-rename-input <=> root.panel-animation-rename-input;
+                    animation-rename-title: root.panel-animation-rename-title;
+                    animation-rename-placeholder: root.panel-animation-rename-placeholder;
+                    animation-delete-title: root.panel-animation-delete-title;
+                    animation-delete-msg: root.panel-animation-delete-msg;
+                    animation-cancel-text: root.panel-animation-cancel-text;
                     anim-titles: root.panel-anim-titles;
                     anim-descs: root.panel-anim-descs;
                     anim-tags: root.panel-anim-tags;

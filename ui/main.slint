@@ -135,6 +135,14 @@ export component MainWindow inherits Window {
     in property <string> border-save-error: "";
     in property <[string]> user-border-preset-names;
     in property <[string]> user-border-preset-tags;
+    // Border preset rename/delete dialogs (shared Dialogs.slint)
+    in-out property <string> border-dialog-mode: "";
+    in-out property <string> border-dialog-target: "";
+    in-out property <string> border-rename-input: "";
+    in property <string> border-rename-title: "Rename border preset";
+    in property <string> border-delete-title: "Delete border preset";
+    in property <string> border-delete-msg: "Are you sure you want to delete";
+    in property <string> border-cancel-text: "Cancel";
     // Tune pane — dynamic (Unit 2)
     in-out property <[string]> tune-active-colors: [];
     in-out property <int> tune-color-count: 0;
@@ -175,6 +183,15 @@ export component MainWindow inherits Window {
     in property <string> animation-save-error: "";
     in property <[string]> user-animation-preset-names;
     in property <[string]> user-animation-preset-tags;
+    // Animation preset rename/delete dialogs (shared Dialogs.slint)
+    in-out property <string> animation-dialog-mode: "";
+    in-out property <string> animation-dialog-target: "";
+    in-out property <string> animation-rename-input: "";
+    in property <string> animation-rename-title: "Rename animation preset";
+    in property <string> animation-rename-placeholder: "Animation preset name…";
+    in property <string> animation-delete-title: "Delete animation preset";
+    in property <string> animation-delete-msg: "Are you sure you want to delete";
+    in property <string> animation-cancel-text: "Cancel";
 
     // Shader data
     in property <[string]> shader-titles;
@@ -447,6 +464,13 @@ export component MainWindow inherits Window {
         panel-border-save-error: root.border-save-error;
         panel-user-border-preset-names: root.user-border-preset-names;
         panel-user-border-preset-tags: root.user-border-preset-tags;
+        panel-border-dialog-mode <=> root.border-dialog-mode;
+        panel-border-dialog-target <=> root.border-dialog-target;
+        panel-border-rename-input <=> root.border-rename-input;
+        panel-border-rename-title: root.border-rename-title;
+        panel-border-delete-title: root.border-delete-title;
+        panel-border-delete-msg: root.border-delete-msg;
+        panel-border-cancel-text: root.border-cancel-text;
         panel-tune-active-colors <=> root.tune-active-colors;
         panel-tune-color-count <=> root.tune-color-count;
         panel-tune-colors-resolved <=> root.tune-colors-resolved;
@@ -485,6 +509,14 @@ export component MainWindow inherits Window {
         panel-animation-save-error: root.animation-save-error;
         panel-user-animation-preset-names: root.user-animation-preset-names;
         panel-user-animation-preset-tags: root.user-animation-preset-tags;
+        panel-animation-dialog-mode <=> root.animation-dialog-mode;
+        panel-animation-dialog-target <=> root.animation-dialog-target;
+        panel-animation-rename-input <=> root.animation-rename-input;
+        panel-animation-rename-title: root.animation-rename-title;
+        panel-animation-rename-placeholder: root.animation-rename-placeholder;
+        panel-animation-delete-title: root.animation-delete-title;
+        panel-animation-delete-msg: root.animation-delete-msg;
+        panel-animation-cancel-text: root.animation-cancel-text;
         panel-anim-titles: root.anim-titles;
         panel-anim-descs: root.anim-descs;
         panel-anim-tags: root.anim-tags;
