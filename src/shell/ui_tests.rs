@@ -4907,6 +4907,39 @@ fn motion_speed_and_style_controls_edit_and_mark_dirty() {
     );
 }
 
+/// Keyboard parity with Borders: the Motion save-form stop (local 6) must let
+/// the keyboard trigger the save. Before the fix `tune-enter` returned 0 for
+/// every stop except the style one, so Enter on the save form engaged a slider
+/// with no branch and a keyboard-only user could never save.
+#[test]
+fn motion_keyboard_enter_on_save_form_triggers_save() {
+    use slint::platform::Key;
+    let win = focus_open_system_panel();
+    win.set_panel_section(2);
+    settle_frames(20);
+
+    win.set_animation_preset_name(slint::SharedString::from("Kbd Curve"));
+
+    let saved = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    win.on_panel_save_animation_preset({
+        let saved = saved.clone();
+        move |name| saved.borrow_mut().push(name.to_string())
+    });
+
+    // No cards: the tune starts at global index 0 (bezier-a), so six Downs land
+    // on the save-form stop (local 6).
+    for _ in 0..6 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    focus_press_key(&win, Key::Return);
+
+    assert_eq!(
+        saved.borrow().as_slice(),
+        &["Kbd Curve".to_string()],
+        "Enter on the Motion save form must fire save-animation-preset with the typed name"
+    );
+}
+
 /// Phase 2 — the Motion tune sequence is bezier a..d, speed, style, save form.
 #[test]
 fn motion_tune_count_covers_the_new_controls() {

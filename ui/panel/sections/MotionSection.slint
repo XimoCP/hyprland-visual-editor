@@ -574,10 +574,18 @@ export component MotionSection inherits Rectangle {
     }
 
     // Tune-enter seat map, mirroring BordersSection.tune-enter: returns 1 when
-    // the stop acted at once (the style stop), 0 when PanelRoot must engage it.
+    // the stop acted at once (the style stop or the save form), 0 when PanelRoot
+    // must engage it.
     public function tune-enter() -> int {
         let local = root.focused-index - root.list-count;
         if (local == 5) { root.cycle-style(); return 1; }
+        // Save-form stop (local 6): act at once, like Borders' save button, so a
+        // keyboard-only user can save without engaging a slider that has no
+        // branch. Empty names never fire (the mouse path guards the same way).
+        if (local == 6) {
+            if (root.preset-name != "") { root.save-animation-preset(root.preset-name); }
+            return 1;
+        }
         return 0;
     }
 
