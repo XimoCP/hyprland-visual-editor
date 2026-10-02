@@ -1,11 +1,11 @@
 // HVE 2 — MotionSection (tune + preset list, two-pane).
 //
 // Two INDEPENDENT scroll regions:
-//   • Fixed header — the enlarged CurvePreview (260×120), always visible.
-//   • Tune pane  — 4 bezier sliders a,b,c,d (x1,y1,x2,y2), then the
-//     global-model SPEED slider and STYLE family segmented row, plus the save
-//     form (LineEdit + Save button) at the bottom for saving the current
-//     curve/speed/style as a user preset.
+//   • Tune pane  — the fixed CurvePreview pinned at its TOP (outside the
+//     ScrollView, so it never scrolls away), then 4 bezier sliders a,b,c,d
+//     (x1,y1,x2,y2), the global-model SPEED slider and STYLE family segmented
+//     row, plus the save form (LineEdit + Save button) at the bottom for saving
+//     the current curve/speed/style as a user preset.
 //   • List pane  — Built-in presets (apply only) + user presets (apply,
 //     rename, delete) via SavedPresetCard. User presets carry a ★ badge.
 // Wide section → panes side by side; narrow → stacked. Each pane owns its own
@@ -97,15 +97,36 @@ component MotionTunePane inherits Rectangle {
     property <length> saved-scroll-y: 0px;
     // 0..3 = bezier sliders; 4 = speed; 5 = style; 6 = save form
     property <int> local-focus: root.focused-index - root.split;
+    // Fixed preview block: 16px top inset + 120px box + 8px gap before the
+    // ScrollView. Shared by the preview and the ScrollView offset so the two can
+    // never disagree.
+    property <length> preview-block: 16px + 120px + 8px;
     background: transparent;
     clip: true;
 
+    // Always-visible curve indicator, pinned at the TOP of the tune pane and
+    // OUTSIDE its ScrollView (so it never scrolls away), spanning the same
+    // content width as the slider cards below (16px side inset). It used to sit
+    // in the shared section header, which stretched the header and pushed BOTH
+    // panes down.
+    CurvePreview {
+        x: 16px;
+        y: 16px;
+        width: parent.width - 32px;
+        height: 120px;
+        a: root.bezier-a;
+        b: root.bezier-b;
+        c: root.bezier-c;
+        d: root.bezier-d;
+    }
+
     ScrollView {
+        y: root.preview-block;
+        height: max(0px, parent.height - root.preview-block);
         // All seven stops sit on an 80px pitch, so the follow target is a
         // single linear expression again (bezier a..d, speed, style, save).
-        // The curve preview now lives in the section header, so the first stop
-        // starts at the ScrollView's 16px top padding (14px keeps the previous
-        // 2px slop that centred a stop's 44px half-height).
+        // The first stop starts at the ScrollView's 16px top padding (14px
+        // keeps the previous 2px slop that centred a stop's 44px half-height).
         property <length> focus-y: 14px + root.local-focus * 80px;
         viewport-y: root.follow ? (root.local-focus >= 0
             ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
@@ -619,26 +640,6 @@ export component MotionSection inherits Rectangle {
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
                 wrap: word-wrap;
-            }
-
-            // Phase 5 — always-visible curve indicator. Fixed header, OUTSIDE
-            // both panes' ScrollViews (same idiom as the Borders dirty
-            // indicator), so it never scrolls out of sight while in Motion.
-            // Enlarged from 120×48 to 260×120, right-aligned so it sits over
-            // the tune pane (sliders + save form) rather than the section title.
-            HorizontalLayout {
-                alignment: end;
-                // Fixed height: without this the layout claims the section's
-                // spare vertical space and floats the preview mid-header.
-                vertical-stretch: 0;
-                CurvePreview {
-                    a: root.bezier-a;
-                    b: root.bezier-b;
-                    c: root.bezier-c;
-                    d: root.bezier-d;
-                    width: 260px;
-                    height: 120px;
-                }
             }
         }
 

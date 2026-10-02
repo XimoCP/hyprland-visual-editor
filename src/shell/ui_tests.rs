@@ -4331,39 +4331,96 @@ fn motion_style_cycle_covers_the_fourth_family() {
     );
 }
 
-/// The always-visible Motion curve preview is fixed in the section header and
-/// must sit on the RIGHT, over the tune pane (sliders + save form), not centred
-/// across the whole section. The panel content centre splits the header band: a
-/// centred preview straddles it, a right-aligned one lives entirely to its
-/// right.
+/// The always-visible Motion curve preview belongs INSIDE the tune pane (the
+/// right block with the sliders), pinned at its TOP and OUTSIDE its ScrollView,
+/// spanning the pane's content width like the sliders below it. It used to sit
+/// in the shared section header, which stretched the header and pushed BOTH
+/// panes down.
 #[test]
-fn motion_curve_preview_sits_on_the_right_of_the_header() {
+fn motion_curve_preview_lives_in_tune_pane_at_full_width() {
     use slint::ComponentHandle as _;
     let win = focus_open_system_panel();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
     win.set_panel_section(2); // Motion
     settle_frames(80);
 
-    let shot = win.window().take_snapshot().expect("motion header snapshot");
-    save_slice_png(shot.clone(), "motion_curve_preview_header.png");
+    let shot = win.window().take_snapshot().expect("motion tune pane snapshot");
+    save_slice_png(shot.clone(), "motion_curve_preview_tune_pane.png");
 
-    // bg-card (#1c2128) is the preview's fill. The panel's own 56px top header
-    // is also bg-card and sits just below the shell chrome, so the band starts
-    // below it (y >= 120) and stops above the panes (y < 315); x >= 360 keeps
-    // the rail out.
-    const BG_CARD: (u8, u8, u8) = (0x1c, 0x21, 0x28);
-    const CONTENT_CENTER: usize = 1140; // (360 + 1920) / 2
-    let left = count_color_in_box(&shot, BG_CARD, 6, 360, 120, CONTENT_CENTER, 315);
-    let right = count_color_in_box(&shot, BG_CARD, 6, CONTENT_CENTER, 120, 1920, 315);
-
+    // The panel content starts at x=161 and the two-column Motion split sits at
+    // the content midpoint (~x=1040), so the tune pane's content spans
+    // ~1058..1902. The first bg-card band in the RIGHT pane (x >= 1050, clear of
+    // the neighbouring scrollbar), below the shell chrome, is the preview: it
+    // sits above the first slider card.
+    const RIGHT: usize = 1050;
+    let (px0, py0, px1, _py1) =
+        first_color_band_bbox(&shot, BG_CARD, 8, RIGHT, 120, 1920, 1080, 100, None)
+            .expect("the tune pane must paint its curve preview");
     assert!(
-        right > 10_000,
-        "the curve preview must render in the header band — got {right} bg-card pixels"
+        px0 >= RIGHT,
+        "the preview must live in the right (tune) pane, not the shared header — x0={px0}"
     );
+    assert!(py0 < 360, "the preview must sit at the TOP of the tune pane — y0={py0}");
+    let width = px1 - px0 + 1;
     assert!(
-        right > left * 3,
-        "the curve preview must be right-aligned over the tune pane: \
-         left={left} right={right} bg-card pixels around the content centre"
+        width > 700,
+        "the preview must span the tune pane's content width (~845px), not the old \
+         260px header box — got {width}px (x {px0}..{px1})"
+    );
+    assert!(width < 1000, "the preview must not overflow the pane — got {width}px");
+}
+
+/// Same preview contract in the STACKED layout (window below the 852px
+/// two-column breakpoint): the preview lives in the lower tune pane and spans
+/// its content width. List cards come first in the vertical stack and hold no
+/// cyan curve, so the first bg-card band carrying the curve is the preview.
+#[test]
+fn motion_curve_preview_stacked_spans_the_tune_pane() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(800, 1000));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Ease"),
+        SharedString::from("Spring"),
+        SharedString::from("Stylized 2.5D"),
+    ])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("smooth"),
+        SharedString::from("bouncy"),
+        SharedString::from("stylized"),
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from(""),
+        SharedString::from(""),
+        SharedString::from(""),
+    ])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("17_ease.lua"),
+        SharedString::from("18_spring.lua"),
+        SharedString::from("19_stylized2.5D.lua"),
+    ])));
+    win.set_panel_section(2);
+    settle_frames(80);
+
+    let shot = win.window().take_snapshot().expect("motion stacked snapshot");
+    save_slice_png(shot.clone(), "motion_curve_preview_stacked.png");
+
+    let (px0, _py0, px1, _py1) = first_color_band_bbox(
+        &shot,
+        BG_CARD,
+        8,
+        170,
+        120,
+        1918,
+        1080,
+        100,
+        Some((ACCENT_CYAN, 24, 20)),
+    )
+    .expect("the stacked tune pane must paint its curve preview");
+    let width = px1 - px0 + 1;
+    assert!(
+        width > 400,
+        "the stacked preview must span the pane's content width — got {width}px (x {px0}..{px1})"
     );
 }
 
@@ -5123,14 +5180,14 @@ fn motion_control_labels_resolve_in_both_languages() {
     assert_eq!(t.get_style_slidefade(), "Slide + Fade");
 }
 
-/// Phase 5 — the curve preview must live in the Motion section's FIXED header,
-/// not inside the tune pane's ScrollView, so it stays visible while the tune
-/// scrolls. The tune is scrolled to its LAST stop and the fixed header band is
-/// sampled for the accent-cyan curve: while the preview sat inside the
-/// ScrollView it scrolled away and the band held no curve. The preview must
-/// also not drift between the top and the bottom of the tune scroll.
+/// The tune pane's curve preview is fixed at the TOP of the pane, OUTSIDE its
+/// ScrollView, so it stays visible while the tune scrolls to its last stop.
+/// While the preview sat inside the ScrollView it scrolled away and the band
+/// held no curve. The preview must also not drift between the top and the
+/// bottom of the tune scroll. This fixture's full 19-card list also pins the
+/// recovered space: the LEFT list's first card must start near the top again.
 #[test]
-fn motion_curve_preview_stays_visible_in_header_when_tune_scrolls() {
+fn motion_curve_preview_stays_fixed_in_tune_pane_when_scrolled() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -5148,34 +5205,66 @@ fn motion_curve_preview_stays_visible_in_header_when_tune_scrolls() {
     win.set_panel_section(2);
     win.set_panel_kbd_preview_index(-1);
     settle_frames(20);
-    let top = win.window().take_snapshot().expect("motion header top snapshot");
-    save_slice_png(top.clone(), "motion_curve_header_top.png");
+    let top = win.window().take_snapshot().expect("motion preview top snapshot");
+    save_slice_png(top.clone(), "motion_curve_preview_top.png");
+
+    // Recovered space: the LEFT list's first card must start near the top of the
+    // content area again. With the preview inside the header it was pushed down
+    // to y≈348; with the header shrunk it starts at y≈224. The first card may be
+    // keyboard-focused (bg-hover) instead of bg-card, so accept both surfaces.
+    const BG_HOVER: (u8, u8, u8) = (0x25, 0x2d, 0x38);
+    let card_y0 = [
+        first_color_band_bbox(&top, BG_CARD, 8, 170, 120, 1000, 1080, 300, None),
+        first_color_band_bbox(&top, BG_HOVER, 8, 170, 120, 1000, 1080, 300, None),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|b| b.1)
+    .min()
+    .expect("the list pane must paint its first card");
+    assert!(
+        card_y0 < 300,
+        "the left list's first card must start near the top, not be pushed down by a \
+         taller header — y0={card_y0}"
+    );
 
     // Last tune stop (save form): list-len 19 + local 6 = 25. The tune
     // ScrollView follows and scrolls to the bottom.
     win.set_panel_kbd_preview_index(19 + 6);
     settle_frames(80);
-    let scrolled = win.window().take_snapshot().expect("motion header scrolled snapshot");
-    save_slice_png(scrolled.clone(), "motion_curve_header_scrolled.png");
+    let scrolled = win.window().take_snapshot().expect("motion preview scrolled snapshot");
+    save_slice_png(scrolled.clone(), "motion_curve_preview_scrolled.png");
 
-    // The fixed section-header band: below the title/subtitle, above the panes,
-    // on the RIGHT where the preview is aligned (over the tune pane), so the
-    // left-aligned header text is out of frame.
-    // Curve stroke is HveColors.accent-cyan (#38bdf8). With the preview inside
-    // the ScrollView this band held at most a few slider-label pixels (the
-    // enlarged 260×120 curve paints far more).
-    const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
-    let header_cyan = count_color_in_box(&scrolled, ACCENT_CYAN, 24, 1600, 165, 1910, 305);
+    // Locate the preview in the RIGHT (tune) pane: the first bg-card band there
+    // (x >= 1050, clear of the neighbouring scrollbar), below the shell chrome.
+    // It sits above the slider cards.
+    const RIGHT: usize = 1050;
+    let (px0, py0, px1, py1) =
+        first_color_band_bbox(&scrolled, BG_CARD, 8, RIGHT, 120, 1920, 1080, 100, None)
+            .expect("the tune pane must paint its curve preview");
     assert!(
-        header_cyan > 250,
-        "the curve preview must stay painted in the fixed header while the tune \
-         is scrolled to its last stop — header_cyan={header_cyan}"
+        px0 >= RIGHT,
+        "the preview must live in the right (tune) pane — x0={px0}"
+    );
+    assert!(
+        px1 - px0 + 1 > 700,
+        "the preview must span the tune pane's content width — got {}px",
+        px1 - px0 + 1
     );
 
-    let drift = count_buffer_diff_region(&top, &scrolled, 1600, 165, 1910, 305);
+    // It stays put: the preview band must not move or change between the top and
+    // the scrolled tune (the ScrollView scrolls UNDER it).
+    let drift = count_buffer_diff_region(&top, &scrolled, px0, py0, px1 + 1, py1 + 1);
     assert!(
-        drift < 200,
-        "the fixed header preview must not scroll away with the tune — drift={drift}"
+        drift < 300,
+        "the fixed preview must not scroll away with the tune — drift={drift}"
+    );
+
+    // The curve is still painted in that band while the tune is scrolled.
+    let cyan = count_color_in_box(&scrolled, ACCENT_CYAN, 24, px0, py0, px1 + 1, py1 + 1);
+    assert!(
+        cyan > 100,
+        "the preview curve must stay painted while the tune scrolls — cyan={cyan}"
     );
 }
 
@@ -6464,6 +6553,85 @@ fn count_color_in_box(
         }
     }
     count
+}
+
+/// Bounding box of the FIRST top-down band of `rgb` inside the box, where a
+/// band is a maximal run of consecutive rows holding at least `min_run` matching
+/// pixels. An optional `signal` — `(color, tol, min_pixels)` — requires the band
+/// to carry at least `min_pixels` of that colour, so a plain card band is
+/// skipped and the caller can target the curve preview among the cards.
+fn first_color_band_bbox(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb: (u8, u8, u8),
+    tol: i16,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    min_run: usize,
+    signal: Option<((u8, u8, u8), i16, usize)>,
+) -> Option<(usize, usize, usize, usize)> {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let x0 = x0.min(w);
+    let x1 = x1.min(w);
+    let y0 = y0.min(h);
+    let y1 = y1.min(h);
+    let matches = |x: usize, y: usize, c: (u8, u8, u8), t: i16| -> bool {
+        let idx = (y * w + x) * 4;
+        bytes[idx + 3] >= 200
+            && (bytes[idx] as i16 - c.0 as i16).abs() <= t
+            && (bytes[idx + 1] as i16 - c.1 as i16).abs() <= t
+            && (bytes[idx + 2] as i16 - c.2 as i16).abs() <= t
+    };
+    let row_count = |y: usize, c: (u8, u8, u8), t: i16| -> usize {
+        (x0..x1).filter(|&x| matches(x, y, c, t)).count()
+    };
+    let mut y = y0;
+    while y < y1 {
+        if row_count(y, rgb, tol) < min_run {
+            y += 1;
+            continue;
+        }
+        let start = y;
+        let mut end = y;
+        while end + 1 < y1 && row_count(end + 1, rgb, tol) >= min_run {
+            end += 1;
+        }
+        if let Some((sc, st, smin)) = signal {
+            let mut found = 0usize;
+            'band: for yy in start..=end {
+                for x in x0..x1 {
+                    if matches(x, yy, sc, st) {
+                        found += 1;
+                        if found >= smin {
+                            break 'band;
+                        }
+                    }
+                }
+            }
+            if found < smin {
+                y = end + 1;
+                continue;
+            }
+        }
+        let (mut bx0, mut bx1) = (usize::MAX, 0usize);
+        for yy in start..=end {
+            for x in x0..x1 {
+                if matches(x, yy, rgb, tol) {
+                    bx0 = bx0.min(x);
+                    bx1 = bx1.max(x);
+                }
+            }
+        }
+        return if bx0 == usize::MAX {
+            None
+        } else {
+            Some((bx0, start, bx1, end))
+        };
+    }
+    None
 }
 
 /// Mean x of `rgb` pixels inside an explicit box, or `None` when none match.
