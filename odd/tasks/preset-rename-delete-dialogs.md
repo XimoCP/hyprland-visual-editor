@@ -126,8 +126,32 @@ component instead of duplicating it.
   cargo test preset_dialogs_render_rename_and_delete -- --nocapture` → ok;
   PNGs read: border rename (prefilled "COCO", pink Rename), border delete
   (red confirm, `...delete "COCO"?`), motion rename (prefilled "EASE").
-- T8: commit on `hve2-visual-rewrite` (see git log).
+- T8: commit on `hve2-visual-rewrite`: `3a0dee1` (refactor) and `a73cb66`
+  (feat). Not pushed.
+
+## Cross-model verification (Tier 3 — UI + wiring)
+
+Written by `deepseek-v4-flash` (MiMo V2.6 Flash Free failed the full task and
+was abandoned); verified independently by `glm-5.3-flash`.
+
+- Verdict **PASS with two minor warnings**. All 7 claims verified: shared
+  `Dialogs.slint`, SaveSection behaviour unchanged, rename opens the dialog and
+  the Rust rename fires only on confirm with the typed name, delete confirms
+  first, the callback chain is complete, no card regression, tests non-vacuous.
+  Full suite `1239 passed; 0 failed`. Orchestrator re-ran the render and read
+  the PNGs (border rename "COCO", border delete `"COCO"?`, motion rename "EASE").
+
+## Follow-ups (not blocking)
+
+- MotionSection dialog confirm labels are hardcoded English (`"Rename"`,
+  `"Delete"`); Motion's preset-card labels were already English defaults, so the
+  dialog inherited a pre-existing Motion i18n gap. Localize Motion preset labels
+  in one pass later.
+- The dim overlay has no click-to-cancel TouchArea; identical to the pre-existing
+  Save dialogs, so not a regression.
+- Commit `a73cb66` is 585 authored lines (>400 review budget): split or take a
+  `size:exception` before any PR.
 
 ## Next step
 
-Cross-model verification (Tier 3) by a different model.
+Closed. Saved and session closed.
