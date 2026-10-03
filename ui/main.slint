@@ -303,6 +303,7 @@ export component MainWindow inherits Window {
     callback gallery-mosaic-activate();
     callback gallery-mosaic-select(pos: int);
     callback gallery-mosaic-deselect();
+    callback gallery-mosaic-cursor-requested(pos: int);
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
@@ -611,6 +612,7 @@ export component MainWindow inherits Window {
         gallery-mosaic-activate => { root.gallery-mosaic-activate(); }
         gallery-mosaic-select(pos) => { root.gallery-mosaic-select(pos); }
         gallery-mosaic-deselect => { root.gallery-mosaic-deselect(); }
+        gallery-mosaic-cursor-requested(pos) => { root.gallery-mosaic-cursor-requested(pos); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
         panel-back => { root.panel-back(); }
         panel-mouse-trace(reason) => { root.panel-mouse-trace(reason); }

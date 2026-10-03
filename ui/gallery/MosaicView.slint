@@ -54,6 +54,9 @@ export component MosaicView inherits Rectangle {
     // asks to apply (its own click) or to contract (pointer left it).
     callback select-requested(int);
     callback deselect-requested();
+    // The pointer landing on a tile moves the keyboard cursor there, so the
+    // ring and the keyboard continue from wherever the mouse is.
+    callback cursor-requested(int);
     // +1 next / −1 previous, once per wheel gesture (mirrors SliceCarousel).
     callback page-step(int);
 
@@ -215,6 +218,10 @@ export component MosaicView inherits Rectangle {
             delay-ms: t.delay-ms;
             curtain-phase: root.curtain-phase;
             curtain-total-ms: root.curtain-total-ms;
+            key-focused: root.cursor == idx;
+            hovered(h) => {
+                if (h) { root.cursor-requested(idx); }
+            }
             clicked => {
                 // First click grows the tile (and shows the theme); once it is
                 // grown, a click applies the theme instead. Same ladder as the
@@ -279,6 +286,7 @@ export component MosaicView inherits Rectangle {
             viewport-h: root.height;
             info: root.info;
             hero: root.cards[t.real-index].hero;
+            slat: root.cards[t.real-index].slat_expanded_image;
             open: root.card-open;
             face-open: root.face-open;
             reduced-motion: root.reduced-motion;

@@ -1064,13 +1064,23 @@ fn mosaic_grown_tile_covers_only_its_own_card() {
     let count = 12usize;
     let mut cards: Vec<crate::GalleryCardData> = Vec::new();
     for i in 0..count {
+        // Same recipe as the Slider's render test: a gradient plus the baked
+        // parallelogram variants, so this test exercises the REAL card (the
+        // bake carries the slanted silhouette and covers the card tip to tip).
+        let grad = slice_test_gradient(i);
         let img = slint::Image::from_rgba8({
-            let grad = slice_test_gradient(i);
             let (w, h) = grad.dimensions();
             let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
             buf.make_mut_bytes().copy_from_slice(grad.as_raw());
             buf
         });
+        let bake = |expanded: bool| {
+            let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(grad.clone(), expanded);
+            let (w, h) = (rgba.width(), rgba.height());
+            let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+            buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
+            slint::Image::from_rgba8(buf)
+        };
         cards.push(crate::GalleryCardData {
             name: SharedString::from(format!("Theme {i}")),
             saved_at: SharedString::from(""),
@@ -1088,8 +1098,8 @@ fn mosaic_grown_tile_covers_only_its_own_card() {
             thumb_path: SharedString::from(""),
             thumb: img.clone(),
             hero: img,
-            slat_image: slint::Image::default(),
-            slat_expanded_image: slint::Image::default(),
+            slat_image: bake(false),
+            slat_expanded_image: bake(true),
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));

@@ -41,6 +41,9 @@ export component MosaicCell inherits Rectangle {
 
     callback clicked();
     callback flip-requested();
+    // The keyboard cursor lands on a tile the same way the pointer does: this
+    // reports the pointer so the two can converge (the panel's own rule).
+    callback hovered(bool);
 
     // ── Hover focus feedback (approved design): hovered tiles grow ~3%
     // from their center and brighten slightly — combined lift+brighten
@@ -54,8 +57,12 @@ export component MosaicCell inherits Rectangle {
     // growth behind the screen bounds — interior tiles lift freely into
     // the gutter. ──
     out property <bool> has-hover: touch.has-hover;
+    // The keyboard cursor's tile grows exactly like the hovered one, so the
+    // two ways of pointing at a tile look the same.
+    in property <bool> key-focused: false;
+    changed has-hover => { root.hovered(self.has-hover); }
     transform-origin: { x: self.width / 2, y: self.height / 2 };
-    transform-scale: root.has-hover ? SkwdTokens.gallery-card-hover-scale : 1.0;
+    transform-scale: (root.has-hover || root.key-focused) ? SkwdTokens.gallery-card-hover-scale : 1.0;
     animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
 
     clip: true;

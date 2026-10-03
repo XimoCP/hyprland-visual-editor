@@ -25,6 +25,9 @@ export component MosaicInfoCard inherits Rectangle {
     in property <length> viewport-h: 1080px;
     in property <ThemeInfoData> info;
     in property <image> hero;
+    // The theme's baked parallelogram image (the Slider's own bake), so the
+    // card can be covered tip to tip.
+    in property <image> slat;
     // Beat 1: the tile has grown into the card. Beat 2: the face is out.
     in property <bool> open: false;
     in property <bool> face-open: false;
@@ -142,11 +145,25 @@ export component MosaicInfoCard inherits Rectangle {
         Close { }
     }
 
-    // The theme's own image, inside the widest rectangle that fits the
-    // parallelogram (x from the shear to the flat width), so no square corner
-    // ever pokes out of the slanted edges. The info face later covers its
-    // right third, exactly like the Slider's card.
-    Image {
+    // The theme's own baked parallelogram image (the SAME bake the Slider's
+    // expanded card uses), scaled to this card's box: it carries the slanted
+    // silhouette in its alpha, so the card is fully covered — including the
+    // pointed tips — with no square corner poking out. The hero is the
+    // fallback while a bake is still cooking.
+    property <int> bake-w: root.slat.width;
+    property <int> bake-h: root.slat.height;
+    property <float> bake-scale: root.bake-w > 0 ? (root.box-wn / (root.bake-w * 1.0)) : 1.0;
+    if root.bake-w > 0 : Image {
+        width: root.bake-w * root.bake-scale * 1px;
+        height: root.bake-h * root.bake-scale * 1px;
+        x: 0px;
+        y: 0px;
+        source: root.slat;
+        image-fit: fill;
+    }
+    // Fallback: the theme's image inside the widest rectangle that fits the
+    // parallelogram, so no square corner pokes out of the slanted edges.
+    if root.bake-w == 0 : Image {
         x: root.skn * 1px;
         width: (root.cw - root.skn) * 1px;
         height: 100%;

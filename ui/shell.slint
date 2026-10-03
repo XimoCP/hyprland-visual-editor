@@ -113,6 +113,7 @@ export component ShellRoot inherits Rectangle {
     callback gallery-mosaic-activate();
     callback gallery-mosaic-select(pos: int);
     callback gallery-mosaic-deselect();
+    callback gallery-mosaic-cursor-requested(pos: int);
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
@@ -531,6 +532,7 @@ export component ShellRoot inherits Rectangle {
                     mosaic-face-open: root.gallery-mosaic-face-open;
                     mosaic-select(pos) => { root.gallery-mosaic-select(pos); }
                     mosaic-deselect => { root.gallery-mosaic-deselect(); }
+                    mosaic-cursor-requested(pos) => { root.gallery-mosaic-cursor-requested(pos); }
                     top-menu-open <=> root.gallery-top-open;
                     bottom-menu-open <=> root.gallery-bottom-open;
                     style-selected(style) => { root.gallery-style-selected(style); }

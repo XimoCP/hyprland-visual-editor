@@ -3822,6 +3822,19 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             });
         }
+        {
+            // The pointer landing on a tile moves the keyboard cursor there:
+            // the ring follows the mouse and the keyboard continues from
+            // wherever the pointer is (the panel's own convergence rule).
+            let win = window.as_weak();
+            window.on_gallery_mosaic_cursor_requested(move |pos| {
+                if let Some(w) = win.upgrade() {
+                    if w.get_gallery_mosaic_cursor() != pos {
+                        w.set_gallery_mosaic_cursor(pos);
+                    }
+                }
+            });
+        }
         // ── Mutating panel wiring (slice 1, R1, R2, R8, R9) ──
         // 350ms Timer → complete_mutation, Esc reverses, wheel/click gated, fullscreen held (no resize).
         // NOTE: panel_section_selected is wired further down, after `state` exists, because D4

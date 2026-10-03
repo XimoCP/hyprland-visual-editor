@@ -115,6 +115,7 @@ export component GalleryRoot inherits Rectangle {
     callback info-close();
     callback mosaic-select(int);
     callback mosaic-deselect();
+    callback mosaic-cursor-requested(int);
 
     callback style-selected(int);
     callback panel-section-selected(int);
@@ -409,6 +410,7 @@ export component GalleryRoot inherits Rectangle {
             face-open: root.mosaic-face-open;
             select-requested(pos) => { root.mosaic-select(pos); }
             deselect-requested => { root.mosaic-deselect(); }
+            cursor-requested(pos) => { root.mosaic-cursor-requested(pos); }
             cell-clicked(idx) => {
                 if (idx < root.cards.length) { root.card-clicked(idx); }
             }
