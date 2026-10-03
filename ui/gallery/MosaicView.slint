@@ -254,7 +254,17 @@ export component MosaicView inherits Rectangle {
             delay-ms: t.delay-ms;
             curtain-phase: root.curtain-phase;
             curtain-total-ms: root.curtain-total-ms;
-            clicked => { root.cell-clicked(t.real-index); }
+            clicked => {
+                // First click grows the tile (and shows the theme); once it is
+                // grown, a click applies the theme instead. Same ladder as the
+                // under-layer: both layers must mean the same thing.
+                if (root.selected == idx) {
+                    root.deselect-requested();
+                    root.cell-clicked(t.real-index);
+                } else {
+                    root.select-requested(idx);
+                }
+            }
             flip-requested => { root.cell-flip(t.real-index); }
         }
     }

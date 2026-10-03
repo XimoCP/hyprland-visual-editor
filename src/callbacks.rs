@@ -234,6 +234,7 @@ pub fn setup_callbacks(
         let pages = mosaic_pages.clone();
         let refresh = refresh_mosaic_page.clone();
         let shell_c = shell.clone();
+        let weak = window.as_weak();
         window.on_gallery_mosaic_page_step(move |dir| {
             if crate::shell::Shell::is_mutating(&shell_c) {
                 tracing::debug!("[gallery] mosaic-page-step ignored — mutating");
@@ -241,6 +242,12 @@ pub fn setup_callbacks(
             }
             let changed = pages.lock().unwrap().step(dir as isize);
             if changed {
+                // A page flip invalidates the grown tile: it belongs to the
+                // page it was opened on, and re-anchoring it onto the new
+                // page's tile would show one theme while applying another.
+                if let Some(w) = weak.upgrade() {
+                    crate::close_gallery_info(&w);
+                }
                 refresh(true); // page flip → snapshot under layer
             }
         });

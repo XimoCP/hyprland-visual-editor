@@ -780,10 +780,11 @@ fn mosaic_tile_real(window: &crate::MainWindow, pos: i32) -> Option<i32> {
     if pos < 0 {
         return None;
     }
-    window
-        .get_gallery_mosaic_tiles()
-        .row_data(pos as usize)
-        .map(|t| t.real_index)
+    let tiles = window.get_gallery_mosaic_tiles();
+    if (pos as usize) >= tiles.row_count() {
+        return None;
+    }
+    tiles.row_data(pos as usize).map(|t| t.real_index)
 }
 
 /// The grown mosaic tile's two beats, in the Slider's own cadence: beat 1 the
@@ -3700,7 +3701,11 @@ fn main() -> Result<(), slint::PlatformError> {
             let win = window.as_weak();
             let pages = mosaic_pages.clone();
             let refresh = refresh_mosaic_page.clone();
+            let shell_c = shell.clone();
             window.on_gallery_mosaic_nav(move |dir| {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
                 let Some(w) = win.upgrade() else { return; };
                 let rects = mosaic_tile_rects(&w);
                 if rects.is_empty() {
@@ -3728,7 +3733,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     Some(next) => w.set_gallery_mosaic_cursor(next as i32),
                     None => {
                         // An edge of the page: step it and land on the new
-                        // page's first tile (or its last, going back).
+                        // page's first tile (or its last, going back). The
+                        // grown tile belongs to THIS page, so it is dropped
+                        // hard first: a graceful contract would let it
+                        // re-anchor onto the new page's tile for a moment,
+                        // showing one theme and applying another.
+                        close_gallery_info(&w);
                         let step = if matches!(dir, MosaicDir::Right | MosaicDir::Down) { 1 } else { -1 };
                         let changed = pages.lock().map(|mut p| p.step(step)).unwrap_or(false);
                         if changed {
@@ -3744,7 +3754,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // First click on a tile: grow it and show the theme's own records.
             let win = window.as_weak();
             let gtm = gallery_tm.clone();
+            let shell_c = shell.clone();
             window.on_gallery_mosaic_select(move |pos| {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
                 let Some(w) = win.upgrade() else { return; };
                 if let Some(real) = mosaic_tile_real(&w, pos) {
                     // The keyboard continues from where the mouse left off.
@@ -3759,7 +3773,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // grown (the same ladder the mouse walks).
             let win = window.as_weak();
             let gtm = gallery_tm.clone();
+            let shell_c = shell.clone();
             window.on_gallery_mosaic_activate(move || {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
                 let Some(w) = win.upgrade() else { return; };
                 let cur = w.get_gallery_mosaic_cursor();
                 if cur < 0 {
@@ -3767,7 +3785,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     return;
                 }
                 let Some(real) = mosaic_tile_real(&w, cur) else { return; };
-                if w.get_gallery_mosaic_selected() == cur {
+                // Only a FULLY grown card applies: a card that is still growing
+                // (or already contracting, e.g. right after Escape) must not.
+                let grown = w.get_gallery_mosaic_card_open() && w.get_gallery_mosaic_face_open();
+                if w.get_gallery_mosaic_selected() == cur && grown {
                     // Second Enter: apply. The grown tile has done its job, so
                     // it contracts while the theme applies.
                     contract_mosaic_card(&w);
@@ -3783,7 +3804,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // The pointer left the grown card (or Escape): contract it. The
             // theme is NOT applied — growing was only a look.
             let win = window.as_weak();
+            let shell_c = shell.clone();
             window.on_gallery_mosaic_deselect(move || {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
                 if let Some(w) = win.upgrade() {
                     w.set_gallery_info_open(false);
                     contract_mosaic_card(&w);

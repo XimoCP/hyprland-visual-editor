@@ -1179,6 +1179,131 @@ fn mosaic_grown_tile_covers_only_its_own_card() {
     );
 }
 
+// ── Mosaic ladder, through the REAL input path ─────────────────────────
+// The first click on a tile must GROW it, never apply the theme, and a click
+// on the grown card must apply. An independent review caught this wiring
+// attached to the under-layer cells (which never receive a click), so the
+// ladder is asserted here through the production input path, not by setting
+// the properties the view renders from.
+#[test]
+fn mosaic_first_click_grows_and_the_second_applies() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(2); // Mosaic
+    win.set_gallery_reduced_motion(true);
+
+    let count = 12usize;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let img = slint::Image::from_rgba8({
+            let grad = slice_test_gradient(i);
+            let (w, h) = grad.dimensions();
+            let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+            buf.make_mut_bytes().copy_from_slice(grad.as_raw());
+            buf
+        });
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: img.clone(),
+            hero: img,
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    let stage_w = 1920.0f32;
+    let stage_h = 1080.0f32;
+    let pg = crate::shell::gallery::views::mosaic::MosaicPages::new(count, stage_w, stage_h);
+    let (aspects, real_indices) = pg.page_render();
+    let (layout, tile_reals) =
+        crate::shell::gallery::views::mosaic::justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+    let delays = crate::shell::gallery::views::mosaic::mosaic_curtain_delays(&layout.tiles);
+    let tiles: Vec<crate::MosaicTileData> = layout
+        .tiles
+        .iter()
+        .zip(tile_reals.iter())
+        .zip(delays.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles.clone())));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+    win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+
+    let selects: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    let applies: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_gallery_mosaic_select({
+        let selects = selects.clone();
+        move |pos| selects.borrow_mut().push(pos)
+    });
+    win.on_gallery_card_clicked({
+        let applies = applies.clone();
+        move |idx| applies.borrow_mut().push(idx)
+    });
+
+    // A point inside the wall: the middle of the band.
+    let (px, py) = (960.0f32, 600.0f32);
+    dispatch_pointer(&win, px, py, slint::platform::PointerEventButton::Left);
+    assert!(
+        !selects.borrow().is_empty(),
+        "the first click on a tile must grow it (the ladder is wired to the wrong layer otherwise)"
+    );
+    assert!(
+        applies.borrow().is_empty(),
+        "the first click must NOT apply the theme, got {:?}",
+        applies.borrow()
+    );
+
+    // Now the grown card covers that point: a second click applies.
+    let pos = selects.borrow()[0];
+    win.set_gallery_mosaic_selected(pos);
+    win.set_gallery_mosaic_card_open(true);
+    win.set_gallery_mosaic_face_open(true);
+    dispatch_pointer(&win, px, py, slint::platform::PointerEventButton::Left);
+    assert!(
+        !applies.borrow().is_empty(),
+        "a click on the grown card must apply the theme"
+    );
+}
+
 // ── Gallery opens on the active theme (carousel initial focus) ─────────
 // Opening the slider must focus the ACTIVE theme first (not index 0):
 // with theme N active, the initial focus is N, settled with zero drift

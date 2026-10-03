@@ -30,7 +30,9 @@ export component MosaicInfoCard inherits Rectangle {
     in property <bool> face-open: false;
     in property <bool> reduced-motion: false;
 
-    // A click on the grown card is the SECOND click: apply the theme.
+    // A click on the grown card is the SECOND click: apply the theme. Only
+    // once the face is out — a card that is still growing (or already
+    // contracting) must never apply.
     callback apply-requested();
     // The grown card keeps the selection alive while the pointer is inside it,
     // and reports when the pointer leaves so the wall can contract it.
@@ -170,15 +172,29 @@ export component MosaicInfoCard inherits Rectangle {
         width: 100%;
         height: 100%;
         mouse-cursor: pointer;
-        clicked => { root.apply-requested(); }
+        clicked => {
+            if (root.face-open) {
+                root.apply-requested();
+            }
+        }
     }
     out property <bool> has-hover: card-touch.has-hover;
+    // Was the pointer ever inside this card? A card opened from the keyboard
+    // was never hovered, so it must not contract when the mouse happens to be
+    // somewhere else — only a card the pointer opened behaves like a popover.
+    in-out property <bool> was-hovered: false;
     changed has-hover => {
-        // Only once the card has finished growing: a card that is clamped near
-        // an edge shifts away from its tile while it grows, so the pointer can
-        // sit outside it mid-morph — reporting that would contract the card it
-        // just grew.
-        if (!self.has-hover && root.face-open) {
+        if (self.has-hover) {
+            root.was-hovered = true;
+        } else if (root.was-hovered && root.face-open) {
+            root.hover-changed(false);
+        }
+    }
+    // A card clamped near an edge shifts away from its own tile while it grows,
+    // so the pointer can end up outside it mid-morph and no further hover
+    // transition ever fires: re-check once the face is out.
+    changed face-open => {
+        if (root.face-open && root.was-hovered && !card-touch.has-hover) {
             root.hover-changed(false);
         }
     }
