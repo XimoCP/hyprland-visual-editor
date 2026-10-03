@@ -857,11 +857,14 @@ fn theme_info_panel_renders_closed_and_open() {
     win.set_gallery_info_open(true);
     let sliding = win.window().take_snapshot().expect("sliding snapshot");
     save_slice_png(sliding.clone(), "theme_info_sliding.png");
+    let t0_diff = {
+        let (sb, cb) = (sliding.as_bytes(), closed.as_bytes());
+        (0..sb.len().min(cb.len())).filter(|&i| sb[i] != cb[i]).count()
+    };
     assert_eq!(
-        sliding.as_bytes(),
-        closed.as_bytes(),
-        "with motion on, the face must not be painted yet: it slides out of the \
-         card instead of appearing on top of it"
+        t0_diff, 0,
+        "with motion on, the face must not be painted yet: {t0_diff} bytes differ \
+         from the closed frame, so it appears on top instead of sliding out of the card"
     );
 
     // Settled frame: reduced motion collapses the tween (0ms), so re-opening

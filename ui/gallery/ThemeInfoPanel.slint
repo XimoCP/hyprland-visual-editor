@@ -1,17 +1,16 @@
 // HVE 2 — ThemeInfoPanel (the theme info face, INSIDE the Slider card).
 //
-// The face the Slider shows on right-click / the `i` key. It is drawn INSIDE
-// the theme's own card, in the card's slant-safe box, so the theme's image
-// contains it: nothing floats over the window and the carousel around it is
-// untouched.
+// The face the Slider shows on right-click / the `i` key. It is a slanted
+// parallelogram in the card's own shape family, drawn INSIDE the theme's card
+// and covering only ONE THIRD of it, so the theme's image stays visible and
+// nothing floats over the window.
 //
-// It slides out from the card's own left edge (the clipped face box hides it
-// while it is out of place), and it keeps the layout of the first version of
-// this panel: title, saved date, palette swatches, one line per fact and the
-// provider chips, all in one vertical block.
+// The shear is derived from the panel's own height with the card's exact ratio
+// (35px of shear per 520px of height), so the panel's slanted edges come out
+// PARALLEL to the card's at any scale, with no extra plumbing.
 //
 // Layout note: the block's height is the layout's natural height and it is
-// centred in the face. A VerticalLayout inside a fixed-height parent would
+// centred in the panel. A VerticalLayout inside a fixed-height parent would
 // stretch its children across the whole face — that is the "floating rows" bug
 // this avoids.
 //
@@ -42,24 +41,103 @@ export component ThemeInfoPanel inherits Rectangle {
     height: 100%;
     background: transparent;
 
-    // The face itself: opaque card surface. Closed it sits one full face to the
-    // left, where the card's own clip hides it, so opening it slides out of the
-    // card instead of appearing on top of it.
+    // ── Geometry: one third of the face, full height, sheared with the card's
+    // own ratio so the panel is parallel to the theme it sits in. ──
+    property <float> hn: root.height / 1px;
+    property <float> skn: root.hn * 35.0 / 520.0;
+    property <float> wn: (root.width / 1px) / 3.0;
+    property <float> padn: 18.0;
+    property <float> pn: 4.0; // stroke room, same trick as the card
+    property <float> slant: Math.sqrt(root.skn * root.skn + root.hn * root.hn);
+    property <float> rn: Math.max(0.0, Math.min(
+        SkwdTokens.radius-12 / 1px,
+        root.wn / 2 - 1,
+        root.hn / 2 - 1));
+    property <float> box-wn: root.wn + root.skn;
+
+    // The panel itself. Closed it has NO width and waits a little to the left,
+    // so opening it slides out of the card's left edge and unfolds, and closing
+    // it contracts back into that same edge. `clip` is what makes the
+    // contraction read: the content keeps its place and is revealed/cut away by
+    // the panel's own edge instead of reflowing.
+    property <length> panel-x: root.open ? 0px : -24px;
+    property <length> panel-w: root.open ? root.box-wn * 1px : 0px;
     body := Rectangle {
-        width: 100%;
+        width: root.panel-w;
         height: 100%;
-        background: HveColors.bg-card;
-        x: root.open ? 0px : -root.width;
+        x: root.panel-x;
+        clip: true;
         opacity: root.open ? 1.0 : 0.0;
         animate x {
             duration: root.reduced-motion ? 0ms : 320ms;
             easing: cubic-bezier(0.215, 0.61, 0.355, 1);
         }
+        animate width {
+            duration: root.reduced-motion ? 0ms : 320ms;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
         animate opacity { duration: root.reduced-motion ? 0ms : 220ms; }
 
+        // Rounded parallelogram, same command list as the card's own face
+        // (vertices (shear,0)(shear+w,0)(w,h)(0,h), QuadTo at the slanted
+        // corners), so the two shapes can never read as different families.
+        face := Path {
+            x: -root.pn * 1px;
+            y: -root.pn * 1px;
+            width: root.box-wn * 1px + 2 * root.pn * 1px;
+            height: root.height + 2 * root.pn * 1px;
+            viewbox-x: -root.pn;
+            viewbox-y: -root.pn;
+            viewbox-width: root.box-wn + 2 * root.pn;
+            viewbox-height: root.hn + 2 * root.pn;
+            fill: HveColors.bg-card.transparentize(0.35);
+            stroke: HveColors.border;
+            stroke-width: SkwdTokens.border-1;
+
+            MoveTo { x: root.skn + root.rn; y: 0; }
+            LineTo { x: root.skn + root.wn - root.rn; y: 0; }
+            QuadraticTo {
+                control-x: root.skn + root.wn;
+                control-y: 0;
+                x: root.skn + root.wn - root.skn * root.rn / root.slant;
+                y: root.hn * root.rn / root.slant;
+            }
+            LineTo {
+                x: root.wn + root.skn * root.rn / root.slant;
+                y: root.hn - root.hn * root.rn / root.slant;
+            }
+            QuadraticTo {
+                control-x: root.wn;
+                control-y: root.hn;
+                x: root.wn - root.rn;
+                y: root.hn;
+            }
+            LineTo { x: root.rn; y: root.hn; }
+            QuadraticTo {
+                control-x: 0;
+                control-y: root.hn;
+                x: root.skn * root.rn / root.slant;
+                y: root.hn - root.hn * root.rn / root.slant;
+            }
+            LineTo {
+                x: root.skn - root.skn * root.rn / root.slant;
+                y: root.hn * root.rn / root.slant;
+            }
+            QuadraticTo {
+                control-x: root.skn;
+                control-y: 0;
+                x: root.skn + root.rn;
+                y: 0;
+            }
+            Close { }
+        }
+
+        // Content inside the panel's slant-safe box: inset by the shear on the
+        // left and by the padding on the right, so no line crosses a slanted
+        // edge at any height.
         content := Rectangle {
-            x: SkwdTokens.spacing-20;
-            width: parent.width - 2 * SkwdTokens.spacing-20;
+            x: (root.skn + root.padn) * 1px;
+            width: (root.wn - root.skn - 2.0 * root.padn) * 1px;
             height: content-layout.preferred-height;
             y: (parent.height - self.height) / 2;
             background: transparent;
@@ -71,7 +149,7 @@ export component ThemeInfoPanel inherits Rectangle {
                     text: root.info.name == "" ? "Theme information" : root.info.name;
                     color: HveColors.accent-cyan;
                     font-family: SkwdTokens.font-heading;
-                    font-size: SkwdTokens.size-18;
+                    font-size: SkwdTokens.size-16;
                     font-weight: 700;
                     overflow: elide;
                 }
@@ -99,15 +177,14 @@ export component ThemeInfoPanel inherits Rectangle {
                     Rectangle { horizontal-stretch: 1; }
                 }
 
-                // One line per fact: label on the left, value on the right —
-                // the layout of the first version of this panel.
+                // One line per fact: label on the left, value on the right.
                 for r in root.info.rows : HorizontalLayout {
-                    spacing: SkwdTokens.spacing-8;
+                    spacing: SkwdTokens.spacing-4;
                     Text {
                         text: r.label;
                         color: HveColors.text-muted;
                         font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-13;
+                        font-size: SkwdTokens.size-12;
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; }
@@ -115,7 +192,7 @@ export component ThemeInfoPanel inherits Rectangle {
                         text: r.value;
                         color: HveColors.text;
                         font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-13;
+                        font-size: SkwdTokens.size-12;
                         font-weight: 600;
                         horizontal-alignment: right;
                         vertical-alignment: center;

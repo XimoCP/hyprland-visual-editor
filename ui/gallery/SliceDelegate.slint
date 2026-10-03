@@ -393,6 +393,12 @@ export component SliceDelegate inherits Rectangle {
             y: parent.height - 28px;
             width: root.face-width - root.skew;
             height: 28px;
+            // The face is translucent, so the theme's own label would ghost
+            // through the sheet while it is open: it fades out with the slide
+            // (opacity, not `visible`, so the frame at t=0 still matches the
+            // closed one — the face must not pop in).
+            opacity: root.info-shown ? 0.0 : 1.0;
+            animate opacity { duration: root.reduced-motion ? 0ms : 200ms; }
             background: #000000.transparentize(0.45);
             Text {
                 text: root.card-name;
@@ -415,8 +421,8 @@ export component SliceDelegate inherits Rectangle {
         // element must already exist for the open transition to animate; only
         // the card its index names ever opens it. ──
         ThemeInfoPanel {
-            x: root.skew;
-            width: root.face-width - root.skew;
+            x: 0px;
+            width: root.face-width;
             height: 100%;
             info: root.info;
             open: root.info-shown;
