@@ -7,7 +7,7 @@ use crate::providers::shell::NoctaliaV4Paths;
 use crate::providers::shell::ShellProvider;
 use crate::theme_manager::{
     DeletableArtifact, PreviewRole, PreviewSource, PreviewSourceKind, ProviderCapabilities,
-    ThemeProvider,
+    ThemeFact, ThemeProvider,
 };
 use serde::Deserialize;
 use std::fs;
@@ -918,6 +918,71 @@ impl ThemeProvider for NoctaliaV4Provider {
 
 // ── Noctalia v5 path lookup ──────────────────────────────────────────
 
+/// Palette colors the theme saved for itself, in display order. Prefers the
+/// theme's own `palette.json` (custom palettes), falls back to `colors.json`
+/// (a saved custom scheme). Empty when the palette comes from the wallpaper or
+/// belongs to a palette HVE does not own — the panel then shows the name only,
+/// and never invents colors.
+fn palette_swatches(provider_dir: &Path) -> Vec<String> {
+    const KEYS: [&str; 4] = ["mPrimary", "mSecondary", "mTertiary", "mSurface"];
+    for file in ["palette.json", "colors.json"] {
+        let Ok(raw) = fs::read_to_string(provider_dir.join(file)) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        // palette.json nests the scheme under `dark`/`light`; colors.json is flat.
+        let scheme = value.get("dark").or_else(|| value.get("light")).unwrap_or(&value);
+        let colors: Vec<String> = KEYS
+            .iter()
+            .filter_map(|k| scheme.get(*k).and_then(|c| c.as_str()).map(str::to_string))
+            .collect();
+        if !colors.is_empty() {
+            return colors;
+        }
+    }
+    Vec::new()
+}
+
+/// Displayable facts for a saved noctalia theme record: which palette the theme
+/// points at (`custom <Name>`, `community <Name>`, `wallpaper <mode>`,
+/// `builtin <Name>`), plus the colors themselves when the theme carries them.
+fn theme_facts_from_records(provider_dir: &Path) -> Vec<ThemeFact> {
+    let mut facts: Vec<ThemeFact> = Vec::new();
+
+    if let Ok(text) = fs::read_to_string(provider_dir.join("source.txt")) {
+        let mut parts = text.trim().splitn(2, char::is_whitespace);
+        let kind = parts.next().unwrap_or("").trim();
+        let name = parts.next().unwrap_or("").trim();
+        if !kind.is_empty() {
+            facts.push(ThemeFact {
+                label: "Palette source".to_string(),
+                value: kind.to_string(),
+                swatches: Vec::new(),
+            });
+        }
+        if !name.is_empty() {
+            facts.push(ThemeFact {
+                label: "Palette".to_string(),
+                value: name.to_string(),
+                swatches: Vec::new(),
+            });
+        }
+    }
+
+    let swatches = palette_swatches(provider_dir);
+    if !swatches.is_empty() {
+        facts.push(ThemeFact {
+            label: "Palette colors".to_string(),
+            value: String::new(),
+            swatches,
+        });
+    }
+
+    facts
+}
+
 /// Parse `custom <PaletteName>` from a `source.txt` body. Splits on ANY
 /// whitespace (space, tab, …): HVE's own Save UI accepts names the old
 /// space-only split misread, and a misread referrer is a palette deleted
@@ -1241,6 +1306,15 @@ impl ThemeProvider for NoctaliaV5Provider {
         }
 
         out
+    }
+
+    /// The theme's own palette record, for the gallery info panel: the saved
+    /// palette colors when the theme carries them, and always which palette it
+    /// points at (`custom <Name>`, `community <Name>`, `wallpaper <mode>`,
+    /// `builtin <Name>`). A wallpaper-derived palette has no color file, so the
+    /// panel shows the palette NAME and invents nothing.
+    fn theme_facts(&self, provider_dir: &Path) -> Vec<ThemeFact> {
+        theme_facts_from_records(provider_dir)
     }
 
     fn save(&self, theme_dir: &Path) -> Result<(), String> {
@@ -2239,6 +2313,84 @@ mod tests {
         // No assert on result — it can be Ok (noctalia running) or
         // Err (noctalia not available). We only check that it does not panic.
         let _result = provider.save(dir.path());
+    }
+
+    #[test]
+    fn theme_facts_report_palette_colors_and_the_palette_name() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("source.txt"), "custom JokerTheme\n").unwrap();
+        fs::write(
+            tmp.path().join("palette.json"),
+            r##"{"dark":{"mPrimary":"#2ec436","mSecondary":"#fb9e0f","mTertiary":"#9d00ff","mSurface":"#0C1017"},"light":{}}"##,
+        )
+        .unwrap();
+
+        let facts = theme_facts_from_records(tmp.path());
+        let rows: Vec<(String, String)> = facts
+            .iter()
+            .filter(|f| !f.value.is_empty())
+            .map(|f| (f.label.clone(), f.value.clone()))
+            .collect();
+        let swatches: Vec<String> = facts.iter().flat_map(|f| f.swatches.clone()).collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("Palette source".to_string(), "custom".to_string()),
+                ("Palette".to_string(), "JokerTheme".to_string()),
+            ],
+            "the color-carrying fact has no label/value row: the core drops it"
+        );
+        assert_eq!(swatches, vec!["#2ec436", "#fb9e0f", "#9d00ff", "#0C1017"]);
+    }
+
+    #[test]
+    fn theme_facts_report_the_palette_name_when_the_colors_live_elsewhere() {
+        // A wallpaper-derived palette has no color file: the panel shows the
+        // name and invents nothing.
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("source.txt"), "wallpaper vibrant").unwrap();
+
+        let facts = theme_facts_from_records(tmp.path());
+        let rows: Vec<(String, String)> = facts
+            .iter()
+            .filter(|f| !f.value.is_empty())
+            .map(|f| (f.label.clone(), f.value.clone()))
+            .collect();
+        let swatches: Vec<String> = facts.iter().flat_map(|f| f.swatches.clone()).collect();
+        assert!(swatches.is_empty(), "never invent colors for a wallpaper palette");
+        assert_eq!(
+            rows,
+            vec![
+                ("Palette source".to_string(), "wallpaper".to_string()),
+                ("Palette".to_string(), "vibrant".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn theme_facts_fall_back_to_a_saved_custom_scheme() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("colors.json"),
+            r##"{"mPrimary":"#ff0000","mSurface":"#000000"}"##,
+        )
+        .unwrap();
+
+        let facts = theme_facts_from_records(tmp.path());
+        let swatches: Vec<String> = facts.iter().flat_map(|f| f.swatches.clone()).collect();
+        assert_eq!(swatches, vec!["#ff0000", "#000000"]);
+    }
+
+    #[test]
+    fn theme_facts_are_empty_for_an_unreadable_record() {
+        let tmp = TempDir::new().unwrap();
+        assert!(theme_facts_from_records(tmp.path()).is_empty());
+        fs::write(tmp.path().join("palette.json"), "{broken").unwrap();
+        let facts = theme_facts_from_records(tmp.path());
+        assert!(
+            facts.iter().all(|f| f.swatches.is_empty()),
+            "a broken palette file must not invent colors"
+        );
     }
 
     #[test]

@@ -79,6 +79,28 @@ pub struct PreviewSource {
     pub paths: Vec<PathBuf>,
 }
 
+/// One displayable fact a provider reports about its OWN saved record for a
+/// theme (the gallery info panel). `swatches` carries palette colors as hex
+/// strings ("#rrggbb"); the core parses them and never interprets a label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeFact {
+    pub label: String,
+    pub value: String,
+    pub swatches: Vec<String>,
+}
+
+/// Everything the info panel shows for one saved theme. Pure Rust, no Slint
+/// types: the UI layer maps it. `swatches` are hex strings in display order
+/// and `rows` are generic label/value lines in provider order.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ThemeFacts {
+    pub name: String,
+    pub saved_at: String,
+    pub providers: Vec<String>,
+    pub swatches: Vec<String>,
+    pub rows: Vec<(String, String)>,
+}
+
 /// A provider knows how to capture and restore one slice of desktop state.
 ///
 /// Each provider is identified by a stable `id` (e.g. `"noctalia"`,
@@ -187,6 +209,16 @@ pub trait ThemeProvider: Send + Sync {
     /// never learn a backend's layout or record format. Default: no
     /// preview record, so nothing is declared.
     fn preview_sources(&self, provider_dir: &Path) -> Vec<PreviewSource> {
+        let _ = provider_dir;
+        Vec::new()
+    }
+
+    /// Displayable facts about this provider's OWN record for a saved theme,
+    /// for the gallery info panel. The provider supplies knowledge — its
+    /// record layout and format — while the core owns presentation, order and
+    /// parsing. Read-only by contract: it never mutates a record and never
+    /// runs a backend command. Default: nothing to show.
+    fn theme_facts(&self, provider_dir: &Path) -> Vec<ThemeFact> {
         let _ = provider_dir;
         Vec::new()
     }
@@ -451,6 +483,60 @@ impl ThemeManager {
         });
 
         Ok(themes)
+    }
+
+    /// Automatic, read-only facts for one saved theme, gathered by asking
+    /// every provider the theme itself recorded. `None` for an unknown theme
+    /// or an unsafe name (separators / traversal), never for a readable one.
+    ///
+    /// The theme's own `meta.json` is the source of the provider list, so a
+    /// theme saved by a backend that is not registered today still reports
+    /// through the read-only declarer the router ships for that id.
+    pub fn theme_info(&self, name: &str) -> Option<ThemeFacts> {
+        if name.is_empty()
+            || name.starts_with('.')
+            || name.contains('/')
+            || name.contains('\\')
+        {
+            return None;
+        }
+        let theme_dir = self.themes_dir.join(name);
+        if !theme_dir.is_dir() {
+            return None;
+        }
+        let meta = fs::read_to_string(theme_dir.join("meta.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<ThemeMeta>(&s).ok());
+        let recorded: Vec<String> = meta.as_ref().map(|m| m.providers.clone()).unwrap_or_default();
+
+        let mut facts = ThemeFacts {
+            name: name.to_string(),
+            saved_at: meta.as_ref().map(|m| m.saved_at.clone()).unwrap_or_default(),
+            providers: recorded.clone(),
+            swatches: Vec::new(),
+            rows: Vec::new(),
+        };
+
+        for id in &recorded {
+            let provider_dir = theme_dir.join("providers").join(id);
+            let declarer;
+            let provider: &dyn ThemeProvider = if let Some(p) = self.provider(id) {
+                p
+            } else if let Some(b) = crate::providers::declaration_provider(id.as_str()) {
+                declarer = b;
+                declarer.as_ref()
+            } else {
+                continue;
+            };
+            for fact in provider.theme_facts(&provider_dir) {
+                if !fact.value.is_empty() {
+                    facts.rows.push((fact.label, fact.value));
+                }
+                facts.swatches.extend(fact.swatches);
+            }
+        }
+
+        Some(facts)
     }
 
     pub fn save(&mut self, name: &str, provider_ids: &[String]) -> Result<(), String> {
@@ -999,6 +1085,159 @@ mod tests {
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities::empty()
         }
+    }
+
+    /// Test-only provider that reports panel facts from its own record, so the
+    /// core's aggregation (provider order, swatch collection, empty-value
+    /// skipping) is proven without any real backend layout. A `swatch=…` line
+    /// declares a color; every other `label=value` line is a fact row.
+    struct FactsProvider {
+        id: &'static str,
+    }
+
+    impl ThemeProvider for FactsProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn display_name_key(&self) -> &str {
+            self.id
+        }
+        fn icon(&self) -> &str {
+            "◆"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn theme_facts(&self, provider_dir: &Path) -> Vec<ThemeFact> {
+            let Ok(raw) = fs::read_to_string(provider_dir.join("facts.txt")) else {
+                return Vec::new();
+            };
+            raw.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    let (label, value) = line.split_once('=').unwrap_or((line, ""));
+                    let (label, value) = (label.trim(), value.trim());
+                    if label == "swatch" {
+                        ThemeFact {
+                            label: "colors".to_string(),
+                            value: String::new(),
+                            swatches: vec![value.to_string()],
+                        }
+                    } else {
+                        ThemeFact {
+                            label: label.to_string(),
+                            value: value.to_string(),
+                            swatches: Vec::new(),
+                        }
+                    }
+                })
+                .collect()
+        }
+    }
+
+    /// Write `hve/themes/<name>` with a meta listing `providers`, plus one
+    /// `facts.txt` per provider id. Returns the config dir to hand to
+    /// `ThemeManager::new`.
+    fn theme_with_facts(
+        root: &Path,
+        name: &str,
+        providers: &[(&str, &str)],
+    ) -> PathBuf {
+        let dir = root.join("hve").join("themes").join(name);
+        let meta = serde_json::json!({
+            "saved_at": "2026-10-03T00:00:00Z",
+            "description": "",
+            "providers": providers.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        });
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("meta.json"), serde_json::to_string(&meta).unwrap()).unwrap();
+        for (id, facts) in providers {
+            let pdir = dir.join("providers").join(id);
+            fs::create_dir_all(&pdir).unwrap();
+            fs::write(pdir.join("facts.txt"), facts).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn theme_info_gathers_provider_facts_in_record_order() {
+        let tmp = TempDir::new().unwrap();
+        theme_with_facts(
+            tmp.path(),
+            "Cars",
+            &[
+                ("facts-a", "Animation=06 impacto\nswatch=#112233\nEmpty=\n"),
+                ("facts-b", "Palette=Garnet\nswatch=#445566\nswatch=#778899\n"),
+            ],
+        );
+
+        let mut tm = ThemeManager::new(tmp.path());
+        tm.register_provider(Box::new(FactsProvider { id: "facts-a" }));
+        tm.register_provider(Box::new(FactsProvider { id: "facts-b" }));
+
+        let facts = tm.theme_info("Cars").expect("saved theme must report");
+        assert_eq!(facts.name, "Cars");
+        assert_eq!(facts.saved_at, "2026-10-03T00:00:00Z");
+        assert_eq!(facts.providers, vec!["facts-a", "facts-b"]);
+        assert_eq!(
+            facts.rows,
+            vec![
+                ("Animation".to_string(), "06 impacto".to_string()),
+                ("Palette".to_string(), "Garnet".to_string()),
+            ],
+            "rows follow provider order and an empty value is skipped"
+        );
+        assert_eq!(
+            facts.swatches,
+            vec!["#112233", "#445566", "#778899"],
+            "swatches from every provider, in provider order"
+        );
+    }
+
+    #[test]
+    fn theme_info_keeps_the_name_when_no_provider_is_registered() {
+        let tmp = TempDir::new().unwrap();
+        theme_with_facts(tmp.path(), "Orphan", &[("facts-gone", "Animation=whatever\n")]);
+
+        let tm = ThemeManager::new(tmp.path());
+        let facts = tm.theme_info("Orphan").expect("meta is readable");
+        assert_eq!(facts.name, "Orphan");
+        assert_eq!(facts.providers, vec!["facts-gone"]);
+        assert!(facts.rows.is_empty(), "a retired backend shows no rows");
+        assert!(facts.swatches.is_empty());
+    }
+
+    #[test]
+    fn theme_info_rejects_traversal_and_unknown_names() {
+        let tmp = TempDir::new().unwrap();
+        theme_with_facts(tmp.path(), "Cars", &[("facts-a", "Animation=x\n")]);
+        let tm = ThemeManager::new(tmp.path());
+
+        assert!(tm.theme_info("../Cars").is_none(), "traversal is refused");
+        assert!(tm.theme_info("a/b").is_none(), "separators are refused");
+        assert!(tm.theme_info(".hidden").is_none(), "hidden dirs are refused");
+        assert!(tm.theme_info("").is_none(), "an empty name is refused");
+        assert!(tm.theme_info("Nope").is_none(), "an unknown theme is refused");
+        assert!(tm.theme_info("Cars").is_some(), "a real theme still reports");
+    }
+
+    #[test]
+    fn theme_info_reads_state_written_after_the_manager_was_built() {
+        // The panel must show what is on disk NOW: a theme saved a second ago
+        // reports without rebuilding the manager.
+        let tmp = TempDir::new().unwrap();
+        let tm = ThemeManager::new(tmp.path());
+        assert!(tm.theme_info("Fresh").is_none());
+
+        theme_with_facts(tmp.path(), "Fresh", &[("facts-a", "Animation=late\n")]);
+        let mut tm = ThemeManager::new(tmp.path());
+        tm.register_provider(Box::new(FactsProvider { id: "facts-a" }));
+        let facts = tm.theme_info("Fresh").expect("just saved");
+        assert_eq!(facts.rows, vec![("Animation".to_string(), "late".to_string())]);
     }
 
     /// Test-only provider for the provider-declared cleanup seam: it owns
