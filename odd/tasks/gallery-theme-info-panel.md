@@ -188,23 +188,101 @@ swatches: Vec<String>, rows: Vec<(String, String)> }` (pure Rust, no Slint).
 - `0e18a76` — `feat(gallery): read each theme's own records for the info panel`.
 - `2256ffc` — `feat(gallery): right-click or i opens the theme info panel`.
 - `6b5a4c5` — `fix(gallery): leaving the gallery closes the theme info panel`.
-- `+` the in-card rework (the stage-level panel was replaced by the card face).
+- `15c860a` — `refactor(gallery): the theme info face lives inside the card, not over the window`.
+- `56bdcaf` — `feat(gallery): the info face slides out of the card, in the first version's format`.
+- `5a922cd` — `fix(gallery): keep the info face open on the card it was opened for`.
+- `b983092` — `feat(gallery): the info face is a third of the card, slanted and translucent`.
+- `552292c` — `feat(gallery): the info face comes out of the card's right edge, a touch more opaque`.
+- `53c7a4c` — `feat(mosaic): a tile grows into the Slider card, and the wall never moves`.
+
+## Mosaic (the keeper's ladder, no hover)
+
+A mosaic tile is far too small for the info, so the tile itself grows.
+
+- **First click on a tile (or Enter on the focused one)** grows that tile into
+  the Slider card's size and shape, on top of its neighbours. The wall is never
+  recalculated: reflowing it would move tiles under the cursor and change the
+  pagination on every movement. The card is centred on its own tile and clamped
+  inside the viewport.
+- **Two beats**, both sequenced in Rust (a Slint Timer inside a repeater panics
+  on 1.17, and the wall's geometry is Rust's anyway): beat 1 the tile grows in
+  the Slider's 350ms cadence, beat 2 the info face slides out inside it on the
+  right third, over the theme's image — the same face component.
+- **Second click on the grown card applies** the theme. Leaving the card with
+  the pointer, moving the focus with the arrows, or Escape contracts it
+  **without applying**: growing is only a look. Before this, one mosaic click
+  applied the theme straight away.
+- **Keyboard**: arrows move a cursor (never expanding anything — the wall would
+  be covered the whole time); Enter walks the same ladder. Left/right follow
+  reading order, up/down use the geometry because a justified wall has rows of
+  different tile widths, and at a page edge the move steps the page. The
+  neighbour rule is `mosaic_neighbor` in Rust, unit-tested on a two-row wall of
+  unequal tiles.
+- **Proof of "no recalculating"**: the render test
+  `mosaic_grown_tile_covers_only_its_own_card` asserts that with a tile grown,
+  everything more than 620px from that tile's centre is pixel-identical.
+
+The Slider is untouched: `ThemeInfoPanel` is back to its committed state.
+
+## Final shape of the face (keeper's brief)
+
+- A slanted parallelogram **inside** the theme card, covering **one third** of
+  its width and its full height, sheared with the card's own ratio (35px of
+  shear per 520px of height) so its edges are parallel to the card's.
+- **Translucent** surface (`bg-card` at 65% opacity) so the theme's image shows
+  through; a 1px border keeps the shape readable.
+- Opens by sliding out of the card's left edge AND unfolding (x and width
+  animate together); closes by **contracting back into that same edge**. The
+  content keeps its place and the panel's own clip reveals it, so nothing
+  reflows mid-animation.
+- Layout is the first version's: title, saved date, palette swatches, one line
+  per fact (label left, value right) and the provider chips.
+
+
+## Cross-model verification (DONE)
+
+Independent review by `jd-judge-a` on `opencode-go/glm-5.3-flash` (different
+family from the author) over the five feature commits. It could not run the
+suite itself (its runtime exposes no shell tool), so its review is static; the
+suite result below is the author's.
+
+Findings and disposition:
+
+- **CRITICAL — the primary gesture never opened the face.** Right-clicking an
+  off-centre card moves the focus first and opens the face right after, while
+  Slint runs `changed` handlers queued on the next event-loop tick — so the
+  focus-change close fired once the face was open. FIXED in `5a922cd`: the
+  close is now conditional on the identity (`info-index != focused-index`).
+- **WARNING — Return applied the focused theme while the face was open**,
+  contradicting the read-only contract the mouse path already had. FIXED.
+- **WARNING — Mosaic/Hexagon** set the open flag with no face to render and no
+  way back except Escape; a style switch left a stale flag. FIXED (request
+  ignored outside the Slider, style switch closes it).
+- **SUGGESTION — hover-brighten painted its white veil over the sheet** while
+  the mouse rested on the card. FIXED.
+- **SUGGESTION — the containment tolerance (<2% of outside samples) could hide
+  a small leak.** FIXED: the assertion is now "no outside sample changes".
+- **SUGGESTION — the dead `flipped()` call** in the right-click path is a
+  pre-existing PR2 stub. NOT fixed: out of this feature's scope.
+- Clean per the reviewer: path safety, never-invent/leak data, identity, and
+  the lifecycle paths (save/rename/delete/overwrite/leaving the gallery/Esc).
+- Not verifiable by the reviewer: mid-slide frames (no event loop in the
+  harness) and commit hygiene (no git access there).
 
 ## Verification evidence
 
-- `cargo test`: **1294 passed / 0 failed** (baseline 1282; +12 new tests:
-  4 `ThemeManager::theme_info`, 3 `preset_facts`, 4 noctalia `theme_facts`,
-  1 render test). No warnings.
+- `cargo test`: **1295 passed / 0 failed** (baseline 1282; +13 new tests).
 - Visual (author's own eyes, per-run directories):
-  - `/tmp/opencode/render-info-verify01..03` — the first stage-overlay design
-    (rows stretched, then fixed, then the centred slice).
-  - `/tmp/opencode/render-info-verify04` — first in-card pass: the face is
-    inside the card but a VerticalLayout stretched the rows across the face.
-  - `/tmp/opencode/render-info-verify05` — final: the face is contained by the
-    card, top-aligned spec sheet (name, saved, swatches, 6 rows in two columns,
-    provider chips pinned at the bottom), neighbours and wallpaper untouched.
-- Structural assertion in the render test: >200 changed samples inside the
-  card's box, <2% of sampled outside pixels change.
+  - `/tmp/opencode/render-info-v9` — the slide proof: `theme_info_sliding.png`
+    is byte-identical to the closed frame (the face is NOT painted at t=0) and
+    `theme_info_open.png` is the settled face in place.
+  - `/tmp/opencode/render-info-v10` — containment with the tightened
+    assertion: no pixel outside the card changes.
+  - `/tmp/opencode/render-info-v11` — identity: the face does not follow the
+    carousel to another card.
+- Structural assertions: face paints inside the card and nowhere else; t=0
+  frame identical to closed; a card never shows another theme's facts.
+
 
 ## Known gaps to iterate on
 
