@@ -3629,6 +3629,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         _ => crate::shell::gallery::GalleryStyle::Mosaic,
                     };
                     w.set_gallery_style(style);
+                    // Entering the Mosaic: seed the keyboard cursor on the
+                    // first tile, so the ring shows where the keyboard is
+                    // before the first arrow press (the wall is never covered
+                    // by the cursor alone — Enter is what grows a tile).
+                    if style == 2 && w.get_gallery_mosaic_cursor() < 0 {
+                        w.set_gallery_mosaic_cursor(0);
+                    }
                     let len = tm.lock().unwrap().list().unwrap_or_default().len() as i32;
                     let cur = w.get_gallery_focused();
                     if len > 0 && cur >= len {

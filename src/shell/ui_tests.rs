@@ -1171,7 +1171,14 @@ fn mosaic_grown_tile_covers_only_its_own_card() {
             }
         }
     }
-    assert!(inside > 200, "the grown card must be painted, got {inside} changed samples");
+    // A card painted ON TOP repaints its whole box (its own surface and the
+    // theme's image over the tiles); a card that ends up BEHIND the wall only
+    // shows in the gutters and past the wall's band, which is a small
+    // fraction of this. The threshold is what separates the two.
+    assert!(
+        inside > 12000,
+        "the grown card must be painted ON TOP of the wall, got {inside} changed samples"
+    );
     assert_eq!(
         far, 0,
         "the wall must not reflow: {far} samples changed more than 620px from the \
