@@ -1035,6 +1035,150 @@ fn theme_info_face_never_shows_on_another_card() {
     );
 }
 
+// ── Mosaic: the grown tile (first click / Enter) ───────────────────────
+// The wall must NOT reflow. The focused tile grows into the Slider's card ON
+// TOP of its neighbours, so everything outside that card has to stay
+// pixel-identical: that is what "no recalculating" means, and this is the
+// assertion that catches a layout that starts moving under the cursor.
+#[test]
+fn mosaic_grown_tile_covers_only_its_own_card() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(2); // Mosaic
+    win.set_gallery_reduced_motion(true);
+
+    let count = 12usize;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        let img = slint::Image::from_rgba8({
+            let grad = slice_test_gradient(i);
+            let (w, h) = grad.dimensions();
+            let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+            buf.make_mut_bytes().copy_from_slice(grad.as_raw());
+            buf
+        });
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: img.clone(),
+            hero: img,
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+
+    // Real page pipeline, so the tiles are a genuine justified wall.
+    let stage_w = 1920.0f32;
+    let stage_h = 1080.0f32;
+    let pg = crate::shell::gallery::views::mosaic::MosaicPages::new(count, stage_w, stage_h);
+    let (aspects, real_indices) = pg.page_render();
+    let (layout, tile_reals) =
+        crate::shell::gallery::views::mosaic::justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+    let delays = crate::shell::gallery::views::mosaic::mosaic_curtain_delays(&layout.tiles);
+    let tiles: Vec<crate::MosaicTileData> = layout
+        .tiles
+        .iter()
+        .zip(tile_reals.iter())
+        .zip(delays.iter())
+        .map(|((t, r), d)| crate::MosaicTileData {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            real_index: *r as i32,
+            delay_ms: *d as i32,
+        })
+        .collect();
+    assert!(tiles.len() >= 2, "the wall needs at least two tiles");
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles.clone())));
+    win.set_gallery_mosaic_current_page(pg.current() as i32);
+    win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+
+    let collapsed = win.window().take_snapshot().expect("collapsed snapshot");
+    save_slice_png(collapsed.clone(), "mosaic_collapsed.png");
+
+    // Grow the FIRST tile: the face's data is the same struct the Slider uses.
+    win.set_gallery_info(crate::ThemeInfoData {
+        name: SharedString::from("BordesRedondosCentrados"),
+        saved_at: SharedString::from("2026-10-03T10:00:00Z"),
+        providers: ModelRc::new(VecModel::from(vec![SharedString::from("hve-presets")])),
+        swatches: ModelRc::new(VecModel::from(vec![slint::Color::from_rgb_u8(0x2e, 0xc4, 0x36)])),
+        rows: ModelRc::new(VecModel::from(vec![crate::ThemeInfoRow {
+            label: SharedString::from("Animation"),
+            value: SharedString::from("12 rebote"),
+        }])),
+    });
+    win.set_gallery_mosaic_selected(0);
+    win.set_gallery_mosaic_card_open(true);
+    win.set_gallery_mosaic_face_open(true);
+    let grown = win.window().take_snapshot().expect("grown snapshot");
+    save_slice_png(grown.clone(), "mosaic_grown.png");
+
+    // The grown tile's centre: the card is centred on it (the component clamps
+    // against the MosaicView's own size, which this test does not know, so the
+    // assertions below are built around the centre instead of an exact box).
+    let t0 = &tiles[0];
+    let cx = t0.x + t0.w / 2.0;
+    // The card is centred on its own tile and at most 959 wide, so everything
+    // more than 620px to the side of that centre is the REST OF THE WALL: it
+    // must stay pixel-identical. That is the "no recalculating" proof — a
+    // reflow would move those tiles. (No clamp math here on purpose: the
+    // component clamps against the MosaicView's own size, which the test does
+    // not know, and an exact box would just re-derive it.)
+    let (cb, gb) = (collapsed.as_bytes(), grown.as_bytes());
+    let (wi, hi) = (grown.width() as usize, grown.height() as usize);
+    let (mut inside, mut far) = (0usize, 0usize);
+    for y in (0..hi).step_by(4) {
+        for x in (0..wi).step_by(4) {
+            let i = (y * wi + x) * 4;
+            let delta = (0..3)
+                .map(|c| cb[i + c].abs_diff(gb[i + c]))
+                .max()
+                .unwrap_or(0);
+            if ((x as f32) - cx).abs() <= 620.0 {
+                if delta > 40 {
+                    inside += 1;
+                }
+            } else if delta > 40 {
+                far += 1;
+            }
+        }
+    }
+    assert!(inside > 200, "the grown card must be painted, got {inside} changed samples");
+    assert_eq!(
+        far, 0,
+        "the wall must not reflow: {far} samples changed more than 620px from the \
+         grown tile's centre"
+    );
+}
+
 // ── Gallery opens on the active theme (carousel initial focus) ─────────
 // Opening the slider must focus the ACTIVE theme first (not index 0):
 // with theme N active, the initial focus is N, settled with zero drift

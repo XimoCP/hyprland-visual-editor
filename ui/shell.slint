@@ -104,6 +104,15 @@ export component ShellRoot inherits Rectangle {
     in property <ThemeInfoData> gallery-info;
     in-out property <bool> gallery-info-open: false;
     in-out property <int> gallery-info-index: -1;
+    // Mosaic cursor + the tile grown into the Slider card (Rust-owned).
+    in-out property <int> gallery-mosaic-cursor: -1;
+    in-out property <int> gallery-mosaic-selected: -1;
+    in-out property <bool> gallery-mosaic-card-open: false;
+    in-out property <bool> gallery-mosaic-face-open: false;
+    callback gallery-mosaic-nav(direction: string);
+    callback gallery-mosaic-activate();
+    callback gallery-mosaic-select(pos: int);
+    callback gallery-mosaic-deselect();
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
@@ -516,6 +525,12 @@ export component ShellRoot inherits Rectangle {
                     info-open <=> root.gallery-info-open;
                     info-index: root.gallery-info-index;
                     info-close => { root.gallery-info-close(); }
+                    mosaic-cursor: root.gallery-mosaic-cursor;
+                    mosaic-selected: root.gallery-mosaic-selected;
+                    mosaic-card-open: root.gallery-mosaic-card-open;
+                    mosaic-face-open: root.gallery-mosaic-face-open;
+                    mosaic-select(pos) => { root.gallery-mosaic-select(pos); }
+                    mosaic-deselect => { root.gallery-mosaic-deselect(); }
                     top-menu-open <=> root.gallery-top-open;
                     bottom-menu-open <=> root.gallery-bottom-open;
                     style-selected(style) => { root.gallery-style-selected(style); }
@@ -824,7 +839,13 @@ export component ShellRoot inherits Rectangle {
         // stays here so the panel can be closed from any sub-scope.
         key-pressed(event) => {
             if (event.text == Key.Escape) {
-                // The theme info panel is the innermost layer: it closes first.
+                // The grown mosaic tile contracts first: it is the innermost
+                // thing the user opened.
+                if (root.gallery-mosaic-selected >= 0) {
+                    root.gallery-mosaic-deselect();
+                    return accept;
+                }
+                // Then the Slider's theme info panel.
                 if (root.gallery-info-open) {
                     root.gallery-info-close();
                     return accept;
@@ -837,7 +858,22 @@ export component ShellRoot inherits Rectangle {
                 return accept;
             }
             if (root.is-panel-open) { return reject; }
-            // `i` opens the theme info face for the focused gallery card.
+            // Mosaic: the arrows move the cursor across the wall (Rust decides
+            // where a move lands — the wall's layout lives there), Enter grows
+            // the focused tile and a second Enter applies it. The cursor alone
+            // never expands anything: that would cover the wall permanently.
+            if (root.mounted-screen == 1 && root.gallery-style == 2) {
+                if (event.text == Key.LeftArrow) { root.gallery-mosaic-nav("left"); return accept; }
+                if (event.text == Key.RightArrow) { root.gallery-mosaic-nav("right"); return accept; }
+                if (event.text == Key.UpArrow) { root.gallery-mosaic-nav("up"); return accept; }
+                if (event.text == Key.DownArrow) { root.gallery-mosaic-nav("down"); return accept; }
+                if (event.text == Key.Return || event.text == Key.Space) {
+                    root.gallery-mosaic-activate();
+                    return accept;
+                }
+                return reject;
+            }
+            // `i` opens the theme info face for the focused Slider card.
             if (event.text == "i" && root.mounted-screen == 1) {
                 root.gallery-info-requested(root.gallery-focused);
                 return accept;

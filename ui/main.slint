@@ -290,6 +290,19 @@ export component MainWindow inherits Window {
     in property <ThemeInfoData> gallery-info;
     in-out property <bool> gallery-info-open: false;
     in-out property <int> gallery-info-index: -1;
+    // Mosaic: the keyboard cursor and the tile grown into the Slider card
+    // (positions in the current page, -1 = none). Rust owns both, because the
+    // wall's layout — and therefore where a move lands — lives in Rust.
+    in-out property <int> gallery-mosaic-cursor: -1;
+    in-out property <int> gallery-mosaic-selected: -1;
+    // The two beats of the grown tile, sequenced by Rust: beat 1 the tile has
+    // grown into the card, beat 2 the info face is out inside it.
+    in-out property <bool> gallery-mosaic-card-open: false;
+    in-out property <bool> gallery-mosaic-face-open: false;
+    callback gallery-mosaic-nav(direction: string);
+    callback gallery-mosaic-activate();
+    callback gallery-mosaic-select(pos: int);
+    callback gallery-mosaic-deselect();
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
@@ -435,6 +448,10 @@ export component MainWindow inherits Window {
         gallery-info: root.gallery-info;
         gallery-info-open <=> root.gallery-info-open;
         gallery-info-index <=> root.gallery-info-index;
+        gallery-mosaic-cursor <=> root.gallery-mosaic-cursor;
+        gallery-mosaic-selected <=> root.gallery-mosaic-selected;
+        gallery-mosaic-card-open <=> root.gallery-mosaic-card-open;
+        gallery-mosaic-face-open <=> root.gallery-mosaic-face-open;
         gallery-top-open <=> root.gallery-top-open;
         gallery-bottom-open <=> root.gallery-bottom-open;
         panel-section: root.panel-section;
@@ -590,6 +607,10 @@ export component MainWindow inherits Window {
         gallery-mit-open => { root.gallery-mit-open(); }
         gallery-info-requested(idx) => { root.gallery-info-requested(idx); }
         gallery-info-close => { root.gallery-info-close(); }
+        gallery-mosaic-nav(direction) => { root.gallery-mosaic-nav(direction); }
+        gallery-mosaic-activate => { root.gallery-mosaic-activate(); }
+        gallery-mosaic-select(pos) => { root.gallery-mosaic-select(pos); }
+        gallery-mosaic-deselect => { root.gallery-mosaic-deselect(); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
         panel-back => { root.panel-back(); }
         panel-mouse-trace(reason) => { root.panel-mouse-trace(reason); }

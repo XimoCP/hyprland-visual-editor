@@ -106,7 +106,15 @@ export component GalleryRoot inherits Rectangle {
     in property <ThemeInfoData> info;
     in-out property <bool> info-open: false;
     in property <int> info-index: -1;
+    // Mosaic keyboard cursor + the tile grown into the Slider card (positions
+    // in the current page's tiles, -1 = none). Both owned by Rust.
+    in property <int> mosaic-cursor: -1;
+    in property <int> mosaic-selected: -1;
+    in property <bool> mosaic-card-open: false;
+    in property <bool> mosaic-face-open: false;
     callback info-close();
+    callback mosaic-select(int);
+    callback mosaic-deselect();
 
     callback style-selected(int);
     callback panel-section-selected(int);
@@ -394,6 +402,13 @@ export component GalleryRoot inherits Rectangle {
             total-pages: root.mosaic-total-pages;
             page-numbers: root.mosaic-page-numbers;
             reduced-motion: root.reduced-motion;
+            info: root.info;
+            cursor: root.mosaic-cursor;
+            selected: root.mosaic-selected;
+            card-open: root.mosaic-card-open;
+            face-open: root.mosaic-face-open;
+            select-requested(pos) => { root.mosaic-select(pos); }
+            deselect-requested => { root.mosaic-deselect(); }
             cell-clicked(idx) => {
                 if (idx < root.cards.length) { root.card-clicked(idx); }
             }

@@ -1,0 +1,177 @@
+// HVE 2 — MosaicInfoCard: one mosaic tile, grown into the Slider's card.
+//
+// A mosaic tile is far too small for the theme's info, so the tile GROWS: on
+// the first click (or Enter) it expands — on top of the wall, without
+// reflowing anything — until it has the Slider card's size and shape, and once
+// it has grown the theme's info face slides out inside it. Two beats, and both
+// pieces are the ones the Slider already uses, so the wall speaks the same
+// language as the carousel.
+//
+// The wall itself never moves: the card is centred on its own tile and kept
+// inside the viewport with a margin, so it can never leave the screen.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
+import { ThemeInfoPanel, ThemeInfoData } from "ThemeInfoPanel.slint";
+
+export component MosaicInfoCard inherits Rectangle {
+    in property <length> tile-x: 0px;
+    in property <length> tile-y: 0px;
+    in property <length> tile-w: 1px;
+    in property <length> tile-h: 1px;
+    in property <length> viewport-w: 1920px;
+    in property <length> viewport-h: 1080px;
+    in property <ThemeInfoData> info;
+    in property <image> hero;
+    // Beat 1: the tile has grown into the card. Beat 2: the face is out.
+    in property <bool> open: false;
+    in property <bool> face-open: false;
+    in property <bool> reduced-motion: false;
+
+    // A click on the grown card is the SECOND click: apply the theme.
+    callback apply-requested();
+    // The grown card keeps the selection alive while the pointer is inside it,
+    // and reports when the pointer leaves so the wall can contract it.
+    callback hover-changed(bool);
+
+    background: transparent;
+
+    // ── Final geometry: the Slider card's own size and shape, scaled with the
+    // viewport exactly like the Slider scales its card. ──
+    property <float> vw: root.viewport-w / 1px;
+    property <float> vh: root.viewport-h / 1px;
+    property <float> cw: Math.min(924.0, root.vw * 0.58);
+    property <float> ch: root.cw * 520.0 / 924.0;
+    property <float> skn: root.ch * 35.0 / 520.0;
+    property <float> tx: root.tile-x / 1px;
+    property <float> ty: root.tile-y / 1px;
+    property <float> tw: root.tile-w / 1px;
+    property <float> th: root.tile-h / 1px;
+    property <float> margin: 12.0;
+    property <float> box-wn: root.cw + root.skn;
+    property <float> fx: Math.max(root.margin, Math.min(
+        root.vw - root.box-wn - root.margin,
+        root.tx + root.tw / 2.0 - root.box-wn / 2.0));
+    property <float> fy: Math.max(root.margin, Math.min(
+        root.vh - root.ch - root.margin,
+        root.ty + root.th / 2.0 - root.ch / 2.0));
+    property <float> rn: Math.max(0.0, Math.min(
+        SkwdTokens.radius-12 / 1px,
+        root.cw / 2 - 1,
+        root.ch / 2 - 1));
+    property <float> slant: Math.sqrt(root.skn * root.skn + root.ch * root.ch);
+    property <float> pn: 4.0; // stroke room, same trick as the card
+
+    // Closed it IS the tile (its own rect); open it is the card. The Slider's
+    // expansion cadence, so the wall and the carousel move alike.
+    x: (root.open ? root.fx : root.tx) * 1px;
+    y: (root.open ? root.fy : root.ty) * 1px;
+    width: (root.open ? root.box-wn : root.tw) * 1px;
+    height: (root.open ? root.ch : root.th) * 1px;
+    animate x {
+        duration: root.reduced-motion ? 0ms : 350ms;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+    animate y {
+        duration: root.reduced-motion ? 0ms : 350ms;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+    animate width {
+        duration: root.reduced-motion ? 0ms : 350ms;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+    animate height {
+        duration: root.reduced-motion ? 0ms : 350ms;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+
+    // ── The card's face: the same parallelogram as the Slider's card, in the
+    // same command list, so the two can never read as different families. ──
+    face := Path {
+        x: -root.pn * 1px;
+        y: -root.pn * 1px;
+        width: root.box-wn * 1px + 2 * root.pn * 1px;
+        height: root.ch * 1px + 2 * root.pn * 1px;
+        viewbox-x: -root.pn;
+        viewbox-y: -root.pn;
+        viewbox-width: root.box-wn + 2 * root.pn;
+        viewbox-height: root.ch + 2 * root.pn;
+        fill: HveColors.bg-card;
+        stroke: HveColors.accent-cyan.transparentize(0.35);
+        stroke-width: SkwdTokens.border-1;
+
+        MoveTo { x: root.skn + root.rn; y: 0; }
+        LineTo { x: root.skn + root.cw - root.rn; y: 0; }
+        QuadraticTo {
+            control-x: root.skn + root.cw;
+            control-y: 0;
+            x: root.skn + root.cw - root.skn * root.rn / root.slant;
+            y: root.ch * root.rn / root.slant;
+        }
+        LineTo {
+            x: root.cw + root.skn * root.rn / root.slant;
+            y: root.ch - root.ch * root.rn / root.slant;
+        }
+        QuadraticTo {
+            control-x: root.cw;
+            control-y: root.ch;
+            x: root.cw - root.rn;
+            y: root.ch;
+        }
+        LineTo { x: root.rn; y: root.ch; }
+        QuadraticTo {
+            control-x: 0;
+            control-y: root.ch;
+            x: root.skn * root.rn / root.slant;
+            y: root.ch - root.ch * root.rn / root.slant;
+        }
+        LineTo {
+            x: root.skn - root.skn * root.rn / root.slant;
+            y: root.ch * root.rn / root.slant;
+        }
+        QuadraticTo {
+            control-x: root.skn;
+            control-y: 0;
+            x: root.skn + root.rn;
+            y: 0;
+        }
+        Close { }
+    }
+
+    // The theme's own image, inside the widest rectangle that fits the
+    // parallelogram (x from the shear to the flat width), so no square corner
+    // ever pokes out of the slanted edges. The info face later covers its
+    // right third, exactly like the Slider's card.
+    Image {
+        x: root.skn * 1px;
+        width: (root.cw - root.skn) * 1px;
+        height: 100%;
+        source: root.hero;
+        image-fit: cover;
+        visible: root.hero.width > 0;
+    }
+
+    // ── Beat 2: the info face, the Slider's own component. It keeps its
+    // Slider geometry — a third of the card, right-anchored — so the theme's
+    // image stays visible on the rest, exactly like the carousel's card. ──
+    ThemeInfoPanel {
+        width: 100%;
+        height: 100%;
+        info: root.info;
+        open: root.face-open;
+        reduced-motion: root.reduced-motion;
+    }
+
+    // The grown card owns its input: a click on it is the second click, and it
+    // holds the selection while the pointer is inside it.
+    card-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.apply-requested(); }
+    }
+    out property <bool> has-hover: card-touch.has-hover;
+    changed has-hover => { root.hover-changed(self.has-hover); }
+}

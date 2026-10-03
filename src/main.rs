@@ -755,6 +755,85 @@ fn theme_info_data(facts: &crate::theme_manager::ThemeFacts) -> crate::ThemeInfo
     }
 }
 
+/// The current mosaic page's tiles as plain rects, in model order — the order
+/// the keyboard cursor indexes, which is the reading order of the wall.
+fn mosaic_tile_rects(
+    window: &crate::MainWindow,
+) -> Vec<crate::shell::gallery::views::mosaic::MosaicTileRect> {
+    use slint::Model as _;
+    let tiles = window.get_gallery_mosaic_tiles();
+    (0..tiles.row_count())
+        .filter_map(|i| tiles.row_data(i))
+        .map(|t| crate::shell::gallery::views::mosaic::MosaicTileRect {
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+        })
+        .collect()
+}
+
+/// The theme a mosaic tile position shows (clone-filled tiles repeat a real
+/// index, so a position is not an index).
+fn mosaic_tile_real(window: &crate::MainWindow, pos: i32) -> Option<i32> {
+    use slint::Model as _;
+    if pos < 0 {
+        return None;
+    }
+    window
+        .get_gallery_mosaic_tiles()
+        .row_data(pos as usize)
+        .map(|t| t.real_index)
+}
+
+/// The grown mosaic tile's two beats, in the Slider's own cadence: beat 1 the
+/// tile has grown into the card, beat 2 the info face is out inside it.
+const MOSAIC_GROW_MS: u64 = 350;
+
+/// Grow the mosaic tile at `pos` into the Slider card and show the theme's own
+/// records. Both beats are sequenced here, not in Slint: a Slint Timer inside a
+/// repeater panics on 1.17, and the wall's geometry is Rust's business anyway.
+fn grow_mosaic_card(window: &crate::MainWindow, pos: i32) {
+    window.set_gallery_mosaic_selected(pos);
+    window.set_gallery_mosaic_face_open(false);
+    window.set_gallery_mosaic_card_open(false);
+    let weak = window.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
+        let Some(w) = weak.upgrade() else { return; };
+        // The selection may have moved on (or been contracted) meanwhile.
+        if w.get_gallery_mosaic_selected() != pos {
+            return;
+        }
+        w.set_gallery_mosaic_card_open(true);
+        let inner = w.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_GROW_MS), move || {
+            if let Some(w) = inner.upgrade() {
+                if w.get_gallery_mosaic_selected() == pos {
+                    w.set_gallery_mosaic_face_open(true);
+                }
+            }
+        });
+    });
+}
+
+/// Contract the grown mosaic tile: the card morphs back into its tile and is
+/// dropped once the reverse morph has run. Nothing is applied — growing was
+/// only a look.
+fn contract_mosaic_card(window: &crate::MainWindow) {
+    window.set_gallery_mosaic_face_open(false);
+    window.set_gallery_mosaic_card_open(false);
+    let weak = window.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_GROW_MS + 10), move || {
+        if let Some(w) = weak.upgrade() {
+            // A new selection may have taken over while the morph ran: only
+            // drop this one when nothing re-opened in the meantime.
+            if !w.get_gallery_mosaic_card_open() {
+                w.set_gallery_mosaic_selected(-1);
+            }
+        }
+    });
+}
+
 /// Open the theme info face for card `idx`, reading that theme's own saved
 /// records through `ThemeManager::theme_info` (never from a cached card, so a
 /// theme saved a second ago shows its real values). A theme with no readable
@@ -769,9 +848,9 @@ fn open_gallery_info(
 ) {
     use slint::Model as _;
     let idx = idx.max(0) as usize;
-    // Only the Slider draws a face: in Mosaic/Hexagon this would set an open
-    // flag with nothing to render and no way back except Escape.
-    if window.get_gallery_style() != 0 {
+    // Only the Slider and the Mosaic draw a face: in Hexagon this would set an
+    // open flag with nothing to render and no way back except Escape.
+    if window.get_gallery_style() != 0 && window.get_gallery_style() != 2 {
         return;
     }
     let Some(name) = window
@@ -803,9 +882,14 @@ fn open_gallery_info(
 
 /// Close the info panel if it is open. The theme list changed (save / rename /
 /// delete / overwrite), so whatever the panel showed may no longer exist.
+/// The mosaic's grown tile goes with it: it shows the same theme.
 fn close_gallery_info(window: &crate::MainWindow) {
     if window.get_gallery_info_open() {
         window.set_gallery_info_open(false);
+    }
+    if window.get_gallery_mosaic_selected() >= 0 {
+        window.set_gallery_mosaic_selected(-1);
+        window.set_gallery_mosaic_cursor(-1);
     }
 }
 
@@ -3604,6 +3688,105 @@ fn main() -> Result<(), slint::PlatformError> {
             window.on_gallery_info_close(move || {
                 if let Some(w) = win.upgrade() {
                     w.set_gallery_info_open(false);
+                }
+            });
+        }
+        {
+            // ── Mosaic: the keyboard cursor and the tile grown into the card.
+            // The wall's layout lives here, so Rust decides where a move lands
+            // and which theme the grown tile shows. The cursor alone never
+            // expands anything — Enter does — so the wall is never covered
+            // while just moving around.
+            let win = window.as_weak();
+            let pages = mosaic_pages.clone();
+            let refresh = refresh_mosaic_page.clone();
+            window.on_gallery_mosaic_nav(move |dir| {
+                let Some(w) = win.upgrade() else { return; };
+                let rects = mosaic_tile_rects(&w);
+                if rects.is_empty() {
+                    return;
+                }
+                // Moving the focus away contracts whatever was grown.
+                if w.get_gallery_mosaic_selected() >= 0 {
+                    w.set_gallery_info_open(false);
+                    contract_mosaic_card(&w);
+                }
+                let cur = w.get_gallery_mosaic_cursor();
+                if cur < 0 {
+                    // The first arrow press enters the wall at its first tile.
+                    w.set_gallery_mosaic_cursor(0);
+                    return;
+                }
+                use crate::shell::gallery::views::mosaic::{mosaic_neighbor, MosaicDir};
+                let dir = match dir.as_str() {
+                    "left" => MosaicDir::Left,
+                    "right" => MosaicDir::Right,
+                    "up" => MosaicDir::Up,
+                    _ => MosaicDir::Down,
+                };
+                match mosaic_neighbor(&rects, cur as usize, dir) {
+                    Some(next) => w.set_gallery_mosaic_cursor(next as i32),
+                    None => {
+                        // An edge of the page: step it and land on the new
+                        // page's first tile (or its last, going back).
+                        let step = if matches!(dir, MosaicDir::Right | MosaicDir::Down) { 1 } else { -1 };
+                        let changed = pages.lock().map(|mut p| p.step(step)).unwrap_or(false);
+                        if changed {
+                            refresh(true);
+                            let last = w.get_gallery_mosaic_tiles().row_count().saturating_sub(1) as i32;
+                            w.set_gallery_mosaic_cursor(if step > 0 { 0 } else { last });
+                        }
+                    }
+                }
+            });
+        }
+        {
+            // First click on a tile: grow it and show the theme's own records.
+            let win = window.as_weak();
+            let gtm = gallery_tm.clone();
+            window.on_gallery_mosaic_select(move |pos| {
+                let Some(w) = win.upgrade() else { return; };
+                if let Some(real) = mosaic_tile_real(&w, pos) {
+                    // The keyboard continues from where the mouse left off.
+                    w.set_gallery_mosaic_cursor(pos);
+                    open_gallery_info(&w, &gtm, real);
+                    grow_mosaic_card(&w, pos);
+                }
+            });
+        }
+        {
+            // Enter: grow the focused tile, or apply it when it is already
+            // grown (the same ladder the mouse walks).
+            let win = window.as_weak();
+            let gtm = gallery_tm.clone();
+            window.on_gallery_mosaic_activate(move || {
+                let Some(w) = win.upgrade() else { return; };
+                let cur = w.get_gallery_mosaic_cursor();
+                if cur < 0 {
+                    w.set_gallery_mosaic_cursor(0);
+                    return;
+                }
+                let Some(real) = mosaic_tile_real(&w, cur) else { return; };
+                if w.get_gallery_mosaic_selected() == cur {
+                    // Second Enter: apply. The grown tile has done its job, so
+                    // it contracts while the theme applies.
+                    contract_mosaic_card(&w);
+                    w.set_gallery_info_open(false);
+                    w.invoke_gallery_card_clicked(real);
+                } else {
+                    open_gallery_info(&w, &gtm, real);
+                    grow_mosaic_card(&w, cur);
+                }
+            });
+        }
+        {
+            // The pointer left the grown card (or Escape): contract it. The
+            // theme is NOT applied — growing was only a look.
+            let win = window.as_weak();
+            window.on_gallery_mosaic_deselect(move || {
+                if let Some(w) = win.upgrade() {
+                    w.set_gallery_info_open(false);
+                    contract_mosaic_card(&w);
                 }
             });
         }

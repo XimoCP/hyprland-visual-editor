@@ -10,7 +10,9 @@
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
 import { MosaicCell } from "MosaicCell.slint";
+import { MosaicInfoCard } from "MosaicInfoCard.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
+import { ThemeInfoData } from "ThemeInfoPanel.slint";
 import { SkwdTokens } from "../tokens.slint";
 import { HveColors } from "../theme.slint";
 
@@ -38,8 +40,20 @@ export component MosaicView inherits Rectangle {
     in property <int> total-pages: 1;
     in property <[int]> page-numbers;
     in property <bool> reduced-motion: false;
+    // Theme info shown by the expanded tile (same data the Slider's face uses).
+    in property <ThemeInfoData> info;
+    // Keyboard cursor: a POSITION in this page's tiles (-1 = none). Owned by
+    // Rust, which also decides where a move lands (the wall's layout lives
+    // there).
+    in-out property <int> cursor: -1;
+    // The tile that is grown into the Slider card (-1 = none). Owned by Rust.
+    in property <int> selected: -1;
     callback cell-clicked(int);
     callback cell-flip(int);
+    // A click on a tile that is not grown yet asks to grow it; the grown card
+    // asks to apply (its own click) or to contract (pointer left it).
+    callback select-requested(int);
+    callback deselect-requested();
     // +1 next / −1 previous, once per wheel gesture (mirrors SliceCarousel).
     callback page-step(int);
 
@@ -157,10 +171,66 @@ export component MosaicView inherits Rectangle {
             curtain-total-ms: root.curtain-total-ms;
             // Under-tiles are frozen — no curtain animation, always fully revealed.
             curtain-progress: 1.0;
-            clicked => { root.cell-clicked(t.real-index); }
+            clicked => {
+                // First click grows the tile (and shows the theme); once it is
+                // grown, a click applies the theme instead.
+                if (root.selected == idx) {
+                    root.deselect-requested();
+                    root.cell-clicked(t.real-index);
+                } else {
+                    root.select-requested(idx);
+                }
+            }
             flip-requested => { root.cell-flip(t.real-index); }
         }
     }
+
+    // ── Keyboard cursor: a ring on the focused tile. The cursor itself never
+    // expands anything — that would cover the wall the whole time; Enter does.
+    // Drawn after the page so a neighbouring tile can never clip it. ──
+    for t[idx] in root.tiles : Rectangle {
+        x: t.x;
+        y: t.y;
+        width: t.w;
+        height: t.h;
+        visible: root.cursor == idx && root.selected != idx;
+        background: transparent;
+        border-width: 2px;
+        border-color: HveColors.accent-cyan;
+        border-radius: SkwdTokens.radius-4;
+    }
+
+    // ── The grown tile, on top of the whole wall. ──
+    for t[idx] in root.tiles : Rectangle {
+        if root.selected == idx : MosaicInfoCard {
+            tile-x: t.x;
+            tile-y: t.y;
+            tile-w: t.w;
+            tile-h: t.h;
+            viewport-w: root.width;
+            viewport-h: root.height;
+            info: root.info;
+            hero: root.cards[t.real-index].hero;
+            open: root.card-open;
+            face-open: root.face-open;
+            reduced-motion: root.reduced-motion;
+            apply-requested => {
+                root.deselect-requested();
+                root.cell-clicked(t.real-index);
+            }
+            hover-changed(h) => {
+                if (!h) { root.deselect-requested(); }
+            }
+        }
+    }
+
+    // ── Expanded tile (first click / Enter): the wall NEVER reflows. Beat 1
+    // grows the tile into the Slider's card and beat 2 slides the info face out
+    // inside it; closing reverses both. Both beats are sequenced in Rust — a
+    // Slint Timer inside a repeater panics on 1.17, and Rust already owns the
+    // wall's geometry — so this view only renders the state it is handed. ──
+    in property <bool> card-open: false;
+    in property <bool> face-open: false;
 
     // ── Current page tiles ──
     page := Rectangle {

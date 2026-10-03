@@ -527,6 +527,91 @@ pub const MOSAIC_CURTAIN_COL_STAGGER_MS: u64 = 50;
 /// Per-tile curtain wipe duration (spec: ~300ms).
 pub const MOSAIC_CURTAIN_TILE_MS: u64 = 300;
 
+/// One tile's geometry as keyboard navigation needs it. Pure data so the
+/// navigation rules are unit-testable without any Slint type.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MosaicTileRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// A keyboard move across the wall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MosaicDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// The tile a keyboard move lands on, or `None` when the move would leave the
+/// page (the caller then steps the page or clamps).
+///
+/// Left/right follow READING ORDER: the tiles model is packed row by row, left
+/// to right, so they are `cur ± 1`. Up/down use the geometry, because a
+/// justified wall has rows of different tile widths: the target is the tile in
+/// the row above/below whose horizontal span contains the cursor's centre, and
+/// when none does, the one with the nearest centre. Rows are runs of tiles
+/// sharing a y (1px tolerance — the same rule `mosaic_layout_rows` uses).
+pub fn mosaic_neighbor(tiles: &[MosaicTileRect], cur: usize, dir: MosaicDir) -> Option<usize> {
+    if cur >= tiles.len() {
+        return None;
+    }
+    match dir {
+        MosaicDir::Left => cur.checked_sub(1),
+        MosaicDir::Right => (cur + 1 < tiles.len()).then_some(cur + 1),
+        MosaicDir::Up | MosaicDir::Down => {
+            let rows = tile_rows(tiles);
+            let Some(row) = rows.iter().position(|r| r.contains(&cur)) else {
+                return None;
+            };
+            let target_row = match dir {
+                MosaicDir::Up => row.checked_sub(1)?,
+                _ => {
+                    if row + 1 >= rows.len() {
+                        return None;
+                    }
+                    row + 1
+                }
+            };
+            let centre = tiles[cur].x + tiles[cur].w / 2.0;
+            nearest_in_row(tiles, &rows[target_row], centre)
+        }
+    }
+}
+
+/// Consecutive runs of tiles sharing a y (1px tolerance), in model order.
+fn tile_rows(tiles: &[MosaicTileRect]) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut cur_y = f32::NAN;
+    for (i, t) in tiles.iter().enumerate() {
+        if rows.is_empty() || (t.y - cur_y).abs() > 1.0 {
+            rows.push(Vec::new());
+            cur_y = t.y;
+        }
+        rows.last_mut().unwrap().push(i);
+    }
+    rows
+}
+
+/// The tile in `row` whose span contains `centre`, else the nearest centre.
+fn nearest_in_row(tiles: &[MosaicTileRect], row: &[usize], centre: f32) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for &i in row {
+        let t = tiles[i];
+        if centre >= t.x && centre <= t.x + t.w {
+            return Some(i);
+        }
+        let d = (t.x + t.w / 2.0 - centre).abs();
+        if best.map_or(true, |(_, bd)| d < bd) {
+            best = Some((i, d));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 /// Group tiles by row using their y (within a 1px tolerance). Justified
 /// rows share an exact y; different rows differ by ~hundreds of px, so a
 /// 1px threshold cleanly separates them.
@@ -2483,5 +2568,64 @@ mod mosaic_unit_a_tests {
         assert!(!p.go_to(99), "already at last, clamped no change");
         let mut empty = MosaicPages::new(0, STAGE_W, STAGE_H);
         assert!(!empty.go_to(5));
+    }
+
+    #[test]
+    fn mosaic_neighbor_follows_reading_order_and_rows() {
+        // Two justified rows with DIFFERENT tile widths (the real case):
+        // row 0 = three tiles 300/200/400 wide, row 1 = two tiles 400/500.
+        let tiles = vec![
+            MosaicTileRect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 },
+            MosaicTileRect { x: 300.0, y: 0.0, w: 200.0, h: 200.0 },
+            MosaicTileRect { x: 500.0, y: 0.0, w: 400.0, h: 200.0 },
+            MosaicTileRect { x: 0.0, y: 200.0, w: 400.0, h: 200.0 },
+            MosaicTileRect { x: 400.0, y: 200.0, w: 500.0, h: 200.0 },
+        ];
+        // Reading order: the model is packed row by row, so left/right are
+        // the adjacent entries — including the row seam.
+        assert_eq!(mosaic_neighbor(&tiles, 0, MosaicDir::Right), Some(1));
+        assert_eq!(
+            mosaic_neighbor(&tiles, 2, MosaicDir::Right),
+            Some(3),
+            "the last tile of a row is followed by the next row's first"
+        );
+        assert_eq!(mosaic_neighbor(&tiles, 3, MosaicDir::Left), Some(2));
+        assert_eq!(
+            mosaic_neighbor(&tiles, 0, MosaicDir::Left),
+            None,
+            "the first tile has no previous: the caller steps the page"
+        );
+        assert_eq!(
+            mosaic_neighbor(&tiles, 4, MosaicDir::Right),
+            None,
+            "the last tile has no next: the caller steps the page"
+        );
+
+        // Up/down use the geometry, because rows have different tile widths.
+        // From tile 0 (centre x = 150) the row below contains 150 in index 3.
+        assert_eq!(mosaic_neighbor(&tiles, 0, MosaicDir::Down), Some(3));
+        // From tile 2 (centre x = 700) index 4 spans 400..900, which contains
+        // 700 — no nearest-centre guesswork needed.
+        assert_eq!(mosaic_neighbor(&tiles, 2, MosaicDir::Down), Some(4));
+        assert_eq!(
+            mosaic_neighbor(&tiles, 4, MosaicDir::Up),
+            Some(2),
+            "up from centre 650 lands on the row-0 tile spanning 500..900"
+        );
+        assert_eq!(mosaic_neighbor(&tiles, 1, MosaicDir::Up), None, "nothing above the first row");
+        assert_eq!(mosaic_neighbor(&tiles, 3, MosaicDir::Down), None, "nothing below the last row");
+        assert_eq!(mosaic_neighbor(&tiles, 9, MosaicDir::Right), None, "out of range is no move");
+    }
+
+    #[test]
+    fn mosaic_neighbor_picks_the_nearest_tile_when_no_span_contains_the_centre() {
+        // A short row under a long one: the cursor sits past the last tile's
+        // right edge, so the nearest centre wins instead of "no move".
+        let tiles = vec![
+            MosaicTileRect { x: 0.0, y: 0.0, w: 900.0, h: 100.0 },
+            MosaicTileRect { x: 0.0, y: 100.0, w: 100.0, h: 100.0 },
+            MosaicTileRect { x: 100.0, y: 100.0, w: 100.0, h: 100.0 },
+        ];
+        assert_eq!(mosaic_neighbor(&tiles, 0, MosaicDir::Down), Some(2), "centre 450: nearest is 150 (index 2)");
     }
 }
