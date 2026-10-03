@@ -769,6 +769,11 @@ fn open_gallery_info(
 ) {
     use slint::Model as _;
     let idx = idx.max(0) as usize;
+    // Only the Slider draws a face: in Mosaic/Hexagon this would set an open
+    // flag with nothing to render and no way back except Escape.
+    if window.get_gallery_style() != 0 {
+        return;
+    }
     let Some(name) = window
         .get_gallery_cards()
         .row_data(idx)

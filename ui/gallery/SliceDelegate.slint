@@ -63,6 +63,9 @@ export component SliceDelegate inherits Rectangle {
     in property <int> info-index: -1;
     in property <int> card-index: -1;
     in property <bool> reduced-motion: false;
+    // True only on the card the info face belongs to. ONE source of truth for
+    // the face's open state, its input gating and the layers it must hide.
+    property <bool> info-shown: root.info-open && root.card-index == root.info-index;
     in property <color> accent: HveColors.accent-cyan;
     in property <image> thumb;
     // Tuck animation: 0 = normal gallery, 1 = hidden behind center (driven by SliceCarousel staggered tuck)
@@ -416,7 +419,7 @@ export component SliceDelegate inherits Rectangle {
             width: root.face-width - root.skew;
             height: 100%;
             info: root.info;
-            open: root.info-open && root.card-index == root.info-index;
+            open: root.info-shown;
             reduced-motion: root.reduced-motion;
         }
     }
@@ -475,7 +478,7 @@ export component SliceDelegate inherits Rectangle {
         height: root.height + 2 * root.pad;
         wn: root.faceWn; hn: root.hn; sn: root.sn; rn: root.rn; pn: root.pn;
         fill: #ffffff;
-        opacity: !root.is-flipped && root.has-baked && root.has-hover
+        opacity: !root.is-flipped && !root.info-shown && root.has-baked && root.has-hover
             ? SkwdTokens.gallery-card-hover-brighten : 0.0;
         animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
     }
@@ -567,7 +570,7 @@ export component SliceDelegate inherits Rectangle {
             if (self.is-inside-shape) {
                 // With the info face open, a click on it is a read action, not
                 // an apply: the face is a panel, not a button.
-                if (!(root.info-open && root.card-index == root.info-index)) {
+                if (!root.info-shown) {
                     root.clicked();
                 }
             }
@@ -578,7 +581,7 @@ export component SliceDelegate inherits Rectangle {
                 if (self.is-inside-shape) {
                     // Right-click inside the open face closes it (the toggle);
                     // anywhere else it is the request that opens it.
-                    if (root.info-open && root.card-index == root.info-index) {
+                    if (root.info-shown) {
                         root.info-close();
                     } else {
                         root.right-clicked();

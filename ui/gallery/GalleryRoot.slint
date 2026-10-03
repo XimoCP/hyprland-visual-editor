@@ -165,6 +165,9 @@ export component GalleryRoot inherits Rectangle {
     }
     changed current-style => {
         if (root.shown-style != root.current-style) { switch-timer.restart(); }
+        // The face only exists in the Slider: leaving that style closes it
+        // instead of leaving a stale open flag behind.
+        if (root.info-open) { root.info-close(); }
     }
 
     Rectangle {
@@ -510,13 +513,16 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Theme info face lives INSIDE the card, so nothing is drawn here. A
-    // focus change (wheel, arrows, a click on another card) closes it: the
-    // face belongs to the theme it was opened for. ──
+    // ── Theme info face lives INSIDE the card, so nothing is drawn here. It
+    // closes when the focus lands on ANOTHER card (the face belongs to the
+    // theme it was opened for), and when the style leaves the Slider, which is
+    // the only view that has a face. Note: `changed` callbacks run queued on
+    // the next event-loop tick, so the identity check is what keeps a
+    // right-click on an off-centre card from closing the face it just opened
+    // (that handler moves the focus first and opens the face right after). ──
     changed focused-index => {
-        if (root.info-open) { root.info-close(); }
+        if (root.info-open && root.info-index != root.focused-index) { root.info-close(); }
     }
-
     GalleryChrome {
         width: 100%;
         height: 100%;

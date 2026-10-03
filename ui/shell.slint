@@ -837,11 +837,15 @@ export component ShellRoot inherits Rectangle {
                 return accept;
             }
             if (root.is-panel-open) { return reject; }
-            // `i` opens the theme info panel for the focused gallery card.
+            // `i` opens the theme info face for the focused gallery card.
             if (event.text == "i" && root.mounted-screen == 1) {
                 root.gallery-info-requested(root.gallery-focused);
                 return accept;
             }
+            // While the info face is open the focused theme must NOT be applied
+            // by Return: the mouse path already treats a click on the face as a
+            // read action, and the keyboard must match it. Escape closes.
+            if (event.text == Key.Return && root.gallery-info-open) { return accept; }
             if (event.text == Key.DownArrow) { root.nav-move("down"); return accept; }
             if (event.text == Key.UpArrow) { root.nav-move("up"); return accept; }
             if (event.text == Key.RightArrow) { root.nav-move("right"); return accept; }

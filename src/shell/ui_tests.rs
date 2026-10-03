@@ -916,9 +916,105 @@ fn theme_info_panel_renders_closed_and_open() {
         "the info face must paint inside the card, got {big_inside} changed samples"
     );
     assert!(
-        big_outside * 50 < sampled_outside.max(1),
+        big_outside == 0,
         "the info face must stay inside the theme: {big_outside} of {sampled_outside} \
          outside samples changed"
+    );
+}
+
+// ── Theme info face: identity (it belongs to ONE card) ─────────────────
+// The face is opened for a specific card. If the carousel is focused on a
+// DIFFERENT card, nothing may be painted: a card must never show another
+// theme's facts, and the face must not resurface on the wrong theme.
+#[test]
+fn theme_info_face_never_shows_on_another_card() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_reduced_motion(true);
+
+    let count = 6usize;
+    let owned = 2usize;
+    let other = 4usize;
+    win.set_gallery_cards(slint::ModelRc::new(VecModel::from(
+        (0..count)
+            .map(|i| late_card(&format!("Theme {i}"), i == owned))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_gallery_info(crate::ThemeInfoData {
+        name: SharedString::from("BordesRedondosCentrados"),
+        saved_at: SharedString::from("2026-10-03T10:00:00Z"),
+        providers: ModelRc::new(VecModel::from(vec![SharedString::from("hve-presets")])),
+        swatches: ModelRc::new(VecModel::from(vec![slint::Color::from_rgb_u8(0x2e, 0xc4, 0x36)])),
+        rows: ModelRc::new(VecModel::from(vec![crate::ThemeInfoRow {
+            label: SharedString::from("Animation"),
+            value: SharedString::from("12 rebote"),
+        }])),
+    });
+
+    // Focused on the card the face was opened for: it shows.
+    win.set_gallery_focused(owned as i32);
+    win.set_gallery_slice_tiles(slint::ModelRc::new(VecModel::from(late_slice_tiles(
+        count, owned, 1920.0,
+    ))));
+    win.set_gallery_slice_delta_base(owned as i32);
+    win.set_gallery_slice_focus_pos(owned as f32);
+    win.set_gallery_info_index(owned as i32);
+    win.set_gallery_info_open(true);
+    let on_owner = win.window().take_snapshot().expect("owner snapshot");
+
+    // The carousel moves to another card while the face stays "open" for the
+    // first one: nothing of the face may be painted.
+    win.set_gallery_focused(other as i32);
+    win.set_gallery_slice_tiles(slint::ModelRc::new(VecModel::from(late_slice_tiles(
+        count, other, 1920.0,
+    ))));
+    win.set_gallery_slice_delta_base(other as i32);
+    win.set_gallery_slice_focus_pos(other as f32);
+    let on_other = win.window().take_snapshot().expect("other snapshot");
+    save_slice_png(on_other.clone(), "theme_info_other_card.png");
+
+    let (w, h) = (on_owner.width() as usize, on_owner.height() as usize);
+    let (ab, bb) = (on_owner.as_bytes(), on_other.as_bytes());
+    let card_left = (w as f32 * 0.5 - 462.0).max(0.0) as usize;
+    let card_right = (w as f32 * 0.5 + 462.0).min(w as f32) as usize;
+    let card_top = (h as f32 * 0.5 - 260.0).max(0.0) as usize;
+    let card_bottom = (h as f32 * 0.5 + 260.0).min(h as f32) as usize;
+    let mut face_coloured = 0usize;
+    for y in (card_top..card_bottom).step_by(4) {
+        for x in (card_left..card_right).step_by(4) {
+            let i = (y * w + x) * 4;
+            // The face's own surface is the card background; on the owner frame
+            // it is painted opaque, on the other frame that pixel must not be
+            // the same face surface at full strength.
+            if ab[i + 3] != bb[i + 3] || ab[i] != bb[i] {
+                face_coloured += 1;
+            }
+        }
+    }
+    assert!(
+        face_coloured > 200,
+        "the two frames must differ (the owner card shows the face and the \
+         other card does not), got {face_coloured} differing samples"
+    );
+    assert!(
+        !win.get_gallery_info_open() || win.get_gallery_info_index() == owned as i32,
+        "the face's identity must not follow the carousel"
     );
 }
 
