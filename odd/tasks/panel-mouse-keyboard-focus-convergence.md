@@ -41,3 +41,20 @@ warnings; the switch-convergence warning was then closed in `a8d93a7`.
 - The `*_mouse_never_touches_focus_by_construction` tests were rewritten to the
   new contract (mouse DOES converge the keyboard index now).
 - Out of scope: the System section rows (no card list).
+
+## Follow-up: the scroll must survive the wheel (2026-10-03)
+
+The keeper reported that after navigating with the mouse/wheel, resuming the
+keyboard left the cursor invisible until it reached the mouse's zone. Root cause:
+a `viewport-y: <expr>` BINDING is destroyed when the ScrollView assigns
+`viewport-y` (the wheel does), so the list stopped following the keyboard focus.
+Borders had already been fixed with an imperative `follow-focus()`
+(`BordersSection.slint:1927-1934`); Motion, Filters, Save and System still used
+the binding.
+
+- `0885305` — ported the Borders imperative pattern to Motion (list + tune),
+  Filters and Save.
+- `0b06c64` — ported it to System's two panes (the About pane needs only the
+  minimal equivalent; its follow target is always the top).
+
+Suite: 1282 passed, 0 failed. Cross-model verified (glm-5.3-flash): PASS.
