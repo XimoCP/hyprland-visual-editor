@@ -173,5 +173,13 @@ export component MosaicInfoCard inherits Rectangle {
         clicked => { root.apply-requested(); }
     }
     out property <bool> has-hover: card-touch.has-hover;
-    changed has-hover => { root.hover-changed(self.has-hover); }
+    changed has-hover => {
+        // Only once the card has finished growing: a card that is clamped near
+        // an edge shifts away from its tile while it grows, so the pointer can
+        // sit outside it mid-morph — reporting that would contract the card it
+        // just grew.
+        if (!self.has-hover && root.face-open) {
+            root.hover-changed(false);
+        }
+    }
 }
