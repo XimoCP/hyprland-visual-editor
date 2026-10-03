@@ -343,7 +343,14 @@ export component ShellRoot inherits Rectangle {
     // `changed` callbacks fire queued on the next event-loop tick, i.e. after
     // the newly mounted subtree settled.
     init => { shell-kbd.focus(); }
-    changed mounted-screen => { shell-kbd.focus(); }
+    // Leaving the gallery closes the theme info panel: it belongs to the
+    // Slider, and coming back later must not resurrect a stale one.
+    changed mounted-screen => {
+        if (root.mounted-screen != 1 && root.gallery-info-open) {
+            root.gallery-info-close();
+        }
+        shell-kbd.focus();
+    }
     // Theme transition END: the apply cycle dropped Slint's internal focus,
     // so hand the gallery keyboard back to shell-kbd — unless something else
     // legitimately owns it (panel open, shell mutating, a drawer open, or a
