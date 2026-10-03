@@ -62,8 +62,7 @@ export component MosaicCell inherits Rectangle {
     in property <bool> key-focused: false;
     changed has-hover => { root.hovered(self.has-hover); }
     transform-origin: { x: self.width / 2, y: self.height / 2 };
-    transform-scale: (root.has-hover || root.key-focused) ? SkwdTokens.gallery-card-hover-scale : 1.0;
-    animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
+    transform-scale: (root.has-hover || root.key-focused) ? SkwdTokens.gallery-card-hover-scale : 1.0;    animate transform-scale { duration: SkwdTokens.anim-150; easing: ease-in-out; }
 
     clip: true;
     border-radius: 0px;
@@ -138,6 +137,21 @@ export component MosaicCell inherits Rectangle {
         background: #ffffff;
         opacity: root.has-image && root.has-hover ? SkwdTokens.gallery-card-hover-brighten : 0.0;
         animate opacity { duration: SkwdTokens.anim-150; easing: ease-in-out; }
+    }
+
+    // ── Keyboard cursor highlight: at the tile's edge and INSIDE the cell, so
+    // it rides the same transform as the photo — the ring grows with the image
+    // instead of sitting still at the old size. Inset by the stroke width so
+    // the cell's own clip can never eat it. ──
+    if root.key-focused : Rectangle {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        background: transparent;
+        border-width: 2px;
+        border-color: SkwdTokens.gallery-slice-focus-border-color;
+        border-radius: SkwdTokens.radius-4;
     }
 
     // ── Curtain cover (Tramo 9): growing clip sweeps LEFT→RIGHT, revealing

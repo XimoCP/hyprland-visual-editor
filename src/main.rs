@@ -787,9 +787,12 @@ fn mosaic_tile_real(window: &crate::MainWindow, pos: i32) -> Option<i32> {
     tiles.row_data(pos as usize).map(|t| t.real_index)
 }
 
-/// The grown mosaic tile's two beats, in the Slider's own cadence: beat 1 the
-/// tile has grown into the card, beat 2 the info face is out inside it.
-const MOSAIC_GROW_MS: u64 = 350;
+/// The grown mosaic tile's two beats. The card's own morph runs 420ms with a
+/// gentle overshoot; the face starts a little past halfway, so the two beats
+/// read as one gesture instead of two separate steps. Contracting is quicker
+/// (280ms), and the card is dropped just after it settles.
+const MOSAIC_FACE_BEAT_MS: u64 = 230;
+const MOSAIC_CONTRACT_MS: u64 = 300;
 
 /// Grow the mosaic tile at `pos` into the Slider card and show the theme's own
 /// records. Both beats are sequenced here, not in Slint: a Slint Timer inside a
@@ -807,7 +810,7 @@ fn grow_mosaic_card(window: &crate::MainWindow, pos: i32) {
         }
         w.set_gallery_mosaic_card_open(true);
         let inner = w.as_weak();
-        slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_GROW_MS), move || {
+        slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_FACE_BEAT_MS), move || {
             if let Some(w) = inner.upgrade() {
                 if w.get_gallery_mosaic_selected() == pos {
                     w.set_gallery_mosaic_face_open(true);
@@ -824,7 +827,7 @@ fn contract_mosaic_card(window: &crate::MainWindow) {
     window.set_gallery_mosaic_face_open(false);
     window.set_gallery_mosaic_card_open(false);
     let weak = window.as_weak();
-    slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_GROW_MS + 10), move || {
+    slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_CONTRACT_MS), move || {
         if let Some(w) = weak.upgrade() {
             // A new selection may have taken over while the morph ran: only
             // drop this one when nothing re-opened in the meantime.

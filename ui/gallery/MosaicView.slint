@@ -257,25 +257,10 @@ export component MosaicView inherits Rectangle {
         }
     }
 
-    // ── Keyboard cursor: a ring on the focused tile. The cursor itself never
-    // expands anything — that would cover the wall the whole time; Enter does.
-    // Declared AFTER the page and the pagination: a tile painted later can
-    // never clip or cover it (the first version of this lived inside the
-    // under-layer block and painted behind the whole wall). ──
-    for t[idx] in root.tiles : Rectangle {
-        x: t.x;
-        y: t.y;
-        width: t.w;
-        height: t.h;
-        visible: root.cursor == idx && root.selected != idx;
-        background: transparent;
-        border-width: 2px;
-        border-color: HveColors.accent-cyan;
-        border-radius: SkwdTokens.radius-4;
-    }
-
-    // ── The grown tile, on top of the whole wall. Same placement rule: last
-    // in the file, so it can never be covered by a tile. ──
+    // ── Keyboard cursor: the ring lives INSIDE MosaicCell now (so it rides the
+    // same transform as the photo and grows with it), and the grown tile is
+    // drawn last so nothing can cover it. ──
+    // ── The grown tile, on top of the whole wall. ──
     for t[idx] in root.tiles : Rectangle {
         if root.selected == idx : MosaicInfoCard {
             tile-x: t.x;

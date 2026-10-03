@@ -69,27 +69,30 @@ export component MosaicInfoCard inherits Rectangle {
     property <float> slant: Math.sqrt(root.skn * root.skn + root.ch * root.ch);
     property <float> pn: 4.0; // stroke room, same trick as the card
 
-    // Closed it IS the tile (its own rect); open it is the card. The Slider's
-    // expansion cadence, so the wall and the carousel move alike.
+    // Closed it IS the tile (its own rect); open it is the card. Growing gets
+    // a gentle overshoot (it should feel like the tile pops into a card) and
+    // contracting is quicker and settles without a bounce — an exit that
+    // bounces reads as sloppy.
+    property <duration> morph-ms: root.open ? 420ms : 280ms;
     x: (root.open ? root.fx : root.tx) * 1px;
     y: (root.open ? root.fy : root.ty) * 1px;
     width: (root.open ? root.box-wn : root.tw) * 1px;
     height: (root.open ? root.ch : root.th) * 1px;
     animate x {
-        duration: root.reduced-motion ? 0ms : 350ms;
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        duration: root.reduced-motion ? 0ms : root.morph-ms;
+        easing: root.open ? cubic-bezier(0.34, 1.4, 0.64, 1) : cubic-bezier(0.4, 0, 0.6, 1);
     }
     animate y {
-        duration: root.reduced-motion ? 0ms : 350ms;
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        duration: root.reduced-motion ? 0ms : root.morph-ms;
+        easing: root.open ? cubic-bezier(0.34, 1.4, 0.64, 1) : cubic-bezier(0.4, 0, 0.6, 1);
     }
     animate width {
-        duration: root.reduced-motion ? 0ms : 350ms;
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        duration: root.reduced-motion ? 0ms : root.morph-ms;
+        easing: root.open ? cubic-bezier(0.34, 1.4, 0.64, 1) : cubic-bezier(0.4, 0, 0.6, 1);
     }
     animate height {
-        duration: root.reduced-motion ? 0ms : 350ms;
-        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        duration: root.reduced-motion ? 0ms : root.morph-ms;
+        easing: root.open ? cubic-bezier(0.34, 1.4, 0.64, 1) : cubic-bezier(0.4, 0, 0.6, 1);
     }
 
     // ── The card's face: the same parallelogram as the Slider's card, in the
@@ -170,6 +173,61 @@ export component MosaicInfoCard inherits Rectangle {
         source: root.hero;
         image-fit: cover;
         visible: root.hero.width > 0;
+    }
+
+    // ── The card's outline, ABOVE the image: the Slider's own focus border
+    // (2px icy cyan, the same token), so a grown tile reads as the same kind
+    // of card the carousel shows. Stroke-only: the fill would hide the photo.
+    // ──
+    border-top := Path {
+        x: -root.pn * 1px;
+        y: -root.pn * 1px;
+        width: root.box-wn * 1px + 2 * root.pn * 1px;
+        height: root.ch * 1px + 2 * root.pn * 1px;
+        viewbox-x: -root.pn;
+        viewbox-y: -root.pn;
+        viewbox-width: root.box-wn + 2 * root.pn;
+        viewbox-height: root.ch + 2 * root.pn;
+        fill: transparent;
+        stroke: SkwdTokens.gallery-slice-focus-border-color;
+        stroke-width: SkwdTokens.border-2;
+
+        MoveTo { x: root.skn + root.rn; y: 0; }
+        LineTo { x: root.skn + root.cw - root.rn; y: 0; }
+        QuadraticTo {
+            control-x: root.skn + root.cw;
+            control-y: 0;
+            x: root.skn + root.cw - root.skn * root.rn / root.slant;
+            y: root.ch * root.rn / root.slant;
+        }
+        LineTo {
+            x: root.cw + root.skn * root.rn / root.slant;
+            y: root.ch - root.ch * root.rn / root.slant;
+        }
+        QuadraticTo {
+            control-x: root.cw;
+            control-y: root.ch;
+            x: root.cw - root.rn;
+            y: root.ch;
+        }
+        LineTo { x: root.rn; y: root.ch; }
+        QuadraticTo {
+            control-x: 0;
+            control-y: root.ch;
+            x: root.skn * root.rn / root.slant;
+            y: root.ch - root.ch * root.rn / root.slant;
+        }
+        LineTo {
+            x: root.skn - root.skn * root.rn / root.slant;
+            y: root.ch * root.rn / root.slant;
+        }
+        QuadraticTo {
+            control-x: root.skn;
+            control-y: 0;
+            x: root.skn + root.rn;
+            y: 0;
+        }
+        Close { }
     }
 
     // ── Beat 2: the info face, the Slider's own component. It keeps its
