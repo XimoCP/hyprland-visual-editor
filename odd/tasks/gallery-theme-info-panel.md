@@ -179,9 +179,11 @@ swatches: Vec<String>, rows: Vec<(String, String)> }` (pure Rust, no Slint).
 - [x] T6 Rust wiring — right-click brings the card to the centre AND opens its
       own face inside it; `i` opens it; Escape / right-click-inside close it;
       Save / rename / delete / overwrite close it instead of leaving stale data.
-- [ ] Cross-model verification — BLOCKED: this runtime denies subagent delegation
-      (`Permission denied: subagent`), so no independent model ran. The work below
-      is single-model (author) evidence only.
+- [x] Cross-model verification — DONE (twice, `jd-judge-a` on
+      `opencode-go/glm-5.3-flash`): once over the Slider's face and once over
+      the mosaic ladder. Caveat that applies to both: the reviewer's runtime
+      exposes no shell tool, so its reviews are static and every suite result
+      below is the author's.
 
 ## Commits
 
@@ -239,7 +241,43 @@ The Slider is untouched: `ThemeInfoPanel` is back to its committed state.
   per fact (label left, value right) and the provider chips.
 
 
-## Cross-model verification (DONE)
+## Cross-model verification, second round: the mosaic ladder
+
+Same reviewer and model. Findings and disposition:
+
+- **CRITICAL — the mouse ladder was dead.** The two-beat wiring had been
+  attached to the under-layer cells (a frozen visual copy that never receives a
+  click) while the live page cells still applied the theme on the first click.
+  FIXED: both layers walk the same ladder, and the new test
+  `mosaic_first_click_grows_and_the_second_applies` drives the production input
+  path — with the old wiring restored it fails, which is the proof it catches
+  this class.
+- **CRITICAL — a page flip left the grown card mounted**, re-anchored onto the
+  new page's tile while the face still showed the previous theme: a click there
+  applied a different theme than the one on screen. FIXED: the wheel path and
+  the keyboard page-edge path both drop the grown card before the flip.
+- **CRITICAL — a card still growing (or already contracting) could apply**: a
+  quick Escape-then-Enter matched the "second Enter" branch, and a click on the
+  collapsing card applied too. FIXED: applying requires
+  `card_open && face_open`.
+- **WARNING — the hover contract was half-implemented**: a keyboard-opened card
+  could be contracted by a mouse elsewhere, and a card whose pointer left during
+  the morph could stay open forever. FIXED: the card latches whether the pointer
+  was ever inside it and re-checks when the face opens.
+- **WARNING — the four mosaic callbacks did not gate on `is_mutating`** like
+  every neighbouring handler. FIXED.
+- **SUGGESTION — `mosaic_tile_real` accepted a position past the model.** FIXED.
+- **SUGGESTION — the ladder callbacks are not unit-tested end to end**: the
+  render test drives the flags directly. NOT fixed; the input-path test above
+  covers the click half of it.
+- **SUGGESTION — legibility of the face over a bright theme image** (the face
+  is translucent by the keeper's own request). Left for the keeper's live test.
+- Clean per the reviewer: the no-reflow claim itself (nothing in the grown-card
+  path rebuilds the wall), the keyboard branches versus the Slider, and the
+  `mosaic_neighbor` unit tests.
+- The reviewer also flagged a doc contradiction (a "DONE" verification section
+  beside a "BLOCKED" checkbox); corrected above.
+
 
 Independent review by `jd-judge-a` on `opencode-go/glm-5.3-flash` (different
 family from the author) over the five feature commits. It could not run the
