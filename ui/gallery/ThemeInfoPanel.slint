@@ -42,10 +42,12 @@ export component ThemeInfoPanel inherits Rectangle {
     background: transparent;
 
     // ── Geometry: one third of the face, full height, sheared with the card's
-    // own ratio so the panel is parallel to the theme it sits in. ──
+    // own ratio so the panel is parallel to the theme it sits in. Anchored to
+    // the RIGHT edge of the card. ──
     property <float> hn: root.height / 1px;
+    property <float> boxW: root.width / 1px;
     property <float> skn: root.hn * 35.0 / 520.0;
-    property <float> wn: (root.width / 1px) / 3.0;
+    property <float> wn: root.boxW / 3.0;
     property <float> padn: 18.0;
     property <float> pn: 4.0; // stroke room, same trick as the card
     property <float> slant: Math.sqrt(root.skn * root.skn + root.hn * root.hn);
@@ -55,12 +57,15 @@ export component ThemeInfoPanel inherits Rectangle {
         root.hn / 2 - 1));
     property <float> box-wn: root.wn + root.skn;
 
-    // The panel itself. Closed it has NO width and waits a little to the left,
-    // so opening it slides out of the card's left edge and unfolds, and closing
-    // it contracts back into that same edge. `clip` is what makes the
-    // contraction read: the content keeps its place and is revealed/cut away by
-    // the panel's own edge instead of reflowing.
-    property <length> panel-x: root.open ? 0px : -24px;
+    // The panel itself, anchored to the card's right edge. Closed it has NO
+    // width and waits a little PAST the right edge, where the card's own clip
+    // hides it, so opening it slides out of the card's right edge and unfolds,
+    // and closing it contracts back into that same edge. `clip` is what makes
+    // the contraction read: the content keeps its place and is revealed/cut
+    // away by the panel's own edge instead of reflowing.
+    property <length> panel-x: root.open
+        ? (root.boxW - root.box-wn) * 1px
+        : (root.boxW + 24.0) * 1px;
     property <length> panel-w: root.open ? root.box-wn * 1px : 0px;
     body := Rectangle {
         width: root.panel-w;
@@ -90,7 +95,7 @@ export component ThemeInfoPanel inherits Rectangle {
             viewbox-y: -root.pn;
             viewbox-width: root.box-wn + 2 * root.pn;
             viewbox-height: root.hn + 2 * root.pn;
-            fill: HveColors.bg-card.transparentize(0.35);
+            fill: HveColors.bg-card.transparentize(0.25);
             stroke: HveColors.border;
             stroke-width: SkwdTokens.border-1;
 

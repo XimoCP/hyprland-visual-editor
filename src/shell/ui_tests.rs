@@ -883,25 +883,39 @@ fn theme_info_panel_renders_closed_and_open() {
         "both frames come from the same window size"
     );
 
-    // Per-pixel: the info must appear INSIDE the expanded card's box and
-    // leave the wallpaper around the carousel untouched. Anything painted
-    // outside the card would mean the panel escapes the theme.
+    // Per-pixel: the info must appear INSIDE the expanded card's own
+    // parallelogram and leave the wallpaper around the carousel untouched.
+    // Anything painted outside the card would mean the face escapes the theme.
+    // The card is a SLANTED shape, so the containment test follows its edges
+    // (a plain rectangle would count its slanted top-right corner as outside
+    // and would hide a leak just past the bottom-right edge).
     let (w, h) = (closed.width() as usize, closed.height() as usize);
     let (cb, ob) = (closed.as_bytes(), open.as_bytes());
-    // Expanded card at this stage size: ~924 wide, ~520 tall, centred.
-    let card_left = (w as f32 * 0.5 - 462.0).max(0.0) as usize;
-    let card_right = (w as f32 * 0.5 + 462.0).min(w as f32) as usize;
-    let card_top = (h as f32 * 0.5 - 260.0).max(0.0) as usize;
-    let card_bottom = (h as f32 * 0.5 + 260.0).min(h as f32) as usize;
+    // Expanded card at this stage size: face 924 wide, 520 tall, 35px of shear,
+    // centred in the stage.
+    let face_w = 924.0f32;
+    let skew = 35.0f32;
+    let card_h = 520.0f32;
+    let card_left = w as f32 * 0.5 - face_w * 0.5;
+    let card_top = h as f32 * 0.5 - card_h * 0.5;
     let (mut big_inside, mut big_outside, mut sampled_outside) = (0usize, 0usize, 0usize);
     for y in (0..h).step_by(4) {
+        let t = (y as f32 - card_top) / card_h;
+        let left = card_left + skew * (1.0 - t);
+        let right = left + face_w;
         for x in (0..w).step_by(4) {
             let i = (y * w + x) * 4;
             let delta = (0..3)
                 .map(|c| cb[i + c].abs_diff(ob[i + c]))
                 .max()
                 .unwrap_or(0);
-            let inside = x >= card_left && x <= card_right && y >= card_top && y <= card_bottom;
+            // A 2px band belongs to the card: the face is flush with the card's
+            // own slanted edge, so its border lands ON that edge and a sample
+            // grid can straddle it. A real leak is far wider than that.
+            let inside = (x as f32) >= left - 2.0
+                && (x as f32) <= right + 2.0
+                && t >= -0.01
+                && t <= 1.01;
             if inside {
                 if delta > 40 {
                     big_inside += 1;

@@ -380,7 +380,7 @@ export component SliceDelegate inherits Rectangle {
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            opacity: video-playing ? 1.0 : 0.6;
+            opacity: root.info-shown ? 0.0 : (video-playing ? 1.0 : 0.6);
             animate opacity { duration: 150ms; easing: ease-in-out; }
         }
 
@@ -422,7 +422,7 @@ export component SliceDelegate inherits Rectangle {
         // the card its index names ever opens it. ──
         ThemeInfoPanel {
             x: 0px;
-            width: root.face-width;
+            width: root.face-width + root.skew;
             height: 100%;
             info: root.info;
             open: root.info-shown;
