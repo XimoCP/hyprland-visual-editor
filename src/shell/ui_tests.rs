@@ -13941,6 +13941,7 @@ fn wheel_then_refocus_diff(
     last: i32,
     wheel: slint::LogicalPosition,
     label: &str,
+    min_moved: usize,
 ) -> usize {
     use slint::ComponentHandle as _;
     let frames = |count: usize| {
@@ -13981,9 +13982,9 @@ fn wheel_then_refocus_diff(
     save_slice_png(wheeled.clone(), &format!("{label}_wheeled.png"));
     let moved = count_buffer_diff(&reference, &wheeled);
     assert!(
-        moved > 20000,
+        moved > min_moved,
         "the wheel must actually scroll the pane: it moved {moved} units of ink (the follow \
-         comparison below is meaningless if the wheel is a no-op)"
+         comparison below is meaningless if the wheel is a no-op; expected > {min_moved})"
     );
     set_focus(0);
     frames(140);
@@ -14020,6 +14021,7 @@ fn filters_list_follows_keyboard_focus_after_wheel() {
         (n - 1) as i32,
         slint::LogicalPosition::new(700.0, 620.0),
         "filters_wheel_follow",
+        20000,
     );
     println!("FILTERS follow diff after wheel: {broke}");
     assert!(
@@ -14054,6 +14056,7 @@ fn motion_list_follows_keyboard_focus_after_wheel() {
         (n - 1) as i32,
         slint::LogicalPosition::new(700.0, 620.0),
         "motion_list_wheel_follow",
+        20000,
     );
     println!("MOTION list follow diff after wheel: {broke}");
     assert!(
@@ -14084,6 +14087,7 @@ fn motion_tune_follows_keyboard_focus_after_wheel() {
         6,
         slint::LogicalPosition::new(1400.0, 400.0),
         "motion_tune_wheel_follow",
+        20000,
     );
     println!("MOTION tune follow diff after wheel: {broke}");
     assert!(
@@ -14119,6 +14123,7 @@ fn save_list_follows_keyboard_focus_after_wheel() {
         (n - 1) as i32,
         slint::LogicalPosition::new(700.0, 620.0),
         "save_list_wheel_follow",
+        20000,
     );
     println!("SAVE list follow diff after wheel: {broke}");
     assert!(
@@ -14126,6 +14131,129 @@ fn save_list_follows_keyboard_focus_after_wheel() {
         "a wheel scroll must not break the keyboard follow: focusing the last saved theme after a \
          wheel landed {broke} units of ink away from the same focus without a wheel (a content \
          shift measures ~30000), i.e. the Save list stopped following the focused theme"
+    );
+}
+
+/// System SETTINGS pane: the wheel must not break the keyboard follow.
+///
+/// SystemSection owns no Rust-facing focus property — `system-focused-row`
+/// lives inside PanelRoot — so the focus is driven through the production key
+/// path. The closure tracks the row it has walked to and moves with Down/Up so
+/// the helper can still name an absolute target.
+#[test]
+fn system_settings_follows_keyboard_focus_after_wheel() {
+    use slint::ComponentHandle as _;
+    use slint::platform::Key;
+    let win = focus_open_system_panel();
+    // A short window plus the restart row (and its banner) forces the settings
+    // content to overflow, giving the follow real travel to lose.
+    win.window().set_size(slint::PhysicalSize::new(1920, 480));
+    win.set_panel_section(4);
+    win.set_restart_required(true);
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let cur = std::cell::Cell::new(0i32);
+    let set_focus = |target: i32| {
+        while cur.get() < target {
+            focus_press_key(&win, Key::DownArrow);
+            cur.set(cur.get() + 1);
+        }
+        while cur.get() > target {
+            focus_press_key(&win, Key::UpArrow);
+            cur.set(cur.get() - 1);
+        }
+    };
+
+    // Row 6 is the Restart row (restart-required on): the last settings-pane
+    // stop, so it is the row that must be followed.
+    let broke = wheel_then_refocus_diff(
+        &win,
+        set_focus,
+        6,
+        slint::LogicalPosition::new(600.0, 400.0),
+        "system_settings_wheel_follow",
+        20000,
+    );
+    println!("SYSTEM settings follow diff after wheel: {broke}");
+    assert!(
+        broke < 15000,
+        "a wheel scroll must not break the keyboard follow: focusing the last System setting after a \
+         wheel landed {broke} units of ink away from the same focus without a wheel (a content \
+         shift measures ~30000), i.e. the System settings pane stopped following the focused row"
+    );
+}
+
+/// System ABOUT pane: the wheel must not break the follow that returns the
+/// About block to the top when it owns the cursor.
+#[test]
+fn system_about_follows_keyboard_focus_after_wheel() {
+    use slint::ComponentHandle as _;
+    use slint::platform::Key;
+    use slint::{ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 400));
+    win.set_panel_section(4);
+    // Long tree so the expanded accordion overflows the short About pane.
+    let n = 60usize;
+    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(
+        (0..n)
+            .map(|i| SharedString::from(format!("src/module_{i:02}/file_{i:02}.rs")))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(
+        (0..n)
+            .map(|_| SharedString::from("description"))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_home_about_tree_path_max("src/module_00/file_00.rs".into());
+    for _ in 0..20 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    // Expand the About accordion through the production path: focus the About
+    // row (6 without the restart row) and Enter toggles it. Then walk back to
+    // row 0 so the helper's tracked starting row is 0 again.
+    for _ in 0..6 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    focus_press_key(&win, Key::Return);
+    for _ in 0..6 {
+        focus_press_key(&win, Key::UpArrow);
+    }
+    for _ in 0..40 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+
+    let cur = std::cell::Cell::new(0i32);
+    let set_focus = |target: i32| {
+        while cur.get() < target {
+            focus_press_key(&win, Key::DownArrow);
+            cur.set(cur.get() + 1);
+        }
+        while cur.get() > target {
+            focus_press_key(&win, Key::UpArrow);
+            cur.set(cur.get() - 1);
+        }
+    };
+
+    let broke = wheel_then_refocus_diff(
+        &win,
+        set_focus,
+        6,
+        slint::LogicalPosition::new(1400.0, 300.0),
+        "system_about_wheel_follow",
+        8000,
+    );
+    println!("SYSTEM about follow diff after wheel: {broke}");
+    assert!(
+        broke < 4000,
+        "a wheel scroll must not break the keyboard follow: focusing the About row after a wheel \
+         landed {broke} units of ink away from the same focus without a wheel, i.e. the System \
+         About pane stopped returning to the top when focused. The About pane is sparse text, so a \
+         full parked-vs-top shift measures ~12000 here (dense card lists measure ~30000); a healthy \
+         follow leaves only scrollbar state."
     );
 }
 

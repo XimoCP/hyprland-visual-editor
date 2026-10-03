@@ -48,22 +48,60 @@ component SystemSettingsPane inherits Rectangle {
     callback restart-app();
 
     property <length> saved-scroll-y: 0px;
+    // Viewport control must be IMPERATIVE, never a binding. Slint DROPS a
+    // property's binding the moment code assigns it, and the ScrollView assigns
+    // `viewport-y` itself whenever the user turns the wheel. With
+    // `viewport-y: <expr>` the wheel therefore killed the binding for the rest
+    // of the session: the settings pane stopped following the focused row, so
+    // navigating by keyboard no longer brought the lower settings into view.
+    // Same fix as BordersSection/MotionSection/FiltersSection/SaveSection.
+    //
+    // The scroll position is OURS to own: own the target, clamp it against the
+    // REAL content height, and stay pinned when the content grows under the
+    // pointer.
+    property <length> scroll-target: 0px;
+    property <length> max-scroll: max(0px, settings-col.height - settings-scroll.height);
+    property <bool> at-end: false;
+    function clamp-scroll(v: length) -> length {
+        return max(0px - root.max-scroll, min(0px, v));
+    }
+
+    changed focused-row => { settings-scroll.follow-focus(); }
+    changed follow => { settings-scroll.follow-focus(); }
+    changed max-scroll => {
+        if (root.at-end) {
+            root.scroll-target = 0px - root.max-scroll;
+            settings-scroll.viewport-y = root.scroll-target;
+        }
+    }
+
     background: transparent;
     clip: true;
 
-    ScrollView {
+    settings-scroll := ScrollView {
         // Fills the pane Rectangle by default (no explicit height). Scroll
         // follows the keyboard focus (rows ~36-40px + 10 spacing → pitch 46px).
         property <length> focus-y: root.focused-row * 46px;
-        viewport-y: root.follow ? (root.focused-row >= 0
-            ? (0px - max(0px, self.focus-y + 18px - self.height / 2))
-            : 0px) : root.saved-scroll-y;
+        // IMPERATIVE, never a binding — see the note above: a wheel writes
+        // `viewport-y`, which would drop a binding and leave the pane unable to
+        // follow the keyboard afterwards.
+        public function follow-focus() {
+            if (root.follow && root.focused-row >= 0) {
+                root.scroll-target = root.clamp-scroll(
+                    0px - max(0px, self.focus-y + 18px - self.height / 2));
+                self.viewport-y = root.scroll-target;
+            }
+        }
         // NEVER animated. `viewport-y` is the property the wheel writes, so an
         // animation on it makes any tick that lands mid-flight compute its target
         // from the INTERPOLATED value — which drops the travel the previous tick
         // had not finished. Exact beats smooth for a scrollable pane.
-        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
+        changed viewport-y => {
+            root.saved-scroll-y = self.viewport-y;
+            root.scroll-target = self.viewport-y;
+            root.at-end = root.scroll-target <= 0px - root.max-scroll + 1px;
+        }
+        settings-col := VerticalLayout {
             padding-left: 16px;
             padding-right: 16px;
             padding-top: 16px;
@@ -365,13 +403,25 @@ component SystemAboutPane inherits Rectangle {
     callback open-docs();
 
     property <length> saved-scroll-y: 0px;
+    // Viewport control must be IMPERATIVE, never a binding (same reason as the
+    // settings pane): the wheel assigns `viewport-y` and DROPS the binding, so
+    // the About block no longer returned to the top when it reclaimed the
+    // cursor. Its follow target is always 0px — the About block is a single
+    // card pinned to the top — so the list panes' clamp/at-end machinery buys
+    // nothing here. The equivalent behaviour is: follow snaps to the top, and
+    // leaving the pane restores the position the wheel left.
+    changed focused-row => { about-scroll.follow-focus(); }
+    changed follow => { about-scroll.follow-focus(); }
+
     background: transparent;
     clip: true;
 
-    ScrollView {
+    about-scroll := ScrollView {
         // Fills the pane Rectangle by default (no explicit height).
         property <length> focus-y: 0px;
-        viewport-y: root.follow ? 0px : root.saved-scroll-y;
+        public function follow-focus() {
+            self.viewport-y = root.follow ? 0px : root.saved-scroll-y;
+        }
         // NEVER animated. `viewport-y` is the property the wheel writes, so an
         // animation on it makes any tick that lands mid-flight compute its target
         // from the INTERPOLATED value — which drops the travel the previous tick
