@@ -786,9 +786,11 @@ fn theme_info_panel_renders_closed_and_open() {
     win.set_expanded(true);
     win.set_gallery_empty(false);
     win.set_gallery_style(0);
-    // Reduced motion pins the slide at its end position: no event loop runs
-    // here to advance a tween, so the snapshot must be the settled frame.
-    win.set_gallery_reduced_motion(true);
+    // Motion stays ON for the first capture: the face must NOT appear at the
+    // instant it opens (that was the keeper's complaint). Reduced motion is
+    // turned on afterwards only to pin the settled frame — no event loop runs
+    // in this harness, so a tween never advances by itself.
+    win.set_gallery_reduced_motion(false);
 
     let count = 6usize;
     let focused = 2usize;
@@ -848,8 +850,26 @@ fn theme_info_panel_renders_closed_and_open() {
     let closed = win.window().take_snapshot().expect("closed snapshot");
     save_slice_png(closed.clone(), "theme_info_closed.png");
 
-    // The face belongs to card `focused` and is drawn INSIDE it.
+    // The face belongs to card `focused` and is drawn INSIDE it. With motion
+    // on, the frame at t=0 must be IDENTICAL to the closed one: the face waits
+    // off the card's left edge and slides in, it never pops on top.
     win.set_gallery_info_index(focused as i32);
+    win.set_gallery_info_open(true);
+    let sliding = win.window().take_snapshot().expect("sliding snapshot");
+    save_slice_png(sliding.clone(), "theme_info_sliding.png");
+    assert_eq!(
+        sliding.as_bytes(),
+        closed.as_bytes(),
+        "with motion on, the face must not be painted yet: it slides out of the \
+         card instead of appearing on top of it"
+    );
+
+    // Settled frame: reduced motion collapses the tween (0ms), so re-opening
+    // the face snaps it into place — that is the frame the geometry assertions
+    // below read. (A tween already in flight would never advance here: this
+    // harness has no event loop to tick it.)
+    win.set_gallery_reduced_motion(true);
+    win.set_gallery_info_open(false);
     win.set_gallery_info_open(true);
     let open = win.window().take_snapshot().expect("open snapshot");
     save_slice_png(open.clone(), "theme_info_open.png");

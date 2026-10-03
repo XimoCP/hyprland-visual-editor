@@ -404,6 +404,21 @@ export component SliceDelegate inherits Rectangle {
                 vertical-alignment: center;
             }
         }
+
+        // ── Theme info face, INSIDE the card and inside this clipped box, so
+        // the theme's own image contains it: closed it sits one face to the
+        // left (hidden by the clip) and opening it slides out from the card's
+        // left edge. It lives here — not gated on `is-current` — because the
+        // element must already exist for the open transition to animate; only
+        // the card its index names ever opens it. ──
+        ThemeInfoPanel {
+            x: root.skew;
+            width: root.face-width - root.skew;
+            height: 100%;
+            info: root.info;
+            open: root.info-open && root.card-index == root.info-index;
+            reduced-motion: root.reduced-motion;
+        }
     }
 
     // Back face rides in the same slant-safe mask box (S3 inset).
@@ -550,31 +565,31 @@ export component SliceDelegate inherits Rectangle {
 
         clicked => {
             if (self.is-inside-shape) {
-                root.clicked();
+                // With the info face open, a click on it is a read action, not
+                // an apply: the face is a panel, not a button.
+                if (!(root.info-open && root.card-index == root.info-index)) {
+                    root.clicked();
+                }
             }
         }
 
         pointer-event(event) => {
             if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
                 if (self.is-inside-shape) {
-                    root.right-clicked();
-                    root.flipped();
+                    // Right-click inside the open face closes it (the toggle);
+                    // anywhere else it is the request that opens it.
+                    if (root.info-open && root.card-index == root.info-index) {
+                        root.info-close();
+                    } else {
+                        root.right-clicked();
+                        root.flipped();
+                    }
                 }
             }
         }
     }
 
-    // ── Theme info face (declared LAST so its own TouchArea, present only
-    // while open, sits above the card's): it comes out from INSIDE the theme,
-    // in the card's own slant-safe box, so it is contained by the card and the
-    // wallpaper around the carousel is untouched. ──
-    if root.is-current && root.card-index == root.info-index : ThemeInfoPanel {
-        x: root.face-inset + root.skew;
-        width: root.face-width - root.skew;
-        height: 100%;
-        info: root.info;
-        open: root.info-open;
-        reduced-motion: root.reduced-motion;
-        closed => { root.info-close(); }
-    }
+    // ── Theme info face is drawn INSIDE the card's clipped face box (see
+    // above); its input is handled by this card's own TouchArea so the face
+    // never needs a second hit area stacked over the carousel. ──
 }
