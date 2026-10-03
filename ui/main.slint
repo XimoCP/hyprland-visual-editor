@@ -5,6 +5,7 @@ import { BordersText } from "panel/sections/borders_text.slint";
 import { MotionText } from "panel/sections/motion_text.slint";
 import { PanelText } from "panel/panel_text.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
+import { ThemeInfoData } from "gallery/ThemeInfoPanel.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
 
@@ -283,12 +284,19 @@ export component MainWindow inherits Window {
     in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
     in property <string> gallery-mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> gallery-reduced-motion: false;
+    // Theme info panel (right-click on a Slider card / the `i` key): the data
+    // is read from each theme's own saved records by Rust, and Rust owns
+    // `gallery-info-open` so open and close travel one way.
+    in property <ThemeInfoData> gallery-info;
+    in-out property <bool> gallery-info-open: false;
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
     callback gallery-wheel-step(int);
     callback gallery-mosaic-page-step(int);
     callback gallery-mit-open();
+    callback gallery-info-requested(int);
+    callback gallery-info-close();
     // Stage geometry events piped from GalleryRoot through ShellRoot
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
@@ -423,6 +431,8 @@ export component MainWindow inherits Window {
         gallery-mit-footer: root.gallery-mit-footer;
         gallery-mit-link: root.gallery-mit-link;
         gallery-reduced-motion: root.gallery-reduced-motion;
+        gallery-info: root.gallery-info;
+        gallery-info-open <=> root.gallery-info-open;
         gallery-top-open <=> root.gallery-top-open;
         gallery-bottom-open <=> root.gallery-bottom-open;
         panel-section: root.panel-section;
@@ -576,6 +586,8 @@ export component MainWindow inherits Window {
         gallery-wheel-step(dir) => { root.gallery-wheel-step(dir); }
         gallery-mosaic-page-step(dir) => { root.gallery-mosaic-page-step(dir); }
         gallery-mit-open => { root.gallery-mit-open(); }
+        gallery-info-requested(idx) => { root.gallery-info-requested(idx); }
+        gallery-info-close => { root.gallery-info-close(); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
         panel-back => { root.panel-back(); }
         panel-mouse-trace(reason) => { root.panel-mouse-trace(reason); }

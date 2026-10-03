@@ -17,6 +17,7 @@ import { GalleryChrome } from "GalleryChrome.slint";
 import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel, SliceTileData } from "SliceCarousel.slint";
 import { MosaicView, MosaicTileData } from "MosaicView.slint";
+import { ThemeInfoPanel, ThemeInfoData } from "ThemeInfoPanel.slint";
 
 // Reused pill — same look as FilterBar (10px skew parallelogram).
 component SkewPill inherits Rectangle {
@@ -97,6 +98,13 @@ export component GalleryRoot inherits Rectangle {
     in property <bool> docking: false;
     in property <int> panel-section: 0;
     in property <float> backdrop-alpha: 0.0;
+
+    // Theme info panel (right-click on a card / the `i` key). `info` is filled
+    // by Rust from each theme's own saved records; `info-open` is owned by Rust
+    // so both the request and the close travel one way.
+    in property <ThemeInfoData> info;
+    in-out property <bool> info-open: false;
+    callback info-close();
 
     callback style-selected(int);
     callback panel-section-selected(int);
@@ -494,6 +502,17 @@ export component GalleryRoot inherits Rectangle {
                 selected => { root.bottom-menu-open = false; root.style-selected(2); }
             }
         }
+    }
+
+    // ── Theme info panel: paints above the stage and the drawers, below the
+    // Chrome arrows so the Style/Settings triggers stay reachable. ──
+    ThemeInfoPanel {
+        info: root.info;
+        open: root.info-open;
+        reduced-motion: root.reduced-motion;
+        stage-width: stage.width;
+        stage-height: stage.height;
+        closed => { root.info-close(); }
     }
 
     GalleryChrome {

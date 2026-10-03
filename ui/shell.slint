@@ -8,6 +8,7 @@ import { SkwdTokens } from "tokens.slint";
 import { HveColors } from "theme.slint";
 import { GalleryRoot } from "gallery/GalleryRoot.slint";
 import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
+import { ThemeInfoData } from "gallery/ThemeInfoPanel.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { PanelRoot } from "panel/PanelRoot.slint";
@@ -98,12 +99,18 @@ export component ShellRoot inherits Rectangle {
     in property <string> gallery-mit-footer: "Visual language translated from skwd-wall (MIT, © liixini) https://github.com/liixini/skwd-wall";
     in property <string> gallery-mit-link: "https://github.com/liixini/skwd-wall";
     in property <bool> gallery-reduced-motion: false;
+    // Theme info panel (right-click on a Slider card / the `i` key): the data
+    // comes from each theme's own saved records; Rust owns `gallery-info-open`.
+    in property <ThemeInfoData> gallery-info;
+    in-out property <bool> gallery-info-open: false;
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
     callback gallery-wheel-step(int);
     callback gallery-mosaic-page-step(int);
     callback gallery-mit-open();
+    callback gallery-info-requested(int);
+    callback gallery-info-close();
     // Stage geometry events from GalleryRoot (logical lengths).
     callback gallery-stage-geometry-changed(length, length);
 
@@ -497,6 +504,9 @@ export component ShellRoot inherits Rectangle {
                     empty-text: root.gallery-empty-text;
                     mit-link: root.gallery-mit-link;
                     reduced-motion: root.gallery-reduced-motion;
+                    info: root.gallery-info;
+                    info-open <=> root.gallery-info-open;
+                    info-close => { root.gallery-info-close(); }
                     top-menu-open <=> root.gallery-top-open;
                     bottom-menu-open <=> root.gallery-bottom-open;
                     style-selected(style) => { root.gallery-style-selected(style); }
@@ -805,6 +815,11 @@ export component ShellRoot inherits Rectangle {
         // stays here so the panel can be closed from any sub-scope.
         key-pressed(event) => {
             if (event.text == Key.Escape) {
+                // The theme info panel is the innermost layer: it closes first.
+                if (root.gallery-info-open) {
+                    root.gallery-info-close();
+                    return accept;
+                }
                 if (root.is-mutating || root.is-panel-open) {
                     root.panel-back();
                 } else {
@@ -813,6 +828,11 @@ export component ShellRoot inherits Rectangle {
                 return accept;
             }
             if (root.is-panel-open) { return reject; }
+            // `i` opens the theme info panel for the focused gallery card.
+            if (event.text == "i" && root.mounted-screen == 1) {
+                root.gallery-info-requested(root.gallery-focused);
+                return accept;
+            }
             if (event.text == Key.DownArrow) { root.nav-move("down"); return accept; }
             if (event.text == Key.UpArrow) { root.nav-move("up"); return accept; }
             if (event.text == Key.RightArrow) { root.nav-move("right"); return accept; }

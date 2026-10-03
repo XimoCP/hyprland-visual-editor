@@ -761,6 +761,139 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_rebasing(false);
 }
 
+// ── Theme info panel geometry (Slint visual proof) ─────────────────────
+// The panel the Slider opens on right-click / `i`: it must be a localised
+// slice on the RIGHT (never the whole window) and it must actually paint.
+// Structural assertions here; the shape/slant/legibility is confirmed by
+// reading the two PNGs from the printed per-run directory.
+#[test]
+fn theme_info_panel_renders_closed_and_open() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    // Reduced motion pins the slide at its end position: no event loop runs
+    // here to advance a tween, so the snapshot must be the settled frame.
+    win.set_gallery_reduced_motion(true);
+
+    let count = 6usize;
+    let focused = 2usize;
+    win.set_gallery_focused(focused as i32);
+    win.set_gallery_cards(slint::ModelRc::new(VecModel::from(
+        (0..count)
+            .map(|i| late_card(&format!("Theme {i}"), i == focused))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_gallery_slice_tiles(slint::ModelRc::new(VecModel::from(late_slice_tiles(
+        count, focused, 1920.0,
+    ))));
+    win.set_gallery_slice_delta_base(focused as i32);
+    win.set_gallery_slice_focus_pos(focused as f32);
+
+    win.set_gallery_info(crate::ThemeInfoData {
+        name: SharedString::from("BordesRedondosCentrados"),
+        saved_at: SharedString::from("2026-10-03T10:00:00Z"),
+        providers: ModelRc::new(VecModel::from(vec![
+            SharedString::from("noctalia-v5"),
+            SharedString::from("hve-presets"),
+        ])),
+        swatches: ModelRc::new(VecModel::from(vec![
+            slint::Color::from_rgb_u8(0x2e, 0xc4, 0x36),
+            slint::Color::from_rgb_u8(0xfb, 0x9e, 0x0f),
+            slint::Color::from_rgb_u8(0x9d, 0x00, 0xff),
+            slint::Color::from_rgb_u8(0x0c, 0x10, 0x17),
+        ])),
+        rows: ModelRc::new(VecModel::from(vec![
+            crate::ThemeInfoRow {
+                label: SharedString::from("Animation"),
+                value: SharedString::from("12 rebote"),
+            },
+            crate::ThemeInfoRow {
+                label: SharedString::from("Border"),
+                value: SharedString::from("13 the joker"),
+            },
+            crate::ThemeInfoRow {
+                label: SharedString::from("Border size"),
+                value: SharedString::from("3px"),
+            },
+            crate::ThemeInfoRow {
+                label: SharedString::from("Radius"),
+                value: SharedString::from("22px"),
+            },
+            crate::ThemeInfoRow {
+                label: SharedString::from("Gaps in / out"),
+                value: SharedString::from("10 / 12"),
+            },
+            crate::ThemeInfoRow {
+                label: SharedString::from("Palette"),
+                value: SharedString::from("JokerTheme"),
+            },
+        ])),
+    });
+
+    let closed = win.window().take_snapshot().expect("closed snapshot");
+    save_slice_png(closed.clone(), "theme_info_closed.png");
+
+    win.set_gallery_info_open(true);
+    let open = win.window().take_snapshot().expect("open snapshot");
+    save_slice_png(open.clone(), "theme_info_open.png");
+
+    assert_eq!(
+        (closed.width(), closed.height()),
+        (open.width(), open.height()),
+        "both frames come from the same window size"
+    );
+
+    // Per-pixel: the panel paints OPACELY on the right slice only. The faint
+    // scrim over the rest is allowed; a big change on the left would mean the
+    // panel covers the window instead of a slice.
+    let (w, h) = (closed.width() as usize, closed.height() as usize);
+    let (cb, ob) = (closed.as_bytes(), open.as_bytes());
+    let split = (w as f32 * 0.6) as usize;
+    let (mut big_right, mut big_left, mut sampled_left) = (0usize, 0usize, 0usize);
+    for y in (0..h).step_by(4) {
+        for x in (0..w).step_by(4) {
+            let i = (y * w + x) * 4;
+            let delta = (0..3)
+                .map(|c| cb[i + c].abs_diff(ob[i + c]))
+                .max()
+                .unwrap_or(0);
+            if x >= split {
+                if delta > 40 {
+                    big_right += 1;
+                }
+            } else {
+                sampled_left += 1;
+                if delta > 40 {
+                    big_left += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        big_right > 200,
+        "the panel must paint opaquely on the right slice, got {big_right} changed samples"
+    );
+    assert!(
+        big_left * 20 < sampled_left.max(1),
+        "the panel must stay a slice: {big_left} of {sampled_left} left samples changed"
+    );
+}
+
 // ── Gallery opens on the active theme (carousel initial focus) ─────────
 // Opening the slider must focus the ACTIVE theme first (not index 0):
 // with theme N active, the initial focus is N, settled with zero drift

@@ -723,6 +723,83 @@ fn dispatch_initial_gallery_expand(shell: &std::rc::Rc<std::cell::RefCell<crate:
     );
 }
 
+/// Map the core's read-only theme facts to the Slint struct the info panel
+/// renders (single place: colors are parsed once, rows keep provider order).
+fn theme_info_data(facts: &crate::theme_manager::ThemeFacts) -> crate::ThemeInfoData {
+    let rows: Vec<crate::ThemeInfoRow> = facts
+        .rows
+        .iter()
+        .map(|(label, value)| crate::ThemeInfoRow {
+            label: slint::SharedString::from(label.as_str()),
+            value: slint::SharedString::from(value.as_str()),
+        })
+        .collect();
+    crate::ThemeInfoData {
+        name: slint::SharedString::from(facts.name.as_str()),
+        saved_at: slint::SharedString::from(facts.saved_at.as_str()),
+        providers: slint::ModelRc::new(slint::VecModel::from(
+            facts
+                .providers
+                .iter()
+                .map(|p| slint::SharedString::from(p.as_str()))
+                .collect::<Vec<_>>(),
+        )),
+        swatches: slint::ModelRc::new(slint::VecModel::from(
+            facts
+                .swatches
+                .iter()
+                .map(|hex| crate::theme::parse_hex(hex))
+                .collect::<Vec<_>>(),
+        )),
+        rows: slint::ModelRc::new(slint::VecModel::from(rows)),
+    }
+}
+
+/// Open the theme info panel for card `idx`, reading that theme's own saved
+/// records through `ThemeManager::theme_info` (never from a cached card, so a
+/// theme saved a second ago shows its real values). A theme with no readable
+/// records still opens, showing its name, and never invents data.
+fn open_gallery_info(
+    window: &crate::MainWindow,
+    gallery_tm: &std::sync::Arc<std::sync::Mutex<crate::theme_manager::ThemeManager>>,
+    idx: i32,
+) {
+    use slint::Model as _;
+    let idx = idx.max(0) as usize;
+    let Some(name) = window
+        .get_gallery_cards()
+        .row_data(idx)
+        .map(|card| card.name.to_string())
+    else {
+        return;
+    };
+    let facts = gallery_tm
+        .lock()
+        .map(|tm| tm.theme_info(&name))
+        .ok()
+        .flatten();
+    let data = match facts {
+        Some(f) => theme_info_data(&f),
+        None => crate::ThemeInfoData {
+            name: slint::SharedString::from(name.as_str()),
+            saved_at: slint::SharedString::from(""),
+            providers: slint::ModelRc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())),
+            swatches: slint::ModelRc::new(slint::VecModel::from(Vec::<slint::Color>::new())),
+            rows: slint::ModelRc::new(slint::VecModel::from(Vec::<crate::ThemeInfoRow>::new())),
+        },
+    };
+    window.set_gallery_info(data);
+    window.set_gallery_info_open(true);
+}
+
+/// Close the info panel if it is open. The theme list changed (save / rename /
+/// delete / overwrite), so whatever the panel showed may no longer exist.
+fn close_gallery_info(window: &crate::MainWindow) {
+    if window.get_gallery_info_open() {
+        window.set_gallery_info_open(false);
+    }
+}
+
 /// Rebuild window gallery cards from gallery_tm in place (keeps baked thumbs)
 /// then refresh mosaic + slice ring. Shared by Save rename/delete/refresh/
 /// overwrite so the Gallery follows without restart. `invalidate` names the
@@ -736,6 +813,9 @@ fn sync_save_gallery_ui(
     refresh_slice_ring: &std::sync::Arc<dyn Fn() + Send + Sync>,
     invalidate: &std::collections::HashSet<String>,
 ) {
+    // The theme list changed: whatever the info panel was showing may be
+    // renamed, overwritten or gone, so it closes rather than showing stale data.
+    close_gallery_info(w);
     let new_rows: Vec<crate::GalleryCardData> = {
         let gtm = gallery_tm.lock().unwrap();
         gtm.list().unwrap_or_default().iter().map(|info| {
@@ -3467,27 +3547,42 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         {
             let win = window.as_weak();
-            let animate = animate_slice_step.clone();
             let shell_c = shell.clone();
+            let gtm = gallery_tm.clone();
             window.on_gallery_card_right_clicked(move |idx| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-right-clicked idx={idx}")));
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     tracing::debug!("[gallery] card-right-clicked ignored — mutating");
                     return;
                 }
+                // Right-click opens the theme info panel for THAT card. It no
+                // longer jumps the carousel: the old focus-jump was the PR2 stub
+                // for the flip this panel replaces.
                 if let Some(w) = win.upgrade() {
-                    let len = w.get_gallery_cards().row_count() as usize;
-                    if len > 0 {
-                        let cur = w.get_gallery_focused().max(0) as usize;
-                        let target = (idx.max(0) as usize).min(len - 1);
-                        let delta = crate::shell::gallery::views::slice::ring_shortest_delta(cur, target, len);
-                        if delta != 0 {
-                            animate(delta);
-                        } else {
-                            w.set_gallery_focused(idx);
-                        }
-                    }
-                    let _ = w.get_gallery_style();
+                    open_gallery_info(&w, &gtm, idx);
+                }
+            });
+        }
+        {
+            // Keyboard `i`: same panel, for the focused card.
+            let win = window.as_weak();
+            let shell_c = shell.clone();
+            let gtm = gallery_tm.clone();
+            window.on_gallery_info_requested(move |idx| {
+                if crate::shell::Shell::is_mutating(&shell_c) {
+                    return;
+                }
+                if let Some(w) = win.upgrade() {
+                    open_gallery_info(&w, &gtm, idx);
+                }
+            });
+        }
+        {
+            // Escape / outside click: the panel only reports, Rust owns the flag.
+            let win = window.as_weak();
+            window.on_gallery_info_close(move || {
+                if let Some(w) = win.upgrade() {
+                    w.set_gallery_info_open(false);
                 }
             });
         }
