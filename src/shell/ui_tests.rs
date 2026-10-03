@@ -4264,11 +4264,14 @@ fn motion_style_row_has_a_fourth_slidefade_button_that_selects() {
     settle_frames(80);
 
     const ACCENT_CYAN: (u8, u8, u8) = (56, 189, 248);
+    // The style segmented row sits at y≈788-819 in the settled tune layout.
+    // The band is below the (white, lit) "Animation Style" label and above the
+    // "Save as Preset" heading, so the centroid is the selected segment alone.
     let highlight_x = |style: &str| -> f32 {
         win.set_anim_style(style.into());
         settle_frames(80);
         let shot = win.window().take_snapshot().expect("style row snapshot");
-        color_centroid_x(&shot, ACCENT_CYAN, 6, 1055, 640, 1905, 700)
+        color_centroid_x(&shot, ACCENT_CYAN, 6, 1055, 786, 1905, 820)
             .unwrap_or_else(|| panic!("no selected-segment highlight for style {style:?}"))
     };
 
@@ -5486,9 +5489,12 @@ fn motion_save_form_focus_renders_ring() {
     save_slice_png(idle.clone(), "motion_save_form_idle.png");
 
     // The save form is the lower block of the tune (right) pane. Sampling its
-    // band isolates the ring from the slider labels above it.
-    let idle_icy = count_color_in_box(&idle, ICY, 40, 1080, 700, 1900, 800);
-    let save_icy = count_color_in_box(&save, ICY, 40, 1080, 700, 1900, 800);
+    // band isolates the ring from the slider labels above it. The tune follows
+    // the focused stop imperatively now, so a pane that already fits is left at
+    // rest and the form sits at its natural y≈910-945 (it used to be pulled up
+    // into blank space by a bound viewport-y).
+    let idle_icy = count_color_in_box(&idle, ICY, 40, 1080, 905, 1900, 950);
+    let save_icy = count_color_in_box(&save, ICY, 40, 1080, 905, 1900, 950);
     assert!(
         save_icy > idle_icy + 200,
         "the save form must paint a focus ring when it owns the cursor — \
@@ -6026,17 +6032,24 @@ fn filters_scroll_follows_keyboard_only_by_construction() {
     let src = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
     // Scroll freeze is kept for keyboard follow. fs.has-focus gates viewport
-    // scroll like other sections.
+    // scroll like other sections, and the viewport is driven IMPERATIVELY:
+    // a `viewport-y: <expr>` binding is dropped by the wheel, which is the bug
+    // this test guards against.
     for marker in [
         "property <length> saved-scroll-y: 0px;",
-        "changed viewport-y => { root.saved-scroll-y = self.viewport-y; }",
+        "root.saved-scroll-y = self.viewport-y;",
+        "public function follow-focus()",
         "hover-moves-focus: false;",
     ] {
-        assert!(src.contains(marker), "FiltersSection must contain scroll-freeze wiring: {marker}");
+        assert!(src.contains(marker), "FiltersSection must contain scroll-follow wiring: {marker}");
     }
     assert!(
-        src.contains(": root.saved-scroll-y;"),
-        "FiltersSection viewport-y must freeze while the mouse drives"
+        src.contains("if (root.has-focus) {"),
+        "FiltersSection follow-focus must freeze while the mouse drives"
+    );
+    assert!(
+        !src.contains("viewport-y: root.has-focus"),
+        "FiltersSection must not bind viewport-y: the wheel drops the binding"
     );
     // Mouse acts through toggled (apply); it must not write focused-index
     // directly — the cursor moves via the section's focus-requested callback.
@@ -13905,6 +13918,214 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
          the same {} ticks back to back ended {lost} units of ink apart, i.e. the `animate \
          viewport-y` is swallowing the distance of ticks that land mid-animation",
         TICKS, TICKS
+    );
+}
+
+// ── Every list/tune pane must follow the keyboard AFTER the wheel ──────
+// The keeper, live: navigate with the wheel, resume with the keyboard, and
+// the list no longer scrolls to the keyboard focus — the view stays anchored
+// where the mouse left it, so the cursor is invisible until it reaches that
+// zone. Cause: a `viewport-y: <expr>` BINDING is DESTROYED the moment the
+// ScrollView assigns `viewport-y` for a wheel tick; after that the pane stops
+// following the focused row for the rest of the session. Borders was fixed
+// with an IMPERATIVE `follow-focus()`; Motion, Filters and Save still bind.
+//
+// This helper reproduces the exact sequence: park the pointer, focus the LAST
+// row with no wheel (the reference), then wheel the pane, refocus the top and
+// the last row again, and measure how far the two end frames differ. With the
+// follow intact the residual is scrollbar state (< 15000 ink); a dead binding
+// leaves the pane where the wheel parked it, a content-scale shift (~30000).
+fn wheel_then_refocus_diff(
+    win: &crate::MainWindow,
+    set_focus: impl Fn(i32),
+    last: i32,
+    wheel: slint::LogicalPosition,
+    label: &str,
+) -> usize {
+    use slint::ComponentHandle as _;
+    let frames = |count: usize| {
+        for _ in 0..count {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    // Park the pointer on the panel header before each snapshot: with the
+    // cursor over the list, the hover expansion grows whichever card happens to
+    // be under it — and after a wheel that is a DIFFERENT card. The follow is
+    // what this assertion is about, not where the cursor happens to sit.
+    let park = || {
+        win.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(1250.0, 30.0),
+            });
+        frames(20);
+    };
+
+    frames(80);
+    set_focus(last);
+    frames(140);
+    park();
+    let reference = win.window().take_snapshot().expect("follow reference");
+    save_slice_png(reference.clone(), &format!("{label}_reference.png"));
+
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: wheel,
+            delta_x: 0.0,
+            delta_y: -180.0,
+        });
+    frames(140);
+    // The wheel must really move the pane: without this check a no-op wheel
+    // would leave reference == after for the trivial reason that nothing
+    // scrolled, and the follow assertion below would be meaningless.
+    let wheeled = win.window().take_snapshot().expect("after wheel only");
+    save_slice_png(wheeled.clone(), &format!("{label}_wheeled.png"));
+    let moved = count_buffer_diff(&reference, &wheeled);
+    assert!(
+        moved > 20000,
+        "the wheel must actually scroll the pane: it moved {moved} units of ink (the follow \
+         comparison below is meaningless if the wheel is a no-op)"
+    );
+    set_focus(0);
+    frames(140);
+    set_focus(last);
+    frames(140);
+    park();
+    let after = win.window().take_snapshot().expect("follow after wheel");
+    save_slice_png(after.clone(), &format!("{label}_after.png"));
+
+    count_buffer_diff(&reference, &after)
+}
+
+/// Filters: the wheel must not break the keyboard follow (see the helper).
+#[test]
+fn filters_list_follows_keyboard_focus_after_wheel() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_panel_section(3);
+    let n = 20usize;
+    let rep = |f: fn(usize) -> String| {
+        ModelRc::new(VecModel::from(
+            (0..n).map(|i| SharedString::from(f(i))).collect::<Vec<_>>(),
+        ))
+    };
+    win.set_shader_titles(rep(|i| format!("Shader {i:02}")));
+    win.set_shader_descs(rep(|_| "desc".to_string()));
+    win.set_shader_tags(rep(|_| String::new()));
+    win.set_shader_files(rep(|i| format!("s{i:02}.lua")));
+
+    let broke = wheel_then_refocus_diff(
+        &win,
+        |i| win.set_panel_kbd_preview_index(i),
+        (n - 1) as i32,
+        slint::LogicalPosition::new(700.0, 620.0),
+        "filters_wheel_follow",
+    );
+    println!("FILTERS follow diff after wheel: {broke}");
+    assert!(
+        broke < 15000,
+        "a wheel scroll must not break the keyboard follow: focusing the last shader after a \
+         wheel landed {broke} units of ink away from the same focus without a wheel (a content \
+         shift measures ~30000), i.e. the Filters list stopped following the focused shader"
+    );
+}
+
+/// Motion LIST pane: the wheel must not break the keyboard follow.
+#[test]
+fn motion_list_follows_keyboard_focus_after_wheel() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_panel_section(2);
+    let n = 20usize;
+    let rep = |f: fn(usize) -> String| {
+        ModelRc::new(VecModel::from(
+            (0..n).map(|i| SharedString::from(f(i))).collect::<Vec<_>>(),
+        ))
+    };
+    win.set_anim_titles(rep(|i| format!("Anim {i:02}")));
+    win.set_anim_descs(rep(|_| "ease curve".to_string()));
+    win.set_anim_tags(rep(|_| String::new()));
+    win.set_anim_files(rep(|i| format!("a{i:02}.lua")));
+
+    let broke = wheel_then_refocus_diff(
+        &win,
+        |i| win.set_panel_kbd_preview_index(i),
+        (n - 1) as i32,
+        slint::LogicalPosition::new(700.0, 620.0),
+        "motion_list_wheel_follow",
+    );
+    println!("MOTION list follow diff after wheel: {broke}");
+    assert!(
+        broke < 15000,
+        "a wheel scroll must not break the keyboard follow: focusing the last animation preset \
+         after a wheel landed {broke} units of ink away from the same focus without a wheel (a \
+         content shift measures ~30000), i.e. the Motion list stopped following the focused card"
+    );
+}
+
+/// Motion TUNE pane: same bug on the slider/save-form scroll. A short window
+/// forces the tune content to overflow so the follow has travel to lose.
+#[test]
+fn motion_tune_follows_keyboard_focus_after_wheel() {
+    use slint::ComponentHandle as _;
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 620));
+    win.set_panel_section(2);
+    // No cards: split is 0, so the global focus index equals the tune-local one
+    // and stop 6 is the save form at the bottom of the tune flow.
+    win.set_anim_titles(slint::ModelRc::new(slint::VecModel::from(Vec::<
+        slint::SharedString,
+    >::new())));
+
+    let broke = wheel_then_refocus_diff(
+        &win,
+        |i| win.set_panel_kbd_preview_index(i),
+        6,
+        slint::LogicalPosition::new(1400.0, 400.0),
+        "motion_tune_wheel_follow",
+    );
+    println!("MOTION tune follow diff after wheel: {broke}");
+    assert!(
+        broke < 15000,
+        "a wheel scroll must not break the keyboard follow: focusing the tune's save form after a \
+         wheel landed {broke} units of ink away from the same focus without a wheel (a content \
+         shift measures ~30000), i.e. the Motion tune pane stopped following the focused stop"
+    );
+}
+
+/// Save LIST pane: the wheel must not break the keyboard follow.
+#[test]
+fn save_list_follows_keyboard_focus_after_wheel() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    let win = focus_open_system_panel();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_panel_section(0);
+    let n = 18usize;
+    win.set_theme_names(ModelRc::new(VecModel::from(
+        (0..n)
+            .map(|i| SharedString::from(format!("Theme {i:02}")))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-01-01");
+        n
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false; n])));
+
+    let broke = wheel_then_refocus_diff(
+        &win,
+        |i| win.set_panel_save_focused_index(i),
+        (n - 1) as i32,
+        slint::LogicalPosition::new(700.0, 620.0),
+        "save_list_wheel_follow",
+    );
+    println!("SAVE list follow diff after wheel: {broke}");
+    assert!(
+        broke < 15000,
+        "a wheel scroll must not break the keyboard follow: focusing the last saved theme after a \
+         wheel landed {broke} units of ink away from the same focus without a wheel (a content \
+         shift measures ~30000), i.e. the Save list stopped following the focused theme"
     );
 }
 

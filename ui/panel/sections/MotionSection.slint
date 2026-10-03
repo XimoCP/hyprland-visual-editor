@@ -104,6 +104,19 @@ component MotionTunePane inherits Rectangle {
     background: transparent;
     clip: true;
 
+    // Imperative scroll-follow (see the note on MotionListPane): a
+    // `viewport-y: <expr>` binding is DROPPED when the wheel writes the
+    // property, after which the tune pane stops following the focused stop.
+    changed local-focus => { tune-scroll.follow-focus(); }
+    changed follow => { tune-scroll.follow-focus(); }
+    // The binding re-aimed whenever the content or the viewport height changed
+    // (panel open, window resize, section switch). An imperative follow must do
+    // the same, or a follow that lands before the first layout computes its
+    // target against an empty content and the ScrollView clamps it to the top
+    // for good.
+    property <length> max-scroll: max(0px, tune-col.height - tune-scroll.height);
+    changed max-scroll => { tune-scroll.follow-focus(); }
+
     // Always-visible curve indicator, pinned at the TOP of the tune pane and
     // OUTSIDE its ScrollView (so it never scrolls away), spanning the same
     // content width as the slider cards below (16px side inset). It used to sit
@@ -120,7 +133,7 @@ component MotionTunePane inherits Rectangle {
         d: root.bezier-d;
     }
 
-    ScrollView {
+    tune-scroll := ScrollView {
         y: root.preview-block;
         height: max(0px, parent.height - root.preview-block);
         // All seven stops sit on an 80px pitch, so the follow target is a
@@ -128,15 +141,25 @@ component MotionTunePane inherits Rectangle {
         // The first stop starts at the ScrollView's 16px top padding (14px
         // keeps the previous 2px slop that centred a stop's 44px half-height).
         property <length> focus-y: 14px + root.local-focus * 80px;
-        viewport-y: root.follow ? (root.local-focus >= 0
-            ? (0px - max(0px, self.focus-y + 44px - self.height / 2))
-            : 0px) : root.saved-scroll-y;
+        // IMPERATIVE, never a binding — see the note on the root: a wheel
+        // writes `viewport-y`, which would drop a binding and leave the tune
+        // pane unable to follow the keyboard afterwards.
+        public function follow-focus() {
+            if (root.follow && root.local-focus >= 0) {
+                // The focused stop is parked near the viewport's middle, the
+                // same target as the old binding — but clamped against the REAL
+                // content height so a pane that already fits is left at rest
+                // instead of being scrolled into blank space.
+                self.viewport-y = max(self.height - tune-col.height,
+                    min(0px, 0px - max(0px, self.focus-y + 44px - self.height / 2)));
+            }
+        }
         // NEVER animated. `viewport-y` is the property the wheel writes, so an
         // animation on it makes any tick that lands mid-flight compute its target
         // from the INTERPOLATED value — which drops the travel the previous tick
         // had not finished. Exact beats smooth for a scrollable pane.
         changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
+        tune-col := VerticalLayout {
             padding-left: 16px;
             padding-right: 16px;
             padding-top: 16px;
@@ -434,20 +457,62 @@ component MotionListPane inherits Rectangle {
     property <length> saved-scroll-y: 0px;
     property <int> builtin-count: root.builtin-names.length;
     property <int> total-count: root.builtin-names.length + root.user-names.length;
+    // Viewport control must be IMPERATIVE, never a binding. Slint DROPS a
+    // property's binding the moment code assigns it, and the ScrollView assigns
+    // `viewport-y` itself whenever the user turns the wheel. With
+    // `viewport-y: <expr>` the wheel therefore killed the binding for the rest
+    // of the session: the list stopped following the focused preset, so
+    // resuming with the keyboard left the cursor invisible until it reached the
+    // zone the mouse had parked. (Same fix as BordersSection.)
+    //
+    // The scroll position is OURS to own: own the target, clamp it against the
+    // REAL content height, and stay pinned when the content grows under the
+    // pointer (a hover expansion must not push the end out of reach).
+    property <length> scroll-target: 0px;
+    property <length> max-scroll: max(0px, column.height - list-scroll.height);
+    property <bool> at-end: false;
+    function clamp-scroll(v: length) -> length {
+        return max(0px - root.max-scroll, min(0px, v));
+    }
+
+    changed focused-index => { list-scroll.follow-focus(); }
+    changed follow => { list-scroll.follow-focus(); }
+    changed max-scroll => {
+        if (root.at-end) {
+            root.scroll-target = 0px - root.max-scroll;
+            list-scroll.viewport-y = root.scroll-target;
+        }
+    }
+
     background: transparent;
     clip: true;
 
-    ScrollView {
+    list-scroll := ScrollView {
         property <length> focus-y: root.focused-index * 66px;
-        viewport-y: root.follow ? (root.focused-index >= 0
-            ? (0px - max(0px, self.focus-y + 29px - self.height / 2))
-            : 0px) : root.saved-scroll-y;
+        // IMPERATIVE, never a binding — see the note above: a wheel writes
+        // `viewport-y`, which would drop a binding and leave the list unable to
+        // follow the keyboard afterwards.
+        public function follow-focus() {
+            if (root.follow && root.focused-index >= 0) {
+                root.scroll-target = root.clamp-scroll(
+                    0px - max(0px, self.focus-y + 29px - self.height / 2));
+                self.viewport-y = root.scroll-target;
+            }
+        }
+        // The binding re-aimed whenever `self.height` changed (panel open,
+        // window resize, section switch). An imperative follow must do the same
+        // or it computes its target from a transient height and sticks there.
+        changed height => { self.follow-focus(); }
         // NEVER animated. `viewport-y` is the property the wheel writes, so an
         // animation on it makes any tick that lands mid-flight compute its target
         // from the INTERPOLATED value — which drops the travel the previous tick
         // had not finished. Exact beats smooth for a scrollable pane.
-        changed viewport-y => { root.saved-scroll-y = self.viewport-y; }
-        VerticalLayout {
+        changed viewport-y => {
+            root.saved-scroll-y = self.viewport-y;
+            root.scroll-target = self.viewport-y;
+            root.at-end = root.scroll-target <= 0px - root.max-scroll + 1px;
+        }
+        column := VerticalLayout {
             padding-left: 16px;
             padding-right: 16px;
             padding-top: 16px;

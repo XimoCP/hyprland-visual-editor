@@ -162,6 +162,33 @@ component SaveListPane inherits Rectangle {
     callback focus-requested(int);
     callback mouse-trace(string);
 
+    // Viewport control must be IMPERATIVE, never a binding. Slint DROPS a
+    // property's binding the moment code assigns it, and the ScrollView assigns
+    // `viewport-y` itself whenever the user turns the wheel. With
+    // `viewport-y: <expr>` the wheel therefore killed the binding for the rest
+    // of the session: the list stopped following the focused theme, so resuming
+    // with the keyboard left the cursor invisible until it reached the zone the
+    // mouse had parked. (Same fix as BordersSection.)
+    //
+    // The scroll position is OURS to own: own the target, clamp it against the
+    // REAL content height, and stay pinned when the content grows under the
+    // pointer (a hover expansion must not push the end out of reach).
+    property <length> saved-scroll-y: 0px;
+    property <length> scroll-target: 0px;
+    property <length> max-scroll: max(0px, column.height - scroll.height);
+    property <bool> at-end: false;
+    function clamp-scroll(v: length) -> length {
+        return max(0px - root.max-scroll, min(0px, v));
+    }
+
+    changed focused-index => { scroll.follow-focus(); }
+    changed max-scroll => {
+        if (root.at-end) {
+            root.scroll-target = 0px - root.max-scroll;
+            scroll.viewport-y = root.scroll-target;
+        }
+    }
+
     background: transparent;
     clip: true;
 
@@ -210,15 +237,34 @@ component SaveListPane inherits Rectangle {
                 root.focused-index * 68px
                 + (root.saved-active-index >= 0 && root.saved-active-index < root.focused-index ? 44px : 0px)
                 + (root.saved-active-index == root.focused-index ? 44px : 0px);
-            viewport-y: root.focused-index >= 0
-                ? (0px - max(0px, self.focus-y + 28px - self.height / 2))
-                : 0px;
+            // IMPERATIVE, never a binding — see the note on the root: a wheel
+            // writes `viewport-y`, which would drop a binding and leave the list
+            // unable to follow the keyboard afterwards.
+            public function follow-focus() {
+                if (root.focused-index >= 0) {
+                    root.scroll-target = root.clamp-scroll(
+                        0px - max(0px, self.focus-y + 28px - self.height / 2));
+                    self.viewport-y = root.scroll-target;
+                } else {
+                    self.viewport-y = 0px;
+                }
+            }
+            // The binding re-aimed whenever `self.height` changed (panel open,
+            // window resize, section switch). An imperative follow must do the
+            // same or it computes its target from a transient height and sticks
+            // there.
+            changed height => { self.follow-focus(); }
             // NEVER animated. `viewport-y` is the property the wheel writes, so an
             // animation on it makes any tick that lands mid-flight compute its target
             // from the INTERPOLATED value — which drops the travel the previous tick
             // had not finished. Exact beats smooth for a scrollable pane.
+            changed viewport-y => {
+                root.saved-scroll-y = self.viewport-y;
+                root.scroll-target = self.viewport-y;
+                root.at-end = root.scroll-target <= 0px - root.max-scroll + 1px;
+            }
 
-            VerticalLayout {
+            column := VerticalLayout {
                 spacing: SkwdTokens.spacing-12;
 
                 if (root.saved-names.length == 0) : Rectangle {
