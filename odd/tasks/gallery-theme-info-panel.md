@@ -161,10 +161,58 @@ swatches: Vec<String>, rows: Vec<(String, String)> }` (pure Rust, no Slint).
 
 ## Progress
 
-- [ ] T1 Slint panel
-- [ ] T2 GalleryRoot integration
-- [ ] T3 main.slint / shell.slint plumbing
-- [ ] T4 render test
-- [ ] T5 Rust reader (TDD)
-- [ ] T6 Rust wiring
-- [ ] Cross-model verification
+- [x] T1 Slint face — `ui/gallery/ThemeInfoPanel.slint` is now the theme's own
+      card face (not a stage overlay): the data-driven content revealed from
+      inside the card, with a right-click-inside close. SliceDelegate places it
+      in the card's own slant-safe box, so the geometry IS the card's geometry.
+- [x] T2 GalleryRoot integration — the face is hosted by the card; a focus
+      change closes it (the face belongs to the theme it was opened for).
+- [x] T3 main.slint / shell.slint plumbing — `gallery-info`, `gallery-info-open`,
+      `gallery-info-index`, `gallery-info-requested`, `gallery-info-close`; `i`
+      opens it for the focused card; Escape closes it first; leaving the gallery
+      closes it.
+- [x] T4 render test — `theme_info_panel_renders_closed_and_open`, which now
+      asserts the face paints INSIDE the card's box and leaves the wallpaper
+      around the carousel untouched.
+- [x] T5 Rust reader (TDD) — `theme_facts` on hve-presets + noctalia-v5,
+      `ThemeManager::theme_info`.
+- [x] T6 Rust wiring — right-click brings the card to the centre AND opens its
+      own face inside it; `i` opens it; Escape / right-click-inside close it;
+      Save / rename / delete / overwrite close it instead of leaving stale data.
+- [ ] Cross-model verification — BLOCKED: this runtime denies subagent delegation
+      (`Permission denied: subagent`), so no independent model ran. The work below
+      is single-model (author) evidence only.
+
+## Commits
+
+- `0e18a76` — `feat(gallery): read each theme's own records for the info panel`.
+- `2256ffc` — `feat(gallery): right-click or i opens the theme info panel`.
+- `6b5a4c5` — `fix(gallery): leaving the gallery closes the theme info panel`.
+- `+` the in-card rework (the stage-level panel was replaced by the card face).
+
+## Verification evidence
+
+- `cargo test`: **1294 passed / 0 failed** (baseline 1282; +12 new tests:
+  4 `ThemeManager::theme_info`, 3 `preset_facts`, 4 noctalia `theme_facts`,
+  1 render test). No warnings.
+- Visual (author's own eyes, per-run directories):
+  - `/tmp/opencode/render-info-verify01..03` — the first stage-overlay design
+    (rows stretched, then fixed, then the centred slice).
+  - `/tmp/opencode/render-info-verify04` — first in-card pass: the face is
+    inside the card but a VerticalLayout stretched the rows across the face.
+  - `/tmp/opencode/render-info-verify05` — final: the face is contained by the
+    card, top-aligned spec sheet (name, saved, swatches, 6 rows in two columns,
+    provider chips pinned at the bottom), neighbours and wallpaper untouched.
+- Structural assertion in the render test: >200 changed samples inside the
+  card's box, <2% of sampled outside pixels change.
+
+## Known gaps to iterate on
+
+- The rows use a two-column sheet layout (label left, value at the column's
+  right edge); a tighter label/value pairing is a taste call.
+- The face covers the card's own 1px border where they overlap.
+- Arrow keys still move the carousel: that closes the face (focus change) —
+  deliberate, so it never shows another theme's facts.
+- noctalia-v4 records are not reported (only v5).
+
+

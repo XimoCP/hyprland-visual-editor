@@ -1,13 +1,17 @@
-// HVE 2 — ThemeInfoPanel (gallery theme-info panel).
+// HVE 2 — ThemeInfoPanel (the theme info face, INSIDE the Slider card).
 //
-// The panel the main Slider opens on right-click / the `i` key: a skewed
-// parallelogram in the SAME shape family as the Slider cards (top edge shifted
-// right by the card slant angle, 35px per 520px of height), anchored to the
-// right edge of the stage and sliding in from off-stage. It covers one slice of
-// the window so almost all of the wallpaper stays visible.
+// The panel the main Slider shows on right-click / the `i` key: it comes out
+// from inside the theme's own card, inside the Slider, contained by the card's
+// frame — it never covers the window and never floats outside the carousel.
 //
-// All values are data-driven: the Rust reader fills `ThemeInfoData` from each
+// SliceDelegate places it exactly where the card's own slant-safe box is, so
+// the geometry is the card's geometry: no second shape, no second slant. All
+// values are data-driven: the Rust reader fills `ThemeInfoData` from each
 // theme's own saved records, so nothing here is hand-typed per theme.
+//
+// Layout note: children are positioned explicitly (no VerticalLayout). A
+// layout inside the fixed-height card face would stretch its children to fill
+// the whole face, which is exactly the "floating rows" bug this avoids.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -28,218 +32,145 @@ export struct ThemeInfoData {
 }
 
 export component ThemeInfoPanel inherits Rectangle {
-    in property <bool> open: false;
     in property <ThemeInfoData> info;
+    in property <bool> open: false;
     in property <bool> reduced-motion: false;
-    in property <length> stage-width: 1920px;
-    in property <length> stage-height: 1080px;
+
+    // Right-click on the open face asks to close it (a toggle, from inside).
     callback closed();
 
     width: 100%;
     height: 100%;
     background: transparent;
 
-    // ── Geometry: same slant angle as the Slider cards (35px of shear over
-    // 520px of height), so the panel's slanted edges read parallel to the
-    // cards'. It is a vertically centred slice of the window: one edge band
-    // with wallpaper visible above, below and beside it.
-    property <float> sw: root.stage-width / 1px;
-    property <float> sh: root.stage-height / 1px;
-    property <float> hn: Math.max(320.0, root.sh * 0.8);
-    property <float> skn: Math.max(0.0, root.hn * 35.0 / 520.0);
-    property <float> wn: Math.max(320.0, Math.min(520.0, root.sw * 0.32));
-    property <float> pn: 4.0; // stroke room, same trick as SliceDelegate
-    property <float> slant: Math.sqrt(root.skn * root.skn + root.hn * root.hn);
-    property <float> rn: Math.max(0.0, Math.min(
-        SkwdTokens.radius-12 / 1px,
-        root.wn / 2 - 1,
-        root.hn / 2 - 1));
-    property <float> padn: 24.0;
-    property <float> box-wn: root.wn + root.skn;
-    // Flush with the stage's right edge at the TOP corner (the shear pushes the
-    // top right), fully off-stage when closed.
-    property <length> open-x: (root.sw - root.box-wn) * 1px;
-    property <length> closed-x: (root.sw + 12.0) * 1px;
-
-    // ── Scrim + outside click, only while open. It is declared FIRST so the
-    // panel body paints above it. When closed it does not exist, so it can
-    // never eat the carousel's clicks or wheel.
-    if root.open : Rectangle {
+    // The face itself: opaque card surface, revealed from the card's own
+    // inside (a short fade + slide) instead of appearing over the window.
+    body := Rectangle {
         width: 100%;
         height: 100%;
-        background: #000000;
-        opacity: 0.22;
+        background: HveColors.bg-card;
+        opacity: root.open ? 1.0 : 0.0;
+        x: root.open ? 0px : 14px;
         animate opacity { duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200; }
+        animate x {
+            duration: root.reduced-motion ? 0ms : SkwdTokens.anim-200;
+            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+        }
 
-        outside-touch := TouchArea {
-            width: 100%;
-            height: 100%;
-            mouse-cursor: pointer;
-            clicked => { root.closed(); }
+        content := Rectangle {
+            x: SkwdTokens.spacing-16;
+            y: SkwdTokens.spacing-16;
+            width: parent.width - 2 * SkwdTokens.spacing-16;
+            height: parent.height - 2 * SkwdTokens.spacing-16;
+            background: transparent;
+
+            Text {
+                y: 0;
+                width: parent.width;
+                height: 24px;
+                text: root.info.name == "" ? "Theme information" : root.info.name;
+                color: HveColors.accent-cyan;
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-16;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            if root.info.saved-at != "" : Text {
+                y: 26px;
+                width: parent.width;
+                height: 16px;
+                text: "Saved " + root.info.saved-at;
+                color: HveColors.text-muted;
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-11;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            // Color swatches straight from the theme's own palette record.
+            if root.info.swatches.length > 0 : HorizontalLayout {
+                y: 50px;
+                width: parent.width;
+                height: 16px;
+                spacing: SkwdTokens.spacing-8;
+                alignment: start;
+                for c in root.info.swatches : Rectangle {
+                    width: 16px;
+                    height: 16px;
+                    border-radius: SkwdTokens.radius-20;
+                    background: c;
+                    border-width: SkwdTokens.border-1;
+                    border-color: HveColors.border.transparentize(0.5);
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // One line per fact, two columns so the wide expanded card reads
+            // like a spec sheet instead of a single long list.
+            for r[i] in root.info.rows : HorizontalLayout {
+                x: Math.mod(i, 2) * (parent.width / 2);
+                y: 84px + (i / 2) * 24px;
+                width: parent.width / 2 - SkwdTokens.spacing-8;
+                height: 24px;
+                spacing: SkwdTokens.spacing-4;
+                Text {
+                    text: r.label;
+                    color: HveColors.text-muted;
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: r.value;
+                    color: HveColors.text;
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    font-weight: 600;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            // Providers pinned to the face's bottom edge.
+            if root.info.providers.length > 0 : HorizontalLayout {
+                y: parent.height - 20px;
+                width: parent.width;
+                height: 20px;
+                spacing: SkwdTokens.spacing-4;
+                alignment: start;
+                for p in root.info.providers : Rectangle {
+                    height: 20px;
+                    width: provider-text.preferred-width + 16px;
+                    border-radius: SkwdTokens.radius-4;
+                    background: HveColors.bg-dark.transparentize(0.2);
+                    border-width: SkwdTokens.border-1;
+                    border-color: HveColors.border;
+                    provider-text := Text {
+                        text: p;
+                        color: HveColors.text-muted;
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
         }
     }
 
-    body := Rectangle {
-        width: root.box-wn * 1px;
-        height: root.hn * 1px;
-        y: (root.sh - root.hn) / 2.0 * 1px;
-        x: root.open ? root.open-x : root.closed-x;
-        animate x {
-            duration: root.reduced-motion ? 0ms : SkwdTokens.anim-250;
-            easing: cubic-bezier(0.215, 0.61, 0.355, 1);
-        }
-        background: transparent;
-
-        // Click anywhere on the body must NOT reach the scrim.
-        body-touch := TouchArea {
-            width: 100%;
-            height: 100%;
-        }
-
-        // Face: rounded parallelogram, vertices (skew,0)(skew+w,0)(w,h)(0,h),
-        // same command list as SliceDelegate's SliceShape (stroke-room pad).
-        face := Path {
-            x: -root.pn * 1px;
-            y: -root.pn * 1px;
-            width: root.box-wn * 1px + 2 * root.pn * 1px;
-            height: root.hn * 1px + 2 * root.pn * 1px;
-            viewbox-x: -root.pn;
-            viewbox-y: -root.pn;
-            viewbox-width: root.box-wn + 2 * root.pn;
-            viewbox-height: root.hn + 2 * root.pn;
-            fill: HveColors.bg-card.transparentize(0.06);
-            stroke: HveColors.border;
-            stroke-width: SkwdTokens.border-1;
-
-            MoveTo { x: root.skn + root.rn; y: 0; }
-            LineTo { x: root.skn + root.wn - root.rn; y: 0; }
-            QuadraticTo {
-                control-x: root.skn + root.wn;
-                control-y: 0;
-                x: root.skn + root.wn - root.skn * root.rn / root.slant;
-                y: root.hn * root.rn / root.slant;
-            }
-            LineTo {
-                x: root.wn + root.skn * root.rn / root.slant;
-                y: root.hn - root.hn * root.rn / root.slant;
-            }
-            QuadraticTo {
-                control-x: root.wn;
-                control-y: root.hn;
-                x: root.wn - root.rn;
-                y: root.hn;
-            }
-            LineTo { x: root.rn; y: root.hn; }
-            QuadraticTo {
-                control-x: 0;
-                control-y: root.hn;
-                x: root.skn * root.rn / root.slant;
-                y: root.hn - root.hn * root.rn / root.slant;
-            }
-            LineTo {
-                x: root.skn - root.skn * root.rn / root.slant;
-                y: root.hn * root.rn / root.slant;
-            }
-            QuadraticTo {
-                control-x: root.skn;
-                control-y: 0;
-                x: root.skn + root.rn;
-                y: 0;
-            }
-            Close { }
-        }
-
-        // Content lives inside the slant-safe box: inset by the shear on the
-        // left and by the padding on the right, so no line ever crosses the
-        // slanted edges at any height. Its height is the layout's natural
-        // height (not the panel height), so rows never stretch.
-        content := Rectangle {
-            x: (root.skn + root.padn) * 1px;
-            y: root.padn * 1px;
-            width: (root.wn - root.skn - 2.0 * root.padn) * 1px;
-            height: Math.min(
-                content-layout.preferred-height,
-                (root.hn - 2.0 * root.padn) * 1px);
-            background: transparent;
-
-            content-layout := VerticalLayout {
-                spacing: SkwdTokens.spacing-12;
-
-                Text {
-                    text: root.info.name == "" ? "Theme information" : root.info.name;
-                    color: HveColors.accent-cyan;
-                    font-family: SkwdTokens.font-heading;
-                    font-size: SkwdTokens.size-18;
-                    font-weight: 700;
-                    overflow: elide;
-                }
-
-                if root.info.saved-at != "" : Text {
-                    text: "Saved " + root.info.saved-at;
-                    color: HveColors.text-muted;
-                    font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-11;
-                    overflow: elide;
-                }
-
-                // Color swatches straight from the theme's own palette record.
-                if root.info.swatches.length > 0 : HorizontalLayout {
-                    spacing: SkwdTokens.spacing-8;
-                    alignment: start;
-                    for c in root.info.swatches : Rectangle {
-                        width: 16px;
-                        height: 16px;
-                        border-radius: SkwdTokens.radius-20;
-                        background: c;
-                        border-width: SkwdTokens.border-1;
-                        border-color: HveColors.border.transparentize(0.5);
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-
-                // One line per fact (animation, border, sizes, ...).
-                for r in root.info.rows : HorizontalLayout {
-                    spacing: SkwdTokens.spacing-8;
-                    Text {
-                        text: r.label;
-                        color: HveColors.text-muted;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        vertical-alignment: center;
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    Text {
-                        text: r.value;
-                        color: HveColors.text;
-                        font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
-                        font-weight: 600;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                }
-
-                if root.info.providers.length > 0 : HorizontalLayout {
-                    spacing: SkwdTokens.spacing-4;
-                    alignment: start;
-                    for p in root.info.providers : Rectangle {
-                        height: 20px;
-                        width: provider-text.preferred-width + 16px;
-                        border-radius: SkwdTokens.radius-4;
-                        background: HveColors.bg-dark.transparentize(0.2);
-                        border-width: SkwdTokens.border-1;
-                        border-color: HveColors.border;
-                        provider-text := Text {
-                            text: p;
-                            color: HveColors.text-muted;
-                            font-size: 10px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                }
+    // Only while open: swallow clicks that land on the face (a left click must
+    // not apply the theme behind the info) and make a right click close it.
+    // Closed, this TouchArea does not exist, so the card keeps its own input.
+    if root.open : TouchArea {
+        width: 100%;
+        height: 100%;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                root.closed();
             }
         }
     }

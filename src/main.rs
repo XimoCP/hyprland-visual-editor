@@ -755,10 +755,13 @@ fn theme_info_data(facts: &crate::theme_manager::ThemeFacts) -> crate::ThemeInfo
     }
 }
 
-/// Open the theme info panel for card `idx`, reading that theme's own saved
+/// Open the theme info face for card `idx`, reading that theme's own saved
 /// records through `ThemeManager::theme_info` (never from a cached card, so a
 /// theme saved a second ago shows its real values). A theme with no readable
 /// records still opens, showing its name, and never invents data.
+///
+/// The face is drawn INSIDE that card, so the index travels with the data: a
+/// card that is not the named one can never show another theme's facts.
 fn open_gallery_info(
     window: &crate::MainWindow,
     gallery_tm: &std::sync::Arc<std::sync::Mutex<crate::theme_manager::ThemeManager>>,
@@ -789,6 +792,7 @@ fn open_gallery_info(
         },
     };
     window.set_gallery_info(data);
+    window.set_gallery_info_index(idx as i32);
     window.set_gallery_info_open(true);
 }
 
@@ -3547,6 +3551,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         {
             let win = window.as_weak();
+            let animate = animate_slice_step.clone();
             let shell_c = shell.clone();
             let gtm = gallery_tm.clone();
             window.on_gallery_card_right_clicked(move |idx| {
@@ -3555,10 +3560,21 @@ fn main() -> Result<(), slint::PlatformError> {
                     tracing::debug!("[gallery] card-right-clicked ignored — mutating");
                     return;
                 }
-                // Right-click opens the theme info panel for THAT card. It no
-                // longer jumps the carousel: the old focus-jump was the PR2 stub
-                // for the flip this panel replaces.
+                // Right-click brings that card to the centre and opens its own
+                // info face INSIDE it (the face is drawn in the card, so the
+                // card must be the expanded one).
                 if let Some(w) = win.upgrade() {
+                    let len = w.get_gallery_cards().row_count() as usize;
+                    if len > 0 {
+                        let cur = w.get_gallery_focused().max(0) as usize;
+                        let target = (idx.max(0) as usize).min(len - 1);
+                        let delta = crate::shell::gallery::views::slice::ring_shortest_delta(cur, target, len);
+                        if delta != 0 {
+                            animate(delta);
+                        } else {
+                            w.set_gallery_focused(idx);
+                        }
+                    }
                     open_gallery_info(&w, &gtm, idx);
                 }
             });

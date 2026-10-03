@@ -13,6 +13,7 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { HveColors } from "../theme.slint";
+import { ThemeInfoPanel, ThemeInfoData } from "ThemeInfoPanel.slint";
 
 // Shared rounded-parallelogram geometry (design D3/D4): ONE command list
 // reused by the projected shadow and the face so both shapes can never
@@ -54,6 +55,14 @@ export component SliceDelegate inherits Rectangle {
     in property <bool> is-current: false;
     in property <bool> is-hovered: false;
     in property <bool> is-flipped: false;
+    // Theme info face (right-click / `i`): the data, whether it is open, and
+    // which card it belongs to. The face renders only on the card it was
+    // opened for, so navigating away can never show another theme's facts.
+    in property <ThemeInfoData> info;
+    in property <bool> info-open: false;
+    in property <int> info-index: -1;
+    in property <int> card-index: -1;
+    in property <bool> reduced-motion: false;
     in property <color> accent: HveColors.accent-cyan;
     in property <image> thumb;
     // Tuck animation: 0 = normal gallery, 1 = hidden behind center (driven by SliceCarousel staggered tuck)
@@ -131,6 +140,7 @@ export component SliceDelegate inherits Rectangle {
     callback clicked();
     callback right-clicked();
     callback flipped();
+    callback info-close();
 
     // ── Geometry: width and x come from the focus-flow formula above (V6).
     // The drawn face is a parallelogram whose top edge shifts right by the
@@ -552,5 +562,19 @@ export component SliceDelegate inherits Rectangle {
                 }
             }
         }
+    }
+
+    // ── Theme info face (declared LAST so its own TouchArea, present only
+    // while open, sits above the card's): it comes out from INSIDE the theme,
+    // in the card's own slant-safe box, so it is contained by the card and the
+    // wallpaper around the carousel is untouched. ──
+    if root.is-current && root.card-index == root.info-index : ThemeInfoPanel {
+        x: root.face-inset + root.skew;
+        width: root.face-width - root.skew;
+        height: 100%;
+        info: root.info;
+        open: root.info-open;
+        reduced-motion: root.reduced-motion;
+        closed => { root.info-close(); }
     }
 }

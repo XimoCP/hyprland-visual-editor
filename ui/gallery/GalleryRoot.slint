@@ -99,11 +99,13 @@ export component GalleryRoot inherits Rectangle {
     in property <int> panel-section: 0;
     in property <float> backdrop-alpha: 0.0;
 
-    // Theme info panel (right-click on a card / the `i` key). `info` is filled
-    // by Rust from each theme's own saved records; `info-open` is owned by Rust
-    // so both the request and the close travel one way.
+    // Theme info face (right-click on a card / the `i` key). `info` is filled
+    // by Rust from each theme's own saved records; `info-open` and
+    // `info-index` are owned by Rust, and the face is drawn INSIDE the card
+    // the index names (never over the window).
     in property <ThemeInfoData> info;
     in-out property <bool> info-open: false;
+    in property <int> info-index: -1;
     callback info-close();
 
     callback style-selected(int);
@@ -369,6 +371,10 @@ export component GalleryRoot inherits Rectangle {
             reduced-motion: root.reduced-motion;
             docking: root.docking;
             delta-base: root.slice-delta-base;
+            info: root.info;
+            info-open: root.info-open;
+            info-index: root.info-index;
+            info-close => { root.info-close(); }
             card-clicked(i) => { root.card-clicked(i); }
             card-right-clicked(i) => { root.card-right-clicked(i); }
             wheel-step(dir) => { root.wheel-step(dir); }
@@ -504,15 +510,11 @@ export component GalleryRoot inherits Rectangle {
         }
     }
 
-    // ── Theme info panel: paints above the stage and the drawers, below the
-    // Chrome arrows so the Style/Settings triggers stay reachable. ──
-    ThemeInfoPanel {
-        info: root.info;
-        open: root.info-open;
-        reduced-motion: root.reduced-motion;
-        stage-width: stage.width;
-        stage-height: stage.height;
-        closed => { root.info-close(); }
+    // ── Theme info face lives INSIDE the card, so nothing is drawn here. A
+    // focus change (wheel, arrows, a click on another card) closes it: the
+    // face belongs to the theme it was opened for. ──
+    changed focused-index => {
+        if (root.info-open) { root.info-close(); }
     }
 
     GalleryChrome {

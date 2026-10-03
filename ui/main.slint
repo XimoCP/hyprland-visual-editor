@@ -289,6 +289,7 @@ export component MainWindow inherits Window {
     // `gallery-info-open` so open and close travel one way.
     in property <ThemeInfoData> gallery-info;
     in-out property <bool> gallery-info-open: false;
+    in-out property <int> gallery-info-index: -1;
     callback gallery-style-selected(int);
     callback gallery-card-clicked(int);
     callback gallery-card-right-clicked(int);
@@ -433,6 +434,7 @@ export component MainWindow inherits Window {
         gallery-reduced-motion: root.gallery-reduced-motion;
         gallery-info: root.gallery-info;
         gallery-info-open <=> root.gallery-info-open;
+        gallery-info-index <=> root.gallery-info-index;
         gallery-top-open <=> root.gallery-top-open;
         gallery-bottom-open <=> root.gallery-bottom-open;
         panel-section: root.panel-section;

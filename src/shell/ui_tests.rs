@@ -848,6 +848,8 @@ fn theme_info_panel_renders_closed_and_open() {
     let closed = win.window().take_snapshot().expect("closed snapshot");
     save_slice_png(closed.clone(), "theme_info_closed.png");
 
+    // The face belongs to card `focused` and is drawn INSIDE it.
+    win.set_gallery_info_index(focused as i32);
     win.set_gallery_info_open(true);
     let open = win.window().take_snapshot().expect("open snapshot");
     save_slice_png(open.clone(), "theme_info_open.png");
@@ -858,13 +860,17 @@ fn theme_info_panel_renders_closed_and_open() {
         "both frames come from the same window size"
     );
 
-    // Per-pixel: the panel paints OPACELY on the right slice only. The faint
-    // scrim over the rest is allowed; a big change on the left would mean the
-    // panel covers the window instead of a slice.
+    // Per-pixel: the info must appear INSIDE the expanded card's box and
+    // leave the wallpaper around the carousel untouched. Anything painted
+    // outside the card would mean the panel escapes the theme.
     let (w, h) = (closed.width() as usize, closed.height() as usize);
     let (cb, ob) = (closed.as_bytes(), open.as_bytes());
-    let split = (w as f32 * 0.6) as usize;
-    let (mut big_right, mut big_left, mut sampled_left) = (0usize, 0usize, 0usize);
+    // Expanded card at this stage size: ~924 wide, ~520 tall, centred.
+    let card_left = (w as f32 * 0.5 - 462.0).max(0.0) as usize;
+    let card_right = (w as f32 * 0.5 + 462.0).min(w as f32) as usize;
+    let card_top = (h as f32 * 0.5 - 260.0).max(0.0) as usize;
+    let card_bottom = (h as f32 * 0.5 + 260.0).min(h as f32) as usize;
+    let (mut big_inside, mut big_outside, mut sampled_outside) = (0usize, 0usize, 0usize);
     for y in (0..h).step_by(4) {
         for x in (0..w).step_by(4) {
             let i = (y * w + x) * 4;
@@ -872,25 +878,27 @@ fn theme_info_panel_renders_closed_and_open() {
                 .map(|c| cb[i + c].abs_diff(ob[i + c]))
                 .max()
                 .unwrap_or(0);
-            if x >= split {
+            let inside = x >= card_left && x <= card_right && y >= card_top && y <= card_bottom;
+            if inside {
                 if delta > 40 {
-                    big_right += 1;
+                    big_inside += 1;
                 }
             } else {
-                sampled_left += 1;
+                sampled_outside += 1;
                 if delta > 40 {
-                    big_left += 1;
+                    big_outside += 1;
                 }
             }
         }
     }
     assert!(
-        big_right > 200,
-        "the panel must paint opaquely on the right slice, got {big_right} changed samples"
+        big_inside > 200,
+        "the info face must paint inside the card, got {big_inside} changed samples"
     );
     assert!(
-        big_left * 20 < sampled_left.max(1),
-        "the panel must stay a slice: {big_left} of {sampled_left} left samples changed"
+        big_outside * 50 < sampled_outside.max(1),
+        "the info face must stay inside the theme: {big_outside} of {sampled_outside} \
+         outside samples changed"
     );
 }
 
