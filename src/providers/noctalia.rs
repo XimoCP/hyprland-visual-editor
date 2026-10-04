@@ -522,6 +522,21 @@ fn plugin_reassert_action(was_enabled: Option<bool>) -> PluginReassert {
     }
 }
 
+/// Whether the live mpvpaper manifest may be copied into a theme.
+///
+/// `wants_manifest` is the legacy capture arm (`SavePlan::Unknown` or a
+/// vetoed video) — the only arm that ever considered the manifest. The
+/// manifest belongs to the `noctalia/mpvpaper` plugin, which OWNS video
+/// wallpapers by launching `mpvpaper`; a provably DISABLED plugin owns
+/// nothing, so its live `assignments.json` is stale (it still names the
+/// previous video). The gallery ranks a live assignment above the theme's
+/// own static wallpaper record, so a copied dead manifest would hijack the
+/// theme's preview AND its re-apply. `None` (unreadable) is never
+/// "disabled": the legacy capture is preserved.
+fn should_capture_video_manifest(wants_manifest: bool, plugin_enabled: Option<bool>) -> bool {
+    wants_manifest && plugin_enabled != Some(false)
+}
+
 /// Snapshot whether `noctalia/mpvpaper` is enabled RIGHT NOW, before apply
 /// overwrites the live settings. Primary signal is the live settings.toml
 /// (fast, local, no IPC); fallback is the `plugins list` IPC. `None` when
@@ -1549,15 +1564,34 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    mpvpaper's state file, which still names the previous video, so
         //    an exact painter record must never share a theme with it — apply
         //    would otherwise have two videos claiming the screen.
-        if capture_video_manifest {
+        //
+        //    The manifest is also gated on the plugin being able to paint: a
+        //    provably DISABLED `noctalia/mpvpaper` owns nothing, so its live
+        //    assignments file is dead and copying it would let a stale video
+        //    hijack the theme's preview and re-apply (the gallery ranks a
+        //    live assignment above the theme's own static record). `None`
+        //    (unreadable) is never disabled, so the legacy capture stays.
+        //    Read the tri-state once and reuse it.
+        let plugin_enabled = if capture_video_manifest {
+            live_mpvpaper_plugin_enabled()
+        } else {
+            None
+        };
+        if should_capture_video_manifest(capture_video_manifest, plugin_enabled) {
             match crate::providers::bg_info::save_manifest(&provider_dir) {
                 Ok(()) => {}
                 Err(e) => tracing::warn!("[noctalia-v5] Could not save mpvpaper manifest: {}", e),
             }
         } else {
+            if capture_video_manifest {
+                tracing::info!(
+                    "[noctalia-v5] Skipping the mpvpaper manifest capture: noctalia/mpvpaper is disabled, so its live assignments file is stale"
+                );
+            }
             // Authority decided exactly (static, or video with a painter
-            // record): drop any stale manifest (re-save does not wipe the
-            // dir, and a leftover would hijack apply).
+            // record) or the plugin is disabled: drop any stale manifest
+            // (re-save does not wipe the dir, and a leftover would hijack
+            // apply).
             remove_stale_artifact(&provider_dir.join(crate::providers::bg_info::MANIFEST_FILE));
         }
 
@@ -2303,10 +2337,18 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_noctalia_v5_save_creates_provider_dir() {
         // Save requires noctalia running — we only check that creating the
         // provider directory is attempted. TempDir cleans up
         // automatically on drop (no leftover state between runs).
+        //
+        // WHY #[serial]: `save()` now snapshots the mpvpaper plugin state
+        // through the same `noctalia msg` IPC the stub harnesses shadow onto
+        // the process-global PATH. Unserialized, this smoke test could slip
+        // an extra probe into `PluginProbeStub`'s exact-count log (and it
+        // already races `ColorStub`'s `color-scheme-get`). The serial group
+        // keeps it from overlapping any stub.
         let provider = NoctaliaV5Provider::new();
         let dir = TempDir::new().unwrap();
 
@@ -2751,6 +2793,43 @@ mod tests {
         assert_eq!(plugin_reassert_action(None), PluginReassert::Leave);
     }
 
+    /// G3: the live mpvpaper manifest may be copied into a theme ONLY when
+    /// the `noctalia/mpvpaper` plugin can actually paint. A provably
+    /// DISABLED plugin owns nothing, so its live assignments file is stale
+    /// (it names the previous video) and the gallery ranks a live
+    /// assignment above the theme's own static wallpaper — copying it would
+    /// hijack the theme's preview and re-apply. `None` (unreadable) is
+    /// never disabled, so the legacy capture stays.
+    ///
+    /// The reused tri-state is the same one apply reads: `Some(false)` is a
+    /// positive "disabled", not "leave alone".
+    #[test]
+    fn video_manifest_capture_requires_an_enabled_or_unknown_plugin() {
+        assert!(
+            should_capture_video_manifest(true, Some(true)),
+            "an enabled plugin can paint: the legacy capture must stay"
+        );
+        assert!(
+            should_capture_video_manifest(true, None),
+            "an unreadable state is unknown, never disabled: the legacy capture must stay"
+        );
+        assert!(
+            !should_capture_video_manifest(true, Some(false)),
+            "a provably disabled plugin must never let its stale manifest into a theme"
+        );
+        assert!(
+            !should_capture_video_manifest(false, Some(true)),
+            "an exact static/video arm captures no manifest even when the plugin is enabled"
+        );
+        assert!(!should_capture_video_manifest(false, Some(false)));
+        assert!(!should_capture_video_manifest(false, None));
+        assert_eq!(
+            plugin_reassert_action(Some(false)),
+            PluginReassert::Disable,
+            "the same tri-state must keep reading Some(false) as a defined disabled"
+        );
+    }
+
     /// What the stub answers the `plugins list` probe with.
     enum ProbeAnswer {
         /// The probe prints this line and exits 0.
@@ -3169,10 +3248,12 @@ mod tests {
     ///
     /// One deliberate wrinkle: PATH shadowing is process-global, so a
     /// concurrent suite-mate that runs `noctalia msg color-scheme-get`
-    /// (today: the v5 save test, which is not `#[serial]`) can slip one
-    /// extra get line into this log. Nothing else in the suite issues
+    /// could slip one extra get line into this log. The v5 save test used
+    /// to be that suite-mate; it is now `#[serial]` because `save()` also
+    /// snapshots the plugin through this same global PATH. Get counts stay
+    /// LOWER BOUNDS defensively, and nothing else in the suite issues
     /// `color-scheme-set` or `templates-apply`, so set/template counts
-    /// stay EXACT while get counts are asserted as LOWER BOUNDS.
+    /// stay EXACT.
     ///
     /// The stub records every invocation in `<state>/log` and answers
     /// `color-scheme-get` from `<state>/scheme`. `NOCTALIA_YIELD_AFTER`
