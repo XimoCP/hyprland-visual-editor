@@ -249,6 +249,50 @@ mod tests {
         assert_eq!(t.tr("shell.home.hint"), Some("Las tarjetas de temas llegan en el módulo 2"));
     }
 
+    // ── Shell bottom-bar shortcut keys (keyboard-shortcuts-footer) ────
+
+    #[test]
+    fn test_shell_shortcut_keys_resolve_in_english() {
+        let t = Tr::with_lang("en");
+        assert_eq!(
+            t.tr("shell.shortcuts.home"),
+            Some("←→ move · Enter open · Esc hides")
+        );
+        assert_eq!(
+            t.tr("shell.shortcuts.slider"),
+            Some("←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc back")
+        );
+        assert_eq!(
+            t.tr("shell.shortcuts.mosaic"),
+            Some("←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc back")
+        );
+        assert_eq!(
+            t.tr("shell.shortcuts.panel"),
+            Some("↑↓ move · ← menu · →/Enter section · Enter engage · Esc back")
+        );
+    }
+
+    #[test]
+    fn test_shell_shortcut_keys_resolve_in_spanish() {
+        let t = Tr::with_lang("es");
+        assert_eq!(
+            t.tr("shell.shortcuts.home"),
+            Some("←→ mover · Enter abrir · Esc oculta")
+        );
+        assert_eq!(
+            t.tr("shell.shortcuts.slider"),
+            Some("←→ temas · Enter aplicar · i info · Ctrl+↑↓ cajones · Esc volver")
+        );
+        assert_eq!(
+            t.tr("shell.shortcuts.mosaic"),
+            Some("←↑↓→ mover · Enter ampliar/aplicar · Ctrl+↑↓ cajones · Esc volver")
+        );
+        assert_eq!(
+            t.tr("shell.shortcuts.panel"),
+            Some("↑↓ mover · ← menú · →/Enter sección · Enter activar · Esc volver")
+        );
+    }
+
     #[test]
     fn test_shell_unknown_locale_falls_back_to_english() {
         // tr.rs only knows "es" and "en"; any other code falls back to the

@@ -2741,6 +2741,25 @@ fn main() -> Result<(), slint::PlatformError> {
         guard_block_message.clone()
     });
     window.set_shell_back_hint(tr.tr_shared("shell.back_hint", "Esc hides"));
+    // Bottom-bar shortcut list, one string per context (keyboard-shortcuts-footer).
+    // The shell derives the painted string from the current context; here we only
+    // hand it the four translated candidates.
+    window.set_shell_shortcuts_home(tr.tr_shared(
+        "shell.shortcuts.home",
+        "←→ move · Enter open · Esc hides",
+    ));
+    window.set_shell_shortcuts_slider(tr.tr_shared(
+        "shell.shortcuts.slider",
+        "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc back",
+    ));
+    window.set_shell_shortcuts_mosaic(tr.tr_shared(
+        "shell.shortcuts.mosaic",
+        "←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc back",
+    ));
+    window.set_shell_shortcuts_panel(tr.tr_shared(
+        "shell.shortcuts.panel",
+        "↑↓ move · ← menu · →/Enter section · Enter engage · Esc back",
+    ));
     window.set_shell_home_hint(tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"));
     window.set_shell_gallery_hint(tr.tr_shared("shell.gallery.hint", "Gallery slot — module 2"));
     window.set_shell_workshop_hint(tr.tr_shared("shell.workshop.hint", "Workshop slot — module 4"));

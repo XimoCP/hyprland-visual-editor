@@ -435,6 +435,92 @@ fn main_window_exposes_shell_i18n_properties() {
     assert_eq!(win.get_shell_back_hint(), "Esc hides");
 }
 
+/// The always-visible bottom bar must list the keyboard shortcuts for the
+/// CURRENT context (Home / Gallery Slider / Gallery Mosaic / Settings panel),
+/// in the active language, and switch the list when the context changes with
+/// no stale value left behind. The list text is owned by Rust out of the i18n
+/// map, so the test fills the four context strings from `Tr` exactly like
+/// main.rs does and reads the derived bar property (not a grep of source).
+#[test]
+fn shell_bottom_bar_shows_context_shortcuts() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    let tr = crate::tr::Tr::with_lang("es");
+
+    // Same wiring shape as main.rs: each context string is the Spanish key.
+    win.set_shell_shortcuts_home(tr.tr_shared("shell.shortcuts.home", ""));
+    win.set_shell_shortcuts_slider(tr.tr_shared("shell.shortcuts.slider", ""));
+    win.set_shell_shortcuts_mosaic(tr.tr_shared("shell.shortcuts.mosaic", ""));
+    win.set_shell_shortcuts_panel(tr.tr_shared("shell.shortcuts.panel", ""));
+
+    // Home.
+    win.set_mounted_screen(0);
+    win.set_is_panel_open(false);
+    win.set_gallery_style(0);
+    let home = win.get_shell_shortcuts();
+    assert!(!home.is_empty(), "Home must list its shortcuts");
+    assert_eq!(
+        home.as_str(),
+        tr.tr("shell.shortcuts.home").unwrap(),
+        "Home bar copy must be the translated `shell.shortcuts.home`"
+    );
+
+    // Gallery Slider.
+    win.set_mounted_screen(1);
+    win.set_gallery_style(0);
+    let slider = win.get_shell_shortcuts();
+    assert!(!slider.is_empty(), "Slider must list its shortcuts");
+    assert_ne!(slider, home, "Slider list must differ from Home");
+    assert_eq!(slider.as_str(), tr.tr("shell.shortcuts.slider").unwrap());
+
+    // Gallery Mosaic.
+    win.set_gallery_style(2);
+    let mosaic = win.get_shell_shortcuts();
+    assert!(!mosaic.is_empty(), "Mosaic must list its shortcuts");
+    assert_ne!(mosaic, slider, "Mosaic list must differ from Slider");
+    assert_eq!(mosaic.as_str(), tr.tr("shell.shortcuts.mosaic").unwrap());
+
+    // Settings panel wins over the mounted screen: it is an overlay.
+    win.set_is_panel_open(true);
+    let panel = win.get_shell_shortcuts();
+    assert!(!panel.is_empty(), "Panel must list its shortcuts");
+    assert_ne!(panel, mosaic, "Panel list must differ from Mosaic");
+    assert_eq!(panel.as_str(), tr.tr("shell.shortcuts.panel").unwrap());
+
+    // Back to the Slider: no stale panel value may be left behind.
+    win.set_is_panel_open(false);
+    win.set_mounted_screen(1);
+    win.set_gallery_style(0);
+    assert_eq!(
+        win.get_shell_shortcuts(),
+        slider,
+        "returning to the Slider must restore its list"
+    );
+
+    // The copy must come from the i18n map: the four English hint strings
+    // may not appear as literals in the .slint, and main.rs must set them
+    // from the `shell.shortcuts.*` keys.
+    let shell_src = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
+    let main_src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let en = crate::tr::Tr::with_lang("en");
+    for key in [
+        "shell.shortcuts.home",
+        "shell.shortcuts.slider",
+        "shell.shortcuts.mosaic",
+        "shell.shortcuts.panel",
+    ] {
+        let copy = en.tr(key).expect("English shortcut key must exist");
+        assert!(
+            !shell_src.contains(copy),
+            "ui/shell.slint must not hardcode the shortcut copy for {key}"
+        );
+        assert!(
+            main_src.contains(key),
+            "src/main.rs must set {key} from the i18n map"
+        );
+    }
+}
+
 #[test]
 fn main_window_exposes_navigation_callbacks() {
     init_test_platform();
@@ -837,6 +923,82 @@ fn ctrl_drawer_deploy_renders() {
     );
     let mosaic = win.window().take_snapshot().expect("mosaic top drawer snapshot");
     save_slice_png(mosaic, "ctrl_top_drawer_mosaic.png");
+}
+
+// ── Bottom-bar shortcuts: visual proof across contexts ─────────────────
+// The bar is a `.slint` change, so green tests are not enough: this renders
+// the four contexts and saves the frames for human review. Read the PNGs from
+// the printed per-run directory; the list must fit one line, be legible at
+// size-12, and not collide with the window edge or the MIT footer.
+#[test]
+fn shell_shortcuts_bar_renders() {
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_gallery_empty(false);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_mutating(false);
+
+    // Same wiring shape as main.rs: the four context strings come from Tr.
+    let tr = crate::tr::Tr::with_lang("en");
+    win.set_shell_shortcuts_home(tr.tr_shared("shell.shortcuts.home", ""));
+    win.set_shell_shortcuts_slider(tr.tr_shared("shell.shortcuts.slider", ""));
+    win.set_shell_shortcuts_mosaic(tr.tr_shared("shell.shortcuts.mosaic", ""));
+    win.set_shell_shortcuts_panel(tr.tr_shared("shell.shortcuts.panel", ""));
+
+    // A little gallery content so the Slider/Mosaic frames are representative.
+    let count = 6usize;
+    let focused = 2usize;
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        (0..count)
+            .map(|i| late_card(&format!("Theme {i}"), i == focused))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+        count, focused, 1920.0,
+    ))));
+    win.set_gallery_slice_delta_base(focused as i32);
+    win.set_gallery_slice_focus_pos(focused as f32);
+
+    // Home.
+    win.set_mounted_screen(0);
+    win.set_is_panel_open(false);
+    win.set_gallery_style(0);
+    focus_settle();
+    let home = win.window().take_snapshot().expect("home snapshot");
+    save_slice_png(home, "shortcuts_bar_home.png");
+
+    // Gallery Slider.
+    win.set_mounted_screen(1);
+    win.set_gallery_style(0);
+    win.set_expanded(true);
+    focus_settle();
+    let slider = win.window().take_snapshot().expect("slider snapshot");
+    save_slice_png(slider, "shortcuts_bar_slider.png");
+
+    // Gallery Mosaic.
+    win.set_gallery_style(2);
+    focus_settle();
+    let mosaic = win.window().take_snapshot().expect("mosaic snapshot");
+    save_slice_png(mosaic, "shortcuts_bar_mosaic.png");
+
+    // Settings panel (the overlay wins over the mounted screen).
+    win.set_is_panel_open(true);
+    win.set_panel_section(4);
+    focus_settle();
+    let panel = win.window().take_snapshot().expect("panel snapshot");
+    save_slice_png(panel, "shortcuts_bar_panel.png");
 }
 
 // ── Theme info panel geometry (Slint visual proof) ─────────────────────

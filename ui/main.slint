@@ -250,6 +250,14 @@ export component MainWindow inherits Window {
     in property <string> shell-brand-subtitle: "Hyprland Visual Editor";
     in property <string> shell-status-text: "Ready";
     in property <string> shell-back-hint: "Esc hides";
+    // Bottom-bar shortcut list, one string per context (keyboard-shortcuts-footer).
+    // Rust fills them from the i18n `shell.shortcuts.*` keys; the shell derives
+    // `shell-shortcuts` (read-only) from the current context.
+    in property <string> shell-shortcuts-home: "";
+    in property <string> shell-shortcuts-slider: "";
+    in property <string> shell-shortcuts-mosaic: "";
+    in property <string> shell-shortcuts-panel: "";
+    out property <string> shell-shortcuts: shell.shortcuts-hint;
     in property <string> shell-home-hint: "Home — theme cards land in module 2";
     in property <string> shell-gallery-hint: "Gallery slot — module 2";
     in property <string> shell-workshop-hint: "Workshop slot — module 4";
@@ -423,6 +431,10 @@ export component MainWindow inherits Window {
         logo-image: root.logo-image;
         status-text: root.shell-status-text;
         back-hint: root.shell-back-hint;
+        shortcuts-home: root.shell-shortcuts-home;
+        shortcuts-slider: root.shell-shortcuts-slider;
+        shortcuts-mosaic: root.shell-shortcuts-mosaic;
+        shortcuts-panel: root.shell-shortcuts-panel;
         slot-home-hint: root.shell-home-hint;
         slot-gallery-hint: root.shell-gallery-hint;
         slot-workshop-hint: root.shell-workshop-hint;

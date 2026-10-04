@@ -62,6 +62,22 @@ export component ShellRoot inherits Rectangle {
     in property <string> status-text: "Ready";
     in property <string> back-hint: "Esc hides";
 
+    // ── Bottom-bar shortcut list (keyboard-shortcuts-footer) ──
+    // One string per context, set from Rust out of the i18n `shell.shortcuts.*`
+    // keys — no copy lives in this file. `shortcuts-hint` is the ONE string the
+    // bar paints: it picks the current context from state the shell already
+    // mirrors (panel overlay > Mosaic > Slider > Home), so switching context
+    // re-evaluates the binding and never leaves a stale list behind.
+    in property <string> shortcuts-home: "";
+    in property <string> shortcuts-slider: "";
+    in property <string> shortcuts-mosaic: "";
+    in property <string> shortcuts-panel: "";
+    out property <string> shortcuts-hint:
+        root.is-panel-open ? root.shortcuts-panel
+        : root.mounted-screen == 1 && root.gallery-style == 2 ? root.shortcuts-mosaic
+        : root.mounted-screen == 1 ? root.shortcuts-slider
+        : root.shortcuts-home;
+
     // ── Slot-area placeholder strings (i18n) ──
     // The real gallery/workshop slot views land in modules 2/4; until then
     // these placeholders describe the slot. Rust sets them from `shell.*`
@@ -802,20 +818,26 @@ export component ShellRoot inherits Rectangle {
             }
         }
 
-        // ── Chrome bottom bar: back affordance hint ──
+        // ── Chrome bottom bar: the current context's keyboard shortcuts ──
+        // Always visible, one line, size-12. The list is context-sensitive
+        // (Home / Slider / Mosaic / Panel) and translated; `Esc hides` is
+        // merged into the Home list instead of painted twice, because in the
+        // other contexts Esc does not hide the window but goes back.
         Rectangle {
             height: 32px;
             background: HveColors.bg-card;
+            clip: true;
 
             HorizontalLayout {
                 padding-left: SkwdTokens.spacing-16;
                 padding-right: SkwdTokens.spacing-16;
                 Text {
-                    text: root.back-hint;
+                    text: root.shortcuts-hint;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
                     color: HveColors.text-muted;
                     vertical-alignment: center;
+                    horizontal-stretch: 1;
                 }
             }
         }

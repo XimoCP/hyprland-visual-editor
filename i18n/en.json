@@ -519,6 +519,12 @@
     "lua_migration": "HVE only manages hyprland.lua — migrate from hyprland.conf",
     "lua_enable": "Run init.sh enable to let HVE manage hyprland.lua",
     "back_hint": "Esc hides",
+    "shortcuts": {
+      "home": "←→ move · Enter open · Esc hides",
+      "slider": "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc back",
+      "mosaic": "←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc back",
+      "panel": "↑↓ move · ← menu · →/Enter section · Enter engage · Esc back"
+    },
     "slots": {
       "home": "Home",
       "gallery": "Gallery",
