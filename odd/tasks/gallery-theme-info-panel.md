@@ -259,6 +259,13 @@ mouse path (the ChromeButton arrows) still works.
 
 Whatever is chosen must keep the Slider's Up/Down behaviour byte-identical.
 
+**Minor pendings — CLOSED (keeper's live test, 2026-10-04)**: both keeper-owned
+live questions are resolved, so neither is open any more. (a) the mosaic
+expansion fade (`805231c` carries the current version) and (b) the legibility of
+the translucent face over a bright image (the suggestion struck in the review
+section below). No source change followed either one. The keeper did not record
+which outcome was chosen, so no decision detail is invented here.
+
 
 ## Final shape of the face (keeper's brief)
 
@@ -304,8 +311,10 @@ Same reviewer and model. Findings and disposition:
 - **SUGGESTION — the ladder callbacks are not unit-tested end to end**: the
   render test drives the flags directly. NOT fixed; the input-path test above
   covers the click half of it.
-- **SUGGESTION — legibility of the face over a bright theme image** (the face
-  is translucent by the keeper's own request). Left for the keeper's live test.
+- ~~**SUGGESTION — legibility of the face over a bright theme image**~~ (the face
+  is translucent by the keeper's own request). **CLOSED by the keeper's live test
+  (2026-10-04).** No source change followed: `805231c` is still the last source
+  commit on the branch.
 - Clean per the reviewer: the no-reflow claim itself (nothing in the grown-card
   path rebuilds the wall), the keyboard branches versus the Slider, and the
   `mosaic_neighbor` unit tests.
