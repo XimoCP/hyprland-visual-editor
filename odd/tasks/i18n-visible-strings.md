@@ -346,3 +346,60 @@ The writer corrected this document four more times, and all four stand:
    control-point coordinates and `a`/`b`/`c`/`d` are their conventional names,
    so a translation would obscure rather than clarify. `Ready` is fed from `tr`
    in production; only the render harness leaves it.
+
+### S5 / S6 — deployed drawer pills and Motion preset descriptions (done)
+
+Two gaps the keeper found in the running app. Commit `feat(ui): the deployed
+drawer pills and the Motion preset descriptions`, writer `general-free` (MiMo).
+
+**S5 — the deployed drawers were English.** The gallery drawer pills carry 15
+hardcoded section labels (5 in `ui/gallery/FilterBar.slint`, 10 in
+`ui/gallery/GalleryRoot.slint`). All fifteen now read `PanelText.nav-*`, the
+global `panel_i18n::apply_panel_chrome` already fills and the left rail already
+reads. No new key and no new Rust: the words were translated all along, the
+drawer just was not asking for them.
+
+`ui/gallery/FilterBar.slint` is NOT instantiated by any Slint file — the HVE 2
+rewrite replaced it with the gallery chrome. Its five bindings are
+consistency-only and are declared as such; the ten live ones are in
+`GalleryRoot.slint`.
+
+**S6 — the Motion cards never showed their descriptions.** Every built-in
+animation preset carries a short description, already translated and already
+reaching the section (`PanelRoot.slint:867` passes `anim-descs: root.anim-descs`,
+filled by `translate_presets`), and `SavedPresetCard` already paints a `desc`
+when given one. `MotionListPane` simply had no `builtin-descs` to read. It has
+one now, passed by both instances, with the same length guard Borders uses
+(`i < root.builtin-descs.length ? … : ""`). User presets carry none, matching
+Borders, because their stored description is a generic placeholder.
+
+**This document's inventory missed the deployed drawers completely** — the
+seventh such miss. They live in `ui/gallery/`, and S4 was written as "gallery
+leftovers", which did not cover the drawer chrome. Recorded because the pattern
+is now unmistakable: a static inventory of the section files does not see the
+chrome that hosts them.
+
+GREEN: `cargo test` — **1341 passed, 0 failed** (92.93s), run by the PARENT.
+Source check by the parent: 5 + 10 `label: PanelText.nav-*` and 0 literals left;
+`builtin-descs` declared once and passed by both instances.
+
+VISUAL: `/tmp/opencode/render-i18n-slice5/contact_sheet.png`, read by the parent
+with vision. It shows, in one labelled sheet: the drawer pills EN
+(`Save/Borders/Motion/Filters/System`) against ES
+(`Guardar/Bordes/Movimiento/Filtros/Sistema`); the Motion built-in cards in
+Spanish with their descriptions ("Relámpago / Máxima respuesta visual.",
+"Inercia Elástica / Movimiento orgánico…", "Seda Minimalista / Suavidad
+absoluta…"); the same cards with the description model emptied (titles only);
+and a control with ES titles plus EN descriptions. Emptying the model changed
+zero pixels before the fix, which is the proof nothing had ever painted it.
+
+Review tier: **Tier 2** (text and data wiring, no path, permission, thread,
+state-machine or cross-subsystem change), so the parent's review plus the render
+pass is the proportional check.
+
+## Follow-up added by S5/S6
+
+8. The style pills (`Slider` / `Mosaic` / `Slice`) in the same drawer are still
+   hardcoded English and have no i18n keys. They name presentation styles rather
+   than panel sections, so deciding their Spanish wording is a product call, not
+   a mechanical one.
