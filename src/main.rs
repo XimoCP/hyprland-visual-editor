@@ -947,6 +947,23 @@ fn close_gallery_info(window: &crate::MainWindow) {
     }
 }
 
+/// Invalidation set for the Save panel's refresh store: the one theme whose
+/// card must be blanked so the thumb scheduler re-bakes it.
+///
+/// The refresh re-saves exactly `last_applied`, so that name is the only
+/// card whose background may have changed on disk. An empty `last_applied`
+/// is a no-op save, so it invalidates nothing (unrelated cards keep their
+/// bakes). Pure and directly unit-tested — see
+/// `shell::ui_tests::refresh_invalidation_set_derives_the_invalidated_theme` —
+/// so the handler's wiring check cannot be satisfied by its own comments.
+fn refresh_invalidation_set(last_applied: &str) -> std::collections::HashSet<String> {
+    let mut invalidated = std::collections::HashSet::new();
+    if !last_applied.is_empty() {
+        invalidated.insert(last_applied.to_string());
+    }
+    invalidated
+}
+
 /// Rebuild window gallery cards from gallery_tm in place (keeps baked thumbs)
 /// then refresh mosaic + slice ring. Shared by Save rename/delete/refresh/
 /// overwrite so the Gallery follows without restart. `invalidate` names the
@@ -4692,10 +4709,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // only — a content-keyed warm cache makes an unchanged source
                 // cheap, and unrelated cards keep their bakes (no mass
                 // invalidation, no flicker).
-                let mut invalidated = std::collections::HashSet::new();
-                if !refreshed.is_empty() {
-                    invalidated.insert(refreshed.clone());
-                }
+                let invalidated = refresh_invalidation_set(&refreshed);
                 sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &invalidated);
                 schedule_thumbs(&weak, &gallery_themes_root_c, &stage_dims_c, refresh_mosaic_page_c.clone());
             });

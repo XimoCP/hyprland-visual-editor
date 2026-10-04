@@ -17229,6 +17229,26 @@ fn overwrite_refresh_invalidates_only_the_overwritten_card() {
     );
 }
 
+// ── G5: the refresh invalidation set is a pure, directly testable rule ──
+// The construction check below can only prove the handler CALLS the
+// helper; this pins what the helper must return. An empty `last_applied`
+// is a no-op save, so it invalidates nothing; any other name invalidates
+// exactly that one theme, so unrelated cards keep their bakes. A comment
+// cannot satisfy these assertions.
+#[test]
+fn refresh_invalidation_set_derives_the_invalidated_theme() {
+    assert!(
+        crate::refresh_invalidation_set("").is_empty(),
+        "an empty last_applied is a no-op save: nothing may be invalidated"
+    );
+    let set = crate::refresh_invalidation_set("joke2");
+    assert_eq!(set.len(), 1, "exactly one theme may be invalidated");
+    assert!(
+        set.contains("joke2"),
+        "the re-saved theme must be the one invalidated"
+    );
+}
+
 // ── U7 wiring: the overwrite handler invalidates its theme and re-bakes ─
 // The refresh path above only helps if the overwrite handler actually uses
 // it: it must pass its own theme name as the invalidation set and run the
@@ -17258,10 +17278,18 @@ fn overwrite_saved_theme_rebakes_its_card_by_construction() {
 // ── U7 wiring: the refresh handler invalidates its theme and re-bakes ──
 // The refresh store rewrites the active theme's files on disk, so it is
 // exactly a path that CAN change artwork — unlike rename/delete. It must
-// mirror the overwrite handler: pass its re-saved theme (`last_applied`)
-// as the invalidation set and run the EXISTING thumb scheduler afterwards
-// (no second scheduler). Construction check — the async bake itself is
-// covered by the scheduler's own tests and the model-level test above.
+// mirror the overwrite handler: derive the invalidation set from its
+// re-saved theme (`last_applied`) and run the EXISTING thumb scheduler
+// afterwards (no second scheduler). Construction check — the async bake
+// itself is covered by the scheduler's own tests and the model-level test
+// above.
+//
+// G5: assert on the helper CALL, not on prose. A bare `invalidat` /
+// `last_applied` substring also appears in the handler's comments, so a
+// disguised re-break (inline `HashSet::new()` while the comments survive)
+// used to pass. `refresh_invalidation_set(` and `schedule_thumbs(` are
+// tokens only real wiring emits; the pure helper's own contract is pinned
+// by `refresh_invalidation_set_derives_the_invalidated_theme` below.
 #[test]
 fn refresh_saved_theme_rebakes_its_card_by_construction() {
     let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
@@ -17274,15 +17302,12 @@ fn refresh_saved_theme_rebakes_its_card_by_construction() {
         .next()
         .unwrap_or(handler);
     assert!(
-        handler.contains("last_applied"),
-        "the refresh handler must derive the invalidated theme from the manager's last_applied"
+        handler.contains("refresh_invalidation_set("),
+        "the refresh handler must build its invalidation set through the \
+         pure helper (comments cannot satisfy this)"
     );
     assert!(
-        handler.contains("invalidat"),
-        "the refresh handler must pass its re-saved theme as the invalidation set"
-    );
-    assert!(
-        handler.contains("schedule_thumbs"),
+        handler.contains("schedule_thumbs("),
         "the refresh handler must reuse the existing thumb scheduler to re-bake"
     );
 }
