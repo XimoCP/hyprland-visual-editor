@@ -77,8 +77,12 @@ const CANONICAL_LEAVES: [&str; 4] = ["windowsIn", "windowsOut", "windowsMove", "
 ///
 /// Hyprland validates the style PER LEAF, so one global family cannot be
 /// copied verbatim onto every leaf (this is what made Hyprland reject a
-/// popin-based user preset):
-/// - `windowsIn` / `windowsOut` accept the chosen family.
+/// popin-based user preset, and later a fade-based one):
+/// - `windowsIn` / `windowsOut` do NOT accept the whole family set: they
+///   reject `fade` outright (`hl.animation("windowsIn"): unknown style`), so
+///   `Fade` is emitted as `popin 100%` — the same trick the shipped presets
+///   use for the faded look (`15_desvanecido` uses `popin 90%` / `popin 95%`
+///   there, and `11_futurista` uses `popin 100%` on `windowsOut`).
 /// - `windowsMove` accepts slide only — every one of the 19 built-in presets
 ///   uses `slide` there and Hyprland rejects anything else.
 /// - `workspaces` rejects `popin`, so it falls back to `fade`.
@@ -87,6 +91,12 @@ pub fn style_for_leaf(style: AnimationStyle, leaf: &str) -> &'static str {
         "windowsMove" => "slide",
         "workspaces" => match style {
             AnimationStyle::Popin => "fade",
+            other => other.as_lua(),
+        },
+        "windowsIn" | "windowsOut" => match style {
+            // Hyprland rejects `fade` on the windows leaves (unknown style),
+            // so the faded look is spelled with popin at full size instead.
+            AnimationStyle::Fade => "popin 100%",
             other => other.as_lua(),
         },
         _ => style.as_lua(),
@@ -130,9 +140,34 @@ pub fn parse(content: &str) -> Option<AnimationParams> {
     let chosen = anims.iter().find(|a| a.leaf == "windowsIn");
 
     // Style: prefer windowsIn, else the first animation that declares one.
+    //
+    // `style_for_leaf` maps the chosen `Fade` onto `popin 100%` for the windows
+    // leaves (Hyprland rejects `fade` there), which makes them ambiguous with
+    // the `Popin` family on the way back. The witness is read from the OUTPUT
+    // itself, never from a header comment: a preset this module generated puts
+    // `popin 100%` on BOTH windows leaves only when the keeper chose `Fade`,
+    // because `Popin` emits `popin 80%` on both. No shipped preset writes
+    // `popin 100%` on `windowsIn` at all (they use 70–95%).
+    //
+    // A comment would also work and was the first attempt, but it makes a line
+    // the keeper can delete load-bearing for behaviour: drop it from a `Fade`
+    // preset and the pane would show `Popin` and the next save would write
+    // `popin 80%`, silently changing the animation. The pair cannot be deleted
+    // by accident.
+    let both_windows_leaves_are_popin_100 = ["windowsIn", "windowsOut"].iter().all(|leaf| {
+        anims.iter().any(|a| {
+            a.leaf == *leaf && a.style.as_deref().map(str::trim) == Some("popin 100%")
+        })
+    });
     let style = chosen
         .and_then(|a| a.style.as_deref())
-        .and_then(AnimationStyle::from_lua)
+        .and_then(|raw| {
+            if both_windows_leaves_are_popin_100 {
+                Some(AnimationStyle::Fade)
+            } else {
+                AnimationStyle::from_lua(raw)
+            }
+        })
         .or_else(|| {
             anims
                 .iter()
@@ -382,6 +417,7 @@ fn match_brace(s: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
 
     const STYLIZED: &str = include_str!("../assets/animations/19_stylized2.5D.lua");
 
@@ -413,6 +449,41 @@ mod tests {
             let lua = generate("Test", &p);
             assert_eq!(parse(&lua), Some(p.clone()), "round trip failed for {p:?}\n{lua}");
         }
+    }
+
+    /// The `Fade` witness is read from the emitted styles, not from a header
+    /// comment: a keeper who strips `-- @Source: user` from a saved preset must
+    /// still get `Fade` back. While the witness was the comment, removing that
+    /// line made the pane show `Popin` and the next save write `popin 80%`,
+    /// silently changing the animation.
+    #[test]
+    fn the_fade_witness_survives_a_stripped_source_comment() {
+        let p = AnimationParams {
+            bezier: [0.25, 0.1, 0.25, 1.0],
+            speed: 3.0,
+            style: AnimationStyle::Fade,
+        };
+        let generated = generate("Strip the marker", &p);
+        assert_eq!(
+            parse(&generated).map(|x| x.style),
+            Some(AnimationStyle::Fade),
+            "a generated Fade preset must read back as Fade\n{generated}"
+        );
+
+        let stripped: String = generated
+            .lines()
+            .filter(|line| !line.contains("-- @Source:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !stripped.contains("-- @Source:"),
+            "the test itself must remove the marker line"
+        );
+        assert_eq!(
+            parse(&stripped).map(|x| x.style),
+            Some(AnimationStyle::Fade),
+            "the witness must not depend on a comment the keeper can delete\n{stripped}"
+        );
     }
 
     #[test]
@@ -470,16 +541,118 @@ mod tests {
         Some(body[..end].to_string())
     }
 
-    /// Styles Hyprland accepts for a generated leaf. Derived from the 19 real
-    /// presets in `assets/animations/`: `windowsMove` is slide-only, and
-    /// `workspaces` never uses popin.
+    /// Styles the generator can emit for one canonical leaf. This table sits next
+    /// to the generator and mirrors its assumptions, so it can only confirm
+    /// self-consistency — it can never see a wrong entry of its own. The
+    /// independent check is `every_emitted_family_is_used_by_the_shipped_corpus_on_the_same_leaf`,
+    /// which derives the truth from `assets/animations/*.lua`.
+    ///
+    /// Derived from the 19 real presets in `assets/animations/`: `windowsMove`
+    /// is slide-only, `workspaces` never uses popin, and the windows leaves
+    /// never use `fade` (Hyprland rejects it there).
     fn allowed_styles_for(leaf: &str) -> &'static [&'static str] {
         match leaf {
-            "windowsIn" | "windowsOut" => &["slide", "fade", "popin 80%", "slidefade 20%"],
+            "windowsIn" | "windowsOut" => &["slide", "popin 80%", "popin 100%", "slidefade 20%"],
             "windowsMove" => &["slide"],
             "workspaces" => &["slide", "fade", "slidefade 20%"],
             other => panic!("unexpected leaf {other}"),
         }
+    }
+
+    /// Leading style family of a raw Lua style value, parameters stripped:
+    /// `popin 95%` → `popin`, `slidefade 20%` → `slidefade`,
+    /// `slidevert` → `slidevert`, `slide right` → `slide`.
+    fn style_family(raw: &str) -> String {
+        raw.trim()
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect::<String>()
+            .to_ascii_lowercase()
+    }
+
+    /// Style families observed per leaf across the shipped preset corpus in
+    /// `assets/animations/` — files Hyprland already accepts. This is the
+    /// generator's INDEPENDENT source of truth: unlike `allowed_styles_for`,
+    /// no entry here was written from the generator's own assumptions.
+    fn corpus_families_per_leaf() -> BTreeMap<String, BTreeSet<String>> {
+        let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut files = 0usize;
+        let entries = std::fs::read_dir("assets/animations")
+            .unwrap_or_else(|e| panic!("cannot read the preset corpus: {e}"));
+        for entry in entries {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("lua") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            for anim in extract_animations(&content) {
+                if let Some(style) = anim.style {
+                    map.entry(anim.leaf)
+                        .or_default()
+                        .insert(style_family(&style));
+                }
+            }
+            files += 1;
+        }
+        assert!(
+            files >= 19,
+            "expected at least the 19 shipped presets in assets/animations, found {files} — \
+             an empty corpus would let every emission pass unchallenged"
+        );
+        map
+    }
+
+    /// Emission pairs the shipped corpus CANNOT confirm: no preset in
+    /// `assets/animations/` uses this family on this leaf. These pairs are
+    /// also UNCONFIRMED against live Hyprland (nobody has saved such a preset
+    /// and watched it load). They are kept unchanged because the reported bug
+    /// is `fade` on the windows leaves, and rewriting this pre-existing
+    /// `slidefade` emission would be an unrequested behaviour change. Named
+    /// uncertainty: `slidefade` on `windowsIn` / `windowsOut`.
+    const CORPUS_UNCONFIRMED: &[(&str, &str)] =
+        &[("windowsIn", "slidefade"), ("windowsOut", "slidefade")];
+
+    /// The independent validator: every style family HVE can emit on a
+    /// canonical leaf must be a family the shipped corpus actually uses on
+    /// that same leaf (those files are Hyprland-accepted evidence), unless it
+    /// sits in the explicit `CORPUS_UNCONFIRMED` exception list.
+    #[test]
+    fn every_emitted_family_is_used_by_the_shipped_corpus_on_the_same_leaf() {
+        let corpus = corpus_families_per_leaf();
+        let mut violations = Vec::new();
+        for style in [
+            AnimationStyle::Slide,
+            AnimationStyle::Fade,
+            AnimationStyle::Popin,
+            AnimationStyle::SlideFade,
+        ] {
+            let p = AnimationParams {
+                bezier: [0.4, -0.3, 0.2, 1.15],
+                speed: 2.0,
+                style,
+            };
+            let lua = generate("Corpus Check", &p);
+            for (leaf, value) in emitted_leaf_styles(&lua) {
+                let family = style_family(&value);
+                if CORPUS_UNCONFIRMED.contains(&(leaf.as_str(), family.as_str())) {
+                    continue;
+                }
+                let observed = corpus.get(&leaf).cloned().unwrap_or_default();
+                if !observed.contains(&family) {
+                    violations.push(format!(
+                        "chosen style {style:?} emits {value:?} (family {family:?}) on leaf {leaf:?}, \
+                         but no preset in assets/animations uses that family on that leaf — \
+                         corpus families for {leaf:?}: {observed:?}"
+                    ));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "styles Hyprland may reject:\n{}",
+            violations.join("\n")
+        );
     }
 
     #[test]
