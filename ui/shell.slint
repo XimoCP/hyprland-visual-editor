@@ -860,6 +860,26 @@ export component ShellRoot inherits Rectangle {
                 return accept;
             }
             if (root.is-panel-open) { return reject; }
+            // Ctrl+Up / Ctrl+Down deploy the behind-drawers (top Settings,
+            // bottom Slider/Mosaic) in BOTH gallery styles. It sits BEFORE the
+            // Mosaic branch on purpose: that branch consumes all four arrows
+            // with no modifier check, so placing the drawer keys here is what
+            // makes Ctrl+arrows win in the Mosaic too. It mirrors the mouse
+            // toggle in GalleryRoot's top/bottom ChromeButtons (mutual
+            // exclusion included) and stays inert while a mutation is in
+            // flight, exactly like nav-move's own guard.
+            if (event.modifiers.control && root.mounted-screen == 1 && !root.is-mutating) {
+                if (event.text == Key.UpArrow) {
+                    root.gallery-top-open = !root.gallery-top-open;
+                    if (root.gallery-top-open) { root.gallery-bottom-open = false; }
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    root.gallery-bottom-open = !root.gallery-bottom-open;
+                    if (root.gallery-bottom-open) { root.gallery-top-open = false; }
+                    return accept;
+                }
+            }
             // Mosaic: the arrows move the cursor across the wall (Rust decides
             // where a move lands — the wall's layout lives there), Enter grows
             // the focused tile and a second Enter applies it. The cursor alone

@@ -761,6 +761,84 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     win.set_gallery_slice_rebasing(false);
 }
 
+// ── Ctrl+arrows deploy the drawers: visual proof ───────────────────────
+// The Ctrl branch is a `.slint` change, so a green test is not enough: this
+// renders the drawer actually deployed by Ctrl+Up / Ctrl+Down through the real
+// keyboard path, in both gallery styles. Read the PNGs from the printed run
+// directory (reduced motion pins the settled frame — no event loop runs here).
+#[test]
+fn ctrl_drawer_deploy_renders() {
+    use slint::platform::Key;
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(false);
+    win.set_is_mutating(false);
+
+    let count = 6usize;
+    let focused = 2usize;
+    win.set_gallery_focused(focused as i32);
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        (0..count)
+            .map(|i| late_card(&format!("Theme {i}"), i == focused))
+            .collect::<Vec<_>>(),
+    )));
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(count, focused, 1920.0))));
+    win.set_gallery_slice_delta_base(focused as i32);
+    win.set_gallery_slice_focus_pos(focused as f32);
+
+    // Slider (style 0): Ctrl+Up deploys the top Settings drawer.
+    win.set_gallery_style(0);
+    focus_settle();
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open(),
+        "Ctrl+Up must deploy the top drawer before the snapshot"
+    );
+    let top = win.window().take_snapshot().expect("top drawer snapshot");
+    save_slice_png(top, "ctrl_top_drawer_slider.png");
+    win.set_gallery_top_open(false);
+    focus_settle();
+
+    // Slider (style 0): Ctrl+Down deploys the bottom style drawer.
+    focus_press_key_with_ctrl(&win, Key::DownArrow);
+    assert!(
+        win.get_gallery_bottom_open(),
+        "Ctrl+Down must deploy the bottom drawer before the snapshot"
+    );
+    let bottom = win.window().take_snapshot().expect("bottom drawer snapshot");
+    save_slice_png(bottom, "ctrl_bottom_drawer_slider.png");
+    win.set_gallery_bottom_open(false);
+    focus_settle();
+
+    // Mosaic (style 2): Ctrl+Up still deploys the top drawer — the branch sits
+    // before the Mosaic arrow branch and wins there too.
+    win.set_gallery_style(2);
+    focus_settle();
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open(),
+        "Ctrl+Up must deploy the top drawer in the Mosaic before the snapshot"
+    );
+    let mosaic = win.window().take_snapshot().expect("mosaic top drawer snapshot");
+    save_slice_png(mosaic, "ctrl_top_drawer_mosaic.png");
+}
+
 // ── Theme info panel geometry (Slint visual proof) ─────────────────────
 // The panel the Slider opens on right-click / `i`: it must be a localised
 // slice on the RIGHT (never the whole window) and it must actually paint.
@@ -5096,6 +5174,25 @@ fn focus_press_key(win: &crate::MainWindow, key: slint::platform::Key) {
     use slint::platform::WindowEvent;
     win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
     win.window().dispatch_event(WindowEvent::KeyReleased { text });
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+/// Dispatch a key press + release pair while Control is held. The modifier
+/// state is tracked by the window from the individual `Control` key events
+/// (`i-slint-core` `state_update`), so the arrow event then carries
+/// `modifiers.control` — the test drives the real keyboard path instead of
+/// faking the modifier on a property.
+fn focus_press_key_with_ctrl(win: &crate::MainWindow, key: slint::platform::Key) {
+    use slint::ComponentHandle as _;
+    use slint::platform::WindowEvent;
+    let ctrl: slint::SharedString = slint::platform::Key::Control.into();
+    let text: slint::SharedString = key.into();
+    win.window().dispatch_event(WindowEvent::KeyPressed { text: ctrl.clone() });
+    win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    win.window().dispatch_event(WindowEvent::KeyReleased { text });
+    win.window().dispatch_event(WindowEvent::KeyReleased { text: ctrl });
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -15943,6 +16040,107 @@ fn theme_transition_end_returns_focus_to_gallery() {
         *applied.borrow(),
         vec![2],
         "panel open → Enter belongs to the panel, the gallery must not steal it"
+    );
+}
+
+// ── Ctrl+Up / Ctrl+Down deploy the drawers in BOTH gallery styles ──────
+// The drawers (top Settings / bottom Slider-Mosaic) lost their keyboard path
+// because the Mosaic branch in `shell-kbd` consumes all four arrows with no
+// modifier check. Ctrl+Up / Ctrl+Down are the drawer keys, handled in Slint
+// BEFORE that Mosaic branch so they win in both styles. This drives the REAL
+// keyboard path: a held Control key event, then the arrow (no property faked).
+#[test]
+fn ctrl_arrows_deploy_the_drawers_in_both_gallery_styles() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(false);
+    win.set_is_mutating(false);
+    focus_settle(); // let the mount reseed land: shell-kbd holds the keyboard
+
+    // ── Slider (style 0) ──
+    win.set_gallery_style(0);
+    focus_settle();
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "baseline: the drawers start closed"
+    );
+
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "Ctrl+Up must deploy the top drawer in the Slider"
+    );
+    // Opening a drawer hands the keyboard to gallery-keys; close it so the
+    // shell's reseed gives shell-kbd the keyboard back for the next chord.
+    win.set_gallery_top_open(false);
+    focus_settle();
+
+    focus_press_key_with_ctrl(&win, Key::DownArrow);
+    assert!(
+        win.get_gallery_bottom_open() && !win.get_gallery_top_open(),
+        "Ctrl+Down must deploy the bottom drawer in the Slider"
+    );
+    win.set_gallery_bottom_open(false);
+    focus_settle();
+
+    // ── Mosaic (style 2) ──
+    win.set_gallery_style(2);
+    focus_settle();
+    let nav: std::rc::Rc<std::cell::RefCell<Vec<String>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    win.on_gallery_mosaic_nav({
+        let nav = nav.clone();
+        move |dir| nav.borrow_mut().push(dir.to_string())
+    });
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "baseline: the drawers start closed in the Mosaic"
+    );
+
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "Ctrl+Up must deploy the top drawer in the Mosaic (it must win over the Mosaic arrow branch)"
+    );
+    assert!(
+        nav.borrow().is_empty(),
+        "Ctrl+Up must not move the Mosaic cursor, got {:?}",
+        nav.borrow()
+    );
+    win.set_gallery_top_open(false);
+    focus_settle();
+
+    focus_press_key_with_ctrl(&win, Key::DownArrow);
+    assert!(
+        win.get_gallery_bottom_open() && !win.get_gallery_top_open(),
+        "Ctrl+Down must deploy the bottom drawer in the Mosaic"
+    );
+    assert!(
+        nav.borrow().is_empty(),
+        "Ctrl+Down must not move the Mosaic cursor, got {:?}",
+        nav.borrow()
+    );
+    win.set_gallery_bottom_open(false);
+    focus_settle();
+
+    // Plain Up in the Mosaic keeps moving the cursor and opens NO drawer.
+    focus_press_key(&win, Key::UpArrow);
+    assert_eq!(
+        *nav.borrow(),
+        vec!["up".to_string()],
+        "plain Up in the Mosaic must still move the cursor"
+    );
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Up in the Mosaic must not open a drawer"
     );
 }
 
