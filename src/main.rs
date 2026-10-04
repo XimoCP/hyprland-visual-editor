@@ -2750,11 +2750,11 @@ fn main() -> Result<(), slint::PlatformError> {
     ));
     window.set_shell_shortcuts_slider(tr.tr_shared(
         "shell.shortcuts.slider",
-        "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc back",
+        "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc hides",
     ));
     window.set_shell_shortcuts_mosaic(tr.tr_shared(
         "shell.shortcuts.mosaic",
-        "←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc back",
+        "←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc hides",
     ));
     window.set_shell_shortcuts_panel(tr.tr_shared(
         "shell.shortcuts.panel",
