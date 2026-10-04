@@ -88,6 +88,8 @@
   "animations": {
     "header_title": "Motion Library",
     "header_subtitle": "Select the animation style for your desktop",
+    "section_desc": "Shape the curve, then save as a preset. Or pick an existing animation.",
+    "kbd_hint": "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back",
     "controls": {
       "speed_label": "Speed",
       "style_label": "Animation Style",
@@ -103,6 +105,10 @@
     "delete_dialog": {
       "title": "Delete animation preset",
       "message": "Are you sure you want to delete"
+    },
+    "list": {
+      "user": "My Animation Presets",
+      "empty": "No animation presets found."
     },
     "presets": {
       "01_relampago": {

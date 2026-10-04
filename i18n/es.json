@@ -88,6 +88,8 @@
   "animations": {
     "header_title": "Biblioteca de Movimiento",
     "header_subtitle": "Selecciona el estilo de animación para tu escritorio",
+    "section_desc": "Ajustá la curva y guardála como preajuste. O elegí una animación existente.",
+    "kbd_hint": "↑↓ navegar • ←→ cambiar de panel • Enter/Space aplicar/activar • flechas ajustar • Esc volver",
     "controls": {
       "speed_label": "Velocidad",
       "style_label": "Estilo de Animación",
@@ -103,6 +105,10 @@
     "delete_dialog": {
       "title": "Eliminar preajuste de animación",
       "message": "¿Seguro que quieres eliminar"
+    },
+    "list": {
+      "user": "Mis Preajustes de Animación",
+      "empty": "No se encontraron preajustes de animación."
     },
     "presets": {
       "01_relampago": {

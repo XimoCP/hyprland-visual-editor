@@ -174,10 +174,21 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
 
 /// Fill every `MotionText` string from `tr` for the selected language.
 ///
-/// Only the NEW Motion tune controls (Phase 2) live in this global: the speed
-/// and style labels and the four style-family button labels. The existing
-/// hardcoded Motion chrome is out of scope and untouched. English is the
+/// Two generations of copy travel here: the NEW Motion tune controls (Phase 2)
+/// and the Motion chrome (i18n slice 3) — the section header, the save form,
+/// the keyboard hint, the list headers and the card/dialog action labels that
+/// used to be hardcoded English in `MotionSection.slint`. English is the
 /// fallback, exactly as `apply_borders` does.
+///
+/// Key reuse follows `apply_save`/`apply_system`: a key is reused only when its
+/// English value is byte-identical to the copy being wired. That is why the
+/// section title goes through `panel.nav.motion` (the nav rail already says the
+/// same word) and NOT through `animations.header_title` ("Motion Library"), and
+/// why `animations.list.user` / `animations.list.empty` / `animations.kbd_hint`
+/// are NEW keys instead of their `borders.*` twins, whose English differs.
+///
+/// The rename/delete DIALOG copy is NOT here: it travels as MainWindow
+/// properties filled by `main()`, the same route the Borders dialogs use.
 pub fn apply_motion(window: &MainWindow, tr: &Tr) {
     let t = crate::MotionText::get(window);
 
@@ -193,6 +204,38 @@ pub fn apply_motion(window: &MainWindow, tr: &Tr) {
         "animations.controls.style_slidefade",
         "Slide + Fade",
     ));
+
+    // Section header
+    t.set_title(tr.tr_shared("panel.nav.motion", "Motion"));
+    t.set_desc(tr.tr_shared(
+        "animations.section_desc",
+        "Shape the curve, then save as a preset. Or pick an existing animation.",
+    ));
+
+    // Save form and keyboard hint
+    t.set_save_title(tr.tr_shared("borders.save.title", "Save as Preset"));
+    t.set_save_placeholder(tr.tr_shared(
+        "animations.rename_dialog.placeholder",
+        "Animation preset name…",
+    ));
+    t.set_save_button(tr.tr_shared("borders.save.button", "Save"));
+    t.set_kbd_hint(tr.tr_shared(
+        "animations.kbd_hint",
+        "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back",
+    ));
+
+    // List pane
+    t.set_list_builtin(tr.tr_shared("borders.list.builtin", "Built-in"));
+    t.set_list_user(tr.tr_shared("animations.list.user", "My Animation Presets"));
+    t.set_list_empty(tr.tr_shared(
+        "animations.list.empty",
+        "No animation presets found.",
+    ));
+
+    // Card action tooltips and the rename/delete dialog confirm buttons
+    t.set_card_apply(tr.tr_shared("borders.list.apply", "Apply"));
+    t.set_card_rename(tr.tr_shared("borders.list.rename", "Rename"));
+    t.set_card_delete(tr.tr_shared("borders.list.delete", "Delete"));
 }
 
 /// Fill every `SaveText` string from `tr` for the selected language.

@@ -346,7 +346,7 @@ component MotionTunePane inherits Rectangle {
 
             // Save form
             Text {
-                text: "Save as Preset";
+                text: MotionText.save-title;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-14;
                 font-weight: 700;
@@ -373,7 +373,7 @@ component MotionTunePane inherits Rectangle {
                         y: 4px;
                         width: parent.width - 8px;
                         height: parent.height - 8px;
-                        placeholder-text: "Animation preset name…";
+                        placeholder-text: MotionText.save-placeholder;
                         text <=> root.preset-name;
                         font-size: SkwdTokens.size-13;
                         accepted(text) => {
@@ -394,7 +394,7 @@ component MotionTunePane inherits Rectangle {
                     border-color: #8fd8ff;
 
                     Text {
-                        text: "Save";
+                        text: MotionText.save-button;
                         color: HveColors.bg-dark;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-13;
@@ -426,7 +426,7 @@ component MotionTunePane inherits Rectangle {
 
             // Keyboard hint
             Text {
-                text: "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back";
+                text: MotionText.kbd-hint;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted.transparentize(0.4);
@@ -525,7 +525,7 @@ component MotionListPane inherits Rectangle {
 
             // Built-in presets header
             if root.builtin-names.length > 0 : Text {
-                text: "Built-in";
+                text: MotionText.list-builtin;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-12;
                 font-weight: 600;
@@ -537,6 +537,9 @@ component MotionListPane inherits Rectangle {
                 apply-value: root.builtin-files[i];
                 is-active: i == root.active-index;
                 is-user: false;
+                apply-text: MotionText.card-apply;
+                rename-text: MotionText.card-rename;
+                delete-text: MotionText.card-delete;
                 keyboard-focused: root.focused-index == i && root.has-focus;
                 accent: #8fd8ff;
                 index: i;
@@ -548,7 +551,7 @@ component MotionListPane inherits Rectangle {
             // User presets header
             if root.user-names.length > 0 : Rectangle { height: 8px; }
             if root.user-names.length > 0 : Text {
-                text: "My Animation Presets";
+                text: MotionText.list-user;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-12;
                 font-weight: 600;
@@ -559,6 +562,9 @@ component MotionListPane inherits Rectangle {
                 preset-name: root.user-names[i];
                 is-active: root.builtin-names.length + i == root.active-index;
                 is-user: true;
+                apply-text: MotionText.card-apply;
+                rename-text: MotionText.card-rename;
+                delete-text: MotionText.card-delete;
                 keyboard-focused: root.focused-index == root.builtin-names.length + i && root.has-focus;
                 accent: HveColors.accent-amber;
                 index: root.builtin-names.length + i;
@@ -571,7 +577,7 @@ component MotionListPane inherits Rectangle {
 
             // Empty state
             if root.total-count == 0 : Text {
-                text: "No animation presets found.";
+                text: MotionText.list-empty;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -706,14 +712,14 @@ export component MotionSection inherits Rectangle {
             padding: 16px;
             spacing: 4px;
             Text {
-                text: "Motion";
+                text: MotionText.title;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Shape the curve, then save as a preset. Or pick an existing animation.";
+                text: MotionText.desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -833,7 +839,7 @@ export component MotionSection inherits Rectangle {
         title: root.rename-title;
         placeholder: root.rename-placeholder;
         cancel-text: root.cancel-text;
-        confirm-text: "Rename";
+        confirm-text: MotionText.card-rename;
         confirm-color: HveColors.accent-pink;
         error-text: root.save-error;
         value <=> root.preset-rename-input;
@@ -850,7 +856,7 @@ export component MotionSection inherits Rectangle {
         title-color: HveColors.accent-red;
         message: root.delete-message + " \"" + root.preset-dialog-target + "\"?";
         cancel-text: root.cancel-text;
-        confirm-text: "Delete";
+        confirm-text: MotionText.card-delete;
         confirm-color: HveColors.accent-red;
         confirm => {
             root.delete-animation-preset(root.preset-dialog-target);

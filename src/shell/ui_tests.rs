@@ -6437,6 +6437,57 @@ fn motion_save_form_focus_renders_ring() {
         "the save form must paint a focus ring when it owns the cursor — \
          idle_icy={idle_icy} save_icy={save_icy}"
     );
+
+    // ── Spanish pass (i18n slice 3) ────────────────────────────────────
+    // The chrome moved into `MotionText`: the header, the save form and the
+    // keyboard hint this frame already shows must repaint in Spanish, and the
+    // two list states the new copy covers (the user-preset header and the
+    // empty list) get their own frames. The nav rail rides along through
+    // `apply_panel_chrome` — it reads the same `panel.nav.motion` key the
+    // section title uses.
+    let es = crate::tr::Tr::with_lang("es");
+    crate::panel_i18n::apply_motion(&win, &es);
+    crate::panel_i18n::apply_panel_chrome(&win, &es);
+    settle_frames(8);
+    let es_snap = win.window().take_snapshot().expect("motion chrome spanish");
+    save_slice_png(es_snap.clone(), "motion_chrome_es.png");
+    let es_diff = count_buffer_diff(&idle, &es_snap);
+    assert!(
+        es_diff > 200,
+        "Spanish Motion chrome must change pixels — got {es_diff} expected >200"
+    );
+
+    // The user-list header only renders with at least one user preset.
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Curva suave"),
+    ])));
+    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from("CUSTOM"),
+    ])));
+    settle_frames(8);
+    let es_user = win.window().take_snapshot().expect("motion user list spanish");
+    save_slice_png(es_user.clone(), "motion_user_list_es.png");
+    let user_diff = count_buffer_diff(&es_snap, &es_user);
+    assert!(
+        user_diff > 100,
+        "the user-preset list must repaint — got {user_diff} expected >100"
+    );
+
+    // Empty state: no built-in and no user preset left.
+    win.set_anim_titles(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_anim_descs(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_anim_tags(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_anim_files(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    settle_frames(8);
+    let es_empty = win.window().take_snapshot().expect("motion empty list spanish");
+    save_slice_png(es_empty.clone(), "motion_empty_es.png");
+    let empty_diff = count_buffer_diff(&es_user, &es_empty);
+    assert!(
+        empty_diff > 100,
+        "the empty-list state must repaint — got {empty_diff} expected >100"
+    );
 }
 
 /// Entering/leaving the rail must be visually obvious: the content dims
@@ -17660,5 +17711,234 @@ fn system_labels_follow_the_language() {
 
     crate::panel_i18n::apply_system(&win, &crate::tr::Tr::with_lang("en"));
     assert_system_labels(&win, "en");
+}
+
+// ── i18n slice 3: Motion chrome ──────────────────────────────────────
+
+/// One row per user-visible Motion chrome string: (property, i18n key,
+/// English, Spanish).
+///
+/// The English column is byte-identical to the hardcoded literal (or `.slint`
+/// default) it replaces, so the English half pins "the panel still reads
+/// exactly as it did". The Spanish column is what `i18n/es.json` must resolve
+/// for the same key: `tr_shared` falls back to the English default when a key
+/// is missing, so a hole shows up here as an English string on a Spanish panel.
+///
+/// Key reuse follows the rule the other slices used: a key is reused only when
+/// its English value is byte-identical to the copy being wired. Three near
+/// misses therefore got NEW `animations.*` keys instead of their `borders.*`
+/// twins (`list.user`, `list.empty`, `kbd_hint`).
+fn motion_chrome_rows() -> [(&'static str, &'static str, &'static str, &'static str); 12] {
+    [
+        ("title", "panel.nav.motion", "Motion", "Movimiento"),
+        ("desc", "animations.section_desc",
+            "Shape the curve, then save as a preset. Or pick an existing animation.",
+            "Ajustá la curva y guardála como preajuste. O elegí una animación existente."),
+        ("save-title", "borders.save.title", "Save as Preset", "Guardar como Preajuste"),
+        ("save-placeholder", "animations.rename_dialog.placeholder",
+            "Animation preset name…", "Nombre del preajuste de animación…"),
+        ("save-button", "borders.save.button", "Save", "Guardar"),
+        ("kbd-hint", "animations.kbd_hint",
+            "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back",
+            "↑↓ navegar • ←→ cambiar de panel • Enter/Space aplicar/activar • flechas ajustar • Esc volver"),
+        ("list-builtin", "borders.list.builtin", "Built-in", "Integrados"),
+        ("list-user", "animations.list.user", "My Animation Presets", "Mis Preajustes de Animación"),
+        ("list-empty", "animations.list.empty",
+            "No animation presets found.", "No se encontraron preajustes de animación."),
+        ("card-apply", "borders.list.apply", "Apply", "Aplicar"),
+        ("card-rename", "borders.list.rename", "Rename", "Renombrar"),
+        ("card-delete", "borders.list.delete", "Delete", "Eliminar"),
+    ]
+}
+
+/// `motion_text.slint` must declare every English default byte for byte: the
+/// default in the global IS the copy an English run reads.
+#[test]
+fn motion_text_defaults_are_todays_english() {
+    let path = "ui/panel/sections/motion_text.slint";
+    let content = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{path} must exist for the Motion chrome i18n slice: {e}"));
+    let missing: Vec<&str> = motion_chrome_rows()
+        .iter()
+        .map(|(_, _, en, _)| *en)
+        .filter(|en| !content.contains(&format!(": \"{en}\";")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "motion_text.slint does not declare today's English copy: {missing:#?}"
+    );
+}
+
+/// Both embedded maps must already carry the exact copy the table pins — a
+/// missing key would silently degrade to English on the Spanish panel.
+#[test]
+fn both_language_maps_carry_every_motion_chrome_string() {
+    let en = crate::tr::Tr::with_lang("en");
+    let es = crate::tr::Tr::with_lang("es");
+    let wrong: Vec<String> = motion_chrome_rows()
+        .iter()
+        .flat_map(|(_, key, en_want, es_want)| {
+            [("en", en.tr(key), *en_want), ("es", es.tr(key), *es_want)]
+        })
+        .filter_map(|(lang, got, want)| {
+            (got != Some(want)).then(|| format!("[{lang}] want {want:?}, map has {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "the i18n maps do not carry today's Motion chrome copy: {wrong:#?}"
+    );
+}
+
+/// No Spanish label may be a copy of its English one: that is what a MISSING
+/// key looks like after `tr_shared` falls back.
+#[test]
+fn every_motion_chrome_label_has_its_own_spanish_text() {
+    let twinned: Vec<&str> = motion_chrome_rows()
+        .iter()
+        .filter(|(_, _, en, es)| en == es)
+        .map(|(prop, ..)| *prop)
+        .collect();
+    assert!(
+        twinned.is_empty(),
+        "these labels would read English on the Spanish panel: {twinned:?}"
+    );
+}
+
+/// The hardcoded literals must be GONE from the markup and the BINDING that
+/// replaced them must be there. The binding is what the guard asserts: a word
+/// found in the text global stops proving the row exists (the S2 lesson — a
+/// needle-hunting guard that accepted either side stayed green when a row was
+/// deleted).
+#[test]
+fn motion_section_reads_its_chrome_from_motion_text() {
+    let ms = std::fs::read_to_string("ui/panel/sections/MotionSection.slint")
+        .expect("MotionSection.slint must exist");
+
+    for gone in [
+        "text: \"Motion\";",
+        "text: \"Shape the curve, then save as a preset. Or pick an existing animation.\";",
+        "text: \"Save as Preset\";",
+        "placeholder-text: \"Animation preset name…\";",
+        "text: \"Save\";",
+        "text: \"↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back\";",
+        "text: \"Built-in\";",
+        "text: \"My Animation Presets\";",
+        "text: \"No animation presets found.\";",
+        "confirm-text: \"Rename\";",
+        "confirm-text: \"Delete\";",
+    ] {
+        assert!(
+            !ms.contains(gone),
+            "MotionSection must read {gone:?} through MotionText, but the literal is still in the file"
+        );
+    }
+
+    for live in [
+        "text: MotionText.title;",
+        "text: MotionText.desc;",
+        "text: MotionText.save-title;",
+        "placeholder-text: MotionText.save-placeholder;",
+        "text: MotionText.save-button;",
+        "text: MotionText.kbd-hint;",
+        "text: MotionText.list-builtin;",
+        "text: MotionText.list-user;",
+        "text: MotionText.list-empty;",
+        "confirm-text: MotionText.card-rename;",
+        "confirm-text: MotionText.card-delete;",
+        "apply-text: MotionText.card-apply;",
+        "rename-text: MotionText.card-rename;",
+        "delete-text: MotionText.card-delete;",
+    ] {
+        assert!(ms.contains(live), "MotionSection must read {live} — missing");
+    }
+}
+
+/// The Motion rename/delete dialog copy travels as MainWindow properties
+/// (`src/main.rs` feeds them from the same embedded map the Borders dialogs
+/// use), NOT through `MotionText`: the chain MainWindow → ShellRoot →
+/// PanelRoot → MotionSection already exists. This pins that route so a future
+/// slice does not wire the same five strings a second time.
+#[test]
+fn main_feeds_the_motion_dialog_strings() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    for call in [
+        "set_animation_rename_title(",
+        "set_animation_rename_placeholder(",
+        "set_animation_delete_title(",
+        "set_animation_delete_msg(",
+        "set_animation_cancel_text(",
+    ] {
+        assert!(
+            MAIN.contains(call),
+            "main must keep feeding the Motion dialog strings through {call}"
+        );
+    }
+}
+
+/// The pass must be WIRED, not merely available: `main()` has to call it, or
+/// the global keeps its Slint defaults on every language (the B7 lesson).
+#[test]
+fn main_applies_the_motion_i18n() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    let call = "panel_i18n::apply_motion(&window, &tr);";
+    let hits = MAIN.matches(call).count();
+    assert_eq!(hits, 1, "main must call {call} exactly once, got {hits}");
+}
+
+/// The getter for each row of `motion_chrome_rows`, in the same order: the
+/// live half of the table (the row data itself is pinned by the tests above).
+fn motion_chrome_readers() -> [fn(&crate::MotionText) -> String; 12] {
+    [
+        |t| t.get_title().to_string(),
+        |t| t.get_desc().to_string(),
+        |t| t.get_save_title().to_string(),
+        |t| t.get_save_placeholder().to_string(),
+        |t| t.get_save_button().to_string(),
+        |t| t.get_kbd_hint().to_string(),
+        |t| t.get_list_builtin().to_string(),
+        |t| t.get_list_user().to_string(),
+        |t| t.get_list_empty().to_string(),
+        |t| t.get_card_apply().to_string(),
+        |t| t.get_card_rename().to_string(),
+        |t| t.get_card_delete().to_string(),
+    ]
+}
+
+/// English reads the Slint defaults (today's copy, no i18n pass needed),
+/// Spanish reads the translation through the REAL production function, and
+/// the round trip back to English restores every string byte for byte.
+#[test]
+fn motion_chrome_labels_follow_the_language() {
+    use slint::Global as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+
+    let assert_lang = |lang: &str| {
+        let t = crate::MotionText::get(&win);
+        let wrong: Vec<String> = motion_chrome_rows()
+            .iter()
+            .zip(motion_chrome_readers())
+            .filter_map(|((prop, _, en, es), read)| {
+                let want = if lang == "en" { *en } else { *es };
+                let got = read(&t);
+                (got != want).then(|| format!("{prop}: want {want:?}, got {got:?}"))
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "[{lang}] the Motion section is not fully in {lang}: {wrong:#?}"
+        );
+    };
+
+    assert_lang("en");
+
+    crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("es"));
+    assert_lang("es");
+
+    crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("en"));
+    assert_lang("en");
 }
 

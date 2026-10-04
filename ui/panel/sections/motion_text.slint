@@ -1,13 +1,22 @@
-// HVE 2 — Motion panel text (Phase 2).
+// HVE 2 — Motion panel text (Phase 2, extended by i18n slice 3).
 //
 // Declared in its own file (no components) so the compiler exposes it to Rust
 // as `crate::MotionText`, the way `BordersText` (borders_text.slint) and
 // `PanelText` (panel_text.slint) are exposed.
 //
-// Only the NEW Motion tune controls live here: the speed and style labels plus
-// the four style-family button labels. Rust fills them from the embedded i18n
-// map through `panel_i18n::apply_motion`; the defaults below are today's English
-// copy, so a run that never calls the i18n pass reads exactly as it always did.
+// Two generations of copy live here:
+//   • the Phase 2 Motion tune controls — the speed and style labels plus the
+//     four style-family button labels;
+//   • the Motion chrome (slice 3) — the section header, the save form, the
+//     keyboard hint, the list headers and the card/dialog action labels that
+//     used to be hardcoded English in `MotionSection.slint`.
+// Rust fills them from the embedded i18n map through `panel_i18n::apply_motion`;
+// the defaults below are today's English copy, so a run that never calls the
+// i18n pass reads exactly as it always did.
+//
+// The rename/delete DIALOG copy is NOT here: it travels as MainWindow
+// properties (`panel-animation-*`) filled by `src/main.rs`, the same route the
+// Borders dialogs use, and reaches MotionSection through PanelRoot.
 //
 // The style VALUES ("slide"/"fade"/"popin"/"slidefade 20%") are identifiers the
 // Rust side round-trips into the saved Lua, so they stay untranslated on purpose.
@@ -18,4 +27,25 @@ export global MotionText {
     in-out property <string> style-fade: "Fade";
     in-out property <string> style-popin: "Popin";
     in-out property <string> style-slidefade: "Slide + Fade";
+
+    // Section header
+    in-out property <string> title: "Motion";
+    in-out property <string> desc: "Shape the curve, then save as a preset. Or pick an existing animation.";
+
+    // Save form
+    in-out property <string> save-title: "Save as Preset";
+    in-out property <string> save-placeholder: "Animation preset name…";
+    in-out property <string> save-button: "Save";
+    in-out property <string> kbd-hint: "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back";
+
+    // List pane
+    in-out property <string> list-builtin: "Built-in";
+    in-out property <string> list-user: "My Animation Presets";
+    in-out property <string> list-empty: "No animation presets found.";
+
+    // Card action tooltips and the rename/delete dialog confirm buttons
+    // (the same three labels BordersText carries for the same card).
+    in-out property <string> card-apply: "Apply";
+    in-out property <string> card-rename: "Rename";
+    in-out property <string> card-delete: "Delete";
 }
