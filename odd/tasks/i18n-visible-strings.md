@@ -292,3 +292,57 @@ fixed by the parent before the commit:
    overridden), so no painted text disagrees — but the inconsistency is real.
 6. The substring-based English-default tests in S1 and S2 would be better
    asserting the property NAME, not a substring.
+
+### S3 — Motion chrome (done)
+
+Writer: `general-free` (MiMo). Commit `f5a2c0c`-equivalent recorded above as the
+`feat(i18n): the Motion panel speaks Spanish` commit. Six files, all inside the
+declared surface; `ui/main.slint` and `src/main.rs` needed no change.
+
+`MotionText` grew from 6 to 18 properties. 8 keys reused byte-identically
+(`panel.nav.motion`, `borders.save.title`, `borders.save.button`,
+`animations.rename_dialog.placeholder`, `borders.list.builtin`,
+`borders.list.apply`, `borders.list.rename`, `borders.list.delete`); 4 added
+(`animations.section_desc`, `animations.kbd_hint`, `animations.list.user`,
+`animations.list.empty`) because each was a NEAR-MISS of an existing key, not a
+match — recorded so nobody later "consolidates" them into the Borders keys.
+
+The parent verified the reuse discipline programmatically: all eight reused keys
+have English byte-identical to the literal they replace.
+
+GREEN: `cargo test` — **1339 passed, 0 failed** (89.18s), run by the PARENT.
+
+VISUAL: `/tmp/opencode/render-i18n-slice3/motion_chrome_es.png`, read by the
+parent with vision: "Movimiento", "Ajustá la curva y guardála como preajuste. O
+elegí una animación existente.", "Integrados", "Velocidad", "Estilo de
+Animación" with its four buttons, "Guardar como Preajuste", "Nombre del
+preajuste de animación…", "Guardar", and the keyboard hint in infinitive
+Spanish.
+
+Review tier: **Tier 2** (text-only copy wiring, no path, permission, thread,
+state-machine or cross-subsystem change), so the parent's own review plus the
+render pass is the proportional check and no cross-model run was spent on it.
+The parent's review did what the cross-model runs did in S1/S2: scope, key
+discipline, suite and pixels.
+
+The writer corrected this document four more times, and all four stand:
+
+1. The five animation dialog properties were ALREADY fed (`main.rs`), so nothing
+   was added; a test now guards it.
+2. `error-text` and `preset-name` defaults are EMPTY strings, not English. The
+   inventory's claim was wrong for those two.
+3. `MotionSection.slint:376`'s `placeholder-text: "Animation preset name…"` was a
+   hardcoded literal the inventory never listed, visible in every Spanish frame.
+4. The two `SavedPresetCard` instances did not pass `apply-text`/`rename-text`/
+   `delete-text`, nor the dialogs their `confirm-text`, so the Motion card
+   tooltips and both dialog buttons stayed English while Borders passed them —
+   the same class of bug as S2's activation card.
+
+## Follow-up added by S3
+
+7. The bezier coordinate labels `X1 — a` / `Y1 — b` / `X2 — c` / `Y2 — d` and
+   the shell status `Ready` remain English in the Spanish frames. The bezier
+   labels are judged NOT worth translating: `X1`/`Y1` are the mathematical
+   control-point coordinates and `a`/`b`/`c`/`d` are their conventional names,
+   so a translation would obscure rather than clarify. `Ready` is fed from `tr`
+   in production; only the render harness leaves it.
