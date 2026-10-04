@@ -375,6 +375,79 @@ fn mpvpaper_enabled_in_settings(raw: &str) -> bool {
     found
 }
 
+/// Tri-state variant of [`mpvpaper_enabled_in_settings`] for the CAPTURE
+/// gate: `Some(true)`/`Some(false)` only when an explicit `[plugins]
+/// enabled` entry was actually located and parsed; `None` when the section,
+/// the key or the value cannot be found (missing, other section, or a
+/// future format drift). The capture arm reads `None` as unknown — never
+/// as disabled — and resolves it through the IPC probe.
+///
+/// `mpvpaper_enabled_in_settings` keeps its false-for-unparseable contract:
+/// `apply()`'s re-assert must read that as "leave the reloaded state
+/// alone", where folding an unreadable file into "disabled" is the safe
+/// reading. The capture arm needs the opposite default, so it gets its own
+/// reader instead of overloading the apply one.
+fn mpvpaper_state_in_settings(raw: &str) -> Option<bool> {
+    let mut in_plugins = false;
+    let mut collecting = false;
+    let mut depth: i32 = 0;
+    let mut buf = String::new();
+    let mut saw_enabled = false;
+    let mut found = false;
+    for line in raw.lines() {
+        let stripped = line.trim();
+        if stripped.starts_with('#') || stripped.is_empty() {
+            continue;
+        }
+        // Machine-written file: no '#' inside quoted values, so a '#'
+        // always starts a trailing comment.
+        let code = stripped.split('#').next().unwrap_or("").trim();
+        if let Some(header) = code.strip_prefix('[') {
+            let header = header.split(']').next().unwrap_or("").trim();
+            in_plugins = header == "plugins";
+            collecting = false;
+            continue;
+        }
+        if !in_plugins {
+            continue;
+        }
+        let piece = if !collecting {
+            match code.strip_prefix("enabled") {
+                Some(rest) => {
+                    let rest = rest.trim_start();
+                    match rest.strip_prefix('=') {
+                        Some(value) => value,
+                        None => continue,
+                    }
+                }
+                None => continue,
+            }
+        } else {
+            code
+        };
+        if !collecting {
+            buf.clear();
+            collecting = true;
+            saw_enabled = true;
+        }
+        buf.push_str(piece);
+        depth += piece.chars().filter(|c| *c == '[').count() as i32
+            - piece.chars().filter(|c| *c == ']').count() as i32;
+        if depth <= 0 {
+            collecting = false;
+            if buf.contains("\"noctalia/mpvpaper\"") || buf.contains("'noctalia/mpvpaper'") {
+                found = true;
+            }
+            buf.clear();
+        }
+    }
+    if saw_enabled {
+        Some(found)
+    } else {
+        None
+    }
+}
+
 /// Flip `[wallpaper.automation] enabled` to `false` in a Noctalia
 /// settings.toml text, preserving every other byte.
 ///
@@ -560,6 +633,46 @@ fn live_mpvpaper_plugin_enabled() -> Option<bool> {
         Err(e) => {
             tracing::warn!(
                 "[noctalia-v5] Cannot snapshot plugin state ({}); leaving reloaded state alone",
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Capture-specific snapshot: may `noctalia/mpvpaper` paint right now?
+///
+/// [`live_mpvpaper_plugin_enabled`] folds an unparseable live settings.toml
+/// into `Some(false)` because `apply()`'s re-assert must read that as "leave
+/// the reloaded state alone". The capture gate cannot afford that: a future
+/// format drift would silently stop capturing the manifest while the plugin
+/// is enabled and painting. So the local read is tri-state
+/// ([`mpvpaper_state_in_settings`]); when it cannot name an explicit
+/// `[plugins] enabled` entry the snapshot asks the `plugins list` IPC, and
+/// only when BOTH fail does it return `None` — which the caller treats as
+/// unknown (capture), never as disabled.
+fn mpvpaper_can_paint_for_capture() -> Option<bool> {
+    if let Some(state_dir) = noctalia_state_dir() {
+        match fs::read_to_string(state_dir.join("settings.toml")) {
+            Ok(raw) => {
+                if let Some(state) = mpvpaper_state_in_settings(&raw) {
+                    return Some(state);
+                }
+                tracing::debug!(
+                    "[noctalia-v5] Live settings.toml names no explicit noctalia/mpvpaper state; asking the plugin IPC for the capture gate"
+                );
+            }
+            Err(e) => tracing::debug!(
+                "[noctalia-v5] Cannot read live settings.toml for the capture snapshot: {}",
+                e
+            ),
+        }
+    }
+    match plugin_enabled_probe(MPVPAPER_PLUGIN_ID) {
+        Ok(enabled) => Some(enabled),
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot snapshot plugin state for capture ({}); treating it as unknown (the manifest is still captured)",
                 e
             );
             None
@@ -1569,11 +1682,14 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    provably DISABLED `noctalia/mpvpaper` owns nothing, so its live
         //    assignments file is dead and copying it would let a stale video
         //    hijack the theme's preview and re-apply (the gallery ranks a
-        //    live assignment above the theme's own static record). `None`
-        //    (unreadable) is never disabled, so the legacy capture stays.
+        //    live assignment above the theme's own static record). The
+        //    capture-specific snapshot never folds an unreadable state into
+        //    "disabled": it falls back to the IPC and only `Some(false)` —
+        //    a provable disabled — suppresses the copy, so a format drift
+        //    cannot silently stop capturing an enabled plugin's record.
         //    Read the tri-state once and reuse it.
         let plugin_enabled = if capture_video_manifest {
-            live_mpvpaper_plugin_enabled()
+            mpvpaper_can_paint_for_capture()
         } else {
             None
         };
@@ -2744,6 +2860,46 @@ mod tests {
         assert!(!mpvpaper_enabled_in_settings(""));
     }
 
+    /// G6: the capture gate must not fold a parse failure into "provably
+    /// disabled". This reader answers `Some(true)`/`Some(false)` ONLY when
+    /// an explicit `[plugins] enabled` entry was found; anything it cannot
+    /// locate — missing section, missing key, format drift, other section —
+    /// is `None`, which the capture arm reads as unknown and resolves
+    /// through the IPC probe. The boolean reader keeps its pinned
+    /// false-for-unparseable contract for apply's re-assert.
+    #[test]
+    fn mpvpaper_state_in_settings_is_tri_state() {
+        let enabled = "[plugins]\nenabled = [ \"kenn/keybind-cheatsheet\", \"noctalia/mpvpaper\", \"yuuto/arch-updater\" ]\n";
+        assert_eq!(mpvpaper_state_in_settings(enabled), Some(true));
+        let disabled = "[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n";
+        assert_eq!(mpvpaper_state_in_settings(disabled), Some(false));
+        let multiline = "[plugins]\nenabled = [\n  \"kenn/keybind-cheatsheet\",\n  \"noctalia/mpvpaper\",\n]\n";
+        assert_eq!(mpvpaper_state_in_settings(multiline), Some(true));
+        let commented = "[plugins]\n# enabled = [ \"noctalia/mpvpaper\" ]\nenabled = [ \"yuuto/arch-updater\" ]\n";
+        assert_eq!(mpvpaper_state_in_settings(commented), Some(false));
+        // Nothing to parse: unknown, never disabled.
+        assert_eq!(mpvpaper_state_in_settings(""), None);
+        assert_eq!(
+            mpvpaper_state_in_settings("[other]\nenabled = [ \"noctalia/mpvpaper\" ]\n"),
+            None,
+            "another section's enabled key is not the plugin state"
+        );
+        assert_eq!(
+            mpvpaper_state_in_settings("[plugins]\nfoo = 1\n"),
+            None,
+            "a [plugins] section without an enabled key is unknown"
+        );
+        assert_eq!(
+            mpvpaper_state_in_settings("[plugins]\nactive = [ \"noctalia/mpvpaper\" ]\n"),
+            None,
+            "format drift (a key the line parser cannot read) must be unknown"
+        );
+        assert!(
+            !mpvpaper_enabled_in_settings("[plugins]\nfoo = 1\n"),
+            "the boolean reader keeps its false-for-unparseable contract"
+        );
+    }
+
     /// Phase 2: the live settings.toml editor flips
     /// `[wallpaper.automation] enabled` to false while preserving every
     /// other byte, is idempotent on an already-off flag, and never touches
@@ -3010,6 +3166,76 @@ mod tests {
             "the primary signal must win even over a failing IPC"
         );
         assert!(stub.probes().is_empty(), "no IPC while the primary answers");
+    }
+
+    /// G6: the capture-specific snapshot must consult the IPC when the
+    /// local settings.toml cannot name an explicit plugin state — a parse
+    /// failure must never mean "disabled" on the capture arm (a future
+    /// format drift would silently stop capturing while the plugin paints).
+    /// Only an explicit local `[plugins] enabled` entry short-circuits the
+    /// probe, exactly as `live_mpvpaper_plugin_enabled` does for apply.
+    #[test]
+    #[serial]
+    fn capture_snapshot_falls_back_to_ipc_when_local_state_is_unknown() {
+        // Explicit local disabled: suppress, and never ask the IPC.
+        let stub = PluginProbeStub::new(ProbeAnswer::Line("noctalia/mpvpaper enabled"));
+        stub.write_settings("[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n");
+        assert_eq!(
+            mpvpaper_can_paint_for_capture(),
+            Some(false),
+            "an explicit local disabled entry must read as provably disabled"
+        );
+        assert!(stub.probes().is_empty(), "a parseable local state must not probe");
+        drop(stub);
+
+        // Explicit local enabled: capture, and never ask the IPC.
+        let stub = PluginProbeStub::new(ProbeAnswer::Fail);
+        stub.write_settings("[plugins]\nenabled = [ \"noctalia/mpvpaper\" ]\n");
+        assert_eq!(
+            mpvpaper_can_paint_for_capture(),
+            Some(true),
+            "an explicit local enabled entry must read as enabled even when the IPC would fail"
+        );
+        assert!(stub.probes().is_empty(), "a parseable local state must not probe");
+        drop(stub);
+
+        // No explicit local state: the IPC decides, never an assumed disabled.
+        let stub = PluginProbeStub::new(ProbeAnswer::Line("noctalia/mpvpaper enabled"));
+        stub.write_settings("[plugins]\nfoo = 1\n");
+        assert_eq!(
+            mpvpaper_can_paint_for_capture(),
+            Some(true),
+            "an unparseable local state must fall back to the IPC, not read as disabled"
+        );
+        assert_eq!(stub.probes(), vec!["msg plugins list"]);
+        drop(stub);
+
+        // IPC answers without the plugin: provably disabled.
+        let stub = PluginProbeStub::new(ProbeAnswer::Empty);
+        stub.write_settings("[other]\nenabled = [ \"noctalia/mpvpaper\" ]\n");
+        assert_eq!(
+            mpvpaper_can_paint_for_capture(),
+            Some(false),
+            "an IPC answer without the plugin is a definite disabled"
+        );
+        assert_eq!(stub.probes(), vec!["msg plugins list"]);
+        drop(stub);
+
+        // Both signals fail: unknown, never disabled (the caller captures).
+        let stub = PluginProbeStub::new(ProbeAnswer::Fail);
+        stub.write_settings("[other]\nenabled = [ \"noctalia/mpvpaper\" ]\n");
+        assert_eq!(
+            mpvpaper_can_paint_for_capture(),
+            None,
+            "a local miss plus a failing IPC is unknown, never disabled"
+        );
+        assert_eq!(stub.probes(), vec!["msg plugins list"]);
+        drop(stub);
+
+        // No settings file at all: also the IPC's call.
+        let stub = PluginProbeStub::new(ProbeAnswer::Line("noctalia/mpvpaper enabled"));
+        assert_eq!(mpvpaper_can_paint_for_capture(), Some(true));
+        assert_eq!(stub.probes(), vec!["msg plugins list"]);
     }
 
     /// The duplication this unit breaks: the apply-time snapshot must
