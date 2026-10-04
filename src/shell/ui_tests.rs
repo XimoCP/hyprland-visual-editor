@@ -16144,6 +16144,321 @@ fn ctrl_arrows_deploy_the_drawers_in_both_gallery_styles() {
     );
 }
 
+// ── Drawers are Ctrl-only: plain arrows stop touching them ─────────────
+// The keeper's rule: no key may mean two things in one screen. Plain Up/Down
+// used to toggle the drawers from Rust (`nav-move`) and, with a drawer open,
+// to close / cross-toggle it from `gallery-keys`. Both paths are removed:
+// Ctrl is now the ONLY drawer key, and plain Up/Down do nothing in the
+// Gallery (the vertical axis stays free for a future use). Escape and the
+// mouse arrow button still close; Home keeps moving its vertical focus.
+//
+// The other headless tests register only the callbacks they assert on, so the
+// Rust `nav-move` drawer logic is invisible to them. This harness wires the
+// REAL production callbacks (`callbacks::setup_callbacks`) so a plain arrow
+// reaches the Rust handler exactly as it does in the app.
+fn window_with_production_callbacks() -> (crate::MainWindow, std::rc::Rc<std::cell::RefCell<crate::shell::Shell>>) {
+    use slint::ComponentHandle as _;
+    use std::sync::{Arc, Mutex};
+
+    // Software renderer so `take_snapshot` works: the default testing backend
+    // keeps a mock renderer with no `WindowAdapter::take_snapshot`.
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+    let _env = crate::test_utils::TempEnv::new();
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config_dir = tempfile::TempDir::new().unwrap();
+    let engine = crate::engine::Engine::new(&proj);
+    let tm = crate::theme_manager::ThemeManager::new(config_dir.path());
+    let state: crate::app_state::SharedState = Arc::new(Mutex::new(
+        crate::app_state::AppState::new(crate::config::Config::default(), engine, tm),
+    ));
+    let shell = crate::shell::Shell::new(win.as_weak());
+    let mosaic_pages = Arc::new(Mutex::new(
+        crate::shell::gallery::views::mosaic::MosaicPages::new(0, 0.0, 0.0),
+    ));
+    let refresh_mosaic: Arc<dyn Fn(bool) + Send + Sync> = Arc::new(|_| {});
+    let refresh_slice: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
+    let animate: Arc<dyn Fn(isize) + Send + Sync> = Arc::new(|_| {});
+    let tray = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let restart_lock: Arc<Mutex<Option<std::fs::File>>> = Arc::new(Mutex::new(None));
+    crate::callbacks::setup_callbacks(
+        &win,
+        &state,
+        proj,
+        tray,
+        &restart_lock,
+        &shell,
+        mosaic_pages,
+        refresh_mosaic,
+        refresh_slice,
+        animate,
+    );
+    (win, shell)
+}
+
+/// Gallery variant: mount the Gallery through the production nav path (the
+/// same state a card click reaches) so the Rust `is_gallery` guard holds.
+fn gallery_with_production_callbacks() -> crate::MainWindow {
+    let (win, shell) = window_with_production_callbacks();
+    crate::shell::Shell::dispatch(
+        &shell,
+        crate::shell::nav::NavCommand::Expand(crate::shell::nav::Screen::Gallery),
+    );
+    for _ in 0..40 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    win.set_gallery_empty(false);
+    win.set_gallery_reduced_motion(true);
+    win
+}
+
+/// Plain Up/Down in the Gallery must not deploy a drawer. Before this change
+/// the Rust `nav-move` handler toggled the top/bottom drawer on a plain arrow;
+/// now only Ctrl does. This drives the REAL keyboard path (a held Control key
+/// event, then the arrow) and asserts the drawer state.
+#[test]
+fn plain_arrows_do_not_deploy_gallery_drawers() {
+    use slint::platform::Key;
+    let win = gallery_with_production_callbacks();
+    win.set_gallery_style(0);
+    focus_settle();
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "baseline: the drawers start closed"
+    );
+
+    focus_press_key(&win, Key::UpArrow);
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Up in the Gallery must not deploy a drawer"
+    );
+    focus_press_key(&win, Key::DownArrow);
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Down in the Gallery must not deploy a drawer"
+    );
+
+    // Ctrl still owns the drawers: both open as before.
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "Ctrl+Up must still deploy the top drawer"
+    );
+    win.set_gallery_top_open(false);
+    focus_settle();
+    focus_press_key_with_ctrl(&win, Key::DownArrow);
+    assert!(
+        win.get_gallery_bottom_open() && !win.get_gallery_top_open(),
+        "Ctrl+Down must still deploy the bottom drawer"
+    );
+    win.set_gallery_bottom_open(false);
+    focus_settle();
+
+    // Mosaic (style 2): plain Up/Down open no drawer there either (its plain
+    // arrows move the cursor through `gallery-mosaic-nav`, not `nav-move`).
+    win.set_gallery_style(2);
+    focus_settle();
+    focus_press_key(&win, Key::UpArrow);
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Up in the Mosaic must not deploy a drawer"
+    );
+    focus_press_key(&win, Key::DownArrow);
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Down in the Mosaic must not deploy a drawer"
+    );
+}
+
+/// Home is untouched: there plain Up/Down still move the vertical focus
+/// (`nav-move`'s `"down" | "up" if !is_gallery` arm). Same production path.
+#[test]
+fn plain_arrows_still_move_home_vertical_focus() {
+    use slint::platform::Key;
+    let (win, shell) = window_with_production_callbacks();
+    win.set_mounted_screen(0); // Home
+    win.set_expanded(false);
+    focus_settle();
+    // `Shell::move_focus` does not auto-mirror, so the Rust nav state is the
+    // observable (the UI mirror is a separate callback concern).
+    assert_eq!(
+        crate::shell::Shell::with_nav(&shell, |n| n.focused_card()),
+        0,
+        "Home starts on card 0"
+    );
+
+    focus_press_key(&win, Key::DownArrow);
+    assert_eq!(
+        crate::shell::Shell::with_nav(&shell, |n| n.focused_card()),
+        1,
+        "plain Down on Home must still move the vertical focus down"
+    );
+    focus_press_key(&win, Key::UpArrow);
+    assert_eq!(
+        crate::shell::Shell::with_nav(&shell, |n| n.focused_card()),
+        0,
+        "plain Up on Home must still move the vertical focus back up"
+    );
+}
+
+/// With a drawer already open, plain Up/Down must do nothing — no close, no
+/// cross-toggle. Before this change `gallery-keys` closed (or cross-toggled)
+/// the open drawer on a plain arrow, so Ctrl+Up opened and plain Up closed:
+/// the exact "two meanings" the keeper removed. Escape and Ctrl stay live.
+#[test]
+fn plain_arrows_do_not_touch_an_open_gallery_drawer() {
+    use slint::platform::Key;
+    use slint::ComponentHandle as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(false);
+    win.set_is_mutating(false);
+    win.set_gallery_style(0);
+    focus_settle();
+
+    // Ctrl+Up opens the top drawer; gallery-keys takes the keyboard.
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(win.get_gallery_top_open(), "precondition: Ctrl+Up opens the top drawer");
+    focus_settle();
+
+    // Plain Up must NOT close it any more.
+    focus_press_key(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open(),
+        "plain Up with the drawer open must do nothing (the drawer stays open)"
+    );
+    // Plain Down must NOT cross-toggle to the bottom either.
+    focus_press_key(&win, Key::DownArrow);
+    assert!(
+        win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Down with the top drawer open must not cross-toggle to the bottom"
+    );
+
+    // Escape still closes the drawer.
+    focus_press_key(&win, Key::Escape);
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "Escape must still close the open drawer"
+    );
+    focus_settle();
+
+    // Ctrl remains the only drawer key: reopen, then cross-toggle with Ctrl.
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(win.get_gallery_top_open(), "Ctrl+Up reopens the top drawer");
+    focus_settle();
+    focus_press_key_with_ctrl(&win, Key::DownArrow);
+    assert!(
+        win.get_gallery_bottom_open() && !win.get_gallery_top_open(),
+        "Ctrl+Down with the top open must still cross-toggle to the bottom"
+    );
+}
+
+/// A snapshot copied into owned bytes, plus its size. The testing backend
+/// reuses its snapshot allocation, so a retained `SharedPixelBuffer` can be
+/// overwritten by a later render; the copy freezes the frame.
+fn snapshot_owned(win: &crate::MainWindow) -> (Vec<u8>, usize, usize) {
+    use slint::ComponentHandle as _;
+    let buf = win.window().take_snapshot().expect("snapshot");
+    let dims = (buf.width() as usize, buf.height() as usize);
+    (Vec::from(buf.as_bytes()), dims.0, dims.1)
+}
+
+/// Save an owned snapshot into this run's directory (same bare-name rule as
+/// [`save_slice_png`]).
+fn save_owned_png(frame: &(Vec<u8>, usize, usize), name: &str) {
+    let (bytes, w, h) = frame;
+    let mut parts = Path::new(name).components();
+    let first_is_file = matches!(parts.next(), Some(std::path::Component::Normal(_)));
+    let bare = first_is_file && parts.next().is_none();
+    assert!(bare, "snapshot name must be a bare file name, got {name:?}");
+    let path = render_run_dir().join(name);
+    let img = image::RgbaImage::from_raw(*w as u32, *h as u32, bytes.clone()).expect("owned snapshot");
+    img.save(&path)
+        .unwrap_or_else(|e| panic!("save png {}: {e}", path.display()));
+}
+
+/// Changed pixels between two owned snapshots, over the whole frame. The
+/// gallery window is transparent, so a pixel can carry meaningful RGB with a
+/// near-zero alpha; unlike `count_buffer_diff_region` this deliberately does
+/// not gate on alpha.
+fn count_owned_diff(a: &(Vec<u8>, usize, usize), b: &(Vec<u8>, usize, usize)) -> usize {
+    let (ab, w, h) = a;
+    let (bb, ..) = b;
+    let mut count = 0usize;
+    for y in 0..*h {
+        for x in 0..*w {
+            let idx = (y * *w + x) * 4;
+            let dr = (ab[idx] as i16 - bb[idx] as i16).abs();
+            let dg = (ab[idx + 1] as i16 - bb[idx + 1] as i16).abs();
+            let db = (ab[idx + 2] as i16 - bb[idx + 2] as i16).abs();
+            if dr > 15 || dg > 15 || db > 15 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Visual proof (the change touches `.slint`): after a plain Up the drawer
+/// must NOT be painted — the frame must be pixel-identical to the baseline —
+/// while Ctrl+Up must paint it. PNGs land in this run's printed directory.
+#[test]
+fn plain_up_paints_no_drawer_but_ctrl_up_does() {
+    use slint::platform::Key;
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let win = gallery_with_production_callbacks();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_gallery_style(0);
+    win.set_gallery_focused(2);
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        (0..6usize)
+            .map(|i| late_card(&format!("Theme {i}"), i == 2))
+            .collect::<Vec<_>>(),
+    )));
+    focus_settle();
+
+    let baseline = snapshot_owned(&win);
+    save_owned_png(&baseline, "ctrl_only_baseline_slider.png");
+
+    focus_press_key(&win, Key::UpArrow);
+    assert!(
+        !win.get_gallery_top_open() && !win.get_gallery_bottom_open(),
+        "plain Up must not open a drawer before the snapshot"
+    );
+    let plain = snapshot_owned(&win);
+    save_owned_png(&plain, "ctrl_only_plain_up_slider.png");
+    assert_eq!(
+        baseline.0, plain.0,
+        "plain Up must repaint nothing — the frame must be byte-identical"
+    );
+
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(win.get_gallery_top_open(), "Ctrl+Up must open the top drawer");
+    let ctrl = snapshot_owned(&win);
+    save_owned_png(&ctrl, "ctrl_only_ctrl_up_slider.png");
+    let ctrl_diff = count_owned_diff(&baseline, &ctrl);
+    assert!(
+        ctrl_diff > 5000,
+        "Ctrl+Up must paint the drawer — only {ctrl_diff} pixels changed"
+    );
+}
+
 // ── U7 refresh path: overwrite invalidates only the overwritten card ──
 // End-to-end through `sync_save_gallery_ui` (headless MainWindow + a real
 // sandboxed ThemeManager): after an overwrite-style refresh for Alpha, its

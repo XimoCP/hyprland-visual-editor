@@ -140,28 +140,12 @@ pub fn setup_callbacks(
             let is_gallery = Shell::with_nav(&shell, |n| {
                 n.screen() == Screen::Gallery && n.expansion() != ExpansionState::Collapsed
             });
-            // V6.1: Up/Down no longer move the carousel — they deploy the drawers
-            // (top Settings, bottom Slider/Mosaic). Only Left/Right move it.
-            // In Gallery, Up toggles the top drawer, Down the bottom drawer.
-            if is_gallery {
-                let dir = direction.as_str();
-                if dir == "up" {
-                    if let Some(w) = weak.upgrade() {
-                        let cur = w.get_gallery_top_open();
-                        w.set_gallery_top_open(!cur);
-                        if !cur { w.set_gallery_bottom_open(false); }
-                    }
-                    return;
-                }
-                if dir == "down" {
-                    if let Some(w) = weak.upgrade() {
-                        let cur = w.get_gallery_bottom_open();
-                        w.set_gallery_bottom_open(!cur);
-                        if !cur { w.set_gallery_top_open(false); }
-                    }
-                    return;
-                }
-            }
+            // Plain Up/Down in the Gallery touch NOTHING here: the drawers are
+            // Ctrl-only (`shell-kbd`'s Ctrl branch plus the Ctrl-gated
+            // `gallery-keys`), and the vertical axis is reserved for a future
+            // use. Only Left/Right move the carousel — the `is_gallery` branch
+            // below. With no drawer case left, the gallery's up/down delta is
+            // already 0, which IS "do nothing".
             let delta: i32 = match direction.as_str() {
                 "right" => 1,
                 "left" => -1,

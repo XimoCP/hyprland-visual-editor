@@ -313,12 +313,15 @@ export component GalleryRoot inherits Rectangle {
                 if (root.bottom-menu-open) { root.bottom-menu-open = false; return accept; }
                 return reject;
             }
-            // ↑/↓ close the open drawer (no Esc needed) and allow cross toggling
-            if (event.text == Key.UpArrow) {
+            // ↑/↓ deploy/close the drawers ONLY with Ctrl — Ctrl is the single
+            // drawer key, mirroring `shell-kbd`'s Ctrl branch. Plain arrows do
+            // nothing while a drawer is open; Escape (above) and the mouse
+            // arrow button still close it.
+            if (event.modifiers.control && event.text == Key.UpArrow) {
                 if (root.top-menu-open) { root.top-menu-open = false; return accept; }
                 if (root.bottom-menu-open) { root.bottom-menu-open = false; root.top-menu-open = true; return accept; }
             }
-            if (event.text == Key.DownArrow) {
+            if (event.modifiers.control && event.text == Key.DownArrow) {
                 if (root.bottom-menu-open) { root.bottom-menu-open = false; return accept; }
                 if (root.top-menu-open) { root.top-menu-open = false; root.bottom-menu-open = true; return accept; }
             }
