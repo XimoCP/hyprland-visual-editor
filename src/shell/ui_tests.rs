@@ -17255,6 +17255,38 @@ fn overwrite_saved_theme_rebakes_its_card_by_construction() {
     );
 }
 
+// ── U7 wiring: the refresh handler invalidates its theme and re-bakes ──
+// The refresh store rewrites the active theme's files on disk, so it is
+// exactly a path that CAN change artwork — unlike rename/delete. It must
+// mirror the overwrite handler: pass its re-saved theme (`last_applied`)
+// as the invalidation set and run the EXISTING thumb scheduler afterwards
+// (no second scheduler). Construction check — the async bake itself is
+// covered by the scheduler's own tests and the model-level test above.
+#[test]
+fn refresh_saved_theme_rebakes_its_card_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let handler = main
+        .split("window.on_panel_refresh_saved_theme")
+        .nth(1)
+        .expect("main.rs must wire on_panel_refresh_saved_theme");
+    let handler = handler
+        .split("window.on_panel_overwrite_saved_theme")
+        .next()
+        .unwrap_or(handler);
+    assert!(
+        handler.contains("last_applied"),
+        "the refresh handler must derive the invalidated theme from the manager's last_applied"
+    );
+    assert!(
+        handler.contains("invalidat"),
+        "the refresh handler must pass its re-saved theme as the invalidation set"
+    );
+    assert!(
+        handler.contains("schedule_thumbs"),
+        "the refresh handler must reuse the existing thumb scheduler to re-bake"
+    );
+}
+
 // ── U6 extension: late palette re-assert drops focus AGAIN (~2 s later) ──
 // Live evidence: after the FIRST apply of the session Enter is dead, on a
 // LATER apply it works. The provider re-assert (noctalia.rs) only fires

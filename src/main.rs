@@ -950,9 +950,9 @@ fn close_gallery_info(window: &crate::MainWindow) {
 /// Rebuild window gallery cards from gallery_tm in place (keeps baked thumbs)
 /// then refresh mosaic + slice ring. Shared by Save rename/delete/refresh/
 /// overwrite so the Gallery follows without restart. `invalidate` names the
-/// themes whose background changed on disk (the overwrite set): their cards
-/// are blanked AFTER the carry-over merge so the thumb scheduler re-bakes
-/// them — empty for paths that change no artwork (rename/delete/refresh).
+/// themes whose background changed on disk (the overwrite and refresh sets):
+/// their cards are blanked AFTER the carry-over merge so the thumb scheduler
+/// re-bakes them — empty for paths that change no artwork (rename/delete).
 fn sync_save_gallery_ui(
     w: &crate::MainWindow,
     gallery_tm: &std::sync::Arc<std::sync::Mutex<crate::theme_manager::ThemeManager>>,
@@ -4656,14 +4656,20 @@ fn main() -> Result<(), slint::PlatformError> {
             let gallery_tm_c = gallery_tm.clone();
             let refresh_mosaic_page_c = refresh_mosaic_page.clone();
             let refresh_slice_ring_c = refresh_slice_ring.clone();
+            let gallery_themes_root_c = gallery_themes_root.clone();
+            let stage_dims_c = stage_dims.clone();
             let weak = window.as_weak();
             window.on_panel_refresh_saved_theme(move || {
                 tracing::debug!("{}", crate::callbacks::mouse_trace("refresh-saved-theme"));
                 let mut error_msg = String::new();
-                let ok = {
+                let (ok, refreshed) = {
                     let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    // `handle_panel_refresh` re-saves exactly `last_applied` and
+                    // does not change it during the call.
+                    let refreshed = st.theme_manager().last_applied.clone();
                     let mut gtm = gallery_tm_c.lock().unwrap();
-                    callbacks::handle_panel_refresh(st.theme_manager_mut(), &mut gtm, &mut error_msg)
+                    let ok = callbacks::handle_panel_refresh(st.theme_manager_mut(), &mut gtm, &mut error_msg);
+                    (ok, refreshed)
                 };
                 let Some(w) = weak.upgrade() else { return; };
                 if !ok {
@@ -4677,7 +4683,21 @@ fn main() -> Result<(), slint::PlatformError> {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.refresh_theme_list(&w);
                 }
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &std::collections::HashSet::new());
+                // The refresh re-saved the active theme: its background may
+                // have changed on disk, so invalidate its card AFTER the
+                // carry-over merge (stale bake would otherwise win) and re-run
+                // the existing thumb scheduler so the blank row re-resolves and
+                // re-bakes. Empty last_applied is a no-op save, so there is
+                // nothing to invalidate. Unconditional for the affected theme
+                // only — a content-keyed warm cache makes an unchanged source
+                // cheap, and unrelated cards keep their bakes (no mass
+                // invalidation, no flicker).
+                let mut invalidated = std::collections::HashSet::new();
+                if !refreshed.is_empty() {
+                    invalidated.insert(refreshed.clone());
+                }
+                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &invalidated);
+                schedule_thumbs(&weak, &gallery_themes_root_c, &stage_dims_c, refresh_mosaic_page_c.clone());
             });
         }
         {

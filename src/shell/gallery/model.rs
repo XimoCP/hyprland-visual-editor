@@ -445,8 +445,8 @@ pub fn sync_cards(model: &slint::VecModel<crate::GalleryCardData>, new_rows: Vec
 /// Blank the baked images of the named cards so they re-bake (U7 preview
 /// refresh). `sync_cards` deliberately keeps old bakes (S5 flicker fix),
 /// and the thumb scheduler skips rows that already carry images — so after
-/// an overwrite the card would show stale pixels forever with no
-/// invalidation path. Call AFTER `sync_cards`: the merge must run first so
+/// an overwrite or a refresh store the card would show stale pixels forever
+/// with no invalidation path. Call AFTER `sync_cards`: the merge must run first so
 /// fresh non-image fields land, then only the affected rows drop their
 /// four image fields and the existing scheduler re-resolves + re-bakes
 /// them. Untouched rows keep their bakes (no mass invalidation, no
