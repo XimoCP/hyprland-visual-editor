@@ -226,6 +226,40 @@ A mosaic tile is far too small for the info, so the tile itself grows.
 
 The Slider is untouched: `ThemeInfoPanel` is back to its committed state.
 
+## PENDING — the mosaic keyboard steals the drawers (found 2026-10-04)
+
+**Symptom**: in the Mosaic, Up/Down no longer bring out the hidden drawers
+(Settings upward, Slider/Mosaic downward). The keeper relies on those keys.
+
+**Cause (verified)**: `shell-kbd` gives the Mosaic its own branch
+(`mounted-screen == 1 && gallery-style == 2`) that consumes all four arrows and
+routes them to `gallery-mosaic-nav`. Before that branch, Up/Down fell through to
+`nav-move`, and `src/callbacks.rs:143-161` says exactly what they did: "V6.1:
+Up/Down no longer move the carousel — they deploy the drawers (top Settings,
+bottom Slider/Mosaic)". The mosaic branch runs first, so the drawers lost their
+only keyboard path. The Slider is unaffected (its branch is untouched), and the
+mouse path (the ChromeButton arrows) still works.
+
+**Options (not implemented — the keeper parked it)**:
+
+1. **Edge escape (preferred)**: keep Up/Down for the cursor, and when the cursor
+   is already on the first row an extra Up opens Settings, and on the last row an
+   extra Down opens the Slider/Mosaic drawer. The signal already exists:
+   `mosaic_neighbor` returns `None` at a page edge, and the nav handler already
+   branches on `None` (today it steps the page for left/right and does nothing
+   for up/down). It mirrors how scrolling past an end reveals the next thing, and
+   keeps one meaning per key.
+2. **Split the keys**: Left/Right move the cursor, Up/Down keep the drawers, and
+   the cursor's vertical movement moves to PageUp/PageDown (or Ctrl+arrows). Keeps
+   the Slider's convention intact but costs the wall its most natural axis.
+3. **Different key for the drawers in the mosaic**: Up/Down keep the cursor and
+   the drawers move to PageUp/PageDown. Cheapest, but the same key means
+   different things in the two styles, which is exactly what this session kept
+   fixing elsewhere.
+
+Whatever is chosen must keep the Slider's Up/Down behaviour byte-identical.
+
+
 ## Final shape of the face (keeper's brief)
 
 - A slanted parallelogram **inside** the theme card, covering **one third** of
