@@ -12,6 +12,9 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { HveColors } from "../theme.slint";
+// The five section words are panel chrome (PanelMenu reads the same global),
+// so the pills follow the language instead of spelling English literals.
+import { PanelText } from "../panel/panel_text.slint";
 
 // One skewed style pill (task 4.2 / spec Floating FilterBar Chrome):
 // parallelogram Path skewed 10px like the slice shear; active filled
@@ -206,35 +209,35 @@ export component FilterBar inherits Rectangle {
 
                 // Wrapping FocusScope for keyboard navigation (R9 keyboard-reachable)
                 save-pill := SkewPill {
-                    label: "Save";
+                    label: PanelText.nav-save;
                     active: root.panel-section == 0;
                     reduced-motion: root.reduced-motion;
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 2;
                     selected => { root.panel-section-selected(0); }
                 }
                 borders-pill := SkewPill {
-                    label: "Borders";
+                    label: PanelText.nav-borders;
                     active: root.panel-section == 1;
                     reduced-motion: root.reduced-motion;
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 3;
                     selected => { root.panel-section-selected(1); }
                 }
                 motion-pill := SkewPill {
-                    label: "Motion";
+                    label: PanelText.nav-motion;
                     active: root.panel-section == 2;
                     reduced-motion: root.reduced-motion;
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 4;
                     selected => { root.panel-section-selected(2); }
                 }
                 filters-pill := SkewPill {
-                    label: "Filters";
+                    label: PanelText.nav-filters;
                     active: root.panel-section == 3;
                     reduced-motion: root.reduced-motion;
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 5;
                     selected => { root.panel-section-selected(3); }
                 }
                 system-pill := SkewPill {
-                    label: "System";
+                    label: PanelText.nav-system;
                     active: root.panel-section == 4;
                     reduced-motion: root.reduced-motion;
                     key-focused: focus-scope.has-focus && focus-scope.key-focused-pill == 6;

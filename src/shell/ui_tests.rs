@@ -939,6 +939,36 @@ fn ctrl_drawer_deploy_renders() {
     );
     let mosaic = win.window().take_snapshot().expect("mosaic top drawer snapshot");
     save_slice_png(mosaic, "ctrl_top_drawer_mosaic.png");
+
+    // The five pill words are panel chrome: deploying the SAME drawer again
+    // after the chrome i18n pass must repaint them with the translated section
+    // words (Guardar / Bordes / Movimiento / Filtros / Sistema), not English.
+    win.set_gallery_top_open(false);
+    focus_settle();
+    win.set_gallery_style(0);
+    focus_settle();
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        win.get_gallery_top_open(),
+        "Ctrl+Up must deploy the Slider top drawer again before the language switch"
+    );
+    focus_settle();
+    let en_drawer = win.window().take_snapshot().expect("english drawer pills");
+    save_slice_png(en_drawer.clone(), "drawer_pills_en.png");
+
+    crate::panel_i18n::apply_panel_chrome(&win, &crate::tr::Tr::with_lang("es"));
+    focus_settle();
+    let es_drawer = win.window().take_snapshot().expect("spanish drawer pills");
+    save_slice_png(es_drawer.clone(), "drawer_pills_es.png");
+
+    // The drawer deploys above the central band (scaled-h = 520px at 1920):
+    // y ≈ (1080 - 520) / 2 - 56 - 12 = 212, and the pills are the ONLY thing
+    // `apply_panel_chrome` can repaint while the panel is closed.
+    let painted = frame_diff(&en_drawer, &es_drawer, (0, 100, 1920, 450));
+    assert!(
+        painted > 200,
+        "switching the deployed drawer pills to Spanish must repaint them: only {painted} pixels differ"
+    );
 }
 
 // ── Bottom-bar shortcuts: visual proof across contexts ─────────────────
@@ -6330,6 +6360,13 @@ fn motion_apply_callback_syncs_the_tune_pane() {
     );
 }
 
+/// The built-in card column of the two-column Motion split at 1920px: the
+/// content starts at x=161 (160px rail + divider) and the split sits at the
+/// content midpoint (~x=1040), the same band `motion_entry_focus...` samples
+/// for the icy ring. Descriptions paint here, so this is the region whose
+/// repaint proves the card reads the description model.
+const MOTION_LIST_AREA: (usize, usize, usize, usize) = (161, 0, 1040, 1080);
+
 /// Entry focus must RENDER on the first list card, never on the tune pane. The
 /// tune-first index space lit bezier-a on entry (index 0) while the list pane
 /// received a negative local index and lit nothing; this pins the cards-first
@@ -6377,6 +6414,80 @@ fn motion_entry_focus_renders_on_first_list_card() {
         list_icy > 200,
         "entering Motion must paint the icy focus ring on the first list card — \
          list_icy={list_icy} (tune_icy={tune_icy} is dominated by the slider labels)"
+    );
+
+    // ── The built-in cards must PAINT their description, in its own language ──
+    // The model is already translated and already reaches the section
+    // (`anim-descs`); what was missing was the hand-off to the list pane. Only
+    // the DESCRIPTION model moves in steps (2) and (3) — titles, tags and files
+    // stay byte for byte — so every differing pixel below is a description.
+    // The chrome is switched to Spanish first so this frame is the one the
+    // Spanish PNG is read from.
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let animations = engine.scan("animations").expect("the animation scan must run");
+    assert!(
+        animations.len() >= 3,
+        "the repo must ship the built-in animations the cards list"
+    );
+
+    let tr_es = crate::tr::Tr::with_lang("es");
+    let titles: Vec<SharedString> = animations
+        .iter()
+        .map(|a| SharedString::from(tr_es.tr_or(&a.i18n_title, &a.raw_title)))
+        .collect();
+    let tags: Vec<SharedString> = animations.iter().map(|a| SharedString::from(&a.tag)).collect();
+    let files: Vec<SharedString> = animations.iter().map(|a| SharedString::from(&a.file)).collect();
+    let descs_for = |lang: &str| -> Vec<SharedString> {
+        let tr = crate::tr::Tr::with_lang(lang);
+        animations
+            .iter()
+            .map(|a| SharedString::from(tr.tr_or(&a.i18n_desc, &a.raw_desc)))
+            .collect()
+    };
+    let es_descs = descs_for("es");
+    let en_descs = descs_for("en");
+    assert!(!es_descs.is_empty(), "the scan must carry descriptions");
+    assert!(
+        es_descs != en_descs,
+        "the Spanish animation descriptions must differ from the English ones, or step (3) proves nothing"
+    );
+
+    crate::panel_i18n::apply_panel_chrome(&win, &crate::tr::Tr::with_lang("es"));
+    crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("es"));
+    win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_anim_tags(ModelRc::new(VecModel::from(tags)));
+    win.set_anim_files(ModelRc::new(VecModel::from(files)));
+    win.set_anim_descs(ModelRc::new(VecModel::from(es_descs.clone())));
+    settle_frames(80);
+    let es = win.window().take_snapshot().expect("spanish built-in descriptions");
+    save_slice_png(es.clone(), "motion_builtin_descs_es.png");
+
+    // (2) Descriptions emptied, everything else untouched: the list MUST
+    // repaint. A card that never reads the model changes zero pixels.
+    let blank: Vec<SharedString> = animations.iter().map(|_| SharedString::from("")).collect();
+    win.set_anim_descs(ModelRc::new(VecModel::from(blank)));
+    settle_frames(80);
+    let es_blank = win.window().take_snapshot().expect("spanish list, descriptions emptied");
+    save_slice_png(es_blank.clone(), "motion_builtin_descs_es_blank.png");
+    let painted = frame_diff(&es, &es_blank, MOTION_LIST_AREA);
+    assert!(
+        painted > 200,
+        "the Motion built-in cards must paint the description model: \
+         emptying it changed only {painted} pixels"
+    );
+
+    // (3) Spanish titles kept, descriptions in ENGLISH: MUST repaint again, so
+    // the painted text follows the model's language instead of a constant.
+    win.set_anim_descs(ModelRc::new(VecModel::from(en_descs)));
+    settle_frames(80);
+    let es_en = win.window().take_snapshot().expect("spanish list, english descriptions");
+    save_slice_png(es_en.clone(), "motion_builtin_descs_es_en_descs.png");
+    let relang = frame_diff(&es, &es_en, MOTION_LIST_AREA);
+    assert!(
+        relang > 200,
+        "the painted description must follow the language: \
+         switching it to English changed only {relang} pixels"
     );
 }
 
@@ -10382,6 +10493,81 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
     );
 }
 
+/// Motion must reach the same wire Borders already has: its built-in cards
+/// never painted a description because nothing ever handed one over. The model
+/// is already translated and already arrives at the section (`anim-descs` →
+/// `PanelRoot` → `MotionSection`); the missing link is the LIST PANE:
+///  1. the pane declares `builtin-descs`;
+///  2. BOTH instantiations (two-column and stacked) forward `root.anim-descs`;
+///  3. the built-in card reads it GUARDED — a fixture may leave the
+///     description model shorter than the name model, so a bare
+///     `builtin-descs[i]` would abort instead of painting nothing;
+///  4. user-preset cards get none, exactly like Borders (they carry a
+///     placeholder description).
+///
+/// The loop structure around `builtin-files[i]` is under investigation for a
+/// reported crash; this test pins the DESC wiring only and must not push the
+/// file indexing one way or the other.
+#[test]
+fn motion_builtin_cards_receive_a_guarded_description_binding() {
+    const SECTION: &str = include_str!("../../ui/panel/sections/MotionSection.slint");
+
+    assert!(
+        SECTION.contains("in property <[string]> builtin-descs"),
+        "MotionListPane must declare `builtin-descs` beside `builtin-files`"
+    );
+
+    assert_eq!(
+        SECTION.matches("builtin-descs: root.anim-descs;").count(),
+        2,
+        "both MotionListPane instantiations (two-column and stacked) must forward `anim-descs`"
+    );
+
+    // The built-in card block, cut at the user-preset loop so the two blocks
+    // can never be confused with each other.
+    let builtins = SECTION
+        .split("for i in root.builtin-names.length : SavedPresetCard")
+        .nth(1)
+        .expect("the built-in card loop must exist");
+    let builtin_block = builtins
+        .split("for i in root.user-names.length")
+        .next()
+        .expect("the built-in block must end before the user-preset loop");
+    assert!(
+        builtin_block.contains("desc: i < root.builtin-descs.length ? root.builtin-descs[i] : \"\";"),
+        "the built-in Motion card must paint the GUARDED `builtin-descs[i]` read"
+    );
+
+    // Exactly ONE read of the model in the whole file, and only inside the
+    // ternary: an unguarded index next to it is the same abort hazard the
+    // list loop is under investigation for.
+    assert_eq!(
+        SECTION.matches("root.builtin-descs[i]").count(),
+        1,
+        "`builtin-descs` must be read exactly once, inside the guard"
+    );
+    assert!(
+        !SECTION.contains("desc: root.builtin-descs[i]"),
+        "the description read must stay behind the length guard"
+    );
+
+    let users = SECTION
+        .split("for i in root.user-names.length : SavedPresetCard")
+        .nth(1)
+        .expect("the user-preset card loop must exist");
+    // Cut at the empty-state block: everything past it is the pane's tail and
+    // then the SECTION itself, whose two instantiations legitimately pass
+    // `builtin-descs` to the pane.
+    let user_block = users
+        .split("if root.total-count == 0")
+        .next()
+        .expect("the empty-state block must follow the user-preset loop");
+    assert!(
+        !user_block.contains("builtin-descs"),
+        "user-preset cards must not receive the built-in description (Borders passes none)"
+    );
+}
+
 // ── Panel chrome i18n (nav rail + header hint) ────────────────────────
 // The rail and the panel header are shared by all five sections, so their
 // strings live in the exported `PanelText` global — the same channel
@@ -10557,6 +10743,75 @@ fn the_panel_chrome_reads_every_label_from_the_text_global() {
         hardcoded.is_empty(),
         "these chrome labels are hardcoded in their component AND read from PanelText: {hardcoded:#?}"
     );
+}
+
+// ── Gallery drawer pills — the five section words ARE panel chrome ─────
+// The deployed drawers (and FilterBar's bottom row) repeat the rail's five
+// section labels, so a Spanish keeper reading English there is the SAME bug
+// as an untranslated rail. The translation already exists (`PanelText.nav-*`,
+// filled by `panel_i18n::apply_panel_chrome`), so every pill must READ it the
+// way `PanelMenu` does. Asserting the English word would pass on the
+// untranslated file — this asserts the BINDING.
+
+/// (file, source) for every file that paints one of the drawer pills.
+fn gallery_pill_sources() -> [(&'static str, &'static str); 2] {
+    [
+        ("ui/gallery/FilterBar.slint", include_str!("../../ui/gallery/FilterBar.slint")),
+        ("ui/gallery/GalleryRoot.slint", include_str!("../../ui/gallery/GalleryRoot.slint")),
+    ]
+}
+
+#[test]
+fn gallery_drawer_pills_read_the_panel_text_global() {
+    // The five nav rows of the chrome table above: (property, _, English, _).
+    let nav: Vec<(&str, &str)> = panel_chrome_labels()
+        .iter()
+        .filter(|(name, ..)| name.starts_with("nav-"))
+        .map(|(name, _, en, _)| (*name, *en))
+        .collect();
+    assert_eq!(nav.len(), 5, "the drawers repeat the five rail sections");
+
+    for (file, src) in gallery_pill_sources() {
+        // FilterBar paints one pill per section; GalleryRoot paints the drawer
+        // twice (behind the stage in Slider, in front in Mosaic).
+        let expected = if file.ends_with("FilterBar.slint") { 1 } else { 2 };
+        for (name, en) in &nav {
+            let binding = format!("label: PanelText.{name};");
+            assert_eq!(
+                src.matches(&binding).count(),
+                expected,
+                "{file}'s {en} pill must read `{binding}` {expected} time(s)"
+            );
+        }
+    }
+
+    // A comment may quote today's copy; only a real code line is a hardcoded pill.
+    let mut hardcoded: Vec<(&str, &str)> = Vec::new();
+    for (file, src) in gallery_pill_sources() {
+        for (name, en) in &nav {
+            let literal = format!("label: \"{en}\";");
+            if src
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .any(|l| l.contains(&literal))
+            {
+                hardcoded.push((*name, file));
+            }
+        }
+    }
+    assert!(
+        hardcoded.is_empty(),
+        "these drawer pills are hardcoded English instead of PanelText: {hardcoded:#?}"
+    );
+
+    // Last, because it is the enabling change: without the import none of the
+    // bindings above can resolve.
+    for (file, src) in gallery_pill_sources() {
+        assert!(
+            src.contains("import { PanelText } from \"../panel/panel_text.slint\";"),
+            "{file} must import PanelText from ../panel/panel_text.slint"
+        );
+    }
 }
 
 /// R13 — headless render flow for the strip, producing the PNGs PR 4's visual

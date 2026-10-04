@@ -444,6 +444,9 @@ component MotionListPane inherits Rectangle {
     // The card DISPLAYS the translated title but sends this to the engine,
     // exactly like BordersSection does (`apply-value: root.builtin-files[i]`).
     in property <[string]> builtin-files;
+    // One-line description per built-in preset, painted under its name. Same
+    // wire BordersListPane uses: comes from `anim-descs`, already translated.
+    in property <[string]> builtin-descs;
     in property <[string]> builtin-tags;
     in property <[string]> user-names;
     in property <[string]> user-tags;
@@ -534,6 +537,8 @@ component MotionListPane inherits Rectangle {
 
             for i in root.builtin-names.length : SavedPresetCard {
                 preset-name: root.builtin-names[i];
+                // Optional: a fixture may leave the description model shorter.
+                desc: i < root.builtin-descs.length ? root.builtin-descs[i] : "";
                 apply-value: root.builtin-files[i];
                 is-active: i == root.active-index;
                 is-user: false;
@@ -737,6 +742,7 @@ export component MotionSection inherits Rectangle {
                 horizontal-stretch: 1;
                 builtin-names: root.anim-titles;
                 builtin-files: root.anim-files;
+                builtin-descs: root.anim-descs;
                 builtin-tags: root.anim-tags;
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;
@@ -789,6 +795,7 @@ export component MotionSection inherits Rectangle {
                 vertical-stretch: 1;
                 builtin-names: root.anim-titles;
                 builtin-files: root.anim-files;
+                builtin-descs: root.anim-descs;
                 builtin-tags: root.anim-tags;
                 user-names: root.user-preset-names;
                 user-tags: root.user-preset-tags;

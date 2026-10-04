@@ -18,6 +18,9 @@ import { GalleryCardData } from "ThemeCardDelegate.slint";
 import { SliceCarousel, SliceTileData } from "SliceCarousel.slint";
 import { MosaicView, MosaicTileData } from "MosaicView.slint";
 import { ThemeInfoPanel, ThemeInfoData } from "ThemeInfoPanel.slint";
+// The five drawer pills repeat the rail's section words, so they read the
+// same chrome global PanelMenu does instead of hardcoded English.
+import { PanelText } from "../panel/panel_text.slint";
 
 // Reused pill — same look as FilterBar (10px skew parallelogram).
 component SkewPill inherits Rectangle {
@@ -219,35 +222,35 @@ export component GalleryRoot inherits Rectangle {
             alignment: center;
 
             SkewPill {
-                label: "Save";
+                label: PanelText.nav-save;
                 active: false;
                 key-focused: root.top-focused == 0 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(0); }
             }
             SkewPill {
-                label: "Borders";
+                label: PanelText.nav-borders;
                 active: false;
                 key-focused: root.top-focused == 1 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(1); }
             }
             SkewPill {
-                label: "Motion";
+                label: PanelText.nav-motion;
                 active: false;
                 key-focused: root.top-focused == 2 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(2); }
             }
             SkewPill {
-                label: "Filters";
+                label: PanelText.nav-filters;
                 active: false;
                 key-focused: root.top-focused == 3 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(3); }
             }
             SkewPill {
-                label: "System";
+                label: PanelText.nav-system;
                 active: false;
                 key-focused: root.top-focused == 4 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
@@ -454,35 +457,35 @@ export component GalleryRoot inherits Rectangle {
             alignment: center;
 
             SkewPill {
-                label: "Save";
+                label: PanelText.nav-save;
                 active: false;
                 key-focused: root.top-focused == 0 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(0); }
             }
             SkewPill {
-                label: "Borders";
+                label: PanelText.nav-borders;
                 active: false;
                 key-focused: root.top-focused == 1 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(1); }
             }
             SkewPill {
-                label: "Motion";
+                label: PanelText.nav-motion;
                 active: false;
                 key-focused: root.top-focused == 2 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(2); }
             }
             SkewPill {
-                label: "Filters";
+                label: PanelText.nav-filters;
                 active: false;
                 key-focused: root.top-focused == 3 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
                 selected => { root.top-menu-open = false; root.panel-section-selected(3); }
             }
             SkewPill {
-                label: "System";
+                label: PanelText.nav-system;
                 active: false;
                 key-focused: root.top-focused == 4 && root.top-menu-open;
                 reduced-motion: root.reduced-motion;
