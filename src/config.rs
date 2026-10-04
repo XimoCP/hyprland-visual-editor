@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Current config version.
 /// Bump this when making backward-incompatible changes and add a migration step.
-pub const CONFIG_VERSION: u32 = 7;
+pub const CONFIG_VERSION: u32 = 8;
 
 fn default_config_version() -> u32 {
     0 // pre-versioning configs are treated as v0 and migrated forward
@@ -39,6 +39,13 @@ pub struct Config {
     pub minimize_seconds: i32,
     pub language: String,
     pub tiling_mode: bool,
+    /// Gallery presentation style, persisted so the keeper's choice survives a
+    /// restart. `0` = Slider, `2` = Mosaic. Any other value (a stale or
+    /// hand-edited file) opens the Slider: only those two are reachable from
+    /// the chrome, and no start-up may strand the gallery on a style the UI
+    /// cannot leave. See `crate::sanitized_gallery_style`.
+    #[serde(default)]
+    pub gallery_style: i32,
     pub theme: String,
     pub last_applied_theme: String,
     pub keybinds_enabled: bool,
@@ -63,6 +70,7 @@ impl Default for Config {
             minimize_seconds: 4,
             language: String::new(),
             tiling_mode: false,
+            gallery_style: 0,
             theme: "system".to_string(),
             last_applied_theme: String::new(),
             keybinds_enabled: false,
@@ -119,6 +127,14 @@ fn migrate(mut cfg: Config) -> Config {
         cfg.gaps_in = 5;
         cfg.gaps_out = 5;
         cfg.config_version = 7;
+    }
+
+    // v7 → v8: add gallery_style. An existing install never chose a style, so
+    // it keeps the Slider it has always started on — an upgrade must not change
+    // which style is painted.
+    if cfg.config_version < 8 {
+        cfg.gallery_style = 0;
+        cfg.config_version = 8;
     }
 
     cfg.config_version = CONFIG_VERSION;
@@ -276,6 +292,10 @@ mod tests {
         assert_eq!(cfg.minimize_seconds, 4, "minimize_seconds should default to 4");
         assert_eq!(cfg.theme, "system", "theme should default to system");
         assert!(!cfg.tiling_mode, "tiling_mode should default to false");
+        assert_eq!(
+            cfg.gallery_style, 0,
+            "gallery_style should default to 0 (Slider) — the Mosaic is opt-in"
+        );
         assert!(
             !cfg.keybinds_enabled,
             "keybinds_enabled should default to false"
@@ -322,6 +342,7 @@ mod tests {
             minimize_seconds: 10,
             language: "es".into(),
             tiling_mode: true,
+            gallery_style: 2,
             theme: "light".into(),
             keybinds_enabled: true,
             last_applied_theme: String::new(),
@@ -341,6 +362,10 @@ mod tests {
         assert_eq!(loaded.minimize_seconds, 10);
         assert_eq!(loaded.language, "es");
         assert!(loaded.tiling_mode);
+        assert_eq!(
+            loaded.gallery_style, 2,
+            "the chosen gallery style must survive a save/load round trip"
+        );
         assert_eq!(loaded.theme, "light");
         assert!(loaded.keybinds_enabled);
         assert_eq!(loaded.active_anim_file, "glow.json");
@@ -429,6 +454,73 @@ mod tests {
         assert_eq!(
             cfg.keybinds_enabled, false,
             "keybinds_enabled should default to false after migration"
+        );
+    }
+
+    // ── migration from v7 → v8 (gallery_style) ───────────────────────
+
+    #[test]
+    fn test_migration_from_v7_to_v8_defaults_gallery_style_to_slider() {
+        let _env = TempEnv::new();
+
+        let path = Config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create parent dir");
+
+        // A v7 config has no gallery_style: it predates the field, so its keeper
+        // never chose a style and must start on the Slider exactly as today.
+        let v7_json = r#"{
+            "config_version": 7,
+            "is_system_active": true,
+            "border_size": 3,
+            "border_radius": 32,
+            "gaps_in": 5,
+            "gaps_out": 5,
+            "active_anim_file": "",
+            "active_border_file": "",
+            "active_shader_file": "",
+            "auto_start": false,
+            "auto_minimize_enabled": true,
+            "minimize_seconds": 5,
+            "language": "",
+            "tiling_mode": false,
+            "theme": "system",
+            "last_applied_theme": "",
+            "keybinds_enabled": false,
+            "disabled_providers": []
+        }"#;
+        std::fs::write(&path, v7_json).expect("write v7 config");
+
+        let cfg = Config::load();
+        assert_eq!(
+            cfg.config_version, CONFIG_VERSION,
+            "v7 config should be migrated to v{CONFIG_VERSION}"
+        );
+        assert_eq!(
+            cfg.gallery_style, 0,
+            "an upgrade must not change which style is painted: still the Slider"
+        );
+        assert!(cfg.is_system_active, "v7 field should be preserved");
+    }
+
+    #[test]
+    fn test_gallery_style_reaches_the_file_on_disk() {
+        let _env = TempEnv::new();
+
+        // The keeper's case: choose the Mosaic once, and the choice is still
+        // there after a restart — that only holds if the value is on disk.
+        let mut cfg = Config::load();
+        cfg.gallery_style = 2;
+        cfg.save().expect("save should succeed");
+
+        let raw = std::fs::read_to_string(Config::config_path()).expect("config.json exists");
+        assert!(
+            raw.contains("\"gallery_style\": 2"),
+            "gallery_style must reach config.json, got:\n{raw}"
+        );
+        assert_eq!(
+            Config::load().gallery_style,
+            2,
+            "a reloaded config must still say Mosaic"
         );
     }
 

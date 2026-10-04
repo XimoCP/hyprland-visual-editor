@@ -581,6 +581,56 @@ pub(crate) fn gallery_note_startup(window: &crate::MainWindow) {
     );
 }
 
+/// Gallery style: the Slider (skwd-wall's slice carousel).
+pub(crate) const SLIDER_STYLE: i32 = 0;
+
+/// Gallery style: the Mosaic wall.
+pub(crate) const MOSAIC_STYLE: i32 = 2;
+
+/// Map a persisted `gallery_style` onto a style this build can actually open.
+///
+/// Only the Slider (`0`) and the Mosaic (`2`) have an entry point in the
+/// chrome: `FilterBar` and `GalleryRoot` both send `style-selected(0)` or
+/// `style-selected(2)`, and nothing ever sends `1`. Honouring anything else — a
+/// hand-edited Hexagon, a negative, a value written by some future version —
+/// could open the gallery on a style the UI has no path back from. The Mosaic is
+/// the only value worth keeping, so it is the only one kept; everything else
+/// opens the Slider.
+pub(crate) fn sanitized_gallery_style(persisted: i32) -> i32 {
+    if persisted == MOSAIC_STYLE {
+        MOSAIC_STYLE
+    } else {
+        SLIDER_STYLE
+    }
+}
+
+/// The keyboard cursor a style needs the moment it becomes active.
+///
+/// The Mosaic draws a ring the arrows move, so entering it with no cursor
+/// (`-1`) would leave the very first arrow press with nowhere to go: seed the
+/// first tile. The Slider has no cursor. An already-placed cursor is never
+/// moved — re-applying the active style must not yank the keeper's position.
+fn gallery_cursor_for_style(style: i32, current_cursor: i32) -> i32 {
+    if style == MOSAIC_STYLE && current_cursor < 0 {
+        0
+    } else {
+        current_cursor
+    }
+}
+
+/// Apply a gallery presentation style plus the state that style needs.
+///
+/// Start-up (the persisted value) and the chrome's `style-selected` callback
+/// both go through here, so the two paths can never drift into "start-up shows
+/// one style while the chrome switches to another".
+pub(crate) fn apply_gallery_style(window: &crate::MainWindow, style: i32) {
+    window.set_gallery_style(style);
+    window.set_gallery_mosaic_cursor(gallery_cursor_for_style(
+        style,
+        window.get_gallery_mosaic_cursor(),
+    ));
+}
+
 /// Snap focus onto a LATE-arriving active card (active resolved after a
 /// fallback startup — watcher refresh, late list resolution). Returns true
 /// when it moved focus; the caller must then run `refresh_slice_ring`,
@@ -3630,7 +3680,8 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
         window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
         window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
-        window.set_gallery_style(0);
+        // The keeper's choice, not a hardcoded Slider: `/mosaic` stays `/mosaic`.
+        apply_gallery_style(&window, sanitized_gallery_style(cfg.gallery_style));
         // Slider opens on the active theme — never hardcoded 0.
         window.set_gallery_focused(crate::gallery_initial_focus(&window) as i32);
         crate::gallery_note_startup(&window);
@@ -3641,6 +3692,12 @@ fn main() -> Result<(), slint::PlatformError> {
             let slot = gallery_slot.clone();
             let tm = gallery_tm.clone();
             let refresh_slice = refresh_slice_ring.clone();
+            // The chrome is the ONE writer of the style (mouse drawer, FilterBar
+            // and keyboard all land here), so this is the single place the
+            // keeper's choice has to reach the config on disk. The window is
+            // built before `AppState` exists, so the shared state is reached
+            // through the slot — same idiom as the card-clicked handler.
+            let gallery_state_c = gallery_state_slot.clone();
             window.on_gallery_style_selected(move |style| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery style-selected style={style}")));
                 let idx = (style as usize).min(2);
@@ -3650,13 +3707,27 @@ fn main() -> Result<(), slint::PlatformError> {
                         1 => crate::shell::gallery::GalleryStyle::Hexagon,
                         _ => crate::shell::gallery::GalleryStyle::Mosaic,
                     };
-                    w.set_gallery_style(style);
-                    // Entering the Mosaic: seed the keyboard cursor on the
-                    // first tile, so the ring shows where the keyboard is
-                    // before the first arrow press (the wall is never covered
-                    // by the cursor alone — Enter is what grows a tile).
-                    if style == 2 && w.get_gallery_mosaic_cursor() < 0 {
-                        w.set_gallery_mosaic_cursor(0);
+                    // Applies the style AND seeds the Mosaic cursor (the wall
+                    // draws a ring the arrows move, so it must open with one).
+                    apply_gallery_style(&w, style);
+                    // Persist: a restart must reopen on this style. Lock
+                    // discipline as everywhere else — the slot guard is dropped
+                    // before the state lock, never two locks at once.
+                    {
+                        let shared = gallery_state_c
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+                        if let Some(ref shared) = shared {
+                            let mut st = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            st.cfg_mut().gallery_style = style;
+                            if let Err(e) = st.cfg().save() {
+                                // Best-effort: a read-only config dir must not
+                                // kill the gallery. The style still applies for
+                                // this session; only the restart is lost.
+                                tracing::warn!("[gallery] could not persist style {style}: {e}");
+                            }
+                        }
                     }
                     let len = tm.lock().unwrap().list().unwrap_or_default().len() as i32;
                     let cur = w.get_gallery_focused();
@@ -7053,6 +7124,59 @@ mod tests {
         ] {
             assert!(code.contains(seam), "the seam must keep passing hypr_eval: {seam}");
         }
+    }
+
+    // ── the gallery style survives a restart ──────────────────────────
+
+    /// Only the Slider and the Mosaic are reachable from the chrome
+    /// (`FilterBar` / `GalleryRoot` send style 0 or 2 — Hexagon has no entry
+    /// point at all). A hand-edited or stale config must therefore never open
+    /// the gallery on a style the UI cannot leave.
+    #[test]
+    fn sanitized_gallery_style_keeps_only_the_two_the_chrome_can_offer() {
+        assert_eq!(sanitized_gallery_style(0), SLIDER_STYLE);
+        assert_eq!(sanitized_gallery_style(2), MOSAIC_STYLE);
+        for rejected in [1, -3, 7, i32::MAX, i32::MIN] {
+            assert_eq!(
+                sanitized_gallery_style(rejected),
+                SLIDER_STYLE,
+                "style {rejected} is unreachable from the chrome and must fall back to the Slider"
+            );
+        }
+    }
+
+    /// Entering the Mosaic seeds the keyboard cursor on the first tile (so the
+    /// very first arrow press has a ring to move); the Slider has no cursor.
+    /// The seed is conditional on an unset cursor, so re-applying a style never
+    /// yanks a cursor the keeper already moved.
+    #[test]
+    fn the_mosaic_seeds_its_cursor_and_the_slider_leaves_it_alone() {
+        assert_eq!(gallery_cursor_for_style(MOSAIC_STYLE, -1), 0);
+        assert_eq!(gallery_cursor_for_style(MOSAIC_STYLE, 4), 4);
+        assert_eq!(gallery_cursor_for_style(SLIDER_STYLE, -1), -1);
+        assert_eq!(gallery_cursor_for_style(SLIDER_STYLE, 3), 3);
+    }
+
+    /// Wiring pins: start-up opens the gallery on the PERSISTED style, and the
+    /// one chrome callback writes it back. Both go through
+    /// `apply_gallery_style`, so the two paths cannot drift into "start-up
+    /// shows X while the chrome switches to Y".
+    #[test]
+    fn the_persisted_style_is_read_at_startup_and_written_by_the_chrome() {
+        let code = main_rs_code();
+        assert!(
+            code.contains("apply_gallery_style(&window, sanitized_gallery_style(cfg.gallery_style))"),
+            "start-up must open the gallery on the persisted style, not a hardcoded 0"
+        );
+        let handler = fn_body(&code, "window.on_gallery_style_selected(");
+        assert!(
+            handler.contains("apply_gallery_style(&w, style)"),
+            "the chrome callback must apply the style through the shared helper"
+        );
+        assert!(
+            handler.contains("gallery_style = style"),
+            "the chrome callback must persist the chosen style"
+        );
     }
 
 }

@@ -16637,6 +16637,85 @@ fn plain_up_paints_no_drawer_but_ctrl_up_does() {
     );
 }
 
+/// The keeper's case, end to end: a `config.json` that says "Mosaic" must open
+/// on the Mosaic after a restart, and one that says "Slider" must open on the
+/// Slider. Drives the SAME helper start-up uses — `apply_gallery_style` over
+/// `sanitized_gallery_style(persisted)` — into ONE window holding ONE set of
+/// cards and ONE wall, so the only thing that can differ between the two frames
+/// is the persisted style. PNGs land in this run's printed directory.
+#[test]
+fn a_persisted_mosaic_opens_on_the_mosaic_after_a_restart() {
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let win = gallery_with_production_callbacks();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_gallery_focused(0);
+    win.set_gallery_cards(ModelRc::new(VecModel::from(
+        (0..6usize)
+            .map(|i| late_card(&format!("Theme {i}"), false))
+            .collect::<Vec<_>>(),
+    )));
+    // BOTH views get their own model, so each frame paints ITS OWN style: the
+    // Mosaic frame a wall, the Slider frame the carousel. Without the slice
+    // tiles the Slider frame would be blank and the diff below would only prove
+    // "the wall is Mosaic-only", not "each persisted style paints its view".
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(6, 0, 1920.0))));
+    win.set_gallery_slice_delta_base(0);
+    win.set_gallery_slice_focus_pos(0.0);
+    // A wall is present for BOTH frames, so the Mosaic frame really paints a
+    // wall and the Slider frame really paints cards.
+    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(vec![
+        crate::MosaicTileData { x: 40.0, y: 160.0, w: 600.0, h: 700.0, real_index: 0, delay_ms: 0 },
+        crate::MosaicTileData { x: 680.0, y: 160.0, w: 600.0, h: 700.0, real_index: 1, delay_ms: 0 },
+        crate::MosaicTileData { x: 1320.0, y: 160.0, w: 560.0, h: 700.0, real_index: 2, delay_ms: 0 },
+    ])));
+    win.set_gallery_mosaic_total_pages(1);
+    win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(vec![1i32])));
+    focus_settle();
+
+    // (a) The persisted value is 2 — the start-up path must open the Mosaic AND
+    // seed the ring the arrows move (a wall with no cursor has nowhere to go).
+    crate::apply_gallery_style(&win, crate::sanitized_gallery_style(2));
+    assert_eq!(
+        win.get_gallery_style(),
+        2,
+        "a persisted Mosaic must open the Mosaic, not fall back to the Slider"
+    );
+    assert_eq!(
+        win.get_gallery_mosaic_cursor(),
+        0,
+        "opening on the Mosaic must seed the keyboard cursor on the first tile"
+    );
+    focus_settle();
+    let mosaic = snapshot_owned(&win);
+    save_owned_png(&mosaic, "gallery_style_mosaic_startup.png");
+
+    // (b) The persisted value is 0 — same window, same cards, same wall.
+    crate::apply_gallery_style(&win, crate::sanitized_gallery_style(0));
+    assert_eq!(
+        win.get_gallery_style(),
+        0,
+        "a persisted Slider must open the Slider"
+    );
+    focus_settle();
+    let slider = snapshot_owned(&win);
+    save_owned_png(&slider, "gallery_style_slider_startup.png");
+
+    let diff = count_owned_diff(&mosaic, &slider);
+    assert!(
+        diff > 5000,
+        "the persisted style must decide what is painted — only {diff} pixels differ"
+    );
+
+    // (c) A stale or hand-edited value can never strand the gallery on a style
+    // the chrome has no path back from.
+    crate::apply_gallery_style(&win, crate::sanitized_gallery_style(1));
+    assert_eq!(
+        win.get_gallery_style(),
+        0,
+        "an unreachable style must fall back to the Slider"
+    );
+}
+
 // ── U7 refresh path: overwrite invalidates only the overwritten card ──
 // End-to-end through `sync_save_gallery_ui` (headless MainWindow + a real
 // sandboxed ThemeManager): after an overwrite-style refresh for Alpha, its
