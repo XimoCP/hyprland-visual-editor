@@ -195,6 +195,56 @@ pub fn apply_motion(window: &MainWindow, tr: &Tr) {
     ));
 }
 
+/// Fill every `SaveText` string from `tr` for the selected language.
+///
+/// The Save form pane — its title, the description under it and the keyboard
+/// tip — was hardcoded English in `SaveSection.slint`. It now travels the
+/// same channel as the Borders copy: i18n map → this pass → the exported
+/// `SaveText` global → wherever the section is mounted. English is the
+/// fallback, exactly as `apply_borders` does. The LineEdit placeholder and
+/// the Save button are NOT here: `main()` fills those window properties from
+/// `tr` itself.
+pub fn apply_save(window: &MainWindow, tr: &Tr) {
+    let t = crate::SaveText::get(window);
+
+    t.set_save_title(tr.tr_shared("panel.save.title", "Save Current Look"));
+    t.set_save_desc(tr.tr_shared(
+        "panel.save.desc",
+        "Save your current setup as a theme. It appears instantly in the Gallery — no restart.",
+    ));
+    t.set_kbd_hint(tr.tr_shared(
+        "panel.save.kbd_hint",
+        "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section",
+    ));
+}
+
+/// Fill every `FiltersText` string from `tr` for the selected language.
+///
+/// The Filters header (title + description), the empty-list message and the
+/// keyboard hint were hardcoded English in `FiltersSection.slint`; they now
+/// travel the same channel as the rest of the panel copy. English is the
+/// fallback, exactly as `apply_borders` does.
+///
+/// The title is keyed through `panel.nav.filters`: the nav rail already says
+/// the same word, so the two can never drift apart.
+pub fn apply_filters(window: &MainWindow, tr: &Tr) {
+    let t = crate::FiltersText::get(window);
+
+    t.set_title(tr.tr_shared("panel.nav.filters", "Filters"));
+    t.set_desc(tr.tr_shared(
+        "panel.filters.desc",
+        "Pick a shader — instantly applied. Repick active to turn off.",
+    ));
+    t.set_empty(tr.tr_shared(
+        "panel.filters.empty",
+        "No shader presets found.",
+    ));
+    t.set_kbd_hint(tr.tr_shared(
+        "panel.filters.kbd_hint",
+        "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back",
+    ));
+}
+
 /// Fill every `PanelText` string from `tr` for the selected language.
 ///
 /// The panel chrome — the left nav rail and the header hint — is shared by all

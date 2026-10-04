@@ -18,6 +18,7 @@ import { ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { PresetCard } from "../../components.slint";
+import { FiltersText } from "filters_text.slint";
 
 export component FiltersSection inherits Rectangle {
     in property <[string]> shader-titles;
@@ -89,14 +90,14 @@ export component FiltersSection inherits Rectangle {
                 padding: 16px;
                 spacing: 4px;
                 Text {
-                    text: "Filters";
+                    text: FiltersText.title;
                     font-family: SkwdTokens.font-heading;
                     font-size: SkwdTokens.size-16;
                     font-weight: 700;
                     color: HveColors.accent-cyan;
                 }
                 Text {
-                    text: "Pick a shader — instantly applied. Repick active to turn off.";
+                    text: FiltersText.desc;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
                     color: HveColors.text-muted;
@@ -164,7 +165,7 @@ export component FiltersSection inherits Rectangle {
                     }
 
                     if root.shader-files.length == 0 : Text {
-                        text: "No shader presets found.";
+                        text: FiltersText.empty;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-12;
                         color: HveColors.text-muted;
@@ -172,7 +173,7 @@ export component FiltersSection inherits Rectangle {
                     }
 
                     Text {
-                        text: "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back";
+                        text: FiltersText.kbd-hint;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-12;
                         color: HveColors.text-muted.transparentize(0.4);

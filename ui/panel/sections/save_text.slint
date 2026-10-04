@@ -1,0 +1,22 @@
+// HVE 2 — Save panel text.
+//
+// Declared in its own file (no components) so the compiler exposes it to Rust
+// as `crate::SaveText`, the way `BordersText` (borders_text.slint),
+// `MotionText` (motion_text.slint) and `PanelText` (panel_text.slint) are
+// exposed.
+//
+// The form pane's title, description and keyboard tip were hardcoded English
+// in `SaveSection.slint`, so they never reached the translation table and a
+// Spanish panel painted them in English. Rust fills them from the embedded
+// i18n map through `panel_i18n::apply_save`; the defaults below are today's
+// English copy byte for byte, so a run that never calls the i18n pass reads
+// exactly as it always did.
+//
+// The LineEdit placeholder and the Save button are NOT here: they travel as
+// MainWindow properties (`set_panel_save_placeholder` /
+// `set_panel_save_button_text`), which `main()` fills from `tr` directly.
+export global SaveText {
+    in-out property <string> save-title: "Save Current Look";
+    in-out property <string> save-desc: "Save your current setup as a theme. It appears instantly in the Gallery — no restart.";
+    in-out property <string> kbd-hint: "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section";
+}

@@ -27,7 +27,18 @@
     },
     "esc_return": "Esc para volver",
     "section_placeholder": "Marcador de sección — esqueleto de la rebanada 1",
-    "back_to_gallery": "Volver a la Galería"
+    "back_to_gallery": "Volver a la Galería",
+    "save": {
+      "title": "Guardá tu configuración actual",
+      "desc": "Guardá tu configuración actual como un tema. Aparece al instante en la Galería — sin reiniciar.",
+      "kbd_hint": "Consejo: ↑↓ elegir tema • Enter aplicar • Esc cerrar • Tab ir a la siguiente sección",
+      "placeholder": "Nombre del tema…"
+    },
+    "filters": {
+      "desc": "Elegí un shader — se aplica al instante. Volvé a elegir el activo para apagarlo.",
+      "empty": "No se encontraron preajustes de shader.",
+      "kbd_hint": "↑↓ navegar • Enter/Space aplicar • Tab elegir→siguiente • Esc volver"
+    }
   },
   "welcome": {
     "toast": {

@@ -3720,6 +3720,18 @@ fn panel_save_renders() {
     // Basic sanity: panel save settled must differ from empty gallery snapshot baseline
     assert!(settled.width() == 1920, "snapshot width 1920");
     assert!(err_snap.width() == 1920);
+
+    // Spanish pass: the three form-pane strings (title, description, keyboard
+    // tip) now live in `SaveText`, so moving only that global must repaint the
+    // section. The PNG is what the visual verification reads.
+    crate::panel_i18n::apply_save(&win, &crate::tr::Tr::with_lang("es"));
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let es_snap = win.window().take_snapshot().expect("panel save spanish");
+    save_slice_png(es_snap.clone(), "panel_save_es.png");
+    let es_diff = count_buffer_diff(&empty_list_snap, &es_snap);
+    assert!(es_diff > 200, "Spanish Save copy must change pixels — got {es_diff} expected >200");
 }
 
 // ── Mutating-window slice 3: Borders pick layer (R3) ───────────────
@@ -4401,6 +4413,18 @@ fn panel_filters_renders() {
     save_slice_png(snap2.clone(), "panel_filters_active2.png");
     let diff = count_buffer_diff(&snap, &snap2);
     assert!(diff > 200, "active shader indicator must change pixels — got {diff} expected >200");
+
+    // Spanish pass: the section title, the description under it and the
+    // keyboard hint live in `FiltersText`, so moving only that global must
+    // repaint the section. The PNG is what the visual verification reads.
+    crate::panel_i18n::apply_filters(&win, &crate::tr::Tr::with_lang("es"));
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let es_snap = win.window().take_snapshot().expect("panel filters spanish");
+    save_slice_png(es_snap.clone(), "panel_filters_es.png");
+    let es_diff = count_buffer_diff(&snap2, &es_snap);
+    assert!(es_diff > 200, "Spanish Filters copy must change pixels — got {es_diff} expected >200");
 }
 
 // ── Mutating-window slice 7: System (R7, R11) ───────────────────────
@@ -17029,5 +17053,320 @@ fn focus_restore_bumps_are_bounded_in_count_and_time() {
         delays.iter().all(|d| (2000..=7000).contains(d)),
         "every ping lands inside the ~2-6 s re-assert window with margin"
     );
+}
+
+// ── Save + Filters section copy through the translation table ────────────
+// Seven literals in `SaveSection.slint` / `FiltersSection.slint` and two in
+// `main()` never consulted the i18n map: they read English on a Spanish
+// panel. The tables below pin every one of them — English byte for byte (the
+// panel must still read exactly as it did), Spanish present and DIFFERENT
+// (an equal Spanish column is what a missing key looks like after `tr_shared`
+// falls back), and the SECTION reading the global instead of the literal).
+
+/// (i18n key, English) for every string this slice wires. The English column
+/// is today's copy — the same string the `.slint` global (or the `main()`
+/// literal) shows right now.
+#[rustfmt::skip]
+fn save_filters_i18n_rows() -> [(&'static str, &'static str); 9] {
+    [
+        ("panel.save.title", "Save Current Look"),
+        ("panel.save.desc", "Save your current setup as a theme. It appears instantly in the Gallery — no restart."),
+        ("panel.save.kbd_hint", "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section"),
+        ("panel.save.placeholder", "Theme name…"),
+        ("themes.save_button", "Save"),
+        ("panel.nav.filters", "Filters"),
+        ("panel.filters.desc", "Pick a shader — instantly applied. Repick active to turn off."),
+        ("panel.filters.empty", "No shader presets found."),
+        ("panel.filters.kbd_hint", "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back"),
+    ]
+}
+
+/// The i18n map itself: every key resolves to EXACTLY today's English, and no
+/// Spanish row is missing or a copy of its English one.
+#[test]
+fn every_save_and_filters_string_resolves_in_english_and_translates_to_spanish() {
+    let en = crate::tr::Tr::with_lang("en");
+    let es = crate::tr::Tr::with_lang("es");
+
+    let wrong_en: Vec<String> = save_filters_i18n_rows()
+        .iter()
+        .filter_map(|(key, want)| {
+            let got = en.tr(key);
+            (got != Some(*want)).then(|| format!("{key}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong_en.is_empty(),
+        "the English i18n map does not carry today's copy: {wrong_en:#?}"
+    );
+
+    let not_spanish: Vec<String> = save_filters_i18n_rows()
+        .iter()
+        .filter_map(|(key, want)| match es.tr(key) {
+            None => Some(format!("{key}: missing from es.json")),
+            Some(got) if got == *want => Some(format!("{key}: still English {got:?}")),
+            Some(_) => None,
+        })
+        .collect();
+    assert!(
+        not_spanish.is_empty(),
+        "[es] these strings would read English on a Spanish panel: {not_spanish:#?}"
+    );
+}
+
+/// The English default declared INSIDE each new `.slint` global must be
+/// byte-identical to the string it replaced — the i18n map can be right while
+/// the global's own fallback silently changed the copy.
+#[test]
+fn the_save_and_filters_text_defaults_are_todays_english() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/ui/panel/sections");
+    let read = |name: &str| {
+        std::fs::read_to_string(format!("{dir}/{name}"))
+            .unwrap_or_else(|e| panic!("{name} must exist for the Save/Filters i18n slice: {e}"))
+    };
+    let files = [
+        ("save_text.slint", read("save_text.slint")),
+        ("filters_text.slint", read("filters_text.slint")),
+    ];
+
+    // The seven strings that moved into a global of their own: one exact
+    // `name: "English";` row each. The eighth (`Save`, a `main()` literal)
+    // has no global to pin — its English rides on `themes.save_button`,
+    // which the map test above pins byte for byte.
+    for (file, prop, en) in [
+        ("save_text.slint", "save-title", "Save Current Look"),
+        ("save_text.slint", "save-desc", "Save your current setup as a theme. It appears instantly in the Gallery — no restart."),
+        ("save_text.slint", "kbd-hint", "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section"),
+        ("filters_text.slint", "title", "Filters"),
+        ("filters_text.slint", "desc", "Pick a shader — instantly applied. Repick active to turn off."),
+        ("filters_text.slint", "empty", "No shader presets found."),
+        ("filters_text.slint", "kbd-hint", "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back"),
+    ] {
+        let src = &files.iter().find(|(f, _)| *f == file).expect(file).1;
+        assert!(
+            src.contains(&format!("{prop}: \"{en}\";")),
+            "{file} must declare {prop}: \"{en}\"; byte for byte (today's copy)"
+        );
+    }
+}
+
+/// The label tables prove the i18n map reaches the globals; this proves the
+/// SECTIONS read them. Without it, hardcoding a label back (`text: "Filters"`)
+/// leaves every assertion above green and the panel goes on painting English.
+#[test]
+fn the_save_and_filters_sections_read_every_label_from_their_text_globals() {
+    const SAVE: &str = include_str!("../../ui/panel/sections/SaveSection.slint");
+    const FILTERS: &str = include_str!("../../ui/panel/sections/FiltersSection.slint");
+
+    let rows: [(&str, &str, &str, &str); 7] = [
+        ("save-title", "Save Current Look", "SaveText", SAVE),
+        ("save-desc", "Save your current setup as a theme. It appears instantly in the Gallery — no restart.", "SaveText", SAVE),
+        ("kbd-hint", "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section", "SaveText", SAVE),
+        ("title", "Filters", "FiltersText", FILTERS),
+        ("desc", "Pick a shader — instantly applied. Repick active to turn off.", "FiltersText", FILTERS),
+        ("empty", "No shader presets found.", "FiltersText", FILTERS),
+        ("kbd-hint", "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back", "FiltersText", FILTERS),
+    ];
+
+    let unbound: Vec<&str> = rows
+        .iter()
+        .filter(|(name, _, global, src)| !src.contains(&format!("{global}.{name}")))
+        .map(|(name, _, _global, _)| *name)
+        .collect();
+    assert!(
+        unbound.is_empty(),
+        "these labels are never read from their text global: {unbound:?}"
+    );
+
+    // Comments may quote today's copy, so only real code lines count as a
+    // leftover hardcoded label, and only in the file that paints it.
+    let hardcoded: Vec<(&str, &str)> = rows
+        .iter()
+        .filter(|(_, en, _, src)| {
+            let code: String = src
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            code.contains(&format!("\"{en}\""))
+        })
+        .map(|(name, en, _, _)| (*name, *en))
+        .collect();
+    assert!(
+        hardcoded.is_empty(),
+        "these labels are hardcoded in their section AND read from a text global: {hardcoded:#?}"
+    );
+}
+
+/// The two `main()` literals that bypassed `Tr` (`Theme name…`, `Save`) must
+/// travel through `tr_shared`'s real entry point with today's English as
+/// the fallback — the same wire the `themes.*` block below them uses.
+#[test]
+fn the_panel_save_placeholder_and_button_go_through_the_translation_table() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    for (setter, fallback) in [
+        ("set_panel_save_placeholder", "Theme name…"),
+        ("set_panel_save_button_text", "Save"),
+    ] {
+        let hits: Vec<&str> = MAIN.lines().filter(|l| l.contains(setter)).collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "{setter} must appear exactly once in src/main.rs, got {hits:?}"
+        );
+        let line = hits[0];
+        assert!(
+            line.contains("tr.tr_shared("),
+            "{setter} must go through tr.tr_shared instead of a bare literal: {line:?}"
+        );
+        assert!(
+            line.contains(&format!("\"{fallback}\"")),
+            "{setter} must keep {fallback:?} as its English fallback: {line:?}"
+        );
+    }
+}
+
+/// The passes must be WIRED, not merely available: `main()` has to call them,
+/// or the globals keep the Slint defaults on every language (the B7 lesson —
+/// a test that only calls `apply_save` itself stays green when `main` stops).
+#[test]
+fn main_applies_the_save_and_filters_i18n() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    for call in [
+        "panel_i18n::apply_save(&window, &tr);",
+        "panel_i18n::apply_filters(&window, &tr);",
+    ] {
+        let hits = MAIN.matches(call).count();
+        assert_eq!(hits, 1, "main must call {call} exactly once, got {hits}");
+    }
+}
+
+/// One row per user-visible `SaveText` property: (property, reader, English,
+/// Spanish). The English column is the same string the `.slint` global
+/// declares as its default — asserted BEFORE any i18n pass runs, so the table
+/// pins the defaults byte for byte as well as the map.
+type SaveLabel = (
+    &'static str,
+    fn(&crate::SaveText) -> String,
+    &'static str,
+    &'static str,
+);
+
+#[rustfmt::skip]
+fn save_labels() -> [SaveLabel; 3] {
+    [
+        ("save-title", |t| t.get_save_title().to_string(),
+            "Save Current Look", "Guardá tu configuración actual"),
+        ("save-desc", |t| t.get_save_desc().to_string(),
+            "Save your current setup as a theme. It appears instantly in the Gallery — no restart.",
+            "Guardá tu configuración actual como un tema. Aparece al instante en la Galería — sin reiniciar."),
+        ("kbd-hint", |t| t.get_kbd_hint().to_string(),
+            "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section",
+            "Consejo: ↑↓ elegir tema • Enter aplicar • Esc cerrar • Tab ir a la siguiente sección"),
+    ]
+}
+
+/// One row per user-visible `FiltersText` property, same shape.
+type FiltersLabel = (
+    &'static str,
+    fn(&crate::FiltersText) -> String,
+    &'static str,
+    &'static str,
+);
+
+#[rustfmt::skip]
+fn filters_labels() -> [FiltersLabel; 4] {
+    [
+        ("title", |t| t.get_title().to_string(),
+            "Filters", "Filtros"),
+        ("desc", |t| t.get_desc().to_string(),
+            "Pick a shader — instantly applied. Repick active to turn off.",
+            "Elegí un shader — se aplica al instante. Volvé a elegir el activo para apagarlo."),
+        ("empty", |t| t.get_empty().to_string(),
+            "No shader presets found.", "No se encontraron preajustes de shader."),
+        ("kbd-hint", |t| t.get_kbd_hint().to_string(),
+            "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back",
+            "↑↓ navegar • Enter/Space aplicar • Tab elegir→siguiente • Esc volver"),
+    ]
+}
+
+/// Assert every label reads in `lang`. The mismatch list is printed whole on
+/// failure, so a missing translation names itself instead of needing a rerun.
+fn assert_save_labels(win: &crate::MainWindow, lang: &str) {
+    use slint::Global as _;
+
+    let t = crate::SaveText::get(win);
+    let wrong: Vec<String> = save_labels()
+        .iter()
+        .filter_map(|(name, read, en, es)| {
+            let want = if lang == "en" { en } else { es };
+            let got = read(&t);
+            (got != *want).then(|| format!("{name}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "[{lang}] the Save section is not fully in {lang}: {wrong:#?}"
+    );
+}
+
+fn assert_filters_labels(win: &crate::MainWindow, lang: &str) {
+    use slint::Global as _;
+
+    let t = crate::FiltersText::get(win);
+    let wrong: Vec<String> = filters_labels()
+        .iter()
+        .filter_map(|(name, read, en, es)| {
+            let want = if lang == "en" { en } else { es };
+            let got = read(&t);
+            (got != *want).then(|| format!("{name}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "[{lang}] the Filters section is not fully in {lang}: {wrong:#?}"
+    );
+}
+
+/// No Spanish label may be a copy of its English one: that is what a MISSING
+/// key looks like after `tr_shared` falls back, and it would let the Spanish
+/// half below pass on an English section.
+#[test]
+fn every_save_and_filters_label_has_its_own_spanish_text() {
+    let twinned: Vec<&str> = save_labels()
+        .iter()
+        .map(|(name, _, en, es)| (*name, *en, *es))
+        .chain(filters_labels().iter().map(|(name, _, en, es)| (*name, *en, *es)))
+        .filter(|(_, en, es)| en == es)
+        .map(|(name, _, _)| name)
+        .collect();
+    assert!(
+        twinned.is_empty(),
+        "these labels would read English on the Spanish panel: {twinned:?}"
+    );
+}
+
+/// English reads the Slint defaults (today's copy, no i18n pass needed),
+/// Spanish reads the translation through the REAL production functions, and
+/// the round trip back to English restores every string byte for byte.
+#[test]
+fn save_and_filters_labels_follow_the_language() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+
+    assert_save_labels(&win, "en");
+    assert_filters_labels(&win, "en");
+
+    crate::panel_i18n::apply_save(&win, &crate::tr::Tr::with_lang("es"));
+    crate::panel_i18n::apply_filters(&win, &crate::tr::Tr::with_lang("es"));
+    assert_save_labels(&win, "es");
+    assert_filters_labels(&win, "es");
+
+    crate::panel_i18n::apply_save(&win, &crate::tr::Tr::with_lang("en"));
+    crate::panel_i18n::apply_filters(&win, &crate::tr::Tr::with_lang("en"));
+    assert_save_labels(&win, "en");
+    assert_filters_labels(&win, "en");
 }
 

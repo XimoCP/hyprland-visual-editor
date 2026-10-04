@@ -19,6 +19,7 @@ import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { SavedThemeCard } from "SavedThemeCard.slint";
 import { ConfirmDialog, RenameDialog } from "Dialogs.slint";
+import { SaveText } from "save_text.slint";
 
 // ─── Form pane: save-current-look input. Own ScrollView. ───
 component SaveFormPane inherits Rectangle {
@@ -40,14 +41,14 @@ component SaveFormPane inherits Rectangle {
             padding: SkwdTokens.spacing-16;
 
             Text {
-                text: "Save Current Look";
+                text: SaveText.save-title;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Save your current setup as a theme. It appears instantly in the Gallery — no restart.";
+                text: SaveText.save-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;
@@ -129,7 +130,7 @@ component SaveFormPane inherits Rectangle {
             }
 
             Text {
-                text: "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section";
+                text: SaveText.kbd-hint;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted.transparentize(0.4);

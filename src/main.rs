@@ -2824,6 +2824,9 @@ fn main() -> Result<(), slint::PlatformError> {
     panel_i18n::apply_panel_chrome(&window, &tr);
     // Motion's new tune controls (speed + style) use the same channel.
     panel_i18n::apply_motion(&window, &tr);
+    // Save form pane + Filters section copy: same channel, same map.
+    panel_i18n::apply_save(&window, &tr);
+    panel_i18n::apply_filters(&window, &tr);
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
@@ -4743,9 +4746,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 )));
             });
         }
-        // Ensure initial panel placeholders are cleared
-        window.set_panel_save_placeholder("Theme name…".into());
-        window.set_panel_save_button_text("Save".into());
+        // Ensure initial panel placeholders are cleared — both texts travel
+        // through `tr` (the placeholder's key is NOT `themes.save_placeholder`:
+        // that one is "Theme name..." with three dots, byte-for-byte different
+        // from the ellipsis this LineEdit has always painted).
+        window.set_panel_save_placeholder(tr.tr_shared("panel.save.placeholder", "Theme name…"));
+        window.set_panel_save_button_text(tr.tr_shared("themes.save_button", "Save"));
         window.set_panel_save_error("".into());
         // Save classic tranche A: search + card action labels (themes.* keys exist in en/es.json)
         window.set_panel_save_search_placeholder(tr.tr_shared("themes.search_placeholder", "Search themes..."));

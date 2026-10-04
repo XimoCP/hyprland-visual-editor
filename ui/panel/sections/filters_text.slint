@@ -1,0 +1,23 @@
+// HVE 2 — Filters panel text.
+//
+// Declared in its own file (no components) so the compiler exposes it to Rust
+// as `crate::FiltersText`, the way `BordersText` (borders_text.slint),
+// `MotionText` (motion_text.slint) and `PanelText` (panel_text.slint) are
+// exposed.
+//
+// The section title, the description under it, the empty-list message and the
+// keyboard hint were hardcoded English in `FiltersSection.slint`, so they never
+// reached the translation table and a Spanish panel painted them in English.
+// Rust fills them from the embedded i18n map through
+// `panel_i18n::apply_filters`; the defaults below are today's English copy
+// byte for byte, so a run that never calls the i18n pass reads exactly as it
+// always did.
+//
+// `title` defaults to "Filters" but is keyed through `panel.nav.filters`: the
+// nav rail already carries the same word, so the two never drift apart.
+export global FiltersText {
+    in-out property <string> title: "Filters";
+    in-out property <string> desc: "Pick a shader — instantly applied. Repick active to turn off.";
+    in-out property <string> empty: "No shader presets found.";
+    in-out property <string> kbd-hint: "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back";
+}

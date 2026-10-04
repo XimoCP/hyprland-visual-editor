@@ -27,7 +27,18 @@
     },
     "esc_return": "Esc to return",
     "section_placeholder": "Section placeholder — slice 1 skeleton",
-    "back_to_gallery": "Back to Gallery"
+    "back_to_gallery": "Back to Gallery",
+    "save": {
+      "title": "Save Current Look",
+      "desc": "Save your current setup as a theme. It appears instantly in the Gallery — no restart.",
+      "kbd_hint": "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section",
+      "placeholder": "Theme name…"
+    },
+    "filters": {
+      "desc": "Pick a shader — instantly applied. Repick active to turn off.",
+      "empty": "No shader presets found.",
+      "kbd_hint": "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back"
+    }
   },
   "welcome": {
     "toast": {
