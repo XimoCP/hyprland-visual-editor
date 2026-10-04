@@ -74,6 +74,15 @@ export component MosaicInfoCard inherits Rectangle {
     // contracting is quicker and settles without a bounce — an exit that
     // bounces reads as sloppy.
     property <duration> morph-ms: root.open ? 420ms : 280ms;
+    // On top of the movement, the card fades: it materialises while it grows
+    // (fully opaque a little before it settles) and dissolves as it contracts,
+    // which is what makes the change of state read as an appearance rather
+    // than a jump between two sizes.
+    opacity: root.open ? 1.0 : 0.0;
+    animate opacity {
+        duration: root.reduced-motion ? 0ms : (root.open ? 320ms : 200ms);
+        easing: ease-out;
+    }
     x: (root.open ? root.fx : root.tx) * 1px;
     y: (root.open ? root.fy : root.ty) * 1px;
     width: (root.open ? root.box-wn : root.tw) * 1px;

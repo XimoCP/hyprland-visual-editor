@@ -141,17 +141,15 @@ export component MosaicCell inherits Rectangle {
 
     // ── Keyboard cursor highlight: at the tile's edge and INSIDE the cell, so
     // it rides the same transform as the photo — the ring grows with the image
-    // instead of sitting still at the old size. Inset by the stroke width so
-    // the cell's own clip can never eat it. ──
+    // instead of sitting still at the old size. Flush with the tile: a Slint
+    // border is painted INSIDE its rectangle, so nothing here can be clipped
+    // and no inset is needed. ──
     if root.key-focused : Rectangle {
-        x: 2px;
-        y: 2px;
-        width: parent.width - 4px;
-        height: parent.height - 4px;
+        width: 100%;
+        height: 100%;
         background: transparent;
         border-width: 2px;
         border-color: SkwdTokens.gallery-slice-focus-border-color;
-        border-radius: SkwdTokens.radius-4;
     }
 
     // ── Curtain cover (Tramo 9): growing clip sweeps LEFT→RIGHT, revealing
