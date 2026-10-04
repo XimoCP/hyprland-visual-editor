@@ -140,7 +140,7 @@ Both must go through `tr.tr_shared(...)` like the block right below them.
   `filters_text` globals; the two `src/main.rs` literals routed through `Tr`.
 - [x] **S1 (VISUAL)** — Render Save and Filters in Spanish, PNG read.
 - [x] **S1 (COMMIT)** — one work-unit commit.
-- [ ] **S2** — System / About.
+- [x] **S2** — System / About (commit `b8113df`).
 - [ ] **S3** — Motion chrome.
 - [ ] **S4** — Gallery leftovers.
 
@@ -219,3 +219,76 @@ agent has no shell.
   these PNGs. The Spanish arrives at runtime through `tr.tr_shared`, and the
   judge confirmed both lines run at startup (`src/main.rs:4753-4754`, inside
   `main()` which begins at 2664).
+
+### S2 — System / About (done)
+
+Writer: `general-free` (MiMo). Commit `b8113df`
+(`feat(i18n): the System and About panels speak Spanish`).
+
+New global `ui/panel/sections/system_text.slint` (`SystemText`, 21 string
+properties), filled by `panel_i18n::apply_system`, read by `SystemSection.slint`
+and by the activation card in `ui/components.slint`.
+
+Keys: 16 reused because their English matched byte for byte (`panel.nav.system`,
+`settings.restart_banner`, `settings.restart_button`, `settings.auto_minimize`,
+`settings.timer`, `settings.language`, `settings.tiling_mode`, `settings.autostart`,
+`settings.theme`, `settings.reset_presets`, `home.about_title`,
+`home.about_tree_label`, `home.about_docs`, `welcome.activation_title`,
+`welcome.toast.enabled`, `welcome.toast.disabled`); 5 added
+(`panel.system.desc`, `panel.system.about_short`, `panel.system.about_full`,
+`panel.system.activation_desc_active`, `panel.system.activation_desc_inactive`).
+`settings.title` deliberately NOT reused: it says "Settings", not "System".
+
+The writer corrected this document twice, and both corrections stand:
+
+- The 15 `shell.slint` `panel-*` System properties were ALREADY fed from `tr` by
+  existing `main.rs` setters. This document's "Work order" claimed none of them
+  was; that claim came from a flawed parent grep and is wrong.
+- The activation card INSTANCE inside `SystemSection.slint` overrides the
+  `components.slint` defaults, so wiring only the listed defaults would have
+  left the painted text English. The inventory had missed it.
+
+GREEN: `cargo test` — **1332 passed, 0 failed** (90.08s), run by the PARENT
+after the parent's strengthening of `test_system_rows_render`.
+
+VISUAL: `/tmp/opencode/render-i18n-slice2/`. Read by the parent with vision:
+`panel_system_es.png` shows "Sistema", "Activación, ajustes y Acerca de. El modo
+tiling se mantiene como está.", "Activación del Sistema", "Editor Visual
+Habilitado", "Retardo al ocultar", "Idioma", "Inicio automático", "Tema",
+"Acerca de HVE"; `panel_system_about_es.png` shows "Estructura del proyecto".
+
+Second-model review (`jd-judge-a`, glm-5.3-flash): **VERDICT PASS**, all ten
+claims PASS, no BLOCKER, scope confirmed as the nine declared files, D1-D5 all
+judged correct. It raised one WARNING and three SUGGESTIONs; the WARNING was
+fixed by the parent before the commit:
+
+- WARNING (fixed): the writer's D3 had WEAKENED `test_system_rows_render` — it
+  accepted a needle found in EITHER the section or its text global, and the
+  global contains all five needles, so deleting a whole row would have stayed
+  green. The guard now asserts the row's binding to the global
+  (`autostart-label:`, `theme-label:`, `reset-label:`, `restart-button-text:`,
+  `about-title:`), which disappears when a row is deleted.
+- SUGGESTION (accepted, not fixed): four of the new keys never reach a pixel —
+  `panel.system.about_short` / `about_full` are overridden by `home.about_*`
+  (via `PanelRoot.slint`), and `activation_desc_*` are read only by the
+  component defaults the instance overrides. No user impact; recorded below.
+- SUGGESTION (accepted, same as S1): the English-default test asserts a raw
+  substring, so it would still pass if a declaration were commented out.
+- SUGGESTION (pre-existing, real): `ui/components.slint:632` paints a literal
+  `ON` / `OFF`, so a Spanish user reads two English words in the activation card.
+
+## Follow-ups recorded by this task (none blocking)
+
+1. `ui/panel/sections/SystemSection.slint` settings-pane keyboard hint
+   (`↑↓ navigate • ←→ switch panel • Enter/Space toggle • Esc back`) is still
+   English. Not in any slice's inventory; needs two keys + infinitive Spanish.
+2. `ui/components.slint:632` literal `ON` / `OFF` — user-visible English.
+3. Four dead new keys from S2 (see above): either delete them or make them the
+   real source for About and the card descriptions.
+4. `SystemSection`'s `settings-title` property is dead (nothing reads it) while
+   the chain still delivers into it; a text-only slice cannot remove it.
+5. `ui/shell.slint:290-291` still defaults to `Auto-minimize` / `Timer:`, now at
+   odds with `SystemText`'s `Hide delay` / `Delay:`. Both are dead (always
+   overridden), so no painted text disagrees — but the inconsistency is real.
+6. The substring-based English-default tests in S1 and S2 would be better
+   asserting the property NAME, not a substring.
