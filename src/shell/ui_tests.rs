@@ -4503,10 +4503,20 @@ fn test_system_rows_render() {
     // RED: SystemSection must contain autostart/theme-pref/reset/restart rows + About moved
     let path = "ui/panel/sections/SystemSection.slint";
     let content = std::fs::read_to_string(path).expect("SystemSection.slint must exist");
-    for needle in ["Autostart", "Theme", "Reset", "Restart", "About"] {
+    // The row copy moved into the text global (i18n slice 2), so asserting the
+    // English WORD would now pass on `system_text.slint` alone — deleting a
+    // whole row from the section would go unnoticed. What has to stay HERE is
+    // the row's binding to the global: drop a row and its binding disappears.
+    for binding in [
+        "autostart-label:",
+        "theme-label:",
+        "reset-label:",
+        "restart-button-text:",
+        "about-title:",
+    ] {
         assert!(
-            content.contains(needle),
-            "SystemSection must contain \"{needle}\" row — missing in content"
+            content.contains(binding),
+            "SystemSection must still bind \"{binding}\" — a row cannot live only in its text global"
         );
     }
     // Tiling stays exactly as-is (deferred window-rules/fullscreen-redesign)
@@ -4553,8 +4563,8 @@ fn panel_system_renders() {
     win.set_theme("system".into());
     win.set_restart_required(false);
     // Settings labels (needed because MainWindow defaults are empty in test)
-    win.set_auto_minimize_label("Retardo al ocultar".into());
-    win.set_timer_label("Retardo:".into());
+    win.set_auto_minimize_label("Hide delay".into());
+    win.set_timer_label("Delay:".into());
     win.set_language_label("Language".into());
     win.set_tiling_label("Tiling mode".into());
     win.set_autostart_label("Autostart".into());
@@ -4648,6 +4658,74 @@ fn panel_system_renders() {
 
     // Basic sanity: still 1920
     assert!(snap_10s.width() == 1920);
+
+    // ── Spanish pass (i18n slice 2) ────────────────────────────────────
+    // The header, the section description, the restart row and the
+    // activation card read `SystemText`; the row labels and the About copy
+    // travel as MainWindow properties, which `main()` fills from the same
+    // embedded map (mirrored here key for key, main.rs i18n blocks).
+    let es = crate::tr::Tr::with_lang("es");
+    win.set_settings_title(es.tr_shared("settings.title", "Settings"));
+    win.set_settings_restart_banner(es.tr_shared("settings.restart_banner", "⚠ Restart required"));
+    win.set_settings_restart_button(es.tr_shared("settings.restart_button", "Restart"));
+    win.set_auto_minimize_label(es.tr_shared("settings.auto_minimize", "Hide delay"));
+    win.set_timer_label(es.tr_shared("settings.timer", "Delay:"));
+    win.set_language_label(es.tr_shared("settings.language", "Language"));
+    win.set_tiling_label(es.tr_shared("settings.tiling_mode", "Tiling mode"));
+    win.set_autostart_label(es.tr_shared("settings.autostart", "Autostart"));
+    win.set_theme_label(es.tr_shared("settings.theme", "Theme"));
+    win.set_reset_label(es.tr_shared("settings.reset_presets", "Reset presets"));
+    win.set_home_about_title(es.tr_shared("home.about_title", "About HVE"));
+    win.set_home_about_short(es.tr_shared(
+        "home.about_short",
+        "Hyprland Visual Editor makes your desktop truly yours.",
+    ));
+    win.set_home_about_full(es.tr_shared(
+        "home.about_full",
+        "HVE is a graphical app to visually manage your Hyprland desktop aesthetics: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete full configurations, including static and animated (mpvpaper) wallpapers depending on the active provider (Noctalia v5, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact.",
+    ));
+    win.set_home_about_tree_label(es.tr_shared("home.about_tree_label", "Project structure"));
+    let es_tree_paths = es.tr_array("home.about_tree_paths");
+    let es_tree_descs = es.tr_array("home.about_tree_descs");
+    win.set_home_about_tree_paths(ModelRc::from(es_tree_paths.as_slice()));
+    win.set_home_about_tree_descs(ModelRc::from(es_tree_descs.as_slice()));
+    win.set_home_about_tree_path_max(
+        es_tree_paths
+            .iter()
+            .max_by_key(|p| p.len())
+            .cloned()
+            .unwrap_or_default(),
+    );
+    win.set_home_about_docs_label(es.tr_shared("home.about_docs", "View documentation"));
+    crate::panel_i18n::apply_system(&win, &es);
+    // The left rail and the header hint are shared chrome with their own pass
+    // (same `panel.nav.system` key this slice reuses for the section title),
+    // so the frame shows the rail a production Spanish run actually paints.
+    crate::panel_i18n::apply_panel_chrome(&win, &es);
+    for _ in 0..8 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    let es_snap = win.window().take_snapshot().expect("panel system spanish");
+    save_slice_png(es_snap.clone(), "panel_system_es.png");
+    let es_diff = count_buffer_diff(&snap_10s, &es_snap);
+    assert!(es_diff > 200, "Spanish System copy must change pixels — got {es_diff} expected >200");
+
+    // About area in Spanish: walk to the About row and expand the accordion
+    // through the real keyboard path, so the PNG shows the paragraph, the
+    // tree and the docs link instead of the collapsed card.
+    focus_settle();
+    for _ in 0..6 {
+        focus_press_key(&win, slint::platform::Key::DownArrow);
+    }
+    focus_press_key(&win, slint::platform::Key::Return);
+    focus_settle();
+    let es_about = win.window().take_snapshot().expect("panel system about spanish");
+    save_slice_png(es_about.clone(), "panel_system_about_es.png");
+    let about_diff = count_buffer_diff(&es_snap, &es_about);
+    assert!(
+        about_diff > 200,
+        "the expanded About area must repaint — got {about_diff} expected >200"
+    );
 }
 
 // ── Mutating-window slice 8: Legacy cleanup (R8) ───────────────────────
@@ -5305,8 +5383,8 @@ fn focus_open_system_panel() -> crate::MainWindow {
     win.set_autostart(false);
     win.set_theme("system".into());
     win.set_restart_required(false);
-    win.set_auto_minimize_label("Retardo al ocultar".into());
-    win.set_timer_label("Retardo:".into());
+    win.set_auto_minimize_label("Hide delay".into());
+    win.set_timer_label("Delay:".into());
     win.set_language_label("Language".into());
     win.set_tiling_label("Tiling mode".into());
     win.set_autostart_label("Autostart".into());
@@ -17368,5 +17446,219 @@ fn save_and_filters_labels_follow_the_language() {
     crate::panel_i18n::apply_filters(&win, &crate::tr::Tr::with_lang("en"));
     assert_save_labels(&win, "en");
     assert_filters_labels(&win, "en");
+}
+
+// ── i18n slice 2: System / About copy ────────────────────────────────
+
+/// One row per user-visible System string: (property, i18n key, English,
+/// Spanish). The English column is byte-identical to the literal or `.slint`
+/// default it replaces — including the two defaults that were written in
+/// SPANISH (`Retardo al ocultar`, `Retardo:`) and are pinned here to the
+/// English the rest of the repository already uses for the same concepts
+/// (`settings.auto_minimize` / `settings.timer`).
+fn system_rows() -> [(&'static str, &'static str, &'static str, &'static str); 21] {
+    [
+        ("settings-title", "panel.nav.system", "System", "Sistema"),
+        ("section-desc", "panel.system.desc",
+            "Activation, settings and About. Tiling stays as-is.",
+            "Activación, ajustes y Acerca de. El modo Tiling se mantiene como está."),
+        ("restart-banner-text", "settings.restart_banner",
+            "⚠ Restart required", "⚠ Reinicio requerido"),
+        ("restart-button-text", "settings.restart_button", "Restart", "Reiniciar"),
+        ("auto-minimize-label", "settings.auto_minimize", "Hide delay", "Retardo al ocultar"),
+        ("timer-label", "settings.timer", "Delay:", "Retardo:"),
+        ("language-label", "settings.language", "Language", "Idioma"),
+        ("tiling-label", "settings.tiling_mode", "Tiling mode", "Modo Tiling"),
+        ("autostart-label", "settings.autostart", "Autostart", "Inicio automático"),
+        ("theme-label", "settings.theme", "Theme", "Tema"),
+        ("reset-label", "settings.reset_presets", "Reset presets", "Restablecer ajustes"),
+        ("about-title", "home.about_title", "About HVE", "Acerca de HVE"),
+        ("about-short", "panel.system.about_short",
+            "Hyprland Visual Editor makes your desktop truly yours.",
+            "Hyprland Visual Editor hace que tu escritorio sea realmente tuyo."),
+        ("about-full", "panel.system.about_full",
+            "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.",
+            "HVE es una aplicación gráfica para gestionar visualmente la estética de tu escritorio Hyprland."),
+        ("tree-label", "home.about_tree_label", "Project structure", "Estructura del proyecto"),
+        ("docs-label", "home.about_docs", "View documentation", "Ver documentación"),
+        ("activation-title", "welcome.activation_title", "System Activation", "Activación del Sistema"),
+        ("activation-active", "welcome.toast.enabled", "Visual Editor Enabled", "Editor Visual Habilitado"),
+        ("activation-inactive", "welcome.toast.disabled", "Visual Editor Disabled", "Editor Visual Deshabilitado"),
+        ("activation-desc-active", "panel.system.activation_desc_active",
+            "Visual effects are safely managed by HVE.",
+            "Los efectos visuales están gestionados por HVE de forma segura."),
+        ("activation-desc-inactive", "panel.system.activation_desc_inactive",
+            "System halted. Enable to start.",
+            "Sistema detenido. Habilitálo para comenzar."),
+    ]
+}
+
+/// `system_text.slint` must exist and declare every string byte for byte: the
+/// English default in the global IS the copy an English run reads.
+#[test]
+fn system_text_defaults_are_todays_english() {
+    let path = "ui/panel/sections/system_text.slint";
+    let content = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{path} must exist for the System i18n slice: {e}"));
+    let missing: Vec<&str> = system_rows()
+        .iter()
+        .map(|(_, _, en, _)| *en)
+        .filter(|en| !content.contains(&format!(": \"{en}\";")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "system_text.slint does not declare today's English copy: {missing:#?}"
+    );
+}
+
+/// Both embedded maps must already carry the exact copy the table pins — a
+/// missing `panel.system.*` key would silently degrade to English.
+#[test]
+fn both_language_maps_carry_every_system_string() {
+    let en = crate::tr::Tr::with_lang("en");
+    let es = crate::tr::Tr::with_lang("es");
+    let wrong: Vec<String> = system_rows()
+        .iter()
+        .flat_map(|(_, key, en_want, es_want)| [("en", en.tr(key), *en_want), ("es", es.tr(key), *es_want)])
+        .filter_map(|(lang, got, want)| {
+            (got != Some(want)).then(|| format!("[{lang}] want {want:?}, map has {got:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "the i18n maps do not carry today's System copy: {wrong:#?}");
+}
+
+/// No Spanish label may be a copy of its English one: that is what a MISSING
+/// key looks like after `tr_shared` falls back.
+#[test]
+fn every_system_label_has_its_own_spanish_text() {
+    let twinned: Vec<&str> = system_rows()
+        .iter()
+        .filter(|(_, _, en, es)| en == es)
+        .map(|(prop, ..)| *prop)
+        .collect();
+    assert!(
+        twinned.is_empty(),
+        "these labels would read English on the Spanish panel: {twinned:?}"
+    );
+}
+
+/// The pass must be WIRED, not merely available: `main()` has to call it, or
+/// the global keeps its Slint defaults on every language (the B7 lesson).
+#[test]
+fn main_applies_the_system_i18n() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    let call = "panel_i18n::apply_system(&window, &tr);";
+    let hits = MAIN.matches(call).count();
+    assert_eq!(hits, 1, "main must call {call} exactly once, got {hits}");
+}
+
+/// The hardcoded English literals must be GONE from the markup (they read the
+/// global now), and the two SPANISH defaults must be English again — the
+/// Spanish lives in `i18n/es.json`, which the map test above pins.
+#[test]
+fn system_section_and_activation_card_read_their_text_from_system_text() {
+    let ss =
+        std::fs::read_to_string("ui/panel/sections/SystemSection.slint").expect("SystemSection.slint");
+    for gone in [
+        "text: \"System\";",
+        "Activation, settings and About. Tiling stays as-is.",
+        "Text { text: \"Restart\";",
+        "card-title: \"System Activation\";",
+        "active-text: \"Visual Editor Enabled\";",
+        "inactive-text: \"Visual Editor Disabled\";",
+        ": \"Retardo",
+    ] {
+        assert!(
+            !ss.contains(gone),
+            "SystemSection must read {gone:?} through SystemText, but the literal is still in the file"
+        );
+    }
+    for live in [
+        "text: SystemText.settings-title;",
+        "text: SystemText.section-desc;",
+        "text: SystemText.restart-button-text;",
+        "card-title: SystemText.activation-title;",
+        "active-text: SystemText.activation-active;",
+        "inactive-text: SystemText.activation-inactive;",
+        "auto-minimize-label: SystemText.auto-minimize-label;",
+        "timer-label: SystemText.timer-label;",
+        "about-title: SystemText.about-title;",
+        "docs-label: SystemText.docs-label;",
+    ] {
+        assert!(ss.contains(live), "SystemSection must read {live} — missing");
+    }
+    let comp = std::fs::read_to_string("ui/components.slint").expect("components.slint");
+    for live in [
+        "card-title: SystemText.activation-title;",
+        "active-text: SystemText.activation-desc-active;",
+        "inactive-text: SystemText.activation-desc-inactive;",
+    ] {
+        assert!(comp.contains(live), "ActivationCard must default to {live} — missing");
+    }
+}
+
+/// The getter for each row of `system_rows`, in the same order: the live half
+/// of the table (the row data itself is pinned by the tests above).
+fn system_readers() -> [fn(&crate::SystemText) -> String; 21] {
+    [
+        |t| t.get_settings_title().to_string(),
+        |t| t.get_section_desc().to_string(),
+        |t| t.get_restart_banner_text().to_string(),
+        |t| t.get_restart_button_text().to_string(),
+        |t| t.get_auto_minimize_label().to_string(),
+        |t| t.get_timer_label().to_string(),
+        |t| t.get_language_label().to_string(),
+        |t| t.get_tiling_label().to_string(),
+        |t| t.get_autostart_label().to_string(),
+        |t| t.get_theme_label().to_string(),
+        |t| t.get_reset_label().to_string(),
+        |t| t.get_about_title().to_string(),
+        |t| t.get_about_short().to_string(),
+        |t| t.get_about_full().to_string(),
+        |t| t.get_tree_label().to_string(),
+        |t| t.get_docs_label().to_string(),
+        |t| t.get_activation_title().to_string(),
+        |t| t.get_activation_active().to_string(),
+        |t| t.get_activation_inactive().to_string(),
+        |t| t.get_activation_desc_active().to_string(),
+        |t| t.get_activation_desc_inactive().to_string(),
+    ]
+}
+
+fn assert_system_labels(win: &crate::MainWindow, lang: &str) {
+    use slint::Global as _;
+
+    let t = crate::SystemText::get(win);
+    let wrong: Vec<String> = system_rows()
+        .iter()
+        .zip(system_readers())
+        .filter_map(|((prop, _, en, es), read)| {
+            let want = if lang == "en" { *en } else { *es };
+            let got = read(&t);
+            (got != want).then(|| format!("{prop}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "[{lang}] the System section is not fully in {lang}: {wrong:#?}"
+    );
+}
+
+/// English reads the Slint defaults (today's copy, no i18n pass needed),
+/// Spanish reads the translation through the REAL production function, and
+/// the round trip back to English restores every string byte for byte.
+#[test]
+fn system_labels_follow_the_language() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+
+    assert_system_labels(&win, "en");
+
+    crate::panel_i18n::apply_system(&win, &crate::tr::Tr::with_lang("es"));
+    assert_system_labels(&win, "es");
+
+    crate::panel_i18n::apply_system(&win, &crate::tr::Tr::with_lang("en"));
+    assert_system_labels(&win, "en");
 }
 

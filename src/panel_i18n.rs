@@ -245,6 +245,61 @@ pub fn apply_filters(window: &MainWindow, tr: &Tr) {
     ));
 }
 
+/// Fill every `SystemText` string from `tr` for the selected language.
+///
+/// The System section's header, its description, the restart row and the
+/// activation card were hardcoded English in `SystemSection.slint` and
+/// `components.slint`; the row labels and the About copy declared defaults no
+/// pass ever translated (two of them even in Spanish). They now travel the
+/// same channel as the rest of the panel copy: i18n map → this pass → the
+/// exported `SystemText` global → wherever the section is mounted. English is
+/// the fallback, exactly as `apply_borders` does.
+///
+/// Key reuse follows the same rule as `apply_filters`: a key is reused only
+/// when its English value is byte-identical to the copy being wired. That is
+/// why the section title goes through `panel.nav.system` (the nav rail already
+/// says the same word) and NOT through `settings.title` ("Settings").
+pub fn apply_system(window: &MainWindow, tr: &Tr) {
+    let t = crate::SystemText::get(window);
+
+    t.set_settings_title(tr.tr_shared("panel.nav.system", "System"));
+    t.set_section_desc(tr.tr_shared(
+        "panel.system.desc",
+        "Activation, settings and About. Tiling stays as-is.",
+    ));
+    t.set_restart_banner_text(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
+    t.set_restart_button_text(tr.tr_shared("settings.restart_button", "Restart"));
+    t.set_auto_minimize_label(tr.tr_shared("settings.auto_minimize", "Hide delay"));
+    t.set_timer_label(tr.tr_shared("settings.timer", "Delay:"));
+    t.set_language_label(tr.tr_shared("settings.language", "Language"));
+    t.set_tiling_label(tr.tr_shared("settings.tiling_mode", "Tiling mode"));
+    t.set_autostart_label(tr.tr_shared("settings.autostart", "Autostart"));
+    t.set_theme_label(tr.tr_shared("settings.theme", "Theme"));
+    t.set_reset_label(tr.tr_shared("settings.reset_presets", "Reset presets"));
+    t.set_about_title(tr.tr_shared("home.about_title", "About HVE"));
+    t.set_about_short(tr.tr_shared(
+        "panel.system.about_short",
+        "Hyprland Visual Editor makes your desktop truly yours.",
+    ));
+    t.set_about_full(tr.tr_shared(
+        "panel.system.about_full",
+        "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.",
+    ));
+    t.set_tree_label(tr.tr_shared("home.about_tree_label", "Project structure"));
+    t.set_docs_label(tr.tr_shared("home.about_docs", "View documentation"));
+    t.set_activation_title(tr.tr_shared("welcome.activation_title", "System Activation"));
+    t.set_activation_active(tr.tr_shared("welcome.toast.enabled", "Visual Editor Enabled"));
+    t.set_activation_inactive(tr.tr_shared("welcome.toast.disabled", "Visual Editor Disabled"));
+    t.set_activation_desc_active(tr.tr_shared(
+        "panel.system.activation_desc_active",
+        "Visual effects are safely managed by HVE.",
+    ));
+    t.set_activation_desc_inactive(tr.tr_shared(
+        "panel.system.activation_desc_inactive",
+        "System halted. Enable to start.",
+    ));
+}
+
 /// Fill every `PanelText` string from `tr` for the selected language.
 ///
 /// The panel chrome — the left nav rail and the header hint — is shared by all

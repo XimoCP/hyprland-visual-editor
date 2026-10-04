@@ -38,6 +38,13 @@
       "desc": "Elegí un shader — se aplica al instante. Volvé a elegir el activo para apagarlo.",
       "empty": "No se encontraron preajustes de shader.",
       "kbd_hint": "↑↓ navegar • Enter/Space aplicar • Tab elegir→siguiente • Esc volver"
+    },
+    "system": {
+      "desc": "Activación, ajustes y Acerca de. El modo Tiling se mantiene como está.",
+      "about_short": "Hyprland Visual Editor hace que tu escritorio sea realmente tuyo.",
+      "about_full": "HVE es una aplicación gráfica para gestionar visualmente la estética de tu escritorio Hyprland.",
+      "activation_desc_active": "Los efectos visuales están gestionados por HVE de forma segura.",
+      "activation_desc_inactive": "Sistema detenido. Habilitálo para comenzar."
     }
   },
   "welcome": {

@@ -1,0 +1,46 @@
+// HVE 2 — System / About panel text.
+//
+// Declared in its own file (no components) so the compiler exposes it to Rust
+// as `crate::SystemText`, the way `SaveText` (save_text.slint),
+// `FiltersText` (filters_text.slint), `BordersText` (borders_text.slint),
+// `MotionText` (motion_text.slint) and `PanelText` (panel_text.slint) are
+// exposed.
+//
+// The section header, its description, the restart row and the activation
+// card were hardcoded English in `SystemSection.slint` and
+// `components.slint`, so they never reached the translation table and a
+// Spanish panel painted them in English. The row labels and the About copy
+// declared their defaults here too — two of them even in SPANISH. Rust fills
+// this global from the embedded i18n map through
+// `panel_i18n::apply_system`; the defaults below are today's English copy
+// byte for byte (the two Spanish ones corrected to the English the rest of
+// the repository uses), so a run that never calls the i18n pass reads
+// exactly as it always did.
+//
+// At runtime the parent chain also feeds the row labels and the About copy
+// as MainWindow properties (`set_auto_minimize_label`, `set_home_about_*`,
+// which `main()` fills from `tr`); this global is the channel for the strings
+// that no property ever carried, and the fallback for the rest.
+export global SystemText {
+    in-out property <string> settings-title: "System";
+    in-out property <string> section-desc: "Activation, settings and About. Tiling stays as-is.";
+    in-out property <string> restart-banner-text: "⚠ Restart required";
+    in-out property <string> restart-button-text: "Restart";
+    in-out property <string> auto-minimize-label: "Hide delay";
+    in-out property <string> timer-label: "Delay:";
+    in-out property <string> language-label: "Language";
+    in-out property <string> tiling-label: "Tiling mode";
+    in-out property <string> autostart-label: "Autostart";
+    in-out property <string> theme-label: "Theme";
+    in-out property <string> reset-label: "Reset presets";
+    in-out property <string> about-title: "About HVE";
+    in-out property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
+    in-out property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in-out property <string> tree-label: "Project structure";
+    in-out property <string> docs-label: "View documentation";
+    in-out property <string> activation-title: "System Activation";
+    in-out property <string> activation-active: "Visual Editor Enabled";
+    in-out property <string> activation-inactive: "Visual Editor Disabled";
+    in-out property <string> activation-desc-active: "Visual effects are safely managed by HVE.";
+    in-out property <string> activation-desc-inactive: "System halted. Enable to start.";
+}

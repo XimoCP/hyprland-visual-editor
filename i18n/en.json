@@ -38,6 +38,13 @@
       "desc": "Pick a shader — instantly applied. Repick active to turn off.",
       "empty": "No shader presets found.",
       "kbd_hint": "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back"
+    },
+    "system": {
+      "desc": "Activation, settings and About. Tiling stays as-is.",
+      "about_short": "Hyprland Visual Editor makes your desktop truly yours.",
+      "about_full": "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.",
+      "activation_desc_active": "Visual effects are safely managed by HVE.",
+      "activation_desc_inactive": "System halted. Enable to start."
     }
   },
   "welcome": {

@@ -2827,6 +2827,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // Save form pane + Filters section copy: same channel, same map.
     panel_i18n::apply_save(&window, &tr);
     panel_i18n::apply_filters(&window, &tr);
+    // System / About section copy (header, restart row, activation card,
+    // row-label and About defaults): same channel, same map.
+    panel_i18n::apply_system(&window, &tr);
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);

@@ -17,6 +17,7 @@ import { ScrollView } from "std-widgets.slint";
 import { SkwdTokens } from "../../tokens.slint";
 import { HveColors } from "../../theme.slint";
 import { ActivationCard, AccordionCard, AboutItem } from "../../components.slint";
+import { SystemText } from "system_text.slint";
 
 // ─── Settings pane: activation + settings rows. Own ScrollView + scroll memory. ───
 component SystemSettingsPane inherits Rectangle {
@@ -27,13 +28,13 @@ component SystemSettingsPane inherits Rectangle {
     in property <bool> autostart: false;
     in property <string> theme: "system";
     in property <bool> restart-required: false;
-    in property <string> restart-banner-text: "⚠ Restart required";
-    in property <string> restart-button-text: "Restart";
-    in property <string> auto-minimize-label: "Auto-minimize";
-    in property <string> timer-label: "Timer:";
-    in property <string> language-label: "Language";
-    in property <string> autostart-label: "Autostart";
-    in property <string> theme-label: "Theme";
+    in property <string> restart-banner-text: SystemText.restart-banner-text;
+    in property <string> restart-button-text: SystemText.restart-button-text;
+    in property <string> auto-minimize-label: SystemText.auto-minimize-label;
+    in property <string> timer-label: SystemText.timer-label;
+    in property <string> language-label: SystemText.language-label;
+    in property <string> autostart-label: SystemText.autostart-label;
+    in property <string> theme-label: SystemText.theme-label;
     in property <int> focused-row: 0;
     in property <bool> has-focus: false;
     in property <bool> option-engaged: false;
@@ -120,9 +121,9 @@ component SystemSettingsPane inherits Rectangle {
                     y: 2px;
                     focused: (root.focused-row == 0 && root.has-focus) || root.mouse-row == 0;
                     active: root.system-active;
-                    card-title: "System Activation";
-                    active-text: "Visual Editor Enabled";
-                    inactive-text: "Visual Editor Disabled";
+                    card-title: SystemText.activation-title;
+                    active-text: SystemText.activation-active;
+                    inactive-text: SystemText.activation-inactive;
                     toggled(v) => { root.mouse-row = 0; root.toggle-system(v); }
                 }
             }
@@ -366,7 +367,7 @@ component SystemSettingsPane inherits Rectangle {
                 background: HveColors.accent-amber.transparentize(0.85);
                 border-width: root.focused-row == 6 && root.has-focus ? 1px : 1px;
                 border-color: (root.focused-row == 6 && root.has-focus) || root.mouse-row == 6 ? #8fd8ff : HveColors.accent-amber.transparentize(0.4);
-                Text { text: "Restart"; color: HveColors.accent-amber; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: SystemText.restart-button-text; color: HveColors.accent-amber; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } }
             }
 
@@ -384,15 +385,15 @@ component SystemSettingsPane inherits Rectangle {
 
 // ─── About pane: About HVE accordion. Own ScrollView. ───
 component SystemAboutPane inherits Rectangle {
-    in property <string> about-title: "About HVE";
-    in property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
-    in property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in property <string> about-title: SystemText.about-title;
+    in property <string> about-short: SystemText.about-short;
+    in property <string> about-full: SystemText.about-full;
     in property <[AboutItem]> about-items;
-    in property <string> tree-label: "Project structure";
+    in property <string> tree-label: SystemText.tree-label;
     in property <[string]> tree-paths;
     in property <[string]> tree-descs;
     in property <string> tree-path-max: "";
-    in property <string> docs-label: "View documentation";
+    in property <string> docs-label: SystemText.docs-label;
     // Row index of the About block (6 without the restart row, 7 with it).
     in property <int> about-row: 6;
     in property <int> focused-row: 0;
@@ -472,27 +473,30 @@ export component SystemSection inherits Rectangle {
     in property <bool> autostart: false;
     in property <string> theme: "system";
     in property <bool> restart-required: false;
-    // Labels (reuse SettingsPanel i18n)
-    in property <string> settings-title: "System";
-    in property <string> auto-minimize-label: "Retardo al ocultar";
-    in property <string> timer-label: "Retardo:";
-    in property <string> language-label: "Language";
-    in property <string> tiling-label: "Tiling mode";
-    in property <string> autostart-label: "Autostart";
-    in property <string> theme-label: "Theme";
-    in property <string> reset-label: "Reset presets";
-    in property <string> restart-banner-text: "⚠ Restart required";
-    in property <string> restart-button-text: "Restart";
+    // Labels — default to the exported `SystemText` global (filled from the
+    // i18n map by `panel_i18n::apply_system`). Two of these defaults were
+    // written in SPANISH (`Retardo al ocultar`, `Retardo:`): the defaults are
+    // English now, the Spanish lives in `i18n/es.json`.
+    in property <string> settings-title: SystemText.settings-title;
+    in property <string> auto-minimize-label: SystemText.auto-minimize-label;
+    in property <string> timer-label: SystemText.timer-label;
+    in property <string> language-label: SystemText.language-label;
+    in property <string> tiling-label: SystemText.tiling-label;
+    in property <string> autostart-label: SystemText.autostart-label;
+    in property <string> theme-label: SystemText.theme-label;
+    in property <string> reset-label: SystemText.reset-label;
+    in property <string> restart-banner-text: SystemText.restart-banner-text;
+    in property <string> restart-button-text: SystemText.restart-button-text;
     // About (from HomeModule via tr.rs)
-    in property <string> about-title: "About HVE";
-    in property <string> about-short: "Hyprland Visual Editor makes your desktop truly yours.";
-    in property <string> about-full: "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.";
+    in property <string> about-title: SystemText.about-title;
+    in property <string> about-short: SystemText.about-short;
+    in property <string> about-full: SystemText.about-full;
     in property <[AboutItem]> about-items;
-    in property <string> tree-label: "Project structure";
+    in property <string> tree-label: SystemText.tree-label;
     in property <[string]> tree-paths;
     in property <[string]> tree-descs;
     in property <string> tree-path-max: "";
-    in property <string> docs-label: "View documentation";
+    in property <string> docs-label: SystemText.docs-label;
 
     callback toggle-system(bool);
     callback toggle-auto-minimize(bool);
@@ -583,14 +587,14 @@ export component SystemSection inherits Rectangle {
             padding: 16px;
             spacing: 4px;
             Text {
-                text: "System";
+                text: SystemText.settings-title;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-16;
                 font-weight: 700;
                 color: HveColors.accent-cyan;
             }
             Text {
-                text: "Activation, settings and About. Tiling stays as-is.";
+                text: SystemText.section-desc;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-12;
                 color: HveColors.text-muted;

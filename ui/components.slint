@@ -1,5 +1,6 @@
 import { Slider, ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
+import { SystemText } from "panel/sections/system_text.slint";
 
 export struct AboutItem {
     text: string,
@@ -586,9 +587,9 @@ export component ActivationCard inherits Rectangle {
     // Keyboard/mouse focus: the CARD recolors and thickens its own border,
     // so there is a single focus line (no separate wrapper ring).
     in property <bool> focused: false;
-    in property <string> card-title: "System Activation";
-    in property <string> active-text: "Visual effects are safely managed by HVE.";
-    in property <string> inactive-text: "System halted. Enable to start.";
+    in property <string> card-title: SystemText.activation-title;
+    in property <string> active-text: SystemText.activation-desc-active;
+    in property <string> inactive-text: SystemText.activation-desc-inactive;
     callback toggled(bool);
 
     height: 84px;
