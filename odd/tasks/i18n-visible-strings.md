@@ -295,8 +295,8 @@ fixed by the parent before the commit:
 
 ### S3 — Motion chrome (done)
 
-Writer: `general-free` (MiMo). Commit `f5a2c0c`-equivalent recorded above as the
-`feat(i18n): the Motion panel speaks Spanish` commit. Six files, all inside the
+Writer: `general-free` (MiMo). Commit `dcffd15`
+(`feat(i18n): the Motion panel speaks Spanish`). Six files, all inside the
 declared surface; `ui/main.slint` and `src/main.rs` needed no change.
 
 `MotionText` grew from 6 to 18 properties. 8 keys reused byte-identically
