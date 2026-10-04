@@ -7176,6 +7176,185 @@ fn motion_apply_switch_click_moves_keyboard_cursor() {
     );
 }
 
+/// Motion's built-in card must send its FILE to `apply-animation`, never the
+/// translated title it displays. Mirrors
+/// `borders_preset_card_click_applies_the_file_not_the_title`, but the switch
+/// coordinate is derived from a real frame: Motion's list sits lower than
+/// Borders' (a title + hint line precede the panes), so Borders' hard-coded
+/// point would miss the switch entirely.
+#[test]
+fn motion_preset_card_click_applies_the_file_not_the_title() {
+    use slint::platform::PointerEventButton;
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    // Expanded + gallery state: without them the panel stays in its translucent
+    // rail-preview state and the card never renders at full opacity.
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(2);
+    // Translated title for DISPLAY, file name for APPLY.
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Lightning",
+    )])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "fast strike",
+    )])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "01_relampago.lua",
+    )])));
+    focus_settle();
+
+    let shot = win.window().take_snapshot().expect("motion card snapshot");
+    // The Apply switch paints HveColors.border (#30363d) while it is off, and it
+    // is the only dense band of that ink in the list pane: the card's own 1px
+    // border is icy while the card holds the keyboard cursor, and the "Built-in"
+    // label is text, not ink. The scan starts below the header (a 1px chrome line
+    // at the top of the pane shares the same ink). Locating the switch itself
+    // keeps the click honest — a coordinate copied from Borders would miss it,
+    // because Motion's list sits lower (a title + hint line precede the panes).
+    let switch_bb = first_color_band_bbox(&shot, BORDER_INK, 0, 170, 300, 1040, 1045, 15, None)
+        .expect("the built-in Motion card must paint its Apply switch");
+    let (switch_x, switch_y) = (
+        ((switch_bb.0 + switch_bb.2) / 2) as f32,
+        ((switch_bb.1 + switch_bb.3) / 2) as f32,
+    );
+
+    let applied: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_apply_animation({
+        let applied = applied.clone();
+        move |_idx, file| applied.borrow_mut().push(file.to_string())
+    });
+
+    dispatch_pointer(&win, switch_x, switch_y, PointerEventButton::Left);
+    settle_frames(30);
+
+    let got = applied.borrow().clone();
+    assert_eq!(
+        got,
+        vec!["01_relampago.lua".to_string()],
+        "clicking the built-in Motion card's switch must apply its FILE — got {got:?}"
+    );
+    assert!(
+        !got.iter().any(|f| f == "Lightning"),
+        "the click must never send the displayed title to the engine — got {got:?}"
+    );
+}
+
+/// Visual proof for the same wiring, end to end: after a REAL switch click the
+/// tune pane must read the clicked preset's curve/speed/style back. The callback
+/// mimics production (`on_panel_apply_animation` → `sync_motion_tune_pane`), so
+/// a payload that is the title would leave the pane at its stale defaults; the
+/// PNG is the human-reviewable frame.
+#[test]
+fn motion_preset_apply_reflects_the_file_in_the_tune_pane() {
+    use slint::platform::PointerEventButton;
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_is_panel_open(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(2);
+    // Display title differs from the FILE that must be applied.
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Stylized 2.5D",
+    )])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "stylized",
+    )])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "19_stylized2.5D.lua",
+    )])));
+    // Stale pane values, as if another preset was active before the click.
+    win.set_bezier_a(0.25);
+    win.set_bezier_b(0.1);
+    win.set_bezier_c(0.25);
+    win.set_bezier_d(1.0);
+    win.set_anim_speed(2.0);
+    win.set_anim_style("slide".into());
+    focus_settle();
+
+    // Production wiring: the applied FILE is read back into the tune pane.
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let w = win.as_weak();
+    win.on_panel_apply_animation(move |_idx, file| {
+        if let Some(w) = w.upgrade() {
+            crate::sync_motion_tune_pane(&w, &proj, &file);
+        }
+    });
+
+    let shot = win.window().take_snapshot().expect("motion card snapshot");
+    let switch_bb = first_color_band_bbox(&shot, BORDER_INK, 0, 170, 300, 1040, 1045, 15, None)
+        .expect("the built-in Motion card must paint its Apply switch");
+    let (switch_x, switch_y) = (
+        ((switch_bb.0 + switch_bb.2) / 2) as f32,
+        ((switch_bb.1 + switch_bb.3) / 2) as f32,
+    );
+
+    dispatch_pointer(&win, switch_x, switch_y, PointerEventButton::Left);
+    settle_frames(40);
+
+    // `19_stylized2.5D.lua` (assets/animations): bezier 0.4 / -0.3 / 0.2 / 1.15,
+    // speed 4.5, style "popin 70%" → the pane's canonical "popin 80%".
+    assert_eq!(win.get_bezier_a(), 0.4, "the pane must read the file's X1");
+    assert_eq!(win.get_bezier_b(), -0.3, "the pane must read the file's Y1");
+    assert_eq!(win.get_bezier_c(), 0.2, "the pane must read the file's X2");
+    assert_eq!(win.get_bezier_d(), 1.15, "the pane must read the file's Y2");
+    assert_eq!(
+        win.get_anim_speed(),
+        4.5,
+        "the pane must read the file's speed"
+    );
+    assert_eq!(
+        win.get_anim_style(),
+        "popin 80%",
+        "the pane must read the file's style"
+    );
+
+    let after = win.window().take_snapshot().expect("motion applied snapshot");
+    save_slice_png(after, "motion_preset_apply_pane.png");
+}
+
 /// Visual proof for the keeper's report: after a card body click the keyboard
 /// focus ring (icy #8fd8ff) paints on the CLICKED card, not the old cursor.
 /// Renders before/after and pins the ring with a colour count; the PNG is the
