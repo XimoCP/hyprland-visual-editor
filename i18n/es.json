@@ -521,8 +521,8 @@
     "back_hint": "Esc oculta",
     "shortcuts": {
       "home": "←→ mover · Enter abrir · Esc oculta",
-      "slider": "←→ temas · Enter aplicar · i info · Ctrl+↑↓ cajones · Esc volver",
-      "mosaic": "←↑↓→ mover · Enter ampliar/aplicar · Ctrl+↑↓ cajones · Esc volver",
+      "slider": "←→ temas · Enter aplicar · i info · Ctrl+↑↓ cajones · Esc oculta",
+      "mosaic": "←↑↓→ mover · Enter ampliar/aplicar · Ctrl+↑↓ cajones · Esc oculta",
       "panel": "↑↓ mover · ← menú · →/Enter sección · Enter activar · Esc volver"
     },
     "slots": {

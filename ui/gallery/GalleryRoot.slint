@@ -133,9 +133,9 @@ export component GalleryRoot inherits Rectangle {
     init => { self.opened = true; }
 
     // ── Two drawers behind the carousel ──
-    // Local UI state — no Rust needed to open/close, but it is
-    // exposed as in-out in case the keyboard (Up/Down) wants to toggle it
-    // from callbacks.rs. Closed by default (hidden behind).
+    // Local UI state — the mouse arrow buttons toggle it and the
+    // keyboard toggles it with Ctrl+Up / Ctrl+Down; those are the only
+    // drawer keys. Closed by default (hidden behind).
     in-out property <bool> top-menu-open: false;
     in-out property <bool> bottom-menu-open: false;
     // Compat: the old FilterBar used style-menu-open — we keep it as

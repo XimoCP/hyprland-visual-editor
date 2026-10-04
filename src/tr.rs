@@ -260,11 +260,11 @@ mod tests {
         );
         assert_eq!(
             t.tr("shell.shortcuts.slider"),
-            Some("←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc back")
+            Some("←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc hides")
         );
         assert_eq!(
             t.tr("shell.shortcuts.mosaic"),
-            Some("←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc back")
+            Some("←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc hides")
         );
         assert_eq!(
             t.tr("shell.shortcuts.panel"),
@@ -281,11 +281,11 @@ mod tests {
         );
         assert_eq!(
             t.tr("shell.shortcuts.slider"),
-            Some("←→ temas · Enter aplicar · i info · Ctrl+↑↓ cajones · Esc volver")
+            Some("←→ temas · Enter aplicar · i info · Ctrl+↑↓ cajones · Esc oculta")
         );
         assert_eq!(
             t.tr("shell.shortcuts.mosaic"),
-            Some("←↑↓→ mover · Enter ampliar/aplicar · Ctrl+↑↓ cajones · Esc volver")
+            Some("←↑↓→ mover · Enter ampliar/aplicar · Ctrl+↑↓ cajones · Esc oculta")
         );
         assert_eq!(
             t.tr("shell.shortcuts.panel"),

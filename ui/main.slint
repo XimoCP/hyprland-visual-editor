@@ -271,7 +271,8 @@ export component MainWindow inherits Window {
     in-out property <int> gallery-style: 0;
     in-out property <int> gallery-focused: 0;
     in property <[GalleryCardData]> gallery-cards;
-    // Two behind-drawers state mirrors (Up -> Settings, Down -> Slider/Mosaic)
+    // Two behind-drawers state mirrors (Ctrl+Up -> Settings, Ctrl+Down -> Slider/Mosaic;
+    // the mouse arrow buttons toggle them too)
     in-out property <bool> gallery-top-open: false;
     in-out property <bool> gallery-bottom-open: false;
     // V3 relative strip tiles (center=0) + strip-offset/rebasing for fluid directional slide.

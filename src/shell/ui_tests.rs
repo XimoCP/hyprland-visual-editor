@@ -464,6 +464,10 @@ fn shell_bottom_bar_shows_context_shortcuts() {
         tr.tr("shell.shortcuts.home").unwrap(),
         "Home bar copy must be the translated `shell.shortcuts.home`"
     );
+    assert!(
+        home.as_str().ends_with("Esc oculta"),
+        "Home Escape hides the window to the tray, so the hint must end in `Esc oculta`"
+    );
 
     // Gallery Slider.
     win.set_mounted_screen(1);
@@ -472,6 +476,10 @@ fn shell_bottom_bar_shows_context_shortcuts() {
     assert!(!slider.is_empty(), "Slider must list its shortcuts");
     assert_ne!(slider, home, "Slider list must differ from Home");
     assert_eq!(slider.as_str(), tr.tr("shell.shortcuts.slider").unwrap());
+    assert!(
+        slider.as_str().ends_with("Esc oculta"),
+        "Slider Escape hides the window to the tray, so the hint must end in `Esc oculta`"
+    );
 
     // Gallery Mosaic.
     win.set_gallery_style(2);
@@ -479,6 +487,10 @@ fn shell_bottom_bar_shows_context_shortcuts() {
     assert!(!mosaic.is_empty(), "Mosaic must list its shortcuts");
     assert_ne!(mosaic, slider, "Mosaic list must differ from Slider");
     assert_eq!(mosaic.as_str(), tr.tr("shell.shortcuts.mosaic").unwrap());
+    assert!(
+        mosaic.as_str().ends_with("Esc oculta"),
+        "Mosaic Escape hides the window to the tray, so the hint must end in `Esc oculta`"
+    );
 
     // Settings panel wins over the mounted screen: it is an overlay.
     win.set_is_panel_open(true);
@@ -486,6 +498,10 @@ fn shell_bottom_bar_shows_context_shortcuts() {
     assert!(!panel.is_empty(), "Panel must list its shortcuts");
     assert_ne!(panel, mosaic, "Panel list must differ from Mosaic");
     assert_eq!(panel.as_str(), tr.tr("shell.shortcuts.panel").unwrap());
+    assert!(
+        panel.as_str().ends_with("Esc volver"),
+        "Panel Escape really goes back, so the hint must end in `Esc volver`"
+    );
 
     // Back to the Slider: no stale panel value may be left behind.
     win.set_is_panel_open(false);

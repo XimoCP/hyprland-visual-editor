@@ -521,8 +521,8 @@
     "back_hint": "Esc hides",
     "shortcuts": {
       "home": "←→ move · Enter open · Esc hides",
-      "slider": "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc back",
-      "mosaic": "←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc back",
+      "slider": "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc hides",
+      "mosaic": "←↑↓→ move · Enter grow/apply · Ctrl+↑↓ drawers · Esc hides",
       "panel": "↑↓ move · ← menu · →/Enter section · Enter engage · Esc back"
     },
     "slots": {
