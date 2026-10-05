@@ -413,18 +413,7 @@ pub fn extract_video_frame(video: &Path, cache_dir: &Path) -> Option<PathBuf> {
     if out.exists() {
         return Some(out);
     }
-    std::fs::create_dir_all(cache_dir).ok()?;
-    let status = std::process::Command::new("ffmpeg")
-        .args(["-ss", "1", "-i"])
-        .arg(video)
-        .args(["-frames:v", "1", "-y"])
-        .arg(&out)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok()?;
-    if !status.success() {
+    if !run_frame_ffmpeg(video, &out, &[]) {
         return None;
     }
     // Trust the artifact only when it decodes as a real image.
@@ -435,6 +424,47 @@ pub fn extract_video_frame(video: &Path, cache_dir: &Path) -> Option<PathBuf> {
         .decode()
         .ok()?;
     Some(out)
+}
+
+/// Shared single-frame extraction used by every ffmpeg caller in HVE: seek
+/// 1s in to skip black lead-in frames, take one frame at the video's NATIVE
+/// resolution, and write it to `out` with `encoder_args` placed before the
+/// output (e.g. JPEG quality). All ffmpeg output is suppressed and a missing
+/// binary is not an error. Returns true only when ffmpeg exited 0 AND `out`
+/// now exists; a partial artifact is the caller's to remove.
+pub fn run_frame_ffmpeg(video: &Path, out: &Path, encoder_args: &[&str]) -> bool {
+    if let Some(parent) = out.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-ss", "1", "-i"])
+        .arg(video)
+        .args(["-frames:v", "1"])
+        .args(encoder_args)
+        .arg("-y")
+        .arg(out)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    matches!(status, Ok(s) if s.success()) && out.exists()
+}
+
+/// Extract a high-quality JPEG frame from `video` to `out` at the video's
+/// native resolution (theme-packages T1 poster). Reuses [`run_frame_ffmpeg`]
+/// so the extraction recipe cannot drift from the gallery's. Returns true
+/// only when the output exists AND decodes as a real image.
+pub fn extract_video_poster_jpeg(video: &Path, out: &Path) -> bool {
+    if !run_frame_ffmpeg(video, out, &["-q:v", "2"]) {
+        return false;
+    }
+    image::ImageReader::open(out)
+        .ok()
+        .and_then(|r| r.with_guessed_format().ok())
+        .and_then(|r| r.decode().ok())
+        .is_some()
 }
 
 /// A planned preview source (W2-1 fix: planning vs extraction split).

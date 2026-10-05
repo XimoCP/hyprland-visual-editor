@@ -1641,6 +1641,15 @@ impl ThemeProvider for NoctaliaV5Provider {
             matches!(plan, SavePlan::StaticOnly | SavePlan::Unknown) || vetoed_video;
         let capture_video_manifest = matches!(plan, SavePlan::Unknown) || vetoed_video;
 
+        // The background the theme actually carries (theme-packages T1):
+        // whichever source the authority capture resolved to — the static
+        // wallpaper or the painter video — is packaged under `{theme}/media/`
+        // after the absolute records are written, and named by a
+        // theme-relative `poster.txt` record. The absolute records above stay
+        // byte-for-byte, so an existing theme on disk keeps resolving exactly
+        // as before.
+        let mut poster_source: Option<PathBuf> = None;
+
         // 4. Save default wallpaper (static only, unless authority unknown).
         //
         // WHY the daemon override: the suite that paints the layer keeps
@@ -1698,6 +1707,7 @@ impl ThemeProvider for NoctaliaV5Provider {
             if let Some(wp) = recorded {
                 fs::write(provider_dir.join("wallpaper.txt"), &wp)
                     .map_err(|e| format!("Cannot write wallpaper.txt: {}", e))?;
+                poster_source = Some(PathBuf::from(&wp));
             }
         } else {
             // Authority says video: a stale static record would resurrect the
@@ -1745,6 +1755,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                             tracing::warn!("[noctalia-v5] Cannot write video.txt: {}", e)
                         }
                     }
+                    poster_source = Some(path.clone());
                 }
                 // Unreachable by construction (video_bg only holds resolved
                 // paths), but honesty first: never write a record without one.
@@ -1754,6 +1765,32 @@ impl ThemeProvider for NoctaliaV5Provider {
             },
             None => {
                 remove_stale_artifact(&provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE));
+            }
+        }
+
+        // 6b. Package the theme's own background (theme-packages T1). The
+        //     source is whichever the authority capture resolved to: a video
+        //     frame as native-resolution JPEG, or the static wallpaper copied
+        //     byte-for-byte. Best-effort by contract — a missing source, a
+        //     missing ffmpeg or a failed extraction only warns; the save
+        //     still succeeds and existing absolute records are unchanged.
+        if let Some(source) = poster_source.as_deref() {
+            match crate::theme_media::write_theme_poster(theme_dir, source) {
+                Some(relative) => {
+                    if let Err(e) =
+                        crate::theme_media::write_poster_record(&provider_dir, &relative)
+                    {
+                        tracing::warn!(
+                            "[noctalia-v5] Cannot record the packaged poster ({}); \
+                             the theme keeps its absolute background record",
+                            e
+                        );
+                    }
+                }
+                None => tracing::warn!(
+                    "[noctalia-v5] Background not packaged ({}) — save continues",
+                    source.display()
+                ),
             }
         }
 
@@ -5146,6 +5183,182 @@ exit 1
             record.contains(&video_str),
             "video.txt must hold the resolved video path, got: {}",
             record
+        );
+    }
+
+    // ── Theme packages T1: save carries its own background ────────────
+    //
+    // WHY these exist: a copied theme folder must travel with its look. The
+    // absolute wallpaper/video records stay byte-for-byte (old themes keep
+    // resolving); the background is additionally packaged under
+    // `{theme}/media/` and named by a theme-relative `poster.txt` record.
+    // Packaging is best-effort: a broken video or a missing ffmpeg can never
+    // fail a save.
+    fn ffmpeg_available() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn synth_video(path: &Path) -> bool {
+        std::process::Command::new("ffmpeg")
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=5:size=320x240:rate=10",
+                "-y",
+            ])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_packages_static_wallpaper_into_the_theme() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("joker.png");
+        let bytes = b"static-image-bytes-kept-verbatim".to_vec();
+        std::fs::write(&src, &bytes).unwrap();
+        let src_str = src.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-paper", "skwd-paper"),
+            None,
+            "ok",
+            &save_daemon_doc("static", &src_str, &src_str),
+            &src_str,
+        );
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+
+        let poster = theme.path().join("media").join("poster.png");
+        assert!(
+            poster.exists(),
+            "save must package the static wallpaper into media/"
+        );
+        assert_eq!(
+            std::fs::read(&poster).unwrap(),
+            bytes,
+            "the packaged static image must keep its bytes"
+        );
+        let record = std::fs::read_to_string(stub.provider_dir(&theme).join("poster.txt"))
+            .expect("save must write the theme-relative poster record");
+        assert_eq!(
+            record.trim(),
+            "poster=media/poster.png",
+            "the record must name the file that was actually written"
+        );
+        // Report evidence (visible with `--nocapture`): the packaged layout.
+        println!(
+            "[evidence] saved theme media: {} ({} bytes) | record: {}",
+            poster.display(),
+            std::fs::metadata(&poster).unwrap().len(),
+            record.trim()
+        );
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(src_str.as_str()),
+            "the existing absolute wallpaper record must stay readable and unchanged"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_video_on_top_packages_a_native_jpeg_poster() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping video poster save test");
+            return;
+        }
+        let media = TempDir::new().unwrap();
+        let video = media.path().join("slugcat.mp4");
+        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+
+        let poster = theme.path().join("media").join("poster.jpg");
+        assert!(poster.exists(), "a video save must package its poster");
+        let bytes = std::fs::read(&poster).unwrap();
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::Jpeg,
+            "the video poster must be JPEG"
+        );
+        let decoded = image::ImageReader::open(&poster).unwrap().decode().unwrap();
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (320, 240),
+            "the poster must keep the video's native resolution"
+        );
+        let record = std::fs::read_to_string(stub.provider_dir(&theme).join("poster.txt"))
+            .expect("a video save must write the theme-relative poster record");
+        assert_eq!(record.trim(), "poster=media/poster.jpg");
+        // Report evidence (visible with `--nocapture`): the packaged layout.
+        println!(
+            "[evidence] saved theme media: {} ({} bytes, {}x{}) | record: {}",
+            poster.display(),
+            bytes.len(),
+            decoded.width(),
+            decoded.height(),
+            record.trim()
+        );
+        let painter = std::fs::read_to_string(
+            stub.provider_dir(&theme)
+                .join(wallpaper_authority::PAINTER_VIDEO_FILE),
+        )
+        .expect("the absolute painter video record must stay unchanged");
+        assert!(
+            painter.contains(&video_str),
+            "the existing absolute video record must stay readable, got: {painter}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_survives_a_video_whose_poster_cannot_be_extracted() {
+        let media = TempDir::new().unwrap();
+        let video = media.path().join("broken.mp4");
+        std::fs::write(&video, b"definitely not a video").unwrap();
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        let res = NoctaliaV5Provider::new().save(theme.path());
+        assert!(
+            res.is_ok(),
+            "a broken video must never fail the save: {res:?}"
+        );
+        assert!(
+            !stub.provider_dir(&theme).join("poster.txt").exists(),
+            "no poster file means no poster record"
+        );
+        assert!(
+            !theme.path().join("media").join("poster.jpg").exists(),
+            "no extractable frame means no poster artifact"
         );
     }
 

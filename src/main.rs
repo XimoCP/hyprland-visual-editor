@@ -20,6 +20,7 @@ mod shell;
 mod show_state;
 mod theme;
 mod theme_manager;
+mod theme_media;
 mod tr;
 mod tray;
 mod utils;
