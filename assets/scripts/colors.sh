@@ -9,7 +9,16 @@ HVE_HYPR_DIR="${HVE_HYPR_DIR:-$HOME/.config/hypr}"
 # `$XDG_CONFIG_HOME` when set, else `$HOME/.config`, plus `hve`. This file is
 # sourced standalone (it does not source utils.sh), so the resolution lives
 # here too instead of assuming the legacy config location under `$HOME`.
-HVE_CONFIG_DIR="${HVE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hve}"
+# A relative `XDG_*_HOME` is invalid under the XDG spec and `dirs` ignores it,
+# so it must be ignored here as well — the same helper lives in utils.sh and
+# in the installer.
+_hve_xdg_dir() {
+    case "${1:-}" in
+        /*) printf '%s' "$1" ;;
+        *) printf '%s' "$2" ;;
+    esac
+}
+HVE_CONFIG_DIR="${HVE_CONFIG_DIR:-$(_hve_xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")/hve}"
 
 # --- The palette roster: ONE declaration, consumed everywhere ----------
 # Every colour role the overlay may reference, in emission order. This list
@@ -105,7 +114,7 @@ _hve_theme_palette_file() {
 
     # Cache-dir convention (unit 1e, F5): same default as utils.sh, which
     # mirrors Rust's `hve_cache_dir()` — `$XDG_CACHE_HOME` else `$HOME/.cache`.
-    local safe_dir="${HVE_SAFE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
+    local safe_dir="${HVE_SAFE_DIR:-$(_hve_xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve}"
     local descriptor="$safe_dir/color-authority.json"
     [ -f "$descriptor" ] || return 1
 
@@ -182,7 +191,7 @@ _hve_theme_palette_name() {
     palette_file=$(_hve_theme_palette_file) || return 1
     [ -n "$palette_file" ] || return 1
 
-    local safe_dir="${HVE_SAFE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
+    local safe_dir="${HVE_SAFE_DIR:-$(_hve_xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve}"
     local descriptor="$safe_dir/color-authority.json"
     local name
     name=$(python3 - "$descriptor" <<'PY' 2>/dev/null

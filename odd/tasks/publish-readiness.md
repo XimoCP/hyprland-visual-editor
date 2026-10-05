@@ -106,7 +106,12 @@ hiding behind green tests.
       removal, root-guard i18n, dead keys, Void names), `f7dc35b` (a relative XDG value
       is ignored like `dirs` does; the autostart update no longer clobbers an existing
       config), `5b0a5e4` (the runtime scripts resolve their paths through XDG too),
-      `741e884` (the shared helpers reject a relative XDG value as well). Evidence: the
+      `741e884` (the shared helpers reject a relative XDG value as well).
+      A second cross-model pass then found two CRITICALs the same family had left
+      behind — `hve_watchdog.sh` handed an unchecked relative `XDG_CACHE_HOME` to
+      `rm -rf`, and `colors.sh` resolved its config root the unchecked way while
+      documented as standalone — both fixed and probed (the watchdog's delete target
+      now falls back to `$HOME/.cache/hve` in the relative case). Evidence: the
       first pass was verified cross-model; every behaviour was probed by running the
       real snippets — four XDG cases (unset / absolute / empty / relative), the
       autostart update over an existing config with other keys, its idempotency, its

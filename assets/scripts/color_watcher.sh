@@ -144,7 +144,7 @@ _notify_hve() {
 _reassert_theme_authority() {
     local force="${1:-}"
     hve_theme_owns_colours || return 0
-    local safe_dir="${HVE_SAFE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
+    local safe_dir="${HVE_SAFE_DIR:-$(_hve_xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve}"
     local stamp_file="$safe_dir/assert-color-authority.last"
     local now
     now=$(date +%s)
