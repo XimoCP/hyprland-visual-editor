@@ -217,6 +217,285 @@ pub fn resolve_theme_poster(theme_dir: &Path, provider_dir: &Path) -> Option<Pat
     }
 }
 
+// ── Theme video packaging (theme-packages T3) ────────────────────────────
+//
+// A theme may carry its video, but only when that is sensible. A video at or
+// under [`MAX_PACKAGED_VIDEO_BYTES`] is copied into the theme as
+// `media/background.mp4` and named by a theme-relative record
+// ([`VIDEO_RECORD_FILE`]); a larger one is never copied — the url the theme's
+// mpvpaper manifest already knows is recorded instead, so the video can still
+// be fetched by the SAME plugin path as any saved manifest. No url means the
+// theme travels with its poster alone. Best-effort, like the poster: a missing
+// file, an over-bound video or a failed copy only warns and never fails a
+// save.
+
+/// Largest video HVE copies into a theme package, in bytes.
+///
+/// GitHub rejects files over 100 MB, so a theme's video must stay below that
+/// to ship in the repository (theme-packages T5). 95 MB leaves a 5 MB safety
+/// margin for repository overhead and metadata drift. A larger video is never
+/// copied; the theme records a `url` instead when one is known, and otherwise
+/// travels with its poster alone.
+pub const MAX_PACKAGED_VIDEO_BYTES: u64 = 95 * 1024 * 1024;
+
+/// The production packaging bound: always [`MAX_PACKAGED_VIDEO_BYTES`].
+///
+/// The environment is deliberately never consulted here. A stray
+/// `HVE_MAX_PACKAGED_VIDEO_BYTES` in the keeper's shell must not be able to
+/// widen the 95 MB guard that keeps a theme's video under GitHub's 100 MB
+/// limit; the override below is reachable only from tests.
+pub fn max_packaged_video_bytes() -> u64 {
+    MAX_PACKAGED_VIDEO_BYTES
+}
+
+/// Test-only override seam for [`MAX_PACKAGED_VIDEO_BYTES`]: the size decision
+/// is exercised with tiny files instead of a real 95 MB video. Absent or
+/// unparseable -> the constant. Not a user setting: there is no UI toggle for
+/// video packaging.
+#[cfg(test)]
+const MAX_PACKAGED_VIDEO_ENV: &str = "HVE_MAX_PACKAGED_VIDEO_BYTES";
+
+/// Test-only packaging bound: the environment override when set, else
+/// [`MAX_PACKAGED_VIDEO_BYTES`]. Compiled only under `cfg(test)`, so the
+/// production save path can never reach it.
+#[cfg(test)]
+pub fn test_packaged_video_bytes() -> u64 {
+    std::env::var(MAX_PACKAGED_VIDEO_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(MAX_PACKAGED_VIDEO_BYTES)
+}
+
+/// Canonical packaged video file name (always MP4, matching the theme layout).
+pub const VIDEO_FILE_NAME: &str = "background.mp4";
+
+/// Record file, inside a provider dir, naming the theme-relative video, or the
+/// url when the video was too large to copy (`video=media/background.mp4` or
+/// `url=https://…`). Mirrors the poster's [`POSTER_RECORD_FILE`].
+pub const VIDEO_RECORD_FILE: &str = "video-media.txt";
+
+/// Record key for the packaged video path (`video=media/background.mp4`).
+const VIDEO_KEY: &str = "video=";
+
+/// Record key for the fallback url (`url=https://…`).
+const URL_KEY: &str = "url=";
+
+/// Optional record keys carried alongside the url so the mpvpaper backend can
+/// rebuild its own assignment (`filename=` / `sha256=`).
+const FILENAME_KEY: &str = "filename=";
+const SHA256_KEY: &str = "sha256=";
+
+/// Pure size decision: a video at or UNDER `max_bytes` fits packaging. The
+/// bound is a parameter so the rule is testable with tiny values, never with a
+/// real large file.
+pub fn video_fits_for_packaging(size: u64, max_bytes: u64) -> bool {
+    size <= max_bytes
+}
+
+/// Package `source` as the theme's own video under `{theme_dir}/media/` and
+/// return the theme-relative path for the record, or `None` (with a warning)
+/// when the source is missing, exceeds `max_bytes`, or cannot be copied.
+///
+/// The copy is staged through a temporary file, so a failed copy never
+/// publishes a partial video and never destroys a previously packaged one.
+/// Best-effort by contract: the caller's save still succeeds.
+pub fn package_theme_video(theme_dir: &Path, source: &Path, max_bytes: u64) -> Option<PathBuf> {
+    if !source.is_file() {
+        tracing::warn!(
+            "[theme-media] video source missing ({}); save continues without a packaged video",
+            source.display()
+        );
+        return None;
+    }
+    let size = std::fs::metadata(source).map(|m| m.len()).unwrap_or(u64::MAX);
+    if !video_fits_for_packaging(size, max_bytes) {
+        tracing::warn!(
+            "[theme-media] video {} is {} bytes, over the {} byte packaging bound; not copied",
+            source.display(),
+            size,
+            max_bytes
+        );
+        return None;
+    }
+    let media_dir = theme_dir.join(MEDIA_DIR);
+    if let Err(e) = std::fs::create_dir_all(&media_dir) {
+        tracing::warn!(
+            "[theme-media] cannot create media dir ({}): {}",
+            media_dir.display(),
+            e
+        );
+        return None;
+    }
+    let out = media_dir.join(VIDEO_FILE_NAME);
+    // Stage through a temporary file so a failed copy never publishes a
+    // partial video and never destroys a previously packaged one.
+    let tmp = media_dir.join(format!(".part-{VIDEO_FILE_NAME}"));
+    let _ = std::fs::remove_file(&tmp);
+    if let Err(e) = std::fs::copy(source, &tmp) {
+        tracing::warn!(
+            "[theme-media] cannot copy video {} into the theme: {}",
+            source.display(),
+            e
+        );
+        let _ = std::fs::remove_file(&tmp);
+        return None;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &out) {
+        tracing::warn!(
+            "[theme-media] cannot publish video {}: {}",
+            out.display(),
+            e
+        );
+        let _ = std::fs::remove_file(&tmp);
+        return None;
+    }
+    tracing::info!("[theme-media] packaged theme video: {}", out.display());
+    Some(Path::new(MEDIA_DIR).join(VIDEO_FILE_NAME))
+}
+
+/// Write the theme-relative packaged-video record into `provider_dir`. Callers
+/// downgrade a failure to a warning: a record problem must never fail a save.
+pub fn write_video_record(provider_dir: &Path, relative: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(provider_dir)
+        .map_err(|e| format!("Cannot create provider dir: {}", e))?;
+    std::fs::write(
+        provider_dir.join(VIDEO_RECORD_FILE),
+        format!("{}{}\n", VIDEO_KEY, relative.display()),
+    )
+    .map_err(|e| format!("Cannot write {}: {}", VIDEO_RECORD_FILE, e))
+}
+
+/// Write the url record (with optional filename/sha256) into `provider_dir` for
+/// a video that was too large to copy. Callers downgrade a failure to a
+/// warning.
+pub fn write_video_url_record(
+    provider_dir: &Path,
+    url: &str,
+    filename: Option<&str>,
+    sha256: Option<&str>,
+) -> Result<(), String> {
+    std::fs::create_dir_all(provider_dir)
+        .map_err(|e| format!("Cannot create provider dir: {}", e))?;
+    let mut text = format!("{}{}\n", URL_KEY, url.trim());
+    if let Some(filename) = filename.map(str::trim).filter(|f| !f.is_empty()) {
+        text.push_str(&format!("{}{}\n", FILENAME_KEY, filename));
+    }
+    if let Some(sha256) = sha256.map(str::trim).filter(|s| !s.is_empty()) {
+        text.push_str(&format!("{}{}\n", SHA256_KEY, sha256));
+    }
+    std::fs::write(provider_dir.join(VIDEO_RECORD_FILE), text)
+        .map_err(|e| format!("Cannot write {}: {}", VIDEO_RECORD_FILE, e))
+}
+
+/// The parsed [`VIDEO_RECORD_FILE`]: a packaged theme-relative path, a url, or
+/// both (the url is the fallback when the packaged file is not on disk).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ThemeVideoRecord {
+    pub packaged: Option<PathBuf>,
+    pub url: Option<String>,
+    pub filename: Option<String>,
+    pub sha256: Option<String>,
+}
+
+/// Parse a video record. An absolute or `..`-traversing packaged path is
+/// rejected (the record must stay inside the theme), exactly like the poster
+/// record; the url and its optional metadata are kept verbatim.
+pub fn parse_video_record(text: &str) -> ThemeVideoRecord {
+    let mut record = ThemeVideoRecord::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix(VIDEO_KEY) {
+            let rest = rest.trim();
+            if rest.is_empty() {
+                continue;
+            }
+            let path = PathBuf::from(rest);
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                continue;
+            }
+            record.packaged = Some(path);
+        } else if let Some(rest) = line.strip_prefix(URL_KEY) {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                record.url = Some(rest.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix(FILENAME_KEY) {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                record.filename = Some(rest.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix(SHA256_KEY) {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                record.sha256 = Some(rest.to_string());
+            }
+        }
+    }
+    record
+}
+
+/// The resolved video source for APPLY, theme-first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThemeVideoSource {
+    /// An absolute path on disk (the packaged `media/background.mp4` or the
+    /// legacy absolute `video.txt` path).
+    Path(PathBuf),
+    /// A remote url the theme's manifest knows, with optional metadata the
+    /// mpvpaper backend needs to rebuild its assignment.
+    Url {
+        url: String,
+        filename: Option<String>,
+        sha256: Option<String>,
+    },
+}
+
+/// Resolve the theme's video for APPLY: the packaged `media/background.mp4`
+/// first, then the existing absolute `video.txt` path, then a recorded url.
+/// `None` when nothing usable exists — the caller keeps its normal chain.
+pub fn resolve_theme_video(
+    theme_dir: &Path,
+    provider_dir: &Path,
+    absolute: Option<&Path>,
+) -> Option<ThemeVideoSource> {
+    let record = std::fs::read_to_string(provider_dir.join(VIDEO_RECORD_FILE))
+        .ok()
+        .map(|text| parse_video_record(&text))
+        .unwrap_or_default();
+    if let Some(relative) = record.packaged {
+        let packaged = theme_dir.join(&relative);
+        if packaged.is_file() {
+            return Some(ThemeVideoSource::Path(packaged));
+        }
+    }
+    if let Some(absolute) = absolute {
+        if absolute.is_file() {
+            return Some(ThemeVideoSource::Path(absolute.to_path_buf()));
+        }
+    }
+    if let Some(url) = record.url {
+        return Some(ThemeVideoSource::Url {
+            url,
+            filename: record.filename,
+            sha256: record.sha256,
+        });
+    }
+    None
+}
+
+/// Drop the theme's packaged video entirely: the [`VIDEO_RECORD_FILE`] record
+/// and `media/background.mp4`. Called when the background is not a video, or a
+/// video could not be packaged and has no known url, so the invariant holds:
+/// the record and the file describe the theme's CURRENT video, or they do not
+/// exist. Best-effort.
+pub fn remove_theme_video(theme_dir: &Path, provider_dir: &Path) {
+    let _ = std::fs::remove_file(provider_dir.join(VIDEO_RECORD_FILE));
+    let _ = std::fs::remove_file(theme_dir.join(MEDIA_DIR).join(VIDEO_FILE_NAME));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +772,258 @@ mod tests {
             "a successful write must drop the stale poster of another format"
         );
         assert_eq!(std::fs::read(theme.join(&rel)).unwrap(), b"fresh jpeg bytes");
+    }
+
+    // ── Theme packages T3: the video is optional and size-aware ───────
+
+    #[test]
+    fn video_fits_for_packaging_is_inclusive_at_the_bound() {
+        assert!(
+            video_fits_for_packaging(95, 95),
+            "a video exactly at the bound must fit (at or under)"
+        );
+        assert!(
+            video_fits_for_packaging(94, 95),
+            "a video under the bound must fit"
+        );
+        assert!(
+            !video_fits_for_packaging(96, 95),
+            "a video over the bound must not fit"
+        );
+    }
+
+    /// The 95 MB guard is a hard bound: a stray `HVE_MAX_PACKAGED_VIDEO_BYTES`
+    /// in the keeper's shell must not be able to widen it. The production
+    /// resolver ignores the environment entirely; the override is reachable
+    /// only from tests (see `test_packaged_video_bytes`).
+    #[test]
+    #[serial_test::serial]
+    fn max_packaged_video_bytes_ignores_the_environment() {
+        let _env = crate::test_utils::env_guard();
+        let previous = std::env::var(MAX_PACKAGED_VIDEO_ENV).ok();
+        std::env::set_var(MAX_PACKAGED_VIDEO_ENV, "999999999");
+        let bound = max_packaged_video_bytes();
+        match previous {
+            Some(v) => std::env::set_var(MAX_PACKAGED_VIDEO_ENV, v),
+            None => std::env::remove_var(MAX_PACKAGED_VIDEO_ENV),
+        }
+        assert_eq!(
+            bound, MAX_PACKAGED_VIDEO_BYTES,
+            "the production bound must be the 95 MB constant even when the env var is set"
+        );
+    }
+
+    #[test]
+    fn package_theme_video_copies_a_video_at_or_under_the_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("clip.mp4");
+        let bytes = b"tiny-video-bytes".to_vec();
+        std::fs::write(&src, &bytes).unwrap();
+
+        let theme = dir.path().join("theme");
+        let rel = package_theme_video(&theme, &src, 1024)
+            .expect("a video under the bound must be packaged");
+
+        assert_eq!(rel, PathBuf::from("media/background.mp4"));
+        assert_eq!(
+            std::fs::read(theme.join(&rel)).unwrap(),
+            bytes,
+            "the packaged video must be a byte copy"
+        );
+    }
+
+    #[test]
+    fn package_theme_video_skips_a_video_over_the_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("clip.mp4");
+        std::fs::write(&src, b"five!").unwrap(); // 5 bytes
+
+        let theme = dir.path().join("theme");
+        assert!(
+            package_theme_video(&theme, &src, 4).is_none(),
+            "a video over the bound must never be copied"
+        );
+        assert!(
+            !theme.join(MEDIA_DIR).join(VIDEO_FILE_NAME).exists(),
+            "an over-bound video must leave no packaged file"
+        );
+    }
+
+    #[test]
+    fn package_theme_video_returns_none_for_a_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        assert!(
+            package_theme_video(&theme, &dir.path().join("nope.mp4"), 1024).is_none(),
+            "a missing source must yield no packaged video"
+        );
+        assert!(
+            !theme.join(MEDIA_DIR).join(VIDEO_FILE_NAME).exists(),
+            "a missing source must not publish a video file"
+        );
+    }
+
+    #[test]
+    fn video_record_round_trips_the_packaged_path() {
+        let dir = tempfile::tempdir().unwrap();
+        write_video_record(dir.path(), Path::new("media/background.mp4")).unwrap();
+
+        let text = std::fs::read_to_string(dir.path().join(VIDEO_RECORD_FILE)).unwrap();
+        assert_eq!(text.trim(), "video=media/background.mp4");
+        let record = parse_video_record(&text);
+        assert_eq!(record.packaged, Some(PathBuf::from("media/background.mp4")));
+        assert_eq!(record.url, None);
+    }
+
+    #[test]
+    fn video_record_round_trips_the_url_and_its_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        write_video_url_record(
+            dir.path(),
+            "https://example.com/clip.mp4",
+            Some("clip.mp4"),
+            Some("abc123"),
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(dir.path().join(VIDEO_RECORD_FILE)).unwrap();
+        assert!(text.contains("url=https://example.com/clip.mp4"), "{text}");
+        assert!(text.contains("filename=clip.mp4"), "{text}");
+        assert!(text.contains("sha256=abc123"), "{text}");
+        let record = parse_video_record(&text);
+        assert_eq!(record.packaged, None);
+        assert_eq!(record.url.as_deref(), Some("https://example.com/clip.mp4"));
+        assert_eq!(record.filename.as_deref(), Some("clip.mp4"));
+        assert_eq!(record.sha256.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn parse_video_record_rejects_absolute_and_traversal_packaged_paths() {
+        assert_eq!(parse_video_record("video=/etc/passwd\n").packaged, None);
+        assert_eq!(parse_video_record("video=\n").packaged, None);
+        assert_eq!(
+            parse_video_record("video=../../etc/passwd\n").packaged,
+            None
+        );
+        assert_eq!(
+            parse_video_record("video=media/../../etc/passwd\n").packaged,
+            None
+        );
+        assert_eq!(
+            parse_video_record("video=media/background.mp4\n").packaged,
+            Some(PathBuf::from("media/background.mp4"))
+        );
+    }
+
+    #[test]
+    fn resolve_theme_video_prefers_the_packaged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join(MEDIA_DIR);
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::write(media.join(VIDEO_FILE_NAME), b"packaged video").unwrap();
+        write_video_record(&provider, Path::new("media/background.mp4")).unwrap();
+        let legacy = dir.path().join("legacy.mp4");
+        std::fs::write(&legacy, b"legacy video").unwrap();
+
+        let resolved = resolve_theme_video(&theme, &provider, Some(&legacy))
+            .expect("the packaged video must resolve");
+        assert_eq!(
+            resolved,
+            ThemeVideoSource::Path(media.join(VIDEO_FILE_NAME)),
+            "the packaged theme video must win over the absolute path"
+        );
+    }
+
+    #[test]
+    fn resolve_theme_video_falls_back_to_the_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let legacy = dir.path().join("legacy.mp4");
+        std::fs::write(&legacy, b"legacy video").unwrap();
+
+        let resolved = resolve_theme_video(&theme, &provider, Some(&legacy))
+            .expect("an old theme's absolute path must still resolve");
+        assert_eq!(resolved, ThemeVideoSource::Path(legacy));
+    }
+
+    #[test]
+    fn resolve_theme_video_falls_back_to_the_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        write_video_url_record(
+            &provider,
+            "https://example.com/clip.mp4",
+            Some("clip.mp4"),
+            None,
+        )
+        .unwrap();
+
+        let resolved = resolve_theme_video(&theme, &provider, None)
+            .expect("a recorded url must resolve when nothing local exists");
+        assert_eq!(
+            resolved,
+            ThemeVideoSource::Url {
+                url: "https://example.com/clip.mp4".into(),
+                filename: Some("clip.mp4".into()),
+                sha256: None,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_theme_video_falls_through_a_missing_packaged_file_to_the_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        // A packaged path is declared but its file is gone, and the same
+        // record carries the url fallback.
+        let text = "video=media/background.mp4\nurl=https://example.com/clip.mp4\n";
+        std::fs::create_dir_all(&provider).unwrap();
+        std::fs::write(provider.join(VIDEO_RECORD_FILE), text).unwrap();
+
+        let resolved = resolve_theme_video(&theme, &provider, None)
+            .expect("the url must be used when the packaged file is missing");
+        assert_eq!(
+            resolved,
+            ThemeVideoSource::Url {
+                url: "https://example.com/clip.mp4".into(),
+                filename: None,
+                sha256: None,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_theme_video_is_none_without_any_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        assert_eq!(resolve_theme_video(&theme, &provider, None), None);
+    }
+
+    #[test]
+    fn remove_theme_video_drops_the_record_and_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join(MEDIA_DIR);
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::write(media.join(VIDEO_FILE_NAME), b"packaged video").unwrap();
+        write_video_record(&provider, Path::new("media/background.mp4")).unwrap();
+
+        remove_theme_video(&theme, &provider);
+
+        assert!(
+            !provider.join(VIDEO_RECORD_FILE).exists(),
+            "the video record must be dropped"
+        );
+        assert!(
+            !media.join(VIDEO_FILE_NAME).exists(),
+            "the packaged video file must be dropped"
+        );
     }
 }

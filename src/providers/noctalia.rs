@@ -1438,6 +1438,20 @@ fn dnd_bool_arg(status: &str) -> Option<&'static str> {
     }
 }
 
+/// The packaging bound a save must use. Production: the fixed constant, which
+/// never reads the environment. Under `cfg(test)` the `cfg(test)`-only seam is
+/// used so the size decision can be exercised with tiny files.
+#[cfg(test)]
+fn save_packaging_bound() -> u64 {
+    crate::theme_media::test_packaged_video_bytes()
+}
+
+/// See the `cfg(test)` overload above.
+#[cfg(not(test))]
+fn save_packaging_bound() -> u64 {
+    crate::theme_media::max_packaged_video_bytes()
+}
+
 // ── NoctaliaV5Provider ───────────────────────────────────────────────
 //
 // Self-contained: the whole save/apply happens over IPC (`noctalia msg`).
@@ -1649,6 +1663,10 @@ impl ThemeProvider for NoctaliaV5Provider {
         // byte-for-byte, so an existing theme on disk keeps resolving exactly
         // as before.
         let mut poster_source: Option<PathBuf> = None;
+        // The theme's own VIDEO source (theme-packages T3): the exact painter
+        // video when the authority resolved one. Packaged under `{theme}/media/`
+        // when it fits the size bound, or recorded by url when it does not.
+        let mut video_source: Option<PathBuf> = None;
 
         // 4. Save default wallpaper (static only, unless authority unknown).
         //
@@ -1756,6 +1774,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                         }
                     }
                     poster_source = Some(path.clone());
+                    video_source = Some(path.clone());
                 }
                 // Unreachable by construction (video_bg only holds resolved
                 // paths), but honesty first: never write a record without one.
@@ -1809,6 +1828,78 @@ impl ThemeProvider for NoctaliaV5Provider {
         };
         if !packaged {
             crate::theme_media::remove_theme_poster(theme_dir, &provider_dir);
+        }
+
+        // 6c. Package the theme's own video (theme-packages T3), size-aware.
+        //     A video at or under the packaging bound is copied into the theme
+        //     as `media/background.mp4` and named by a theme-relative record;
+        //     a larger one is never copied — the url the theme's manifest
+        //     already knows is recorded instead, so the video can still be
+        //     fetched by the mpvpaper backend. No url means the theme travels
+        //     with its poster alone. Best-effort by contract: a missing file,
+        //     an over-bound video or a failed copy only warns; the save still
+        //     succeeds.
+        //
+        //     INVARIANT (mirrors the poster): `video-media.txt` and
+        //     `media/background.mp4` describe the theme's CURRENT video, or
+        //     they do not exist. A save whose background is not a video, or a
+        //     video that could not be packaged and has no known url, removes
+        //     both. Read the manifest BEFORE step 7 drops it for an exact
+        //     video, so an over-bound video keeps the url it knew.
+        let video_packaged = match video_source.as_deref() {
+            Some(source) => {
+                match crate::theme_media::package_theme_video(
+                    theme_dir,
+                    source,
+                    save_packaging_bound(),
+                ) {
+                    Some(relative) => {
+                        match crate::theme_media::write_video_record(&provider_dir, &relative) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[noctalia-v5] Cannot record the packaged video ({}); \
+                                     dropping the stale theme video",
+                                    e
+                                );
+                                false
+                            }
+                        }
+                    }
+                    None => match crate::providers::bg_info::video_url_for(&provider_dir, source) {
+                        Some(known) => {
+                            match crate::theme_media::write_video_url_record(
+                                &provider_dir,
+                                &known.url,
+                                known.filename.as_deref(),
+                                known.sha256.as_deref(),
+                            ) {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[noctalia-v5] Cannot record the video url ({}); \
+                                         the theme keeps only its poster",
+                                        e
+                                    );
+                                    false
+                                }
+                            }
+                        }
+                        None => {
+                            tracing::warn!(
+                                "[noctalia-v5] Video not packaged ({}) and no url known; \
+                                 the theme travels with its poster",
+                                source.display()
+                            );
+                            false
+                        }
+                    },
+                }
+            }
+            None => false,
+        };
+        if !video_packaged {
+            crate::theme_media::remove_theme_video(theme_dir, &provider_dir);
         }
 
         // 7. Save animated wallpaper manifest (mpvpaper plugin), reference only.
@@ -1939,6 +2030,18 @@ impl ThemeProvider for NoctaliaV5Provider {
         // video was restored (legacy manifest, static, or delegation failure).
         let mut applied_video: Option<PathBuf> = None;
         let painter_record = provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE);
+        // T3 theme-first video: the packaged `media/background.mp4` wins over
+        // the absolute `video.txt` path, which in turn wins over a recorded
+        // url. `None` for every old theme (no record, no media), so their
+        // chain stays byte-for-byte as before.
+        let recorded_absolute: Option<PathBuf> = fs::read_to_string(&painter_record)
+            .ok()
+            .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
+        let theme_video = crate::theme_media::resolve_theme_video(
+            theme_dir,
+            &provider_dir,
+            recorded_absolute.as_deref(),
+        );
         // ── Colour-authority yield (W2 + W4) ────────────────────────────
         // The keeper's wallpaper engine owns the colour scheme
         // (`theme.policy == "wallpaper"`): if a wallpaper is handed over
@@ -1992,9 +2095,13 @@ impl ThemeProvider for NoctaliaV5Provider {
         // byte-for-byte as before.
         let theme_poster = crate::theme_media::resolve_theme_poster(theme_dir, &provider_dir);
         let static_planned = static_wallpaper.is_some() || theme_poster.is_some();
+        // A theme-first video (packaged, absolute or url) also changes hands,
+        // so it takes part in the yield decision exactly like the records it
+        // replaces.
+        let video_planned = theme_video.is_some();
         let owner_snapshot: Option<bool>;
         let mut authority_guard: Option<background::ColourAuthorityHold> = None;
-        if painter_record.exists() || static_planned {
+        if painter_record.exists() || static_planned || video_planned {
             owner_snapshot = Some(background::engine_owns_color_scheme());
             match background::hold_color_authority() {
                 Ok(Some(hold)) => {
@@ -2022,35 +2129,65 @@ impl ThemeProvider for NoctaliaV5Provider {
         } else {
             owner_snapshot = None;
         }
-        if painter_record.exists() {
-            let recorded: Option<PathBuf> = fs::read_to_string(&painter_record)
-                .ok()
-                .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
-            match recorded {
-                Some(path) if path.exists() => {
-                    if background::hand_off_path(&path) {
-                        animated_applied = true;
-                        applied_video = Some(path.clone());
-                        tracing::info!(
-                            "[noctalia-v5] Restored painter video (video.txt) via skwd: {}",
-                            path.display()
-                        );
-                    } else {
-                        // D1: the video is NOT back — keep every fallback
-                        // route (manifest below, static restore after it)
-                        // instead of claiming success and deleting them.
-                        tracing::warn!(
-                            "[noctalia-v5] Painter video delegation failed ({}); keeping fallback routes",
-                            path.display()
-                        );
-                    }
-                }
-                Some(path) => {
-                    tracing::warn!(
-                        "[noctalia-v5] Painter video no longer on disk ({}); falling back",
-                        path.display()
-                    );
-                }
+        let path: Option<PathBuf> = match theme_video.as_ref() {
+            Some(crate::theme_media::ThemeVideoSource::Path(path)) => Some(path.clone()),
+            _ => None,
+        };
+        if let Some(path) = path {
+            if background::hand_off_path(&path) {
+                animated_applied = true;
+                applied_video = Some(path.clone());
+                tracing::info!(
+                    "[noctalia-v5] Restored theme video via skwd: {}",
+                    path.display()
+                );
+            } else {
+                // D1: the video is NOT back — keep every fallback
+                // route (manifest below, static restore after it)
+                // instead of claiming success and deleting them.
+                tracing::warn!(
+                    "[noctalia-v5] Video delegation failed ({}); keeping fallback routes",
+                    path.display()
+                );
+            }
+        } else if let Some(crate::theme_media::ThemeVideoSource::Url {
+            url,
+            filename,
+            sha256,
+        }) = theme_video.as_ref()
+        {
+            // T3: an over-bound video was never copied. Hand its recorded url
+            // to the mpvpaper backend through the SAME manifest the plugin
+            // already plays. Best-effort: a failure only warns.
+            match crate::providers::bg_info::ensure_url_manifest(
+                &provider_dir,
+                filename.as_deref(),
+                url,
+                sha256.as_deref(),
+            ) {
+                Ok(crate::providers::bg_info::UrlManifestOutcome::Written) => tracing::info!(
+                    "[noctalia-v5] Wrote the theme video url into the mpvpaper manifest: {}",
+                    url
+                ),
+                Ok(crate::providers::bg_info::UrlManifestOutcome::KeptExisting) => tracing::info!(
+                    "[noctalia-v5] Kept the existing mpvpaper manifest; nothing written for the \
+                     theme video url: {}",
+                    url
+                ),
+                Err(e) => tracing::warn!(
+                    "[noctalia-v5] Cannot hand the theme video url to mpvpaper ({}); \
+                     the theme keeps its poster",
+                    e
+                ),
+            }
+        } else if painter_record.exists() {
+            // Preserve today's honest warnings: the absolute record exists but
+            // yields nothing usable (a dead path or an unparseable record).
+            match recorded_absolute {
+                Some(path) => tracing::warn!(
+                    "[noctalia-v5] Painter video no longer on disk ({}); falling back",
+                    path.display()
+                ),
                 None => {
                     tracing::warn!(
                         "[noctalia-v5] Cannot parse video.txt; falling back to manifest"
@@ -4672,6 +4809,136 @@ exit 0
         std::thread::sleep(Duration::from_millis(500));
     }
 
+    // ── Theme packages T3: apply resolves the video theme-first ───────
+    //
+    // WHY these exist: a theme may carry its video (`media/background.mp4`)
+    // or, when the video was too large to copy, a recorded url. Apply must
+    // resolve the packaged file first, keep the old absolute `video.txt`
+    // path working, and hand an over-bound video's url to the SAME mpvpaper
+    // backend that plays any saved manifest.
+
+    /// A theme carrying a packaged video (`media/background.mp4` + the
+    /// theme-relative `video-media.txt`), with an optional absolute `video.txt`
+    /// pointing at a real file elsewhere.
+    fn theme_with_packaged_video(stub: &ColorStub, legacy: Option<&Path>) -> (TempDir, PathBuf) {
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let media = theme.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let video = media.join(crate::theme_media::VIDEO_FILE_NAME);
+        std::fs::write(&video, b"packaged video bytes").unwrap();
+        crate::theme_media::write_video_record(&dir, Path::new("media/background.mp4")).unwrap();
+        if let Some(legacy) = legacy {
+            std::fs::write(
+                dir.join("video.txt"),
+                format!(
+                    "path={}\npainter=skwd-wall-vk\nnamespace=dp-3\npid=1\n",
+                    legacy.display()
+                ),
+            )
+            .unwrap();
+        }
+        (theme, video)
+    }
+
+    /// The packaged video wins over the (still readable) absolute path, and is
+    /// handed to the engine as the theme's OWN file.
+    #[test]
+    #[serial]
+    fn v5_apply_prefers_the_packaged_video_over_the_absolute_path() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let legacy = stub._tmp.path().join("legacy-loop.mp4");
+        std::fs::write(&legacy, b"legacy video").unwrap();
+        let (theme, packaged) = theme_with_packaged_video(&stub, Some(&legacy));
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {res:?}");
+
+        let log = stub_log(&stub);
+        let line = format!("skwd-helm apply {}", packaged.display());
+        let alt = format!("skwd-wall-v2 apply {}", packaged.display());
+        assert!(
+            log.lines().any(|l| l == line || l == alt),
+            "the packaged video must be handed to the engine, log was:\n{log}"
+        );
+        assert!(
+            !log.contains(&legacy.display().to_string()),
+            "the absolute legacy path must not win over the packaged video, log was:\n{log}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// An over-bound video was never copied: apply hands its recorded url to
+    /// the mpvpaper backend by filling in the manifest the plugin plays.
+    #[test]
+    #[serial]
+    fn v5_apply_hands_a_recorded_url_to_the_mpvpaper_backend() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        // Keep only the stub bin dir on PATH: no notify-send/pkill/curl runs.
+        std::env::set_var("PATH", stub._tmp.path().join("bin"));
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        crate::theme_media::write_video_url_record(
+            &dir,
+            "https://example.com/clip.mp4",
+            Some("clip.mp4"),
+            None,
+        )
+        .unwrap();
+        assert!(!dir.join("video.txt").exists(), "url-only theme has no absolute record");
+        assert!(
+            !dir.join(crate::providers::bg_info::MANIFEST_FILE).exists(),
+            "url-only theme carries no manifest yet"
+        );
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {res:?}");
+
+        let manifest = std::fs::read_to_string(dir.join(crate::providers::bg_info::MANIFEST_FILE))
+            .expect("the url must be handed to the mpvpaper backend as a manifest");
+        assert!(
+            manifest.contains("https://example.com/clip.mp4"),
+            "the manifest must carry the recorded url, was:\n{manifest}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    /// An old theme with ONLY the absolute `video.txt` path resolves exactly as
+    /// before the packaged-video support existed.
+    #[test]
+    #[serial]
+    fn v5_apply_old_theme_with_only_the_absolute_video_path_is_unchanged() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let video = stub._tmp.path().join("loop.mp4");
+        std::fs::write(&video, b"legacy video").unwrap();
+        std::fs::write(
+            dir.join("video.txt"),
+            format!(
+                "path={}\npainter=skwd-wall-vk\nnamespace=dp-3\npid=1\n",
+                video.display()
+            ),
+        )
+        .unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {res:?}");
+
+        let log = stub_log(&stub);
+        let line = format!("skwd-helm apply {}", video.display());
+        let alt = format!("skwd-wall-v2 apply {}", video.display());
+        assert!(
+            log.lines().any(|l| l == line || l == alt),
+            "the absolute path must still be handed over, log was:\n{log}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
     /// Phase 2 wiring: applying a video theme whose saved settings.toml
     /// re-arms Noctalia's rotation must turn the LIVE flag off, keeping
     /// every other restored byte intact.
@@ -5761,6 +6028,194 @@ exit 1
                 .any(|e| e.file_name().to_string_lossy().starts_with("poster."));
             assert!(!stray, "no background source means no media/poster.*");
         }
+    }
+
+    // ── Theme packages T3: save packages the video when it fits ───────
+    //
+    // WHY these exist: a theme may carry its video, but only when that is
+    // sensible. An under-bound video is copied into the theme as
+    // `media/background.mp4` and named by a theme-relative record; an
+    // over-bound video is never copied — the url its manifest already knows
+    // is recorded instead. No url means the theme travels with its poster.
+    // Packaging is best-effort: a failed copy can never fail a save.
+
+    /// Set the packaging bound for the duration of `f`, restoring the previous
+    /// value even on panic. The seam lets the size decision be exercised with
+    /// tiny files instead of a real 95 MB video.
+    fn with_video_bound<T>(bound: &str, f: impl FnOnce() -> T) -> T {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(v) => std::env::set_var("HVE_MAX_PACKAGED_VIDEO_BYTES", v),
+                    None => std::env::remove_var("HVE_MAX_PACKAGED_VIDEO_BYTES"),
+                }
+            }
+        }
+        let _restore = Restore(std::env::var("HVE_MAX_PACKAGED_VIDEO_BYTES").ok());
+        std::env::set_var("HVE_MAX_PACKAGED_VIDEO_BYTES", bound);
+        f()
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_packages_an_under_bound_video_into_the_theme() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping under-bound video save test");
+            return;
+        }
+        let media = TempDir::new().unwrap();
+        let video = media.path().join("slugcat.mp4");
+        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+
+        let packaged = theme.path().join("media").join(crate::theme_media::VIDEO_FILE_NAME);
+        assert!(
+            packaged.exists(),
+            "an under-bound video must be copied into the theme"
+        );
+        let record =
+            std::fs::read_to_string(stub.provider_dir(&theme).join(crate::theme_media::VIDEO_RECORD_FILE))
+                .expect("save must write the theme-relative video record");
+        assert_eq!(record.trim(), "video=media/background.mp4");
+        let painter = std::fs::read_to_string(
+            stub.provider_dir(&theme)
+                .join(wallpaper_authority::PAINTER_VIDEO_FILE),
+        )
+        .expect("the absolute painter video record must stay unchanged");
+        assert!(
+            painter.contains(&video_str),
+            "the existing absolute video record must stay readable, got: {painter}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_over_bound_video_records_the_url_instead_of_copying() {
+        if !ffmpeg_available() {
+            println!("ffmpeg not available — skipping over-bound video save test");
+            return;
+        }
+        let media = TempDir::new().unwrap();
+        let video = media.path().join("slugcat.mp4");
+        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        let dir = stub.provider_dir(&theme);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = format!(
+            r#"{{"version":1,"assignments":{{"*":{{"filename":"slugcat.mp4","local_path":"{video_str}","url":"https://example.com/slugcat.mp4"}}}}}}"#
+        );
+        std::fs::write(dir.join(crate::providers::bg_info::MANIFEST_FILE), manifest).unwrap();
+
+        let res = with_video_bound("1", || NoctaliaV5Provider::new().save(theme.path()));
+        assert!(res.is_ok(), "save must succeed: {res:?}");
+
+        assert!(
+            !theme
+                .path()
+                .join("media")
+                .join(crate::theme_media::VIDEO_FILE_NAME)
+                .exists(),
+            "an over-bound video must never be copied"
+        );
+        let record =
+            std::fs::read_to_string(dir.join(crate::theme_media::VIDEO_RECORD_FILE))
+                .expect("the url must be recorded when the video is over the bound");
+        assert!(
+            record.contains("url=https://example.com/slugcat.mp4"),
+            "the record must carry the manifest's url, was: {record}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_over_bound_video_without_a_url_records_nothing() {
+        // No ffmpeg needed: the video packaging is independent of the poster.
+        let media = TempDir::new().unwrap();
+        let video = media.path().join("slugcat.mp4");
+        std::fs::write(&video, b"tiny fake video").unwrap();
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        let dir = stub.provider_dir(&theme);
+
+        let res = with_video_bound("1", || NoctaliaV5Provider::new().save(theme.path()));
+        assert!(res.is_ok(), "save must succeed: {res:?}");
+
+        assert!(
+            !theme
+                .path()
+                .join("media")
+                .join(crate::theme_media::VIDEO_FILE_NAME)
+                .exists(),
+            "an over-bound video with no url must not be copied"
+        );
+        assert!(
+            !dir.join(crate::theme_media::VIDEO_RECORD_FILE).exists(),
+            "an over-bound video with no url records nothing"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_save_survives_a_video_that_cannot_be_published() {
+        // No ffmpeg needed: the publish failure is exercised by occupying the
+        // packaged video name with a directory, so the rename cannot land.
+        let media = TempDir::new().unwrap();
+        let video = media.path().join("slugcat.mp4");
+        std::fs::write(&video, b"tiny fake video").unwrap();
+        let video_str = video.to_string_lossy().to_string();
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
+            None,
+            "ok",
+            &save_daemon_doc("video", &video_str, &video_str),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        let dir = stub.provider_dir(&theme);
+        std::fs::create_dir_all(
+            theme
+                .path()
+                .join("media")
+                .join(crate::theme_media::VIDEO_FILE_NAME),
+        )
+        .unwrap();
+
+        let res = NoctaliaV5Provider::new().save(theme.path());
+        assert!(
+            res.is_ok(),
+            "a video that cannot be published must never fail the save: {res:?}"
+        );
+        assert!(
+            !dir.join(crate::theme_media::VIDEO_RECORD_FILE).exists(),
+            "no published video means no video record"
+        );
     }
 
     // ── Unit 1c2: pure re-assert decision ──

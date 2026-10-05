@@ -150,6 +150,117 @@ pub fn preview_candidates(provider_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+// ── Remote url knowledge (theme-packages T3) ────────────────────────────
+
+/// A remote video reference HVE learned from a theme's mpvpaper manifest: the
+/// url, plus the optional metadata the backend needs to rebuild its own
+/// assignment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoUrl {
+    pub url: String,
+    pub filename: Option<String>,
+    pub sha256: Option<String>,
+}
+
+/// Look up the `url` a theme's mpvpaper manifest already knows for `source`,
+/// matched by absolute `local_path` first and by base file name second. `None`
+/// when the manifest is absent/unreadable, has no matching assignment, or that
+/// assignment carries no url — the caller then records nothing and the theme
+/// travels with its poster alone.
+pub fn video_url_for(provider_dir: &Path, source: &Path) -> Option<VideoUrl> {
+    let text = fs::read_to_string(provider_dir.join(MANIFEST_FILE)).ok()?;
+    let manifest: MpvpaperManifest = serde_json::from_str(&text).ok()?;
+    let source_str = source.to_string_lossy();
+    let source_name = source.file_name().and_then(|n| n.to_str());
+    for video in manifest.assignments.values() {
+        let matches = video.local_path.as_deref() == Some(source_str.as_ref())
+            || (source_name.is_some() && Some(video.filename.as_str()) == source_name);
+        if !matches {
+            continue;
+        }
+        if let Some(url) = video.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            return Some(VideoUrl {
+                url: url.to_string(),
+                filename: Some(video.filename.trim().to_string()).filter(|f| !f.is_empty()),
+                sha256: video
+                    .sha256
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+            });
+        }
+    }
+    None
+}
+
+/// Whether `name` is a manifest-safe video file name, mirroring the backend's
+/// own allowlist: no separators, no leading dot, no `..`, only letters, digits,
+/// `-`, `_`, `.` and spaces. An unsafe name is dropped and the fallback used,
+/// so a tampered record can never point the download outside `video_directory`.
+fn is_safe_video_filename(name: &str) -> bool {
+    if name.is_empty() || name.starts_with('.') || name.contains("..") {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+}
+
+/// What [`ensure_url_manifest`] actually did: wrote a fresh manifest from the
+/// url record, or left an existing manifest untouched. The caller logs the
+/// truth instead of claiming a write that never happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrlManifestOutcome {
+    /// No manifest existed, so one was written from the url record.
+    Written,
+    /// A manifest already existed and was deliberately left untouched.
+    KeptExisting,
+}
+
+/// Make sure the theme's manifest carries `url` for the mpvpaper backend, so an
+/// over-bound video (recorded by url, never copied) is still played by the SAME
+/// plugin path that plays any saved manifest. A manifest already on disk is
+/// left untouched (the theme's own record wins); only its absence is filled in
+/// from the url record. Best-effort: the caller downgrades a failure to a
+/// warning. The returned [`UrlManifestOutcome`] says whether the manifest was
+/// actually written.
+pub fn ensure_url_manifest(
+    provider_dir: &Path,
+    filename: Option<&str>,
+    url: &str,
+    sha256: Option<&str>,
+) -> Result<UrlManifestOutcome, String> {
+    let manifest_path = provider_dir.join(MANIFEST_FILE);
+    if manifest_path.exists() {
+        return Ok(UrlManifestOutcome::KeptExisting);
+    }
+    let filename = filename
+        .map(str::trim)
+        .filter(|f| is_safe_video_filename(f))
+        .unwrap_or("background.mp4")
+        .to_string();
+    let mut assignments = HashMap::new();
+    assignments.insert(
+        "*".to_string(),
+        MpvpaperVideo {
+            filename,
+            local_path: None,
+            url: Some(url.trim().to_string()),
+            sha256: sha256
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        },
+    );
+    let manifest = MpvpaperManifest { version: 1, assignments };
+    fs::create_dir_all(provider_dir).map_err(|e| format!("Cannot create provider dir: {}", e))?;
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("Manifest serialization error: {}", e))?;
+    fs::write(&manifest_path, json).map_err(|e| format!("Cannot write mpvpaper manifest: {}", e))?;
+    tracing::info!("[mpvpaper] Recorded a url assignment for an over-bound theme video");
+    Ok(UrlManifestOutcome::Written)
+}
+
 // ── Notification ────────────────────────────────────────────────────────
 
 /// Notify the user that the mpvpaper plugin is required but not available,
@@ -268,6 +379,156 @@ mod tests {
             crate::providers::mpvpaper::MANIFEST_FILE,
             "mpvpaper-assignments.json",
             "the manifest file name is part of the saved-theme format"
+        );
+    }
+
+    // ── Theme packages T3: remote url knowledge ───────────────────────
+
+    /// Write a manifest with one assignment carrying the given fields.
+    fn write_manifest(
+        dir: &Path,
+        connector: &str,
+        filename: &str,
+        local_path: Option<&str>,
+        url: Option<&str>,
+        sha256: Option<&str>,
+    ) {
+        let mut assignments = std::collections::HashMap::new();
+        assignments.insert(
+            connector.to_string(),
+            crate::providers::mpvpaper::MpvpaperVideo {
+                filename: filename.to_string(),
+                local_path: local_path.map(str::to_string),
+                url: url.map(str::to_string),
+                sha256: sha256.map(str::to_string),
+            },
+        );
+        let manifest = crate::providers::mpvpaper::MpvpaperManifest { version: 1, assignments };
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        fs::write(dir.join(crate::providers::bg_info::MANIFEST_FILE), json).unwrap();
+    }
+
+    #[test]
+    fn video_url_for_matches_by_local_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = Path::new("/videos/slugcat.mp4");
+        write_manifest(
+            dir.path(),
+            "*",
+            "slugcat.mp4",
+            Some("/videos/slugcat.mp4"),
+            Some("https://example.com/slugcat.mp4"),
+            Some("abc"),
+        );
+
+        let found = crate::providers::bg_info::video_url_for(dir.path(), source)
+            .expect("the matching assignment's url must be found");
+        assert_eq!(found.url, "https://example.com/slugcat.mp4");
+        assert_eq!(found.filename.as_deref(), Some("slugcat.mp4"));
+        assert_eq!(found.sha256.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn video_url_for_matches_by_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = Path::new("/elsewhere/slugcat.mp4");
+        write_manifest(
+            dir.path(),
+            "*",
+            "slugcat.mp4",
+            None,
+            Some("https://example.com/slugcat.mp4"),
+            None,
+        );
+
+        let found = crate::providers::bg_info::video_url_for(dir.path(), source)
+            .expect("the file name must match when the local path does not");
+        assert_eq!(found.url, "https://example.com/slugcat.mp4");
+        assert_eq!(found.sha256, None);
+    }
+
+    #[test]
+    fn video_url_for_is_none_without_a_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = Path::new("/videos/slugcat.mp4");
+        write_manifest(
+            dir.path(),
+            "*",
+            "slugcat.mp4",
+            Some("/videos/slugcat.mp4"),
+            None,
+            None,
+        );
+        assert_eq!(
+            crate::providers::bg_info::video_url_for(dir.path(), source),
+            None,
+            "a manifest without a url must record nothing"
+        );
+        // No manifest at all is equally honest.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            crate::providers::bg_info::video_url_for(empty.path(), source),
+            None
+        );
+    }
+
+    #[test]
+    fn ensure_url_manifest_writes_the_url_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = crate::providers::bg_info::ensure_url_manifest(
+            dir.path(),
+            Some("slugcat.mp4"),
+            "https://example.com/slugcat.mp4",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            crate::providers::bg_info::UrlManifestOutcome::Written,
+            "an absent manifest must be reported as written"
+        );
+
+        let text =
+            fs::read_to_string(dir.path().join(crate::providers::bg_info::MANIFEST_FILE)).unwrap();
+        let parsed: crate::providers::mpvpaper::MpvpaperManifest =
+            serde_json::from_str(&text).unwrap();
+        let video = &parsed.assignments["*"];
+        assert_eq!(video.url.as_deref(), Some("https://example.com/slugcat.mp4"));
+        assert_eq!(video.filename, "slugcat.mp4");
+    }
+
+    #[test]
+    fn ensure_url_manifest_leaves_an_existing_manifest_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        write_manifest(
+            dir.path(),
+            "DP-3",
+            "kept.mp4",
+            Some("/videos/kept.mp4"),
+            Some("https://example.com/kept.mp4"),
+            None,
+        );
+        let before =
+            fs::read_to_string(dir.path().join(crate::providers::bg_info::MANIFEST_FILE)).unwrap();
+
+        let outcome = crate::providers::bg_info::ensure_url_manifest(
+            dir.path(),
+            Some("other.mp4"),
+            "https://example.com/other.mp4",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            crate::providers::bg_info::UrlManifestOutcome::KeptExisting,
+            "an existing manifest must be reported as kept, not written"
+        );
+
+        let after =
+            fs::read_to_string(dir.path().join(crate::providers::bg_info::MANIFEST_FILE)).unwrap();
+        assert_eq!(
+            before, after,
+            "an existing manifest must win; the url record never clobbers it"
         );
     }
 }
