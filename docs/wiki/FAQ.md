@@ -19,7 +19,7 @@ Each change re-runs `assemble.sh`, which rewrites the overlay and queues a reloa
 Yes, with `hve --tray` (tray only) and the `hve-ipc` commands from a terminal or a keyboard shortcut.
 
 **Does HVE use a lot of resources?**
-No. The binary is compiled Rust and lightweight. `color_watcher.sh` sits on `inotifywait`, which uses no CPU while nothing changes; with the watcher off, HVE only uses resources while you interact with the interface.
+No. The binary is compiled Rust and lightweight. `color_watcher.sh` sits on `inotifywait`, which uses no CPU while nothing changes; HVE only uses resources while you interact with the interface.
 
 **What if I switch colour tools (pywal → matugen)?**
 The colour sources are modules in `assets/scripts/color_sources.d/`, and every overlay assembly picks the best available one in the order Noctalia → pywal → matugen → manual. The files the watcher watches are chosen when it starts, so restart HVE after switching tools. See [Themes and colours](Themes-and-Colours).

@@ -1,9 +1,8 @@
 # Installation
 
-HVE is installed from a clone of the repository:
+HVE is installed from a clone of the repository. From its root:
 
 ```bash
-git clone https://github.com/tu-usuario/hve.git
 cd hve
 ./install.sh
 ```

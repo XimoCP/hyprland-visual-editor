@@ -11,11 +11,11 @@ your Hyprland files  ←  immutable, HVE never modifies them
       ┃
       ┃ (source / dofile)
       ┃
-  ~/.cache/hve/overlay.{lua,conf}  ←  the single file HVE generates
+  ~/.cache/hve/overlay.lua  ←  the single file HVE generates
       ┃
       ┃ (assembles)
       ┃
-  assets/fragments/*.{lua,conf}    ←  individual fragments (animation, border, shader, geometry)
+  assets/fragments/*.lua    ←  individual fragments (animation, border, shader, geometry)
   + auto-detected colours
 ```
 
@@ -29,7 +29,7 @@ your Hyprland files  ←  immutable, HVE never modifies them
 
 - [Installation](Installation) — installing HVE, its system dependencies, and where the installer places each file.
 - [Uninstallation](Uninstallation) — removing HVE, what is deleted, what is kept, and why nothing is left behind.
-- [Architecture](Architecture) — how fragments are assembled into the overlay, Lua vs Conf detection, and the configuration, colour, preset, background, IPC, tray and watchdog systems.
+- [Architecture](Architecture) — how fragments are assembled into the overlay, the Lua-only configuration, and the configuration, colour, preset, background, IPC, tray and watchdog systems.
 - [Themes and colours](Themes-and-Colours) — how HVE reads colours from Noctalia, pywal, matugen or a manual source, and how complete themes are saved and applied.
 - [Presets](Presets) — animation, border and shader presets: their metadata, how they are scanned, and the toggle behaviour.
 - [Backgrounds](Backgrounds) — static and animated (video) wallpapers, and which piece owns the one on screen.
