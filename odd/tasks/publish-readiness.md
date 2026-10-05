@@ -18,10 +18,15 @@ hiding behind green tests.
 - [x] **P1 — the MIT licence text exists** (2026-10-05). `LICENSE` added, MIT,
       `Copyright (c) 2026 XimoCP` (the name `Cargo.toml` already declares). If the
       keeper wants a legal name instead of the handle, it is a one-line edit.
-- [ ] **P2 — `hve.desktop` stops naming one machine's home.** Today
-      `Exec=/home/ximo/.local/bin/hve` (line 5). Needs a decision: `Exec=hve` (relies on
-      `PATH`, and the installer already offers a `/usr/local/bin` symlink) or a `sh -c`
-      wrapper. Also check `install.sh` writes the same content it ships.
+- [x] **P2 — `hve.desktop` stops naming one machine's home** (2026-10-05).
+      `Exec=sh -c "exec \$HOME/.local/bin/hve"`, validated with
+      `desktop-file-validate` (exit 0; the only message left is a pre-existing
+      `Categories` hint). Chosen over plain `Exec=hve` on evidence: the installer
+      puts the binary at `$HOME/.local/bin/hve` and only offers a `/usr/local/bin`
+      symlink for `hve-ipc`, never for `hve` — and `install.sh` itself warns that
+      `~/.local/bin` may not be in `PATH`, so a bare `hve` would break for exactly
+      the users the installer already knows about. `install.sh` copies the shipped
+      file verbatim, so the fix reaches every install.
 - [ ] **P3 — a git remote exists.** Nothing can be published while
       `git remote -v` is empty. Needs the keeper's destination (host + repository);
       the orchestrator cannot invent it.
@@ -57,8 +62,9 @@ hiding behind green tests.
 ## Progress and evidence
 
 - 2026-10-05: tracker created; P1 done (LICENSE).
-- Pending: P2 onward.
+- 2026-10-05: P2 done (the launcher no longer names one machine).
+- Pending: P3 (needs the remote URL), P4, P5.
 
 ## Next step
 
-P2 — the `hve.desktop` decision.
+P4 — decide which of README.md / WIKI.md is the source of truth and sync the other.
