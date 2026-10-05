@@ -38,9 +38,10 @@ const POSTER_STEM: &str = "poster";
 ///   so the record always points at the file that actually holds the bytes.
 ///
 /// `None` (with a warning) when the source is missing or nothing usable could
-/// be produced — the caller still succeeds. A previously packaged poster is
-/// left untouched on failure; a successful write is done through a temporary
-/// file so a partial artifact is never published.
+/// be produced — the caller still succeeds. The save path then removes any
+/// stale poster via [`remove_theme_poster`], so the theme never keeps a poster
+/// it no longer declares; a successful write is done through a temporary file
+/// so a partial artifact is never published.
 pub fn write_theme_poster(theme_dir: &Path, source: &Path) -> Option<PathBuf> {
     if !source.is_file() {
         tracing::warn!(
@@ -95,7 +96,7 @@ pub fn write_theme_poster(theme_dir: &Path, source: &Path) -> Option<PathBuf> {
         return None;
     }
 
-    remove_stale_posters(&media_dir, &name);
+    remove_stale_posters(&media_dir, Some(&name));
     tracing::info!("[theme-media] packaged theme poster: {}", out.display());
     Some(Path::new(MEDIA_DIR).join(&name))
 }
@@ -115,16 +116,19 @@ fn poster_file_name(source: &Path) -> String {
     }
 }
 
-/// Drop every packaged poster whose name differs from `keep`, so a re-save
-/// never leaves two backgrounds behind. Best-effort: removal failures only
-/// mean a stale file survives, never a broken save.
-fn remove_stale_posters(media_dir: &Path, keep: &str) {
+/// Drop every packaged poster whose name differs from `keep` (or every
+/// packaged poster at all when `keep` is `None`), so a re-save never leaves
+/// two backgrounds behind and a failed re-package never leaves a stale one.
+/// Best-effort: removal failures only mean a stale file survives, never a
+/// broken save.
+fn remove_stale_posters(media_dir: &Path, keep: Option<&str>) {
     let Ok(entries) = std::fs::read_dir(media_dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.file_name().and_then(|n| n.to_str()) == Some(keep) {
+        let name = path.file_name().and_then(|n| n.to_str());
+        if name.is_some() && name == keep {
             continue;
         }
         let is_poster = path.file_stem().and_then(|s| s.to_str()) == Some(POSTER_STEM)
@@ -133,6 +137,18 @@ fn remove_stale_posters(media_dir: &Path, keep: &str) {
             let _ = std::fs::remove_file(&path);
         }
     }
+}
+
+/// Drop the theme's packaged poster entirely: the [`POSTER_RECORD_FILE`]
+/// record and every `media/poster.*` file. Called when a save could not
+/// (re)package a background — a missing source, a missing ffmpeg, a failed
+/// extraction, or no background source at all — so the theme invariant holds:
+/// `poster.txt` and `media/poster.*` describe the theme's CURRENT background,
+/// or they do not exist. Apply then falls back to the normal chain instead of
+/// painting a stale image. Best-effort, like every media removal here.
+pub fn remove_theme_poster(theme_dir: &Path, provider_dir: &Path) {
+    let _ = std::fs::remove_file(provider_dir.join(POSTER_RECORD_FILE));
+    remove_stale_posters(&theme_dir.join(MEDIA_DIR), None);
 }
 
 /// Write the theme-relative poster record into `provider_dir`. Callers
@@ -151,11 +167,13 @@ pub fn write_poster_record(provider_dir: &Path, relative: &Path) -> Result<(), S
 /// Parse a poster record back to the theme-relative path. `None` when no
 /// usable `poster=` line exists; an ABSOLUTE path is rejected because a
 /// theme record must stay inside the theme (resolving it against the theme
-/// dir is the only correct reading).
+/// dir is the only correct reading). A `..` component is rejected too: it
+/// would escape the theme folder once resolved, so a tampered record can
+/// never reach an arbitrary file. An invalid record is treated exactly like
+/// a missing one — the caller falls back to the normal chain.
 ///
 /// The read seam for T2's theme-first apply resolution; exercised by tests
 /// until that task lands.
-#[allow(dead_code)]
 pub fn parse_poster_record(text: &str) -> Option<PathBuf> {
     text.lines().find_map(|line| {
         let rest = line.strip_prefix(POSTER_KEY)?.trim();
@@ -163,12 +181,40 @@ pub fn parse_poster_record(text: &str) -> Option<PathBuf> {
             return None;
         }
         let path = PathBuf::from(rest);
-        if path.is_absolute() {
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             None
         } else {
             Some(path)
         }
     })
+}
+
+/// Resolve the theme's packaged poster for APPLY, as an ABSOLUTE path.
+///
+/// Reads the theme-relative [`POSTER_RECORD_FILE`] from `provider_dir`, and
+/// when it names a valid (non-absolute, non-traversing) file that actually
+/// exists inside `theme_dir`, returns `theme_dir.join(record)` resolved at
+/// apply time. This is what lets a theme copied to another machine paint its
+/// own background even though the absolute record it also carries points at
+/// a path that does not exist there.
+///
+/// `None` — treated exactly like "no packaged poster" — when the record is
+/// missing, invalid, absolute, traversing, or names a file that is not on
+/// disk. A `media/` file with no record is deliberately ignored: a leftover
+/// artifact must never resurrect a background the theme no longer declares.
+pub fn resolve_theme_poster(theme_dir: &Path, provider_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(provider_dir.join(POSTER_RECORD_FILE)).ok()?;
+    let relative = parse_poster_record(&text)?;
+    let absolute = theme_dir.join(&relative);
+    if absolute.is_file() {
+        Some(absolute)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -339,6 +385,94 @@ mod tests {
         assert_eq!(parse_poster_record("poster=/etc/passwd\n"), None);
         assert_eq!(parse_poster_record(""), None);
         assert_eq!(parse_poster_record("poster=\n"), None);
+    }
+
+    #[test]
+    fn parse_poster_record_rejects_traversal_outside_the_theme() {
+        // T2 security guard: a theme record must stay inside the theme
+        // folder. `..` components escape it, so a value that carries one —
+        // even nested — is refused instead of being resolved against the
+        // theme dir.
+        assert_eq!(parse_poster_record("poster=../../etc/passwd\n"), None);
+        assert_eq!(parse_poster_record("poster=media/../../etc/passwd\n"), None);
+        assert_eq!(parse_poster_record("poster=../sibling.jpg\n"), None);
+        // A normal nested relative path stays valid.
+        assert_eq!(
+            parse_poster_record("poster=media/poster.jpg\n"),
+            Some(PathBuf::from("media/poster.jpg"))
+        );
+    }
+
+    /// The "other machine" case, unit level: the record names a file inside
+    /// the theme and the resolution is absolute and real, so the caller can
+    /// hand it to a shell/engine that has no idea where the theme came from.
+    #[test]
+    fn resolve_theme_poster_resolves_the_record_inside_the_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join(MEDIA_DIR);
+        std::fs::create_dir_all(&media).unwrap();
+        let bytes = b"\xff\xd8\xffpackaged-poster-bytes".to_vec();
+        std::fs::write(media.join("poster.jpg"), &bytes).unwrap();
+        write_poster_record(&provider, Path::new("media/poster.jpg")).unwrap();
+
+        let resolved =
+            resolve_theme_poster(&theme, &provider).expect("a packaged poster must resolve");
+
+        assert!(resolved.is_absolute(), "apply needs an absolute path");
+        assert_eq!(resolved, media.join("poster.jpg"));
+        assert_eq!(std::fs::read(&resolved).unwrap(), bytes);
+    }
+
+    #[test]
+    fn resolve_theme_poster_ignores_a_stray_poster_without_a_record() {
+        // T2 requirement 5: a leftover `media/poster.*` from an older save
+        // must never resurrect a background the theme no longer declares.
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join(MEDIA_DIR);
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::create_dir_all(&provider).unwrap();
+        std::fs::write(media.join("poster.jpg"), b"stray leftover").unwrap();
+
+        assert_eq!(
+            resolve_theme_poster(&theme, &provider),
+            None,
+            "media without a record must be ignored"
+        );
+    }
+
+    #[test]
+    fn resolve_theme_poster_none_when_the_declared_file_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        write_poster_record(&provider, Path::new("media/gone.jpg")).unwrap();
+
+        assert_eq!(
+            resolve_theme_poster(&theme, &provider),
+            None,
+            "a declared poster with no file must fall back to the normal chain"
+        );
+    }
+
+    #[test]
+    fn resolve_theme_poster_rejects_a_traversal_record_even_when_the_target_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let secret = dir.path().join("secret.jpg");
+        std::fs::write(&secret, b"outside the theme").unwrap();
+        // theme/providers/noctalia-v5/ + ../../../ -> dir
+        write_poster_record(&provider, Path::new("../../../secret.jpg")).unwrap();
+
+        assert_eq!(
+            resolve_theme_poster(&theme, &provider),
+            None,
+            "a traversing record must never reach a file outside the theme"
+        );
     }
 
     #[test]

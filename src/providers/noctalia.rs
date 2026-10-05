@@ -1774,24 +1774,41 @@ impl ThemeProvider for NoctaliaV5Provider {
         //     byte-for-byte. Best-effort by contract — a missing source, a
         //     missing ffmpeg or a failed extraction only warns; the save
         //     still succeeds and existing absolute records are unchanged.
-        if let Some(source) = poster_source.as_deref() {
-            match crate::theme_media::write_theme_poster(theme_dir, source) {
+        //
+        //     INVARIANT (correction): `poster.txt` and `media/poster.*`
+        //     describe the theme's CURRENT background, or they do not exist.
+        //     T2 made apply resolve the theme poster FIRST, so whenever the
+        //     background is NOT successfully (re)packaged — a failed
+        //     extraction, no ffmpeg, a failed record write, or no background
+        //     source at all — the stale poster is removed and apply falls back
+        //     to the normal chain instead of painting the old image.
+        let packaged = match poster_source.as_deref() {
+            Some(source) => match crate::theme_media::write_theme_poster(theme_dir, source) {
                 Some(relative) => {
-                    if let Err(e) =
-                        crate::theme_media::write_poster_record(&provider_dir, &relative)
-                    {
-                        tracing::warn!(
-                            "[noctalia-v5] Cannot record the packaged poster ({}); \
-                             the theme keeps its absolute background record",
-                            e
-                        );
+                    match crate::theme_media::write_poster_record(&provider_dir, &relative) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::warn!(
+                                "[noctalia-v5] Cannot record the packaged poster ({}); \
+                                 dropping the stale theme poster",
+                                e
+                            );
+                            false
+                        }
                     }
                 }
-                None => tracing::warn!(
-                    "[noctalia-v5] Background not packaged ({}) — save continues",
-                    source.display()
-                ),
-            }
+                None => {
+                    tracing::warn!(
+                        "[noctalia-v5] Background not packaged ({}) — save continues",
+                        source.display()
+                    );
+                    false
+                }
+            },
+            None => false,
+        };
+        if !packaged {
+            crate::theme_media::remove_theme_poster(theme_dir, &provider_dir);
         }
 
         // 7. Save animated wallpaper manifest (mpvpaper plugin), reference only.
@@ -1969,7 +1986,12 @@ impl ThemeProvider for NoctaliaV5Provider {
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
             .map(PathBuf::from);
-        let static_planned = static_wallpaper.is_some();
+        // T2 theme-first: the theme's own packaged poster, resolved against
+        // the theme dir NOW. `None` for every old theme (no record, no
+        // media), so their yield decision and background chain stay
+        // byte-for-byte as before.
+        let theme_poster = crate::theme_media::resolve_theme_poster(theme_dir, &provider_dir);
+        let static_planned = static_wallpaper.is_some() || theme_poster.is_some();
         let owner_snapshot: Option<bool>;
         let mut authority_guard: Option<background::ColourAuthorityHold> = None;
         if painter_record.exists() || static_planned {
@@ -2129,20 +2151,44 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    through every hand-off in this phase. The guard — armed with
         //    the previous value — restores on every exit path unless the
         //    re-assert worker takes ownership.
-        if !animated_applied && wp_path.exists() {
-            let wp = fs::read_to_string(&wp_path)
-                .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
-            let wp = wp.trim();
-            if !wp.is_empty() {
-                noctalia_msg(&["msg", "wallpaper-set", "", wp])
+        //
+        //    T2 theme-first: when the theme carries its own packaged poster
+        //    (`poster.txt` naming a file inside the theme), that file is
+        //    resolved against the theme dir AT APPLY TIME and wins over the
+        //    absolute record — so a theme copied to another machine still
+        //    paints its own background even though the absolute wallpaper.txt
+        //    path does not exist there. A missing, invalid or traversing
+        //    record (or a declared file that is not on disk) falls back to
+        //    the chain below, byte-for-byte as today.
+        if !animated_applied {
+            if let Some(poster) = theme_poster {
+                let poster_arg = poster.to_string_lossy().to_string();
+                noctalia_msg(&["msg", "wallpaper-set", "", &poster_arg])
                     .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
-                tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
-                // Best-effort delegation to skwd-walld (agnostic, silent if absent)
-                // — reached through the `apply-background` router. The
-                // authoritative read above is what Noctalia just set: state it
-                // on the request so the router hands the engine the SAME path.
-                bg_request.static_wallpaper = Some(PathBuf::from(wp));
+                tracing::info!(
+                    "[noctalia-v5] Restored theme-packaged poster: {}",
+                    poster.display()
+                );
+                // Best-effort delegation to skwd-walld through the
+                // `apply-background` router, same as the static record below:
+                // the engine gets the SAME resolved absolute path.
+                bg_request.static_wallpaper = Some(poster);
                 background::hand_off_static(&bg_request);
+            } else if wp_path.exists() {
+                let wp = fs::read_to_string(&wp_path)
+                    .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
+                let wp = wp.trim();
+                if !wp.is_empty() {
+                    noctalia_msg(&["msg", "wallpaper-set", "", wp])
+                        .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
+                    tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
+                    // Best-effort delegation to skwd-walld (agnostic, silent if absent)
+                    // — reached through the `apply-background` router. The
+                    // authoritative read above is what Noctalia just set: state it
+                    // on the request so the router hands the engine the SAME path.
+                    bg_request.static_wallpaper = Some(PathBuf::from(wp));
+                    background::hand_off_static(&bg_request);
+                }
             }
         }
 
@@ -4399,6 +4445,233 @@ exit 0
         std::thread::sleep(Duration::from_millis(500));
     }
 
+    // ── Theme packages T2: apply resolves the media from the theme ────
+    //
+    // WHY these exist: a theme is a package that travels. The absolute
+    // records it carries can point at paths that do not exist on the
+    // machine it was copied to; the packaged `media/poster.*` named by
+    // `poster.txt` is resolved against the theme dir AT APPLY TIME, so the
+    // background still resolves. Old themes (no record, no media) must keep
+    // resolving exactly as before.
+
+    /// A theme carrying a packaged poster (`media/poster.jpg` + the
+    /// theme-relative `poster.txt`), with an optional absolute `wallpaper.txt`
+    /// that may point at a path that does not exist here.
+    fn theme_with_packaged_poster(stub: &ColorStub, wallpaper: Option<&str>) -> (TempDir, PathBuf) {
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let media = theme.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let poster = media.join("poster.jpg");
+        std::fs::write(&poster, b"\xff\xd8\xffpackaged-poster").unwrap();
+        crate::theme_media::write_poster_record(&dir, Path::new("media/poster.jpg")).unwrap();
+        if let Some(wp) = wallpaper {
+            std::fs::write(dir.join("wallpaper.txt"), wp).unwrap();
+        }
+        (theme, poster)
+    }
+
+    fn stub_log(stub: &ColorStub) -> String {
+        std::fs::read_to_string(stub.state_dir.join("log")).unwrap_or_default()
+    }
+
+    /// The "other machine" proof: the absolute record points at a path that
+    /// does NOT exist, but the packaged poster inside the theme does. Apply
+    /// must hand the theme's OWN file to the shell (and the engine) instead
+    /// of the dead absolute path.
+    #[test]
+    #[serial]
+    fn v5_apply_prefers_the_packaged_poster_over_a_missing_absolute_path() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let dead = "/nonexistent/other-machine/wall.jpg";
+        let (theme, poster) = theme_with_packaged_poster(&stub, Some(dead));
+        assert!(!Path::new(dead).exists(), "fixture must be a dead path");
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        let shell_line = format!("msg wallpaper-set  {}", poster.display());
+        assert!(
+            log.lines().any(|l| l == shell_line),
+            "the theme's packaged poster must be handed to the shell, log was:\n{log}"
+        );
+        assert!(
+            !log.contains(dead),
+            "the dead absolute record must not be handed over, log was:\n{log}"
+        );
+        let engine_line = format!("skwd-wall-v2 apply {}", poster.display());
+        let engine_line_alt = format!("skwd-helm apply {}", poster.display());
+        assert!(
+            log.lines().any(|l| l == engine_line || l == engine_line_alt),
+            "the theme's packaged poster must be handed to the engine too, log was:\n{log}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// A video theme drops `wallpaper.txt`, so with no video backend the
+    /// apply used to end with NO static background. The packaged poster must
+    /// become that static fallback.
+    #[test]
+    #[serial]
+    fn v5_apply_video_without_backend_paints_the_poster_statically() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        // No delegation socket: no engine can paint the theme's video.
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let media = theme.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let poster = media.join("poster.jpg");
+        std::fs::write(&poster, b"\xff\xd8\xffpackaged-poster").unwrap();
+        crate::theme_media::write_poster_record(&dir, Path::new("media/poster.jpg")).unwrap();
+        std::fs::write(
+            dir.join("video.txt"),
+            "path=/nonexistent/other-machine/loop.mp4\npainter=mpvpaper\nnamespace=dp-3\npid=1\n",
+        )
+        .unwrap();
+        assert!(
+            !dir.join("wallpaper.txt").exists(),
+            "a video theme carries no static record"
+        );
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        let shell_line = format!("msg wallpaper-set  {}", poster.display());
+        assert!(
+            log.lines().any(|l| l == shell_line),
+            "with no video backend the packaged poster must become the static background, log was:\n{log}"
+        );
+        assert!(
+            !log.contains("loop.mp4"),
+            "the missing absolute video must not be handed over, log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// The counterpart: when a video backend CAN paint, the video wins and
+    /// the poster is not also painted statically (that would cover it).
+    #[test]
+    #[serial]
+    fn v5_apply_video_with_backend_keeps_the_video_and_skips_the_poster_static() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        enable_delegation(&stub, "0");
+        let (theme, poster) = theme_with_packaged_poster(&stub, None);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let video = stub._tmp.path().join("loop.mp4");
+        std::fs::write(&video, b"fake video bytes").unwrap();
+        std::fs::write(
+            dir.join("video.txt"),
+            format!(
+                "path={}\npainter=skwd-wall-vk\nnamespace=dp-3\npid=1\n",
+                video.display()
+            ),
+        )
+        .unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        assert!(
+            count_prefix(&stub, "skwd-wall-v2 apply") + count_prefix(&stub, "skwd-helm apply") >= 1,
+            "the video must be handed to a video backend, log was:\n{log}"
+        );
+        let shell_line = format!("msg wallpaper-set  {}", poster.display());
+        assert!(
+            !log.lines().any(|l| l == shell_line),
+            "a painted video must not also paint the poster statically, log was:\n{log}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// A declared poster whose file is gone falls back to the normal chain.
+    #[test]
+    #[serial]
+    fn v5_apply_declared_poster_with_missing_file_falls_back_to_wallpaper_txt() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        crate::theme_media::write_poster_record(&dir, Path::new("media/gone.jpg")).unwrap();
+        std::fs::write(dir.join("wallpaper.txt"), "/tmp/fallback-absolute.png").unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        assert!(
+            log.lines().any(|l| l == "msg wallpaper-set  /tmp/fallback-absolute.png"),
+            "a declared poster with no file must fall back to wallpaper.txt, log was:\n{log}"
+        );
+        assert!(
+            !log.contains("media/gone.jpg"),
+            "the missing poster must not be handed over, log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// A leftover `media/poster.*` with NO record must never resurrect a
+    /// background the theme no longer declares.
+    #[test]
+    #[serial]
+    fn v5_apply_never_resurrects_a_stray_poster_file() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let media = theme.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::write(media.join("poster.jpg"), b"stray leftover").unwrap();
+        std::fs::write(dir.join("wallpaper.txt"), "/tmp/real-wall.png").unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        assert!(
+            log.lines().any(|l| l == "msg wallpaper-set  /tmp/real-wall.png"),
+            "the normal chain must still be used, log was:\n{log}"
+        );
+        assert!(
+            !log.contains("media/poster.jpg"),
+            "a stray media file with no record must never be chosen, log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// A record that tries to escape the theme (`..`) must be rejected and
+    /// the apply must fall back — never fail, never resolve the escape.
+    #[test]
+    #[serial]
+    fn v5_apply_rejects_a_traversal_record_and_falls_back() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        crate::theme_media::write_poster_record(&dir, Path::new("../../../etc/passwd")).unwrap();
+        std::fs::write(dir.join("wallpaper.txt"), "/tmp/safe-wall.png").unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a bad poster record must never fail the apply: {:?}",
+            res
+        );
+
+        let log = stub_log(&stub);
+        assert!(
+            log.lines().any(|l| l == "msg wallpaper-set  /tmp/safe-wall.png"),
+            "a rejected record must fall back to wallpaper.txt, log was:\n{log}"
+        );
+        assert!(
+            !log.contains("passwd"),
+            "the traversal target must never be handed over, log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
     /// Phase 2 wiring: applying a video theme whose saved settings.toml
     /// re-arms Noctalia's rotation must turn the LIVE flag off, keeping
     /// every other restored byte intact.
@@ -4941,6 +5214,12 @@ exit 1
                 .ok()
                 .map(|s| s.trim().to_string())
         }
+
+        /// The stub `noctalia` argv log, so a save+apply flow can assert which
+        /// wallpaper was actually handed to the shell.
+        fn logged(&self) -> String {
+            std::fs::read_to_string(self._tmp.path().join("state").join("log")).unwrap_or_default()
+        }
     }
 
     impl Drop for SaveStub {
@@ -5360,6 +5639,128 @@ exit 1
             !theme.path().join("media").join("poster.jpg").exists(),
             "no extractable frame means no poster artifact"
         );
+    }
+
+    /// The correction invariant: `poster.txt` and `media/poster.*` describe
+    /// the theme's CURRENT background, or they do not exist. A re-save that
+    /// cannot (re)package a background must drop the previously packaged
+    /// poster, otherwise apply — which resolves the theme poster FIRST — would
+    /// paint the stale image instead of the freshly recorded background.
+    #[test]
+    #[serial]
+    fn v5_resave_without_a_poster_source_drops_the_stale_poster() {
+        let fixtures = TempDir::new().unwrap();
+        let src = fixtures.path().join("joker.png");
+        let bytes = b"first-save-static-bytes".to_vec();
+        std::fs::write(&src, &bytes).unwrap();
+        let src_str = src.to_string_lossy().to_string();
+
+        let theme = TempDir::new().unwrap();
+        let provider_dir = theme.path().join("providers").join("noctalia-v5");
+        let media_dir = theme.path().join("media");
+
+        // First save: a static background is packaged into the theme.
+        {
+            let _stub = SaveStub::new(
+                &save_layers_doc("skwd-paper", "skwd-paper"),
+                None,
+                "ok",
+                &save_daemon_doc("static", &src_str, &src_str),
+                &src_str,
+            );
+            NoctaliaV5Provider::new()
+                .save(theme.path())
+                .expect("first save must succeed");
+            assert!(
+                provider_dir.join("poster.txt").exists(),
+                "the first save must package a poster"
+            );
+            assert!(
+                media_dir.join("poster.png").exists(),
+                "the first save must write the packaged poster file"
+            );
+        }
+
+        // Re-save the SAME theme with no background source at all: the old
+        // packaged poster must not survive (apply would paint it theme-first
+        // even though it no longer describes the theme's background).
+        let stub = SaveStub::new(
+            &save_layers_doc("mystery-layer", "mystery-layer"),
+            None,
+            "ok",
+            &save_daemon_doc("static", "/nonexistent/gone.png", "/nonexistent/gone.png"),
+            "",
+        );
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("the re-save must still succeed");
+
+        assert!(
+            !provider_dir.join("poster.txt").exists(),
+            "a re-save with no poster source must remove the stale poster record"
+        );
+        let strays: Vec<String> = std::fs::read_dir(&media_dir)
+            .map(|it| {
+                it.flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|n| n.starts_with("poster."))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            strays.is_empty(),
+            "a re-save with no poster source must remove every media/poster.* file, found {strays:?}"
+        );
+
+        // Apply must now fall back to the absolute wallpaper.txt record the
+        // first save left in place (still a real path here).
+        assert_eq!(
+            stub.wallpaper_txt(&theme).as_deref(),
+            Some(src_str.as_str()),
+            "the absolute wallpaper record must survive the failed re-package"
+        );
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {res:?}");
+        let log = stub.logged();
+        let expected = format!("msg wallpaper-set  {src_str}");
+        assert!(
+            log.lines().any(|l| l == expected),
+            "apply must fall back to the absolute wallpaper.txt value, log was:\n{log}"
+        );
+        assert!(
+            !log.contains("media/poster"),
+            "apply must not paint a stale packaged poster, log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// The invariant's other half: a successful save with NO background
+    /// source at all leaves no poster behind.
+    #[test]
+    #[serial]
+    fn v5_save_without_a_poster_source_leaves_no_poster() {
+        let stub = SaveStub::new(
+            &save_layers_doc("mystery-layer", "mystery-layer"),
+            None,
+            "ok",
+            &save_daemon_doc("static", "/nonexistent/gone.png", "/nonexistent/gone.png"),
+            "",
+        );
+        let theme = TempDir::new().unwrap();
+        let res = NoctaliaV5Provider::new().save(theme.path());
+        assert!(res.is_ok(), "save must succeed: {res:?}");
+        assert!(
+            !stub.provider_dir(&theme).join("poster.txt").exists(),
+            "no background source means no poster record"
+        );
+        let media_dir = theme.path().join("media");
+        if media_dir.exists() {
+            let stray = std::fs::read_dir(&media_dir)
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("poster."));
+            assert!(!stray, "no background source means no media/poster.*");
+        }
     }
 
     // ── Unit 1c2: pure re-assert decision ──
