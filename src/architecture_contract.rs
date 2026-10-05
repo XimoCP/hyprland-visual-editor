@@ -273,7 +273,7 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/config_guard.rs", "hyprland", 2),
     ("src/hypr_ipc.rs", "hyprland", 9),
     ("src/providers/noctalia_paths.rs", "hyprctl", 1),
-    ("src/providers/noctalia_paths.rs", "noctalia", 35),
+    ("src/providers/noctalia_paths.rs", "noctalia", 33),
     ("src/providers/noctalia_paths.rs", "quickshell", 6),
     ("assets/scripts/colors.sh", "noctalia", 4),
     ("assets/scripts/colors.sh", "matugen", 2),

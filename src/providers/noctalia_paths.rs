@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 /// Includes source/rendered file lists, template processor paths, and
 /// wallpaper IPC operations.
 pub trait ShellProvider: Send + Sync {
-    // The four methods below are exercised only by the test suite (and by
-    // `ShellRegistry`, itself tests-only); production code (noctalia.rs) uses
-    // the remaining methods. The allows are required: rustc's dead_code lint
-    // does not count `#[cfg(test)]` usage during a plain `cargo check`.
+    // The four methods below are exercised only by the test suite;
+    // production code (noctalia.rs) uses the remaining methods. The allows
+    // are required: rustc's dead_code lint does not count `#[cfg(test)]`
+    // usage during a plain `cargo check`.
     #[allow(dead_code)]
     fn id(&self) -> &str;
     #[allow(dead_code)]
@@ -159,25 +159,14 @@ impl ShellProvider for NoctaliaV4Paths {
     }
 }
 
-/// Detects whether a shell is active on the system.
-pub trait ShellDetector: Send + Sync {
-    // `id` is used by tests and by `ShellRegistry` (tests-only); the lint does
-    // not count `#[cfg(test)]` usage during a plain `cargo check`.
-    #[allow(dead_code)]
-    fn id(&self) -> &str;
-    fn is_active(&self) -> bool;
-}
-
-impl ShellDetector for NoctaliaV4Paths {
-    fn id(&self) -> &str {
-        "noctalia"
-    }
-
-    fn is_active(&self) -> bool {
-        // `.output()`, never `.status()`: `status()` inherits this process's
-        // stdout, so `pgrep` prints the matching PID straight into whatever
-        // terminal launched HVE. The question here is only "did it match",
-        // and `.output()` answers it while capturing the PID.
+impl NoctaliaV4Paths {
+    /// True when the Noctalia v4 Quickshell process is running.
+    ///
+    /// `.output()`, never `.status()`: `status()` inherits this process's
+    /// stdout, so `pgrep` prints the matching PID straight into whatever
+    /// terminal launched HVE. The question here is only "did it match", and
+    /// `.output()` answers it while capturing the PID.
+    pub fn is_active(&self) -> bool {
         std::process::Command::new("pgrep")
             .arg("-x")
             .arg("quickshell")
@@ -272,15 +261,10 @@ impl ShellProvider for NoctaliaV5Paths {
     }
 }
 
-impl ShellDetector for NoctaliaV5Paths {
-    fn id(&self) -> &str {
-        "noctalia"
-    }
-
-    fn is_active(&self) -> bool {
-        // Both conditions are required:
-        // 1. The noctalia process is running
-        // 2. ~/.config/noctalia/profiles/ exists (v5 only)
+impl NoctaliaV5Paths {
+    /// True when Noctalia v5 is running: both the `noctalia` process and the
+    /// v5-only `~/.config/noctalia/profiles/` marker must exist.
+    pub fn is_active(&self) -> bool {
         // Same rule as the v4 detector above: `.output()` captures the PID
         // `pgrep` would otherwise print into HVE's own terminal.
         let process_running = std::process::Command::new("pgrep")
@@ -296,46 +280,6 @@ impl ShellDetector for NoctaliaV5Paths {
             .unwrap_or(false);
 
         process_running && profiles_dir_exists
-    }
-}
-
-/// Registry that detects which shell is active.
-///
-/// Detectors are registered in order; the first one to return
-/// `is_active() == true` is marked as active.
-///
-/// NOTE: only instantiated by tests. Production (main.rs) bypasses the
-/// registry and calls `is_active()` on the detectors directly.
-#[allow(dead_code)]
-pub struct ShellRegistry {
-    detectors: Vec<Box<dyn ShellDetector>>,
-    active_id: Option<String>,
-}
-
-#[allow(dead_code)]
-impl ShellRegistry {
-    pub fn new() -> Self {
-        Self {
-            detectors: Vec::new(),
-            active_id: None,
-        }
-    }
-
-    pub fn register<T: ShellDetector + 'static>(&mut self, detector: T) {
-        let id = detector.id().to_string();
-        if self.active_id.is_none() && detector.is_active() {
-            tracing::info!("[shell] {} detectado como activo", id);
-            self.active_id = Some(id.clone());
-        }
-        self.detectors.push(Box::new(detector));
-    }
-
-    pub fn active_id(&self) -> Option<&str> {
-        self.active_id.as_deref()
-    }
-
-    pub fn is_active(&self, id: &str) -> bool {
-        self.active_id.as_deref() == Some(id)
     }
 }
 
@@ -525,76 +469,6 @@ mod tests {
                 "unexpected error: {}",
                 e
             );
-        }
-    }
-
-    // ── ShellDetector tests ──
-
-    #[test]
-    fn test_v4_detector_id() {
-        let detector = NoctaliaV4Paths;
-        assert_eq!(<NoctaliaV4Paths as ShellDetector>::id(&detector), "noctalia");
-    }
-
-    #[test]
-    fn test_v5_detector_id() {
-        let detector = NoctaliaV5Paths;
-        assert_eq!(<NoctaliaV5Paths as ShellDetector>::id(&detector), "noctalia");
-    }
-
-    #[test]
-    fn test_v4_detector_is_active_no_crash() {
-        // It can be true or false depending on whether quickshell is running
-        // We only check that it does not panic
-        let _env = crate::test_utils::env_guard();
-        let detector = NoctaliaV4Paths;
-        let _ = detector.is_active();
-    }
-
-    #[test]
-    fn test_v5_detector_is_active_no_crash() {
-        // It can be true or false depending on processes and directories
-        // We only check that it does not panic
-        let _env = crate::test_utils::env_guard();
-        let detector = NoctaliaV5Paths;
-        let _ = detector.is_active();
-    }
-
-    // ── ShellRegistry tests ──
-
-    #[test]
-    fn test_registry_new_empty() {
-        let registry = ShellRegistry::new();
-        assert!(registry.active_id().is_none());
-    }
-
-    #[test]
-    fn test_registry_register_v4_v5() {
-        let _env = crate::test_utils::env_guard();
-        let mut registry = ShellRegistry::new();
-        registry.register(NoctaliaV4Paths);
-        registry.register(NoctaliaV5Paths);
-        // active_id will be None (no process running in tests)
-        // or Some("noctalia") (if one of the detectors returns true)
-        match registry.active_id() {
-            None => {} // none active — OK
-            Some(id) => assert_eq!(id, "noctalia"), // one active — OK
-        }
-    }
-
-    #[test]
-    fn test_registry_is_active_check() {
-        let _env = crate::test_utils::env_guard();
-        let mut registry = ShellRegistry::new();
-        registry.register(NoctaliaV4Paths);
-        registry.register(NoctaliaV5Paths);
-
-        // If any is active, is_active("noctalia") must be true
-        if registry.active_id() == Some("noctalia") {
-            assert!(registry.is_active("noctalia"));
-            assert!(!registry.is_active("nonexistent"));
-        } else {
-            assert!(!registry.is_active("noctalia"));
         }
     }
 }

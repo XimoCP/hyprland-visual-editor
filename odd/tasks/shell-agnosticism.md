@@ -156,7 +156,16 @@ both is stopped and reported, never forced.
   truth table (GLM verified). Only delta: log wording. Writer: MiMo 2.6;
   cross-model verification: GLM → **VERDICT PASS**. Suite 1351/0; release
   build warning-free.
+- 2026-10-05: **A5 done** (leak L10, commit `112ef7c`). The dead
+  `ShellDetector` / `ShellRegistry` seam is deleted from
+  `noctalia_paths.rs`; the two `is_active()` probes become inherent methods
+  (byte-identical probes), and `providers/mod.rs` drops the trait import.
+  `ShellProvider` stays (Noctalia's own paths trait, used by v4). Pin
+  `noctalia_paths.rs/noctalia` 35 → 33 (dead mentions removed). Writer: MiMo
+  2.6; cross-model verification: GLM → **VERDICT PASS**. Suite 1344/0 (7
+  dead-seam tests removed); release build warning-free.
 
 ## Next step
 
-A5 — the half-built seam (L10).
+A6 — the guard: extend `architecture_contract.rs` to the unlisted core files
+(L11) with shell-name pins at zero.

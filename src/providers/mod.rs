@@ -13,7 +13,6 @@ pub mod wallpaper_authority;
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme_manager::{ThemeManager, ThemeProvider};
-use noctalia_paths::ShellDetector;
 
 /// One shipped desktop-shell backend. Adding a shell is ONE entry here plus
 /// its provider module: the registration router never needs an `if` for it.
