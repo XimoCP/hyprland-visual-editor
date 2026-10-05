@@ -401,7 +401,7 @@ mod tests {
         // loop (the orphan stub must already exist when we kill it). ──
         let mut first = KillOnDrop::new(spawn_instance());
 
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let lock_file = cache.join("color_watcher.lock");
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -905,7 +905,7 @@ mod tests {
         // ── Instance 1 must acquire the singleton lock and start ──
         let first = KillOnDrop::new(spawn_instance());
 
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let lock_file = cache.join("color_watcher.lock");
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -1082,7 +1082,7 @@ mod tests {
 
         // The unguarded watcher must reach normal operation: it logs its
         // start and performs the initial refresh (the assemble marker).
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let log = std::fs::read_to_string(&log_file).unwrap_or_default();
@@ -1351,7 +1351,7 @@ mod tests {
         );
 
         // Wait until the watcher is armed (lock + start line + initial refresh).
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let lock_file = cache.join("color_watcher.lock");
         let assemble_marker = cache.join("assemble_runs");
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -1478,7 +1478,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let lock_file = cache.join("color_watcher.lock");
         let assemble_marker = cache.join("assemble_runs");
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -1582,7 +1582,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let lock_file = cache.join("color_watcher.lock");
         let assemble_marker = cache.join("assemble_runs");
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -1801,7 +1801,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let log_file = home.join(".cache/hve/color_watcher.log");
+        let log_file = cache.join("color_watcher.log");
         let lock_file = cache.join("color_watcher.lock");
         let assemble_marker = cache.join("assemble_runs");
         let calls_file = cache.join("noctalia_calls");
