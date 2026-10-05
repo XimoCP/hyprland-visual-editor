@@ -96,7 +96,9 @@ hiding behind green tests.
         `README.md`) from `src/callbacks.rs:270-281`. Once the manual is a
         multi-page wiki, that single file no longer represents it: either the link
         moves to the wiki URL (needs P3) or it keeps opening a local page. Until
-        that is decided, `WIKI.md` stays in place.
+        that is decided, `WIKI.md` stays in place. **Decided 2026-10-05: the
+        link moves to the wiki URL** — `on_open_docs` now opens
+        `https://github.com/XimoCP/hyprland-visual-editor/wiki`.
       - **Progress (2026-10-05, complete)**:
         the wiki is real under `docs/wiki/` — `Home.md`, `_Sidebar.md`,
         `_Footer.md` plus `Installation`, `Uninstallation`, `Architecture`
@@ -200,9 +202,13 @@ hiding behind green tests.
 - 2026-10-05: **the wiki is published** — all sixteen pages pushed to
   `hyprland-visual-editor.wiki.git` (live at
   https://github.com/XimoCP/hyprland-visual-editor/wiki).
-- Pending: the About-link decision (inside P4) is still the keeper's.
+- 2026-10-05: **the About link opens the wiki** — `on_open_docs` spawns
+  `xdg-open https://github.com/XimoCP/hyprland-visual-editor/wiki`
+  (`src/callbacks.rs`, pure `docs_open_command` + a contract test), replacing
+  the local `WIKI.md`/`README.md` fallback.
+- Pending: nothing blocking. `WIKI.md` stays as the historical single-file
+  manual; the app no longer opens it.
 
 ## Next step
 
-Decide whether the app's About link moves to the wiki URL or keeps opening the
-local `WIKI.md`.
+Nothing blocking for publication.

@@ -4108,7 +4108,6 @@ fn main() -> Result<(), slint::PlatformError> {
     callbacks::setup_callbacks(
         &window,
         &state,
-        proj.clone(),
         tray_system_active,
         &lock,
         &shell,

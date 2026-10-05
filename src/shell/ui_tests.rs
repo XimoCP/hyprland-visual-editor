@@ -16781,7 +16781,6 @@ fn window_with_production_callbacks() -> (crate::MainWindow, std::rc::Rc<std::ce
     crate::callbacks::setup_callbacks(
         &win,
         &state,
-        proj,
         tray,
         &restart_lock,
         &shell,

@@ -49,6 +49,17 @@ macro_rules! make_toggle_callback {
     };
 }
 
+/// The project's online manual: the GitHub wiki. A compile-time constant, so
+/// no user input ever reaches the command line.
+pub(crate) const ABOUT_DOCS_URL: &str =
+    "https://github.com/XimoCP/hyprland-visual-editor/wiki";
+
+/// The argv the About link runs. Pure, so the contract — the About link opens
+/// the online manual, never a local file — is testable without spawning.
+pub(crate) fn docs_open_command() -> Vec<String> {
+    vec!["xdg-open".to_string(), ABOUT_DOCS_URL.to_string()]
+}
+
 /// Registers every Slint UI callback. Call once from `main()` after the
 /// window and the shared `AppState` are initialized.
 ///
@@ -58,7 +69,6 @@ macro_rules! make_toggle_callback {
 pub fn setup_callbacks(
     window: &crate::MainWindow,
     state: &SharedState,
-    proj: PathBuf,
     tray_active: Arc<AtomicBool>,
     restart_lock: &Arc<Mutex<Option<std::fs::File>>>,
     shell: &Rc<RefCell<Shell>>,
@@ -267,17 +277,20 @@ pub fn setup_callbacks(
     let _ = &state;
     let _ = &window; // keep bindings used
 
-    // Open project documentation (WIKI.md / README.md) in the default viewer
+    // Open the online manual (the GitHub wiki) in the default browser. Constant
+    // argv — no user input reaches the command line.
     {
-        let wiki_path = proj.join("WIKI.md");
-        window.on_open_docs(move || {
-            let target = if wiki_path.exists() {
-                wiki_path.clone()
-            } else {
-                proj.join("README.md")
-            };
-            tracing::info!("[about] Opening documentation: {}", target.display());
-            let _ = std::process::Command::new("xdg-open").arg(&target).spawn();
+        window.on_open_docs(|| {
+            let mut argv = docs_open_command();
+            let program = argv.remove(0);
+            tracing::info!("[about] Opening documentation: {}", ABOUT_DOCS_URL);
+            if let Err(e) = std::process::Command::new(program).args(&argv).spawn() {
+                tracing::warn!(
+                    "[about] could not open documentation '{}': {}",
+                    ABOUT_DOCS_URL,
+                    e
+                );
+            }
         });
     }
 
@@ -1854,4 +1867,29 @@ fn resolve_exe() -> PathBuf {
         }
     }
     PathBuf::from("hve")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The About link must open the online manual (the GitHub wiki), never a
+    /// local file: a regression that points it back at `WIKI.md` fails here.
+    #[test]
+    fn about_link_opens_the_online_manual() {
+        let argv = docs_open_command();
+        assert_eq!(argv.first().map(String::as_str), Some("xdg-open"));
+        assert_eq!(argv.get(1).map(String::as_str), Some(ABOUT_DOCS_URL));
+        assert_eq!(argv.len(), 2, "exactly xdg-open + the URL");
+        assert!(
+            ABOUT_DOCS_URL.starts_with("https://") && ABOUT_DOCS_URL.contains("/wiki"),
+            "the target must be the GitHub wiki URL, got {ABOUT_DOCS_URL}"
+        );
+        for arg in &argv {
+            assert!(
+                !arg.ends_with("WIKI.md") && !arg.ends_with("README.md"),
+                "the About link must not open a local file, got {arg}"
+            );
+        }
+    }
 }
