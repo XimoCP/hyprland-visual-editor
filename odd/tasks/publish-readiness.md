@@ -197,11 +197,12 @@ hiding behind green tests.
 - 2026-10-05: **P3 and P5 closed** — `origin` set to the keeper's repo (his
   obsolete first HVE replaced on `main` by the current one) and `Cargo.toml`
   carries `readme` + `repository`.
-- Pending: nothing blocking. The wiki is ready to publish on request; the
-  About-link decision (inside P4) is still the keeper's.
+- 2026-10-05: **the wiki is published** — all sixteen pages pushed to
+  `hyprland-visual-editor.wiki.git` (live at
+  https://github.com/XimoCP/hyprland-visual-editor/wiki).
+- Pending: the About-link decision (inside P4) is still the keeper's.
 
 ## Next step
 
-Publish the wiki (`docs/wiki/` → the repo's `.wiki.git`) when the keeper wants
-it; decide whether the app's About link moves to the wiki or keeps opening the
+Decide whether the app's About link moves to the wiki URL or keeps opening the
 local `WIKI.md`.
