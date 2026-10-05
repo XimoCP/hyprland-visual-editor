@@ -147,7 +147,16 @@ both is stopped and reported, never forced.
   of the rename (the module name now spells the token), disclosed in the pin
   comment. Carried forward: two stale `src/providers/shell.rs` mentions in
   `openspec/specs/capability-routing/spec.md` (A6/A7).
+- 2026-10-05: **A4 done** (data-driven registry, L1-L2, commit `de42a39`).
+  `src/providers/mod.rs` gains a `ShellBackend` list (`id / detect / fallback /
+  make / declare`); `register_default_providers` picks the first detector, else
+  the fallback entry, then subtracts `disabled_providers`; `declaration_provider`
+  resolves off the same list (with the `wallpaper`→v4 alias). Adding a shell is
+  one entry, no `if`. Behaviour identical across the whole detection/disabled
+  truth table (GLM verified). Only delta: log wording. Writer: MiMo 2.6;
+  cross-model verification: GLM → **VERDICT PASS**. Suite 1351/0; release
+  build warning-free.
 
 ## Next step
 
-A4 — the data-driven registry (L1, L2).
+A5 — the half-built seam (L10).

@@ -15,45 +15,77 @@ use crate::engine::Engine;
 use crate::theme_manager::{ThemeManager, ThemeProvider};
 use noctalia_paths::ShellDetector;
 
+/// One shipped desktop-shell backend. Adding a shell is ONE entry here plus
+/// its provider module: the registration router never needs an `if` for it.
+struct ShellBackend {
+    /// The provider id a theme records (`noctalia-v5`, `noctalia`).
+    id: &'static str,
+    /// True when this shell is running now.
+    detect: fn() -> bool,
+    /// The historical fallback: used when no backend detects. The LAST entry
+    /// carries it.
+    fallback: bool,
+    /// Build the live provider (save/apply/list).
+    make: fn() -> Box<dyn ThemeProvider>,
+    /// Build the side-effect-free read-only declarer for cleanup and preview.
+    declare: fn() -> Box<dyn ThemeProvider>,
+}
+
+/// The shipped shell backends, in detection order. v5 is tried first; v4 is
+/// the historical fallback when nothing detects.
+fn shell_backends() -> [ShellBackend; 2] {
+    [
+        ShellBackend {
+            id: "noctalia-v5",
+            detect: || noctalia_paths::NoctaliaV5Paths.is_active(),
+            fallback: false,
+            make: || Box::new(noctalia::NoctaliaV5Provider::new()) as Box<dyn ThemeProvider>,
+            declare: || Box::new(noctalia::NoctaliaV5Provider::new()) as Box<dyn ThemeProvider>,
+        },
+        ShellBackend {
+            id: "noctalia",
+            detect: || noctalia_paths::NoctaliaV4Paths.is_active(),
+            fallback: true,
+            make: || Box::new(noctalia::NoctaliaV4Provider::new()) as Box<dyn ThemeProvider>,
+            declare: || Box::new(noctalia::NoctaliaV4Provider::new()) as Box<dyn ThemeProvider>,
+        },
+    ]
+}
+
 /// Register every provider shipped with HVE, in the canonical order.
 ///
-/// Shell detection picks the Noctalia provider that matches the running shell
-/// (v5 when active, v4 otherwise — the v4 fallback preserves the historical
-/// startup behaviour). Both the main window's manager and the gallery's
-/// manager call this, so they always expose the same provider list.
+/// Detection order decides WHICH backend is wanted: the first entry whose
+/// detector fires wins; the fallback entry is used when none detects. The
+/// `Config::disabled_providers` list only SUBTRACTS from that decision: a
+/// disabled wanted backend registers nothing — the other version is never
+/// substituted for it, because the keeper turned that backend off. Unknown
+/// ids match nothing.
 ///
-/// `Config::disabled_providers` gates that decision: an id listed there is
-/// skipped entirely, so the same list applies to every caller (main window,
-/// gallery, IPC) because it is read here, inside the seam.
+/// `hve-presets` is a provider, not a shell, so it is not part of the backend
+/// list; it registers unless its own id is disabled.
 pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
     let disabled = Config::load().disabled_providers;
+    let backends = shell_backends();
 
-    let noctalia_v5 = noctalia_paths::NoctaliaV5Paths;
-    let noctalia_v4 = noctalia_paths::NoctaliaV4Paths;
+    let wanted = backends
+        .iter()
+        .find(|b| (b.detect)())
+        .or_else(|| backends.iter().find(|b| b.fallback));
 
-    // Shell detection still decides WHICH Noctalia provider is wanted — v5
-    // when active, v4 when active, v4 as the historical fallback — and the
-    // disabled list only SUBTRACTS from that decision. The matched ids are
-    // exactly the strings `ThemeProvider::id()` returns: `noctalia-v5` for
-    // v5, `noctalia` for v4 (the v4 provider has no `noctalia-v4` id). When
-    // the wanted version is disabled we register NO Noctalia provider: the
-    // other version is never substituted for it, because the keeper turned
-    // that backend off. Unknown ids match nothing.
-    let v5_active = noctalia_v5.is_active();
-    let v4_active = noctalia_v4.is_active();
-    let wanted: &str = if v5_active { "noctalia-v5" } else { "noctalia" };
-
-    if disabled.iter().any(|d| d == wanted) {
-        tracing::info!("[providers] provider '{wanted}' disabled in config — skipping registration");
-    } else if v5_active {
-        tm.register_provider(Box::new(noctalia::NoctaliaV5Provider::new()));
-        tracing::info!("[shell] Noctalia v5 detectado — registrando provider v5");
-    } else if v4_active {
-        tm.register_provider(Box::new(noctalia::NoctaliaV4Provider::new()));
-        tracing::info!("[shell] Noctalia v4 detectado — registrando provider v4");
-    } else {
-        tm.register_provider(Box::new(noctalia::NoctaliaV4Provider::new()));
-        tracing::warn!("[shell] Noctalia no detectado — registrando provider v4 por defecto");
+    match wanted {
+        Some(b) if disabled.iter().any(|d| d == b.id) => {
+            tracing::info!(
+                "[providers] provider '{}' disabled in config — skipping registration",
+                b.id
+            );
+        }
+        Some(b) => {
+            tm.register_provider((b.make)());
+            tracing::info!("[providers] registered provider '{}'", b.id);
+        }
+        None => {
+            tracing::warn!("[providers] no shipped shell backend to register");
+        }
     }
 
     if disabled.iter().any(|d| d == "hve-presets") {
@@ -70,43 +102,36 @@ pub fn active_shell() -> Box<dyn shell_capabilities::ShellCapabilities> {
     Box::new(crate::providers::noctalia::NoctaliaShell)
 }
 
-/// A READ-ONLY declaration instance of a shipped provider, obtained by id
-/// for cleanup decisions about a theme that RECORDED that id when it was
-/// saved — and for the gallery's `read-preview-source` declarations, which
-/// the core resolves from the theme's own `providers/` directory names the
-/// same way.
+/// A READ-ONLY declaration instance of a shipped provider, obtained by id for
+/// cleanup decisions about a theme that RECORDED that id when it was saved —
+/// and for the gallery's `read-preview-source` declarations, which the core
+/// resolves from the theme's own `providers/` directory names the same way.
 ///
 /// Registration gates behaviour (save/apply/list) — it must not gate
 /// knowledge: the backend contract's `deletable-artefacts` applies "when a
 /// theme that used this backend is removed"
-/// (`openspec/specs/capability-routing/spec.md`), whether or not that
-/// backend is active — or enabled — today. The core calls this with the
-/// provider ids a theme's own `providers/` tree records; it never names a
-/// backend itself. `None` for an id this product does not ship (an
-/// unknown id declares nothing) and for `hve-presets` (constructing it
-/// needs an `Engine` handle, and it declares no artifacts).
+/// (`openspec/specs/capability-routing/spec.md`), whether or not that backend
+/// is active — or enabled — today. The core calls this with the provider ids a
+/// theme's own `providers/` tree records; it never names a backend itself.
+/// `None` for an id this product does not ship and for `hve-presets`
+/// (constructing it needs an `Engine` handle, and it declares no artifacts).
 ///
-/// Constructing a declarer must stay side-effect free — the only methods
-/// the cleanup and preview seams call are `deletable_artifacts` (reads the
-/// theme's own record) and `preview_sources` (reads the record files of
-/// the provider directory the core hands it). Keep this list in sync with
-/// `register_default_providers` above: a shipped provider missing here
-/// only LEAKS its artifacts (nothing is declared, so nothing is deleted)
-/// — the failure is deliberately the safe direction.
+/// Constructing a declarer must stay side-effect free — the only methods the
+/// cleanup and preview seams call are `deletable_artifacts` and
+/// `preview_sources`, both of which only read the theme's own record.
 pub fn declaration_provider(id: &str) -> Option<Box<dyn ThemeProvider>> {
-    match id {
-        "noctalia-v5" => Some(Box::new(noctalia::NoctaliaV5Provider::new())),
-        "noctalia" => Some(Box::new(noctalia::NoctaliaV4Provider::new())),
-        // The retired `wallpaper` id (see `src/providers/wallpaper.rs`,
-        // inert) stored a byte-copy of Noctalia v4's OWN cache record —
-        // the same `wallpapers.json` file v4 saves from — so v4 is its
-        // read-only declarer: it parses the record format it owns in
-        // whatever provider directory the core hands it. Themes on disk
-        // still carry `providers/wallpaper/` trees; without this arm their
-        // preview source would silently disappear from the gallery.
-        "wallpaper" => Some(Box::new(noctalia::NoctaliaV4Provider::new())),
-        _ => None,
-    }
+    // The retired `wallpaper` id (see `src/providers/wallpaper.rs`, inert)
+    // stored a byte-copy of Noctalia v4's OWN cache record — the same
+    // `wallpapers.json` file v4 saves from — so v4 is its read-only
+    // declarer: it parses the record format it owns in whatever provider
+    // directory the core hands it. Themes on disk still carry
+    // `providers/wallpaper/` trees; without this alias their preview source
+    // would silently disappear from the gallery.
+    let lookup = if id == "wallpaper" { "noctalia" } else { id };
+    shell_backends()
+        .iter()
+        .find(|b| b.id == lookup)
+        .map(|b| (b.declare)())
 }
 
 #[cfg(test)]
@@ -449,6 +474,27 @@ end)\n\
         assert_eq!(
             after, before,
             "applying a theme must not modify the system blocks of hve-settings.lua"
+        );
+    }
+
+    /// The registry is data-driven: adding a shell is one entry, and the
+    /// shipped list carries the detection order plus exactly one fallback,
+    /// which must be the LAST entry (v4).
+    #[test]
+    fn shipped_backends_list_owns_detection_and_construction() {
+        let backends = shell_backends();
+        assert_eq!(
+            backends.iter().map(|b| b.id).collect::<Vec<_>>(),
+            vec!["noctalia-v5", "noctalia"]
+        );
+        assert_eq!(
+            backends.iter().filter(|b| b.fallback).count(),
+            1,
+            "exactly one backend is the historical fallback"
+        );
+        assert!(
+            !backends[0].fallback && backends[1].fallback,
+            "the fallback must be the last entry"
         );
     }
 }
