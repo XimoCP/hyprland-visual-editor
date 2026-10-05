@@ -137,7 +137,17 @@ both is stopped and reported, never forced.
   unused (A5), the `active_shell()` wrapper path (A4/A5), localized
   `home.about_full` still names Noctalia (A7), three `main.rs` doc comments
   still name it (A6/A7).
+- 2026-10-05: **A3 done** (module honesty, L7-L9, commit `1d5afdd`).
+  `src/providers/shell.rs` → `src/providers/noctalia_paths.rs` (pure move;
+  every impl there is Noctalia, and the file now says so); the "neutral"
+  claims in `noctalia_runtime.rs` and `bg_info.rs` are replaced by honest
+  dependencies. No behaviour change. Writer: MiMo 2.6; cross-model
+  verification: GLM → **VERDICT PASS**. Suite 1350/0; release build
+  warning-free. Pin note: `wallpaper.rs/noctalia` 4 → 6, a substring artifact
+  of the rename (the module name now spells the token), disclosed in the pin
+  comment. Carried forward: two stale `src/providers/shell.rs` mentions in
+  `openspec/specs/capability-routing/spec.md` (A6/A7).
 
 ## Next step
 
-A3 — module honesty (L7, L8, L9).
+A4 — the data-driven registry (L1, L2).

@@ -3,8 +3,8 @@ use crate::providers::noctalia_runtime::{
     noctalia_config_dir, noctalia_msg, noctalia_state_dir, plugin_enabled_probe, MPVPAPER_PLUGIN_ID,
 };
 use crate::providers::wallpaper_authority::{self, SavePlan, WallpaperKind};
-use crate::providers::shell::NoctaliaV4Paths;
-use crate::providers::shell::ShellProvider;
+use crate::providers::noctalia_paths::NoctaliaV4Paths;
+use crate::providers::noctalia_paths::ShellProvider;
 use crate::theme_manager::{
     DeletableArtifact, PreviewRole, PreviewSource, PreviewSourceKind, ProviderCapabilities,
     ThemeFact, ThemeProvider,

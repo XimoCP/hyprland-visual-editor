@@ -62,7 +62,7 @@ const SCANNED_FILES: &[&str] = &[
     "src/theme.rs",
     "src/config_guard.rs",
     "src/hypr_ipc.rs",
-    "src/providers/shell.rs",
+    "src/providers/noctalia_paths.rs",
     "assets/scripts/colors.sh",
     "assets/scripts/color_watcher.sh",
     // Phase-4 visibility: the read-desktop-preference capability directory.
@@ -272,9 +272,9 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/theme.rs", "gsettings", 0),
     ("src/config_guard.rs", "hyprland", 2),
     ("src/hypr_ipc.rs", "hyprland", 9),
-    ("src/providers/shell.rs", "hyprctl", 1),
-    ("src/providers/shell.rs", "noctalia", 35),
-    ("src/providers/shell.rs", "quickshell", 6),
+    ("src/providers/noctalia_paths.rs", "hyprctl", 1),
+    ("src/providers/noctalia_paths.rs", "noctalia", 35),
+    ("src/providers/noctalia_paths.rs", "quickshell", 6),
     ("assets/scripts/colors.sh", "noctalia", 4),
     ("assets/scripts/colors.sh", "matugen", 2),
     ("assets/scripts/color_watcher.sh", "hyprland", 1),
@@ -301,7 +301,11 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/providers/hve_presets.rs", "hyprland", 1),
     // wallpaper.rs (inert: no `mod wallpaper;` today, but it ships and is
     // pending re-wiring) hardcodes Noctalia's cache paths for wallpapers.json.
-    ("src/providers/wallpaper.rs", "noctalia", 4),
+    // 4 → 6 (2026-10-05, A3 rename): not a new coupling — the module it has
+    // always imported was renamed `shell` → `noctalia_paths`, so its two
+    // import paths now spell the token. The comment/doc body is stripped
+    // before counting; any mention beyond these imports still fails.
+    ("src/providers/wallpaper.rs", "noctalia", 6),
     // --- Phase-4 visibility baseline (2026-09-29), newly-scanned files ---
     // Read before touching: the desktop-preference capability directory,
     // `src/shell/gallery/slot.rs` and `src/composer/hyprland.rs` joined
@@ -336,7 +340,7 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
 /// shell scripts. A literal "cut at the first `#[cfg(test)]`" would be
 /// WRONG here: `src/main.rs:25-29` registers test-only modules
 /// (`#[cfg(test)] mod scripts_contract;` …) at the top of the file, and
-/// `src/theme_manager.rs:28` plus `src/providers/shell.rs:12,157` mention
+/// `src/theme_manager.rs:28` plus `src/providers/noctalia_paths.rs:20,165` mention
 /// `#[cfg(test)]` inside `//` comments (gone after comment stripping). No
 /// scanned file interleaves tests with production code, so no file is
 /// excluded.

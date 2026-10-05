@@ -3,8 +3,8 @@ pub mod bg_info;
 pub mod hve_presets;
 pub mod mpvpaper;
 pub mod noctalia;
+pub mod noctalia_paths;
 pub mod noctalia_runtime;
-pub mod shell;
 pub mod shell_capabilities;
 pub mod skwd_engine;
 pub mod skwd_policy;
@@ -13,7 +13,7 @@ pub mod wallpaper_authority;
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme_manager::{ThemeManager, ThemeProvider};
-use shell::ShellDetector;
+use noctalia_paths::ShellDetector;
 
 /// Register every provider shipped with HVE, in the canonical order.
 ///
@@ -28,8 +28,8 @@ use shell::ShellDetector;
 pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
     let disabled = Config::load().disabled_providers;
 
-    let noctalia_v5 = shell::NoctaliaV5Paths;
-    let noctalia_v4 = shell::NoctaliaV4Paths;
+    let noctalia_v5 = noctalia_paths::NoctaliaV5Paths;
+    let noctalia_v4 = noctalia_paths::NoctaliaV4Paths;
 
     // Shell detection still decides WHICH Noctalia provider is wanted — v5
     // when active, v4 when active, v4 as the historical fallback — and the

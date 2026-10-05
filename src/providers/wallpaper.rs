@@ -1,10 +1,10 @@
 // NOTE: This module is intentionally NOT registered in `providers/mod.rs`
 // (kept inert, pending implementation — see commit 393992b). The aliases
 // below map the pre-refactor API it was written against onto the current
-// neutral base (`providers::shell`), so the file carries no stale
+// Noctalia path seam (`providers::noctalia_paths`), so the file carries no stale
 // cross-provider imports once it is wired up again.
-use crate::providers::shell::NoctaliaV4Paths as NoctaliaPaths;
-use crate::providers::shell::ShellProvider as ShellPaths;
+use crate::providers::noctalia_paths::NoctaliaV4Paths as NoctaliaPaths;
+use crate::providers::noctalia_paths::ShellProvider as ShellPaths;
 use crate::theme_manager::ThemeProvider;
 use serde::Deserialize;
 use std::fs;

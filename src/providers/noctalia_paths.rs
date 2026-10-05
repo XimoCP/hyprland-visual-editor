@@ -1,3 +1,11 @@
+//! Noctalia's own path and launcher knowledge: the v4 Quickshell paths and
+//! the v5 native paths, plus the `ShellProvider` trait those paths implement.
+//!
+//! This file used to be called `shell.rs` and read as if it were the generic
+//! shell seam. It never was: every impl here is Noctalia. The generic seam now
+//! lives in `shell_capabilities.rs`; naming this module after its owner is the
+//! honest fix.
+
 use std::path::{Path, PathBuf};
 
 /// A shell knows how to resolve its configuration paths and perform shell-specific

@@ -1,14 +1,14 @@
-//! Shared access to the Noctalia runtime: IPC (`noctalia msg`) and on-disk
-//! path resolution (config dir, state dir).
+//! Noctalia runtime access: IPC (`noctalia msg`) and on-disk path resolution
+//! (config dir, state dir).
 //!
-//! This is the neutral shared piece used by the `noctalia` and `mpvpaper`
-//! providers, so neither depends on the other provider's internals.
+//! This IS Noctalia knowledge: it spawns `noctalia`, knows its config and
+//! state directories, and probes its `noctalia/mpvpaper` plugin. It is shared
+//! as a DEPENDENCY by the modules that need the live shell (the Noctalia
+//! provider and the media backend that drives Noctalia's plugin) — not as a
+//! provider-neutral seam, which it is not.
 //!
-//! Plugin supervision lives here too: the plugin is Noctalia's
-//! (`noctalia/mpvpaper`), so knowing how to probe, bounce and command it is
-//! Noctalia runtime knowledge — not the media backend's. Every supervisor
-//! call takes an explicit plugin id, so this seam is not shaped around one
-//! plugin.
+//! Every supervisor call takes an explicit plugin id, so the helpers are not
+//! shaped around one plugin.
 
 use std::io::Read;
 use std::path::PathBuf;

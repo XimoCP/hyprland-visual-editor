@@ -1,21 +1,17 @@
-//! Neutral shared background information.
+//! Shared background (wallpaper) information.
 //!
-//! This is the shared, provider-neutral piece of background (wallpaper)
-//! information that BOTH backends may read: the theme-manifest file name,
-//! the capture of the live background state, and the user notification that
-//! an animated background could not be applied.
+//! Holds the theme-manifest file name, the capture of the live background
+//! state, and the user notification that an animated background could not be
+//! applied — the pieces BOTH backends (the Noctalia provider and the media
+//! backend) may read, so neither depends on the other's internals (the
+//! capability-routing rule: a backend never calls another backend).
 //!
-//! It exists so neither backend depends on the other's internals. The
-//! capability-routing rule (`openspec/specs/capability-routing/spec.md`) is
-//! that a backend never calls another backend, so anything both need lives
-//! here instead of inside one of them.
-//!
-//! This module holds NO provider-specific policy: it decides nothing about
+//! It is NOT provider-neutral: it resolves the live state location through the
+//! Noctalia runtime (`noctalia_state_dir`) and its notification copy names a
+//! third-party plugin identifier it does not own and must not reword. The
+//! module holds no provider-specific POLICY: it decides nothing about
 //! enabling, bouncing, delegating to, or skipping any plugin. Callers keep
-//! their own policy; this module only records and reports information. The
-//! notification copy below is preserved byte-for-byte (it names a
-//! third-party plugin identifier, which is not this module's decision to
-//! make or to reword); when to send it stays with the caller.
+//! their own policy; this module only records and reports information.
 
 use std::fs;
 use std::path::{Path, PathBuf};
