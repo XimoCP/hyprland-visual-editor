@@ -4,7 +4,7 @@
 
 **HVE** es una aplicación gráfica para gestionar visualmente la estética de Hyprland: animaciones, bordes, shaders, geometría de ventanas y colores, todo desde una interfaz unificada.
 
-Funciona con **cualquier desktop basado en Hyprland** (Noctalia Shell, Hyprland puro, etc.) y es **agnóstico al escritorio** — no depende de ningún shell en particular.
+HVE usa **Hyprland como base** — no como un backend intercambiable — y no depende de un shell concreto: las fuentes de color son módulos enchufables, el registro de shells es una lista de datos, y todo lo que el núcleo necesita del shell (fondo activo, DND, re-afirmado de paleta) pasa por un seam de capacidades que una prueba con un adaptador falso demuestra, con una guardia de arquitectura que hace fallar el build si un nombre de shell aparece en el código de producción del núcleo. Hoy se envía el adaptador de Noctalia.
 
 ---
 
@@ -642,7 +642,7 @@ Si los atajos de teclado están activos (por defecto: sí), puedes usar:
 No. Solo inyecta dos líneas entre marcadores `# HVE START` / `# HVE END` (o `--` en Lua). Al desinstalar o desactivar, esas líneas se eliminan y tu configuración queda exactamente como estaba.
 
 **¿Funciona con Noctalia Shell?**
-Sí. HVE es agnóstico al escritorio. Funciona con Hyprland puro, Noctalia Shell, o cualquier entorno basado en Hyprland.
+Sí. HVE se apoya en Hyprland como base y hoy trae de fábrica el adaptador de Noctalia Shell: con Noctalia funciona sin más. Otro shell sobre Hyprland necesita un adaptador nuevo — el núcleo no cambia — pero hoy no viene incluido.
 
 **¿Qué pasa si borro los archivos de HVE manualmente?**
 El watchdog `hve_watchdog.sh` —que se ejecuta al iniciar Hyprland— detecta la ausencia y limpia los marcadores automáticamente.

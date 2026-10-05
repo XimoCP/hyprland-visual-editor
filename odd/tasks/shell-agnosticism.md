@@ -175,7 +175,26 @@ both is stopped and reported, never forced.
   unchanged. Two stale `shell.rs` paths in
   `openspec/specs/capability-routing/spec.md` fixed. Writer: MiMo 2.6;
   cross-model verification: GLM → **VERDICT PASS**. Suite 1347/0.
+- 2026-10-05: **A7 done** (the words, criterion 7, commit `e3cc07a`). README
+  and WIKI lose the agnosticism overclaim (line 7 and the FAQ) and state what
+  is now true; a new English `docs/wiki/Architecture.md` documents the
+  contract (base vs shell axis, the capability seam, the data-driven registry,
+  the fake-adapter proof, the build guard); the in-app About copy stops naming
+  the shipped shell. Writer: MiMo 2.6; cross-model verification: GLM → first
+  **VERDICT FAIL** with three honesty findings (a surviving FAQ overclaim, a
+  wrong colour-source location, and an overstated guard scope), all fixed and
+  re-checked. Suite 1347/0.
+
+## Route status
+
+A1-A7 complete. Acceptance criteria 1-7 satisfied: core free of shell names
+(measured zero, guarded); capabilities with declined defaults; data-driven
+registry; the fake-adapter proof; the build guard; behaviour preserved
+(Notalia suite green); documentation honest. Every unit has a MiMo writer and
+a GLM cross-model verification recorded, and one commit per unit.
 
 ## Next step
 
-A7 — the words: the honest README/WIKI wording plus the contract page.
+P4 (the full wiki under `docs/wiki/` plus the keeper-only Spanish mirror) and
+P7 (already satisfied by A7's wording; close it) in
+`odd/tasks/publish-readiness.md`.
