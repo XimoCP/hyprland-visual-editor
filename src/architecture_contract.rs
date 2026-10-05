@@ -134,6 +134,79 @@ const TOKENS: &[&str] = &[
     "providers::background",
 ];
 
+/// Desktop-shell names the core must never spell. Distinctive substrings: a
+/// core file mentioning the layer that sits on Hyprland is a leak, whoever
+/// wrote it. `dms` is short, but it measured zero across every core file when
+/// this guard was added and it is the only token for that shell.
+const SHELL_NAMES: &[&str] = &["noctalia", "quickshell", "calestia", "dms"];
+
+/// Core files the contract's rule 1 names, WIDER than `SCANNED_FILES`: the
+/// token scanner also polices backend tokens that some core files may
+/// legitimately carry, so the shell guard keeps its own list. Test-only
+/// files (`*_tests.rs`) are excluded — they build shell fixtures on purpose.
+const SHELL_FREE_CORE_FILES: &[&str] = &[
+    "src/main.rs",
+    "src/callbacks.rs",
+    "src/theme_manager.rs",
+    "src/config.rs",
+    "src/watcher.rs",
+    "src/ipc.rs",
+    "src/tray.rs",
+    "src/engine.rs",
+    "src/shell/mod.rs",
+    "src/shell/nav.rs",
+    "src/shell/size.rs",
+    "src/shell/slots.rs",
+    "src/shell/gallery/mod.rs",
+    "src/shell/gallery/model.rs",
+    "src/shell/gallery/slat_image.rs",
+    "src/shell/gallery/slot.rs",
+    "src/shell/gallery/thumbs.rs",
+    "src/shell/gallery/views/mod.rs",
+    "src/shell/gallery/views/hexagon.rs",
+    "src/shell/gallery/views/mosaic.rs",
+    "src/shell/gallery/views/slice.rs",
+    "src/shell/gallery/views/slice_reel.rs",
+];
+
+/// One message per shell name that appears in a policed lowercased body.
+/// Empty = clean. Pure, so the injection test can drive it over a tampered
+/// text without touching the repo file.
+fn shell_name_failures(file: &str, lowered_body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in SHELL_NAMES {
+        let count = count_token(lowered_body, name);
+        if count > 0 {
+            out.push(format!(
+                "SHELL NAME IN CORE: {file} mentions `{name}` {count}x. A core file \
+                 must not name a desktop shell; move it behind the adapter that \
+                 owns it (src/providers/shell_capabilities.rs) or into its \
+                 provider module."
+            ));
+        }
+    }
+    out
+}
+
+/// Every `.rs` file under `dir`, recursively. Used by the coverage tripwire
+/// so a NEW shell UI module cannot join the tree unpoliced.
+fn rs_files_under(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
 /// (file, token) pairs the checker SKIPS: the token is the file's own
 /// identity or domain, or the reference belongs to a category the contract
 /// allows. Skipped pairs are still MEASURED and printed in the report (pin
@@ -745,4 +818,79 @@ fn pin_check_fails_both_directions() {
         shrunk.iter().any(|m| m.contains("STALE PIN")),
         "a pin above its count must fail so pins get lowered: {shrunk:?}"
     );
+}
+
+/// The shell-name guard: every core file in `SHELL_FREE_CORE_FILES` must
+/// measure ZERO shell names. A new leak fails the build.
+#[test]
+fn no_shell_name_in_any_core_file() {
+    let mut failures = Vec::new();
+    for file in SHELL_FREE_CORE_FILES {
+        let body = read_production_body(file);
+        failures.extend(shell_name_failures(file, &body));
+    }
+    assert!(
+        failures.is_empty(),
+        "shell-agnosticism contract violated (odd/tasks/shell-agnosticism.md):\n{}",
+        failures.join("\n")
+    );
+}
+
+/// The guard must be WIDER than the token scanner: it covers core files the
+/// scanner does not list, and a leak injected into such a file (a TEMPORARY
+/// copy; the repo file is never touched) must be reported.
+#[test]
+fn shell_guard_catches_a_leak_in_a_core_file_the_token_scanner_ignores() {
+    let file = "src/ipc.rs";
+    assert!(
+        !SCANNED_FILES.contains(&file),
+        "precondition: ipc.rs must not be in the token scanner today"
+    );
+    assert!(
+        SHELL_FREE_CORE_FILES.contains(&file),
+        "the shell guard must cover {file}"
+    );
+
+    let source = std::fs::read_to_string(repo_root().join(file)).unwrap();
+    let clean = production_body(&source).to_lowercase();
+    assert!(
+        shell_name_failures(file, &clean).is_empty(),
+        "today's {file} must be clean: {:?}",
+        shell_name_failures(file, &clean)
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("ipc.rs");
+    let cut = source.find("mod tests").unwrap_or(source.len());
+    let mut tampered = source.clone();
+    tampered.insert_str(
+        cut,
+        "// temporary probe, never committed\nfn probe_leak() { let _ = \"noctalia\"; }\n",
+    );
+    std::fs::write(&copy, &tampered).unwrap();
+    let body = production_body(&std::fs::read_to_string(&copy).unwrap()).to_lowercase();
+    assert!(
+        shell_name_failures(file, &body)
+            .iter()
+            .any(|m| m.contains("noctalia")),
+        "the guard must flag the injected shell name"
+    );
+}
+
+/// Coverage tripwire: every production `.rs` under `src/shell/` must be in
+/// `SHELL_FREE_CORE_FILES` (test-only `*_tests.rs` excluded). A new shell UI
+/// module cannot join the tree unpoliced.
+#[test]
+fn shell_guard_covers_every_shell_ui_module() {
+    let root = repo_root();
+    for path in rs_files_under(&root.join("src/shell")) {
+        let rel = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        if rel.ends_with("_tests.rs") {
+            continue;
+        }
+        assert!(
+            SHELL_FREE_CORE_FILES.contains(&rel.as_str()),
+            "the shell guard does not cover {rel}: a shell name could leak there unseen"
+        );
+    }
 }

@@ -31,7 +31,7 @@ interchangeable.
 - THEN the test fails until the call moves behind `Composer`
 
 **Known debt**: raw `hyprctl` still lives outside `Composer` in
-`src/providers/shell.rs` (1× — its declared `reload_command`, no
+`src/providers/noctalia_paths.rs` (1× — its declared `reload_command`, no
 production caller) and `src/providers/wallpaper_authority.rs` (2× —
 read-only `hyprctl -j layers` / `-j monitors` queries);
 `src/hypr_ipc.rs` (event socket) and `src/config_guard.rs` (reads
@@ -131,7 +131,7 @@ backend's CLI run from inside the watcher — left `color_watcher.sh`
 when each declared refresh moved into its own colour module (unit
 1d4). Genuine debt left under this capability: the raw fires in
 `init.sh` enable/disable (one-shot, outside any burst) and the
-uncalled `reload_command` in `src/providers/shell.rs`.
+uncalled `reload_command` in `src/providers/noctalia_paths.rs`.
 
 #### Scenario: Core wants something outside the vocabulary
 

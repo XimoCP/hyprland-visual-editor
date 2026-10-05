@@ -164,8 +164,18 @@ both is stopped and reported, never forced.
   `noctalia_paths.rs/noctalia` 35 → 33 (dead mentions removed). Writer: MiMo
   2.6; cross-model verification: GLM → **VERDICT PASS**. Suite 1344/0 (7
   dead-seam tests removed); release build warning-free.
+- 2026-10-05: **A6 done** (the guard, L11, commit `0c503f4`).
+  `architecture_contract.rs` gains `SHELL_NAMES` (`noctalia`, `quickshell`,
+  `calestia`, `dms`) and `SHELL_FREE_CORE_FILES` (22 core files: the eight
+  rule-1 files plus the `src/shell/` production tree), a pure
+  `shell_name_failures`, a recursive `rs_files_under`, and three tests: the
+  zero-leak guard, an injection test over `src/ipc.rs` (a core file the token
+  scanner never listed), and a tripwire that every `src/shell/*.rs` production
+  module is covered. The scanner's `SCANNED_FILES`, tokens and pins are
+  unchanged. Two stale `shell.rs` paths in
+  `openspec/specs/capability-routing/spec.md` fixed. Writer: MiMo 2.6;
+  cross-model verification: GLM → **VERDICT PASS**. Suite 1347/0.
 
 ## Next step
 
-A6 — the guard: extend `architecture_contract.rs` to the unlisted core files
-(L11) with shell-name pins at zero.
+A7 — the words: the honest README/WIKI wording plus the contract page.
