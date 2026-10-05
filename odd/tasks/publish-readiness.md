@@ -96,6 +96,26 @@ hiding behind green tests.
         multi-page wiki, that single file no longer represents it: either the link
         moves to the wiki URL (needs P3) or it keeps opening a local page. Until
         that is decided, `WIKI.md` stays in place.
+      - **Progress (2026-10-05, English manual written; Spanish mirror pending)**:
+        the wiki is real under `docs/wiki/` — `Home.md`, `_Sidebar.md`,
+        `_Footer.md` plus `Installation`, `Uninstallation`, `Architecture`
+        (with the verified shell-agnosticism contract), `Themes-and-Colours`,
+        `Presets`, `Backgrounds`, `IPC`, `Tray-and-Automation`,
+        `Project-Structure`, `Usage`, `Configuration`, `FAQ` and `Development`.
+        `README.md` is rewritten in English to the approved skeleton (what it
+        is, philosophy, Hyprland-base/shell-axis, install, quick start, manual,
+        licence). The Spanish mirror (`docs/wiki-es/` + `readme_es.md`,
+        gitignored) is the trailing step. The porting writer cross-checked every
+        claim against the code and corrected the source doc: `config_version` 8
+        (not 7), the real `Config::default()` values, the 11 IPC commands (not
+        9), the single shipped keybind `SUPER + H`, the marker block spellings,
+        the colour-source chain (6 steps, `color_sources.d/`), 19 animations
+        (not 18), Lua-only assets, the gallery/panel navigation model, and the
+        "two lines" myth (it is one small block). **Residuals**: `WIKI.md` is
+        now a superseded single-file Spanish manual with known stale claims and
+        still the app's About target — the open decision above must be taken
+        before publishing; the `hve_watchdog.sh` HVE_DIR resolution looks like a
+        real defect (batch 3, item 7) and deserves its own issue.
 - [ ] **P5 — `Cargo.toml` carries `readme` and `repository`.** `readme = "README.md"` is
       free; `repository` waits on P3.
 
@@ -124,19 +144,14 @@ hiding behind green tests.
       elsewhere: five distro branches still unexercised (M4) and no `shellcheck` gate.
       Verified good: no personal paths, prompts never hang, idempotent, refuses root,
       every path matches the code.
-- [ ] **P7 — the documentation must not overclaim shell agnosticism.** Today
-      `README.md:7` and `WIKI.md:7` already say HVE "does not depend on any particular
-      shell", which the code does not support. Verified truth to write instead: the
-      colour sources are genuinely pluggable (`assets/scripts/colors.sh:413-580`, one
-      module per shell), a theme provider can be implemented against `ThemeProvider`
-      (`src/theme_manager.rs:109-225`) without rewriting the core, and the compositor
-      sits behind `Composer` (`src/composer/mod.rs:106-192`) — but the registry is
-      hardcoded to Noctalia (`src/providers/mod.rs:27, 88`), the core names Noctalia
-      paths and its CLI (`src/main.rs:680-681, 695, 1052-1063, 2582-2598`), and the
-      modules documented as "neutral" (`noctalia_runtime.rs`, `bg_info.rs`) are
-      Noctalia-specific. Adding another shell is an adapter plus a handful of core
-      edits — not a drop-in. Decision recorded: HVE will NOT grow more backends; the
-      claim is stated honestly and the leaks are only worth closing if someone asks.
+- [x] **P7 — the documentation must not overclaim shell agnosticism** (closed
+      2026-10-05 by A7 of `odd/tasks/shell-agnosticism.md`, commit `270102d`).
+      The overclaim is gone from `README.md:7`, `WIKI.md:7` and the FAQ of both;
+      the wording now states what the code proves (the seam, the data-driven
+      registry, the fake-adapter proof, the build guard) and `docs/wiki/Architecture.md`
+      documents the contract. Verified cross-model (GLM), which caught and forced
+      the fix of a surviving FAQ claim, a wrong colour-source location and an
+      overstated guard scope.
 - [ ] **P8 — no troubleshooting section anywhere** (keeper's decision, 2026-10-05):
       people report issues in the repository instead. Remove `Troubleshooting` from the
       wiki page list and keep it out of the README.

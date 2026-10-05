@@ -4,7 +4,7 @@
 
 ## How it works
 
-HVE never rewrites your personal Hyprland configuration. Instead it keeps small snippets called **fragments** — one for the animation, one for the border, one for the geometry, one for the shader — and **assembles** them, together with the colours detected on your system, into a single `overlay` file that Hyprland loads alongside your own configuration. HVE injects only two lines between markers it can fully revert, every change is written to a temporary file and moved into place, and uninstalling leaves the system as it was before HVE was installed.
+HVE never rewrites your personal Hyprland configuration. Instead it keeps small snippets called **fragments** — one for the animation, one for the border, one for the geometry, one for the shader — and **assembles** them, together with the colours detected on your system, into a single `overlay` file that Hyprland loads alongside your own configuration. It injects one small block between markers it can fully revert, every change is written to a temporary file and moved into place, and uninstalling leaves the system as it was before HVE was installed.
 
 ```
 your Hyprland files  ←  immutable, HVE never modifies them

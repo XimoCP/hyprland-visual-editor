@@ -1,8 +1,94 @@
 # Architecture
 
-HVE is built for Hyprland and nothing replaces it. This page explains the
-seams that keep the pieces independent; the fragment/assembly, colour, preset,
-background, IPC, tray and watchdog systems are described on their own pages.
+HVE splits the look of your desktop into small snippets called **fragments**
+— one for the animation, one for the border, one for the geometry, one for
+the shader. `assets/scripts/assemble.sh` collects the active fragments
+together with the colours detected on your system and writes a **single
+overlay file** that Hyprland loads alongside your own configuration.
+
+HVE never rewrites your files. Enabling it appends one block between markers
+in `hyprland.lua`; that block only `dofile`s `~/.cache/hve/overlay.lua` and
+`~/.cache/hve/hve-settings.lua` and registers the watchdog. Disabling removes
+the whole block again, and every generated file is written to a temporary
+path and moved into place — so an uninstall leaves your configuration exactly
+as it was.
+
+This page covers how fragments are assembled, which configuration format HVE
+emits, and where each subsystem lives. The seams that keep the pieces
+independent are at the end; each individual system has its own page.
+
+## Fragments and assembly
+
+The core of the system is `assets/scripts/assemble.sh`, which:
+
+1. **Resolves the active colours** by sourcing `colors.sh`.
+2. **Writes a temporary overlay** containing:
+   - the header (`HYPRLAND VISUAL EDITOR - MASTER OVERLAY`, `Lua mode`);
+   - the colour variables — one line per role in the palette roster
+     (`primary`, `secondary`, `tertiary`, `error`, `surface`,
+     `surface_lowest`, `accent`);
+   - the baseline linear bezier curve;
+   - the active fragments, in this order: `animation.lua`, `border.lua`,
+     `shader.lua`, `geometry.lua`.
+3. **Validates the result**: classic `general {`, `decoration {` or
+   `animations {` blocks are classic syntax, not Lua, so the write is
+   aborted and the previous overlay is kept.
+4. **Replaces the destination atomically** with `mv`.
+5. **Refreshes the `overlay.current` symlink** to point at the new overlay.
+6. **Queues one `hyprctl reload`** through `reload_coalescer.sh` — bursts of
+   changes fold into a single reload instead of one per click.
+
+If `colors.sh` declares no palette roster, or validation fails, `assemble.sh`
+deletes the temporary file and leaves the active overlay untouched.
+
+```
+assemble.sh
+  ├── colors.sh        → colour variables
+  ├── fragments/
+  │   ├── animation.lua   ← written by apply_animation.sh
+  │   ├── border.lua      ← written by border.sh
+  │   ├── shader.lua      ← written by shader.sh
+  │   └── geometry.lua    ← written by geometry.sh
+  └── overlay.current  → symlink to the active overlay
+```
+
+The fragments directory lives inside the installed assets (see
+[Project structure](Project-Structure)), and is overwritten every time you
+pick a preset.
+
+## Lua vs Conf
+
+Hyprland 0.55+ defaults to a Lua configuration — `hl.` calls and `require()`
+— and HVE 2 targets exactly that. Earlier versions shipped every animation
+and border preset twice (`.conf` and `.lua`) and probed your installation
+with `detect_format.sh`, caching the answer in `~/.cache/hve/hve_format`.
+
+HVE 2 **never detects the format at runtime**:
+
+- `assemble.sh` writes `overlay.lua` and nothing else.
+- `scan.sh` lists `*.lua` and `*.frag` only — no format detection, no `.conf`
+  globbing.
+- `init.sh` refuses to enable HVE on a legacy `hyprland.conf`-only setup and
+  asks you to migrate first; it manages `hyprland.lua`.
+- `detect_format.sh` and `format_test.sh` and the 32 `.conf` preset twins
+  were removed; `src/scripts_contract.rs` fails the build if any script
+  mentions `detect_format` or `hve_format` again.
+
+The rule itself is written down in `openspec/specs/lua-only-config/spec.md`.
+Shaders are `.frag` files with no second format, because Hyprland reads the
+same shader file regardless of how your configuration is written.
+
+## The systems
+
+| System | What it does | Where | Page |
+|--------|--------------|-------|------|
+| Colour and theme | Picks the colour source, feeds the overlay, and derives the app's own colours | `assets/scripts/colors.sh`, `assets/scripts/color_sources.d/`, `src/theme.rs`, `src/theme_manager.rs` | [Themes and colours](Themes-and-Colours) |
+| Presets | Scans animation, border and shader presets and their metadata, applies one or none | `assets/scripts/scan.sh`, `src/presets.rs` | [Presets](Presets) |
+| Backgrounds | Static wallpapers and animated (video) wallpapers, and who paints them | `src/providers/background.rs`, `src/providers/mpvpaper.rs`, `src/providers/wallpaper_authority.rs` | [Backgrounds](Backgrounds) |
+| IPC | A Unix socket plus the `hve-ipc` client and the default shortcuts | `src/ipc.rs`, `assets/scripts/hve-ipc` | [IPC](IPC) |
+| Tray | The tray icon and its menu, plus the colour watcher, auto-minimise and the safety watchdog | `src/tray.rs`, `src/countdown.rs`, `assets/scripts/hve_watchdog.sh` | [Tray and automation](Tray-and-Automation) |
+| Internationalisation | English and Spanish strings embedded at compile time, resolved by dot-notation key | `src/tr.rs`, `i18n/` | [Configuration](Configuration) |
+| Configuration | The persistent `config.json`, its fields and its migrations | `src/config.rs` | [Configuration](Configuration) |
 
 ## Hyprland is the base, never a backend
 
