@@ -1352,6 +1352,92 @@ fn palette_needs_reassert(
     !matches!(live_palette, Some(live) if live == snapshot)
 }
 
+// ── The Noctalia shell-capability adapter ────────────────────────────
+//
+// The core drives Noctalia through this adapter, never by name. It owns
+// every Noctalia-specific fact the core needs: the CLI calls, the
+// `providers/noctalia-v5/` record layout, and the DND spelling.
+
+pub struct NoctaliaShell;
+
+impl crate::providers::shell_capabilities::ShellCapabilities for NoctaliaShell {
+    fn live_wallpaper(&self) -> Option<String> {
+        noctalia_msg(&["msg", "wallpaper-get"])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    fn saved_theme_wallpaper(
+        &self,
+        themes_root: &std::path::Path,
+        theme_name: &str,
+    ) -> Option<String> {
+        std::fs::read_to_string(
+            themes_root
+                .join(theme_name)
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
+        )
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    }
+
+    fn arms_palette_reassert(&self, themes_root: &std::path::Path, theme_name: &str) -> bool {
+        let provider_dir = themes_root
+            .join(theme_name)
+            .join("providers")
+            .join("noctalia-v5");
+        let raw = match std::fs::read_to_string(provider_dir.join("source.txt")) {
+            Ok(raw) => raw,
+            Err(_) => return false,
+        };
+        let parts: Vec<&str> = raw.trim().splitn(2, ' ').collect();
+        let name = parts.get(1).copied().unwrap_or("");
+        if name.is_empty() {
+            return false;
+        }
+        provider_dir.join("palette.json").is_file()
+    }
+
+    fn dnd_status(&self) -> Option<String> {
+        let out = std::process::Command::new("noctalia")
+            .args(["msg", "notification-dnd-status"])
+            .output()
+            .ok()?;
+        let s = String::from_utf8(out.stdout).ok()?;
+        let s = s.trim().to_string();
+        if s == "on" || s == "off" {
+            Some(s)
+        } else {
+            None
+        }
+    }
+
+    fn dnd_set(&self, state: &str) -> bool {
+        let Some(arg) = dnd_bool_arg(state) else {
+            return false;
+        };
+        std::process::Command::new("noctalia")
+            .args(["msg", "notification-dnd-set", arg])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+            .unwrap_or(false)
+    }
+}
+
+/// "on"→"true", "off"→"false" — Noctalia's DND boolean spelling. Anything
+/// else is not a status the shell reports, so it is refused without spawning.
+fn dnd_bool_arg(status: &str) -> Option<&'static str> {
+    match status {
+        "on" => Some("true"),
+        "off" => Some("false"),
+        _ => None,
+    }
+}
+
 // ── NoctaliaV5Provider ───────────────────────────────────────────────
 //
 // Self-contained: the whole save/apply happens over IPC (`noctalia msg`).
@@ -2299,6 +2385,18 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use tempfile::TempDir;
+
+    /// The DND spelling the shell adapter owns: "on"/"off" are the only
+    /// statuses Noctalia reports, and they map to the CLI's `true`/`false`.
+    /// A mapping typo here would silently break DND restore for the shipped
+    /// setup, so it stays pinned by a test.
+    #[test]
+    fn test_noctalia_dnd_bool_maps_status_words() {
+        assert_eq!(dnd_bool_arg("on"), Some("true"));
+        assert_eq!(dnd_bool_arg("off"), Some("false"));
+        assert_eq!(dnd_bool_arg(""), None);
+        assert_eq!(dnd_bool_arg("garbage"), None);
+    }
 
     #[test]
     fn test_noctalia_v4_provider_new() {

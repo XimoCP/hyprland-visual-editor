@@ -119,8 +119,25 @@ both is stopped and reported, never forced.
 ## Progress and evidence
 
 - 2026-10-05: contract written from the verified read-only report; backup taken.
-- Pending: A1 onward.
+- 2026-10-05: pre-existing red fixed first — the seven sandboxed watcher tests
+  still read the log at the old `~/.cache/hve/` path while `color_watcher.sh`
+  (commit `5b0a5e4`) now writes it at `$HVE_SAFE_DIR`; commit `3f97182`, suite
+  back to 1346/0.
+- 2026-10-05: **A1+A2 done** (one TDD unit, commit `98c452e`). New generic seam
+  `src/providers/shell_capabilities.rs` (trait with declined defaults plus
+  `NoShell`); `NoctaliaShell` in `noctalia.rs` owns the moved L3-L6 logic; the
+  core (`main.rs`) drives it through `providers::active_shell()` and names no
+  shell in its production body (architecture pin `main.rs/noctalia` 13 → 0).
+  The test-only fake (`src/shell_agnosticism_tests.rs`) drives backfill,
+  re-assert arming, DND, and a fake `ThemeProvider` through
+  list/save/apply/preview/facts. Writer: MiMo 2.6
+  (`opencode-go/mimo-v2.6-flash`); cross-model verification: GLM
+  (`opencode-go/glm-5.3-flash`) → **VERDICT PASS**, no blockers. Suite 1350/0;
+  `cargo build --release` warning-free. Carried to later units: `NoShell`
+  unused (A5), the `active_shell()` wrapper path (A4/A5), localized
+  `home.about_full` still names Noctalia (A7), three `main.rs` doc comments
+  still name it (A6/A7).
 
 ## Next step
 
-A1 — the fake-adapter proof (delegated writer, then cross-model verification).
+A3 — module honesty (L7, L8, L9).

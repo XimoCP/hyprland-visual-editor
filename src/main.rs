@@ -32,6 +32,8 @@ mod scripts_contract;
 mod reload_coalescer;
 #[cfg(test)]
 mod test_utils;
+#[cfg(test)]
+mod shell_agnosticism_tests;
 
 use app_state::AppState;
 use clap::Parser;
@@ -668,39 +670,24 @@ pub(crate) fn reaffirm_gallery_focus_on_active(window: &crate::MainWindow) -> bo
 // `cfg.last_applied_theme` empty on disk, so every restart resolved NO
 // active card and the carousel fell back to the first one (user report:
 // always the same theme centered). Resolve the active theme from the LIVE
-// wallpaper — the same IPC the noctalia-v5 provider saves with — adopt the
-// first matching theme in list order, and persist it so this only runs once.
+// wallpaper through the shell adapter, adopt the first matching theme in
+// list order, and persist it so this only runs once.
 
-/// Saved noctalia-v5 wallpaper of one theme (empty dir/file → None).
-fn saved_theme_wallpaper(themes_dir: &std::path::Path, name: &str) -> Option<String> {
-    std::fs::read_to_string(
-        themes_dir
-            .join(name)
-            .join("providers")
-            .join("noctalia-v5")
-            .join("wallpaper.txt"),
-    )
-    .ok()
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
-}
-
-/// Resolve the backfill candidate: live wallpaper via IPC, then the first
-/// theme whose saved snapshot matches. IPC failure or no match → None (the
-/// caller keeps the old first-card fallback; next launch tries again).
+/// Resolve the backfill candidate: live wallpaper via the shell adapter,
+/// then the first theme whose saved snapshot matches. Adapter failure or no
+/// match → None (the caller keeps the old first-card fallback; next launch
+/// tries again).
 fn backfill_active_from_live(
     tm: &crate::theme_manager::ThemeManager,
     config_dir: &std::path::Path,
+    shell: &dyn crate::providers::shell_capabilities::ShellCapabilities,
 ) -> Option<String> {
-    let live = crate::providers::noctalia_runtime::noctalia_msg(&["msg", "wallpaper-get"])
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())?;
+    let live = shell.live_wallpaper()?;
     let themes_dir = config_dir.join("hve").join("themes");
     let themes = tm.list().ok()?;
     let rows: Vec<(String, Option<String>)> = themes
         .iter()
-        .map(|t| (t.name.clone(), saved_theme_wallpaper(&themes_dir, &t.name)))
+        .map(|t| (t.name.clone(), shell.saved_theme_wallpaper(&themes_dir, &t.name)))
         .collect();
     crate::callbacks::backfill_active_candidate(&rows, &live)
 }
@@ -1050,17 +1037,17 @@ pub(crate) const FOCUS_RESTORE_BUMP_DELAYS_MS: &[u64] = &[2500, 4500, 6500];
 /// unreadable files and palette-less schemes (builtin without a file,
 /// wallpaper) arm nothing, so those applies schedule no extra restores.
 pub(crate) fn apply_arms_palette_reassert(themes_root: &std::path::Path, theme_name: &str) -> bool {
-    let provider_dir = themes_root.join(theme_name).join("providers").join("noctalia-v5");
-    let raw = match std::fs::read_to_string(provider_dir.join("source.txt")) {
-        Ok(raw) => raw,
-        Err(_) => return false,
-    };
-    let parts: Vec<&str> = raw.trim().splitn(2, ' ').collect();
-    let name = parts.get(1).copied().unwrap_or("");
-    if name.is_empty() {
-        return false;
-    }
-    provider_dir.join("palette.json").is_file()
+    apply_arms_palette_reassert_with(themes_root, theme_name, &*crate::providers::active_shell())
+}
+
+/// Injectable core: does applying `theme_name` arm the late palette
+/// re-assert? The answer comes from the shell adapter; the core only asks.
+pub(crate) fn apply_arms_palette_reassert_with(
+    themes_root: &std::path::Path,
+    theme_name: &str,
+    shell: &dyn crate::providers::shell_capabilities::ShellCapabilities,
+) -> bool {
+    shell.arms_palette_reassert(themes_root, theme_name)
 }
 
 /// Schedule the bounded focus-restore bumps after an apply. Custom-palette
@@ -2568,67 +2555,44 @@ fn reassert_hve_fullscreen_targeted() -> bool {
 // net — `take()` makes a second restore a no-op).
 static THEME_DND_ORIG: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// "on"→"true", "off"→"false" — noctalia's DND boolean spelling.
-fn dnd_bool_arg(status: &str) -> Option<&'static str> {
-    match status {
-        "on" => Some("true"),
-        "off" => Some("false"),
-        _ => None,
-    }
-}
-
-/// Verified live: `noctalia msg notification-dnd-status` prints on/off;
-/// `notification-dnd-set true|false` answers ok. Best-effort everywhere.
-fn noctalia_dnd_set(state: &str) -> bool {
-    std::process::Command::new("noctalia")
-        .args(["msg", "notification-dnd-set", state])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
-        .unwrap_or(false)
-}
-
-fn noctalia_dnd_status() -> Option<String> {
-    let out = std::process::Command::new("noctalia")
-        .args(["msg", "notification-dnd-status"])
-        .output()
-        .ok()?;
-    let s = String::from_utf8(out.stdout).ok()?;
-    let s = s.trim().to_string();
-    if s == "on" || s == "off" { Some(s) } else { None }
-}
-
 /// Engage DND for the swap. First writer wins: while a swap is already in
 /// flight (rapid successive applies) a newer generation must NOT overwrite
 /// the captured original with its own silenced "on".
-fn theme_dnd_engage() {
+fn theme_dnd_engage_with(shell: &dyn crate::providers::shell_capabilities::ShellCapabilities) {
     let orig = {
         let mut slot = THEME_DND_ORIG.lock().unwrap();
         if slot.is_some() {
             return; // already engaged by an earlier generation
         }
-        match noctalia_dnd_status() {
+        match shell.dnd_status() {
             Some(s) => {
                 *slot = Some(s);
                 slot.clone().unwrap()
             }
             None => {
-                tracing::warn!("[theme] noctalia DND status unavailable — notifications not silenced");
+                tracing::warn!("[theme] shell DND status unavailable — notifications not silenced");
                 return;
             }
         }
     };
-    let ok = noctalia_dnd_set("true");
+    let ok = shell.dnd_set("on");
     tracing::info!("[theme] DND engaged (was {}) ok={}", orig, ok);
 }
 
+fn theme_dnd_engage() {
+    theme_dnd_engage_with(&*crate::providers::active_shell());
+}
+
 /// Restore the pre-swap DND state, exactly once (take()).
-fn theme_dnd_release() {
+fn theme_dnd_release_with(shell: &dyn crate::providers::shell_capabilities::ShellCapabilities) {
     if let Some(orig) = THEME_DND_ORIG.lock().unwrap().take() {
-        if let Some(arg) = dnd_bool_arg(&orig) {
-            let ok = noctalia_dnd_set(arg);
-            tracing::info!("[theme] DND restored to {} ok={}", orig, ok);
-        }
+        let ok = shell.dnd_set(&orig);
+        tracing::info!("[theme] DND restored to {} ok={}", orig, ok);
     }
+}
+
+fn theme_dnd_release() {
+    theme_dnd_release_with(&*crate::providers::active_shell());
 }
 
 /// Interlude view state, pure — `THEME_INTERLUDE` holds the shared static.
@@ -2878,7 +2842,7 @@ fn main() -> Result<(), slint::PlatformError> {
         // the field empty — resolve the active theme from the live wallpaper
         // and persist it, so the gallery opens on the APPLIED card.
         if theme_manager.last_applied.is_empty() {
-            if let Some(name) = backfill_active_from_live(&theme_manager, &config_dir) {
+            if let Some(name) = backfill_active_from_live(&theme_manager, &config_dir, &*crate::providers::active_shell()) {
                 theme_manager.last_applied = name.clone();
                 cfg.last_applied_theme = name;
                 let _ = cfg.save();
@@ -4033,7 +3997,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_active_theme_name(cfg.last_applied_theme.clone().into());
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
     window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
-    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE is a graphical app to visually manage your Hyprland desktop aesthetics: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete full configurations, including static and animated (mpvpaper) wallpapers depending on the active provider (Noctalia v5, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact."));
+    window.set_home_about_full(tr.tr_shared("home.about_full", "HVE is a graphical app to visually manage your Hyprland desktop aesthetics: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete full configurations, including static and animated (mpvpaper) wallpapers depending on the active provider (your shell provider, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact."));
     window.set_home_about_tree_label(tr.tr_shared("home.about_tree_label", "Project structure"));
     let tree_paths: Vec<SharedString> = tr.tr_array("home.about_tree_paths");
     let tree_descs: Vec<SharedString> = tr.tr_array("home.about_tree_descs");
@@ -6408,16 +6372,6 @@ mod tests {
         assert!(s.staged(), "mark_moved must be observable for the finale skip");
         assert_eq!(s.take_restore(), Some("2".to_string()));
         assert_eq!(s.take_restore(), None, "restore is consumed exactly once");
-    }
-
-    #[test]
-    fn dnd_bool_maps_noctalia_status_words() {
-        // Verified live: `noctalia msg notification-dnd-status` prints
-        // on/off and `notification-dnd-set true|false` toggles it.
-        assert_eq!(dnd_bool_arg("on"), Some("true"));
-        assert_eq!(dnd_bool_arg("off"), Some("false"));
-        assert_eq!(dnd_bool_arg(""), None);
-        assert_eq!(dnd_bool_arg("garbage"), None);
     }
 
     #[test]

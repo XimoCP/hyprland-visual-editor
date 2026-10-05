@@ -5,6 +5,7 @@ pub mod mpvpaper;
 pub mod noctalia;
 pub mod noctalia_runtime;
 pub mod shell;
+pub mod shell_capabilities;
 pub mod skwd_engine;
 pub mod skwd_policy;
 pub mod wallpaper_authority;
@@ -60,6 +61,13 @@ pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
     } else {
         tm.register_provider(Box::new(hve_presets::HvePresetsProvider::new(engine.clone())));
     }
+}
+
+/// The capability adapter for the shell that is running. Today the only
+/// shipped shell is Noctalia; a future shell adds its own adapter here. The
+/// core calls only this, never a shell name, path or CLI.
+pub fn active_shell() -> Box<dyn shell_capabilities::ShellCapabilities> {
+    Box::new(crate::providers::noctalia::NoctaliaShell)
 }
 
 /// A READ-ONLY declaration instance of a shipped provider, obtained by id
