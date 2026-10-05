@@ -6,7 +6,7 @@
 #
 # Changes:
 #   - Uses inotifywait -e close_write (fires AFTER file is fully written)
-#   - Logs to ~/.cache/hve/color_watcher.log
+#   - Logs to $HVE_SAFE_DIR/color_watcher.log (utils.sh resolves it via XDG)
 #   - Errors from assemble.sh are visible in the log
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
@@ -18,8 +18,8 @@ source "$SCRIPT_DIR/colors.sh"
 
 HVE_HYPR_DIR="$HOME/.config/hypr"
 ASSEMBLE_SCRIPT="$HVE_SCRIPTS_DIR/assemble.sh"
-LOG_FILE="$HOME/.cache/hve/color_watcher.log"
-COLOR_SIGNAL="$HOME/.cache/hve/colors.json"
+LOG_FILE="$HVE_SAFE_DIR/color_watcher.log"
+COLOR_SIGNAL="$HVE_SAFE_DIR/colors.json"
 GET_COLORS_SCRIPT="$HVE_SCRIPTS_DIR/get_colors.sh"
 
 _log() {
@@ -144,7 +144,7 @@ _notify_hve() {
 _reassert_theme_authority() {
     local force="${1:-}"
     hve_theme_owns_colours || return 0
-    local safe_dir="${HVE_SAFE_DIR:-$HOME/.cache/hve}"
+    local safe_dir="${HVE_SAFE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
     local stamp_file="$safe_dir/assert-color-authority.last"
     local now
     now=$(date +%s)

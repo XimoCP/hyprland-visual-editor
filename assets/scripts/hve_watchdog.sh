@@ -8,7 +8,10 @@ HVE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
 HYPR_LUA="$HOME/.config/hypr/hyprland.lua"
-HVE_SAFE_DIR="${HVE_CACHE_DIR:-$HOME/.cache/hve}"
+# Cache root, mirroring Rust's `dirs::cache_dir()` (src/config.rs):
+# `$XDG_CACHE_HOME` when set, else `$HOME/.cache`, plus `hve`. This script
+# does not source utils.sh, so the resolution lives here too.
+HVE_SAFE_DIR="${HVE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
 
 # Check if the HVE directory still exists
 if [ ! -d "$HVE_DIR" ]; then

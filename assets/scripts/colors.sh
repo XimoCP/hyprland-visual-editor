@@ -5,6 +5,12 @@
 
 HVE_HYPR_DIR="${HVE_HYPR_DIR:-$HOME/.config/hypr}"
 
+# HVE config root, mirroring Rust's `dirs::config_dir()` (src/config.rs):
+# `$XDG_CONFIG_HOME` when set, else `$HOME/.config`, plus `hve`. This file is
+# sourced standalone (it does not source utils.sh), so the resolution lives
+# here too instead of assuming the legacy config location under `$HOME`.
+HVE_CONFIG_DIR="${HVE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hve}"
+
 # --- The palette roster: ONE declaration, consumed everywhere ----------
 # Every colour role the overlay may reference, in emission order. This list
 # is the single source of the whole role lifecycle: the reset, the
@@ -103,7 +109,7 @@ _hve_theme_palette_file() {
     local descriptor="$safe_dir/color-authority.json"
     [ -f "$descriptor" ] || return 1
 
-    local cfg="$HOME/.config/hve/config.json"
+    local cfg="$HVE_CONFIG_DIR/config.json"
     [ -f "$cfg" ] || return 1
 
     local palette
@@ -141,7 +147,7 @@ PY
         *..*) return 1 ;;
     esac
     case "$palette" in
-        "$HOME/.config/hve/themes/"*) ;;
+        "$HVE_CONFIG_DIR/themes/"*) ;;
         *) return 1 ;;
     esac
     [ -f "$palette" ] || return 1
@@ -156,7 +162,7 @@ PY
     local _hve_parent _hve_real_parent _hve_themes_root _hve_real_root
     _hve_parent=$(dirname -- "$palette")
     _hve_real_parent=$(cd -P -- "$_hve_parent" 2>/dev/null && pwd) || return 1
-    _hve_themes_root="$HOME/.config/hve/themes"
+    _hve_themes_root="$HVE_CONFIG_DIR/themes"
     if _hve_real_root=$(cd -P -- "$_hve_themes_root" 2>/dev/null && pwd); then
         case "$_hve_real_parent/" in
             "$_hve_real_root/"*) ;;
