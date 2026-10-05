@@ -101,3 +101,20 @@ one commit, suite green.
 
 - 2026-10-05: contract written from the keeper's requirements and the measured
   theme layout, media sizes and poster sizes. Pending: T1 onward.
+- 2026-10-05 (night, autonomous): keeper approved "go non-stop until finished,
+  commit at the end". Working agreement for the run:
+  - Route: one delegated writer + one cross-model verifier per task; one
+    work-unit commit per task, made by the orchestrator after verification.
+  - TDD: ON (source: project AGENTS.md). Runner: `cargo test`. RED before GREEN.
+  - Writer model: MiMo 2.6 Flash. Verifier model: GLM 5.3 Flash (different
+    model, required by the project rules).
+  - Visual changes: any `.slint` or paint-path change also needs the headless
+    render test and the PNGs actually read before it counts as verified.
+  - Forecast: the six tasks exceed ~400 authored changed lines. No PR is created
+    in this run (PRs are the keeper's call); when one is opened, slice it
+    (chained) or record `size:exception`.
+  - Media resolution default for T5 (keeper asleep): ship a reference theme's
+    video only when it is under 100 MB; otherwise ship the poster and keep the
+    `url` record, and report the outliers for the keeper to decide.
+  - Placement rule for T1/T2/T3: theme media lives at `{theme_dir}/media/`,
+    records become **theme-relative**, absolute records stay readable.
