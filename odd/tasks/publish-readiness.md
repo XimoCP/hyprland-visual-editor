@@ -111,7 +111,10 @@ hiding behind green tests.
       behind — `hve_watchdog.sh` handed an unchecked relative `XDG_CACHE_HOME` to
       `rm -rf`, and `colors.sh` resolved its config root the unchecked way while
       documented as standalone — both fixed and probed (the watchdog's delete target
-      now falls back to `$HOME/.cache/hve` in the relative case). Evidence: the
+      now falls back to `$HOME/.cache/hve` in the relative case). A follow-up
+      verification passed with no blocking findings; its two small residuals (an
+      exported relative `HVE_CACHE_DIR`, a relative `$HOME`) are closed by a guard at
+      the delete site, which now only removes an absolute `.../hve` path. Evidence: the
       first pass was verified cross-model; every behaviour was probed by running the
       real snippets — four XDG cases (unset / absolute / empty / relative), the
       autostart update over an existing config with other keys, its idempotency, its

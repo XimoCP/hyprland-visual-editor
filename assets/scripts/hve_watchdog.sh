@@ -34,6 +34,13 @@ if [ ! -d "$HVE_DIR" ]; then
         sed -i '/-- >>> HYPRLAND VISUAL EDITOR START <<</,/-- >>> HYPRLAND VISUAL EDITOR END <<</d' "$HYPR_LUA"
     fi
 
-    # Remove the safe fallback directory and this script itself
-    rm -rf "$HVE_SAFE_DIR"
+    # Remove the safe fallback directory and this script itself.
+    # Guard the delete: the only shape HVE ever resolves is an absolute path
+    # ending in `/hve`. An exported relative `HVE_CACHE_DIR`, or a relative
+    # `$HOME`, would otherwise send `rm -rf` chasing a path relative to
+    # whatever directory this script happened to run in.
+    case "$HVE_SAFE_DIR" in
+        /*/hve) rm -rf "$HVE_SAFE_DIR" ;;
+        *) echo "hve_watchdog: refusing to remove '$HVE_SAFE_DIR' (not an absolute .../hve path)" >&2 ;;
+    esac
 fi
