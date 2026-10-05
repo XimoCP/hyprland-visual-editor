@@ -2,43 +2,221 @@
 <img src="assets/branding/social-preview.png" alt="HVE — Hyprland Visual Editor" width="900">
 </p>
 
-# HVE — Hyprland Visual Editor
+<h1 align="center">HVE — Hyprland Visual Editor</h1>
 
-HVE is a graphical app that manages the look of a Hyprland desktop from one place.
+<p align="center">
+<strong>Shape your Hyprland desktop. Live.</strong>
+</p>
 
-## What it is
+<p align="center">
+Animations · Borders · Shaders · Gaps · Wallpapers · Colours · Themes
+</p>
 
-A desktop application for changing how your Hyprland setup looks: animations, borders, shaders, window gaps, wallpapers, colours and themes — all from one interface, with the change applied live as you make it.
+---
 
-## Philosophy
+## 🎨 Your desktop, your way
 
-HVE never rewrites your personal Hyprland configuration. It keeps small **fragments** — one for the animation, one for the border, one for the geometry, one for the shader — and **assembles** them, together with the colours detected on your system, into a single overlay file that Hyprland loads alongside your own configuration. It injects one small block between markers HVE can fully revert, and every write is atomic. Uninstalling leaves the system as it was before HVE was installed.
+Hyprland gives you an incredible amount of control.
 
-## Hyprland is the base; the shell is a separate axis
+HVE gives you a place to **actually use it**.
 
-Hyprland is the base HVE builds on, not a swappable backend. The desktop shell that sits on top of it is a separate axis: what the core needs from a shell (active wallpaper, Do-Not-Disturb, palette re-assert) goes through a capability seam where every method has a declined default, and an architecture test fails the build if a shell name appears in core production code. Today the shipped adapter is **Noctalia**; another shell would need its own adapter, without changes to the core.
+HVE is a graphical application for designing the visual side of your Hyprland desktop from one place. Change animations, borders, shaders, gaps, wallpapers, colours and themes — and **see the result as you make it**.
 
-## Install
+No digging through configuration files just to change a border.
+
+No hunting for the right animation syntax.
+
+No manually rebuilding a collection of snippets every time you want to try something different.
+
+**Open HVE. Change it. See it. Keep it.**
+
+---
+
+## 🧩 Designed to work with your configuration — not against it
+
+Your Hyprland configuration is yours.
+
+HVE doesn't take it over.
+
+Instead, HVE keeps small, independent fragments for the things it manages:
+
+```text
+animation
+border
+geometry
+shader
+```
+
+It also reads the colours your desktop already uses. The active fragments and the detected colours are assembled into an overlay that Hyprland loads alongside your own configuration.
+
+Your original configuration stays untouched.
+
+And when HVE goes away, **your system goes back to the way it was.**
+
+Every write is atomic, and the changes HVE makes are deliberately small and reversible.
+
+---
+
+## 🏠 Hyprland is the foundation
+
+HVE is built specifically around Hyprland.
+
+That's intentional.
+
+Hyprland provides the compositor, the configuration model and the power.
+
+HVE provides a visual way to work with the parts that define how your desktop feels.
+
+The shell is a separate layer.
+
+Today, HVE ships with a **Noctalia adapter** for the shell capabilities it needs. The core itself does not depend on Noctalia — shell integration goes through a small capability interface, allowing other shells to provide their own adapter in the future.
+
+In other words:
+
+```text
+                  HVE
+                   │
+          ┌────────┴────────┐
+          │                 │
+       Hyprland          Shell
+          │                 │
+          │            ┌────┴─────┐
+          │            │ Noctalia │
+          │            │ adapter  │
+          │            └──────────┘
+          │
+       Your desktop
+```
+
+**Hyprland is the base.
+The shell is an integration layer.**
+
+---
+
+## ⚡ Live changes
+
+HVE is designed around experimentation.
+
+Change something.
+
+Look at it.
+
+Change it again.
+
+Find what feels right.
+
+You shouldn't need to restart your desktop every time you want to see whether a different animation feels better.
+
+That's the point.
+
+---
+
+## 🖥️ One place for your visual setup
+
+HVE brings together the pieces that normally end up scattered across configuration files:
+
+| Piece | What it controls |
+| ----- | ---------------- |
+| 🎬 **Animations** | How windows and workspaces move |
+| 🪟 **Borders** | The visual frame around your windows |
+| 📐 **Geometry** | Gaps and spatial relationships |
+| 🕶️ **Shaders** | Visual effects |
+| 🖼️ **Wallpapers** | Static and animated backgrounds |
+| 🎨 **Colours** | Your desktop palette |
+| ✨ **Themes** | Several visual settings saved as one coherent look |
+
+---
+
+## 🚀 Install
+
+Clone the repository and run:
 
 ```bash
 ./install.sh
 ```
 
-Full details, dependencies and what the installer places where: [Installation](docs/wiki/Installation.md).
+For dependencies, installation paths and everything the installer does:
 
-## Quick start
+**→ [Installation](docs/wiki/Installation.md)**
+
+---
+
+## 🏃 Quick start
+
+Open HVE:
 
 ```bash
-hve          # open the window
-hve --tray   # start minimized in the system tray
+hve
 ```
 
-Your settings live in `~/.config/hve/config.json`.
+Or start it directly in the system tray:
 
-## Manual
+```bash
+hve --tray
+```
 
-The full manual is the wiki under [`docs/wiki/`](docs/wiki/Home.md), starting at [Home](docs/wiki/Home.md): installation, architecture, themes and colours, presets, backgrounds, IPC, tray and automation, project structure, usage, configuration, FAQ and development.
+Your configuration is stored here:
 
-## Licence
+```text
+~/.config/hve/config.json
+```
+
+---
+
+## 📖 Documentation
+
+The complete manual lives in the wiki.
+
+**→ [Open the HVE Wiki](https://github.com/XimoCP/hyprland-visual-editor/wiki)**
+
+You'll find information about:
+
+* Installation
+* Usage
+* Themes and colours
+* Presets
+* Backgrounds
+* IPC
+* Tray and automation
+* Configuration
+* Architecture
+* Project structure
+* Development
+* FAQ
+
+If you're looking for the details, they're there.
+
+If you're just here to make your desktop look better, **you can simply install HVE and start playing with it.**
+
+---
+
+## 🛠️ Built for experimentation
+
+HVE is still evolving.
+
+The goal isn't to hide Hyprland's power behind a simplified interface.
+
+It's to make that power **easier to explore**.
+
+Try things.
+
+Build a look.
+
+Save it.
+
+Change it tomorrow.
+
+Break nothing.
+
+---
+
+## 📜 Licence
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+<strong>HVE — Hyprland Visual Editor</strong><br>
+<em>Make Hyprland yours.</em>
+</p>
