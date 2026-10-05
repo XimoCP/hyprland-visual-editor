@@ -25,12 +25,22 @@ HVE_BORDERS_DIR="$HVE_ASSETS_DIR/borders"
 HVE_ANIMATIONS_DIR="$HVE_ASSETS_DIR/animations"
 HVE_SHADERS_DIR="$HVE_ASSETS_DIR/shaders"
 
+# `dirs::config_dir()` / `dirs::cache_dir()` follow the XDG spec: a relative
+# `XDG_*_HOME` is invalid and is ignored, falling back to `$HOME`. Mirror that
+# here so the scripts and the app can never resolve to different directories.
+_hve_xdg_dir() {
+    case "${1:-}" in
+        /*) printf '%s' "$1" ;;
+        *) printf '%s' "$2" ;;
+    esac
+}
+
 # User preset root, mirroring `PresetStore::new` (src/preset_store.rs):
 # `dirs::config_dir()` → `$XDG_CONFIG_HOME` when set, else `$HOME/.config`,
 # plus `hve/presets`. Saved presets live in `<root>/borders` and
 # `<root>/animations`. An explicit `HVE_USER_PRESETS_DIR` (sandbox/test
 # override) wins, same rule as `HVE_CACHE_DIR`.
-HVE_USER_PRESETS_DIR="${HVE_USER_PRESETS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hve/presets}"
+HVE_USER_PRESETS_DIR="${HVE_USER_PRESETS_DIR:-$(_hve_xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")/hve/presets}"
 
 # Safe cache directory (outside plugin, survives plugin deletion for cleanup).
 # Cache-dir convention (capability-routing unit 1e, F5): the default mirrors
@@ -38,7 +48,7 @@ HVE_USER_PRESETS_DIR="${HVE_USER_PRESETS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/
 # `$HOME/.cache`, plus `hve` — so both sides find `color-authority.json`.
 # Rule: an explicit `HVE_CACHE_DIR` (sandbox/test override) wins; otherwise
 # the XDG rule above. In production neither `HVE_*` var is set, so both agree.
-HVE_SAFE_DIR="${HVE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hve}"
+HVE_SAFE_DIR="${HVE_CACHE_DIR:-$(_hve_xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve}"
 
 # Hyprland config directory
 HVE_HYPR_DIR="$HOME/.config/hypr"
