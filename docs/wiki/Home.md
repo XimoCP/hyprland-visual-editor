@@ -1,6 +1,6 @@
 # HVE — Hyprland Visual Editor
 
-**HVE** is a graphical application for managing the look of a Hyprland desktop from one place: animations, borders, rounded corners, gaps, shaders, wallpapers and colours and themes. It is aimed at anyone running a Hyprland-based setup — plain Hyprland, Noctalia Shell or any other Hyprland-based desktop — who wants to change how the desktop looks without editing configuration files by hand.
+**HVE** is a graphical application for managing the look of a Hyprland desktop from one place: animations, borders, rounded corners, gaps, shaders, wallpapers and colours and themes. It is aimed at anyone running a Hyprland setup — plain Hyprland or Noctalia Shell today — who wants to change how the desktop looks without editing configuration files by hand.
 
 ## How it works
 
@@ -32,12 +32,11 @@ your Hyprland files  ←  immutable, HVE never modifies them
 - [Architecture](Architecture) — how fragments are assembled into the overlay, Lua vs Conf detection, and the configuration, colour, preset, background, IPC, tray and watchdog systems.
 - [Themes and colours](Themes-and-Colours) — how HVE reads colours from Noctalia, pywal, matugen or a manual source, and how complete themes are saved and applied.
 - [Presets](Presets) — animation, border and shader presets: their metadata, how they are scanned, and the toggle behaviour.
-- [Backgrounds](Backgrounds) — animated (video) wallpapers for Noctalia v5 themes through the `noctalia/mpvpaper` plugin.
+- [Backgrounds](Backgrounds) — static and animated (video) wallpapers, and which piece owns the one on screen.
 - [IPC](IPC) — the `hve-ipc` client, its commands and the default keyboard shortcuts.
 - [Tray and automation](Tray-and-Automation) — the tray icon and its menu, the colour watcher, auto-minimise with countdown, and the safety watchdog.
 - [Project structure](Project-Structure) — the repository layout and the runtime files HVE creates.
 - [Usage](Usage) — the graphical interface, the command line, the tray and the keyboard shortcuts.
 - [Configuration](Configuration) — a reference for `~/.config/hve/config.json`, its fields and its migrations.
-- [Troubleshooting](Troubleshooting) — checks to run when HVE does not behave as expected.
 - [FAQ](FAQ) — short answers to common questions.
 - [Development](Development) — building HVE from source and working on its code.

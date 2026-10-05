@@ -99,8 +99,46 @@ hiding behind green tests.
 - [ ] **P5 — `Cargo.toml` carries `readme` and `repository`.** `readme = "README.md"` is
       free; `repository` waits on P3.
 
-### Load-bearing findings (the audit's items 6-7)
+### Installer and the agnosticism claim (keeper's questions, 2026-10-05)
 
+- [ ] **P6 — `install.sh` fixes before publishing** (read-only review done). Current in
+      its core, but four real defects:
+      1. **Ignores XDG**: hardcodes `$HOME/.config/hve` (install.sh:142, 420-427) and
+         `$HOME/.cache/hve` (uninstall.sh:94) while the app uses `dirs::config_dir()` /
+         `dirs::cache_dir()` (`src/config.rs:145-150, 238-245`) — on a machine that sets
+         `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` it installs where the app will not read.
+      2. **`python3` is never installed or checked** (install.sh:212-267) although
+         `hve-ipc` (`assets/scripts/hve-ipc:1`) and the colour path
+         (`assets/scripts/colors.sh:98,110,182,234`) require it.
+      3. **Stale `config_version`**: writes `3` (install.sh:424, 427); current is `8`
+         (`src/config.rs:7`). Migration saves it, but it is out of date.
+      4. **Uninstall does not mirror install**: it removes
+         `~/.config/autostart/hve.desktop` (uninstall.sh:90, 144) which install never
+         creates, while the real autostart lives in `~/.cache/hve/hve-settings.lua`
+         (`src/settings.rs:444`) and can survive with the binary gone.
+      Also worth fixing: Void package names are probably wrong (install.sh:234,
+      plausible not verified), `cargo build --release` runs without `--locked`
+      (install.sh:309), and five of the six distro branches have never been exercised.
+      Verified good: no personal paths, prompts never hang (EOF falls back to defaults),
+      idempotent, refuses to run as root, and every path it writes matches the code.
+- [ ] **P7 — the documentation must not overclaim shell agnosticism.** Today
+      `README.md:7` and `WIKI.md:7` already say HVE "does not depend on any particular
+      shell", which the code does not support. Verified truth to write instead: the
+      colour sources are genuinely pluggable (`assets/scripts/colors.sh:413-580`, one
+      module per shell), a theme provider can be implemented against `ThemeProvider`
+      (`src/theme_manager.rs:109-225`) without rewriting the core, and the compositor
+      sits behind `Composer` (`src/composer/mod.rs:106-192`) — but the registry is
+      hardcoded to Noctalia (`src/providers/mod.rs:27, 88`), the core names Noctalia
+      paths and its CLI (`src/main.rs:680-681, 695, 1052-1063, 2582-2598`), and the
+      modules documented as "neutral" (`noctalia_runtime.rs`, `bg_info.rs`) are
+      Noctalia-specific. Adding another shell is an adapter plus a handful of core
+      edits — not a drop-in. Decision recorded: HVE will NOT grow more backends; the
+      claim is stated honestly and the leaks are only worth closing if someone asks.
+- [ ] **P8 — no troubleshooting section anywhere** (keeper's decision, 2026-10-05):
+      people report issues in the repository instead. Remove `Troubleshooting` from the
+      wiki page list and keep it out of the README.
+
+### Load-bearing findings (the audit's items 6-7)
 - [ ] **H1 — the forced close and the poisoned locks.** Keep the log capture ready for
       the next occurrence, and remove the bare `THEME_*.lock().unwrap()` pattern that
       turns one panic into an immediate cascade.

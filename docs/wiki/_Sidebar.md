@@ -11,6 +11,5 @@
 - [Project structure](Project-Structure)
 - [Usage](Usage)
 - [Configuration](Configuration)
-- [Troubleshooting](Troubleshooting)
 - [FAQ](FAQ)
 - [Development](Development)
