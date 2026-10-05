@@ -5,6 +5,8 @@ edition = "2021"
 description = "Hyprland Visual Editor — Standalone"
 authors = ["XimoCP"]
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/XimoCP/hyprland-visual-editor"
 
 [dependencies]
 bitflags = "2"

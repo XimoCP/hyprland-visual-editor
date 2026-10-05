@@ -27,9 +27,11 @@ hiding behind green tests.
       `~/.local/bin` may not be in `PATH`, so a bare `hve` would break for exactly
       the users the installer already knows about. `install.sh` copies the shipped
       file verbatim, so the fix reaches every install.
-- [ ] **P3 — a git remote exists.** Nothing can be published while
-      `git remote -v` is empty. Needs the keeper's destination (host + repository);
-      the orchestrator cannot invent it.
+- [x] **P3 — a git remote exists** (closed 2026-10-05). `origin` =
+      `git@github.com:XimoCP/hyprland-visual-editor.git` (SSH). The repo held the
+      keeper's first, obsolete HVE (Quickshell/Noctalia v4); with his
+      authorisation its `main` was replaced by the current HVE (preserved locally
+      as tag `legacy-hve1`), and `hve2-visual-rewrite` was pushed as a branch.
 - [x] **P4 — README and WIKI, each with its own job, plus Spanish copies**
       (closed 2026-10-05).
       - `README.md` — the simple explanation of the project.
@@ -121,8 +123,9 @@ hiding behind green tests.
         `assets/scripts/hve_watchdog.sh`: the deployed copy derived its HVE
         home as `$HOME` (always present) so cleanup never fired; "installed" is
         now the binary `$HOME/.local/bin/hve`, with two contract tests.
-- [ ] **P5 — `Cargo.toml` carries `readme` and `repository`.** `readme = "README.md"` is
-      free; `repository` waits on P3.
+- [x] **P5 — `Cargo.toml` carries `readme` and `repository`** (closed
+      2026-10-05). `readme = "README.md"` and
+      `repository = "https://github.com/XimoCP/hyprland-visual-editor"`.
 
 ### Installer and the agnosticism claim (keeper's questions, 2026-10-05)
 
@@ -191,11 +194,14 @@ hiding behind green tests.
 - 2026-10-05: **P4 closed** — the English manual under `docs/wiki/` (sixteen
   pages), the English README, and the keeper-only Spanish mirror under
   `docs/wiki-es/` + `readme_es.md` (gitignored).
-- Pending: P3 (needs the remote URL), P5.
+- 2026-10-05: **P3 and P5 closed** — `origin` set to the keeper's repo (his
+  obsolete first HVE replaced on `main` by the current one) and `Cargo.toml`
+  carries `readme` + `repository`.
+- Pending: nothing blocking. The wiki is ready to publish on request; the
+  About-link decision (inside P4) is still the keeper's.
 
 ## Next step
 
-P5 — `readme = "README.md"` in `Cargo.toml` (free now); `repository` waits on
-P3, which needs the keeper's destination. The P4 residual open decision (does
-the app's About link move to the wiki URL once P3 exists, or keep opening the
-local `WIKI.md`?) is the keeper's call and is recorded inside P4.
+Publish the wiki (`docs/wiki/` → the repo's `.wiki.git`) when the keeper wants
+it; decide whether the app's About link moves to the wiki or keeps opening the
+local `WIKI.md`.
