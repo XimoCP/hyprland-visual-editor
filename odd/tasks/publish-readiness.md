@@ -117,7 +117,10 @@ hiding behind green tests.
         now a superseded single-file Spanish manual with known stale claims and
         still the app's About target — the open decision above must be taken
         before publishing; the `hve_watchdog.sh` HVE_DIR resolution looks like a
-        real defect (batch 3, item 7) and deserves its own issue.
+        real defect (batch 3, item 7) — **fixed 2026-10-05** in
+        `assets/scripts/hve_watchdog.sh`: the deployed copy derived its HVE
+        home as `$HOME` (always present) so cleanup never fired; "installed" is
+        now the binary `$HOME/.local/bin/hve`, with two contract tests.
 - [ ] **P5 — `Cargo.toml` carries `readme` and `repository`.** `readme = "README.md"` is
       free; `repository` waits on P3.
 

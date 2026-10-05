@@ -1,10 +1,14 @@
 #!/bin/bash
 # hve_watchdog.sh - Monitors if HVE is still installed and cleans up if not
 
-# Resolve HVE directory from THIS script's location
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-# scripts/ is inside assets/, assets/ is inside the project root
-HVE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+# "Still installed" is defined by the binary the installer places. This script
+# is DEPLOYED into the cache (~/.cache/hve/hve_watchdog.sh) and runs from
+# there, so its own location says nothing about where HVE lives: the old
+# `dirname(dirname(SCRIPT_DIR))` derivation resolved to `$HOME`, which always
+# exists, and the cleanup below could never fire. `install.sh` writes
+# `$HOME/.local/bin/hve` and `uninstall.sh` removes exactly that path, so its
+# absence is the honest "HVE is gone" signal.
+HVE_BIN="${HVE_BIN:-$HOME/.local/bin/hve}"
 
 HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
 HYPR_LUA="$HOME/.config/hypr/hyprland.lua"
@@ -21,8 +25,8 @@ _hve_xdg_dir() {
 }
 HVE_SAFE_DIR="${HVE_CACHE_DIR:-$(_hve_xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve}"
 
-# Check if the HVE directory still exists
-if [ ! -d "$HVE_DIR" ]; then
+# Check if HVE is still installed (its binary is present)
+if [ ! -e "$HVE_BIN" ]; then
 
     # Remove markers from hyprland.conf (# style)
     if [ -f "$HYPR_CONF" ]; then

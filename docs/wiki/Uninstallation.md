@@ -30,7 +30,7 @@ Both questions default to **No**, so answering nothing keeps everything.
 
 1. **Your Hyprland configuration is only appended to, never rewritten.** HVE appends one block between the markers `-- >>> HYPRLAND VISUAL EDITOR START <<<` and `-- >>> HYPRLAND VISUAL EDITOR END <<<` in `hyprland.lua` (HVE 2 manages `hyprland.lua` only). Disabling HVE removes the whole block, so the file is exactly as it was. The uninstaller itself never edits your Hyprland files.
 
-2. **The watchdog (`hve_watchdog.sh`) finishes the job.** It runs at every Hyprland start (registered inside that same block). If the HVE directory no longer exists — uninstall, manual deletion — it detects the absence, removes the markers from `hyprland.lua` (and a leftover `#`-style block from an older `hyprland.conf`) and clears `~/.cache/hve/`.
+2. **The watchdog (`hve_watchdog.sh`) finishes the job.** It runs at every Hyprland start (registered inside that same block). If the HVE binary (`~/.local/bin/hve`) is gone — uninstall, manual deletion — it detects the absence, removes the markers from `hyprland.lua` (and a leftover `#`-style block from an older `hyprland.conf`) and clears `~/.cache/hve/`.
 
 3. **The uninstaller removes every file the installer created.** No hidden files, no system records, no residual configuration.
 

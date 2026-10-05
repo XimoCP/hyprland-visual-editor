@@ -127,7 +127,7 @@ hve/
 | `apply_animation.sh` | 33 | Applies an animation preset, copies it to `fragments/animation.lua` |
 | `border.sh` | 32 | Applies a border preset, copies it to `fragments/border.lua` |
 | `get_colors.sh` | 11 | Wraps `colors.sh`, JSON output |
-| `hve_watchdog.sh` | 46 | Safety: if HVE is gone, removes the markers and clears the cache |
+| `hve_watchdog.sh` | 50 | Safety: if HVE is gone, removes the markers and clears the cache |
 | `reload_coalescer.sh` | 194 | One `hyprctl reload` per change-burst, never lost |
 | `hve-ipc` | 26 | Python client for the Unix socket |
 | `hve-sentinel.py` | 282 | Listens on Hyprland's event socket to catch a theme transition where the shell bar stays above HVE |

@@ -7,7 +7,7 @@ No. It only appends an HVE block between the markers `-- >>> HYPRLAND VISUAL EDI
 Yes. HVE is built on Hyprland and ships with the Noctalia adapter today: with Noctalia it works out of the box. Another shell on Hyprland would need a new adapter — the core does not change — but none ships today. See [Architecture](Architecture).
 
 **What happens if I delete HVE's files manually?**
-The watchdog `hve_watchdog.sh`, which runs at every Hyprland start, detects the absence and removes the markers and clears `~/.cache/hve/` automatically.
+The watchdog `hve_watchdog.sh`, which runs at every Hyprland start, detects that the HVE binary (`~/.local/bin/hve`) is gone, removes the markers and clears `~/.cache/hve/` automatically.
 
 **Can I run two instances of HVE?**
 No. HVE takes an exclusive lock on `~/.cache/hve/hve.lock`. A second launch opens no window: it asks the running instance to raise its window over IPC (`show`) and exits.

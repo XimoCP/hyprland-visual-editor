@@ -1762,3 +1762,101 @@ fn symlinked_preset_inside_the_dir_takes_the_safe_fallback() {
         "a symlinked preset must take the safe fallback:\n{overlay}"
     );
 }
+
+// ── Watchdog: cleans up only when HVE is really gone ────────────────────
+
+/// Build a sandbox shaped like a real install: the watchdog deployed into
+/// `~/.cache/hve/`, the HVE block injected into `~/.config/hypr/hyprland.lua`,
+/// and — when `binary_present` — the binary the installer places at
+/// `~/.local/bin/hve`.
+fn watchdog_sandbox(home: &Path, binary_present: bool) -> PathBuf {
+    let cache = home.join(".cache").join("hve");
+    std::fs::create_dir_all(&cache).unwrap();
+    let watchdog = cache.join("hve_watchdog.sh");
+    std::fs::copy(scripts_dir().join("hve_watchdog.sh"), &watchdog).unwrap();
+
+    let hypr = home.join(".config").join("hypr");
+    std::fs::create_dir_all(&hypr).unwrap();
+    std::fs::write(
+        hypr.join("hyprland.lua"),
+        "hl.monitor({ output = \"DP-1\" })\n\n\
+         -- >>> HYPRLAND VISUAL EDITOR START <<<\n\
+         dofile(\"/nonexistent/overlay.lua\")\n\
+         -- >>> HYPRLAND VISUAL EDITOR END <<<\n\n\
+         hl.env(\"XCURSOR_SIZE\", \"24\")\n",
+    )
+    .unwrap();
+
+    if binary_present {
+        let bin = home.join(".local").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let hve = bin.join("hve");
+        std::fs::write(&hve, "#!/bin/bash\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        make_exec(&hve);
+    }
+
+    watchdog
+}
+
+fn run_watchdog(home: &Path, watchdog: &Path) -> Output {
+    let cache = home.join(".cache").join("hve");
+    run_bash(
+        &format!("bash \"{}\"", watchdog.display()),
+        &[],
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("HVE_CACHE_DIR", cache.to_str().unwrap()),
+        ],
+        home,
+    )
+}
+
+/// Deleting HVE's files by hand — the binary gone while the injected block is
+/// still in `hyprland.lua` — must trigger the watchdog's cleanup. The watchdog
+/// is DEPLOYED into the cache, so its own location says nothing about where
+/// HVE lives: the old `dirname(dirname(...))` derivation resolved to `$HOME`
+/// (which always exists) and the cleanup could never fire.
+#[test]
+fn watchdog_cleans_up_when_the_installed_binary_is_gone() {
+    let home = tempfile::tempdir().unwrap();
+    let watchdog = watchdog_sandbox(home.path(), false);
+
+    let out = run_watchdog(home.path(), &watchdog);
+    assert!(out.status.success(), "watchdog must exit 0: {out:?}");
+
+    let lua = std::fs::read_to_string(home.path().join(".config/hypr/hyprland.lua")).unwrap();
+    assert!(
+        !lua.contains("HYPRLAND VISUAL EDITOR START"),
+        "a missing binary must remove the injected HVE block:\n{lua}"
+    );
+    assert!(
+        lua.contains("hl.monitor") && lua.contains("XCURSOR_SIZE"),
+        "the user's own configuration must survive untouched:\n{lua}"
+    );
+    assert!(
+        !home.path().join(".cache/hve").exists(),
+        "the HVE cache must be removed once HVE is gone"
+    );
+}
+
+/// The same sandbox with the installed binary present: the watchdog must do
+/// nothing at all.
+#[test]
+fn watchdog_leaves_everything_when_hve_is_still_installed() {
+    let home = tempfile::tempdir().unwrap();
+    let watchdog = watchdog_sandbox(home.path(), true);
+
+    let out = run_watchdog(home.path(), &watchdog);
+    assert!(out.status.success(), "watchdog must exit 0: {out:?}");
+
+    let lua = std::fs::read_to_string(home.path().join(".config/hypr/hyprland.lua")).unwrap();
+    assert!(
+        lua.contains("HYPRLAND VISUAL EDITOR START"),
+        "an installed HVE must keep its injected block:\n{lua}"
+    );
+    assert!(
+        home.path().join(".cache/hve").exists(),
+        "an installed HVE must keep its cache"
+    );
+}

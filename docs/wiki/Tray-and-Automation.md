@@ -62,14 +62,14 @@ hl.on("hyprland.start", function()
 end)
 ```
 
-The script resolves the directory it treats as HVE's home from its own location — two levels above the script's own directory — and tests that it still exists. (With the registered copy living in `~/.cache/hve`, that resolved directory is normally `$HOME`, so the cleanup below only runs when that directory is gone.)
+"Still installed" is defined by the binary the installer places at `~/.local/bin/hve` — the exact path `uninstall.sh` removes. The watchdog runs from its deployed copy in the cache, so its own location says nothing about where HVE lives; it checks that binary instead.
 
-If the directory is missing — a manual uninstall or an accidental deletion — the script:
+If the binary is missing — a manual uninstall or an accidental deletion — the script:
 
 1. strips HVE's marker block from `~/.config/hypr/hyprland.conf` (`# >>> HYPRLAND VISUAL EDITOR START <<<` … `# >>> HYPRLAND VISUAL EDITOR END <<<`) and from `~/.config/hypr/hyprland.lua` (the same markers with `--` comments);
 2. deletes the cache directory, but only when the resolved path is absolute and ends in `/hve` — a relative `HVE_CACHE_DIR` or a broken `$HOME` can never send `rm -rf` after the wrong directory.
 
-If the directory exists, the script does nothing.
+If the binary is present, the script does nothing.
 
 ## See also
 
