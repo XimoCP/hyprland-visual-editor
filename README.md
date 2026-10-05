@@ -1,3 +1,7 @@
+<p align="center">
+<img src="assets/branding/social-preview.png" alt="HVE — Hyprland Visual Editor" width="900">
+</p>
+
 # HVE — Hyprland Visual Editor
 
 HVE is a graphical app that manages the look of a Hyprland desktop from one place.
