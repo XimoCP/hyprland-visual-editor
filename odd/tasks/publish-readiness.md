@@ -30,9 +30,8 @@ hiding behind green tests.
 - [ ] **P3 — a git remote exists.** Nothing can be published while
       `git remote -v` is empty. Needs the keeper's destination (host + repository);
       the orchestrator cannot invent it.
-- [ ] **P4 — README and WIKI, each with its own job, plus Spanish copies**
-      (keeper's scope, 2026-10-05; **format changed to a GitHub wiki** the same day). Roles are now different, so the old "kept
-      identical" invariant is retired:
+- [x] **P4 — README and WIKI, each with its own job, plus Spanish copies**
+      (closed 2026-10-05).
       - `README.md` — the simple explanation of the project.
       - `WIKI.md` — a structured manual: an index, then one topic per section
         explained from A to Z before moving to the next.
@@ -96,7 +95,7 @@ hiding behind green tests.
         multi-page wiki, that single file no longer represents it: either the link
         moves to the wiki URL (needs P3) or it keeps opening a local page. Until
         that is decided, `WIKI.md` stays in place.
-      - **Progress (2026-10-05, English manual written; Spanish mirror pending)**:
+      - **Progress (2026-10-05, complete)**:
         the wiki is real under `docs/wiki/` — `Home.md`, `_Sidebar.md`,
         `_Footer.md` plus `Installation`, `Uninstallation`, `Architecture`
         (with the verified shell-agnosticism contract), `Themes-and-Colours`,
@@ -104,8 +103,11 @@ hiding behind green tests.
         `Project-Structure`, `Usage`, `Configuration`, `FAQ` and `Development`.
         `README.md` is rewritten in English to the approved skeleton (what it
         is, philosophy, Hyprland-base/shell-axis, install, quick start, manual,
-        licence). The Spanish mirror (`docs/wiki-es/` + `readme_es.md`,
-        gitignored) is the trailing step. The porting writer cross-checked every
+        licence). The Spanish mirror is done too: `docs/wiki-es/` carries all
+        sixteen pages plus `readme_es.md` at the root, a 1:1 counterpart of the
+        English source (same headings, order, code and tables; neutral
+        professional Spanish), stored locally and gitignored — it is never
+        uploaded and the app's About link never sees it. The porting writer cross-checked every
         claim against the code and corrected the source doc: `config_version` 8
         (not 7), the real `Config::default()` values, the 11 IPC commands (not
         9), the single shipped keybind `SUPER + H`, the marker block spellings,
@@ -182,8 +184,15 @@ hiding behind green tests.
 
 - 2026-10-05: tracker created; P1 done (LICENSE).
 - 2026-10-05: P2 done (the launcher no longer names one machine).
-- Pending: P3 (needs the remote URL), P4, P5.
+- 2026-10-05: P6 and P7 closed (installer family, honest shell claims).
+- 2026-10-05: **P4 closed** — the English manual under `docs/wiki/` (sixteen
+  pages), the English README, and the keeper-only Spanish mirror under
+  `docs/wiki-es/` + `readme_es.md` (gitignored).
+- Pending: P3 (needs the remote URL), P5.
 
 ## Next step
 
-P4 — decide which of README.md / WIKI.md is the source of truth and sync the other.
+P5 — `readme = "README.md"` in `Cargo.toml` (free now); `repository` waits on
+P3, which needs the keeper's destination. The P4 residual open decision (does
+the app's About link move to the wiki URL once P3 exists, or keep opening the
+local `WIKI.md`?) is the keeper's call and is recorded inside P4.
