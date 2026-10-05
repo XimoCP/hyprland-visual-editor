@@ -62,11 +62,11 @@ hiding behind green tests.
         every TOC anchor; the two ASCII diagrams need re-padding if their comments
         are translated; the preset metadata block and all commands/paths stay
         verbatim.
-      - **Proposed skeleton (awaiting the keeper's approval)**: README = what it is,
+      - **Proposed skeleton (approved 2026-10-05, minus the troubleshooting page)**: README = what it is,
         philosophy, install, quick start, where the manual lives, licence. WIKI =
         index, then one topic per section from A to Z: installation, uninstallation,
         architecture, project structure, usage and keybinds, IPC, configuration
-        reference, troubleshooting, FAQ, development.
+        reference, FAQ, development.
       - The two Spanish copies live at the repo root as `readme_es.md` and
         `wiki_es.md`, excluded from git, and must never be picked up by the app's
         About link.
@@ -89,8 +89,8 @@ hiding behind green tests.
         `Installation.md`, `Uninstallation.md`, `Architecture.md`,
         `Themes-and-Colours.md`, `Presets.md`, `Backgrounds.md`, `IPC.md`,
         `Tray-and-Automation.md`, `Project-Structure.md`, `Usage.md`,
-        `Configuration.md`, `Troubleshooting.md`, `FAQ.md`, `Development.md`, plus
-        `_Sidebar.md` and `_Footer.md`.
+        `Configuration.md`, `FAQ.md`, `Development.md`, plus
+        `_Sidebar.md` and `_Footer.md` (no `Troubleshooting` page — see P8).
       - **Open decision for the keeper**: the app's About link opens `WIKI.md` (else
         `README.md`) from `src/callbacks.rs:270-281`. Once the manual is a
         multi-page wiki, that single file no longer represents it: either the link
@@ -101,26 +101,21 @@ hiding behind green tests.
 
 ### Installer and the agnosticism claim (keeper's questions, 2026-10-05)
 
-- [ ] **P6 — `install.sh` fixes before publishing** (read-only review done). Current in
-      its core, but four real defects:
-      1. **Ignores XDG**: hardcodes `$HOME/.config/hve` (install.sh:142, 420-427) and
-         `$HOME/.cache/hve` (uninstall.sh:94) while the app uses `dirs::config_dir()` /
-         `dirs::cache_dir()` (`src/config.rs:145-150, 238-245`) — on a machine that sets
-         `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` it installs where the app will not read.
-      2. **`python3` is never installed or checked** (install.sh:212-267) although
-         `hve-ipc` (`assets/scripts/hve-ipc:1`) and the colour path
-         (`assets/scripts/colors.sh:98,110,182,234`) require it.
-      3. **Stale `config_version`**: writes `3` (install.sh:424, 427); current is `8`
-         (`src/config.rs:7`). Migration saves it, but it is out of date.
-      4. **Uninstall does not mirror install**: it removes
-         `~/.config/autostart/hve.desktop` (uninstall.sh:90, 144) which install never
-         creates, while the real autostart lives in `~/.cache/hve/hve-settings.lua`
-         (`src/settings.rs:444`) and can survive with the binary gone.
-      Also worth fixing: Void package names are probably wrong (install.sh:234,
-      plausible not verified), `cargo build --release` runs without `--locked`
-      (install.sh:309), and five of the six distro branches have never been exercised.
-      Verified good: no personal paths, prompts never hang (EOF falls back to defaults),
-      idempotent, refuses to run as root, and every path it writes matches the code.
+- [x] **P6 — `install.sh` fixes before publishing** (read-only review done; **closed
+      2026-10-05**). Commits: `d4140d2` (XDG, python3, `config_version` 8, autostart
+      removal, root-guard i18n, dead keys, Void names), `f7dc35b` (a relative XDG value
+      is ignored like `dirs` does; the autostart update no longer clobbers an existing
+      config), `5b0a5e4` (the runtime scripts resolve their paths through XDG too),
+      `741e884` (the shared helpers reject a relative XDG value as well). Evidence: the
+      first pass was verified cross-model; every behaviour was probed by running the
+      real snippets — four XDG cases (unset / absolute / empty / relative), the
+      autostart update over an existing config with other keys, its idempotency, its
+      failure path leaving the file untouched, and the runtime scripts matching the old
+      literals when XDG is unset. The orchestrator's own probe caught and fixed a
+      `set -u` hazard the first attempt introduced in `utils.sh`. Remaining, tracked
+      elsewhere: five distro branches still unexercised (M4) and no `shellcheck` gate.
+      Verified good: no personal paths, prompts never hang, idempotent, refuses root,
+      every path matches the code.
 - [ ] **P7 — the documentation must not overclaim shell agnosticism.** Today
       `README.md:7` and `WIKI.md:7` already say HVE "does not depend on any particular
       shell", which the code does not support. Verified truth to write instead: the
