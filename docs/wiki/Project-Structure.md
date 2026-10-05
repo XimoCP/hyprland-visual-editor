@@ -26,6 +26,7 @@ hve/
 └── assets/
     ├── hve_logo.svg        ← Vector icon
     ├── owl_neon.png        ← Decorative image
+    ├── branding/           ← Social preview / promo art (the GitHub OG image)
     ├── scripts/            ← Scripts + color_sources.d/ (see below)
     ├── animations/         ← 19 animation presets (.lua)
     ├── borders/            ← 14 border presets (.lua)
