@@ -206,6 +206,10 @@ hiding behind green tests.
   `xdg-open https://github.com/XimoCP/hyprland-visual-editor/wiki`
   (`src/callbacks.rs`, pure `docs_open_command` + a contract test), replacing
   the local `WIKI.md`/`README.md` fallback.
+- 2026-10-05: **the README became the richer landing page** at the keeper's
+  request (hero banner, tagline, features table, manual pointer). It slightly
+  overlaps the wiki; the keeper will personalise it later. The banner is the
+  neon art in `assets/branding/`.
 - Pending: nothing blocking. `WIKI.md` stays as the historical single-file
   manual; the app no longer opens it.
 
