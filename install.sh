@@ -63,6 +63,7 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_SYMLINK_FAIL="No se pudo crear el symlink — créalo manualmente:"
     MSG_AUTOSTART_PROMPT="¿Iniciar HVE con el sistema (bandeja)? HVE se ejecuta en segundo plano como icono en la bandeja del sistema para cambiar temas, animaciones, bordes al instante. Se activa via exec-once en hve-settings (Hyprland nativo). Sin autostart, tenés que ejecutar 'hve --tray' manualmente cada vez. [y/N]"
     MSG_AUTOSTART_TO="Autostart → exec-once en hve-settings (Hyprland nativo)"
+    MSG_AUTOSTART_FAIL="No se pudo activar el autostart — se dejó config.json intacto"
     MSG_LAUNCH_PROMPT="¿Iniciar HVE ahora? [y/N]"
     MSG_LAUNCHED="HVE iniciado"
     MSG_NOT_FOUND_AT="Binario no encontrado en %s"
@@ -109,6 +110,7 @@ else
     MSG_SYMLINK_FAIL="Could not create symlink — create it manually:"
     MSG_AUTOSTART_PROMPT="Start HVE on login (system tray)? HVE runs in the background as a tray icon for quick theme, animation, border, and shader switching. Uses exec-once in hve-settings (Hyprland-native). Without autostart, you'll need to run 'hve --tray' manually each session. [y/N]"
     MSG_AUTOSTART_TO="Autostart → exec-once in hve-settings (Hyprland-native)"
+    MSG_AUTOSTART_FAIL="Could not enable autostart — config.json was left untouched"
     MSG_LAUNCH_PROMPT="Launch HVE now? [y/N]"
     MSG_LAUNCHED="HVE launched"
     MSG_NOT_FOUND_AT="Binary not found at %s"
@@ -136,12 +138,25 @@ check_sudo() {
     fi
 }
 
+# Resolve one XDG base directory the way the Rust side does. `dirs` uses the
+# variable only when it is an ABSOLUTE path and otherwise falls back; a shell
+# `${VAR:-fallback}` would instead accept a RELATIVE value and resolve it
+# against the caller's CWD, writing a config the app never reads. Unset and
+# empty keep the fallback, exactly as before.
+xdg_dir() {
+    local value="${1:-}" fallback="$2"
+    case "$value" in
+        /*) printf '%s\n' "$value" ;;
+        *)  printf '%s\n' "$fallback" ;;
+    esac
+}
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HVE_BIN="$HOME/.local/bin/hve"
 HVE_SCRIPTS="$HOME/.local/bin/assets/scripts"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
-HVE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hve"
+HVE_CONFIG_DIR="$(xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")/hve"
 HVE_CONFIG_JSON="$HVE_CONFIG_DIR/config.json"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
 HYPR_DIR="$HOME/.config/hypr"
@@ -161,6 +176,34 @@ prompt_yes_no() {
         [[ "$default" == "yes" ]] && return 0 || return 1
     fi
     [[ "$answer" =~ [Yy] ]] && return 0 || return 1
+}
+
+# Enable autostart in config.json. Non-destructive by construction: an
+# existing file keeps every other key and only has auto_start set to true,
+# and a missing file gets the same sparse document the old code wrote.
+#
+# A plain `sed` cannot do this safely. With no auto_start key it matches
+# nothing yet exits 0, so autostart silently stays off while the summary
+# claims success; and on a real sed failure a `|| echo >` fallback would
+# OVERWRITE the user's whole config. Here a failed update returns non-zero,
+# leaves the file exactly as it was, and lets the caller report the truth.
+enable_autostart_config() {
+    mkdir -p "$HVE_CONFIG_DIR"
+    if [ ! -f "$HVE_CONFIG_JSON" ]; then
+        printf '%s\n' '{"config_version":8,"auto_start":true}' > "$HVE_CONFIG_JSON"
+        return 0
+    fi
+    python3 - "$HVE_CONFIG_JSON" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+cfg["auto_start"] = True
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
 }
 
 # ============================================================================
@@ -419,7 +462,9 @@ fi
 # ============================================================================
 echo ""
 AUTOSTART_INSTALLED=false
+AUTOSTART_REQUESTED=false
 if prompt_yes_no "$MSG_AUTOSTART_PROMPT" "no"; then
+    AUTOSTART_REQUESTED=true
     # HVE's set_autostart() writes the Lua autostart block into
     # hve-settings.lua as hl.on("hyprland.start", ...) for `hve --tray`.
     #
@@ -435,17 +480,12 @@ if prompt_yes_no "$MSG_AUTOSTART_PROMPT" "no"; then
     # migration on first launch. Do NOT omit the field: it would default to 0
     # and run the whole chain, where v1→v2 sets minimize_seconds=5 instead of
     # the current default of 4.
-    mkdir -p "$HVE_CONFIG_DIR"
-    if [ -f "$HVE_CONFIG_JSON" ]; then
-        # Replace auto_start value (HVE-generated JSON always has it)
-        sed -i 's/"auto_start"\s*:\s*\(true\|false\)/"auto_start": true/' "$HVE_CONFIG_JSON" 2>/dev/null || {
-            echo '{"config_version":8,"auto_start":true}' > "$HVE_CONFIG_JSON"
-        }
+    if enable_autostart_config; then
+        ok "$MSG_AUTOSTART_TO"
+        AUTOSTART_INSTALLED=true
     else
-        echo '{"config_version":8,"auto_start":true}' > "$HVE_CONFIG_JSON"
+        warn "$MSG_AUTOSTART_FAIL"
     fi
-    ok "$MSG_AUTOSTART_TO"
-    AUTOSTART_INSTALLED=true
 fi
 
 # ============================================================================
@@ -476,6 +516,10 @@ echo "   $(msg_fmt "$MSG_ASSETS_TO")"
 echo "   $(msg_fmt "$MSG_DESKTOP_TO" "$HVE_DESKTOP" "$HVE_BIN")"
 if [ "$AUTOSTART_INSTALLED" = true ]; then
     echo "   $MSG_AUTOSTART_TO"
+elif [ "$AUTOSTART_REQUESTED" = true ]; then
+    # The user asked for it but the config write failed: the summary must not
+    # claim success (the file was left untouched).
+    echo "   $MSG_AUTOSTART_FAIL"
 fi
 if [ "$IPC_INSTALLED" = true ]; then
     echo "   $(msg_fmt "$MSG_IPC_TO" "$HVE_IPC")"

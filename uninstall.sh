@@ -30,9 +30,9 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_REMOVING="Eliminando"
     MSG_OK="eliminado"
     MSG_NOT_FOUND="no encontrado — ignorado"
-    MSG_CACHE="¿Eliminar datos de runtime (~/.cache/hve)? [y/N]"
+    MSG_CACHE="¿Eliminar datos de runtime (%s)? [y/N]"
     MSG_CACHE_HINT="Son archivos temporales (logs, backups). Se recrean al ejecutar HVE de nuevo."
-    MSG_CONFIG="¿Eliminar configuración de usuario (~/.config/hve/)? [y/N]"
+    MSG_CONFIG="¿Eliminar configuración de usuario (%s/)? [y/N]"
     MSG_CONFIG_WARN="⚠️  Esto borra tus ajustes de HVE (tema, animaciones, binds, presets)."
     MSG_SUDO_CLEAN="Limpiando symlink del sistema..."
     MSG_SUDO_DONE="Symlink del sistema eliminado"
@@ -51,9 +51,9 @@ else
     MSG_REMOVING="Removing"
     MSG_OK="removed"
     MSG_NOT_FOUND="not found — skipped"
-    MSG_CACHE="Remove runtime data (~/.cache/hve)? [y/N]"
+    MSG_CACHE="Remove runtime data (%s)? [y/N]"
     MSG_CACHE_HINT="Temporary files (logs, backups). They'll be recreated if you run HVE again."
-    MSG_CONFIG="Remove user configuration (~/.config/hve/)? [y/N]"
+    MSG_CONFIG="Remove user configuration (%s/)? [y/N]"
     MSG_CONFIG_WARN="⚠️  This deletes your HVE settings (theme, animations, keybinds, presets)."
     MSG_SUDO_CLEAN="Cleaning system symlink..."
     MSG_SUDO_DONE="System symlink removed"
@@ -71,6 +71,26 @@ ok()   { echo -e "${GREEN}✅ $1${NC}"; }
 warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 info() { echo -e "${CYAN}ℹ️  $1${NC}"; }
 fail() { echo -e "${RED}❌ $1${NC}"; }
+
+# sprintf helper for messages with arguments
+msg_fmt() {
+    local fmt="$1"; shift
+    # shellcheck disable=SC2059
+    printf "$fmt" "$@"
+}
+
+# Resolve one XDG base directory the way the Rust side does. `dirs` uses the
+# variable only when it is an ABSOLUTE path and otherwise falls back; a shell
+# `${VAR:-fallback}` would instead accept a RELATIVE value and resolve it
+# against the caller's CWD, removing a directory the app never wrote. Unset
+# and empty keep the fallback, exactly as before.
+xdg_dir() {
+    local value="${1:-}" fallback="$2"
+    case "$value" in
+        /*) printf '%s\n' "$value" ;;
+        *)  printf '%s\n' "$fallback" ;;
+    esac
+}
 
 prompt_yes_no() {
     local prompt="$1" default="$2"
@@ -91,9 +111,11 @@ HVE_IPC="$HOME/.local/bin/hve-ipc"
 # HVE_FIRST_TOGGLE removed — priming is now internal via winit/xdg-shell
 HVE_IPC_SYMLINK="/usr/local/bin/hve-ipc"
 # Mirror the app's `dirs::cache_dir()` / `dirs::config_dir()` resolution
-# (src/config.rs): honour XDG_*_HOME, else fall back to $HOME/.cache|.config.
-HVE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/hve"
-HVE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/hve"
+# (src/config.rs): honour XDG_*_HOME only when it is an absolute path, else
+# fall back to $HOME/.cache|.config. A relative XDG value is ignored exactly
+# as `dirs` ignores it, so we never act on a stray directory.
+HVE_CACHE="$(xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve"
+HVE_CONFIG="$(xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")/hve"
 
 REMOVED=()
 NOT_FOUND=()
@@ -190,8 +212,8 @@ fi
 # ── 7. Cache (temporary runtime data) ──────────────────────────────────────
 echo ""
 info "$MSG_CACHE_HINT"
-if prompt_yes_no "$MSG_CACHE" "no"; then
-    remove_dir "$HVE_CACHE" "Cache (~/.cache/hve/)"
+if prompt_yes_no "$(msg_fmt "$MSG_CACHE" "$HVE_CACHE")" "no"; then
+    remove_dir "$HVE_CACHE" "$(msg_fmt 'Cache (%s/)' "$HVE_CACHE")"
 else
     info "Cache conservado"
 fi
@@ -199,8 +221,8 @@ fi
 # ── 8. User config (ask!) ──────────────────────────────────────────────────
 echo ""
 warn "$MSG_CONFIG_WARN"
-if prompt_yes_no "$MSG_CONFIG" "no"; then
-    remove_dir "$HVE_CONFIG" "Configuración (~/.config/hve/)"
+if prompt_yes_no "$(msg_fmt "$MSG_CONFIG" "$HVE_CONFIG")" "no"; then
+    remove_dir "$HVE_CONFIG" "$(msg_fmt 'Configuración (%s/)' "$HVE_CONFIG")"
 else
     info "$MSG_CONFIG_KEPT"
 fi
