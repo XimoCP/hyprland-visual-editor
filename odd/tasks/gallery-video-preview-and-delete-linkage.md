@@ -86,7 +86,7 @@ Extend the headless render coverage (`cargo test slice_focus_flow_renders` and/o
 ## TDD
 
 - Mode: strict (project default, `openspec/config.yaml`).
-- Source of the mode: HVE 2 skill hard rule ("write the failing test first") + AGENTS.md.
+- Source of the mode: HVE skill hard rule ("write the failing test first") + AGENTS.md.
 - Runner: `cargo test`. RED before each unit, GREEN after, then refactor.
 
 ## Route per task

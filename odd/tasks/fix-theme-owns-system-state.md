@@ -26,7 +26,7 @@ false for runtime state.
 
 - Keeper's saved snapshots (`~/.config/hve/themes/*/providers/hyprland-settings/state.json`),
   all stale: 5 keybinds (the set removed on 2026-09-07; HVE now wants only SUPER+H), window
-  rules in the old `hl.window_rule({...})` form (HVE 2 manages its own window state and needs
+  rules in the old `hl.window_rule({...})` form (HVE manages its own window state and needs
   none), and `autostart` pointing at the dead dev path `/home/ximo/hve/target/debug/hve`
   (the repo lives at `/home/ximo/Proyectos/hve`). The newest one (ThemasAnimados,
   2026-09-06 22:24) has `autostart: null` -> applying it DELETES the autostart block.

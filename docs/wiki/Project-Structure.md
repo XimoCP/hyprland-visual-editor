@@ -14,7 +14,7 @@ hve/
 │   └── es.json             ← Spanish translations
 ├── ui/
 │   ├── main.slint          ← Main window (Slint)
-│   ├── shell.slint         ← HVE 2 shell: navigation and slot mounting
+│   ├── shell.slint         ← HVE shell: navigation and slot mounting
 │   ├── components.slint    ← Reusable components (buttons, panels)
 │   ├── tokens.slint        ← Design tokens
 │   ├── theme.slint         ← Global colour tokens (HveColors), NavModule
@@ -67,7 +67,7 @@ hve/
 |------|-------|----------------|
 | `composer/mod.rs` | 1429 | Compositor driver abstraction (`Composer` trait) |
 | `composer/hyprland.rs` | 1265 | Hyprland implementation: overlay, `hyprctl` queries, workspaces |
-| `config_guard.rs` | 243 | Migration guard: HVE 2 enables only on a valid `hyprland.lua` |
+| `config_guard.rs` | 243 | Migration guard: HVE enables only on a valid `hyprland.lua` |
 | `config_markers.rs` | 93 | Single source of truth for every marker string |
 | `color_authority.rs` | 187 | Declarative colour-authority descriptor in the cache dir |
 | `reload_coalescer.rs` | 902 | Sandboxed behavioural tests for the reload coalescer |
@@ -96,7 +96,7 @@ hve/
 
 | File | Lines | Responsibility |
 |------|-------|----------------|
-| `shell/mod.rs` | 962 | HVE 2 shell: state-driven navigation and slot mounting |
+| `shell/mod.rs` | 962 | HVE shell: state-driven navigation and slot mounting |
 | `shell/nav.rs` | 668 | Pure navigation state machine |
 | `shell/slots.rs` | 248 | Slot mounting contract |
 | `shell/size.rs` | 233 | Window sizing policy |

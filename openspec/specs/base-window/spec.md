@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines HVE 2's single-window shell: one large base window that mutates instead of stacking, grows via `set_size`, enforces a minimum size, and stays consistent with the existing `Composer` lifecycle. Engine and composer contracts are untouched; existing tests stay green.
+Defines HVE's single-window shell: one large base window that mutates instead of stacking, grows via `set_size`, enforces a minimum size, and stays consistent with the existing `Composer` lifecycle. Engine and composer contracts are untouched; existing tests stay green.
 
 ## Requirements
 

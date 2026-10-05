@@ -748,7 +748,7 @@ pub(crate) fn apply_visual_state(
     Some((icon?, colors.primary.clone()))
 }
 
-/// Mount the Gallery screen as the initial shell screen (HVE 2 visual
+/// Mount the Gallery screen as the initial shell screen (HVE visual
 /// rewrite, PR1.1): queues Expand(Gallery) so the shell mounts the gallery
 /// slot and opens the immersive fullscreen session. Must be called only
 /// AFTER `composer::init_global` — with no global controller the session
@@ -2753,7 +2753,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let window = MainWindow::new()?;
 
-    // ── HVE 2 shell init (delivery 4/5) ──
+    // ── HVE shell init (delivery 4/5) ──
     // The Shell owns navigation state, slot registry, and the stepped
     // size animator. It lives in Rc<RefCell<>> because slint::Timer is
     // !Send + !Sync.

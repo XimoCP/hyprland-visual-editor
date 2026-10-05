@@ -1,4 +1,4 @@
-// HVE 2 — Mosaic Voronoi (theme-gallery PR3).
+// HVE — Mosaic Voronoi (theme-gallery PR3).
 //
 // Voronoi tessellation + Lloyd relaxation (default 3), cache rebuild only on
 // filter/count change, async guard with cancel token, kinetic scroll 0.90,

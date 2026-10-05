@@ -49,7 +49,7 @@ fn generated_header_block() -> String {
 /// Ensure the Lua settings file exists with empty window rules, keybinds and
 /// autostart sections.
 ///
-/// HVE 2 manages its own window state via the Composer trait (fullscreen for
+/// HVE manages its own window state via the Composer trait (fullscreen for
 /// Gallery, floating for settings), so no window rules are needed.
 /// Called once at startup. Creates the file with the auto-generated header when
 /// missing; prepends the header idempotently when the file exists without it.
@@ -91,7 +91,7 @@ pub fn ensure_settings_file() {
 
 /// Apply HVE window rules to `hve-settings.lua`.
 ///
-/// HVE 2 manages its own window state via the Composer trait (fullscreen for
+/// HVE manages its own window state via the Composer trait (fullscreen for
 /// Gallery, floating for settings), so the emitted window-rules block is
 /// always empty except for explanatory comments. The `tiling` parameter is
 /// retained for call-site compatibility, but it no longer changes the output.
@@ -192,14 +192,14 @@ pub(crate) fn set_tiling_window_rules(tiling: bool) -> bool {
 
 /// Pure: the desired Lua window-rules block.
 ///
-/// HVE 2 manages its own window state via the Composer trait (fullscreen for
+/// HVE manages its own window state via the Composer trait (fullscreen for
 /// Gallery, floating for settings), so the block carries only comments.
 /// Shared by the startup template and the compare-before-write guard so they
 /// cannot drift apart.
 fn window_rules_block() -> String {
     format!(
         "{LUA_WINDOW_RULES_START}\n\
--- HVE 2 manages its own window state via the Composer trait\n\
+-- HVE manages its own window state via the Composer trait\n\
 -- (fullscreen for Gallery, floating for settings). No rules needed here.\n\
 {LUA_WINDOW_RULES_END}"
     )
@@ -402,7 +402,7 @@ fn resolve_autostart_exe() -> String {
 ///
 /// The sentinel (`assets/scripts/hve-sentinel.py`) is a project instrument: it
 /// listens to Hyprland's event socket and records the moments the shell bar
-/// overlaps HVE. It is meant to live only while the HVE 2 rewrite is in
+/// overlaps HVE. It is meant to live only while the HVE rewrite is in
 /// progress, so it rides the autostart switch instead of owning a setting of its
 /// own — one toggle, no residue, nothing to remember.
 ///
@@ -464,7 +464,7 @@ pub(crate) fn set_autostart(enabled: bool) {
     let exe = resolve_autostart_exe();
 
     let autostart_block: String = if enabled {
-        // While the HVE 2 project is open, the session also brings up the
+        // While the HVE project is open, the session also brings up the
         // bar-above sentinel (assets/scripts/hve-sentinel.py). It is GATED on the
         // script existing, so removing the script cannot leave a dead line, and
         // it lives inside this same block so ONE switch turns both on and off —
@@ -609,7 +609,7 @@ mod tests {
         // Create settings file manually WITHOUT keybinds markers
         let path = hve_settings_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let no_kb_content = "-- >>> HVE WINDOW RULES <<<\n-- HVE 2 manages its own window state via the Composer trait\n-- >>> HVE WINDOW RULES END <<<\n";
+        let no_kb_content = "-- >>> HVE WINDOW RULES <<<\n-- HVE manages its own window state via the Composer trait\n-- >>> HVE WINDOW RULES END <<<\n";
         std::fs::write(&path, no_kb_content).unwrap();
 
         let before = std::fs::read_to_string(&path).unwrap();
@@ -683,21 +683,21 @@ mod tests {
     }
 
     fn assert_floating_content(content: &str) {
-        // HVE 2 manages its own window state via the Composer trait
+        // HVE manages its own window state via the Composer trait
         // (fullscreen for Gallery, floating for settings). No rules needed.
         assert!(
             content.contains("Composer trait"),
-            "HVE 2 Composer comment present in window rules"
+            "HVE Composer comment present in window rules"
         );
         assert!(!content.contains("tile = true"), "no tiling rule in floating mode");
     }
 
     fn assert_tiling_content(content: &str) {
-        // HVE 2 manages its own window state via the Composer trait
+        // HVE manages its own window state via the Composer trait
         // (fullscreen for Gallery, floating for settings). No rules needed.
         assert!(
             content.contains("Composer trait"),
-            "HVE 2 Composer comment present in window rules, got:\n{content}"
+            "HVE Composer comment present in window rules, got:\n{content}"
         );
     }
 
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn tiling_rules_no_rewrite_since_composer_manages_state() {
-        // HVE 2 manages window state via the Composer trait, so
+        // HVE manages window state via the Composer trait, so
         // set_tiling_window_rules always writes empty rules regardless
         // of the tiling parameter. The file should never be rewritten.
         let _env = TempEnv::new();

@@ -404,7 +404,7 @@ mod tests {
         std::fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
         let before = "\
 -- >>> HVE WINDOW RULES <<<\n\
--- HVE 2 manages its own window state via the Composer trait\n\
+-- HVE manages its own window state via the Composer trait\n\
 -- >>> HVE WINDOW RULES END <<<\n\
 -- >>> HVE KEYBINDS <<<\n\
 hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\

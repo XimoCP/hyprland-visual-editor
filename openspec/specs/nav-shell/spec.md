@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines HVE 2's state-driven navigation shell: one Rust-owned navigation state, slot-based mounting for future modules, expansion transitions, keyboard+mouse input, and ES/EN shell strings. The UI is a read-only view; panel clip-swapping is removed.
+Defines HVE's state-driven navigation shell: one Rust-owned navigation state, slot-based mounting for future modules, expansion transitions, keyboard+mouse input, and ES/EN shell strings. The UI is a read-only view; panel clip-swapping is removed.
 
 ## Requirements
 

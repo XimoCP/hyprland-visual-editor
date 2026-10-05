@@ -1,7 +1,7 @@
 # FAQ
 
 **Does HVE modify my Hyprland configuration files?**
-No. It only appends an HVE block between the markers `-- >>> HYPRLAND VISUAL EDITOR START <<<` and `-- >>> HYPRLAND VISUAL EDITOR END <<<` in `hyprland.lua` (HVE 2 manages `hyprland.lua` only); the block loads the overlay, loads the HVE settings and registers the watchdog. Disabling removes the whole block, and after an uninstall the watchdog removes it at the next Hyprland start, so your configuration ends up exactly as it was.
+No. It only appends an HVE block between the markers `-- >>> HYPRLAND VISUAL EDITOR START <<<` and `-- >>> HYPRLAND VISUAL EDITOR END <<<` in `hyprland.lua` (HVE manages `hyprland.lua` only); the block loads the overlay, loads the HVE settings and registers the watchdog. Disabling removes the whole block, and after an uninstall the watchdog removes it at the next Hyprland start, so your configuration ends up exactly as it was.
 
 **Does it work with Noctalia Shell?**
 Yes. HVE is built on Hyprland and ships with the Noctalia adapter today: with Noctalia it works out of the box. Another shell on Hyprland would need a new adapter — the core does not change — but none ships today. See [Architecture](Architecture).

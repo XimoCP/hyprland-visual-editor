@@ -4,7 +4,7 @@
 `theme-gallery`
 
 ## Summary
-Build the **Theme Gallery** — the first screen and WOW piece of HVE 2. Cards show complete looks (colors + border + background + shader) with instant apply. Three presentation styles 1:1 from skwd-wall (MIT): **parallelogram carousel**, **hexagon grid**, **voronoi mosaic**. Click a card → window animates resize → card expands into settings panel inside the same mutating window.
+Build the **Theme Gallery** — the first screen and WOW piece of HVE. Cards show complete looks (colors + border + background + shader) with instant apply. Three presentation styles 1:1 from skwd-wall (MIT): **parallelogram carousel**, **hexagon grid**, **voronoi mosaic**. Click a card → window animates resize → card expands into settings panel inside the same mutating window.
 
 ## Problem
 HVE 1 has a theme list but no visual gallery. Users can't preview complete looks before applying. The skwd-wall visual language (parallelogram/hexagon/mosaic with fluid animations) is the reference — MIT licensed, translatable to Slint.

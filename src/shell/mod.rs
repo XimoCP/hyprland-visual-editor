@@ -1,6 +1,6 @@
-//! HVE 2 shell: state-driven navigation and slot mounting.
+//! HVE shell: state-driven navigation and slot mounting.
 //!
-//! The shell is the HVE 2 "trunk": a single window that mutates instead of
+//! The shell is the HVE "trunk": a single window that mutates instead of
 //! stacking. `NavState` (in `nav`) is the pure Rust-owned navigation state
 //! machine (nav-shell spec R1, R2). Slot mounting, window sizing and the
 //! Slint chrome land in later deliveries on top of it.

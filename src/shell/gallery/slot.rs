@@ -1,4 +1,4 @@
-// HVE 2 — GallerySlot (theme-gallery PR4 Slot + Integration + Polish).
+// HVE — GallerySlot (theme-gallery PR4 Slot + Integration + Polish).
 // Implements Slot trait, prewarm/cleanup, instant apply two-pass, no-op pulse S8,
 // ExpandToSettings 1300x900, Back/Esc S10/11, empty S18, delete/rename S19/20,
 // shader flicker overlay S21 ~3s, reduced-motion S23,

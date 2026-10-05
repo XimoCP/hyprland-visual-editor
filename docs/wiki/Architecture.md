@@ -59,11 +59,11 @@ pick a preset.
 ## Lua vs Conf
 
 Hyprland 0.55+ defaults to a Lua configuration — `hl.` calls and `require()`
-— and HVE 2 targets exactly that. Earlier versions shipped every animation
+— and HVE targets exactly that. Earlier versions shipped every animation
 and border preset twice (`.conf` and `.lua`) and probed your installation
 with `detect_format.sh`, caching the answer in `~/.cache/hve/hve_format`.
 
-HVE 2 **never detects the format at runtime**:
+HVE **never detects the format at runtime**:
 
 - `assemble.sh` writes `overlay.lua` and nothing else.
 - `scan.sh` lists `*.lua` and `*.frag` only — no format detection, no `.conf`

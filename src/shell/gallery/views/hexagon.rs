@@ -1,4 +1,4 @@
-// HVE 2 — Hexagon grid (theme-gallery PR3).
+// HVE — Hexagon grid (theme-gallery PR3).
 //
 // Honeycomb layout r140, point-in-hex hit test, pull-out with dashed
 // border, subtle parallax, video on selected hex.

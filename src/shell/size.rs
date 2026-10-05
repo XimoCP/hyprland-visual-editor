@@ -1,4 +1,4 @@
-//! Pure window sizing policy for the HVE 2 shell (base-window spec R8).
+//! Pure window sizing policy for the HVE shell (base-window spec R8).
 //!
 //! `SizePolicy` is a pure math helper (design D4): it maps the shell
 //! expansion state to a target window size and clamps any size to the

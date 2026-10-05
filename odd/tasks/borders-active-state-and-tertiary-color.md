@@ -43,7 +43,7 @@ A board that silently shows nothing teaches the user to distrust the app's state
 
 - In scope: the borders active-index seed path (`src/presets.rs`, `src/main.rs`, `src/callbacks.rs`) and the tertiary colour detection (`assets/scripts/colors.sh`).
 - Out of scope: carrying `@Color`/`icon` through the scanner (recorded as a known gap), the picker `y` slide-in (parked, see `openspec/changes/border-colors-single-strip/design.md` Open Question #3), the strip focus-ring ownership risk inherited from PR 3, and the user's pending polish list (keyboard shortcuts, visual details).
-- Constraints: `src/config.rs` is engine-sealed per `AGENTS.md` — keep changes minimal and additive; HVE 2 is a visual-only editor; no GPL code; visual changes require the PNG render inspection.
+- Constraints: `src/config.rs` is engine-sealed per `AGENTS.md` — keep changes minimal and additive; HVE is a visual-only editor; no GPL code; visual changes require the PNG render inspection.
 
 ## Authorized scope
 

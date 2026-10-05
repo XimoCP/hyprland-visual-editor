@@ -1,4 +1,4 @@
-// HVE 2 — Slice carousel (gallery-immersive-redesign PR2 + S1 ring).
+// HVE — Slice carousel (gallery-immersive-redesign PR2 + S1 ring).
 //
 // Parallelogram carousel with skwd-wall exact geometry: collapsed 135 ↔
 // expanded 924, height 520, skew 35px X-shear, radius 0, 350ms OutCubic.

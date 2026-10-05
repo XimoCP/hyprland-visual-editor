@@ -102,7 +102,7 @@ setup_files() {
         echo "Creating default settings at $SETTINGS_FILE..."
         cat > "$SETTINGS_FILE" << 'SETEOF'
 -- >>> HVE WINDOW RULES <<<
--- HVE 2 manages its own window state via the Composer trait
+-- HVE manages its own window state via the Composer trait
 -- (fullscreen for Gallery, floating for settings). No rules needed here.
 -- >>> HVE WINDOW RULES END <<<
 -- >>> HVE KEYBINDS <<<
@@ -115,8 +115,8 @@ SETEOF
 
 if [ "$ACTION" == "enable" ]; then
     if ! hve_guard_allows_enable; then
-        echo "HVE 2 only manages hyprland.lua — migrate from hyprland.conf."
-        echo "HVE 2 solo gestiona hyprland.lua — migre desde hyprland.conf."
+        echo "HVE only manages hyprland.lua — migrate from hyprland.conf."
+        echo "HVE solo gestiona hyprland.lua — migre desde hyprland.conf."
         echo "Migrate your config, then run 'init.sh enable' again."
         echo "Migre su configuración y ejecute 'init.sh enable' de nuevo."
         exit 1

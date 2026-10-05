@@ -1,4 +1,4 @@
-# Feature: borders geometry fast apply + tune simplification (HVE 2)
+# Feature: borders geometry fast apply + tune simplification (HVE)
 
 **Locator**: `odd/tasks/borders-geometry-and-tune-simplification.md`
 **Engram mirror**: topic `odd/borders-geometry-and-tune-simplification/tasks`

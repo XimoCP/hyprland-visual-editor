@@ -1,4 +1,4 @@
-// HVE 2 — Gallery model (theme-gallery PR1 Foundation + PR4 Polish).
+// HVE — Gallery model (theme-gallery PR1 Foundation + PR4 Polish).
 //
 // Data layer for the theme gallery: ThemeCard + ThemeGalleryModel + LRU200
 // thumbnail cache + reduced-motion + MIT footer. Engine sealed — reads

@@ -1,4 +1,4 @@
-// HVE 2 — Gallery views (theme-gallery module 2, PR2 Slice).
+// HVE — Gallery views (theme-gallery module 2, PR2 Slice).
 //
 // PR1 scaffold + PR2 Slice carousel. Hex/Mosaic land in PR3.
 //

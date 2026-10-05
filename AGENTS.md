@@ -2,11 +2,11 @@
 
 ## Project Skills
 
-- `hve2` — Plano maestro del proyecto HVE 2 (visual rewrite). Load it FIRST for any session on the `hve2-visual-rewrite` branch: `.opencode/skills/hve2/SKILL.md`.
+- `hve2` — Plano maestro del proyecto HVE (visual rewrite). Load it FIRST for any session on the `hve2-visual-rewrite` branch: `.opencode/skills/hve2/SKILL.md`.
 
 ## Hard Rules
 
-- HVE 2 is a VISUAL-ONLY editor. Monitors/HDR/display layout belongs to hyprmod — never plan or build it here.
+- HVE is a VISUAL-ONLY editor. Monitors/HDR/display layout belongs to hyprmod — never plan or build it here.
 - Preserve the engine intact: `src/engine.rs`, `src/config.rs`, `src/settings.rs`, `src/theme_manager.rs`, `src/app_state.rs`, `src/watcher.rs`, `src/utils.rs`, all `src/providers/` are reused, not rewritten.
 - Single window that MUTATES; never stack windows.
 - Visual styles 1:1 with skwd-wall (parallelogram, grid, hexagon).
@@ -39,5 +39,5 @@ Verification is proportional to DANGER, never to diff size. A five-line change t
 
 - Stack: Rust 2021, Slint 1.17.1, MIT license, binary `hve`. Config: `openspec/config.yaml`.
 - Completed: `rewrite-compositor-driven` change decoupled the Hyprland driver behind a `Composer` trait (see `openspec/changes/rewrite-compositor-driven/`).
-- Active branch for HVE 2 work: `hve2-visual-rewrite`.
+- Active branch for HVE work: `hve2-visual-rewrite`.
 - See `.opencode/skills/hve2/references/vision.md` for the full product vision, module tree, external references, and risks.

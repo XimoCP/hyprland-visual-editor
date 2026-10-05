@@ -303,7 +303,7 @@ cargo check -- 2>&1
 ## Next Recommended
 
 1. **Archive**: Proceed to `sdd-archive` to sync delta specs (no critical blockers, 0 warnings).
-2. **Module 3**: Curve workshop per vision.md module tree order (HVE 2 tree).
+2. **Module 3**: Curve workshop per vision.md module tree order (HVE tree).
 
 ## Risks
 

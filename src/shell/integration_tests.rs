@@ -1,4 +1,4 @@
-//! Headless integration tests for the HVE 2 shell (delivery 5).
+//! Headless integration tests for the HVE shell (delivery 5).
 //!
 //! These tests exercise the FULL flow: UI callback → Shell → window.
 //! They use `init_no_event_loop()` per-test (same pattern as delivery 4

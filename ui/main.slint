@@ -234,7 +234,7 @@ export component MainWindow inherits Window {
     in-out property <int> countdown-seconds: 5;
     in-out property <float> countdown-progress: 1.0;
 
-    // ── HVE 2 shell state mirrors (delivery 4/5) ──
+    // ── HVE shell state mirrors (delivery 4/5) ──
     // Written by the Rust Shell, read by ShellRoot.
     in-out property <int> mounted-screen: 0;
     in-out property <bool> expanded: false;
@@ -431,7 +431,7 @@ export component MainWindow inherits Window {
     // ── Legacy held-key nav (legacy_tab) — REMOVED slice 8 (R8) ──
     // Panel sections handle their own FocusScope keyboard nav (R11).
 
-    // ── HVE 2 shell mount (delivery 4/5 + PR4.5 gallery wiring) ──
+    // ── HVE shell mount (delivery 4/5 + PR4.5 gallery wiring) ──
     shell := ShellRoot {
         width: 100%;
         height: 100%;

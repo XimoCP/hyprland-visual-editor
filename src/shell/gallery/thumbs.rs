@@ -1,4 +1,4 @@
-// HVE 2 — Real wallpaper thumbnail pipeline (gallery-immersive-redesign
+// HVE — Real wallpaper thumbnail pipeline (gallery-immersive-redesign
 // PR4, design D8; Tramo 2 content-keyed cache R2/D2).
 //
 // Decodes a theme's source image, cover-crops + scales it to ≤400×720 and

@@ -1,4 +1,4 @@
-// HVE 2 — S4a slat image baking (parallelogram alpha).
+// HVE — S4a slat image baking (parallelogram alpha).
 //
 // Parallelogram geometry derived from `ui/gallery/SliceDelegate.slint`
 // `SliceShape` (skwd-wall exact, design D3):

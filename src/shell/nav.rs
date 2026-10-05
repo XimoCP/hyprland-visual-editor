@@ -1,4 +1,4 @@
-//! Pure navigation state machine for the HVE 2 shell.
+//! Pure navigation state machine for the HVE shell.
 //!
 //! `NavState` owns ALL shell navigation state (nav-shell spec R1): the
 //! current screen, the expansion state, the FIFO command queue and the

@@ -70,7 +70,7 @@ pub fn setup_callbacks(
     // Single AppState instance shared across all callbacks
     let state = state.clone();
 
-    // ── HVE 2 shell callbacks (delivery 4/5 + PR4 4.7/4.5) ──
+    // ── HVE shell callbacks (delivery 4/5 + PR4 4.7/4.5) ──
     // Map shell UI callbacks to NavCommand (nav-shell spec R4; design D8).
     // PR4: Home→Expand (S1) via card_activated, arrow→apply (S2/S12) via nav_move,
     //      Back/Esc collapse settings S10/11 + ExpandToSettings S9 size mutation.

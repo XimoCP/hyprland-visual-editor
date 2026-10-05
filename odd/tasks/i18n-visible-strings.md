@@ -359,7 +359,7 @@ global `panel_i18n::apply_panel_chrome` already fills and the left rail already
 reads. No new key and no new Rust: the words were translated all along, the
 drawer just was not asking for them.
 
-`ui/gallery/FilterBar.slint` is NOT instantiated by any Slint file — the HVE 2
+`ui/gallery/FilterBar.slint` is NOT instantiated by any Slint file — the HVE
 rewrite replaced it with the gallery chrome. Its five bindings are
 consistency-only and are declared as such; the ten live ones are in
 `GalleryRoot.slint`.

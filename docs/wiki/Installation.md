@@ -45,7 +45,7 @@ A distribution outside that list stops the installer with an "unsupported" messa
 2. **Detects the distribution** from `ID` and `ID_LIKE` in `/etc/os-release`, with fallbacks to `/etc/arch-release`, `/etc/debian_version`, `/etc/fedora-release` and `/etc/gentoo-release`.
 3. **Installs dependencies** — one batch install first; if it fails, package by package.
 4. **Verifies Rust** — installs it through `rustup` when it is missing.
-5. **Checks that Hyprland uses Lua** — HVE 2 manages `hyprland.lua` only. A legacy `hyprland.conf` is reported, and the configuration must be migrated before HVE can be enabled.
+5. **Checks that Hyprland uses Lua** — HVE manages `hyprland.lua` only. A legacy `hyprland.conf` is reported, and the configuration must be migrated before HVE can be enabled.
 6. **Builds** (`cargo build --release`).
 7. **Copies the binary** to `~/.local/bin/hve`.
 8. **Copies the assets** (scripts, animations, borders, shaders, fragments).

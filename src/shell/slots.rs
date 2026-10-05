@@ -1,4 +1,4 @@
-//! Slot mounting contract for the HVE 2 shell (nav-shell spec R3).
+//! Slot mounting contract for the HVE shell (nav-shell spec R3).
 //!
 //! `Slot` is the trait every module (gallery, workshop, ...) implements to
 //! be mountable inside the single shell window. `SlotRegistry` maps each
