@@ -1558,6 +1558,42 @@ fn saved_user_animation_preset_reaches_the_overlay() {
     );
 }
 
+/// theme-packages T4, end to end: a theme that carries a CUSTOM preset under
+/// `presets/` must have it installed into the user's store by the apply step
+/// and then APPLIED by the real `apply_animation.sh` — proving the existing
+/// apply path uses the preset the theme brought with it.
+#[test]
+fn a_theme_bundled_custom_animation_is_installed_and_applied() {
+    let sb = OverlaySandbox::build();
+    let theme = sb.root.join("travelling-theme");
+    let preset_dir = theme.join("presets/animations");
+    std::fs::create_dir_all(&preset_dir).unwrap();
+    let content = "hl.config({ animations = { enabled = true, bezier = \"theme_custom\" } }) \
+                   -- THEME_CUSTOM_SENTINEL\n";
+    std::fs::write(preset_dir.join("theme_custom.lua"), content).unwrap();
+
+    // The install step the provider's apply runs, into the SAME user store the
+    // sandboxed scripts resolve (`$XDG_CONFIG_HOME/hve/presets`).
+    let user_root = sb.root.join("xdg/hve/presets");
+    let report = crate::theme_presets::install_theme_presets(&theme, &user_root);
+    assert_eq!(
+        report.installed.len(),
+        1,
+        "the theme's custom animation must be installed into the user store: {report:?}"
+    );
+
+    let overlay = sb.apply_animation_preset("theme_custom.lua");
+    assert!(
+        overlay.contains("THEME_CUSTOM_SENTINEL"),
+        "the theme's own custom animation never reached the overlay — the apply \
+         path did not use the installed preset:\n{overlay}"
+    );
+    assert!(
+        !overlay.contains("hl.config({ animations = { enabled = true } })"),
+        "the custom animation must resolve, not the safe-animation fallback:\n{overlay}"
+    );
+}
+
 /// An unknown name must still produce the safe fallback for BOTH callers:
 /// that behaviour is a security property (D3), not an accident of the bug.
 #[test]

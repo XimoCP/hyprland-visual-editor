@@ -117,6 +117,16 @@ impl Engine {
         Self { scripts_dir }
     }
 
+    /// The project's `assets/` directory (the parent of the scripts dir).
+    /// Read-only: callers that need the shipped preset directories ask here
+    /// instead of re-deriving them from the project root.
+    pub fn assets_dir(&self) -> PathBuf {
+        self.scripts_dir
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.scripts_dir.clone())
+    }
+
     pub fn run_script(&self, script_name: &str, args: &[&str]) -> Result<String, EngineError> {
         let script_path = self.scripts_dir.join(script_name);
         if !script_path.exists() {

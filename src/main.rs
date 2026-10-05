@@ -21,6 +21,7 @@ mod show_state;
 mod theme;
 mod theme_manager;
 mod theme_media;
+mod theme_presets;
 mod tr;
 mod tray;
 mod utils;

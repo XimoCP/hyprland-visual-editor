@@ -19,13 +19,19 @@ pub struct PresetMeta {
 }
 
 impl PresetStore {
-    /// Create a store for a specific category ("borders" or "animations").
-    pub fn new(category: &str) -> Self {
-        let base = dirs::config_dir()
+    /// The user preset root: `<config_dir>/hve/presets` (XDG-aware). Category
+    /// subdirectories live under it; mirrors `HVE_USER_PRESETS_DIR` in
+    /// `assets/scripts/utils.sh`.
+    pub fn root() -> PathBuf {
+        dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("hve")
             .join("presets")
-            .join(category);
+    }
+
+    /// Create a store for a specific category ("borders" or "animations").
+    pub fn new(category: &str) -> Self {
+        let base = Self::root().join(category);
         Self { base }
     }
 
@@ -44,7 +50,7 @@ impl PresetStore {
     /// like `../../../../etc/passwd` would escape `base` and be read into the
     /// assembled compositor config. Mirrors the shell guard
     /// `_hve_preset_name_is_safe` in `assets/scripts/utils.sh`.
-    fn validate_name(name: &str) -> Result<(), String> {
+    pub(crate) fn validate_name(name: &str) -> Result<(), String> {
         if name.is_empty() {
             return Err("Preset name must not be empty".to_string());
         }
