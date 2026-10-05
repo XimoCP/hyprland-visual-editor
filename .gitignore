@@ -8,3 +8,8 @@ assets/fragments/
 
 # gentle-ai runtime ledger instance marker: tool state, not source work.
 .gentle-ai-instance
+
+# Keeper-only Spanish mirror of the documentation. Reviewed locally, never
+# published: the uploadable docs are English (docs/wiki/ + README.md).
+docs/wiki-es/
+readme_es.md

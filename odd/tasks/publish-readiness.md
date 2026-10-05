@@ -30,9 +30,72 @@ hiding behind green tests.
 - [ ] **P3 — a git remote exists.** Nothing can be published while
       `git remote -v` is empty. Needs the keeper's destination (host + repository);
       the orchestrator cannot invent it.
-- [ ] **P4 — `README.md` and `WIKI.md` agree again.** 33 139 B vs 34 119 B today, while
-      the README's own note says they are kept identical. Needs a decision on which one
-      is the source of truth, then a sync.
+- [ ] **P4 — README and WIKI, each with its own job, plus Spanish copies**
+      (keeper's scope, 2026-10-05; **format changed to a GitHub wiki** the same day). Roles are now different, so the old "kept
+      identical" invariant is retired:
+      - `README.md` — the simple explanation of the project.
+      - `WIKI.md` — a structured manual: an index, then one topic per section
+        explained from A to Z before moving to the next.
+      - `readme_es.md` and `wiki_es.md` — **1:1 Spanish counterparts for the keeper
+        only; never uploaded** (kept out of git). They must stay faithful to their
+        English source: same headings, same order, same code and tables.
+      - Step 1 is reading both files and mapping how they are built before any
+        rewrite.
+      - The drift measured by the audit (33 139 B vs 34 119 B) is expected once the
+        roles differ; what matters now is that each file is complete for its own
+        role and that each Spanish copy mirrors its English source.
+      - **Step 1 done (2026-10-05), mapping findings**: both files are the SAME
+        document, and both are written in SPANISH today (not English). README 663
+        lines, WIKI 687. Four drift hunks: README has the `show` IPC row, the
+        second-instance note and the `hve-ipc show` line (newer on user-facing
+        behaviour); WIKI has a 28-line English `Gallery image pipeline performance`
+        section (newer on that one internal topic). Neither has a licence,
+        contributing/development or troubleshooting section, no images, and both
+        carry the placeholder clone URL `https://github.com/tu-usuario/hve.git`.
+        WIKI's own index does not list its unique section. 12 code blocks and 12
+        tables per file; 35 TOC anchors generated from Spanish headings; the app
+        opens `WIKI.md` (else `README.md`) from `src/callbacks.rs:270-281`, and the
+        in-app About tree lists both names in `i18n/{en,es}.json`.
+      - **Consequence**: the publishable pair must be ENGLISH (repo rule), so the
+        Spanish files become the keeper-only copies, and the "1:1" is between each
+        English file and its Spanish counterpart. Translating headings regenerates
+        every TOC anchor; the two ASCII diagrams need re-padding if their comments
+        are translated; the preset metadata block and all commands/paths stay
+        verbatim.
+      - **Proposed skeleton (awaiting the keeper's approval)**: README = what it is,
+        philosophy, install, quick start, where the manual lives, licence. WIKI =
+        index, then one topic per section from A to Z: installation, uninstallation,
+        architecture, project structure, usage and keybinds, IPC, configuration
+        reference, troubleshooting, FAQ, development.
+      - The two Spanish copies live at the repo root as `readme_es.md` and
+        `wiki_es.md`, excluded from git, and must never be picked up by the app's
+        About link.
+      - **Format decided 2026-10-05: a GitHub wiki**, after checking GitHub's own
+        documentation. Facts that shape the work: the wiki is a SEPARATE git
+        repository (`REPO.wiki.git`); one Markdown file per page and the FILENAME
+        is the page title; titles may not contain `\ / : * ? " < > |`, so there are
+        no nested pages and the hierarchy comes from `_Sidebar.md` (shown on every
+        page) with `Home.md` as the landing page and an optional `_Footer.md`;
+        editing happens on the web or by cloning the wiki, and only the default
+        branch is published.
+      - **Workflow the keeper asked for**: everything is prepared and reviewed
+        LOCALLY first; nothing is uploaded until the keeper says so. The wiki
+        source therefore lives in this repository under `docs/wiki/` (English,
+        reviewable in normal commits), the Spanish mirror lives under
+        `docs/wiki-es/` and is gitignored together with `readme_es.md`, and a
+        publish step (copy into a clone of the wiki repository and push) waits for
+        P3 to provide the remote.
+      - **Page list (flat names, English, one topic each)**: `Home.md`,
+        `Installation.md`, `Uninstallation.md`, `Architecture.md`,
+        `Themes-and-Colours.md`, `Presets.md`, `Backgrounds.md`, `IPC.md`,
+        `Tray-and-Automation.md`, `Project-Structure.md`, `Usage.md`,
+        `Configuration.md`, `Troubleshooting.md`, `FAQ.md`, `Development.md`, plus
+        `_Sidebar.md` and `_Footer.md`.
+      - **Open decision for the keeper**: the app's About link opens `WIKI.md` (else
+        `README.md`) from `src/callbacks.rs:270-281`. Once the manual is a
+        multi-page wiki, that single file no longer represents it: either the link
+        moves to the wiki URL (needs P3) or it keeps opening a local page. Until
+        that is decided, `WIKI.md` stays in place.
 - [ ] **P5 — `Cargo.toml` carries `readme` and `repository`.** `readme = "README.md"` is
       free; `repository` waits on P3.
 
