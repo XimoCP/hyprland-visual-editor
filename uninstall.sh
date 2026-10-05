@@ -87,12 +87,13 @@ prompt_yes_no() {
 HVE_BIN="$HOME/.local/bin/hve"
 HVE_ASSETS="$HOME/.local/bin/assets"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
-HVE_AUTOSTART="$HOME/.config/autostart/hve.desktop"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
 # HVE_FIRST_TOGGLE removed — priming is now internal via winit/xdg-shell
 HVE_IPC_SYMLINK="/usr/local/bin/hve-ipc"
-HVE_CACHE="$HOME/.cache/hve"
-HVE_CONFIG="$HOME/.config/hve"
+# Mirror the app's `dirs::cache_dir()` / `dirs::config_dir()` resolution
+# (src/config.rs): honour XDG_*_HOME, else fall back to $HOME/.cache|.config.
+HVE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/hve"
+HVE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/hve"
 
 REMOVED=()
 NOT_FOUND=()
@@ -121,6 +122,27 @@ remove_dir() {
     fi
 }
 
+# Remove only the HVE autostart block from hve-settings.lua, leaving keybinds
+# and window rules in place. Mirrors src/config_markers.rs:
+#   LUA_AUTOSTART_START = "-- >>> HVE AUTOSTART <<<"
+#   LUA_AUTOSTART_END   = "-- >>> HVE AUTOSTART END <<<"
+# Runs even when the user keeps the cache, so no `hve --tray` entry survives
+# pointing at a binary that is being removed.
+remove_autostart_block() {
+    local path="$HVE_CACHE/hve-settings.lua"
+    local label="Autostart entry (hve-settings.lua)"
+    if [ ! -f "$path" ] || ! grep -qF -- '-- >>> HVE AUTOSTART <<<' "$path"; then
+        warn "$label → $MSG_NOT_FOUND"
+        NOT_FOUND+=("$label")
+        return
+    fi
+    # Delete from start marker through end marker, inclusive. Leading/trailing
+    # whitespace is tolerated, matching the trimmed compare in settings.rs.
+    sed -i '/^[[:space:]]*-- >>> HVE AUTOSTART <<<[[:space:]]*$/,/^[[:space:]]*-- >>> HVE AUTOSTART END <<<[[:space:]]*$/d' "$path"
+    ok "$label → $MSG_OK"
+    REMOVED+=("$label")
+}
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -141,7 +163,10 @@ remove_dir "$HVE_ASSETS" "Assets (~/.local/bin/assets/)"
 remove_file "$HVE_DESKTOP" "Acceso directo (.local/share/applications/hve.desktop)"
 
 # ── 4. Autostart ───────────────────────────────────────────────────────────
-remove_file "$HVE_AUTOSTART" "Autostart (.config/autostart/hve.desktop)"
+# Install never writes ~/.config/autostart/hve.desktop; the real autostart is
+# the `hl.on("hyprland.start", ...)` block inside hve-settings.lua. Remove just
+# that block, even if the cache is kept below.
+remove_autostart_block
 
 # ── 5. IPC script ──────────────────────────────────────────────────────────
 remove_file "$HVE_IPC" "IPC script (~/.local/bin/hve-ipc)"

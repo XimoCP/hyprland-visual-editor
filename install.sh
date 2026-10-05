@@ -31,11 +31,14 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_DETECTING_OS="Detectando sistema operativo..."
     MSG_DETECTED="Detectado:"
     MSG_UNSUPPORTED="Distribución no soportada (%s). Instala las dependencias manualmente y vuelve a ejecutar."
+    MSG_ROOT_GUARD="No ejecutes este script con sudo o como root."
+    MSG_ROOT_GUARD_HINT="El script pedirá sudo cuando sea necesario."
     MSG_INSTALLING_DEPS="Instalando dependencias del sistema..."
     MSG_BATCH_FAIL="Fallo la instalación por lote — probando una por una..."
     MSG_COULD_NOT_INSTALL="No se pudo instalar %s (puede que necesites instalarlo manualmente)"
     MSG_FOUND="encontrado"
     MSG_NOT_FOUND="no encontrado — algunas funciones pueden no funcionar"
+    MSG_PYTHON3_MISSING="python3 no encontrado — la detección de color y los atajos IPC pueden no funcionar"
     MSG_CHECKING_RUST="Verificando Rust..."
     MSG_RUST_OK="Rust %s"
     MSG_RUST_NOT_FOUND="Rust no encontrado — instalando rustup..."
@@ -53,13 +56,11 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_DETECTING_COLOR="Detectando herramienta de colores..."
     MSG_COLOR_TOOL="Herramienta de colores: %s"
     MSG_WATCHING="Vigilando:  %s"
-    MSG_IPC_TITLE="Instalando script hve-ipc..."
     MSG_IPC_TO="Script IPC → %s"
     MSG_IPC_PROMPT="¿Instalar hve-ipc? Te permite controlar HVE desde atajos de teclado de Hyprland (toggle system tray, pause, cambiar animaciones, etc.). Sin esto, los atajos no funcionan. [Y/n]"
     MSG_SYMLINK_PROMPT="¿Crear symlink en /usr/local/bin/? Si Hyprland/Noctalia ejecuta hve-ipc desde una ruta fija, el symlink evita tener que configurar el PATH. (necesita sudo) [y/N]"
     MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
     MSG_SYMLINK_FAIL="No se pudo crear el symlink — créalo manualmente:"
-    MSG_FIRST_TOGGLE_TO="Script workaround → %s"
     MSG_AUTOSTART_PROMPT="¿Iniciar HVE con el sistema (bandeja)? HVE se ejecuta en segundo plano como icono en la bandeja del sistema para cambiar temas, animaciones, bordes al instante. Se activa via exec-once en hve-settings (Hyprland nativo). Sin autostart, tenés que ejecutar 'hve --tray' manualmente cada vez. [y/N]"
     MSG_AUTOSTART_TO="Autostart → exec-once en hve-settings (Hyprland nativo)"
     MSG_LAUNCH_PROMPT="¿Iniciar HVE ahora? [y/N]"
@@ -76,11 +77,14 @@ else
     MSG_DETECTING_OS="Detecting operating system..."
     MSG_DETECTED="Detected:"
     MSG_UNSUPPORTED="Unsupported distro (%s). Install dependencies manually and re-run."
+    MSG_ROOT_GUARD="Do not run this script with sudo or as root."
+    MSG_ROOT_GUARD_HINT="The script will ask for sudo when needed."
     MSG_INSTALLING_DEPS="Installing system dependencies..."
     MSG_BATCH_FAIL="Batch install failed — trying individually..."
     MSG_COULD_NOT_INSTALL="Could not install: %s (you may need to install it manually)"
     MSG_FOUND="found"
     MSG_NOT_FOUND="not found — some features may not work"
+    MSG_PYTHON3_MISSING="python3 not found — color detection and IPC keybinds may not work"
     MSG_CHECKING_RUST="Checking Rust toolchain..."
     MSG_RUST_OK="Rust %s"
     MSG_RUST_NOT_FOUND="Rust not found — installing rustup..."
@@ -98,13 +102,11 @@ else
     MSG_DETECTING_COLOR="Detecting color tool..."
     MSG_COLOR_TOOL="Color tool: %s"
     MSG_WATCHING="Watching:    %s"
-    MSG_IPC_TITLE="Installing IPC script..."
     MSG_IPC_TO="IPC script → %s"
     MSG_IPC_PROMPT="Install hve-ipc? Enables Hyprland keyboard shortcuts to control HVE (toggle system tray, pause, switch animations, etc.). Without this, keybinds won't work. [Y/n]"
     MSG_SYMLINK_PROMPT="Create symlink in /usr/local/bin/? If Hyprland/Noctalia calls hve-ipc from a fixed path, the symlink ensures keybinds work without PATH config. (requires sudo) [y/N]"
     MSG_SYMLINK_OK="Symlink → /usr/local/bin/hve-ipc"
     MSG_SYMLINK_FAIL="Could not create symlink — create it manually:"
-    MSG_FIRST_TOGGLE_TO="Toggle workaround script → %s"
     MSG_AUTOSTART_PROMPT="Start HVE on login (system tray)? HVE runs in the background as a tray icon for quick theme, animation, border, and shader switching. Uses exec-once in hve-settings (Hyprland-native). Without autostart, you'll need to run 'hve --tray' manually each session. [y/N]"
     MSG_AUTOSTART_TO="Autostart → exec-once in hve-settings (Hyprland-native)"
     MSG_LAUNCH_PROMPT="Launch HVE now? [y/N]"
@@ -128,8 +130,8 @@ msg_fmt() {
 # ── Sudo guard ─────────────────────────────────────────────────────────────
 check_sudo() {
     if [ "$(id -u)" -eq 0 ]; then
-        echo -e "${RED}❌ No ejecutes este script con sudo o como root.${NC}"
-        echo "   El script pedirá sudo cuando sea necesario."
+        echo -e "${RED}❌ $MSG_ROOT_GUARD${NC}"
+        echo "   $MSG_ROOT_GUARD_HINT"
         exit 1
     fi
 }
@@ -139,7 +141,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HVE_BIN="$HOME/.local/bin/hve"
 HVE_SCRIPTS="$HOME/.local/bin/assets/scripts"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
-HVE_CONFIG_DIR="$HOME/.config/hve"
+HVE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hve"
 HVE_CONFIG_JSON="$HVE_CONFIG_DIR/config.json"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
 HYPR_DIR="$HOME/.config/hypr"
@@ -215,27 +217,31 @@ INSTALL_CMD=""
 case "$DISTRO" in
     arch)
         INSTALL_CMD="pacman -S --noconfirm"
-        REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango)
+        # Arch's Python 3 package is `python`; there is no `python3` package.
+        REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango python)
         ;;
     debian)
         INSTALL_CMD="apt install -y"
-        REQUIRED_PKGS=(inotify-tools pkg-config libgtk-3-dev libglib2.0-dev libcairo2-dev libpango1.0-dev)
+        REQUIRED_PKGS=(inotify-tools pkg-config libgtk-3-dev libglib2.0-dev libcairo2-dev libpango1.0-dev python3)
         ;;
     fedora)
         INSTALL_CMD="dnf install -y"
-        REQUIRED_PKGS=(inotify-tools pkgconfig gtk3-devel glib2-devel cairo-devel pango-devel)
+        REQUIRED_PKGS=(inotify-tools pkgconfig gtk3-devel glib2-devel cairo-devel pango-devel python3)
         ;;
     opensuse)
         INSTALL_CMD="zypper install -y"
-        REQUIRED_PKGS=(inotify-tools pkg-config gtk3-devel glib2-devel cairo-devel pango-devel)
+        REQUIRED_PKGS=(inotify-tools pkg-config gtk3-devel glib2-devel cairo-devel pango-devel python3)
         ;;
     void)
         INSTALL_CMD="xbps-install -y"
-        REQUIRED_PKGS=(inotify-tools pkg-config gtk3-devel glib2-devel cairo-devel pango-devel)
+        # Void package names verified against xq-api.voidlinux.org: it ships
+        # `gtk+3-devel` and `glib-devel`; `gtk3-devel`/`glib2-devel` do not exist.
+        REQUIRED_PKGS=(inotify-tools pkg-config gtk+3-devel glib-devel cairo-devel pango-devel python3)
         ;;
     gentoo)
         INSTALL_CMD="emerge -qv"
-        REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango)
+        # Gentoo's Python 3 atom is fully qualified: `dev-lang/python`.
+        REQUIRED_PKGS=(inotify-tools pkg-config gtk3 glib2 cairo pango dev-lang/python)
         ;;
     *)
         fail "$(msg_fmt "$MSG_UNSUPPORTED" "$DISTRO")"
@@ -258,9 +264,11 @@ if ! sudo $INSTALL_CMD "${REQUIRED_PKGS[@]}" 2>/dev/null; then
 fi
 
 # Verify key build/run dependencies
-for cmd in inotifywait pkg-config; do
+for cmd in inotifywait pkg-config python3; do
     if command -v "$cmd" &>/dev/null; then
         ok "$cmd $MSG_FOUND"
+    elif [ "$cmd" = "python3" ]; then
+        warn "$MSG_PYTHON3_MISSING"
     else
         warn "$cmd $MSG_NOT_FOUND"
     fi
@@ -417,14 +425,24 @@ if prompt_yes_no "$MSG_AUTOSTART_PROMPT" "no"; then
     #
     # We write auto_start:true to config.json. On next launch, HVE reads it
     # and calls set_autostart(true), which handles the hve-settings injection.
+    #
+    # Version: write CONFIG_VERSION (src/config.rs) directly. This file is
+    # sparse, and `Config` is declared `#[serde(default = "Config::default")]`,
+    # so every missing field loads from `Config::default()`. The v3→v8
+    # migrations only re-apply those same defaults (keybinds off, empty
+    # last_applied_theme, empty disabled_providers, border_radius 32, gaps 5,
+    # gallery_style 0), so claiming v8 here is truthful and avoids a pointless
+    # migration on first launch. Do NOT omit the field: it would default to 0
+    # and run the whole chain, where v1→v2 sets minimize_seconds=5 instead of
+    # the current default of 4.
     mkdir -p "$HVE_CONFIG_DIR"
     if [ -f "$HVE_CONFIG_JSON" ]; then
         # Replace auto_start value (HVE-generated JSON always has it)
         sed -i 's/"auto_start"\s*:\s*\(true\|false\)/"auto_start": true/' "$HVE_CONFIG_JSON" 2>/dev/null || {
-            echo '{"config_version":3,"auto_start":true}' > "$HVE_CONFIG_JSON"
+            echo '{"config_version":8,"auto_start":true}' > "$HVE_CONFIG_JSON"
         }
     else
-        echo '{"config_version":3,"auto_start":true}' > "$HVE_CONFIG_JSON"
+        echo '{"config_version":8,"auto_start":true}' > "$HVE_CONFIG_JSON"
     fi
     ok "$MSG_AUTOSTART_TO"
     AUTOSTART_INSTALLED=true
