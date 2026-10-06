@@ -1876,6 +1876,113 @@ fn watchdog_cleans_up_when_the_installed_binary_is_gone() {
     );
 }
 
+// ── install.sh ships the reference themes without clobbering (T5) ───────
+
+/// The reference-theme installer copies every shipped `assets/themes/<Name>/`
+/// into the user's config themes dir, but NEVER clobbers a same-named theme the
+/// user already has: it is skipped, never overwritten and never deleted. The
+/// helper is RUN, not grepped, so the rule is proven by behaviour.
+///
+/// The guard is `[ -e ]`, so it covers BOTH shapes the user may already have at
+/// the destination: a same-named DIRECTORY (their own theme) and a same-named
+/// FILE. Both are planted here so a future regression to `[ -d ]` — which would
+/// see the file as "absent" and try to `cp -r` over it — fails the suite.
+#[test]
+fn reference_theme_installer_never_clobbers_a_user_theme() {
+    let helper = scripts_dir().join("install_themes.sh");
+    let root = tempfile::tempdir().unwrap();
+    let src = root.path().join("assets/themes");
+    let dest = root.path().join("config/hve/themes");
+    // Three shipped themes.
+    std::fs::create_dir_all(src.join("Alpha")).unwrap();
+    std::fs::write(src.join("Alpha/palette.json"), b"shipped alpha").unwrap();
+    std::fs::create_dir_all(src.join("Beta")).unwrap();
+    std::fs::write(src.join("Beta/palette.json"), b"shipped beta").unwrap();
+    std::fs::create_dir_all(src.join("Gamma")).unwrap();
+    std::fs::write(src.join("Gamma/palette.json"), b"shipped gamma").unwrap();
+    // The user already has Alpha as a directory, with their own content.
+    std::fs::create_dir_all(dest.join("Alpha")).unwrap();
+    std::fs::write(dest.join("Alpha/palette.json"), b"THE USER'S ALPHA").unwrap();
+    // And Gamma as a same-named FILE, with their own content.
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("Gamma"), b"THE USER'S GAMMA FILE").unwrap();
+
+    let script = format!(
+        r#"source "{helper}"
+hve_install_reference_themes "$1" "$2"
+"#,
+        helper = helper.display()
+    );
+    let out = run_bash(
+        &script,
+        &["hve-themes-test", src.to_str().unwrap(), dest.to_str().unwrap()],
+        &[],
+        root.path(),
+    );
+    assert!(
+        out.status.success(),
+        "the helper must exit 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert_eq!(
+        std::fs::read(dest.join("Alpha/palette.json")).unwrap(),
+        b"THE USER'S ALPHA",
+        "an existing theme must never be clobbered"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("Gamma")).unwrap(),
+        b"THE USER'S GAMMA FILE",
+        "a same-named file at the destination must never be clobbered"
+    );
+    assert!(
+        dest.join("Gamma").is_file(),
+        "the destination entry must stay the user's file, not a directory"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("Beta/palette.json")).unwrap(),
+        b"shipped beta",
+        "a theme the user lacks must be installed"
+    );
+    assert!(
+        stdout.contains("kept Alpha"),
+        "the skip must be reported: {stdout}"
+    );
+    assert!(
+        stdout.contains("kept Gamma"),
+        "the file skip must be reported: {stdout}"
+    );
+    assert!(
+        stdout.contains("installed Beta"),
+        "the install must be reported: {stdout}"
+    );
+}
+
+/// The generic asset copy into `~/.local/bin/assets/` must never carry the
+/// large `assets/themes/` tree: themes belong in the config dir, where the
+/// reference-theme section copies them instead.
+#[test]
+fn install_sh_excludes_themes_from_the_local_assets_copy() {
+    let src = std::fs::read_to_string(repo_root().join("install.sh")).unwrap();
+    let loop_line = src
+        .lines()
+        .find(|l| l.contains("for dir in"))
+        .expect("install.sh must keep the explicit asset allowlist");
+    assert!(
+        !loop_line.contains("themes"),
+        "the ~/.local/bin/assets copy must not include themes: {loop_line}"
+    );
+    assert!(
+        src.contains("hve_install_reference_themes"),
+        "install.sh must install the reference themes"
+    );
+    assert!(
+        src.contains("assets/themes"),
+        "install.sh must read the shipped themes from assets/themes"
+    );
+}
+
 /// The same sandbox with the installed binary present: the watchdog must do
 /// nothing at all.
 #[test]

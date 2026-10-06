@@ -83,6 +83,15 @@ const SCANNED_FILES: &[&str] = &[
     "src/providers/bg_info.rs",
     "src/providers/hve_presets.rs",
     "src/providers/wallpaper.rs",
+    // T5 (2026-10-06): the maintenance packaging module. It joins so its
+    // cross-backend tokens cannot hide. It LEGITIMATELY names `noctalia` —
+    // its whole job is to re-package the records that provider writes, the
+    // same reasoning as `src/providers/noctalia.rs` — so that one token is
+    // exempt (see `EXEMPT_TOKENS`); every OTHER cross-backend token is
+    // policed at pin 0. It is deliberately NOT in `SHELL_FREE_CORE_FILES`:
+    // naming the shell whose records it packages is that guard's whole point,
+    // and the file does so on purpose.
+    "src/theme_package.rs",
 ];
 
 /// Integration names that must stay out of core files — and cross-backend
@@ -293,6 +302,18 @@ const EXEMPT_TOKENS: &[(&str, &str)] = &[
     ("src/composer/hyprland.rs", "hyprctl"),
     ("src/composer/hyprland.rs", "hyprland"),
     ("src/composer/hyprland.rs", "hyprmod"),
+    // --- T5 maintenance packaging (2026-10-06) ---
+    // `src/theme_package.rs` packages the records a theme's background provider
+    // wrote, so it names `noctalia` on purpose: it resolves the provider
+    // directory `providers/noctalia-v5/` and asks the registration router for
+    // that provider's declarer. Same reasoning as `noctalia.rs` naming its own
+    // identity — a maintenance tool that re-packages that provider's records
+    // must name it. Measured: 2x (the provider-dir join and the router lookup).
+    // The file's OTHER tokens — including `bg_info`, which the manifest format
+    // lives in — are policed at pin 0; the url and the live-assignment
+    // candidates now come from the provider's own `preview_sources` /
+    // `video_url` seams, never from a direct reach into `bg_info`.
+    ("src/theme_package.rs", "noctalia"),
 ];
 
 fn is_exempt(file: &str, token: &str) -> bool {
@@ -592,6 +613,9 @@ fn scanner_covers_every_policed_file_and_token() {
         "src/theme/desktop_preference/darkman.rs",
         "src/shell/gallery/slot.rs",
         "src/composer/hyprland.rs",
+        // T5 (2026-10-06): the maintenance packaging module — a core file that
+        // must stay visible to the token scanner.
+        "src/theme_package.rs",
     ] {
         assert!(
             SCANNED_FILES.contains(&file),

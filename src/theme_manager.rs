@@ -79,6 +79,18 @@ pub struct PreviewSource {
     pub paths: Vec<PathBuf>,
 }
 
+/// A remote video url a provider's OWN record knows for a background source
+/// (theme-packages T3): the url plus the optional metadata the backend needs
+/// to rebuild its own assignment. Same split as [`PreviewSource`]: the
+/// provider supplies knowledge of its own record format, while the core
+/// owns the decision to record it and never parses the provider's file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeVideoUrl {
+    pub url: String,
+    pub filename: Option<String>,
+    pub sha256: Option<String>,
+}
+
 /// One displayable fact a provider reports about its OWN saved record for a
 /// theme (the gallery info panel). `swatches` carries palette colors as hex
 /// strings ("#rrggbb"); the core parses them and never interprets a label.
@@ -211,6 +223,17 @@ pub trait ThemeProvider: Send + Sync {
     fn preview_sources(&self, provider_dir: &Path) -> Vec<PreviewSource> {
         let _ = provider_dir;
         Vec::new()
+    }
+
+    /// The remote video url this provider's OWN record knows for `source`, if
+    /// any (theme-packages T3). The provider reads its own manifest inside
+    /// `provider_dir` and states what it holds; the core only records what the
+    /// provider states and never parses the file itself. Mirrors
+    /// [`Self::preview_sources`]: knowledge from the provider, decision from
+    /// the core. Default: no url knowledge, so nothing is recorded.
+    fn video_url(&self, provider_dir: &Path, source: &Path) -> Option<ThemeVideoUrl> {
+        let _ = (provider_dir, source);
+        None
     }
 
     /// Displayable facts about this provider's OWN record for a saved theme,

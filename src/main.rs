@@ -21,6 +21,7 @@ mod show_state;
 mod theme;
 mod theme_manager;
 mod theme_media;
+mod theme_package;
 mod theme_presets;
 mod tr;
 mod tray;
@@ -83,6 +84,41 @@ fn project_dir() -> PathBuf {
 
     // Last resort: fallback to compiled manifest dir (works in dev builds)
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Intercept the hidden maintenance flags BEFORE any GUI setup.
+///
+/// Returns `Some(exit_code)` when a maintenance command ran (or a
+/// maintenance-looking flag was invalid); `None` when the normal GUI path
+/// should continue. Running here means no Slint window, no single-instance
+/// lock and no watcher are ever started for a maintenance invocation.
+fn run_maintenance_cli() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match crate::theme_package::parse_maintenance(&args) {
+        crate::theme_package::MaintenanceParse::NotMaintenance => None,
+        crate::theme_package::MaintenanceParse::Invalid(message) => {
+            eprintln!("hve: {message}");
+            Some(2)
+        }
+        crate::theme_package::MaintenanceParse::Run(command) => {
+            let config_dir = dirs::config_dir().unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_default();
+                PathBuf::from(home).join(".config")
+            });
+            let themes_root = config_dir.join("hve").join("themes");
+            let assets_dir = Engine::new(&project_dir()).assets_dir();
+            let user_presets_root = crate::preset_store::PresetStore::root();
+            let mut stdout = std::io::stdout();
+            Some(crate::theme_package::run_maintenance(
+                &command,
+                &themes_root,
+                &assets_dir,
+                &user_presets_root,
+                crate::theme_media::max_packaged_video_bytes(),
+                &mut stdout,
+            ))
+        }
+    }
 }
 
 /// D4: drop the hidden border draft and restore the active border (or no border
@@ -2645,6 +2681,11 @@ impl InterludeState {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Hidden maintenance flags run without starting Slint and exit before any
+    // GUI setup (no window, no single-instance lock, no watcher).
+    if let Some(code) = run_maintenance_cli() {
+        std::process::exit(code);
+    }
     let cli = Cli::parse();
 
     // ── Structured logging ──

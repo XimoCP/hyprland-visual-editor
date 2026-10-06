@@ -7,7 +7,7 @@ use crate::providers::noctalia_paths::NoctaliaV4Paths;
 use crate::providers::noctalia_paths::ShellProvider;
 use crate::theme_manager::{
     DeletableArtifact, PreviewRole, PreviewSource, PreviewSourceKind, ProviderCapabilities,
-    ThemeFact, ThemeProvider,
+    ThemeFact, ThemeProvider, ThemeVideoUrl,
 };
 use serde::Deserialize;
 use std::fs;
@@ -1534,6 +1534,18 @@ impl ThemeProvider for NoctaliaV5Provider {
         }
 
         out
+    }
+
+    /// The remote video url this provider's own mpvpaper manifest knows for
+    /// `source` (theme-packages T3). The manifest format is this backend's
+    /// own record knowledge (`bg_info`), so the parse stays here and the core
+    /// only records what the provider states.
+    fn video_url(&self, provider_dir: &Path, source: &Path) -> Option<ThemeVideoUrl> {
+        crate::providers::bg_info::video_url_for(provider_dir, source).map(|known| ThemeVideoUrl {
+            url: known.url,
+            filename: known.filename,
+            sha256: known.sha256,
+        })
     }
 
     /// The theme's own palette record, for the gallery info panel: the saved

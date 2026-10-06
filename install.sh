@@ -52,6 +52,8 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_INSTALLING="Instalando HVE..."
     MSG_BINARY_TO="Binario → %s"
     MSG_ASSETS_TO="Assets → ~/.local/bin/assets/"
+    MSG_THEMES_TO="Temas de referencia → %s"
+    MSG_THEME_KEPT="Tema existente conservado: %s"
     MSG_DESKTOP_TO="Acceso directo → %s (%s)"
     MSG_DETECTING_COLOR="Detectando herramienta de colores..."
     MSG_COLOR_TOOL="Herramienta de colores: %s"
@@ -99,6 +101,8 @@ else
     MSG_INSTALLING="Installing HVE..."
     MSG_BINARY_TO="Binary → %s"
     MSG_ASSETS_TO="Assets → ~/.local/bin/assets/"
+    MSG_THEMES_TO="Reference themes → %s"
+    MSG_THEME_KEPT="kept existing theme: %s"
     MSG_DESKTOP_TO="Desktop entry → %s (%s)"
     MSG_DETECTING_COLOR="Detecting color tool..."
     MSG_COLOR_TOOL="Color tool: %s"
@@ -381,6 +385,23 @@ if [ -d "$SCRIPT_DIR/assets" ]; then
         fi
     done
     ok "$MSG_ASSETS_TO"
+fi
+
+# Reference themes (theme-packages T5): the keeper's themes ship under
+# assets/themes/<Name>/ and are copied into the user's config themes dir
+# WITHOUT clobbering — a same-named theme the user already has is skipped,
+# never overwritten or deleted. Themes belong in the config dir, NOT in
+# ~/.local/bin/assets/, so the asset loop above deliberately omits `themes`.
+if [ -d "$SCRIPT_DIR/assets/themes" ]; then
+    # shellcheck source=/dev/null
+    . "$SCRIPT_DIR/assets/scripts/install_themes.sh"
+    info "$(msg_fmt "$MSG_THEMES_TO" "$HVE_CONFIG_DIR/themes")"
+    themes_report="$(hve_install_reference_themes "$SCRIPT_DIR/assets/themes" "$HVE_CONFIG_DIR/themes")"
+    printf '%s\n' "$themes_report" | while IFS= read -r theme_action; do
+        case "$theme_action" in
+            kept\ *) warn "$(msg_fmt "$MSG_THEME_KEPT" "${theme_action#kept }")" ;;
+        esac
+    done
 fi
 
 # Desktop entry
