@@ -1,4 +1,8 @@
-# Architecture
+# 🧠 Architecture
+
+**How HVE works inside: the pieces and how they fit together.**
+
+This page is for developers and for anyone curious about the machinery. If you just want to use HVE, you do not need it — start with [Usage](Usage) instead.
 
 HVE splits the look of your desktop into small snippets called **fragments**
 — one for the animation, one for the border, one for the geometry, one for
@@ -17,7 +21,7 @@ This page covers how fragments are assembled, which configuration format HVE
 emits, and where each subsystem lives. The seams that keep the pieces
 independent are at the end; each individual system has its own page.
 
-## Fragments and assembly
+## 🧩 Fragments and assembly
 
 The core of the system is `assets/scripts/assemble.sh`, which:
 
@@ -56,7 +60,7 @@ The fragments directory lives inside the installed assets (see
 [Project structure](Project-Structure)), and is overwritten every time you
 pick a preset.
 
-## Lua vs Conf
+## 📜 Lua vs Conf
 
 Hyprland 0.55+ defaults to a Lua configuration — `hl.` calls and `require()`
 — and HVE targets exactly that. Earlier versions shipped every animation
@@ -78,7 +82,7 @@ The rule itself is written down in `openspec/specs/lua-only-config/spec.md`.
 Shaders are `.frag` files with no second format, because Hyprland reads the
 same shader file regardless of how your configuration is written.
 
-## The systems
+## 🗺️ The systems
 
 | System | What it does | Where | Page |
 |--------|--------------|-------|------|
@@ -90,7 +94,7 @@ same shader file regardless of how your configuration is written.
 | Internationalisation | English and Spanish strings embedded at compile time, resolved by dot-notation key | `src/tr.rs`, `i18n/` | [Configuration](Configuration) |
 | Configuration | The persistent `config.json`, its fields and its migrations | `src/config.rs` | [Configuration](Configuration) |
 
-## Hyprland is the base, never a backend
+## 🧱 Hyprland is the base, never a backend
 
 HVE is built for Hyprland and nothing replaces it. Compositor-specific
 knowledge — the `hyprctl` calls, the reload, the workspace queries — lives
@@ -98,7 +102,7 @@ behind the `Composer` seam (`src/composer/mod.rs`), whose only implementation
 is `HyprlandComposer` (`src/composer/hyprland.rs`). The rest of the code talks
 to `Composer`, never to Hyprland directly.
 
-## Shell agnosticism
+## 🐚 Shell agnosticism
 
 HVE is agnostic of the **desktop shell** — the layer that sits on top of
 Hyprland (Noctalia, DMS, Calestia, …). It is **not** agnostic of Hyprland:
@@ -139,7 +143,7 @@ when any shell name (`noctalia`, `quickshell`, `calestia`, `dms`) appears in a
 core file, and a tripwire fails when a new `src/shell/` module joins the tree
 unpoliced.
 
-### What is pluggable
+### 🔌 What is pluggable
 
 - The colour sources are genuinely pluggable: each source is one module under
   `assets/scripts/color_sources.d/`, discovered from that directory, so adding

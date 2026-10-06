@@ -1,4 +1,8 @@
-# Configuration
+# ⚙️ Configuration
+
+**The reference for `~/.config/hve/config.json`, field by field.**
+
+This page is for people who edit HVE's configuration by hand. If you use the app and its panels, you do not need it — see [Usage](Usage).
 
 HVE keeps one JSON file: `~/.config/hve/config.json` (it honours `$XDG_CONFIG_HOME`, so the file can live elsewhere if you set that variable). It is read and written by `src/config.rs`.
 
@@ -30,7 +34,7 @@ HVE keeps one JSON file: `~/.config/hve/config.json` (it honours `$XDG_CONFIG_HO
 
 That block is what a **fresh** file looks like — the defaults from `Config::default()`. An existing file holds your current values instead; for example `"theme": "dark"` or `"active_anim_file": "01_relampago"`.
 
-## Field reference
+## 📋 Field reference
 
 | Field | Type | Default | What it does |
 |-------|------|---------|--------------|
@@ -54,7 +58,7 @@ That block is what a **fresh** file looks like — the defaults from `Config::de
 | `keybinds_enabled` | bool | `false` | Saved toggle for HVE's shortcut block. Nothing outside `src/config.rs` reads it today: at startup HVE writes the vital `SUPER + H` keybind itself (`src/main.rs` → `src/settings.rs`). |
 | `disabled_providers` | array | `[]` | Provider ids the user turned off, for example `"noctalia"` or `"hve-presets"`. |
 
-## Migrations
+## 🔄 Migrations
 
 The system migrates **forward**: if a future version adds fields, HVE migrates automatically from any older version. The real chain:
 
@@ -71,13 +75,13 @@ The system migrates **forward**: if a future version adds fields, HVE migrates a
 
 Each step fills in the value **that version** introduced, so an upgraded file keeps the historical default of the step (for example `minimize_seconds: 5` from v1 → v2) while a fresh file starts at the current default (`4`). The migration prints `[hve] Info: migrating config from vN to v8.` to stderr and the file is rewritten at the current version.
 
-## Unknown fields
+## ⚠️ Unknown fields
 
 The struct is declared with `deny_unknown_fields`. A key HVE does not know — a typo, or a key from a newer version — makes the parse fail: the warning goes to stderr and the **whole file** falls back to defaults, and the next save overwrites it. Editing this file by hand therefore means editing only keys that exist in the table above.
 
 A corrupt or unreadable file behaves the same way: a warning on stderr, then defaults.
 
-## See also
+## 📚 See also
 
 - [Architecture](Architecture) — how the configuration, fragment and colour systems fit together.
 - [Project structure](Project-Structure) — where the config lives among the runtime files.

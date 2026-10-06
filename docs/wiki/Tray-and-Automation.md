@@ -1,8 +1,12 @@
-# Tray and automation
+# 🖥️ Tray and automation
+
+**How the tray, the colour watcher and the safety pieces work.**
+
+If you only want to use the tray menu, [Usage](Usage) is enough — this page is the detail underneath, for whoever wants to know what runs in the background.
 
 Four pieces keep HVE working while you are not looking at it: the tray icon, the colour watcher, the focus countdown and the safety watchdog.
 
-## System tray
+## 📌 System tray
 
 HVE publishes a tray icon through the **KDE Status Notifier Item** protocol using the `ksni` crate (`src/tray.rs`). The tray starts on every launch, with or without `--tray`; the flag only decides whether the window opens as well.
 
@@ -10,7 +14,7 @@ HVE publishes a tray icon through the **KDE Status Notifier Item** protocol usin
 - Its tint follows the current theme accent (lightened for dark panels); the on/off state of HVE is shown by the menu, not by an icon colour swap.
 - The tray title is `HVE — Hyprland Visual Editor`.
 
-### Context menu
+### 📋 Context menu
 
 | Entry | Action |
 |-------|--------|
@@ -27,7 +31,7 @@ HVE publishes a tray icon through the **KDE Status Notifier Item** protocol usin
 
 Every label goes through the translation table (`tray.*` keys) with English as the fallback.
 
-## Colour watcher (`color_watcher.sh`)
+## 🎨 Colour watcher (`color_watcher.sh`)
 
 `color_watcher.sh` is a background process spawned by HVE on every launch (`src/watcher.rs`) that watches your colour files with `inotifywait` and keeps the overlay in sync.
 
@@ -39,7 +43,7 @@ Every label goes through the translation table (`tray.*` keys) with English as t
 - **Singleton**: a non-blocking `flock` on `~/.cache/hve/color_watcher.lock` allows only one watcher; a second instance logs one line and exits. If `flock` is missing the guard is skipped and the watcher continues unguarded rather than silently losing colour sync.
 - **Log**: `~/.cache/hve/color_watcher.log` (XDG-aware).
 
-## Auto-minimise and countdown
+## ⏱️ Auto-minimise and countdown
 
 When the window loses focus — detected from Hyprland's `activewindow` events (`src/hypr_ipc.rs`) — and auto-minimise is enabled:
 
@@ -52,7 +56,7 @@ The countdown is suppressed while a theme is being applied (a reload briefly mov
 
 Defaults and the toggle live in `~/.config/hve/config.json`: `auto_minimize_enabled: true`, `minimize_seconds: 4`. Both are editable from the **System** panel section — see [Configuration](Configuration).
 
-## Safety watchdog (`hve_watchdog.sh`)
+## 🛡️ Safety watchdog (`hve_watchdog.sh`)
 
 `init.sh enable` copies the watchdog to the cache directory (`~/.cache/hve/hve_watchdog.sh`) and registers it in `hyprland.lua` so it runs at every Hyprland start:
 
@@ -71,7 +75,7 @@ If the binary is missing — a manual uninstall or an accidental deletion — th
 
 If the binary is present, the script does nothing.
 
-## See also
+## 📚 See also
 
 - [IPC](IPC) — the commands these scripts send.
 - [Uninstallation](Uninstallation) — what is removed when you take HVE out.

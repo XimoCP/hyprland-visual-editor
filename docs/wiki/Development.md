@@ -1,6 +1,10 @@
-# Development
+# 💻 Development
 
-## Build
+**Build HVE from source, test it, and work on its code.**
+
+This page is for developers. If you installed HVE and just want to use it, you do not need it — see [Usage](Usage).
+
+## 🏗️ Build
 
 Prerequisites are the Rust toolchain (`rustup` installs it if missing) and the system packages listed in [Installation](Installation).
 
@@ -10,7 +14,7 @@ cargo build --release
 
 The binary lands in `target/release/hve`; the installer runs exactly this command. The Slint UI is compiled from `build.rs` (`slint_build::compile("ui/main.slint")`), so a build always carries the current `ui/` tree with it.
 
-## Test
+## 🧪 Test
 
 ```bash
 cargo test
@@ -26,7 +30,7 @@ Three families of tests are worth knowing about:
 | `src/architecture_contract.rs` | A measurement instrument, not production code. It pins today's integration-token counts per core and provider file and fails when a count **grows** (a coupling leaked in) or when a pin is **higher** than the measured count (a stale pin). It also carries the shell-name guard: a core production file that spells `noctalia`, `quickshell`, `calestia` or `dms` fails the build with `SHELL NAME IN CORE: … move it behind the adapter that owns it (src/providers/shell_capabilities.rs)`. Lower a pin when you move a coupling; never raise it to hide one. |
 | `src/shell_agnosticism_tests.rs` | Drives the core end to end with a **fake** shell adapter and a **fake** theme provider the core has never heard of. If a new shell ever forces an edit here to keep it passing, the agnosticism claim is false. |
 
-## Visual verification for UI changes
+## 👀 Visual verification for UI changes
 
 A UI change that only shows "tests green + build clean" is not verified. Run the headless render and read the images it produced:
 
@@ -36,7 +40,7 @@ HVE_RENDER_DIR=/tmp/opencode/render-verify-<unique> cargo test slice_focus_flow_
 
 The test prints a `render artifacts for this run: <dir>` line; open the PNGs in **that** directory and check the geometry yourself. Each run writes its own directory, so a frame can never come from another run — anything flat in `/tmp/opencode/*.png` is a leftover and never evidence. Sibling render tests cover other states (`ctrl_drawer_deploy_renders`, `mosaic_curtain_phase_driven_renders_mid_and_settled`, `panel_morph_midflight_renders`, `theme_info_panel_renders_closed_and_open`, …); extend them when you touch a new visual state.
 
-## Working rules
+## 📏 Working rules
 
 Taken from the repository's own `AGENTS.md`:
 
@@ -47,7 +51,7 @@ Taken from the repository's own `AGENTS.md`:
 - **One mutating window** — never stack windows.
 - **No GPL copying** — never copy code from hyprmod or skwd-wall (both GPL-3.0); translate visual ideas only, with credit.
 
-## Gallery image pipeline performance
+## ⚡ Gallery image pipeline performance
 
 Single decode → four artifacts: the worker decodes the source once and
 derives thumb (≤400×720 cover), hero (≤1600×900 contain), and both

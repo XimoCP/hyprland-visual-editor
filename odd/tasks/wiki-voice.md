@@ -54,7 +54,7 @@ claim against the code, one commit.
   colours, what does all this mean", "what is a preset and how do I use one",
   "what happens with wallpapers and videos".
 - [x] **W4 — FAQ, Uninstallation.** Plain answers, plain removal.
-- [ ] **W5 — Technical pages, light touch.** Architecture, IPC,
+- [x] **W5 — Technical pages, light touch.** Architecture, IPC,
   Project-Structure, Configuration, Development, Tray and automation: a plain
   opening line, heading icons, and no loss of depth.
 
