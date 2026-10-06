@@ -4499,7 +4499,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let Some(name) = name_opt else { return; };
                 let outcome = slot_c.apply_theme(&name);
                 if outcome != crate::shell::gallery::slot::ApplyOutcome::Applied {
-                    return; // Pulsed (already active) / NotFound / Failed: no sync
+                    return; // NotFound / Failed: nothing to sync
                 }
                 // Dual-manager sync: mirror active into main manager AND
                 // persist to cfg so the next startup resolves the same card.

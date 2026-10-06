@@ -1,5 +1,5 @@
 // HVE — GallerySlot (theme-gallery PR4 Slot + Integration + Polish).
-// Implements Slot trait, prewarm/cleanup, instant apply two-pass, no-op pulse S8,
+// Implements Slot trait, prewarm/cleanup, instant apply two-pass, active-card pulse S8,
 // ExpandToSettings 1300x900, Back/Esc S10/11, empty S18, delete/rename S19/20,
 // shader flicker overlay S21 ~3s, reduced-motion S23,
 // MIT footer R7, LRU200 R8, headless 22steps 350ms OutCubic.
@@ -37,7 +37,6 @@ pub const GALLERY_EXPANDED_SIZE: (f32, f32) = (1200.0, 800.0);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyOutcome {
     Applied,
-    Pulsed, // no-op active → pulse S8
     NotFound,
     Failed,
 }
@@ -172,7 +171,10 @@ impl GallerySlot {
     // ── instant apply two-pass (4.2, 4.3) ─────────────────────────────
     pub fn apply_theme(&self, name: &str) -> ApplyOutcome {
         let start = Instant::now();
-        // Check active via ThemeManager.list (ground truth)
+        // An already-active theme is RE-APPLIED, not skipped: the user may
+        // have changed part of its state and clicks its card to get it back,
+        // so the click must rewrite the theme. The pulse still fires as the
+        // visual acknowledgement of the click.
         let is_active = {
             let tm = self.theme_manager.lock().unwrap();
             let list = tm.list().unwrap_or_default();
@@ -180,8 +182,6 @@ impl GallerySlot {
         };
         if is_active {
             self.pulse_count.fetch_add(1, Ordering::SeqCst);
-            self.last_apply_ms.store(0, Ordering::SeqCst);
-            return ApplyOutcome::Pulsed;
         }
         // Check existence
         let exists = {
@@ -251,8 +251,8 @@ impl GallerySlot {
         self.last_applied_name.lock().unwrap().clone()
     }
 
-    // ── No-op pulse S8 helper (test-verified; runtime pulses inside
-    //    apply_theme) ──────────────────────────────────────────────────
+    // ── Active-card pulse S8 helper (test-verified; runtime pulses inside
+    //    apply_theme on a re-apply) ─────────────────────────────────────
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn should_pulse(&self, name: &str) -> bool {
         let tm = self.theme_manager.lock().unwrap();
@@ -566,19 +566,21 @@ mod tests {
         assert!(!nord.is_active);
     }
 
-    // ── 4.4 No-op active pulse S8 + mutation ExpandToSettings size anim test apply_noop ──
+    // ── 4.4 Active-theme re-apply rewrites it + ExpandToSettings size anim ──
 
     #[test]
-    fn apply_noop_pulse_on_active_and_expand_to_settings_anim() {
+    fn apply_active_theme_reapplies_and_expand_to_settings_anim() {
         let (tm, _dir) = temp_manager();
         let slot = GallerySlot::new(tm.clone());
-        // Nord is active → no-op pulse S8
+        // Nord is already active: clicking its card must APPLY it again so a
+        // changed theme can rewrite itself, while the click still pulses.
         let outcome = slot.apply_theme("Nord");
-        assert_eq!(outcome, ApplyOutcome::Pulsed, "active theme → pulse S8");
-        assert_eq!(slot.pulse_count(), 1);
-        assert_eq!(slot.apply_calls(), 0, "no reload on active");
-        assert_eq!(slot.last_apply_ms(), 0);
-        assert!(slot.should_pulse("Nord"));
+        assert_eq!(outcome, ApplyOutcome::Applied, "active theme re-applies, not no-op");
+        assert_eq!(slot.pulse_count(), 1, "click on the active card still pulses");
+        assert_eq!(slot.apply_calls(), 1, "active theme runs the real apply path (incl. reload)");
+        assert_eq!(slot.last_applied_name(), "Nord", "active theme stays applied");
+        assert_eq!(tm.lock().unwrap().last_applied, "Nord");
+        assert!(slot.should_pulse("Nord"), "Nord still the active theme");
         assert!(!slot.should_pulse("Cyber"));
         // Mutation ExpandToSettings: window mutates 1200x800 →1300x900 via SizePolicy 22steps 350ms OutCubic 4.4
         assert!(!slot.is_settings_open());
@@ -597,12 +599,88 @@ mod tests {
         assert_eq!(policy.target(true), GALLERY_EXPANDED_SIZE);
         assert_eq!(policy.target_for_settings(true), SETTINGS_SIZE);
         assert_eq!(SETTINGS_SIZE, (1300.0,900.0));
-        // pulse still 1, apply 0
+        // The size animation did not trigger extra applies or pulses
         assert_eq!(slot.pulse_count(), 1);
+        assert_eq!(slot.apply_calls(), 1);
+    }
+
+    // ── Keeper's report: re-applying the active theme rewrites its state ──
+
+    /// Provider whose `apply` counts calls and copies its saved state onto a
+    /// live file, so a second apply on the SAME theme is observable.
+    struct RewriteProvider {
+        id: String,
+        apply_calls: Arc<AtomicUsize>,
+        live_path: PathBuf,
+    }
+
+    impl ThemeProvider for RewriteProvider {
+        fn id(&self) -> &str { &self.id }
+        fn display_name_key(&self) -> &str { "rewrite" }
+        fn icon(&self) -> &str { "rewrite" }
+        fn save(&self, theme_dir: &Path) -> Result<(), String> {
+            let dir = theme_dir.join("providers").join(&self.id);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            std::fs::write(dir.join("state"), "theme-original").map_err(|e| e.to_string())
+        }
+        fn apply(&self, theme_dir: &Path) -> Result<(), String> {
+            self.apply_calls.fetch_add(1, Ordering::SeqCst);
+            let state = std::fs::read_to_string(
+                theme_dir.join("providers").join(&self.id).join("state"),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(&self.live_path, state).map_err(|e| e.to_string())
+        }
+        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+    }
+
+    #[test]
+    fn reapply_same_theme_rewrites_changed_state() {
+        let dir = TempDir::new().unwrap();
+        let live = dir.path().join("live-state");
+        let apply_calls = Arc::new(AtomicUsize::new(0));
+        let mut tm = ThemeManager::new(dir.path());
+        tm.register_provider(Box::new(RewriteProvider {
+            id: "rewrite".to_string(),
+            apply_calls: apply_calls.clone(),
+            live_path: live.clone(),
+        }));
+        tm.save("Nord", &["rewrite".to_string()]).unwrap();
+        let slot = GallerySlot::new(Arc::new(Mutex::new(tm)));
+
+        // First apply writes the theme's own state to the live file.
+        assert_eq!(slot.apply_theme("Nord"), ApplyOutcome::Applied);
+        assert_eq!(apply_calls.load(Ordering::SeqCst), 1, "provider ran on first apply");
+        assert_eq!(std::fs::read_to_string(&live).unwrap(), "theme-original");
+
+        // The user changes something of the theme (e.g. its background).
+        std::fs::write(&live, "user-changed").unwrap();
+        assert_eq!(std::fs::read_to_string(&live).unwrap(), "user-changed");
+
+        // Clicking the SAME already-active theme again must rewrite it.
+        assert_eq!(
+            slot.apply_theme("Nord"),
+            ApplyOutcome::Applied,
+            "re-apply of the active theme applies"
+        );
+        assert_eq!(
+            apply_calls.load(Ordering::SeqCst),
+            2,
+            "provider ran AGAIN on the re-apply"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&live).unwrap(),
+            "theme-original",
+            "the theme rewrote its own state back"
+        );
+        assert_eq!(
+            slot.pulse_count(),
+            1,
+            "the re-apply click on the active card pulsed (the first apply was not active)"
+        );
     }
 
     // ── 4.5 Back/Esc collapse + sync_global_after_show S10/11 test back_collapse ──
-
     #[test]
     fn back_collapse_esc_and_sync_global_after_show() {
         let (tm, _dir) = temp_manager();
