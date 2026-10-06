@@ -37,7 +37,7 @@ The panel opens from the gallery's five section pills and floats over it. The le
 |---------|------------------|
 | **Save** | *Save Current Look* form and *My Themes* list (search, rename, delete, refresh, overwrite). |
 | **Borders** | Geometry (size, radius, gaps), corner angle, colour slots, glow/shadow, plus built-in and user border presets. |
-| **Motion** | Curve preview, bezier sliders, speed and style, plus animation presets. |
+| **Motion** | Curve preview, the sliders that shape it, speed and style, plus animation presets. |
 | **Filters** | Shader cards; picking the active one again clears it. |
 | **System** | System on/off, hide delay, language, autostart, theme, tiling, the restart banner, and the **About HVE** block. |
 
@@ -63,11 +63,11 @@ hve [OPTIONS]
   -vv        Even more verbose logging (TRACE)
 ```
 
-Without `-v` the log filter is `info`. `--help` and `--version` come from the argument parser itself.
+Without `-v`, HVE logs ordinary messages and warnings. `-v` and `-vv` turn on debug and trace detail. `--help` and `--version` are handled by the command-line tool itself.
 
-HVE allows a single instance: a second launch does not open a new window, it asks the running one to bring its window forward (the `show` IPC command) and exits. If that instance cannot be reached, the second launch fails with a message naming both ways out — `pkill -x hve` to close it, or `SUPER + H` to show it.
+HVE allows a single instance: a second launch does not open a new window, it asks the running one to bring its window forward (the `show` command) and exits. If that instance cannot be reached, the second launch fails with a message naming both ways out — `pkill -x hve` to close it, or `SUPER + H` to show it.
 
-The shortcuts need the `hve-ipc` client, offered as an option during [Installation](Installation):
+The shortcuts need the `hve-ipc` tool, offered as an option during [Installation](Installation):
 
 ```bash
 hve-ipc show             # show the window (never hides it)
@@ -81,13 +81,13 @@ hve-ipc refresh-theme    # reload the colours
 hve-ipc quit             # close HVE
 ```
 
-With keybinds active (they are written on every launch) you get:
+With the shortcuts active (they are set up on every launch) you get:
 
 | Combination | Action |
 |-------------|--------|
 | `SUPER + H` | Show / hide the window |
 
-Any other command can be bound the same way in `~/.cache/hve/hve-settings.lua`. The full command list and the socket details are in [IPC](IPC).
+Any other command can be bound the same way in `~/.cache/hve/hve-settings.lua`. The full command list is in [IPC](IPC).
 
 ## 🔧 Under the hood
 

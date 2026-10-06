@@ -6,10 +6,10 @@ HVE installs from a clone of the repository. It builds the app, puts the binary 
 
 ## 📋 What you need first
 
-- A Hyprland desktop — Hyprland is the program that draws your desktop and manages your windows — that uses the Lua configuration (`hyprland.lua`). HVE manages only that file: if your Hyprland still runs the older `hyprland.conf`, migrate it first.
+- A Hyprland desktop — Hyprland is the program that draws your desktop and manages your windows — that uses the newer configuration file (`hyprland.lua`). HVE manages only that file: if your Hyprland still uses the older `hyprland.conf`, convert it first.
 - A normal user account. Do not run the installer with `sudo` or as root — it asks for `sudo` by itself when a package or a system path is involved.
 - Rust. The installer checks for it and installs it through `rustup` when it is missing.
-- `python3`. Without it, colour detection and the IPC shortcuts may not work.
+- `python3`. Without it, colour detection and the keyboard shortcuts may not work.
 
 The installer knows Arch, Manjaro, EndeavourOS, CachyOS, Artix, Debian, Ubuntu, Pop, Linux Mint, Elementary, Fedora, openSUSE, Void and Gentoo, and installs the system packages for you. On any other distribution it stops with an "unsupported" message and asks you to install the dependencies by hand.
 
@@ -22,7 +22,7 @@ cd hve
 ./install.sh
 ```
 
-The installer is bilingual (Spanish/English), runs as your normal user and asks before doing anything optional. It asks for `sudo` only for system packages and for the optional `/usr/local/bin` symlink.
+The installer is bilingual (Spanish/English), runs as your normal user and asks before doing anything optional. It asks for `sudo` only for system packages and for the optional `/usr/local/bin` shortcut.
 
 ## 📍 What lands where
 
@@ -44,10 +44,10 @@ Your settings live in `~/.config/hve/config.json`.
 
 ## ✅ How to know it worked
 
-- The installer finishes with **HVE installed!** and prints the path of the binary.
+- The installer finishes with **HVE installed!** and prints where it put the app.
 - `hve --version` answers with a version.
 - Running `hve` opens the fullscreen gallery.
-- If `~/.local/bin` is not in your `PATH`, the installer warns you and prints the line to add to your shell configuration.
+- If `~/.local/bin` is not in your `PATH` (the list of folders your terminal searches for commands), the installer warns you and prints the line to add to your terminal's start-up file.
 - Your application launcher shows a **Hyprland Visual Editor** entry.
 
 ## 🔧 Under the hood

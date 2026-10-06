@@ -14,19 +14,19 @@ Change something, see it straight away, keep what you like. HVE never rewrites y
 
 ## 📚 What's in this manual
 
-- [🚀 Installation](Installation) — get HVE onto your machine: its system dependencies and where the installer places each file.
+- [🚀 Installation](Installation) — get HVE onto your machine: the programs it needs first and where the installer places each file.
 - [🕹️ Usage](Usage) — the first ten minutes: the graphical interface, the command line, the tray and the keyboard shortcuts.
 - [🎨 Themes and colours](Themes-and-Colours) — choose where your colours come from (Noctalia, pywal, matugen or a manual source), and how complete themes are saved and applied.
-- [🧩 Presets](Presets) — try a ready-made look: animation, border and shader presets, their metadata, how they are scanned, and the toggle behaviour.
+- [🧩 Presets](Presets) — try a ready-made look: animation, border and shader presets, what each one carries, and how clicking a card turns it on and off.
 - [🖼️ Backgrounds](Backgrounds) — set your wallpaper: static and animated (video) wallpapers, and which piece owns the one on screen.
 - [❓ FAQ](FAQ) — short answers to common questions.
 - [🧹 Uninstallation](Uninstallation) — remove HVE: what is deleted, what is kept, and why nothing is left behind.
-- [🧠 Architecture](Architecture) — how fragments are assembled into the overlay, the Lua-only configuration, and the configuration, colour, preset, background, IPC, tray and watchdog systems.
-- [🔌 IPC](IPC) — drive HVE from scripts and keys: the `hve-ipc` client, its commands and the default keyboard shortcuts.
-- [🗂️ Project structure](Project-Structure) — find your way around: the repository layout and the runtime files HVE creates.
-- [⚙️ Configuration](Configuration) — tune HVE by hand: a reference for `~/.config/hve/config.json`, its fields and its migrations.
+- [🧠 Architecture](Architecture) — how HVE works inside: the pieces it keeps and puts together, its configuration, and each of its systems.
+- [🔌 IPC](IPC) — drive HVE from scripts and keys: the `hve-ipc` tool, its commands and the default keyboard shortcuts.
+- [🗂️ Project structure](Project-Structure) — find your way around: the repository layout and the files HVE creates while it runs.
+- [⚙️ Configuration](Configuration) — tune HVE by hand: a reference for `~/.config/hve/config.json`, its fields and how it upgrades itself.
 - [💻 Development](Development) — build HVE from source and work on its code.
-- [🖥️ Tray and automation](Tray-and-Automation) — the tray icon and its menu, the colour watcher, auto-minimise with countdown, and the safety watchdog.
+- [🖥️ Tray and automation](Tray-and-Automation) — the tray icon and its menu, the colour watcher, auto-minimise with countdown, and the safety check that cleans up after a crash.
 
 ## 🔧 Under the hood
 

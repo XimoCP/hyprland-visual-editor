@@ -2,16 +2,16 @@
 
 **What happens with wallpapers and videos.**
 
-A **static** wallpaper is one image sitting on the background layer. An **animated** wallpaper is a video, played by `mpvpaper` — one process per screen. HVE saves both with a theme and puts them back when you apply it, but it never owns the desktop's background itself: the piece that is currently painting wins, and HVE only hands paths over. A saved theme carries its background inside its own folder, so copying the folder carries the wallpaper too.
+A **static** wallpaper is one image sitting on the background layer. An **animated** wallpaper is a video, played by `mpvpaper` — one player per screen. HVE saves both with a theme and puts them back when you apply it, but it never owns the desktop's background itself: whichever program is already painting it wins, and HVE only passes the file along. A saved theme carries its background inside its own folder, so copying the folder carries the wallpaper too.
 
 ## 🖼️ Static or animated
 
-- **Static**: one image. HVE restores it with the shell's own call and hands the same path to the wallpaper engine.
-- **Animated**: a video. HVE drives a video backend (the Noctalia `mpvpaper` plugin, or the skwd-wall engine) — it never plays the video itself.
+- **Static**: one image. HVE asks your desktop to put it back and passes the same file to the program that paints wallpapers.
+- **Animated**: a video. HVE tells another program to play it (the Noctalia `mpvpaper` plugin, or skwd-wall) — it never plays the video itself.
 
 ## 🎬 Which piece owns the screen
 
-HVE does not guess who is painting the background. It asks the compositor which layer is on top and the wallpaper daemon what kind of layer it is, and only then decides. A theme captures **only** the background that is active right now — the video or the image, never both.
+HVE does not guess who is painting the background. It asks Hyprland which background sits on top and the wallpaper program what kind it is, and only then decides. A theme captures **only** the background that is active right now — the video or the image, never both.
 
 ## 🔧 Under the hood
 

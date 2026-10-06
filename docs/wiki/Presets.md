@@ -2,11 +2,11 @@
 
 **A ready-made look you can try with one click.**
 
-A preset is one file that describes one look: an animation, a border or a shader. HVE ships a set of them, shows each as a card with an icon, a colour and a description, and lets you switch between "this one" and "none" by clicking the card. You can also save your own from the tune panes, and a saved theme carries the custom presets it uses so the look travels with it.
+A preset is one file that describes one look: an animation, a border or a shader. HVE ships a set of them, shows each as a card with an icon, a colour and a description, and lets you switch between "this one" and "none" by clicking the card. You can also save your own from the panel where you adjust the look, and a saved theme carries the custom presets it uses so the look travels with it.
 
 ## 🎯 Three kinds of preset
 
-There are three categories, one folder each inside HVE's assets:
+There are three categories, one folder each inside the files HVE installs:
 
 | Kind | Folder | What it changes |
 |------|--------|-----------------|

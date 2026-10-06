@@ -2,7 +2,7 @@
 
 **Where your colours come from, and what applying a theme does.**
 
-HVE takes the colours from whatever colour tool you already use and applies them to two places: the Hyprland overlay (the look of your window borders, gradients and rounded geometry) and HVE's own interface. You do not pick a palette by hand — HVE finds one. A complete desktop look — colours, presets, backgrounds — is saved and put back as a **theme**.
+HVE takes the colours from whatever colour tool you already use and applies them to two places: the look of your Hyprland window borders, gradients and rounded corners, and HVE's own interface. You do not pick a palette by hand — HVE finds one. A complete desktop look — colours, presets, backgrounds — is saved and put back as a **theme**.
 
 ## 🌈 Where your colours come from
 

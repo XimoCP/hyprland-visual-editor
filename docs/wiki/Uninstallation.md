@@ -12,18 +12,18 @@ The uninstaller is bilingual (Spanish/English), prints a summary of what it remo
 
 | Item | Path | Notes |
 |------|------|-------|
-| Binary | `~/.local/bin/hve` | — |
-| Assets | `~/.local/bin/assets/` | Scripts, animations, borders, shaders, fragments |
-| Desktop entry | `~/.local/share/applications/hve.desktop` | — |
-| Autostart entry | The `-- >>> HVE AUTOSTART <<<` block inside `~/.cache/hve/hve-settings.lua` | Removed even if you keep the cache, so no `hve --tray` entry outlives the binary |
-| IPC script | `~/.local/bin/hve-ipc` | Only if you installed it |
-| System symlink | `/usr/local/bin/hve-ipc` | Requires `sudo`; only if it exists |
+| Program | `~/.local/bin/hve` | — |
+| Support files | `~/.local/bin/assets/` | Scripts, animations, borders, shaders and the pieces of the current look |
+| Launcher entry | `~/.local/share/applications/hve.desktop` | — |
+| Autostart entry | The `-- >>> HVE AUTOSTART <<<` block inside `~/.cache/hve/hve-settings.lua` | Removed even if you keep the temporary files, so no `hve --tray` entry outlives the program |
+| Shortcut helper | `~/.local/bin/hve-ipc` | Only if you installed it |
+| System shortcut | `/usr/local/bin/hve-ipc` | Requires `sudo`; only if it exists |
 
 ## ❓ What it asks about first
 
 | Item | Path | Why it asks |
 |------|------|-------------|
-| Runtime cache | `~/.cache/hve/` | Temporary data (logs, overlay, locks). Recreated the next time you run HVE. |
+| Temporary files | `~/.cache/hve/` | Temporary data (logs, the assembled look, lock files). Recreated the next time you run HVE. |
 | User configuration | `~/.config/hve/` | **Your data**: `config.json` with your settings, `themes/` with saved themes, `presets/` with your saved presets. |
 
 Both questions default to **No**, so answering nothing keeps everything.
