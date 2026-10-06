@@ -72,7 +72,7 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_INSTALLED="HVE instalado!"
     MSG_PATH_WARN="~/.local/bin no está en tu PATH. Agrega esto a tu configuración del shell:"
     MSG_RUN="Ejecutar:   hve"
-    MSG_SHORTCUTS="Atajos:    hve-ipc toggle-system"
+    MSG_SHORTCUTS="Atajos:    hve-ipc toggle-tray"
     MSG_YES="sí"
     MSG_NO="no"
 else
@@ -121,7 +121,7 @@ else
     MSG_INSTALLED="HVE installed!"
     MSG_PATH_WARN="~/.local/bin is not in your PATH. Add this to your shell config:"
     MSG_RUN="Run:        hve"
-    MSG_SHORTCUTS="Shortcuts:  hve-ipc toggle-system"
+    MSG_SHORTCUTS="Shortcuts:  hve-ipc toggle-tray"
     MSG_YES="yes"
     MSG_NO="no"
 fi
