@@ -94,6 +94,29 @@ the apply continues without a video.
   for the new instances to spawn, so a following static apply cannot
   clear-all into a half-booted plugin.
 
+### Installing a video backend
+
+HVE **does not install third-party software**: no package manager, no
+downloads, nothing written outside the theme and provider directories it
+manages. An animated background needs a backend that HVE only *drives*:
+
+- the **Noctalia `noctalia/mpvpaper` plugin** (with `mpvpaper` itself), which
+  plays the theme's saved manifest; or
+- the **skwd-wall engine** (`skwd-wall-v2` / `skwd-helm`), which paints one
+  exact video path on request and is available when its socket exists under
+  `$XDG_RUNTIME_DIR/skwd-wall-v2/wall.sock`.
+
+Install one of those yourself — through your distribution or the plugin's own
+instructions — to get animated backgrounds.
+
+When a theme wants a video and **neither** backend is available, HVE still
+applies the theme: it paints the theme's packaged poster (`media/poster.*`)
+statically when the theme carries one, and raises a desktop
+notification that names what is missing and points here for the install
+steps. The decision and the copy live in `src/providers/bg_info.rs`
+(`video_backend_notice`), so the notice can be tested without spawning
+anything.
+
 ### Availability
 
 Animated backgrounds depend on the active provider: they are a **Noctalia v5**

@@ -73,6 +73,10 @@ pub struct ApplyBackgroundRequest {
     pub animated_applied: bool,
     /// The saved static wallpaper path, if the theme carries one.
     pub static_wallpaper: Option<PathBuf>,
+    /// T6: HOW the theme wants its video (none, an exact path, or a url), so
+    /// the video-backend notice can tell which backend could paint it. The
+    /// notice reads it.
+    pub video_want: bg_info::VideoWant,
 }
 
 // ── Outcome ──────────────────────────────────────────────────────────
@@ -193,26 +197,21 @@ pub fn apply_animated(req: &ApplyBackgroundRequest) -> ApplyBackgroundOutcome {
 /// video wallpapers.
 fn mpvpaper_manifest_leg(req: &ApplyBackgroundRequest) -> ApplyBackgroundOutcome {
     let manifest_exists = req.provider_dir.join(bg_info::MANIFEST_FILE).exists();
+    let notification = notify_missing_video_backend(req, manifest_exists);
     if !manifest_exists {
         return match crate::providers::mpvpaper::clear_all() {
             Ok(()) => ApplyBackgroundOutcome {
                 animated_applied: false,
-                notification: BackgroundNotification::NoNotification,
+                notification,
                 leg: RoutedLeg::Cleared,
             },
             Err(reason) => ApplyBackgroundOutcome {
                 animated_applied: false,
-                notification: BackgroundNotification::NoNotification,
+                notification,
                 leg: RoutedLeg::ClearFailed(reason),
             },
         };
     }
-    let notification = if crate::providers::mpvpaper::mpvpaper_enabled() {
-        BackgroundNotification::NoNotification
-    } else {
-        bg_info::notify_plugin_required();
-        BackgroundNotification::PluginUnavailable
-    };
     match crate::providers::mpvpaper::apply_manifest(&req.theme_dir) {
         Ok(()) => ApplyBackgroundOutcome {
             animated_applied: true,
@@ -224,6 +223,39 @@ fn mpvpaper_manifest_leg(req: &ApplyBackgroundRequest) -> ApplyBackgroundOutcome
             notification,
             leg: RoutedLeg::ManifestRefused(reason),
         },
+    }
+}
+
+/// Whether the wallpaper engine's socket exists — the engine can paint a
+/// video. Read here so no provider names the engine backend directly.
+pub fn engine_socket_available() -> bool {
+    crate::providers::skwd_engine::socket_available()
+}
+
+/// T6: tell the user when a theme wants a video and no backend can paint it.
+///
+/// The decision and the copy come from the pure
+/// [`bg_info::video_backend_notice`]; this only gathers the facts and raises
+/// the shared toast. A static theme (nothing wants a video, no manifest)
+/// short-circuits before any probe, so it never spawns the plugin probe.
+fn notify_missing_video_backend(
+    req: &ApplyBackgroundRequest,
+    manifest_exists: bool,
+) -> BackgroundNotification {
+    if req.video_want == bg_info::VideoWant::None && !manifest_exists {
+        return BackgroundNotification::NoNotification;
+    }
+    let facts = bg_info::VideoBackendFacts {
+        video_want: req.video_want,
+        has_manifest: manifest_exists,
+        engine_socket: engine_socket_available(),
+        mpvpaper_enabled: crate::providers::mpvpaper::mpvpaper_enabled(),
+    };
+    if let Some(notice) = bg_info::video_backend_notice(facts) {
+        bg_info::notify_video_backend(&notice);
+        BackgroundNotification::PluginUnavailable
+    } else {
+        BackgroundNotification::NoNotification
     }
 }
 
@@ -376,6 +408,10 @@ mod tests {
     struct ProbeSandbox {
         /// Restored first: `Drop` puts PATH back before any field goes.
         old_path: Option<String>,
+        /// Restored with PATH: the engine socket seam, so a live keeper socket
+        /// can never leak into the notice decision.
+        old_runtime_dir: Option<String>,
+        old_skwd_sock: Option<String>,
         /// Written by the stub `notify-send` when a notification fires.
         notify_marker: PathBuf,
         /// Lives on PATH until `old_path` is restored above.
@@ -421,8 +457,16 @@ mod tests {
                 "PATH",
                 format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()),
             );
+            // Isolate the engine's socket seam: no live keeper socket may make
+            // the notice decision think a video backend is available.
+            let old_runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok();
+            let old_skwd_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+            std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
             Self {
                 old_path,
+                old_runtime_dir,
+                old_skwd_sock,
                 notify_marker,
                 _bin: bin,
                 _tmp: tmp,
@@ -440,6 +484,14 @@ mod tests {
             match &self.old_path {
                 Some(p) => std::env::set_var("PATH", p),
                 None => std::env::remove_var("PATH"),
+            }
+            match &self.old_runtime_dir {
+                Some(p) => std::env::set_var("XDG_RUNTIME_DIR", p),
+                None => std::env::remove_var("XDG_RUNTIME_DIR"),
+            }
+            match &self.old_skwd_sock {
+                Some(p) => std::env::set_var("SKWD_WALL_V2_SOCK", p),
+                None => std::env::remove_var("SKWD_WALL_V2_SOCK"),
             }
         }
     }
@@ -467,6 +519,7 @@ mod tests {
             provider_dir: theme.path().join("providers").join("noctalia-v5"),
             animated_applied,
             static_wallpaper: None,
+            video_want: bg_info::VideoWant::None,
         }
     }
 
@@ -576,6 +629,101 @@ mod tests {
         assert!(!sandbox.notified(), "clear-all must never notify");
     }
 
+    /// T6 new case: a theme that wants a video (a packaged video, or a
+    /// recorded video/url) but carries NO manifest and has no backend at all
+    /// must be told the backend is missing — while the clear leg still runs
+    /// and `animated_applied` stays false, so the caller keeps painting the
+    /// poster statically.
+    #[test]
+    #[serial]
+    fn packaged_video_without_any_backend_notifies_and_keeps_the_clear_leg() {
+        let sandbox = ProbeSandbox::new(false);
+        let theme = TempDir::new().unwrap();
+        std::fs::create_dir_all(theme.path().join("providers").join("noctalia-v5")).unwrap();
+        let req = ApplyBackgroundRequest {
+            theme_dir: theme.path().to_path_buf(),
+            provider_dir: theme.path().join("providers").join("noctalia-v5"),
+            animated_applied: false,
+            static_wallpaper: None,
+            video_want: bg_info::VideoWant::ExactPath,
+        };
+
+        let outcome = apply_animated(&req);
+
+        assert_eq!(
+            outcome.notification,
+            BackgroundNotification::PluginUnavailable,
+            "a video with no backend must carry the notification state"
+        );
+        assert!(
+            sandbox.notified(),
+            "the user must be told no backend can paint the theme's video"
+        );
+        assert_eq!(
+            outcome.leg,
+            RoutedLeg::Cleared,
+            "the clear leg still runs after the notice, got {:?}",
+            outcome.leg
+        );
+        assert!(
+            !outcome.animated_applied,
+            "no video was painted: the poster fallback stays in charge"
+        );
+    }
+
+    /// Defect 1 (verifier): the plugin plays only a SAVED manifest, never a
+    /// bare path, so an enabled plugin is NOT a backend for the packaged video
+    /// the reference theme ships. With no engine socket the notice MUST fire.
+    #[test]
+    #[serial]
+    fn packaged_video_with_only_the_plugin_enabled_still_notifies_without_an_engine_socket() {
+        let sandbox = ProbeSandbox::new(true);
+        let theme = TempDir::new().unwrap();
+        std::fs::create_dir_all(theme.path().join("providers").join("noctalia-v5")).unwrap();
+        let req = ApplyBackgroundRequest {
+            theme_dir: theme.path().to_path_buf(),
+            provider_dir: theme.path().join("providers").join("noctalia-v5"),
+            animated_applied: false,
+            static_wallpaper: None,
+            video_want: bg_info::VideoWant::ExactPath,
+        };
+
+        let outcome = apply_animated(&req);
+
+        assert_eq!(
+            outcome.notification,
+            BackgroundNotification::PluginUnavailable,
+            "the plugin cannot paint a bare path: the notice must fire"
+        );
+        assert!(
+            sandbox.notified(),
+            "the user must be told no backend can paint the theme's packaged video"
+        );
+    }
+
+    /// T6: a STATIC theme (nothing wants a video) must never notify, even with
+    /// no backend at all.
+    #[test]
+    #[serial]
+    fn static_theme_never_notifies_for_the_video_backend() {
+        let sandbox = ProbeSandbox::new(false);
+        let theme = TempDir::new().unwrap();
+        std::fs::create_dir_all(theme.path().join("providers").join("noctalia-v5")).unwrap();
+        let req = ApplyBackgroundRequest {
+            theme_dir: theme.path().to_path_buf(),
+            provider_dir: theme.path().join("providers").join("noctalia-v5"),
+            animated_applied: false,
+            static_wallpaper: None,
+            video_want: bg_info::VideoWant::None,
+        };
+
+        let outcome = apply_animated(&req);
+
+        assert_eq!(outcome.leg, RoutedLeg::Cleared);
+        assert_eq!(outcome.notification, BackgroundNotification::NoNotification);
+        assert!(!sandbox.notified(), "a static theme must never notify");
+    }
+
     /// The engine's gate is the socket file: with it absent the routed
     /// path hand-off must report `false` (never panic, never claim a
     /// paint), so the caller keeps every fallback route (D1).
@@ -639,6 +787,7 @@ mod tests {
             provider_dir: tmp.path().join("providers").join("noctalia-v5"),
             animated_applied: false,
             static_wallpaper: Some(PathBuf::from("/tmp/a-still.png")),
+            video_want: bg_info::VideoWant::None,
         };
         assert!(
             hand_off_static(&req),
@@ -667,6 +816,7 @@ mod tests {
             provider_dir: PathBuf::from("/nonexistent-theme/providers/noctalia-v5"),
             animated_applied: false,
             static_wallpaper: None,
+            video_want: bg_info::VideoWant::None,
         };
         assert!(!hand_off_static(&req));
     }

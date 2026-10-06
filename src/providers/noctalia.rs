@@ -2220,11 +2220,25 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    up-front notification for a missing/disabled plugin happens
         //    inside the router, before the manifest leg runs, exactly as
         //    it did here.
+        // T6: HOW the theme wants its video decides which backend can paint
+        // it — an exact path goes to the wallpaper engine, a url to the plugin
+        // through the manifest — so the notice must read the KIND, never a
+        // single "wants a video" boolean.
+        let video_want = match theme_video.as_ref() {
+            Some(crate::theme_media::ThemeVideoSource::Path(_)) => {
+                crate::providers::bg_info::VideoWant::ExactPath
+            }
+            Some(crate::theme_media::ThemeVideoSource::Url { .. }) => {
+                crate::providers::bg_info::VideoWant::Url
+            }
+            None => crate::providers::bg_info::VideoWant::None,
+        };
         let mut bg_request = background::ApplyBackgroundRequest {
             theme_dir: theme_dir.to_path_buf(),
             provider_dir,
             animated_applied,
             static_wallpaper,
+            video_want,
         };
         let outcome = background::apply_animated(&bg_request);
         animated_applied = outcome.animated_applied;
@@ -3874,6 +3888,25 @@ exit 0
                 std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755))
                     .unwrap();
             }
+            // Hermetic `notify-send`: the desktop toasts HVE raises are
+            // recorded instead of landing on the keeper's screen. Both the
+            // post-apply toast and the T6 video-backend notice land in the
+            // same file, so tests assert on their content.
+            let notify_send = bin_dir.join("notify-send");
+            std::fs::write(
+                &notify_send,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                    state_dir.join("notify.log").display()
+                ),
+            )
+            .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&notify_send, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
             let orig_path = std::env::var("PATH").unwrap_or_default();
             std::env::set_var(
                 "PATH",
@@ -3918,6 +3951,11 @@ exit 0
             std::fs::create_dir_all(&noct_home).unwrap();
             std::env::set_var("HVE_NOCTALIA_CONFIG", &noct_home);
             theme
+        }
+
+        /// Every `notify-send` invocation the apply raised, one per line.
+        fn notified(&self) -> String {
+            std::fs::read_to_string(self.state_dir.join("notify.log")).unwrap_or_default()
         }
 
         fn count(&self, needle: &str) -> usize {
@@ -4697,6 +4735,71 @@ exit 0
         assert!(
             !log.contains("loop.mp4"),
             "the missing absolute video must not be handed over, log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    // ── Theme packages T6: the video-backend notice ───────────────────
+    //
+    // WHY these exist: when a theme wants a video but no backend can paint it,
+    // the poster fallback stays AND the user must be told what is missing and
+    // where to read how to install a backend. The decision + copy are pure
+    // (`providers::bg_info::video_backend_notice`); this drives the real apply
+    // to prove the notice fires alongside the poster fallback.
+
+    /// A theme carrying BOTH a packaged video and a packaged poster, with no
+    /// mpvpaper manifest — the "no backend at all" case T6 adds.
+    fn theme_with_packaged_video_and_poster(stub: &ColorStub) -> (TempDir, PathBuf, PathBuf) {
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        let dir = theme.path().join("providers").join("noctalia-v5");
+        let media = theme.path().join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let video = media.join(crate::theme_media::VIDEO_FILE_NAME);
+        std::fs::write(&video, b"packaged video bytes").unwrap();
+        crate::theme_media::write_video_record(&dir, Path::new("media/background.mp4")).unwrap();
+        let poster = media.join("poster.jpg");
+        std::fs::write(&poster, b"\xff\xd8\xffpackaged-poster").unwrap();
+        crate::theme_media::write_poster_record(&dir, Path::new("media/poster.jpg")).unwrap();
+        (theme, video, poster)
+    }
+
+    /// The T6 acceptance path: a packaged video with no backend paints the
+    /// poster statically AND raises the actionable notice naming the wiki
+    /// page. Neither half may regress.
+    #[test]
+    #[serial]
+    fn v5_apply_packaged_video_without_backend_notifies_and_paints_the_poster() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        // No delegation socket and no enabled plugin: no backend at all.
+        let (theme, _video, poster) = theme_with_packaged_video_and_poster(&stub);
+        assert!(
+            !theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join(crate::providers::bg_info::MANIFEST_FILE)
+                .exists(),
+            "the fixture must carry no mpvpaper manifest"
+        );
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {res:?}");
+
+        let log = stub_log(&stub);
+        let shell_line = format!("msg wallpaper-set  {}", poster.display());
+        assert!(
+            log.lines().any(|l| l == shell_line),
+            "with no video backend the packaged poster must still be painted, log was:\n{log}"
+        );
+
+        let notified = stub.notified();
+        assert!(
+            notified.contains("Fondo animado no aplicado"),
+            "the video-backend notice must fire, notify log was:\n{notified}"
+        );
+        assert!(
+            notified.contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
+            "the notice must point at the wiki page, notify log was:\n{notified}"
         );
         std::thread::sleep(Duration::from_millis(500));
     }

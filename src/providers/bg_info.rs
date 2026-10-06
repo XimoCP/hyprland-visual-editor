@@ -263,14 +263,136 @@ pub fn ensure_url_manifest(
 
 // ── Notification ────────────────────────────────────────────────────────
 
-/// Notify the user that the mpvpaper plugin is required but not available,
-/// so an animated theme cannot be applied.
-pub fn notify_plugin_required() {
+/// Raise ONE video-backend notice through the desktop mechanism already in
+/// use. Thin shell: the decision and the copy live in [`video_backend_notice`]
+/// / [`VideoBackendNotice::for_missing_backend`]; this only spawns
+/// `notify-send`.
+pub fn notify_video_backend(notice: &VideoBackendNotice) {
     let _ = std::process::Command::new("notify-send")
         .arg("--app-name=HVE")
-        .arg("⚠️ Fondo animado no aplicado")
-        .arg("El tema incluye fondos animados, pero el plugin noctalia/mpvpaper no está instalado o está desactivado. Activá el plugin en los ajustes de Noctalia para poder aplicarlos.")
+        .arg(&notice.title)
+        .arg(&notice.body)
         .output();
+}
+
+/// Historical API-compat shell: notify the user that the mpvpaper plugin is
+/// required but not available. The production path raises the decision's own
+/// notice through [`notify_video_backend`]; this keeps the historical
+/// `bg_info::notify_plugin_required` / `mpvpaper::notify_plugin_required`
+/// paths resolving (pinned by the `bg_info` compatibility test) with the
+/// plugin remedy of the manifest leg. Nothing in the binary calls it, hence
+/// the allow — same reasoning as the `mpvpaper` re-export's `unused_imports`.
+#[allow(dead_code)]
+pub fn notify_plugin_required() {
+    notify_video_backend(&VideoBackendNotice::for_missing_backend(VideoWant::None));
+}
+
+// ── Video-backend notice (theme-packages T6) ────────────────────────────
+
+/// The wiki page that explains how to install an animated-background backend.
+/// Kept as data so the notice copy and its tests share one source.
+pub const VIDEO_BACKEND_WIKI_URL: &str =
+    "https://github.com/XimoCP/hyprland-visual-editor/wiki/Backgrounds";
+
+/// HOW a theme wants its animated background — the fact the video-backend
+/// notice decision reads, because each kind is painted by a DIFFERENT backend:
+/// an exact path by the wallpaper engine, a url by the plugin through the
+/// manifest. A single "wants a video" boolean cannot tell the two apart, and
+/// that conflation is exactly what silenced the notice where it was needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoWant {
+    /// The theme wants no video at all (a static theme).
+    None,
+    /// An exact path on disk (the packaged `media/background.mp4` or an
+    /// absolute recorded path): only the wallpaper engine can paint it.
+    ExactPath,
+    /// A remote url: only the mpvpaper plugin can paint it, through the
+    /// theme's manifest.
+    Url,
+}
+
+/// The facts the T6 video-backend notice decision reads. Stated by the caller
+/// so the decision stays pure and testable without spawning anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoBackendFacts {
+    /// HOW the theme wants its video, if it wants one at all.
+    pub video_want: VideoWant,
+    /// The theme carries the mpvpaper manifest (the plugin's own record).
+    pub has_manifest: bool,
+    /// The wallpaper engine's socket exists (it can paint a video).
+    pub engine_socket: bool,
+    /// The mpvpaper plugin is installed and enabled.
+    pub mpvpaper_enabled: bool,
+}
+
+/// The user-facing notice HVE raises when a theme wants a video and no backend
+/// can paint it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoBackendNotice {
+    pub title: String,
+    pub body: String,
+}
+
+impl VideoBackendNotice {
+    /// The ONE notice HVE raises when a theme wants a video and no backend can
+    /// paint it. Names what is missing, that the theme's poster is shown
+    /// instead, and where to read how to install a backend.
+    ///
+    /// The REMEDY matches the kind, because each kind is painted by a DIFFERENT
+    /// backend: an exact path needs the background engine (named generically —
+    /// this file names no engine), while a url or a saved manifest needs the
+    /// mpvpaper plugin. Offering the plugin for a bare path would name a
+    /// backend that cannot paint it, and is often already enabled.
+    pub fn for_missing_backend(want: VideoWant) -> Self {
+        let remedy = match want {
+            VideoWant::ExactPath => "instala o activa un motor de fondos animados",
+            VideoWant::None | VideoWant::Url => "instala el plugin noctalia/mpvpaper",
+        };
+        Self {
+            title: "⚠️ Fondo animado no aplicado".to_string(),
+            body: format!(
+                "Este tema incluye un fondo animado, pero no hay un reproductor de vídeo \
+                 disponible para mostrarlo. Se muestra el póster del tema en su lugar si el \
+                 tema lo incluye. Para activar los fondos animados, {}; cómo hacerlo: {}",
+                remedy, VIDEO_BACKEND_WIKI_URL
+            ),
+        }
+    }
+}
+
+/// Pure decision + copy: `Some(notice)` when this apply must tell the user the
+/// video backend is missing, `None` when there is nothing to say.
+///
+/// The answer depends on HOW the theme wants its video, because each kind is
+/// painted by a DIFFERENT backend:
+/// - an EXACT PATH (the packaged `media/background.mp4` or an absolute record)
+///   is painted by the wallpaper engine, OR by the plugin through a saved
+///   manifest when the theme carries both — the plugin plays only a saved
+///   manifest, never a bare path, but that manifest leg IS a painter for such
+///   a theme. Blocked only when NEITHER painter can run;
+/// - a URL is painted by the plugin through the manifest: blocked iff the
+///   plugin is not enabled or the manifest was not actually written;
+/// - a SAVED MANIFEST (the old leg) keeps its rule: blocked iff the plugin is
+///   not enabled;
+/// - a static theme never notifies.
+pub fn video_backend_notice(facts: VideoBackendFacts) -> Option<VideoBackendNotice> {
+    let manifest_blocked = facts.has_manifest && !facts.mpvpaper_enabled;
+    let want_blocked = match facts.video_want {
+        VideoWant::None => false,
+        // The engine's socket OR the manifest leg can paint this theme: a
+        // theme carrying both a packaged exact-path video and a saved manifest
+        // has its video played by the manifest when the plugin is enabled, so
+        // the notice is silent unless BOTH painters are blocked.
+        VideoWant::ExactPath => {
+            !facts.engine_socket && !(facts.has_manifest && facts.mpvpaper_enabled)
+        }
+        VideoWant::Url => !facts.mpvpaper_enabled || !facts.has_manifest,
+    };
+    if manifest_blocked || want_blocked {
+        Some(VideoBackendNotice::for_missing_backend(facts.video_want))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -529,6 +651,283 @@ mod tests {
         assert_eq!(
             before, after,
             "an existing manifest must win; the url record never clobbers it"
+        );
+    }
+
+    // ── Theme packages T6: the video-backend notice decision ───────────
+
+    /// A packaged video with NO backend at all is the case T6 adds: the pure
+    /// decision must fire, and its copy must name the poster fallback and the
+    /// wiki page that explains how to install a backend.
+    #[test]
+    fn video_backend_notice_fires_for_a_theme_that_wants_a_video_with_no_backend() {
+        let notice = crate::providers::bg_info::video_backend_notice(
+            crate::providers::bg_info::VideoBackendFacts {
+                video_want: crate::providers::bg_info::VideoWant::ExactPath,
+                has_manifest: false,
+                engine_socket: false,
+                mpvpaper_enabled: false,
+            },
+        )
+        .expect("a packaged video with no backend must raise the notice");
+
+        assert!(!notice.title.is_empty(), "the notice must carry a title");
+        assert!(
+            notice.body.contains("póster"),
+            "the notice must say the poster is shown instead, got: {}",
+            notice.body
+        );
+        let wiki = crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL;
+        assert!(
+            notice.body.contains(wiki),
+            "the notice must point at the wiki page, got: {}",
+            notice.body
+        );
+        assert!(
+            notice.body.contains("motor de fondos animados"),
+            "the exact-path notice must name the missing backend for its kind, got: {}",
+            notice.body
+        );
+    }
+
+    /// A backend that CAN paint the theme's KIND of video silences the notice:
+    /// the engine's socket for an exact path, the plugin plus its written
+    /// manifest for a url. The plugin ALONE is not a backend for an exact
+    /// path — that conflation is defect 1, asserted below.
+    #[test]
+    fn video_backend_notice_is_silent_when_the_right_backend_is_present() {
+        assert_eq!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::ExactPath,
+                    has_manifest: false,
+                    engine_socket: true,
+                    mpvpaper_enabled: false,
+                },
+            ),
+            None,
+            "an available engine socket must silence an exact-path video"
+        );
+        assert_eq!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::Url,
+                    has_manifest: true,
+                    engine_socket: false,
+                    mpvpaper_enabled: true,
+                },
+            ),
+            None,
+            "an enabled plugin with its written url manifest must silence a url video"
+        );
+    }
+
+    /// Defect 1 (verifier): the shipped reference theme
+    /// `assets/themes/Animation` carries a packaged video and NO manifest. On a
+    /// machine where the plugin is enabled but the engine socket is absent, the
+    /// plugin CANNOT paint the bare path, so the notice MUST fire. Treating an
+    /// enabled plugin as a backend for an exact path silenced it exactly where
+    /// it was needed.
+    #[test]
+    fn video_backend_notice_fires_for_a_packaged_video_with_only_the_plugin_enabled() {
+        let notice = crate::providers::bg_info::video_backend_notice(
+            crate::providers::bg_info::VideoBackendFacts {
+                video_want: crate::providers::bg_info::VideoWant::ExactPath,
+                has_manifest: false,
+                engine_socket: false,
+                mpvpaper_enabled: true,
+            },
+        )
+        .expect("the plugin plays no bare path: a packaged video with no socket must notify");
+        assert!(
+            notice.body.contains("póster"),
+            "the notice must name the poster fallback, got: {}",
+            notice.body
+        );
+    }
+
+    /// Point 1 correction: a theme that carries BOTH a packaged exact-path
+    /// video and a saved manifest, with the plugin enabled and no engine
+    /// socket, has its video painted by the manifest leg — so the notice must
+    /// stay silent. The plugin ALONE paints no bare path (the previous test),
+    /// but plugin + written manifest is a real painter for this theme.
+    #[test]
+    fn video_backend_notice_is_silent_when_an_exact_path_has_a_paintable_manifest() {
+        assert_eq!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::ExactPath,
+                    has_manifest: true,
+                    engine_socket: false,
+                    mpvpaper_enabled: true,
+                },
+            ),
+            None,
+            "an enabled plugin with a written manifest paints this theme's video: \
+             the notice must stay silent"
+        );
+    }
+
+    /// A url is painted by the plugin THROUGH the manifest: a disabled plugin
+    /// blocks it, and so does a manifest that was never written (the engine
+    /// cannot paint a url either).
+    #[test]
+    fn video_backend_notice_fires_for_a_url_that_no_plugin_can_paint() {
+        assert!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::Url,
+                    has_manifest: false,
+                    engine_socket: false,
+                    mpvpaper_enabled: false,
+                },
+            )
+            .is_some(),
+            "a url with the plugin disabled must notify"
+        );
+        assert!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::Url,
+                    has_manifest: false,
+                    engine_socket: true,
+                    mpvpaper_enabled: true,
+                },
+            )
+            .is_some(),
+            "the engine cannot paint a url: an enabled plugin with no written manifest must notify"
+        );
+    }
+
+    /// Defect 3 (verifier): a theme with no poster record and no static
+    /// wallpaper paints NOTHING, so the copy must not promise a poster
+    /// unconditionally — the fallback is stated as conditional.
+    #[test]
+    fn video_backend_notice_copy_conditions_the_poster_fallback() {
+        let notice = crate::providers::bg_info::VideoBackendNotice::for_missing_backend(
+            crate::providers::bg_info::VideoWant::None,
+        );
+        assert!(
+            notice.body.contains("si el tema lo incluye"),
+            "the notice must state the poster fallback is conditional, got: {}",
+            notice.body
+        );
+    }
+
+    /// Point 3 correction: the remedy must match the kind of want. An exact
+    /// path is painted by the background ENGINE — the plugin plays no bare path
+    /// (and is often already enabled) — so its copy must not offer the plugin.
+    /// A url is painted by the plugin, so its copy names it. Both keep the
+    /// poster sentence and the wiki link.
+    #[test]
+    fn video_backend_notice_remedy_matches_the_kind() {
+        let exact = crate::providers::bg_info::video_backend_notice(
+            crate::providers::bg_info::VideoBackendFacts {
+                video_want: crate::providers::bg_info::VideoWant::ExactPath,
+                has_manifest: false,
+                engine_socket: false,
+                mpvpaper_enabled: true,
+            },
+        )
+        .expect("an exact path with no engine must notify");
+        assert!(
+            exact.body.contains("motor de fondos animados"),
+            "the exact-path remedy must name the background engine, got: {}",
+            exact.body
+        );
+        assert!(
+            !exact.body.contains("mpvpaper"),
+            "the plugin cannot paint a bare path: the exact-path remedy must not \
+             offer it, got: {}",
+            exact.body
+        );
+        assert!(
+            exact.body.contains("póster")
+                && exact.body.contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
+            "the exact-path copy must keep the poster sentence and the wiki link, got: {}",
+            exact.body
+        );
+
+        let url = crate::providers::bg_info::video_backend_notice(
+            crate::providers::bg_info::VideoBackendFacts {
+                video_want: crate::providers::bg_info::VideoWant::Url,
+                has_manifest: false,
+                engine_socket: false,
+                mpvpaper_enabled: false,
+            },
+        )
+        .expect("a url with no plugin must notify");
+        assert!(
+            url.body.contains("mpvpaper"),
+            "the url remedy must name the plugin, got: {}",
+            url.body
+        );
+        assert!(
+            url.body.contains("póster")
+                && url.body.contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
+            "the url copy must keep the poster sentence and the wiki link, got: {}",
+            url.body
+        );
+    }
+
+    /// The old case must keep working: a theme with an mpvpaper manifest while
+    /// the plugin is missing or disabled still notifies. The engine's socket
+    /// cannot unblock an mpvpaper manifest, so it stays a notice either way.
+    #[test]
+    fn video_backend_notice_keeps_the_manifest_leg_case() {
+        assert!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::None,
+                    has_manifest: true,
+                    engine_socket: false,
+                    mpvpaper_enabled: false,
+                },
+            )
+            .is_some(),
+            "the plugin-disabled manifest leg must keep notifying"
+        );
+        assert!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::None,
+                    has_manifest: true,
+                    engine_socket: true,
+                    mpvpaper_enabled: false,
+                },
+            )
+            .is_some(),
+            "the engine socket must not silence the manifest leg"
+        );
+        // The plugin being enabled is the one thing that silences it.
+        assert_eq!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::None,
+                    has_manifest: true,
+                    engine_socket: false,
+                    mpvpaper_enabled: true,
+                },
+            ),
+            None,
+            "an enabled plugin needs no notice"
+        );
+    }
+
+    /// A static theme has nothing to be told — even with no backend at all.
+    #[test]
+    fn video_backend_notice_is_silent_for_a_static_theme() {
+        assert_eq!(
+            crate::providers::bg_info::video_backend_notice(
+                crate::providers::bg_info::VideoBackendFacts {
+                    video_want: crate::providers::bg_info::VideoWant::None,
+                    has_manifest: false,
+                    engine_socket: false,
+                    mpvpaper_enabled: false,
+                },
+            ),
+            None,
+            "a static theme must never notify"
         );
     }
 }

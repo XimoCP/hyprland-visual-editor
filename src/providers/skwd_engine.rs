@@ -36,6 +36,21 @@ fn skwd_wall_socket_path() -> PathBuf {
     runtime.join("skwd-wall-v2").join("wall.sock")
 }
 
+/// Whether the engine's socket exists AND really is a socket — its gate for
+/// painting a wallpaper. Symlinks are FOLLOWED (the delegation gate uses
+/// `Path::exists()`, which follows), so a symlink to a live socket counts as
+/// available. A stale regular FILE at the path — or a symlink to one — is not
+/// a listening socket, so it must not report the engine as available; that
+/// wrong "available" silenced the video-backend notice exactly where it was
+/// needed. Exposed so the `apply-background` router can decide, without naming
+/// the engine backend, whether a video backend is available at all.
+pub(crate) fn socket_available() -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::metadata(skwd_wall_socket_path())
+        .map(|meta| meta.file_type().is_socket())
+        .unwrap_or(false)
+}
+
 pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     let socket = skwd_wall_socket_path();
     if !socket.exists() {
@@ -252,5 +267,133 @@ mod tests {
         } else {
             std::env::remove_var("SKWD_WALL_V2_SOCK");
         }
+    }
+
+    /// Defect 2 (verifier): the socket probe must be a SOCKET probe. A stale
+    /// regular FILE at the socket path is not a listening socket, so it must
+    /// not report the engine as available — that wrong "available" silenced
+    /// the video-backend notice exactly where it was needed.
+    #[test]
+    #[serial]
+    fn socket_available_is_false_for_a_regular_file_at_the_socket_path() {
+        let _env = crate::test_utils::env_guard();
+        let tmp_runtime = TempDir::new().unwrap();
+        let sock = tmp_runtime.path().join("wall.sock");
+        std::fs::write(&sock, b"not a socket").unwrap();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        std::env::set_var("SKWD_WALL_V2_SOCK", &sock);
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        let available = socket_available();
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        assert!(
+            !available,
+            "a regular file at the socket path is not a listening socket"
+        );
+    }
+
+    /// The positive half of the same probe: a REAL unix socket at the path must
+    /// still report available, so the probe rejects only non-sockets.
+    #[test]
+    #[serial]
+    fn socket_available_is_true_for_a_real_unix_socket() {
+        let _env = crate::test_utils::env_guard();
+        let tmp_runtime = TempDir::new().unwrap();
+        let sock = tmp_runtime.path().join("wall.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        std::env::set_var("SKWD_WALL_V2_SOCK", &sock);
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        let available = socket_available();
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        assert!(
+            available,
+            "a real unix socket at the socket path is an available engine"
+        );
+    }
+
+    /// Point 2 correction: a symlink at the socket path whose target is a live
+    /// socket must count as available. The delegation gate follows symlinks
+    /// (`Path::exists()`), so a probe that does not would fire the notice
+    /// although the engine can paint.
+    #[test]
+    #[serial]
+    fn socket_available_is_true_for_a_symlink_to_a_real_unix_socket() {
+        let _env = crate::test_utils::env_guard();
+        let tmp_runtime = TempDir::new().unwrap();
+        let target = tmp_runtime.path().join("real.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&target).unwrap();
+        let link = tmp_runtime.path().join("wall.sock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        std::env::set_var("SKWD_WALL_V2_SOCK", &link);
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        let available = socket_available();
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        assert!(
+            available,
+            "a symlink to a live socket is the engine's socket: it must report available"
+        );
+    }
+
+    /// Following the symlink must not weaken the socket requirement: a symlink
+    /// whose target is a regular file is still not a listening socket.
+    #[test]
+    #[serial]
+    fn socket_available_is_false_for_a_symlink_to_a_regular_file() {
+        let _env = crate::test_utils::env_guard();
+        let tmp_runtime = TempDir::new().unwrap();
+        let target = tmp_runtime.path().join("real.txt");
+        std::fs::write(&target, b"not a socket").unwrap();
+        let link = tmp_runtime.path().join("wall.sock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let orig_sock = std::env::var("SKWD_WALL_V2_SOCK").ok();
+        let orig_runtime = std::env::var("XDG_RUNTIME_DIR").ok();
+        std::env::set_var("SKWD_WALL_V2_SOCK", &link);
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        let available = socket_available();
+        if let Some(v) = orig_sock {
+            std::env::set_var("SKWD_WALL_V2_SOCK", v);
+        } else {
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+        }
+        if let Some(v) = orig_runtime {
+            std::env::set_var("XDG_RUNTIME_DIR", v);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        assert!(
+            !available,
+            "a symlink to a regular file is not a listening socket"
+        );
     }
 }
