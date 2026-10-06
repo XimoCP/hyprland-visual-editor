@@ -1,11 +1,26 @@
-# Presets
+# 🧩 Presets
 
-A preset is one file that describes one look: an animation, a border or a
-shader. HVE ships a set of them, scans their metadata, shows each as a card
-with an icon, a colour and a description, and toggles between "this one" and
-"none".
+**A ready-made look you can try with one click.**
 
-## What ships
+A preset is one file that describes one look: an animation, a border or a shader. HVE ships a set of them, shows each as a card with an icon, a colour and a description, and lets you switch between "this one" and "none" by clicking the card. You can also save your own from the tune panes, and a saved theme carries the custom presets it uses so the look travels with it.
+
+## 🎯 Three kinds of preset
+
+There are three categories, one folder each inside HVE's assets:
+
+| Kind | Folder | What it changes |
+|------|--------|-----------------|
+| Animations | `assets/animations/` | How windows move and fade. |
+| Borders | `assets/borders/` | The colours, angle, size and glow of window borders. |
+| Shaders | `assets/shaders/` | A colour filter drawn over the whole screen. |
+
+## 🖱️ Using one
+
+Picking a card applies that preset and reloads Hyprland, so you see it at once. **Clicking the card that is already active turns it off** — the look goes back to "none" instead of staying on the preset you just switched off. A preset you saved yourself shows up in the same lists, tagged `CUSTOM`.
+
+## 🔧 Under the hood
+
+### 📦 What ships
 
 | Kind | Directory | Count | Files |
 |------|-----------|-------|-------|
@@ -16,7 +31,7 @@ with an icon, a colour and a description, and toggles between "this one" and
 Shaders have no second format because Hyprland reads the same shader file
 regardless of how your configuration is written.
 
-## The metadata block
+### 🏷️ The metadata block
 
 Each preset carries its display metadata in a comment block:
 
@@ -44,7 +59,7 @@ Each preset carries its display metadata in a comment block:
 > defaults apply — harmless, because the title and description shown in the
 > interface come from the translations below anyway.
 
-## Scanning
+### 🔍 Scanning
 
 `scan.sh <folder>` looks in `assets/<folder>/`, one level deep, for `*.lua`
 and `*.frag`, sorted by name. Files whose name contains `store` and any file
@@ -71,7 +86,7 @@ The result is one JSON object per preset:
 `_` in the key (the file itself keeps its original name).
 `Engine::scan()` (`src/engine.rs`) parses the JSON into a `PresetInfo`.
 
-### Translations win
+### 🌍 Translations win
 
 `src/presets.rs` resolves each key through the translation map and falls back
 to the raw metadata only when the key does not exist — so
@@ -79,7 +94,7 @@ to the raw metadata only when the key does not exist — so
 add without a translation still shows something sensible. Icon, colour and
 tag have no translation; the raw metadata is used for those.
 
-## Applying one, and the toggle
+### 🖱️ Applying one, and the toggle
 
 Picking a card writes the preset into the active fragment
 (`assets/fragments/animation.lua`, `border.lua` or `shader.lua`) and re-runs
@@ -99,7 +114,7 @@ An active name that matches no scanned preset (a renamed or removed file) is
 the same story: the index is set to an explicit `-1` and a warning is logged,
 never a marker pointing at something that is not loaded.
 
-## Your own presets
+### ✏️ Your own presets
 
 The tune panes can save a preset of your own. They are written as `.lua`
 files under `~/.config/hve/presets/borders/` or
@@ -108,14 +123,29 @@ interface tagged `CUSTOM`. When one is applied, the built-in directory is
 searched first and the user directory second, so a user preset can never
 shadow a built-in by accident.
 
-## Reading a preset's values
+### 📦 A theme carries your presets
+
+When you save a theme, the **custom** presets it uses travel inside it, under
+`{theme_dir}/presets/<category>/` (categories: animations, borders, shaders).
+A preset HVE ships is never copied — it is already inside the app. On apply,
+a preset the theme carries and your own store lacks is installed into
+`~/.config/hve/presets/`, so the normal apply path can resolve it; if you
+already have a preset with the same name, **your copy is kept, never
+overwritten**. Animations and borders resolve through that store. A custom
+**shader** is installed there too, but `shader.sh` still reads only the
+shaders HVE ships, so a custom shader is carried and installed yet not applied
+today. All of this is best-effort: a missing source or a copy error
+only warns and never fails a save or an apply, and a theme with no `presets/`
+applies exactly as before.
+
+### 📖 Reading a preset's values
 
 `src/animation_preset.rs` and `src/border_preset.rs` read a preset's Lua
 line by line — there is no Lua interpreter in the dependency tree — to fill
 the tune panes with the preset's curve, speed, colours, angle and glow.
 Unparseable input resolves to documented defaults instead of failing.
 
-## See also
+## 📚 See also
 
 - [Themes and colours](Themes-and-Colours) — presets are one slice of a saved
   theme.

@@ -1,12 +1,21 @@
-# Backgrounds
+# 🖼️ Backgrounds
 
-A **static** wallpaper is one image sitting on the background layer. An
-**animated** wallpaper is a video, played by `mpvpaper` — one process per
-output. HVE saves both with a theme and puts them back when you apply it,
-but it never owns the desktop's background itself: the piece that is
-currently painting wins, and HVE only hands paths over.
+**What happens with wallpapers and videos.**
 
-## Static wallpapers
+A **static** wallpaper is one image sitting on the background layer. An **animated** wallpaper is a video, played by `mpvpaper` — one process per screen. HVE saves both with a theme and puts them back when you apply it, but it never owns the desktop's background itself: the piece that is currently painting wins, and HVE only hands paths over. A saved theme carries its background inside its own folder, so copying the folder carries the wallpaper too.
+
+## 🖼️ Static or animated
+
+- **Static**: one image. HVE restores it with the shell's own call and hands the same path to the wallpaper engine.
+- **Animated**: a video. HVE drives a video backend (the Noctalia `mpvpaper` plugin, or the skwd-wall engine) — it never plays the video itself.
+
+## 🎬 Which piece owns the screen
+
+HVE does not guess who is painting the background. It asks the compositor which layer is on top and the wallpaper daemon what kind of layer it is, and only then decides. A theme captures **only** the background that is active right now — the video or the image, never both.
+
+## 🔧 Under the hood
+
+### 🖼️ Static wallpapers
 
 On a theme apply, when no video ends up on screen, HVE restores the saved
 image with the shell's own `wallpaper-set` call and then passes the **same**
@@ -20,7 +29,7 @@ purpose — setting an image afterwards would cover the running video.
 A theme stores its static wallpaper as `wallpaper.txt` inside its provider
 directory.
 
-## Animated wallpapers (Noctalia mpvpaper)
+### 🎬 Animated wallpapers (Noctalia mpvpaper)
 
 HVE integrates video backgrounds for **Noctalia v5** themes through the
 official `noctalia/mpvpaper` plugin. The plugin supervises one `mpvpaper`
@@ -46,7 +55,7 @@ HVE never starts `mpvpaper` itself; before bouncing it kills any current
 instance (`pkill -9 -x mpvpaper`) so a config reload cannot leave two
 decoders fighting over the same video.
 
-### The theme manifest
+#### 📄 The theme manifest
 
 Themes store a lightweight manifest — references only, never video bytes —
 at `{theme_dir}/providers/noctalia-v5/mpvpaper-assignments.json`:
@@ -65,7 +74,7 @@ The key is the output: `"*"` means every output, or name a connector such as
 a machine with no live state simply saves no manifest, which means "not an
 animated theme".
 
-### Resolution at apply time
+#### 🔗 Resolution at apply time
 
 For each assignment, in order:
 
@@ -81,7 +90,7 @@ that cannot be resolved is skipped with a warning; the theme apply itself
 never fails because of it — if *no* video resolves, the leg reports it and
 the apply continues without a video.
 
-### Apply and clear
+#### ▶️ Apply and clear
 
 - If the theme carries a manifest but the plugin is missing or disabled, HVE
   warns you with a desktop notification **before** it tries to play anything,
@@ -94,11 +103,10 @@ the apply continues without a video.
   for the new instances to spawn, so a following static apply cannot
   clear-all into a half-booted plugin.
 
-### Installing a video backend
+#### 🛠️ Installing a video backend
 
-HVE **does not install third-party software**: no package manager, no
-downloads, nothing written outside the theme and provider directories it
-manages. An animated background needs a backend that HVE only *drives*:
+HVE **does not install third-party software**: no package manager, no installs
+of its own. An animated background needs a backend that HVE only *drives*:
 
 - the **Noctalia `noctalia/mpvpaper` plugin** (with `mpvpaper` itself), which
   plays the theme's saved manifest; or
@@ -109,21 +117,59 @@ manages. An animated background needs a backend that HVE only *drives*:
 Install one of those yourself — through your distribution or the plugin's own
 instructions — to get animated backgrounds.
 
-When a theme wants a video and **neither** backend is available, HVE still
-applies the theme: it paints the theme's packaged poster (`media/poster.*`)
-statically when the theme carries one, and raises a desktop
+When a theme wants a video and nothing can paint it — an exact video path with
+no engine socket, or a url with the plugin disabled or its manifest never
+written — HVE still applies the theme: it paints the theme's packaged poster
+(`media/poster.*`) statically when the theme carries one, and raises a desktop
 notification that names what is missing and points here for the install
-steps. The decision and the copy live in `src/providers/bg_info.rs`
-(`video_backend_notice`), so the notice can be tested without spawning
-anything.
+steps. A url theme is the case where the plugin's own download (into its video
+directory, e.g. `~/Videos`) is what plays it. The decision and the copy live
+in `src/providers/bg_info.rs` (`video_backend_notice`), so the notice can be
+tested without spawning anything.
 
-### Availability
+#### 📌 Availability
 
 Animated backgrounds depend on the active provider: they are a **Noctalia v5**
 feature (`providers/noctalia-v5/`). Noctalia v4 and HVE's own presets carry
 no video.
 
-## Who owns the live background
+### 📦 The theme's own background
+
+A saved theme carries its background inside its own folder, under
+`{theme_dir}/media/`, so the look moves when you copy the theme folder
+(`src/theme_media.rs`). The provider directory keeps small records that point
+at it.
+
+**The poster.** A video source is frame-extracted as a high-quality JPEG at
+the video's native resolution (no scaling) and named `media/poster.jpg`. A
+static image is copied byte-for-byte, keeping its real extension
+(`media/poster.jpg`, `media/poster.png`, …), so the record always points at
+the file that actually holds the bytes. The record is `poster.txt`
+(`poster=media/poster.jpg`) in the provider directory, and apply resolves it
+first: the record must be theme-relative (an absolute or `..` path is
+rejected) and name a file that really exists inside the theme. A `media/`
+file with no record is deliberately ignored, so a leftover image can never
+resurrect a background the theme no longer declares.
+
+**The video.** A video is copied into the theme only when that is sensible:
+
+- at or under **95 MB** (`MAX_PACKAGED_VIDEO_BYTES`) → copied as
+  `media/background.mp4` and named by the record `video-media.txt`
+  (`video=media/background.mp4`);
+- over 95 MB → **never copied**; the `url` the theme's mpvpaper manifest
+  already knows is recorded instead (`url=https://…`, with the optional
+  `filename=` and `sha256=`), so the plugin can still fetch it. No url means
+  the theme travels with its poster alone.
+
+The 95 MB bound keeps a theme's video under GitHub's 100 MB file limit, with
+a safety margin. Apply resolves the theme's video theme-first: the packaged
+`media/background.mp4` wins, then the old absolute `video.txt` path, then a
+recorded url. Both records and files are dropped when the theme's current
+background is not that kind, so a theme never keeps a poster or a video it no
+longer declares. Packaging is best-effort throughout: a missing source or a
+failed copy only warns and never fails a save.
+
+### 👑 Who owns the live background
 
 HVE does not decide this by guessing. `src/providers/wallpaper_authority.rs`
 is the single module that answers "who controls the wallpaper right now", and
@@ -143,7 +189,7 @@ decision instead of being ignored.
 Theme save consults this module so a theme captures **only** the currently
 active background — the video or the image, not both.
 
-## The two backends
+### 🔀 The two backends
 
 `src/providers/background.rs` routes an apply by declared choice, never by
 side effect:
@@ -157,7 +203,7 @@ A backend never calls another one, and every hand-off reports whether it
 really painted something — a `false` means the caller keeps its fallback
 routes instead of claiming a background that was never set.
 
-## See also
+## 📚 See also
 
 - [Themes and colours](Themes-and-Colours) — what else a saved theme
   captures.

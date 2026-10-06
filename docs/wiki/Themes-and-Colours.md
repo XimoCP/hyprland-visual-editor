@@ -1,11 +1,20 @@
-# Themes and colours
+# 🎨 Themes and colours
 
-HVE takes the colours from whatever colour tool you already use and applies
-them to two places: the Hyprland overlay (window borders, gradients, the
-geometry fragment) and HVE's own interface. Complete desktop setups —
-colours, presets, backgrounds — are saved and re-applied as **themes**.
+**Where your colours come from, and what applying a theme does.**
 
-## How a colour source is chosen
+HVE takes the colours from whatever colour tool you already use and applies them to two places: the Hyprland overlay (the look of your window borders, gradients and rounded geometry) and HVE's own interface. You do not pick a palette by hand — HVE finds one. A complete desktop look — colours, presets, backgrounds — is saved and put back as a **theme**.
+
+## 🌈 Where your colours come from
+
+A *colour source* is the program or file HVE reads a palette from. HVE tries the sources it knows in order and stops at the first one that works: Noctalia, then pywal, then matugen, then a plain scan of your Hyprland files. If the theme you applied owns its own colours, that saved snapshot wins over all of them. You never choose a source; switching colour tools just means restarting HVE.
+
+## 💾 What a theme is, and what applying one does
+
+A theme is a saved look: the colours, plus the presets, borders, shaders and background that go with it. It lives in its own folder under `~/.config/hve/themes/<name>/`, so copying the folder carries the whole look. Applying a theme writes its files to disk and reloads Hyprland, so the change lands immediately. The gallery lists a theme only when every part it recorded is available on this machine, so a theme is never half-applied.
+
+## 🔧 Under the hood
+
+### 🔍 How a colour source is chosen
 
 `assets/scripts/colors.sh` builds one palette for the overlay. It resets
 every colour role, then tries the available sources **in priority order** and
@@ -24,7 +33,7 @@ state behind for the next.
 Lower number wins. Steps are sorted by priority and ties break by id, so the
 order above never changes by accident.
 
-## The palette the overlay gets
+### 🎨 The palette the overlay gets
 
 `colors.sh` declares the roles **once**, in `HVE_PALETTE_TOKENS`:
 
@@ -50,7 +59,7 @@ only when its `primary` matches the one already detected, so a leftover file
 from an older scheme cannot leak in. Only when nothing can supply one does
 the `#94e2d5` fallback apply.
 
-## The colours HVE itself uses
+### 🖥️ The colours HVE itself uses
 
 `assets/scripts/get_colors.sh` wraps `colors.sh` and prints the six roles as
 JSON. `Engine::get_colors()` (`src/engine.rs`) parses that into a
@@ -66,7 +75,7 @@ The `theme` setting (`dark`, `light`, `system`) resolves the base scheme;
 `system` asks the desktop preference through the `read-desktop-preference`
 capability (`src/theme/desktop_preference/`).
 
-## Saving and applying a theme
+### 📦 Saving and applying a theme
 
 Themes live in `~/.config/hve/themes/<name>/`. Each theme directory holds a
 `meta.json` (when it was saved and which providers took part) and one
@@ -95,7 +104,7 @@ other shell version is never substituted for it.
   outside its own directory, and clears the colour-authority descriptor when
   it names the deleted theme.
 
-### Colour authority
+#### 🔑 Colour authority
 
 When an applied theme owns the colours, `src/color_authority.rs` writes
 `~/.cache/hve/color-authority.json` naming the backend, the theme, its
@@ -105,7 +114,7 @@ the descriptor's theme, and only for an existing, non-symlinked palette file
 **inside** `~/.config/hve/themes/`. Anything else falls through to the live
 chain above, exactly as if no theme had claimed the colours.
 
-## Keeping colours in sync
+### 🔄 Keeping colours in sync
 
 `assets/scripts/color_watcher.sh` watches the paths the modules declare,
 hashes them to detect real changes, runs the owning module's refresh when a
@@ -113,7 +122,7 @@ module declared one, re-runs `assemble.sh`, writes the colour signal to
 `~/.cache/hve/colors.json` and notifies HVE over `hve-ipc refresh-theme`.
 See [Tray and automation](Tray-and-Automation).
 
-## Adding a colour source
+### ➕ Adding a colour source
 
 A colour source is **one new file** under `assets/scripts/color_sources.d/`.
 `colors.sh` discovers that directory itself; nothing in the loader is edited
@@ -145,7 +154,7 @@ Because the watcher asks each module which paths it wants, adding a source
 also adds its files to the watch list automatically; restart HVE after
 adding one.
 
-## See also
+## 📚 See also
 
 - [Architecture](Architecture) — where the colour system sits among the
   fragment, preset and background systems.

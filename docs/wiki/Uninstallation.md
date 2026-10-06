@@ -1,12 +1,14 @@
-# Uninstallation
+# 🧹 Uninstallation
+
+**Get HVE off your machine, and know exactly what happens.**
 
 ```bash
 ./uninstall.sh
 ```
 
-The uninstaller is bilingual (Spanish/English), prints a summary of what it removed and what it did not find, and asks before deleting anything that is yours.
+The uninstaller is bilingual (Spanish/English), prints a summary of what it removed and what it did not find, and asks before deleting anything that is yours. It removes HVE's own files, keeps your settings unless you say otherwise, and never rewrites your Hyprland configuration.
 
-## What it removes
+## 🗑️ What it removes
 
 | Item | Path | Notes |
 |------|------|-------|
@@ -17,7 +19,7 @@ The uninstaller is bilingual (Spanish/English), prints a summary of what it remo
 | IPC script | `~/.local/bin/hve-ipc` | Only if you installed it |
 | System symlink | `/usr/local/bin/hve-ipc` | Requires `sudo`; only if it exists |
 
-## What it asks about first
+## ❓ What it asks about first
 
 | Item | Path | Why it asks |
 |------|------|-------------|
@@ -26,7 +28,9 @@ The uninstaller is bilingual (Spanish/English), prints a summary of what it remo
 
 Both questions default to **No**, so answering nothing keeps everything.
 
-## Why uninstalling leaves nothing behind
+## 🔧 Under the hood
+
+### 🛡️ Why uninstalling leaves nothing behind
 
 1. **Your Hyprland configuration is only appended to, never rewritten.** HVE appends one block between the markers `-- >>> HYPRLAND VISUAL EDITOR START <<<` and `-- >>> HYPRLAND VISUAL EDITOR END <<<` in `hyprland.lua` (HVE manages `hyprland.lua` only). Disabling HVE removes the whole block, so the file is exactly as it was. The uninstaller itself never edits your Hyprland files.
 
@@ -40,4 +44,7 @@ Both questions default to **No**, so answering nothing keeps everything.
 
 In short: **you can install and uninstall HVE as many times as you like without leaving rubbish behind or breaking your Hyprland configuration.**
 
-See [Installation](Installation) to install again, and [Configuration](Configuration) for what the kept configuration contains.
+## 📚 See also
+
+- [Installation](Installation) — install again.
+- [Configuration](Configuration) — what the kept configuration contains.

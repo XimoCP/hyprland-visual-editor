@@ -44,16 +44,16 @@ will drift out of sync with the technical one.
 One work unit each: a delegated writer, a cross-model verifier that checks every
 claim against the code, one commit.
 
-- [ ] **W1 — Home, _Sidebar, _Footer.** The landing page answers "what is this
+- [x] **W1 — Home, _Sidebar, _Footer.** The landing page answers "what is this
   and why would I want it" in ten lines, then the depth. The sidebar groups
   *getting started* apart from *technical reference* and gains icons.
-- [ ] **W2 — Installation, Usage.** "I want to install it, tell me exactly what
+- [x] **W2 — Installation, Usage.** "I want to install it, tell me exactly what
   to do" and "I have it installed, how do I use it". The first ten minutes,
   end to end, with the technical detail after.
-- [ ] **W3 — Themes and colours, Presets, Backgrounds.** "I want to change the
+- [x] **W3 — Themes and colours, Presets, Backgrounds.** "I want to change the
   colours, what does all this mean", "what is a preset and how do I use one",
   "what happens with wallpapers and videos".
-- [ ] **W4 — FAQ, Uninstallation.** Plain answers, plain removal.
+- [x] **W4 — FAQ, Uninstallation.** Plain answers, plain removal.
 - [ ] **W5 — Technical pages, light touch.** Architecture, IPC,
   Project-Structure, Configuration, Development, Tray and automation: a plain
   opening line, heading icons, and no loss of depth.
