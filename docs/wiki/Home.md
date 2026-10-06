@@ -30,10 +30,10 @@ Change something, see it straight away, keep what you like. HVE never rewrites y
 
 ## 🔧 Under the hood
 
-Your own Hyprland files stay untouched. HVE writes one generated file that Hyprland reads alongside them:
+HVE never rewrites your Hyprland configuration. It adds one small block between its own markers, which it can remove completely, and writes one generated file that Hyprland reads alongside your own:
 
 ```
-your Hyprland files  ←  immutable, HVE never modifies them
+your Hyprland files  ←  yours; HVE adds one removable block
       ┃
       ┃ (source / dofile)
       ┃
