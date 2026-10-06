@@ -48,7 +48,7 @@ That block is what a **fresh** file looks like — the defaults from `Config::de
 | `minimize_seconds` | number | `4` | Seconds of countdown before the window hides. |
 | `language` | string | `""` | `""` means auto-detect from `$LANG`. `en` and `es` are available; a change needs a restart. |
 | `tiling_mode` | bool | `false` | `false` = floating, `true` = tiled windows. |
-| `gallery_style` | number | `0` | `0` = Slider, `2` = Mosaic. Any other value (a stale or hand-edited file) opens the Slider. |
+| `gallery_style` | number | `0` | `0` = the carousel (the **Slice** pill), `2` = the grid (the **Mosaic** pill). Any other value (a stale or hand-edited file) opens the carousel. |
 | `theme` | string | `"system"` | `"dark"`, `"light"` or `"system"`; `system` asks the desktop preference. |
 | `last_applied_theme` | string | `""` | Name of the last applied theme, used to re-assert its colours after a restart. |
 | `keybinds_enabled` | bool | `false` | Saved toggle for HVE's shortcut block. Nothing outside `src/config.rs` reads it today: at startup HVE writes the vital `SUPER + H` keybind itself (`src/main.rs` → `src/settings.rs`). |
