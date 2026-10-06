@@ -70,3 +70,38 @@ claim against the code, one commit.
 
 - 2026-10-06: contract written from the keeper's mandate and the external review
   he agreed with. Pending: W1 onward.
+- 2026-10-06 (run complete): W1-W5 done, each verified by a different model,
+  one commit each: W1 `dd926eb`, W2 `6edecaa`, W3+W4 `35712ff`, W5 `74bdc89`,
+  plus `c26412c` (an installer fix the review uncovered). Every fact was
+  checked against the code; the verifiers caught and we fixed three
+  overstatements: the video-backend section claimed nothing is ever downloaded
+  (the mpvpaper plugin downloads a recorded url into its own video directory),
+  the notice was described by the wrong triggers, and the preset page implied a
+  bundled custom shader is applied when it is only installed.
+- **Publishing is pending and is the keeper's call**: the GitHub wiki is a
+  separate push, not made here. `docs/wiki/` is the source.
+
+## Decisions taken
+
+- One text at two depths, not two parallel explanations: the plain part stays
+  2-4 lines, the depth lives below a marked heading.
+- The technical pages keep their rigour and only gain a plain opening line and
+  heading icons.
+- `Tray and automation` does not tell the reader they can skip it, because the
+  tray menu and auto-minimise are user-visible.
+
+## Follow-ups found while rewriting (keeper's decision)
+
+1. `ui/navigation-proposal.json` (12 KB) is referenced nowhere: a stray
+   proposal file in the source tree. Delete it, or move it under `odd/`.
+2. `assets/owl_neon.png` (6.5 MB) and `assets/branding/logo-neon.png` (1.4 MB)
+   are referenced by no file; only the project-structure tree lists them as
+   decorative.
+3. The app names the carousel style twice: the pill says **Slice**
+   (`ui/gallery/FilterBar.slint`), the code constant and old docs say
+   **Slider**. The wiki now uses the visible label; the app itself should pick
+   one.
+4. `WIKI.md` (36 KB) duplicates the wiki pages and is kept as history only.
+5. The shipped reference themes carry `/home/ximo/...` absolute records and a
+   stale `pid=` in `video.txt`; harmless (the packaged `media/` wins) but it is
+   the keeper's machine inside a public repo.
