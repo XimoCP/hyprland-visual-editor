@@ -1,0 +1,435 @@
+config_version = 8
+
+[accessibility]
+ui_scale = 1.1500000096857548
+
+[bar]
+order = [ "default", "barra_lateral" ]
+
+    [bar.barra_lateral]
+    auto_hide = true
+    background_opacity = 0.79999998211860657
+    center = [ "group:g1", "ram", "group:g2" ]
+    end = []
+    margin_ends = 500
+    reserve_space = false
+    scale = 1.1000000089406967
+    start = [ "widget" ]
+    widget_spacing = 26
+
+        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        fill = "surface_variant"
+        id = "g1"
+        members = [ "sysmon", "network_rx" ]
+        opacity = 1.0
+        padding = 6.0
+
+        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        fill = "surface_variant"
+        id = "g2"
+        members = [ "cpu", "network_tx" ]
+        opacity = 1.0
+        padding = 6.0
+
+    [bar.default]
+    background_opacity = 0.79999998211860657
+    border = "primary"
+    capsule_opacity = 0.0
+    capsule_padding = 29.0
+    center = []
+    color = "secondary"
+    contact_shadow = true
+    end = [
+        "media",
+        "spacer_2",
+        "tray",
+        "spacer_3",
+        "notifications",
+        "clipboard",
+        "network",
+        "bluetooth",
+        "volume",
+        "brightness",
+        "battery",
+        "spacer_4",
+        "control-center"
+    ]
+    icon_color = "primary"
+    margin_ends = 0
+    padding = 27
+    position = "left"
+    radius_bottom_left = 0
+    radius_bottom_right = 20
+    radius_top_left = 0
+    radius_top_right = 20
+    start = [ "launcher", "wallpaper", "workspaces", "clock" ]
+    widget_spacing = 26
+
+[desktop_widgets]
+schema_version = 2
+widget_order = [
+    "desktop-widget-0000000000000001",
+    "desktop-widget-0000000000000002",
+    "desktop-widget-0000000000000003",
+    "desktop-widget-0000000000000004",
+    "desktop-widget-0000000000000005",
+    "desktop-widget-0000000000000006"
+]
+
+    [desktop_widgets.grid]
+    cell_size = 16
+    major_interval = 4
+    visible = false
+
+    [desktop_widgets.widget.desktop-widget-0000000000000001]
+    box_height = 144.0
+    box_width = 272.0
+    cx = 2417.0859375
+    cy = 80.046875
+    output = "DP-3"
+    rotation = 0.0
+    type = "weather"
+
+        [desktop_widgets.widget.desktop-widget-0000000000000001.settings]
+        background = true
+        background_color = "surface"
+        background_opacity = 0.70000000000000007
+        background_radius = 0
+        color = "primary"
+        forecast_days = 2
+        shadow = false
+        show_forecast = true
+
+    [desktop_widgets.widget.desktop-widget-0000000000000002]
+    box_height = 176.0
+    box_width = 272.0
+    cx = 2417.15234375
+    cy = 239.43359375
+    output = "DP-3"
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget.desktop-widget-0000000000000002.settings]
+        background_opacity = 0.70000000000000007
+        background_radius = 0
+        color = "primary"
+        display = "graph"
+        gauge_layout = "horizontal"
+        shadow = false
+        stat = "cpu_usage"
+        stat2 = "cpu_temp"
+
+    [desktop_widgets.widget.desktop-widget-0000000000000003]
+    box_height = 176.0
+    box_width = 272.0
+    cx = 2417.15234375
+    cy = 415.43359375
+    output = "DP-3"
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget.desktop-widget-0000000000000003.settings]
+        background_opacity = 0.69999999999999996
+        background_radius = 0
+        shadow = false
+        stat = "gpu_usage"
+        stat2 = "gpu_temp"
+
+    [desktop_widgets.widget.desktop-widget-0000000000000004]
+    box_height = 96.0
+    box_width = 80.0
+    cx = 2513.1875
+    cy = 551.15234375
+    output = "DP-3"
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget.desktop-widget-0000000000000004.settings]
+        background_radius = 0
+        display = "gauge"
+        gauge_layout = "vertical"
+        shadow = false
+        stat = "swap_pct"
+        stat2 = "cpu_temp"
+
+    [desktop_widgets.widget.desktop-widget-0000000000000005]
+    box_height = 96.0
+    box_width = 96.0
+    cx = 2329.15234375
+    cy = 551.43359375
+    output = "DP-3"
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget.desktop-widget-0000000000000005.settings]
+        background_radius = 0
+        display = "gauge"
+        gauge_layout = "vertical"
+        shadow = false
+        stat = "ram_pct"
+        stat2 = "cpu_temp"
+
+    [desktop_widgets.widget.desktop-widget-0000000000000006]
+    box_height = 96.0
+    box_width = 96.0
+    cx = 2425.15234375
+    cy = 551.43359375
+    output = "DP-3"
+    rotation = 0.0
+    type = "sysmon"
+
+        [desktop_widgets.widget.desktop-widget-0000000000000006.settings]
+        background_radius = 0
+        display = "gauge"
+        gauge_layout = "vertical"
+        shadow = false
+        stat = "gpu_vram"
+        stat2 = "cpu_temp"
+
+[dock]
+active_scale = 1.5000000223517418
+background_opacity = 0.79999998211860657
+cross_axis_padding = 2
+enabled = true
+icon_size = 24
+magnification_scale = 2.0
+main_axis_padding = 15
+radius = 12
+radius_bottom_left = 12
+radius_bottom_right = 12
+reserve_space = false
+smart_auto_hide = true
+
+[idle]
+behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
+
+    [idle.behavior.lock]
+    action = "lock"
+    enabled = true
+    timeout = 600.0
+
+    [idle.behavior.lock-and-suspend]
+    action = "lock_and_suspend"
+    enabled = true
+    timeout = 900.0
+
+    [idle.behavior.screen-off]
+    action = "screen_off"
+    enabled = true
+    timeout = 660.0
+
+[location]
+auto_locate = true
+
+[lockscreen]
+fingerprint = false
+
+[lockscreen_widgets]
+enabled = true
+schema_version = 2
+widget_order = [ "lockscreen-login-box@FALLBACK", "lockscreen-login-box@DP-3", "lockscreen-widget-0000000000000001" ]
+
+    [lockscreen_widgets.grid]
+    cell_size = 16
+    major_interval = 4
+    visible = true
+
+    [lockscreen_widgets.widget."lockscreen-login-box@DP-3"]
+    box_height = 196.0
+    box_width = 810.0
+    cx = 1280.0
+    cy = 1070.0
+    output = "DP-3"
+    rotation = 0.0
+    type = "login_box"
+
+        [lockscreen_widgets.widget."lockscreen-login-box@DP-3".settings]
+        background_color = "surface_variant"
+        background_opacity = 0.88
+        background_radius = 12.0
+        center_password_text = false
+        input_opacity = 1.0
+        input_radius = 6.0
+        layout = "regular"
+        show_caps_lock = true
+        show_keyboard_layout = true
+        show_login_button = true
+        show_media = true
+        show_session_buttons = true
+        show_unlock_hint = true
+        show_weather = true
+
+    [lockscreen_widgets.widget."lockscreen-login-box@FALLBACK"]
+    box_height = 196.0
+    box_width = 810.0
+    cx = 960.0
+    cy = 898.0
+    output = "FALLBACK"
+    rotation = 0.0
+    type = "login_box"
+
+        [lockscreen_widgets.widget."lockscreen-login-box@FALLBACK".settings]
+        background_color = "surface_variant"
+        background_opacity = 0.88
+        background_radius = 12.0
+        center_password_text = false
+        input_opacity = 1.0
+        input_radius = 6.0
+        layout = "regular"
+        show_caps_lock = true
+        show_keyboard_layout = true
+        show_login_button = true
+        show_media = true
+        show_session_buttons = true
+        show_unlock_hint = true
+        show_weather = true
+
+    [lockscreen_widgets.widget.lockscreen-widget-0000000000000001]
+    box_height = 224.0
+    box_width = 320.0
+    cx = 144.0
+    cy = 96.0
+    output = "DP-3"
+    rotation = 0.0
+    type = "clock"
+
+        [lockscreen_widgets.widget.lockscreen-widget-0000000000000001.settings]
+        background = true
+        background_padding = 32
+        background_radius = 0
+        clock_style = "digital"
+        color = "primary"
+        shadow = true
+
+[osd]
+background_opacity = 0.84999998100101948
+
+[plugin_settings."kenn/keybind-cheatsheet"]
+columns = 4
+compositor = "hyprland"
+hyprland_config = "~/.config/hypr/configs/keybinds.conf"
+hyprland_lua_config = "~/.config/hypr/configs/keybinds.lua"
+hyprland_parser = "lua"
+show_actions = true
+
+[plugin_settings."yuuto/arch-updater"]
+auto_check_hours = 60
+terminal = "kitty"
+
+[plugins]
+enabled = [ "noctalia/mpvpaper", "yuuto/arch-updater" ]
+
+[shell]
+app_icon_color = "secondary"
+lang = "es"
+password_style = "random"
+polkit_agent = true
+telemetry_enabled = true
+
+    [shell.panel]
+    control_center_placement = "floating"
+    control_center_position = "center"
+    session_placement = "floating"
+    session_position = "center"
+    transparency_mode = "soft"
+    wallpaper_placement = "floating"
+    wallpaper_position = "center"
+
+    [shell.screenshot]
+    confirm_region = true
+    directory = "/home/ximo/Pictures/Screenshots"
+
+    [shell.session]
+    grid_columns = 5
+
+[theme]
+builtin = "Ayu"
+community_palette = "Garnet"
+custom_palette = "JokerTheme"
+mode = "dark"
+source = "wallpaper"
+wallpaper_scheme = "vibrant"
+
+    [theme.templates]
+    builtin_ids = [ "btop", "gtk3", "gtk4", "hyprland", "kcolorscheme", "kitty", "qt" ]
+    community_ids = [ "opencode", "pywalfox", "neovim", "vscode", "hyprtoolkit" ]
+
+[wallpaper]
+directory = "/home/ximo/Pictures/Wallpapers/Cars"
+transition_on_startup = true
+
+    [wallpaper.automation]
+    enabled = true
+    interval_seconds = 600
+    recursive = false
+
+    [wallpaper.default]
+    path = "/home/ximo/Pictures/Wallpapers/Cars/car4.jpg"
+
+    [wallpaper.last]
+    path = "/home/ximo/Pictures/Wallpapers/Cars/car4.jpg"
+
+    [wallpaper.monitors.DP-3]
+    path = "/home/ximo/Pictures/Wallpapers/Cars/car4.jpg"
+
+    [wallpaper.monitors.FALLBACK]
+    path = "/home/ximo/Pictures/Wallpapers/Cars/car3.jpg"
+
+[widget.battery]
+enabled = false
+
+[widget.brightness]
+enabled = false
+
+[widget.clipboard]
+enabled = false
+
+[widget.clock]
+color = "secondary"
+scale = 1.3
+
+[widget.control-center]
+enabled = false
+
+[widget.launcher]
+enabled = false
+
+[widget.media]
+color = "secondary"
+title_scroll = "on_hover"
+
+[widget.network]
+show_label = false
+
+[widget.network_rx]
+stat = "gpu_temp"
+
+[widget.network_tx]
+stat = "cpu_temp"
+
+[widget.notifications]
+color = "secondary"
+
+[widget.spacer_2]
+length = 25
+type = "spacer"
+
+[widget.spacer_3]
+length = 25
+type = "spacer"
+
+[widget.spacer_4]
+enabled = false
+length = 25
+type = "spacer"
+
+[widget.sysmon]
+stat = "gpu_usage"
+
+[widget.wallpaper]
+enabled = false
+
+[widget.widget]
+type = "yuuto/arch-updater:widget"

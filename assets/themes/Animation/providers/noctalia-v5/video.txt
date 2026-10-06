@@ -1,0 +1,4 @@
+path=/home/ximo/Pictures/LiveWallpapers/ellen-joe-neon-alley-zenless-zone-zero-moewalls-com.mp4
+painter=skwd-wall-vk
+namespace=skwd-wall-vk
+pid=39917

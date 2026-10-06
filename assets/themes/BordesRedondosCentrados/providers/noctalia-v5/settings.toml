@@ -1,0 +1,148 @@
+config_version = 8
+
+[accessibility]
+ui_scale = 1.1500000096857548
+
+[bar]
+order = [ "default", "barra_lateral" ]
+
+    [bar.barra_lateral]
+    auto_hide = true
+    end = []
+    margin_ends = 500
+    position = "right"
+    radius = 20
+    reserve_space = false
+    start = [ "widget" ]
+
+    [bar.default]
+    end = [
+        "media",
+        "tray",
+        "notifications",
+        "clipboard",
+        "network",
+        "bluetooth",
+        "volume",
+        "brightness",
+        "battery",
+        "control-center"
+    ]
+
+[idle]
+behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
+
+    [idle.behavior.lock]
+    action = "lock"
+    enabled = true
+    timeout = 600.0
+
+    [idle.behavior.lock-and-suspend]
+    action = "lock_and_suspend"
+    enabled = true
+    timeout = 900.0
+
+    [idle.behavior.screen-off]
+    action = "screen_off"
+    enabled = true
+    timeout = 660.0
+
+[lockscreen]
+fingerprint = false
+
+[lockscreen_widgets]
+enabled = true
+schema_version = 2
+widget_order = [ "lockscreen-login-box@DP-3", "lockscreen-widget-0000000000000001" ]
+
+    [lockscreen_widgets.grid]
+    cell_size = 16
+    major_interval = 4
+    visible = true
+
+    [lockscreen_widgets.widget."lockscreen-login-box@DP-3"]
+    box_height = 229.0
+    box_width = 810.0
+    cx = 1280.0
+    cy = 1249.5
+    output = "DP-3"
+    rotation = 0.0
+    type = "login_box"
+
+        [lockscreen_widgets.widget."lockscreen-login-box@DP-3".settings]
+        background_color = "surface_variant"
+        background_opacity = 0.88
+        background_radius = 12.0
+        center_password_text = false
+        input_opacity = 1.0
+        input_radius = 6.0
+        layout = "regular"
+        show_caps_lock = true
+        show_keyboard_layout = true
+        show_login_button = true
+        show_media = true
+        show_session_buttons = true
+        show_weather = true
+
+    [lockscreen_widgets.widget.lockscreen-widget-0000000000000001]
+    box_height = 160.0
+    box_width = 256.0
+    cx = 1280.0
+    cy = 704.0
+    output = "DP-3"
+    rotation = 0.0
+    type = "clock"
+
+[osd]
+background_opacity = 0.84999998100101948
+
+[plugin_settings."yuuto/arch-updater"]
+auto_check_hours = 60
+terminal = "kitty"
+
+[plugins]
+enabled = [ "kenn/keybind-cheatsheet", "noctalia/mpvpaper", "yuuto/arch-updater" ]
+
+[shell]
+lang = "es"
+password_style = "random"
+polkit_agent = true
+telemetry_enabled = true
+
+[theme]
+builtin = "Kanagawa"
+community_palette = "Ayu Green"
+custom_palette = "JokerTheme"
+source = "custom"
+
+    [theme.templates]
+    builtin_ids = [ "btop", "gtk3", "gtk4", "hyprland", "kcolorscheme", "kitty", "qt" ]
+    community_ids = [ "opencode", "pywalfox", "vscode", "hyprtoolkit" ]
+
+[wallpaper]
+directory = "/home/ximo/Pictures/Wallpapers/Joker"
+transition_on_startup = true
+
+    [wallpaper.automation]
+    recursive = false
+
+    [wallpaper.default]
+    path = "/home/ximo/Pictures/Wallpapers/Joker/joker4.png"
+
+    [wallpaper.last]
+    path = "/home/ximo/Pictures/Wallpapers/Joker/joker4.png"
+
+    [wallpaper.monitors.DP-3]
+    path = "/home/ximo/Pictures/Wallpapers/Joker/joker4.png"
+
+    [[wallpaper.favorite]]
+    custom_palette = "JokerTheme"
+    palette_source = "custom"
+    path = "/home/ximo/Pictures/Wallpapers/Joker/joker1.png"
+    theme_mode = "dark"
+
+[widget.network]
+show_label = false
+
+[widget.widget]
+type = "yuuto/arch-updater:widget"

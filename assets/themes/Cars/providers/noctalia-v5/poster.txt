@@ -1,0 +1,1 @@
+poster=media/poster.jpg
