@@ -15,8 +15,13 @@ The exact files, unmodified:
 | Roboto Mono | `Roboto Mono` | `RobotoMono-Regular.ttf`, `RobotoMono-Medium.ttf`, `RobotoMono-Bold.ttf` |
 
 The family names above are what `ui/tokens.slint` asks for. Only the three
-weights Regular (400), Medium (500) and Bold (700) are shipped upstream, so a
-`font-weight: 600` request resolves to the nearest weight the family provides.
+weights Regular (400), Medium (500) and Bold (700) are vendored into HVE,
+because they are the only weights the UI asks for; the upstream packages also
+ship Light, Thin, Black and the full italic sets, which HVE does not need.
+
+A `font-weight: 600` request is not pinned by the design: the renderer lands it
+on the nearest vendored weight, and 600 sits exactly between Medium (500) and
+Bold (700), so which of the two wins is the renderer's tie-break decision.
 
 ## Source
 

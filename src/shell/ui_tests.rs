@@ -314,8 +314,17 @@ fn tokens_fonts_and_anim_cadence_match_design() {
 
 /// The three families the design declares are vendored in the repo, embedded
 /// into the binary at build time by slint-build, and each one is imported by
-/// `ui/tokens.slint` — so a font file can never sit in the repo unused, and no
-/// machine silently falls back to a system font.
+/// `ui/tokens.slint` — so a font file can never sit in the repo unused, and a
+/// family name declared in `ui/tokens.slint` always answers to a vendored face
+/// instead of a system fallback. A typo or a renamed family would otherwise
+/// compile, pass every other check and render in a system font.
+///
+/// What it enforces: each declared family (`font-body`, `font-heading`,
+/// `font-mono`) has its three faces (Regular/Medium/Bold) in the vendored set
+/// and imported by `ui/tokens.slint`, every file is at least 10 KB and starts
+/// with the TrueType magic, and both OFL texts are present. What it cannot see:
+/// these are structural claims — a `.ttf` replaced by a *different real font*
+/// of the same size and format would still pass.
 #[test]
 fn vendored_fonts_are_complete_and_imported() {
     let tokens = std::fs::read_to_string("ui/tokens.slint").expect("ui/tokens.slint must exist");
@@ -350,6 +359,35 @@ fn vendored_fonts_are_complete_and_imported() {
         );
     }
 
+    // Each family name the design declares must land on those vendored faces:
+    // the file-name prefix is the family with its spaces removed
+    // (`"Roboto Condensed"` → `RobotoCondensed-Regular.ttf`). Without this tie a
+    // renamed or mistyped family would still pass everything above and fall
+    // back to a system font.
+    let declared_family = |prop: &str| -> String {
+        tokens
+            .lines()
+            .find_map(|line| {
+                let rest = line.split_once(&format!("{prop}:"))?.1;
+                let open = rest.find('"')? + 1;
+                let close = rest[open..].find('"')? + open;
+                Some(rest[open..close].to_string())
+            })
+            .unwrap_or_else(|| panic!("ui/tokens.slint must declare {prop}"))
+    };
+    for prop in ["font-body", "font-heading", "font-mono"] {
+        let family = declared_family(prop);
+        let prefix = family.replace(' ', "");
+        for weight in ["Regular", "Medium", "Bold"] {
+            let face = format!("{prefix}-{weight}.ttf");
+            assert!(
+                fonts.contains(&face.as_str()),
+                "ui/tokens.slint declares {prop}: \"{family}\", which needs the vendored face \
+                 {face}; without it that family falls back to a system font on every machine"
+            );
+        }
+    }
+
     // Both licences travel with the fonts: Roboto + Roboto Condensed share one
     // file, Roboto Mono has its own.
     for name in ["assets/fonts/OFL-Roboto.txt", "assets/fonts/OFL-RobotoMono.txt"] {
@@ -365,10 +403,18 @@ fn vendored_fonts_are_complete_and_imported() {
 /// ≤11px band was raised two points in a single pass: every hardcoded
 /// `font-size: Npx` with N ≤ 11 became N+2, and every `size-11` font-size
 /// token became `size-13`. This test pins the new floor so the small print can
-/// never silently shrink back: no literal below 10px anywhere under `ui/`, and
-/// no font-size token whose *declared* value sits below 12px. Only the tokens'
-/// use as a font size is checked here — the declarations in `ui/tokens.slint`
-/// are not.
+/// never silently shrink back.
+///
+/// Every `font-size:` under `ui/` is read as a whole statement (up to its `;`,
+/// across newlines), not as a single line, so every alternative of a ternary is
+/// checked. A statement that uses `SkwdTokens.size-<N>` is judged by the value
+/// declared in `ui/tokens.slint` (floor 12px, and a missing declaration fails
+/// loudly). Any other statement must carry at least one `<number>px` literal,
+/// and the *smallest* of them must stay ≥ 10px. A statement with neither form
+/// fails the test on purpose: an unrecognised form is a hole in the guard, and
+/// skipping it is how this test would quietly stop guarding. The `size-N`
+/// declarations in `ui/tokens.slint` themselves are not checked here, only
+/// their use as a font size.
 #[test]
 fn no_ui_font_size_sits_below_the_raised_floor() {
     use std::path::Path;
@@ -382,6 +428,30 @@ fn no_ui_font_size_sits_below_the_raised_floor() {
                 files.push(path);
             }
         }
+    }
+
+    /// Every `<number>px` literal in a value span, in source order. A digit run
+    /// preceded by `.` is left alone, so `1.5px` counts as one unrecognised
+    /// literal instead of a bare `5px`.
+    fn px_literals(span: &str) -> Vec<u32> {
+        let bytes = span.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let after_a_dot = start > 0 && bytes[start - 1] == b'.';
+            if !after_a_dot && span[i..].starts_with("px") {
+                out.push(span[start..i].parse().unwrap());
+            }
+        }
+        out
     }
 
     // Declared token values read straight from ui/tokens.slint (`size-N: Npx`),
@@ -405,39 +475,59 @@ fn no_ui_font_size_sits_below_the_raised_floor() {
     for path in &files {
         let src = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
-        for (idx, line) in src.lines().enumerate() {
-            let Some((_, after)) = line.split_once("font-size:") else {
+        let line_of = |at: usize| src[..at].matches('\n').count() + 1;
+
+        let mut cursor = 0usize;
+        while let Some(found) = src[cursor..].find("font-size:") {
+            let at = cursor + found;
+            cursor = at + "font-size:".len();
+            // A commented-out statement is not a font size the UI renders.
+            let line_start = src[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            if src[line_start..at].trim_start().starts_with("//") {
                 continue;
-            };
-            let after = after.trim_start();
-            if let Some(rest) = after.strip_prefix("SkwdTokens.size-") {
-                // Token usage: read the declared value out of ui/tokens.slint.
-                let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if n.is_empty() {
-                    continue;
+            }
+            // The statement value: everything up to the `;` that closes it,
+            // whatever the formatting does in between.
+            let after = &src[cursor..];
+            let span = after.split_once(';').map_or(after, |(value, _)| value);
+            let line = line_of(at);
+
+            // Token references in the span, each judged by its declaration.
+            let mut token_uses = Vec::new();
+            let mut scan = span;
+            while let Some(t) = scan.find("SkwdTokens.size-") {
+                let rest = &scan[t + "SkwdTokens.size-".len()..];
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if !digits.is_empty() {
+                    token_uses.push(format!("size-{digits}"));
                 }
-                let token = format!("size-{n}");
-                let effective = declared_value(&token);
-                if effective < 12 {
-                    violations.push(format!(
-                        "{}:{} uses {token} at {effective}px (floor is 12px)",
+                scan = rest;
+            }
+
+            if token_uses.is_empty() {
+                let literals = px_literals(span);
+                match literals.iter().min() {
+                    Some(&n) if n < 10 => violations.push(format!(
+                        "{}:{line} declares font-size: {n}px (floor is 10px)",
+                        path.display()
+                    )),
+                    Some(_) => {}
+                    None => violations.push(format!(
+                        "{}:{line} has a font-size this guard does not recognise: \
+                         `font-size:{}` — teach the scanner this form, or the floor is unchecked",
                         path.display(),
-                        idx + 1
-                    ));
+                        span.trim_end()
+                    )),
                 }
             } else {
-                // Hardcoded literal: `Npx`.
-                let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if digits.is_empty() || !after[digits.len()..].starts_with("px") {
-                    continue;
-                }
-                let n: u32 = digits.parse().unwrap();
-                if n < 10 {
-                    violations.push(format!(
-                        "{}:{} declares font-size: {n}px (floor is 10px)",
-                        path.display(),
-                        idx + 1
-                    ));
+                for token in token_uses {
+                    let effective = declared_value(&token);
+                    if effective < 12 {
+                        violations.push(format!(
+                            "{}:{line} uses {token} at {effective}px (floor is 12px)",
+                            path.display()
+                        ));
+                    }
                 }
             }
         }
