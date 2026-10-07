@@ -1,5 +1,6 @@
 import { Slider, ScrollView } from "std-widgets.slint";
 import { HveColors } from "./theme.slint";
+import { SkwdTokens } from "./tokens.slint";
 import { SystemText } from "panel/sections/system_text.slint";
 
 export struct AboutItem {
@@ -716,13 +717,14 @@ export component AccordionCard inherits Rectangle {
     callback toggled();
     callback open-docs();
 
-    // Width of the tree column: the longest path measured with the real font (monospace),
-    // plus a small margin. That way every definition starts at the same x.
+    // Width of the tree column: the longest path measured with the bundled mono
+    // family (identical on every machine), plus a small margin. That way every
+    // definition starts at the same x.
     private property <length> tree-path-col-width: tree-path-measure.preferred-width + 14px;
 
     tree-path-measure := Text {
         text: root.tree-path-max;
-        font-family: "monospace";
+        font-family: SkwdTokens.font-mono;
         font-size: 12px;
         opacity: 0;
         x: -10000px;
@@ -898,7 +900,7 @@ export component AccordionCard inherits Rectangle {
                                     text: root.tree-paths[i];
                                     color: HveColors.text;
                                     font-size: 12px;
-                                    font-family: "monospace";
+                                    font-family: SkwdTokens.font-mono;
                                     vertical-alignment: center;
                                 }
 
@@ -906,7 +908,7 @@ export component AccordionCard inherits Rectangle {
                                     text: root.tree-descs[i] != "" ? "...................................................................................................." : "";
                                     color: HveColors.text-muted;
                                     font-size: 12px;
-                                    font-family: "monospace";
+                                    font-family: SkwdTokens.font-mono;
                                     horizontal-stretch: 1;
                                     horizontal-alignment: right;
                                     vertical-alignment: center;
