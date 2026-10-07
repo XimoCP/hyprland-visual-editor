@@ -312,6 +312,71 @@ fn tokens_fonts_and_anim_cadence_match_design() {
     assert_eq!(t.get_anim_1000(), 1000);
 }
 
+/// The three families the design declares are vendored in the repo, embedded
+/// into the binary at build time by slint-build, and each one is imported by
+/// `ui/tokens.slint` — so a font file can never sit in the repo unused, and no
+/// machine silently falls back to a system font.
+#[test]
+fn vendored_fonts_are_complete_and_imported() {
+    let tokens = std::fs::read_to_string("ui/tokens.slint").expect("ui/tokens.slint must exist");
+
+    // Exactly the weights the UI asks for (400/500/600/700), across the three
+    // families: no other weight exists in the design.
+    let fonts = [
+        "Roboto-Regular.ttf",
+        "Roboto-Medium.ttf",
+        "Roboto-Bold.ttf",
+        "RobotoCondensed-Regular.ttf",
+        "RobotoCondensed-Medium.ttf",
+        "RobotoCondensed-Bold.ttf",
+        "RobotoMono-Regular.ttf",
+        "RobotoMono-Medium.ttf",
+        "RobotoMono-Bold.ttf",
+    ];
+    for name in fonts {
+        let path = format!("assets/fonts/{name}");
+        let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{path} must exist"));
+        assert!(bytes.len() >= 10_000, "{path} must be a complete font, not a stub");
+        // TrueType files start with the 0x0001_0000 magic; anything else means
+        // the file was truncated, re-encoded or is not the vendored font.
+        assert_eq!(
+            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            0x0001_0000,
+            "{path} must start with the TrueType magic"
+        );
+        assert!(
+            tokens.contains(&format!("import \"../assets/fonts/{name}\";")),
+            "ui/tokens.slint must import {name}"
+        );
+    }
+
+    // Both licences travel with the fonts: Roboto + Roboto Condensed share one
+    // file, Roboto Mono has its own.
+    for name in ["assets/fonts/OFL-Roboto.txt", "assets/fonts/OFL-RobotoMono.txt"] {
+        let text = std::fs::read_to_string(name).unwrap_or_else(|_| panic!("{name} must exist"));
+        assert!(
+            text.contains("SIL Open Font License"),
+            "{name} must carry the SIL Open Font License text"
+        );
+    }
+}
+
+/// The window inherits the body family instead of the stale `Inter` fallback,
+/// so every `Text` that declares no family of its own renders as the design
+/// chose rather than in whatever the system calls sans-serif.
+#[test]
+fn main_window_default_font_is_the_body_token() {
+    let main = std::fs::read_to_string("ui/main.slint").expect("ui/main.slint must exist");
+    assert!(
+        !main.contains("Inter"),
+        "ui/main.slint must not name the Inter fallback"
+    );
+    assert!(
+        main.contains("default-font-family: SkwdTokens.font-body"),
+        "ui/main.slint must inherit default-font-family from SkwdTokens.font-body"
+    );
+}
+
 #[test]
 fn tokens_sizes_radii_spacing_match_design() {
     init_test_platform();

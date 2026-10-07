@@ -5,6 +5,19 @@
 // No GPL code (hyprmod) is used. Source values: openspec/changes/
 // hve2-trunk/design.md, "Design Tokens" section (task 3.1).
 
+// Bundled families (SIL OFL 1.1, see assets/fonts/README.md): importing each
+// file registers the font and embeds it in the binary at build time, so every
+// machine renders with these exact faces instead of a system fallback.
+import "../assets/fonts/Roboto-Regular.ttf";
+import "../assets/fonts/Roboto-Medium.ttf";
+import "../assets/fonts/Roboto-Bold.ttf";
+import "../assets/fonts/RobotoCondensed-Regular.ttf";
+import "../assets/fonts/RobotoCondensed-Medium.ttf";
+import "../assets/fonts/RobotoCondensed-Bold.ttf";
+import "../assets/fonts/RobotoMono-Regular.ttf";
+import "../assets/fonts/RobotoMono-Medium.ttf";
+import "../assets/fonts/RobotoMono-Bold.ttf";
+
 // ─── SkwdTokens — design token singleton (design D6) ───────────────────
 // The `pragma Singleton` analog: one exported global the whole shell reads
 // for fonts, sizes, radii, spacing, animation cadence, borders, opacity,
