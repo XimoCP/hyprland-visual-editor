@@ -152,7 +152,7 @@ component SystemSettingsPane inherits Rectangle {
                     Rectangle {
                         width: 60px; height: 24px; border-radius: 6px;
                         background: HveColors.bg-card;
-                        Text { text: root.restart-button-text; color: HveColors.accent-amber; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: root.restart-button-text; color: HveColors.accent-amber; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { width: 100%; height: 100%; clicked => { root.restart-app(); } changed has-hover => { if (self.has-hover) { root.mouse-row = 6; } } }
                     }
                 }
@@ -274,12 +274,12 @@ component SystemSettingsPane inherits Rectangle {
                             spacing: 0px;
                             Rectangle {
                                 width: 50%; height: 100%; border-radius: root.language == "en" ? 5px : 0px; background: root.language == "en" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
-                                Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                Text { text: "EN"; color: root.language == "en" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                 en-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 3; root.change-language("en"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } } }
                             }
                             Rectangle {
                                 width: 50%; height: 100%; border-radius: root.language == "es" ? 5px : 0px; background: root.language == "es" ? HveColors.accent-cyan.transparentize(0.8) : transparent;
-                                Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                Text { text: "ES"; color: root.language == "es" ? HveColors.accent-cyan : HveColors.text-muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                 es-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 3; root.change-language("es"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 3; } } }
                             }
                         }
@@ -338,7 +338,7 @@ component SystemSettingsPane inherits Rectangle {
                             background: root.theme == "dark" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
                             border-width: 1px;
                             border-color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.border;
-                            Text { text: "dark"; color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "dark"; color: root.theme == "dark" ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                             theme-dark-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("dark"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
                         }
                         Rectangle {
@@ -346,7 +346,7 @@ component SystemSettingsPane inherits Rectangle {
                             background: root.theme == "light" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
                             border-width: 1px;
                             border-color: root.theme == "light" ? HveColors.accent-cyan : HveColors.border;
-                            Text { text: "light"; color: root.theme == "light" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "light"; color: root.theme == "light" ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                             theme-light-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("light"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
                         }
                         Rectangle {
@@ -354,7 +354,7 @@ component SystemSettingsPane inherits Rectangle {
                             background: root.theme == "system" ? HveColors.accent-cyan.transparentize(0.8) : HveColors.bg-card;
                             border-width: 1px;
                             border-color: root.theme == "system" ? HveColors.accent-cyan : HveColors.border;
-                            Text { text: "system"; color: root.theme == "system" ? HveColors.accent-cyan : HveColors.text; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "system"; color: root.theme == "system" ? HveColors.accent-cyan : HveColors.text; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                             theme-system-ta := TouchArea { width: 100%; height: 100%; clicked => { root.mouse-row = 5; root.change-theme("system"); } changed has-hover => { if (self.has-hover) { root.mouse-row = 5; } } }
                         }
                     }

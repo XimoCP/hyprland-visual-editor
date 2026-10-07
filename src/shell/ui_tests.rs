@@ -361,6 +361,94 @@ fn vendored_fonts_are_complete_and_imported() {
     }
 }
 
+/// The keeper could not read HVE's smallest text from his seat, so the whole
+/// ≤11px band was raised two points in a single pass: every hardcoded
+/// `font-size: Npx` with N ≤ 11 became N+2, and every `size-11` font-size
+/// token became `size-13`. This test pins the new floor so the small print can
+/// never silently shrink back: no literal below 10px anywhere under `ui/`, and
+/// no font-size token whose *declared* value sits below 12px. Only the tokens'
+/// use as a font size is checked here — the declarations in `ui/tokens.slint`
+/// are not.
+#[test]
+fn no_ui_font_size_sits_below_the_raised_floor() {
+    use std::path::Path;
+
+    fn walk_slint(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{dir:?} unreadable: {e}")) {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk_slint(&path, files);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("slint") {
+                files.push(path);
+            }
+        }
+    }
+
+    // Declared token values read straight from ui/tokens.slint (`size-N: Npx`),
+    // so the check follows the declaration instead of hardcoding it too.
+    let tokens = std::fs::read_to_string("ui/tokens.slint").expect("ui/tokens.slint must exist");
+    let declared_value = |token: &str| -> u32 {
+        let needle = format!("{token}:");
+        tokens
+            .lines()
+            .find_map(|line| {
+                let rest = line.split_once(&needle)?.1;
+                rest.trim().split_once("px")?.0.trim().parse::<u32>().ok()
+            })
+            .unwrap_or_else(|| panic!("ui/tokens.slint must declare {token}"))
+    };
+
+    let mut files = Vec::new();
+    walk_slint(Path::new("ui"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let src = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+        for (idx, line) in src.lines().enumerate() {
+            let Some((_, after)) = line.split_once("font-size:") else {
+                continue;
+            };
+            let after = after.trim_start();
+            if let Some(rest) = after.strip_prefix("SkwdTokens.size-") {
+                // Token usage: read the declared value out of ui/tokens.slint.
+                let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if n.is_empty() {
+                    continue;
+                }
+                let token = format!("size-{n}");
+                let effective = declared_value(&token);
+                if effective < 12 {
+                    violations.push(format!(
+                        "{}:{} uses {token} at {effective}px (floor is 12px)",
+                        path.display(),
+                        idx + 1
+                    ));
+                }
+            } else {
+                // Hardcoded literal: `Npx`.
+                let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if digits.is_empty() || !after[digits.len()..].starts_with("px") {
+                    continue;
+                }
+                let n: u32 = digits.parse().unwrap();
+                if n < 10 {
+                    violations.push(format!(
+                        "{}:{} declares font-size: {n}px (floor is 10px)",
+                        path.display(),
+                        idx + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "UI font sizes below the raised floor: {violations:#?}"
+    );
+}
+
 /// The window inherits the body family instead of the stale `Inter` fallback,
 /// so every `Text` that declares no family of its own renders as the design
 /// chose rather than in whatever the system calls sans-serif.

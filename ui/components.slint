@@ -128,7 +128,7 @@ export component PresetCard inherits Rectangle {
                             tag-text := Text {
                                 text: root.tag;
                                 color: active ? accent : HveColors.text-muted;
-                                font-size: 11px;
+                                font-size: 13px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -281,7 +281,7 @@ export component SectionHeader inherits VerticalLayout {
     Text {
         text: root.subtitle;
         color: HveColors.text-muted;
-        font-size: 11px;
+        font-size: 13px;
     }
 }
 
@@ -470,7 +470,7 @@ export component WelcomeCard inherits Rectangle {
         Text {
             text: root.description;
             color: HveColors.text-muted;
-            font-size: 11px;
+            font-size: 13px;
             wrap: word-wrap;
         }
     }
@@ -565,7 +565,7 @@ export component CloseButton inherits Rectangle {
         Text {
             text: root.countdown-seconds + "s";
             color: HveColors.accent-red;
-            font-size: 10px;
+            font-size: 12px;
             font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -656,7 +656,7 @@ export component ActivationCard inherits Rectangle {
             Text {
                 text: root.active ? root.active-text : root.inactive-text;
                 color: HveColors.text-muted;
-                font-size: 11px;
+                font-size: 13px;
                 wrap: word-wrap;
                 overflow: elide;
             }
@@ -792,7 +792,7 @@ export component AccordionCard inherits Rectangle {
                 Text {
                     text: root.expanded ? "▲" : "▼";
                     color: expanded ? root.accent : HveColors.text-muted;
-                    font-size: 10px;
+                    font-size: 12px;
                     animate color { duration: 200ms; }
                 }
             }
@@ -1043,7 +1043,7 @@ export component NavCard inherits Rectangle {
 
         Text {
             text: root.count-text;
-            font-size: 11px;       // 10→11px: better legibility without hinting
+            font-size: 13px;       // small-print step, raised +2 so it stays readable
             color: HveColors.text-muted;
             horizontal-alignment: center;
         }
@@ -1118,7 +1118,7 @@ export component Tooltip inherits Rectangle {
             Text {
                 text: root.text;
                 color: HveColors.text;
-                font-size: 10px;
+                font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
