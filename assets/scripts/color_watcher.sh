@@ -153,25 +153,33 @@ _reassert_theme_authority() {
         last=$(cat "$stamp_file" 2>/dev/null)
         case "$last" in
             ''|*[!0-9]*) ;;
-            *) [ $((now - last)) -lt "${HVE_THEME_ASSERT_COOLDOWN:-5}" ] && return 0 ;;
+            *)
+                local cooldown="${HVE_THEME_ASSERT_COOLDOWN:-5}"
+                if [ $((now - last)) -lt "$cooldown" ]; then
+                    _log "Colour-authority ask suppressed: $((now - last))s since the last ask (< ${cooldown}s cooldown) — dropping this request"
+                    return 0
+                fi
+                ;;
         esac
+    fi
+    if [ ! -x "$HVE_SCRIPTS_DIR/hve-ipc" ]; then
+        _log "WARN: cannot ask HVE to re-assert colour authority: $HVE_SCRIPTS_DIR/hve-ipc is missing or not executable"
+        return 0
     fi
     mkdir -p "$safe_dir" 2>/dev/null
     printf '%s' "$now" > "$stamp_file"
-    if [ -x "$HVE_SCRIPTS_DIR/hve-ipc" ]; then
-        # Two verbs: a change burst asks `assert-color-authority`, which the
-        # app gates on a monitor-event window (the palette file is the
-        # detector, the monitor event is the permission —
-        # odd/tasks/palette-defence-on-monitor-events.md). The startup repair
-        # is NOT a palette change: it must never wait for a monitor event, so
-        # it goes through the ungated `repair-color-authority`.
-        if [ "$force" = "force" ]; then
-            "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- repair-color-authority 2>/dev/null || true
-            _log "Asked HVE to repair colour authority (repair-color-authority)"
-        else
-            "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- assert-color-authority 2>/dev/null || true
-            _log "Asked HVE to re-assert colour authority (assert-color-authority)"
-        fi
+    # Two verbs: a change burst asks `assert-color-authority`, which the
+    # app gates on a monitor-event window (the palette file is the
+    # detector, the monitor event is the permission —
+    # odd/tasks/palette-defence-on-monitor-events.md). The startup repair
+    # is NOT a palette change: it must never wait for a monitor event, so
+    # it goes through the ungated `repair-color-authority`.
+    if [ "$force" = "force" ]; then
+        "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- repair-color-authority 2>/dev/null || true
+        _log "Asked HVE to repair colour authority (repair-color-authority)"
+    else
+        "$HVE_SCRIPTS_DIR/hve-ipc" 9>&- assert-color-authority 2>/dev/null || true
+        _log "Asked HVE to re-assert colour authority (assert-color-authority)"
     fi
 }
 

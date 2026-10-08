@@ -68,6 +68,15 @@ pub fn write_descriptor(authority: &ColorAuthority) -> std::io::Result<()> {
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
+    if result.is_ok() {
+        crate::decision_log::record(
+            "CLAIMED",
+            &format!(
+                "theme \"{}\" owns the palette (backend {})",
+                authority.theme, authority.backend
+            ),
+        );
+    }
     result
 }
 
@@ -108,6 +117,20 @@ mod tests {
         let authority = sample();
         write_descriptor(&authority).expect("write must succeed");
         assert_eq!(read_descriptor(), Some(authority));
+    }
+
+    /// W3 of `odd/tasks/palette-authority-mute-and-yield.md`: writing the
+    /// descriptor is the moment a theme CLAIMS the palette, so the keeper
+    /// must find it in the decision log. Read inside the `TempEnv` sandbox.
+    #[test]
+    fn writing_the_descriptor_records_the_claim_in_the_decision_log() {
+        let _env = TempEnv::new();
+        write_descriptor(&sample()).expect("write must succeed");
+        let text = fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        assert!(
+            text.contains("CLAIMED") && text.contains("Animation"),
+            "the claim must name the theme, got: {text}"
+        );
     }
 
     #[test]

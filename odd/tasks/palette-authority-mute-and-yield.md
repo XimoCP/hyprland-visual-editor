@@ -2,7 +2,7 @@
 
 Feature name: `palette-authority-mute-and-yield`
 Branch: `hve2-visual-rewrite`
-Status: IN PROGRESS — W1 done (see Progress / evidence); W2 done (see Progress / evidence); W3 not started; W4 (cross-model verification + the keeper's live test) pending by definition.
+Status: IN PROGRESS — W1 done (see Progress / evidence); W2 done (see Progress / evidence); W3 done (see Progress / evidence); W4 (cross-model verification + the keeper's live test) pending by definition.
 Supersedes: `odd/tasks/palette-defence-covers-suspend-resume.md` (the temporal permission: monitor one-shot + 60 s resume
 grace) and the background-identity study it was heading towards. Both are demoted to safety nets.
 
@@ -81,7 +81,7 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       theme stops owning the colours and the watcher stops asking) and stay aside until a theme apply
       re-claims and re-mutes. Tests: pure decision function over (program open/closed, background changed
       or not, HVE acting or not), stub binary for the engine read, and the release/re-claim lifecycle.
-- [ ] **W3 — Make every decision visible.**
+- [x] **W3 — Make every decision visible.**
       The guard's own `tracing` goes to `/dev/null` in production (the app is started by the session/tray),
       and the watcher's cooldown drop leaves no line at all - which is why the 07-oct failure took three
       rounds of questions to read. Add a decision log under HVE's cache dir (mute held/released, step-aside,
@@ -453,6 +453,73 @@ Limits (honest, not covered without the keeper live):
   limit of the chosen signal, not a guess.
 - The picker process's lifetime (does `skwd-wall-v2` really stay alive while the keeper drives it,
   and does its `comm` really read exactly that) must be confirmed in the W4 live test.
+
+### W3 — done
+
+Makes every guard decision readable without `tracing` (which goes to `/dev/null` in production, where
+the app is started by the session/tray).
+
+New `src/decision_log.rs`: one append-only line per decision under HVE's cache dir
+(`$XDG_CACHE_HOME/hve/color-authority.log`, the same `hve_cache_dir()` the rest of the code uses).
+Format mirrors the watcher's own log: `[HVE Authority] <UTC timestamp> <DECISION> <detail>`.
+Best-effort: a failed write is reported through `tracing` and never aborts the decision it records.
+Bounded: the file is capped at `MAX_BYTES` (256 KiB) and rotated to `color-authority.log.1` before an
+append that would pass the cap, so disk use never exceeds `2 * MAX_BYTES` and the most recent history
+always survives.
+
+Decisions recorded (one line each):
+
+- `MUTE SET` — the flip, with the previous `theme.policy` value.
+- `MUTE HELD` — the engine was already held off (pending marker reused), or the release kept the mute
+  while a colour-authority descriptor exists.
+- `MUTE RELEASED` — a genuine release (apply, crash repair, step-aside, completed pending release).
+- `MUTE RELEASE PENDING` / `MUTE RELEASE FAILED` — a failed/pending release and its retry.
+- `STEPPED ASIDE` — the W2 step-aside, with its reason (a foreign background while the keeper's program
+  is running).
+- `CLAIMED` — a theme claims the palette (the descriptor write), i.e. the re-claim on applying a theme.
+- `ENGINE ABSENT` / `ENGINE UNREADABLE` — the engine config or its live background could not be read.
+- `ASSERT GRANTED` / `ASSERT REFUSED` — the `assert-color-authority` verb, with its source
+  (monitor|resume) or its refusal reason.
+
+Watcher (`assets/scripts/color_watcher.sh`): the 5 s cooldown now logs the suppression it used to
+swallow, and the `assert-color-authority.last` stamp is written only after the `hve-ipc` helper is
+proven present — an absent helper no longer poisons the next 5 s. Bash still only asks: the
+capability-routing contract tests (no backend CLI, no backend-file rewrite) stay green.
+
+Files touched:
+
+- `src/decision_log.rs` (new) — the bounded, best-effort log plus 3 tests.
+- `src/main.rs` — `mod decision_log;`.
+- `src/providers/skwd_policy.rs` — the mute set/held/released/pending/failed and engine
+  absent/unreadable decisions, plus 4 tests.
+- `src/providers/background.rs` — the step-aside and its release decisions, plus 2 tests.
+- `src/color_authority.rs` — the `CLAIMED` decision on a descriptor write, plus 1 test.
+- `src/ipc.rs` — the pure `reassert_decision` mapping + the decision-log call, plus 1 test.
+- `assets/scripts/color_watcher.sh` — the suppression log line and the stamp ordering.
+- `src/watcher.rs` — 1 static contract test pinning both script changes.
+
+Evidence (commands run from `/home/ximo/Proyectos/hve`):
+
+- `cargo test`: `1504 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (`140.50 s`) — W2's
+  1492 plus 12 new tests.
+- `cargo build`: clean, no warnings.
+- Non-vacuous checks (throwaway breaks, reverted; `sha256sum` confirmed the files returned to their
+  pre-break bytes `4f2896a1…` / `35b0f1e0…` / `37417a67…`):
+  - making `decision_log::rotate_if_needed` a no-op makes
+    `a_full_log_rotates_to_one_previous_generation` fail.
+  - moving the stamp write back before the helper check makes
+    `the_watcher_logs_suppressed_asks_and_stamps_only_a_real_ask` fail.
+  - renaming the yield's `MUTE SET` decision makes
+    `the_yield_and_release_are_recorded_in_the_decision_log` fail.
+
+Limits (honest, not covered without the keeper live):
+
+- The log records decisions, not proofs: it says what HVE decided, and the W4 live test is what
+  confirms the decisions match the screen.
+- Rotation keeps ONE previous generation; a very long incident can push older lines into `.1` and then
+  out. The cap is a single constant (`MAX_BYTES`) if the keeper needs more.
+- Concurrent writers append with `O_APPEND`; a rotation racing an append can drop at most one line
+  (best-effort by design, never an abort).
 
 Evidence collected while planning (07-08-oct-2026, this machine):
 - The engine publishes on every apply: `noctalia palette bridge: published scheme and

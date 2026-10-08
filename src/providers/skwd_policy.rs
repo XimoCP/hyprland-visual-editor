@@ -223,10 +223,16 @@ impl Drop for YieldGuard {
                     previous,
                     wrote
                 ),
-                Err(e) => tracing::warn!(
-                    "[skwd-policy] yield guard could NOT restore engine colour authority: {}",
-                    e
-                ),
+                Err(e) => {
+                    crate::decision_log::record(
+                        "MUTE RELEASE FAILED",
+                        &format!("yield guard could not restore engine colour authority: {e}"),
+                    );
+                    tracing::warn!(
+                        "[skwd-policy] yield guard could NOT restore engine colour authority: {}",
+                        e
+                    )
+                }
             }
         }
     }
@@ -320,6 +326,10 @@ pub(crate) fn startup_recover_crashed_yield() {
             tracing::info!("[skwd-policy] startup repair: nothing to repair");
         }
         Err(e) => {
+            crate::decision_log::record(
+                "MUTE RELEASE FAILED",
+                &format!("startup repair failed: {e}"),
+            );
             tracing::warn!("[skwd-policy] startup repair FAILED: {}", e);
         }
     }
@@ -446,6 +456,36 @@ pub(crate) fn plan_restore(text: &str, previous_value: &str) -> Option<RestorePl
     Some(RestorePlan {
         new_text: replace_token(text, &value_range, &replacement),
     })
+}
+
+/// Why a yield was skipped, as `(decision, detail)` for the W3 decision log.
+/// Never affects behaviour: it only names the honest reason so the keeper can
+/// tell an absent/unreadable engine from a policy that simply is not ours.
+fn yield_skip_decision(text: &str) -> (&'static str, &'static str) {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Err(_) => (
+            "ENGINE UNREADABLE",
+            "engine config is not JSON; nothing to mute",
+        ),
+        Ok(parsed) => match parsed
+            .get("theme")
+            .and_then(|theme| theme.get("policy"))
+            .and_then(|policy| policy.as_str())
+        {
+            Some("wallpaper") => (
+                "MUTE NOT NEEDED",
+                "policy anchor is not a plain \"wallpaper\" token; refusing to edit",
+            ),
+            Some(_) => (
+                "MUTE NOT NEEDED",
+                "theme.policy is not \"wallpaper\"; the engine does not own the palette",
+            ),
+            None => (
+                "MUTE NOT NEEDED",
+                "theme.policy is absent; the engine does not own the palette",
+            ),
+        },
+    }
 }
 
 // ── Impure shell ─────────────────────────────────────────────────────
@@ -588,13 +628,23 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            crate::decision_log::record(
+                "ENGINE ABSENT",
+                &format!("engine config not found at {}", path.display()),
+            );
+            return Ok(None);
+        }
         Err(e) => {
+            crate::decision_log::record(
+                "ENGINE UNREADABLE",
+                &format!("cannot read engine config {}: {}", path.display(), e),
+            );
             return Err(format!(
                 "[skwd-policy] cannot read engine config {}: {}",
                 path.display(),
                 e
-            ))
+            ));
         }
     };
     let plan = match plan_yield(&text) {
@@ -617,11 +667,21 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
                 })
                 .unwrap_or(false);
             if !already_off {
+                let (decision, detail) = yield_skip_decision(&text);
+                crate::decision_log::record(decision, detail);
                 return Ok(None);
             }
             let ours = read_marker()?;
             return match ours {
                 Some(marker) if marker.config_path == path.display().to_string() => {
+                    crate::decision_log::record(
+                        "MUTE HELD",
+                        &format!(
+                            "engine already held off (theme.policy is \"off\"); \
+                             reusing the pending value \"{}\" for this apply's release",
+                            marker.previous_value
+                        ),
+                    );
                     tracing::info!(
                         "[skwd-policy] engine already held off (theme.policy is \
                          \"off\"); reusing the pending marker's value \"{}\" for \
@@ -632,7 +692,13 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
                 }
                 // Nothing pending, or a marker for a DIFFERENT config: not
                 // ours, never guessed.
-                _ => Ok(None),
+                _ => {
+                    crate::decision_log::record(
+                        "MUTE HELD",
+                        "engine already held off but no pending marker of ours; nothing to hold",
+                    );
+                    Ok(None)
+                }
             };
         }
     };
@@ -655,6 +721,14 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
          theme.policy \"{}\" -> \"off\" ({})",
         plan.previous_value,
         path.display()
+    );
+    crate::decision_log::record(
+        "MUTE SET",
+        &format!(
+            "theme.policy \"{}\" -> \"off\" ({})",
+            plan.previous_value,
+            path.display()
+        ),
     );
     Ok(Some(plan.previous_value))
 }
@@ -681,10 +755,18 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Engine config is gone: nothing to restore, and the pending
             // claim is moot. Clear the marker and report "nothing written".
+            crate::decision_log::record(
+                "ENGINE ABSENT",
+                &format!("engine config not found at {}; nothing to release", path.display()),
+            );
             clear_marker()?;
             return Ok(false);
         }
         Err(e) => {
+            crate::decision_log::record(
+                "ENGINE UNREADABLE",
+                &format!("cannot re-read engine config {}: {}", path.display(), e),
+            );
             return Err(format!(
                 "[skwd-policy] cannot re-read engine config {}: {}",
                 path.display(),
@@ -699,6 +781,10 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
             // engine or keeper write won, or the yield never happened).
             // Never clobber a foreign value: back off, clear the marker,
             // keep the file as-is.
+            crate::decision_log::record(
+                "MUTE RELEASE SKIPPED",
+                "the current theme.policy is not the \"off\" we wrote; leaving the engine as-is",
+            );
             clear_marker()?;
             return Ok(false);
         }
@@ -711,6 +797,13 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
     // that is absent or unreadable means no theme owns the colours: the
     // engine's own value comes back below, and the mute is not retried.
     if crate::color_authority::read_descriptor().is_some() {
+        crate::decision_log::record(
+            "MUTE HELD",
+            &format!(
+                "a theme owns the palette; engine stays \"off\" ({})",
+                path.display()
+            ),
+        );
         tracing::info!(
             "[skwd-policy] mute held: a theme owns the palette (colour-authority \
              descriptor present); engine colour authority stays \"off\" ({})",
@@ -727,6 +820,10 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
          \"{}\" ({})",
         previous_value,
         path.display()
+    );
+    crate::decision_log::record(
+        "MUTE RELEASED",
+        &format!("theme.policy -> \"{}\" ({})", previous_value, path.display()),
     );
     Ok(true)
 }
@@ -749,10 +846,18 @@ pub(crate) fn recover_crashed_yield() -> Result<bool, String> {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Config no longer exists; nothing to repair.
+            crate::decision_log::record(
+                "ENGINE ABSENT",
+                &format!("crash repair: engine config not found at {}", path.display()),
+            );
             clear_marker()?;
             return Ok(true);
         }
         Err(e) => {
+            crate::decision_log::record(
+                "ENGINE UNREADABLE",
+                &format!("crash repair: cannot read engine config {}: {}", path.display(), e),
+            );
             return Err(format!(
                 "[skwd-policy] cannot read engine config {} for crash \
                  repair: {}",
@@ -767,10 +872,21 @@ pub(crate) fn recover_crashed_yield() -> Result<bool, String> {
             "[skwd-policy] crash repair: theme.policy put back to \"{}\"",
             marker.previous_value
         );
+        crate::decision_log::record(
+            "MUTE RELEASED",
+            &format!(
+                "crash repair: theme.policy put back to \"{}\"",
+                marker.previous_value
+            ),
+        );
     } else {
         tracing::warn!(
             "[skwd-policy] crash repair: nothing to do (value already \
              restored, or changed by the keeper in the meantime)"
+        );
+        crate::decision_log::record(
+            "MUTE RELEASE SKIPPED",
+            "crash repair: value already restored or changed by the keeper",
         );
     }
     clear_marker()?;
@@ -1629,5 +1745,75 @@ mod tests {
             assert_eq!(env.read(), "{{{ not json", "foreign bytes stay untouched");
             assert!(!env.marker().exists(), "no marker for a non-yield");
         }
+    }
+
+    // ── W3: the decision log (odd/tasks/palette-authority-mute-and-yield) ──
+    //
+    // The guard's `tracing` is invisible in production (the app is started by
+    // the session/tray), so every mute decision must also land in the file
+    // log the keeper can read. These tests read that file inside the
+    // `TempEnv` sandbox; the keeper's live cache is never touched.
+
+    fn log_text() -> String {
+        fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_yield_and_release_are_recorded_in_the_decision_log() {
+        let _env = PolicyEnv::new(Some(FIXTURE), None);
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        let after_yield = log_text();
+        assert!(
+            after_yield.contains("MUTE SET") && after_yield.contains("wallpaper"),
+            "the mute set and its previous value must be logged, got: {after_yield}"
+        );
+
+        let _ = restore_color_authority("wallpaper").unwrap();
+        let after_release = log_text();
+        assert!(
+            after_release.contains("MUTE RELEASED"),
+            "the release must be logged, got: {after_release}"
+        );
+    }
+
+    #[test]
+    fn the_held_mute_is_recorded_while_a_theme_owns_the_palette() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        env.write_authority();
+        assert!(!restore_color_authority("wallpaper").unwrap(), "mute held");
+        assert!(
+            log_text().contains("MUTE HELD"),
+            "the held mute must be logged, got: {}",
+            log_text()
+        );
+    }
+
+    #[test]
+    fn an_absent_engine_is_recorded_in_the_decision_log() {
+        let _env = PolicyEnv::new(None, None);
+        assert!(yield_color_authority().unwrap().is_none());
+        assert!(
+            log_text().contains("ENGINE ABSENT"),
+            "an absent engine must be logged, got: {}",
+            log_text()
+        );
+    }
+
+    #[test]
+    fn an_unparsable_engine_config_is_recorded_as_unreadable() {
+        let _env = PolicyEnv::new(Some("{{{ not json"), None);
+        assert!(yield_color_authority().unwrap().is_none());
+        assert!(
+            log_text().contains("ENGINE UNREADABLE"),
+            "an unparsable engine config must be logged as unreadable, got: {}",
+            log_text()
+        );
     }
 }

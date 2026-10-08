@@ -641,6 +641,12 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
             .map(|path| canonical_for_compare(path))
             .collect::<Vec<String>>()
     });
+    if live.is_none() {
+        crate::decision_log::record(
+            "ENGINE UNREADABLE",
+            "cannot read the engine's live background; holding the claim",
+        );
+    }
     if decide_palette_authority(
         live.as_deref(),
         &declared,
@@ -656,6 +662,10 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
     // palette); clearing it first makes the release genuine.
     crate::color_authority::clear_descriptor()
         .map_err(|e| format!("[background] cannot clear colour-authority descriptor: {e}"))?;
+    crate::decision_log::record(
+        "STEPPED ASIDE",
+        "a background HVE did not paint is live and the keeper's program is running; descriptor cleared",
+    );
     // The pending marker is the value a genuine release must put back; its
     // absence is not an error (the mute may never have been ours).
     let pending = crate::providers::skwd_policy::held_previous_value();
@@ -664,18 +674,36 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
         None => Ok(false),
     };
     match (pending.as_deref(), released) {
-        (_, Ok(true)) => tracing::info!(
-            "[background] a background HVE did not paint is live: stepped aside \
-             (descriptor cleared, engine mute released)"
-        ),
-        (Some(_), Ok(false)) => tracing::info!(
-            "[background] a background HVE did not paint is live: stepped aside \
-             (descriptor cleared; the engine mute was already back)"
-        ),
-        (None, Ok(false)) => tracing::info!(
-            "[background] a background HVE did not paint is live: stepped aside \
-             (descriptor cleared; no pending engine mute to release)"
-        ),
+        (_, Ok(true)) => {
+            tracing::info!(
+                "[background] a background HVE did not paint is live: stepped aside \
+                 (descriptor cleared, engine mute released)"
+            );
+            crate::decision_log::record(
+                "MUTE RELEASED",
+                "step-aside put the engine's own value back",
+            );
+        }
+        (Some(_), Ok(false)) => {
+            tracing::info!(
+                "[background] a background HVE did not paint is live: stepped aside \
+                 (descriptor cleared; the engine mute was already back)"
+            );
+            crate::decision_log::record(
+                "MUTE RELEASED",
+                "step-aside: the engine mute was already back",
+            );
+        }
+        (None, Ok(false)) => {
+            tracing::info!(
+                "[background] a background HVE did not paint is live: stepped aside \
+                 (descriptor cleared; no pending engine mute to release)"
+            );
+            crate::decision_log::record(
+                "MUTE RELEASED",
+                "step-aside: no pending engine mute to release",
+            );
+        }
         (_, Err(e)) => {
             // The descriptor is already cleared, so the mute is PENDING, not
             // lost: the next watch tick retries it through
@@ -683,6 +711,12 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
             tracing::warn!(
                 "[background] stepped aside (descriptor cleared) but could not release \
                  the engine mute yet: {e}; the release stays pending and will be retried"
+            );
+            crate::decision_log::record(
+                "MUTE RELEASE PENDING",
+                &format!(
+                    "step-aside could not release the engine mute yet: {e}; will retry"
+                ),
             );
         }
     }
@@ -706,11 +740,24 @@ fn complete_pending_release() -> Result<bool, String> {
     let Some(previous) = crate::providers::skwd_policy::held_previous_value() else {
         return Ok(false);
     };
-    let wrote = release_color_authority(&previous)?;
+    let wrote = match release_color_authority(&previous) {
+        Ok(wrote) => wrote,
+        Err(e) => {
+            crate::decision_log::record(
+                "MUTE RELEASE PENDING",
+                &format!("pending release failed: {e}; will retry"),
+            );
+            return Err(e);
+        }
+    };
     if wrote {
         tracing::info!(
             "[background] completed a pending engine-mute release: theme.policy -> \"{}\"",
             previous
+        );
+        crate::decision_log::record(
+            "MUTE RELEASED",
+            "completed a pending engine-mute release",
         );
     }
     Ok(wrote)
@@ -1807,6 +1854,55 @@ mod tests {
             "a read failure must not release the claim"
         );
         assert!(sandbox.read_config().contains("\"policy\": \"off\""));
+    }
+
+    /// W3: an unreadable engine while a theme owns the palette must be
+    /// visible in the decision log, so the keeper can tell "HVE held
+    /// because it could not read the engine" from "nothing changed".
+    #[test]
+    fn an_unreadable_engine_while_a_theme_owns_the_palette_is_recorded() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), None);
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+
+        assert_eq!(
+            step_aside_if_foreign().expect("the check is an honest Result"),
+            StepAsideOutcome::Held
+        );
+
+        let text =
+            std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        assert!(
+            text.contains("ENGINE UNREADABLE"),
+            "the held claim on an unreadable engine must be logged, got: {text}"
+        );
+    }
+
+    /// W3: the step-aside decision (and the mute it releases) must land in
+    /// the file log the keeper reads, not only in the invisible `tracing`.
+    #[test]
+    fn a_step_aside_is_recorded_in_the_decision_log() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&["/keeper/car7.jpg"]));
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+
+        assert_eq!(
+            step_aside_if_foreign().expect("the check is an honest Result"),
+            StepAsideOutcome::SteppedAside
+        );
+
+        let text =
+            std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        assert!(
+            text.contains("STEPPED ASIDE"),
+            "the step-aside must be logged with its reason, got: {text}"
+        );
+        assert!(
+            text.contains("MUTE RELEASED"),
+            "the release the step-aside performed must be logged, got: {text}"
+        );
     }
 
     /// While HVE is acting, its own hand-off is never a foreign change.

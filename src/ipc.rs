@@ -478,8 +478,24 @@ fn resolve_assert_color_authority(
 /// Both sources funnel through one entry point, and the decision is logged
 /// (D4): a refusal used to be completely invisible, which is why the 18:29
 /// suspend diagnosis took hours. One line per decision, never more.
+/// The decision `assert-color-authority` reached, as `(decision, detail)`
+/// for the W3 decision log. Pure so the mapping is pinned without an event
+/// loop or an armed permit.
+fn reassert_decision(permit: crate::hypr_ipc::ReassertPermit) -> (&'static str, String) {
+    match permit {
+        crate::hypr_ipc::ReassertPermit::None => (
+            "ASSERT REFUSED",
+            "no monitor event and no resume grace; the palette change is presumed legitimate"
+                .to_string(),
+        ),
+        granted => ("ASSERT GRANTED", format!("source={}", granted.as_str())),
+    }
+}
+
 fn cmd_assert_color_authority(proj: &Path) -> String {
     let permit = crate::hypr_ipc::consume_reassert_permit();
+    let (decision, detail) = reassert_decision(permit);
+    crate::decision_log::record(decision, &detail);
     if permit == crate::hypr_ipc::ReassertPermit::None {
         tracing::info!(
             "[colour-defence] re-assert REFUSED (no monitor event, no resume grace): \
@@ -1062,5 +1078,27 @@ mod tests {
             body.contains("\"noop\\n\""),
             "the refusal must still answer noop to the watcher"
         );
+    }
+
+    /// W3 (odd/tasks/palette-authority-mute-and-yield.md): the `tracing` line
+    /// is invisible in production, so the same decision must also reach the
+    /// file log. The pure mapping is pinned directly — grant WITH source,
+    /// refusal WITH its reason.
+    #[test]
+    fn the_reassert_decision_names_grant_and_refusal_for_the_decision_log() {
+        let (decision, detail) = reassert_decision(crate::hypr_ipc::ReassertPermit::None);
+        assert_eq!(decision, "ASSERT REFUSED");
+        assert!(
+            detail.contains("no monitor event"),
+            "the refusal must name its reason, got: {detail}"
+        );
+
+        let (decision, detail) = reassert_decision(crate::hypr_ipc::ReassertPermit::Monitor);
+        assert_eq!(decision, "ASSERT GRANTED");
+        assert_eq!(detail, "source=monitor");
+
+        let (decision, detail) = reassert_decision(crate::hypr_ipc::ReassertPermit::Resume);
+        assert_eq!(decision, "ASSERT GRANTED");
+        assert_eq!(detail, "source=resume");
     }
 }

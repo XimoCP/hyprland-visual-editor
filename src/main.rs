@@ -8,6 +8,7 @@ mod config;
 mod config_guard;
 mod config_markers;
 mod countdown;
+mod decision_log;
 mod engine;
 mod hypr_ipc;
 mod ipc;

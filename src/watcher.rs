@@ -1900,4 +1900,43 @@ mod tests {
             std::fs::read_to_string(&calls_file).unwrap_or_default()
         );
     }
+
+    /// W3 (odd/tasks/palette-authority-mute-and-yield.md): the cooldown used
+    /// to drop an ask with NO line at all, and the `assert-color-authority`
+    /// stamp was written BEFORE the helper check — so an absent `hve-ipc`
+    /// poisoned the following 5 s. The script must log the suppression and
+    /// write the stamp only once the ask is really made. Static contract over
+    /// the real script, comment-stripped, like the house precedent: a
+    /// commented-out branch cannot satisfy it.
+    #[test]
+    fn the_watcher_logs_suppressed_asks_and_stamps_only_a_real_ask() {
+        let src = std::fs::read_to_string("assets/scripts/color_watcher.sh")
+            .expect("color_watcher.sh must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let start = code
+            .find("_reassert_theme_authority()")
+            .expect("_reassert_theme_authority must exist");
+        let body = &code[start..];
+        let end = body.find("\n}").unwrap_or(body.len());
+        let body = &body[..end];
+
+        assert!(
+            body.contains("suppressed"),
+            "the cooldown drop must be logged, not silent: {body}"
+        );
+        let helper_check = body
+            .find("-x \"$HVE_SCRIPTS_DIR/hve-ipc\"")
+            .expect("the helper must be checked before asking");
+        let stamp_write = body
+            .find("> \"$stamp_file\"")
+            .expect("the stamp must be written");
+        assert!(
+            helper_check < stamp_write,
+            "the stamp must be written only after the helper is proven present"
+        );
+    }
 }
