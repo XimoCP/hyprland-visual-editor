@@ -95,7 +95,8 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       (5) the engine absent/renamed -> HVE degrades honestly and does not guess.
       Status (08-oct): cross-model verification done for W1 and W2 (each found real defects, all fixed);
       W3 is orchestrator-verified (Tier 2, observability only). Keeper's live verdict: the general behaviour
-      passes and he likes it; **only case (3), suspend/resume, is still pending**.
+      passes and he likes it; **only case (3), suspend/resume, is still pending** — parked on purpose until
+      the case happens and the keeper gives his verdict. Delivery: one PR with `size:exception`.
 
 ## Acceptance criteria
 
@@ -535,9 +536,13 @@ Delivery state at this point: the new binary and the changed watcher script are 
 (`~/.local/bin/hve`, `~/.local/bin/assets/scripts/color_watcher.sh`, both md5-verified against the repo),
 with the previous binary kept at `~/.local/bin/hve.pre-palette-mute-2026-10-08` and the previous script at
 `/tmp/opencode/color_watcher.sh.pre-palette-mute`; the restore tag is
-`restore-point/pre-palette-mute-2026-10-08`. The branch is pushed. **Still the keeper's call: the PR**,
-because the accumulated branch is well past the 400-line review budget and has to be sliced (chained PRs)
-or carry a maintainer-approved `size:exception`.
+`restore-point/pre-palette-mute-2026-10-08`. The branch is pushed.
+
+**Delivery decision (keeper, 08-oct-2026): maintainer-approved `size:exception` — this ships as ONE PR, no
+slicing.** The branch is well past the 400-line review budget on purpose: the units are the rule, its
+corrections and its observability, and slicing them would separate a rule from the evidence that justifies
+it. **Parked on purpose:** the PR is not opened and the suspend/resume live case is not run until the
+keeper's verdict arrives; nothing else is outstanding.
 
 Evidence collected while planning (07-08-oct-2026, this machine):
 - The engine publishes on every apply: `noctalia palette bridge: published scheme and
