@@ -375,6 +375,85 @@ Limits (honest, not covered without the keeper live):
 - The engine read is one subprocess every 5 s while a theme owns the palette. It is not sampled while
   nothing claims the palette.
 
+### W2 — correction: the cross-model review findings (08-oct-2026)
+
+The cross-model review of `1285524` returned one critical and four warnings; all are closed in
+`src/providers/background.rs` (no engine code, no new dependency, no design change):
+
+- **Critical — a partial step-aside could mute the engine forever.** The old code cleared the
+  descriptor and THEN released the mute; if the release failed (or there was no pending value), the
+  engine stayed `off` with no descriptor and no retry — the next watch tick read `descriptor ==
+  None` and returned "nothing claimed", so the silence persisted until an HVE restart, and the log
+  still claimed the mute was released. The release is now RECOVERABLE: when the descriptor is
+  absent, `step_aside_if_foreign` runs `complete_pending_release`, which releases the pending mute
+  whenever one is recorded and HVE is not acting (a theme that re-claimed the palette between ticks
+  is protected by `restore_color_authority` itself, which keeps the mute while a descriptor exists).
+  A failed release leaves the mute PENDING and is retried on the next tick; the log now tells the
+  truth in all three cases — released / already back / failed-and-pending — and never says
+  "released" when nothing was restored. Idempotent: the release only ever rewrites the exact `off`
+  token we wrote.
+- **Warning — false step-aside on the engine's own reconcile.** The decision only knew the declared
+  set, so a hotplug or rotation re-applying a background the engine remembered (not declared by the
+  theme) looked foreign and HVE abandoned the defence without the keeper touching anything (the
+  07-oct wake). The step-aside now also requires that the KEEPER is acting, and its signal is that
+  the engine's own picker program is running: a cheap `/proc` scan for a numeric pid whose `comm` is
+  `skwd-wall-v2` (the daemon is `skwd-walld`, a different name, so the two never collide). Without
+  that program open a background change is attributed to the engine (reconcile/rotation) → Hold; a
+  signal that cannot be determined (`/proc` unreadable) degrades conservatively to Hold too.
+- **Warning — a theme that declares no background locked the keeper out.** With an empty declared
+  set the table answered Hold forever, so the engine stayed mute and its palette was never published
+  again. The rule is now the opposite: an empty declared set cannot match any live path, so a live
+  background then belongs to someone else → StepAside. Both sides are pinned by tests.
+- **Warning — `HVE_APPLY_ACTIVE` was a process boolean.** Two overlapping applies could clear the
+  flag for each other, and it was raised AFTER the ~250 ms observe wait (an uncovered window). It is
+  now a saturating DEPTH COUNTER raised by `ApplyActivityGuard` at the very top of
+  `hold_color_authority` (before the flip and the wait) and lowered on every exit path, including an
+  error; `hve_is_acting()` reads `depth > 0`.
+- **Suggestion — path comparison.** Both the live and the declared paths are canonicalized (when the
+  path exists on disk; a missing path is compared as-is, never dropped) before the exact comparison,
+  so the same file spelled two ways — a symlink, a relative-vs-absolute record — is not mistaken for
+  a foreign change.
+
+Files touched (this correction): `src/providers/background.rs` only (production logic plus 11 tests;
+no engine, config or `.slint` change).
+
+New tests (all hermetic — stubbed engine binaries on `PATH`, private temp sandboxes, a forced
+keeper-program signal so no test depends on what runs on the box):
+
+- `a_failed_release_is_retried_and_completes_on_the_next_check` (critical: the release is pending and
+  the next check completes it; a third call is a no-op)
+- `a_step_aside_never_logs_a_release_it_did_not_do` / `a_step_aside_without_a_pending_mute_does_not_claim_a_release`
+  (the log reflects reality)
+- `a_foreign_background_without_the_keepers_program_holds` (pure) /
+  `a_foreign_background_holds_while_the_keepers_program_is_not_running` (lifecycle)
+- `the_keeper_program_signal_reads_the_process_table` (the picker is recognised, the daemon's name is
+  not, an empty table is "not running", an unreadable table is "unknown")
+- `a_theme_that_declares_no_background_yields_a_live_one` (pure) /
+  `a_theme_that_declares_no_background_steps_aside` (lifecycle)
+- `a_symlinked_live_background_matches_the_declared_one` (canonicalization)
+- `overlapping_holds_keep_hve_acting_until_the_last_one_ends` / `a_failed_hold_never_leaves_hve_acting`
+
+Evidence (commands run from `/home/ximo/Proyectos/hve`):
+
+- `cargo test`: `1492 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (`145.11 s`) — W2's
+  1481 plus 11 new tests.
+- `cargo build`: clean, no warnings; `cargo test --no-run`: no warnings.
+- Non-vacuous checks (throwaway breaks, reverted; `sha256sum` confirmed `src/providers/background.rs`
+  returned to its pre-break bytes `ff5c4763a48059f0f958a4aa7286777707ef0c14ac9873981ba13d48d71f893a`):
+  - removing the `complete_pending_release()` retry from the no-descriptor branch makes
+    `a_failed_release_is_retried_and_completes_on_the_next_check` fail (`left: "policy": "off"`,
+    `right: "policy": "wallpaper"`).
+  - making `ApplyActivityGuard::drop` `store(0)` (the old boolean behaviour) makes
+    `overlapping_holds_keep_hve_acting_until_the_last_one_ends` fail (`left: 0, right: 1`).
+
+Limits (honest, not covered without the keeper live):
+
+- The keeper gate is the picker program's presence: a background changed from the engine's CLI or a
+  shortcut WITHOUT opening its window is not detected as the keeper's, and HVE holds. That is a real
+  limit of the chosen signal, not a guess.
+- The picker process's lifetime (does `skwd-wall-v2` really stay alive while the keeper drives it,
+  and does its `comm` really read exactly that) must be confirmed in the W4 live test.
+
 Evidence collected while planning (07-08-oct-2026, this machine):
 - The engine publishes on every apply: `noctalia palette bridge: published scheme and
   /home/ximo/.config/noctalia/palettes/skwd-wall.json`, verified today at 02:38:33Z, 02:38:56Z, 02:39:03Z.
