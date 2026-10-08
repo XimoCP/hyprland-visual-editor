@@ -2744,6 +2744,14 @@ fn main() -> Result<(), slint::PlatformError> {
     // says we left it off and log the outcome either way. A failure never
     // aborts startup.
     crate::providers::skwd_policy::startup_recover_crashed_yield();
+    // ── W2: watch for a background HVE did not paint ──────────────────
+    // While a theme owns the palette the engine is mute, so the old
+    // bridge-file detector is blind. Sample the engine's OWN state instead
+    // (never its private log): if a background the applied theme does not
+    // declare becomes live, the keeper changed it and does not want the
+    // theme — HVE steps aside until a theme is applied again. Idempotent and
+    // best-effort: a failed spawn is logged and never aborts startup.
+    crate::providers::start_foreign_change_watch();
     // A crash between masking and restoring would leave the desktop without
     // blur, border and shadow (and the next apply would make it permanent).
     // Replay it before anything else touches the compositor.

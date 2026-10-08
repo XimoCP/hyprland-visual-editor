@@ -134,6 +134,17 @@ pub(crate) fn marker_path() -> PathBuf {
     hve_cache_dir().join("skwd-policy-yield.json")
 }
 
+/// The `theme.policy` value a PENDING hold must put back, if a marker of
+/// ours exists. `None` when no hold is pending or the marker is unreadable.
+///
+/// W2 of `odd/tasks/palette-authority-mute-and-yield.md`: the step-aside
+/// clears the colour-authority descriptor and then releases the mute through
+/// the normal `restore_color_authority` path; the previous value it must
+/// restore lives in the pending marker.
+pub(crate) fn held_previous_value() -> Option<String> {
+    read_marker().ok().flatten().map(|marker| marker.previous_value)
+}
+
 /// True when the engine owns the color scheme and will asynchronously
 /// override whatever HVE sets: `theme.policy == "wallpaper"` (the engine
 /// derives the palette from the wallpaper it was just handed) OR

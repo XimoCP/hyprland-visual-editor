@@ -10,6 +10,13 @@ pub mod skwd_engine;
 pub mod skwd_policy;
 pub mod wallpaper_authority;
 
+/// Composition-root re-export (W2 of
+/// `odd/tasks/palette-authority-mute-and-yield.md`): `main` starts the
+/// foreign-background watch through the registration router, the same way it
+/// reaches the other provider entry points, so the core never names the
+/// `background` router directly.
+pub use background::start_foreign_change_watch;
+
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme_manager::{ThemeManager, ThemeProvider};

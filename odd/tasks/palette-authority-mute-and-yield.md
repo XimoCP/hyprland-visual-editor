@@ -2,7 +2,7 @@
 
 Feature name: `palette-authority-mute-and-yield`
 Branch: `hve2-visual-rewrite`
-Status: IN PROGRESS — W1 done (see Progress / evidence); W2..W3 not started; W4 (cross-model verification + the keeper's live test) pending by definition.
+Status: IN PROGRESS — W1 done (see Progress / evidence); W2 done (see Progress / evidence); W3 not started; W4 (cross-model verification + the keeper's live test) pending by definition.
 Supersedes: `odd/tasks/palette-defence-covers-suspend-resume.md` (the temporal permission: monitor one-shot + 60 s resume
 grace) and the background-identity study it was heading towards. Both are demoted to safety nets.
 
@@ -73,7 +73,7 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       (marker `~/.cache/hve/skwd-policy-yield.json` + the startup repair sweep) and the byte-preserving
       single-token edit. Tests: flip vs no-flip cases, marker lifecycle, restore on release, the existing
       `skwd_policy` suite untouched and green.
-- [ ] **W2 — Step aside when the background change was not HVE's.**
+- [x] **W2 — Step aside when the background change was not HVE's.**
       Detection decision to settle first (see Open questions): the engine's own program showing up in
       Hyprland's event stream (HVE's IPC listener already reads that socket, so presence is free) and/or
       the engine's state read (`outputs --json` / `current`), which HVE's adapter already performs.
@@ -285,9 +285,97 @@ Evidence after both repairs: `cargo test` — `1466 passed; 0 failed; 0 ignored;
 (`144.74 s`), `cargo build` clean, no warnings, and the affected subset `cargo test v5_apply` →
 `37 passed; 0 failed`. Verified by the orchestrator (parent spot check), not by the writer's word.
 
+### W2 — done
+
+Implements the step-aside half of the keeper's rule: while a theme owns the palette, a background the
+applied theme does not declare is the keeper's own change; HVE releases the claim and stays aside until a
+theme is applied again.
+
+Detection source (settled): the engine's OWN state, `skwd-helm current --json` (with `skwd-wall-v2
+current --json` as fallback), never its private log. With the mute on the engine publishes no palette, so
+the old bridge-file detector is blind; its per-output `current` is the live background.
+
+- `src/providers/wallpaper_authority.rs` — `query_live_backgrounds()`: reads the engine's `current --json`
+  through the existing bounded runner and JSON parser, returns the CONNECTED outputs' paths, deduplicated,
+  or `None` on any read failure (never an empty/foreign guess). This is the adapter that already performed
+  the engine state read (`outputs --json`).
+- `src/theme_media.rs` — `declared_backgrounds(theme_dir, provider_dir)`: the background paths the applied
+  theme declares as its own, as absolute paths — the packaged poster, the video (packaged first, then the
+  legacy absolute `video.txt` record) and the saved `wallpaper.txt`. Empty when nothing is declared.
+- `src/providers/background.rs` — the pure decision `decide_palette_authority(live, declared, hve_acting,
+  descriptor_present)` plus the impure `step_aside_if_foreign()`:
+  - `Hold` unless the descriptor exists, HVE is not acting, the engine was read, the live set is non-empty
+    and at least one live path is outside the declared set. Unreadable engine / empty live / no declared
+    set / no descriptor / HVE acting all `Hold` (conservative).
+  - `StepAside`: clear the descriptor FIRST, then release the mute through `release_color_authority` with
+    the pending marker's value (order matters: with the descriptor still present the release would keep the
+    mute). No re-mute, no palette re-assert.
+  - `hve_is_acting()`: a process-global flag set while a `ColourAuthorityHold` is alive (i.e. the apply's
+    hand-off phase) and cleared when its guard drops. This makes the re-apply window safe: a new apply
+    holds the mute with the OLD descriptor still on disk, and the flag keeps the detector quiet.
+  - `start_foreign_change_watch()`: a process-lifetime poll (5 s) that only samples the engine while a
+    descriptor exists (an idle HVE never runs the engine CLI). Idempotent; a failed spawn is logged and
+    leaves the watch unstarted.
+- `src/providers/skwd_policy.rs` — `held_previous_value()`: the pending marker's `previous_value`, the
+  value a step-aside must restore. W1's flip/restore/marker logic untouched.
+- `src/providers/mod.rs` — re-export `start_foreign_change_watch` through the registration router;
+  `src/main.rs` starts it next to the crash repair. `noctalia.rs` was NOT touched (W1 and its corrections
+  stand: the live-worker counter, the loud `ColorStub::drop` deadline and `Builder::spawn` are unchanged).
+
+Files touched:
+
+- `src/providers/background.rs` — pure decision + step-aside shell + acting flag + watch, and 10 tests.
+- `src/providers/wallpaper_authority.rs` — `query_live_backgrounds` + 2 tests.
+- `src/theme_media.rs` — `declared_backgrounds` + 3 tests.
+- `src/providers/skwd_policy.rs` — `held_previous_value` accessor (no behaviour change).
+- `src/providers/mod.rs`, `src/main.rs` — start the watch (composition root).
+
+Tests (all in temporary sandboxes — the keeper's live engine, config and descriptor are never read,
+written or probed; engine reads use stub binaries on PATH):
+
+- `a_foreign_live_background_steps_aside_and_a_declared_one_holds` (pure table)
+- `an_unknown_background_is_never_evidence_of_a_foreign_change` (pure: `None` / empty / undeclared)
+- `hve_acting_and_no_descriptor_both_hold` (pure)
+- `a_foreign_background_clears_the_descriptor_and_releases_the_mute` (lifecycle)
+- `a_declared_live_background_keeps_the_claim_and_the_mute`
+- `an_unreadable_engine_never_steps_aside`
+- `hve_acting_never_steps_aside`
+- `once_aside_further_background_changes_are_a_noop`
+- `applying_a_theme_reclaims_and_remutes`
+- `declared_backgrounds_are_resolved_from_the_descriptor`
+- `live_backgrounds_reads_the_engine_current_json` / `live_backgrounds_is_none_when_the_engine_is_unavailable`
+- `declared_backgrounds_collects_poster_video_and_wallpaper` / `..._is_empty_without_any_record` /
+  `..._prefers_the_packaged_video`
+
+Evidence (commands run from `/home/ximo/Proyectos/hve`):
+
+- `cargo test`: `1481 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (`145.28 s`) — W1's 1466
+  plus 15 new tests.
+- `cargo build`: clean, no warnings.
+- Non-vacuous checks (throwaway breaks, reverted; `sha256sum` confirmed the files returned to their
+  pre-break bytes `947203d4…` / `465d1a14…`):
+  - forcing `step_aside_if_foreign` to always return `Held` makes
+    `a_foreign_background_clears_the_descriptor_and_releases_the_mute` fail (`left: Held, right:
+    SteppedAside`).
+  - making `theme_media::declared_backgrounds` return `Vec::new()` makes
+    `declared_backgrounds_collects_poster_video_and_wallpaper` fail.
+
+Limits (honest, not covered without the keeper live):
+
+- The end-to-end live test (keeper changes the background from the engine's own program → HVE steps aside;
+  re-apply → palette returns and the engine is mute) is W4 and needs the keeper.
+- The watch samples every 5 s, so the step-aside lags a keeper change by up to one interval; the live test
+  should confirm the lag is acceptable. The interval is a single constant
+  (`FOREIGN_CHANGE_POLL_INTERVAL`) if it needs tuning.
+- The declared set is resolved from the descriptor's `palette_file` layout
+  (`{theme}/providers/{id}/palette.json`, what the provider's apply writes). A descriptor whose path does
+  not have that shape declares nothing and the detector holds — conservative, never a wrong step-aside.
+- `hve_is_acting` is in-process: if HVE restarts mid-apply the flag is gone, but a restart also drops the
+  descriptor's owner, so the detector has nothing to defend.
+- The engine read is one subprocess every 5 s while a theme owns the palette. It is not sampled while
+  nothing claims the palette.
 
 Evidence collected while planning (07-08-oct-2026, this machine):
-
 - The engine publishes on every apply: `noctalia palette bridge: published scheme and
   /home/ximo/.config/noctalia/palettes/skwd-wall.json`, verified today at 02:38:33Z, 02:38:56Z, 02:39:03Z.
 - The mute works and is observable: at 02:39:55Z the apply logged `theme apply: backend=off` with no

@@ -496,6 +496,69 @@ pub fn remove_theme_video(theme_dir: &Path, provider_dir: &Path) {
     let _ = std::fs::remove_file(theme_dir.join(MEDIA_DIR).join(VIDEO_FILE_NAME));
 }
 
+/// Every background path the applied theme declares as its own, as the
+/// absolute paths the engine would report for them: the packaged poster, the
+/// video (packaged first, then the legacy absolute record) and the saved
+/// static wallpaper. Order is poster, video, wallpaper; duplicates are
+/// dropped.
+///
+/// W2 of `odd/tasks/palette-authority-mute-and-yield.md`: the detector
+/// compares the engine's live background against this set, so a path outside
+/// it is the keeper's own change. An unreadable or absent record simply
+/// contributes nothing — the set is a declaration, never a guess.
+pub fn declared_backgrounds(theme_dir: &Path, provider_dir: &Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(poster) = resolve_theme_poster(theme_dir, provider_dir) {
+        push_unique(&mut out, poster);
+    }
+    let legacy = legacy_painter_video_path(provider_dir);
+    match resolve_theme_video(theme_dir, provider_dir, legacy.as_deref()) {
+        Some(ThemeVideoSource::Path(path)) => push_unique(&mut out, path),
+        // A url is not something the engine paints from disk, so it is not a
+        // live background path to compare against.
+        Some(ThemeVideoSource::Url { .. }) | None => {}
+    }
+    if let Ok(text) = std::fs::read_to_string(provider_dir.join(STATIC_RECORD_FILE)) {
+        let wallpaper = text.trim();
+        if !wallpaper.is_empty() {
+            push_unique(&mut out, PathBuf::from(wallpaper));
+        }
+    }
+    out
+}
+
+/// Record file the provider writes for a saved static wallpaper (mirrors the
+/// provider's own layout; declared here so this core module never depends on
+/// a provider module).
+const STATIC_RECORD_FILE: &str = "wallpaper.txt";
+
+/// The legacy painter-video record's absolute path (`path=<abs>`). Parsed
+/// inline so this core module never reaches into a provider module; a
+/// relative path is rejected exactly like the provider's own parser.
+fn legacy_painter_video_path(provider_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(provider_dir.join("video.txt")).ok()?;
+    text.lines().find_map(|line| {
+        let rest = line.strip_prefix("path=")?.trim();
+        if rest.is_empty() {
+            return None;
+        }
+        let path = PathBuf::from(rest);
+        if path.is_absolute() {
+            Some(path)
+        } else {
+            None
+        }
+    })
+}
+
+/// Append `path` unless an identical entry is already present.
+fn push_unique(out: &mut Vec<String>, path: PathBuf) {
+    let rendered = path.display().to_string();
+    if !out.iter().any(|existing| existing == &rendered) {
+        out.push(rendered);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,6 +1087,91 @@ mod tests {
         assert!(
             !media.join(VIDEO_FILE_NAME).exists(),
             "the packaged video file must be dropped"
+        );
+    }
+
+    // ── W2: the background paths the theme declares ───────────────────
+    //
+    // odd/tasks/palette-authority-mute-and-yield.md W2: "the background
+    // change was not HVE's" is defined against what the applied theme
+    // declares as its own — the packaged poster, the video (packaged or the
+    // legacy absolute record) and the saved static wallpaper. A live engine
+    // background outside this set is the keeper's own change.
+
+    /// Every declared record is collected as the absolute path the engine
+    /// would show: the packaged poster, the legacy absolute video and the
+    /// saved static wallpaper.
+    #[test]
+    fn declared_backgrounds_collects_poster_video_and_wallpaper() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join(MEDIA_DIR);
+        std::fs::create_dir_all(&media).unwrap();
+        let poster = media.join("poster.png");
+        std::fs::write(&poster, b"\x89PNG").unwrap();
+        write_poster_record(&provider, Path::new("media/poster.png")).unwrap();
+        let video = dir.path().join("loop.mp4");
+        std::fs::write(&video, b"video").unwrap();
+        std::fs::write(
+            provider.join("video.txt"),
+            format!("path={}\npainter=mpvpaper\n", video.display()),
+        )
+        .unwrap();
+        let wallpaper = dir.path().join("fallback.png");
+        std::fs::write(&wallpaper, b"\x89PNG").unwrap();
+        std::fs::write(provider.join("wallpaper.txt"), wallpaper.display().to_string()).unwrap();
+
+        let declared = declared_backgrounds(&theme, &provider);
+
+        assert!(declared.contains(&poster.display().to_string()), "{declared:?}");
+        assert!(declared.contains(&video.display().to_string()), "{declared:?}");
+        assert!(
+            declared.contains(&wallpaper.display().to_string()),
+            "{declared:?}"
+        );
+    }
+
+    /// A theme that declares nothing yields an empty set — the detector
+    /// then has nothing to compare and must never step aside.
+    #[test]
+    fn declared_backgrounds_is_empty_without_any_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        std::fs::create_dir_all(&provider).unwrap();
+        assert!(declared_backgrounds(&theme, &provider).is_empty());
+    }
+
+    /// The packaged video wins over a legacy absolute record, exactly like
+    /// the apply resolver: the engine is handed the packaged file.
+    #[test]
+    fn declared_backgrounds_prefers_the_packaged_video() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join(MEDIA_DIR);
+        std::fs::create_dir_all(&media).unwrap();
+        let packaged = media.join(VIDEO_FILE_NAME);
+        std::fs::write(&packaged, b"packaged").unwrap();
+        write_video_record(&provider, Path::new("media/background.mp4")).unwrap();
+        let legacy = dir.path().join("legacy.mp4");
+        std::fs::write(&legacy, b"legacy").unwrap();
+        std::fs::write(
+            provider.join("video.txt"),
+            format!("path={}\n", legacy.display()),
+        )
+        .unwrap();
+
+        let declared = declared_backgrounds(&theme, &provider);
+
+        assert!(
+            declared.contains(&packaged.display().to_string()),
+            "the packaged video must be declared: {declared:?}"
+        );
+        assert!(
+            !declared.contains(&legacy.display().to_string()),
+            "the legacy absolute record must not shadow the packaged video: {declared:?}"
         );
     }
 }

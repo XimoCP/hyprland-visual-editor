@@ -14,6 +14,7 @@
 //! mpvpaper internals beyond its public API.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::providers::bg_info;
@@ -327,6 +328,14 @@ impl ColourAuthorityHold {
     }
 }
 
+impl Drop for ColourAuthorityHold {
+    fn drop(&mut self) {
+        // The apply's hand-off phase is over: HVE is no longer acting, so a
+        // later engine background change can be told apart from its own.
+        HVE_APPLY_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Hold the engine's colour authority off for one apply: flip
 /// `theme.policy` to `off` (engine's own mechanism, never touched from
 /// here), give the engine's config watcher the bounded moment to observe
@@ -344,6 +353,9 @@ pub fn hold_color_authority() -> Result<Option<ColourAuthorityHold>, String> {
         Err(e) => return Err(e),
     };
     let observed_in = wait_for_engine_to_observe_flip();
+    // The hold is alive until its guard drops: while it is, HVE is the one
+    // painting, so its own hand-off is never a foreign change.
+    HVE_APPLY_ACTIVE.store(true, Ordering::SeqCst);
     Ok(Some(ColourAuthorityHold {
         guard: crate::providers::skwd_policy::YieldGuard::new(previous),
         observed_in,
@@ -377,6 +389,177 @@ pub fn color_authority_held() -> bool {
 /// the engine's file. Missing or unparsable config answers `false`.
 pub fn engine_owns_color_scheme() -> bool {
     crate::providers::skwd_policy::engine_owns_color_scheme()
+}
+
+// ── Foreign-background step-aside (W2 of palette-authority-mute-and-yield) ─
+
+/// What the detector decided about the live background while a theme owns
+/// the palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteAuthorityVerdict {
+    /// Keep the claim: nothing proves the background change was foreign.
+    Hold,
+    /// A background the theme does not declare is live: HVE steps aside.
+    StepAside,
+}
+
+/// The pure step-aside decision.
+///
+/// Inputs are exactly the facts the rule needs:
+/// - `live`: the engine's own live background paths (`None` = the engine
+///   could not be read — a read failure is NEVER evidence of a foreign
+///   change);
+/// - `declared`: the background paths the applied theme declares as its own;
+/// - `hve_acting`: HVE is inside its own apply (its own hand-off is never a
+///   foreign change);
+/// - `descriptor_present`: a theme currently owns the palette. Without it
+///   there is nothing to step aside from.
+///
+/// Conservative by construction: an unreadable engine, an empty live set or
+/// a theme that declares nothing all `Hold` — the detector only steps aside
+/// when it can prove a live path is not one the theme declared.
+pub fn decide_palette_authority(
+    live: Option<&[String]>,
+    declared: &[String],
+    hve_acting: bool,
+    descriptor_present: bool,
+) -> PaletteAuthorityVerdict {
+    // No owner: nothing to step aside from.
+    if !descriptor_present {
+        return PaletteAuthorityVerdict::Hold;
+    }
+    // HVE's own apply is painting the theme's background right now.
+    if hve_acting {
+        return PaletteAuthorityVerdict::Hold;
+    }
+    // A failed read, no live outputs, or a theme that declares nothing:
+    // HVE cannot prove a foreign change, so it never acts on a guess.
+    let Some(live) = live else {
+        return PaletteAuthorityVerdict::Hold;
+    };
+    if live.is_empty() || declared.is_empty() {
+        return PaletteAuthorityVerdict::Hold;
+    }
+    // Hold only while EVERY live background is one the theme declared. A
+    // single path outside the declared set is the keeper's own change.
+    let all_declared = live.iter().all(|path| declared.iter().any(|d| d == path));
+    if all_declared {
+        PaletteAuthorityVerdict::Hold
+    } else {
+        PaletteAuthorityVerdict::StepAside
+    }
+}
+
+/// Whether HVE is inside its own apply right now (a hold is alive). Process
+/// global, set by [`hold_color_authority`] and cleared when the hold guard
+/// drops: the whole hand-off phase of an apply is "HVE acting", so a
+/// background the engine shows during it is never mistaken for the keeper's.
+static HVE_APPLY_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Whether HVE is currently applying (see [`HVE_APPLY_ACTIVE`]).
+pub fn hve_is_acting() -> bool {
+    HVE_APPLY_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// What one step-aside check found and did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepAsideOutcome {
+    /// No theme owns the palette: nothing to step aside from.
+    NothingClaimed,
+    /// A theme owns the palette and the live background is still its own.
+    Held,
+    /// A foreign background is live: the claim was released.
+    SteppedAside,
+}
+
+/// The background paths the applied theme declares as its own, resolved from
+/// its colour-authority descriptor.
+///
+/// The descriptor's `palette_file` lives at
+/// `{theme}/providers/{id}/palette.json` (written by the provider's apply),
+/// so the theme and provider dirs are derived from it. A descriptor whose
+/// path does not have that shape declares nothing: the detector then holds.
+fn declared_backgrounds_for(authority: &crate::color_authority::ColorAuthority) -> Vec<String> {
+    let palette = Path::new(&authority.palette_file);
+    let Some(provider_dir) = palette.parent() else {
+        return Vec::new();
+    };
+    let Some(theme_dir) = provider_dir.parent().and_then(Path::parent) else {
+        return Vec::new();
+    };
+    crate::theme_media::declared_backgrounds(theme_dir, provider_dir)
+}
+
+/// One step-aside check: read the engine's own live background, compare it
+/// with what the applied theme declares, and — only when it proves the
+/// change was not HVE's — release the claim (descriptor cleared) and the
+/// engine mute.
+///
+/// Nothing happens without a descriptor (no theme owns the palette), while
+/// HVE is acting, when the engine cannot be read, or when the live
+/// background is one the theme declared. Idempotent: once aside, the absent
+/// descriptor keeps every later call a `NothingClaimed` no-op.
+pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
+    let Some(descriptor) = crate::color_authority::read_descriptor() else {
+        return Ok(StepAsideOutcome::NothingClaimed);
+    };
+    let declared = declared_backgrounds_for(&descriptor);
+    let live = crate::providers::wallpaper_authority::query_live_backgrounds();
+    if decide_palette_authority(live.as_deref(), &declared, hve_is_acting(), true)
+        == PaletteAuthorityVerdict::Hold
+    {
+        return Ok(StepAsideOutcome::Held);
+    }
+    // Step aside. ORDER MATTERS: with the descriptor still present
+    // `restore_color_authority` would keep the mute (a theme owns the
+    // palette); clearing it first makes the release genuine.
+    crate::color_authority::clear_descriptor()
+        .map_err(|e| format!("[background] cannot clear colour-authority descriptor: {e}"))?;
+    if let Some(previous) = crate::providers::skwd_policy::held_previous_value() {
+        release_color_authority(&previous)?;
+    }
+    tracing::info!(
+        "[background] a background HVE did not paint is live: stepping aside from \
+         the palette (descriptor cleared, engine mute released)"
+    );
+    Ok(StepAsideOutcome::SteppedAside)
+}
+
+/// How often the background watch samples the engine's own state.
+///
+/// The keeper changes the background by hand, so a few seconds of lag is
+/// harmless; the read itself is bounded by the authority timeout. One sample
+/// per interval, and only while a theme owns the palette.
+const FOREIGN_CHANGE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Start the process-lifetime watch that steps aside when a background HVE
+/// did not paint becomes live.
+///
+/// Idempotent: a second call is a no-op. The thread only samples the engine
+/// while a colour-authority descriptor exists (a theme owns the palette), so
+/// an idle HVE never runs the engine CLI. Spawn failure is logged and leaves
+/// the watch unstarted (a later call retries); it never panics.
+pub fn start_foreign_change_watch() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("hve-foreign-bg-watch".into())
+        .spawn(|| loop {
+            std::thread::sleep(FOREIGN_CHANGE_POLL_INTERVAL);
+            // No owner -> nothing to defend; skip the engine read entirely.
+            if crate::color_authority::read_descriptor().is_none() {
+                continue;
+            }
+            if let Err(e) = step_aside_if_foreign() {
+                tracing::warn!("[background] foreign-background check failed: {e}");
+            }
+        });
+    if let Err(e) = spawned {
+        STARTED.store(false, Ordering::SeqCst);
+        tracing::warn!("[background] cannot start the foreign-background watch: {e}");
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -1025,5 +1208,409 @@ mod tests {
     #[test]
     fn the_observe_wait_keeps_its_measured_bound() {
         assert_eq!(COLOR_YIELD_OBSERVE_WAIT, Duration::from_millis(250));
+    }
+
+    // ── W2: the foreign-background step-aside decision (pure) ─────────
+    //
+    // odd/tasks/palette-authority-mute-and-yield.md W2: while a theme owns
+    // the palette, a background the theme does not declare means the keeper
+    // changed it and does not want the theme — HVE steps aside. The table
+    // below is the whole rule; the impure shell only gathers the inputs.
+
+    fn paths(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// Equal, foreign, and mixed live sets: the declared paths hold the
+    /// claim, any other path steps aside (a mixed set already proves one
+    /// live path is foreign).
+    #[test]
+    fn a_foreign_live_background_steps_aside_and_a_declared_one_holds() {
+        let declared = paths(&["/theme/poster.png", "/theme/loop.mp4"]);
+        for live in [
+            paths(&["/theme/poster.png"]),
+            paths(&["/theme/loop.mp4"]),
+            paths(&["/theme/poster.png", "/theme/loop.mp4"]),
+        ] {
+            assert_eq!(
+                decide_palette_authority(Some(&live), &declared, false, true),
+                PaletteAuthorityVerdict::Hold,
+                "a live background the theme declares must hold: {live:?}"
+            );
+        }
+        assert_eq!(
+            decide_palette_authority(Some(&paths(&["/keeper/car7.jpg"])), &declared, false, true),
+            PaletteAuthorityVerdict::StepAside,
+            "a live background the theme does not declare must step aside"
+        );
+        assert_eq!(
+            decide_palette_authority(
+                Some(&paths(&["/theme/poster.png", "/keeper/car7.jpg"])),
+                &declared,
+                false,
+                true
+            ),
+            PaletteAuthorityVerdict::StepAside,
+            "one foreign live path is enough to step aside"
+        );
+    }
+
+    /// Unknown is conservative: an unreadable engine, no live outputs, or a
+    /// theme that declares nothing can never prove a foreign change.
+    #[test]
+    fn an_unknown_background_is_never_evidence_of_a_foreign_change() {
+        let declared = paths(&["/theme/poster.png"]);
+        assert_eq!(
+            decide_palette_authority(None, &declared, false, true),
+            PaletteAuthorityVerdict::Hold,
+            "a failed engine read must never step aside"
+        );
+        assert_eq!(
+            decide_palette_authority(Some(&[]), &declared, false, true),
+            PaletteAuthorityVerdict::Hold,
+            "an empty live set must never step aside"
+        );
+        assert_eq!(
+            decide_palette_authority(Some(&paths(&["/keeper/car7.jpg"])), &[], false, true),
+            PaletteAuthorityVerdict::Hold,
+            "a theme that declares no background cannot be compared: hold"
+        );
+    }
+
+    /// HVE acting is never a foreign change; with no descriptor there is
+    /// nothing claimed to step aside from.
+    #[test]
+    fn hve_acting_and_no_descriptor_both_hold() {
+        let declared = paths(&["/theme/poster.png"]);
+        assert_eq!(
+            decide_palette_authority(
+                Some(&paths(&["/keeper/car7.jpg"])),
+                &declared,
+                true,
+                true
+            ),
+            PaletteAuthorityVerdict::Hold,
+            "HVE's own hand-off is never a foreign change"
+        );
+        assert_eq!(
+            decide_palette_authority(
+                Some(&paths(&["/keeper/car7.jpg"])),
+                &declared,
+                false,
+                false
+            ),
+            PaletteAuthorityVerdict::Hold,
+            "with no descriptor nothing owns the palette: nothing to step aside from"
+        );
+    }
+
+    // ── W2: the step-aside shell (descriptor + mute lifecycle) ────────
+    //
+    // The engine is a FAKE one: a private `SKWD_WALL_V2_CONFIG` and a stub
+    // `skwd-helm` / `skwd-wall-v2` on PATH answer `current --json`. The
+    // keeper's live engine and config are never touched.
+
+    /// The fake engine's config while it owns the colour scheme.
+    const FOREIGN_OWNER: &str =
+        r#"{"theme": {"policy": "wallpaper"}, "noctalia": {"themeMode": "manual"}}"#;
+
+    /// Install stub engine binaries answering `current --json` with `live`
+    /// (one connected output per path); `None` installs binaries that fail,
+    /// for the unreadable-engine case.
+    fn install_current_stub(bin_dir: &Path, live: Option<&[&str]>) {
+        std::fs::create_dir_all(bin_dir).unwrap();
+        let script = match live {
+            None => "#!/bin/sh\nexit 1\n".to_string(),
+            Some(paths) => {
+                let outputs: Vec<String> = paths
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        format!(
+                            r#"{{"name":"OUT-{i}","type":"static","connected":true,"current":"{p}"}}"#
+                        )
+                    })
+                    .collect();
+                let json = format!(r#"{{"outputs":[{}]}}"#, outputs.join(","));
+                let payload = bin_dir.join("current.json");
+                std::fs::write(&payload, json).unwrap();
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = current ]; then cat '{}'; exit 0; fi\nexit 1\n",
+                    payload.display()
+                )
+            }
+        };
+        for bin in ["skwd-helm", "skwd-wall-v2"] {
+            let path = bin_dir.join(bin);
+            std::fs::write(&path, &script).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+    }
+
+    /// Hermetic step-aside sandbox: `TempEnv` redirects HOME (the descriptor
+    /// and cache live under it), `SKWD_WALL_V2_CONFIG` points at a private
+    /// engine config, stub engine binaries answer on PATH and the `fast`
+    /// profile keeps the observe wait off the real bound. Restores every
+    /// process-global on drop, before the env lock is released.
+    struct ForeignSandbox {
+        config: PathBuf,
+        saved: Vec<(&'static str, Option<String>)>,
+        _tmp: tempfile::TempDir,
+        _env: crate::test_utils::TempEnv,
+    }
+
+    impl ForeignSandbox {
+        fn new(engine_config: Option<&str>, live: Option<&[&str]>) -> Self {
+            let env = crate::test_utils::TempEnv::new();
+            let saved: Vec<(&'static str, Option<String>)> =
+                ["SKWD_WALL_V2_CONFIG", "HVE_REASSERT_PROFILE", "PATH"]
+                    .iter()
+                    .map(|k| (*k, std::env::var(k).ok()))
+                    .collect();
+            let tmp = tempfile::tempdir().expect("create foreign sandbox");
+            let config = tmp.path().join("engine-config.json");
+            if let Some(text) = engine_config {
+                std::fs::write(&config, text).unwrap();
+            }
+            let bin = tmp.path().join("bin");
+            install_current_stub(&bin, live);
+            std::env::set_var("SKWD_WALL_V2_CONFIG", &config);
+            std::env::set_var("HVE_REASSERT_PROFILE", "fast");
+            let old_path = saved[2].1.clone().unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path));
+            Self {
+                config,
+                saved,
+                _tmp: tmp,
+                _env: env,
+            }
+        }
+
+        fn read_config(&self) -> String {
+            std::fs::read_to_string(&self.config).unwrap_or_default()
+        }
+    }
+
+    impl Drop for ForeignSandbox {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// A theme whose provider dir declares the packaged `poster_rel` poster,
+    /// plus a real `palette.json` so the descriptor's path chain is valid.
+    /// Returns `(theme_dir, provider_dir, poster_abs)`.
+    fn declared_theme(root: &Path, poster_rel: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let theme = root.join("theme");
+        let provider = theme.join("providers").join("noctalia-v5");
+        let media = theme.join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let poster = media.join(Path::new(poster_rel).file_name().unwrap());
+        std::fs::write(&poster, b"\x89PNG").unwrap();
+        crate::theme_media::write_poster_record(&provider, Path::new(poster_rel)).unwrap();
+        std::fs::write(provider.join("palette.json"), b"{}").unwrap();
+        (theme, provider, poster)
+    }
+
+    fn descriptor_for(provider: &Path) -> crate::color_authority::ColorAuthority {
+        crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "JoKer".to_string(),
+            palette_file: provider.join("palette.json").display().to_string(),
+            palette_name: "JokerTheme".to_string(),
+        }
+    }
+
+    /// Put HVE in the CLAIMED state exactly as a real apply leaves it: the
+    /// engine held off (`theme.policy` off, pending marker) and the theme's
+    /// descriptor present. HVE is not acting afterwards.
+    fn enter_claimed_state(sandbox: &ForeignSandbox, provider: &Path) {
+        let mut hold = hold_color_authority()
+            .expect("hold is an honest Result")
+            .expect("the owner config must yield");
+        hold.disarm();
+        drop(hold); // the hand-off phase is over: HVE is no longer acting
+        crate::color_authority::write_descriptor(&descriptor_for(provider)).unwrap();
+        assert!(
+            sandbox.read_config().contains("\"policy\": \"off\""),
+            "precondition: the engine is held off"
+        );
+        assert!(color_authority_held(), "precondition: the marker is pending");
+        assert!(
+            crate::color_authority::read_descriptor().is_some(),
+            "precondition: a theme owns the palette"
+        );
+    }
+
+    /// The core of W2: a foreign live background clears the descriptor AND
+    /// releases the mute, so the keeper's background and its palette win.
+    #[test]
+    fn a_foreign_background_clears_the_descriptor_and_releases_the_mute() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&["/keeper/car7.jpg"]));
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+
+        let outcome = step_aside_if_foreign().expect("the check is an honest Result");
+
+        assert_eq!(outcome, StepAsideOutcome::SteppedAside);
+        assert!(
+            crate::color_authority::read_descriptor().is_none(),
+            "the theme's claim must be released"
+        );
+        assert_eq!(
+            sandbox.read_config(),
+            FOREIGN_OWNER,
+            "the engine's own value must come back: the keeper's background wins"
+        );
+        assert!(
+            !color_authority_held(),
+            "the pending marker must be cleared with the mute"
+        );
+    }
+
+    /// A live background the theme declares keeps the claim and the mute.
+    #[test]
+    fn a_declared_live_background_keeps_the_claim_and_the_mute() {
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        let poster = poster.display().to_string();
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&[poster.as_str()]));
+        enter_claimed_state(&sandbox, &provider);
+
+        let outcome = step_aside_if_foreign().expect("the check is an honest Result");
+
+        assert_eq!(outcome, StepAsideOutcome::Held);
+        assert!(
+            crate::color_authority::read_descriptor().is_some(),
+            "the theme still owns the palette"
+        );
+        assert!(
+            sandbox.read_config().contains("\"policy\": \"off\""),
+            "the mute must survive a declared background"
+        );
+        assert!(color_authority_held(), "the marker stays pending");
+    }
+
+    /// An unreadable engine is never evidence: HVE holds, conservatively.
+    #[test]
+    fn an_unreadable_engine_never_steps_aside() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), None);
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+
+        let outcome = step_aside_if_foreign().expect("the check is an honest Result");
+
+        assert_eq!(outcome, StepAsideOutcome::Held);
+        assert!(
+            crate::color_authority::read_descriptor().is_some(),
+            "a read failure must not release the claim"
+        );
+        assert!(sandbox.read_config().contains("\"policy\": \"off\""));
+    }
+
+    /// While HVE is acting, its own hand-off is never a foreign change.
+    #[test]
+    fn hve_acting_never_steps_aside() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&["/keeper/car7.jpg"]));
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        let hold = hold_color_authority()
+            .expect("hold is an honest Result")
+            .expect("the owner config must yield");
+        crate::color_authority::write_descriptor(&descriptor_for(&provider)).unwrap();
+        assert!(hve_is_acting(), "precondition: a hold is alive");
+
+        let outcome = step_aside_if_foreign().expect("the check is an honest Result");
+
+        assert_eq!(outcome, StepAsideOutcome::Held);
+        assert!(
+            crate::color_authority::read_descriptor().is_some(),
+            "HVE's own apply must not release the claim"
+        );
+        assert!(sandbox.read_config().contains("\"policy\": \"off\""));
+        drop(hold);
+    }
+
+    /// Once aside, every later check is a no-op: nothing claims the palette,
+    /// so nothing can be released twice.
+    #[test]
+    fn once_aside_further_background_changes_are_a_noop() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&["/keeper/car7.jpg"]));
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+        assert_eq!(
+            step_aside_if_foreign().unwrap(),
+            StepAsideOutcome::SteppedAside
+        );
+
+        let again = step_aside_if_foreign().expect("the check is an honest Result");
+
+        assert_eq!(again, StepAsideOutcome::NothingClaimed);
+        assert_eq!(
+            sandbox.read_config(),
+            FOREIGN_OWNER,
+            "the engine's own value must stay untouched"
+        );
+    }
+
+    /// Applying a theme re-claims: a new hold mutes the engine again and the
+    /// theme's descriptor makes it own the palette once more.
+    #[test]
+    fn applying_a_theme_reclaims_and_remutes() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&["/keeper/car7.jpg"]));
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+        assert_eq!(
+            step_aside_if_foreign().unwrap(),
+            StepAsideOutcome::SteppedAside
+        );
+
+        // A new apply: the hold mutes the engine and the theme writes its
+        // descriptor — the claim is back.
+        let mut hold = hold_color_authority()
+            .expect("hold is an honest Result")
+            .expect("the engine must yield again");
+        assert!(sandbox.read_config().contains("\"policy\": \"off\""));
+        assert!(color_authority_held());
+        crate::color_authority::write_descriptor(&descriptor_for(&provider)).unwrap();
+        let previous = hold.disarm().expect("hand the restore to the worker");
+        drop(hold);
+
+        assert_eq!(previous, "wallpaper");
+        assert!(
+            crate::color_authority::read_descriptor().is_some(),
+            "the re-applied theme owns the palette again"
+        );
+        assert!(
+            color_authority_held(),
+            "the mute outlives the apply while the theme rules"
+        );
+    }
+
+    /// The descriptor→declared resolution derives the theme and provider
+    /// dirs from the descriptor's `palette_file` (the layout the provider's
+    /// apply writes).
+    #[test]
+    fn declared_backgrounds_are_resolved_from_the_descriptor() {
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        let declared = declared_backgrounds_for(&descriptor_for(&provider));
+        assert!(
+            declared.contains(&poster.display().to_string()),
+            "the theme's packaged poster must be declared: {declared:?}"
+        );
     }
 }

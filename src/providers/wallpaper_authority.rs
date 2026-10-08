@@ -1048,6 +1048,48 @@ fn log_daemon_disagreement(daemon_json: Option<&str>, kind: WallpaperKind) {
     }
 }
 
+/// The engine's own live background paths, one per CONNECTED output,
+/// deduplicated in report order — read from its `current --json`.
+///
+/// W2 of `odd/tasks/palette-authority-mute-and-yield.md`: with the engine
+/// muted it publishes no palette, so the old bridge-file detector is blind;
+/// the engine's own state is the source instead. `None` (never an empty or
+/// guessed list) when the engine is unavailable, answers unparsably or
+/// reports no connected output — the caller must stay conservative on a
+/// read failure and never conclude a change was foreign.
+pub fn query_live_backgrounds() -> Option<Vec<String>> {
+    let json = query_daemon_current_json()?;
+    let outputs = parse_authority_outputs(&json).ok()?;
+    let mut paths: Vec<String> = Vec::new();
+    for output in outputs.iter().filter(|o| o.connected) {
+        let path = output.current.trim();
+        if path.is_empty() {
+            continue;
+        }
+        if !paths.iter().any(|p| p == path) {
+            paths.push(path.to_string());
+        }
+    }
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+/// Run the engine's `current --json` through [`AUTHORITY_BINARIES`], first
+/// binary that answers with parseable output wins. `None` when none does.
+fn query_daemon_current_json() -> Option<String> {
+    for binary in AUTHORITY_BINARIES {
+        if let Ok(json) = run_bounded_command(binary, &["current", "--json"], AUTHORITY_TIMEOUT) {
+            if parse_authority_outputs(&json).is_ok() {
+                return Some(json);
+            }
+        }
+    }
+    None
+}
+
 /// Ask which background is active right now from a shared
 /// [`AuthoritySnapshot`]: the COMPOSITOR says which layer is on top, the
 /// daemon says the type of the skwd suite's layers (see
@@ -1503,6 +1545,95 @@ mod tests {
         // bounded by ≤500 ms.
         assert!(!AUTHORITY_TIMEOUT.is_zero());
         assert!(AUTHORITY_TIMEOUT <= Duration::from_millis(500));
+    }
+
+    // ── W2: the live-background read (the engine's own state) ─────────
+    //
+    // odd/tasks/palette-authority-mute-and-yield.md W2: with the mute on,
+    // the engine publishes no palette, so the old bridge-file detector is
+    // blind. The engine's own `current --json` is the source: a stub binary
+    // on PATH keeps the read hermetic (never the keeper's live engine).
+
+    /// Install a stub `skwd-helm` / `skwd-wall-v2` that answers
+    /// `current --json` with `json` (from a file, so the shell script needs
+    /// no escaping) and fails every other call.
+    fn install_engine_stubs(bin_dir: &std::path::Path, json: &str) {
+        std::fs::create_dir_all(bin_dir).unwrap();
+        let payload = bin_dir.join("current.json");
+        std::fs::write(&payload, json).unwrap();
+        for bin in ["skwd-helm", "skwd-wall-v2"] {
+            let script = format!(
+                "#!/bin/sh\nif [ \"$1\" = current ]; then cat '{}'; exit 0; fi\nexit 1\n",
+                payload.display()
+            );
+            let path = bin_dir.join(bin);
+            std::fs::write(&path, script).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+    }
+
+    /// The live read returns the CONNECTED outputs' paths, deduplicated;
+    /// a disconnected output is ignored.
+    #[test]
+    fn live_backgrounds_reads_the_engine_current_json() {
+        let _env = crate::test_utils::env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        install_engine_stubs(
+            &bin,
+            r#"{"outputs":[
+                {"name":"DP-3","type":"static","connected":true,"current":"/theme/poster.png"},
+                {"name":"HDMI-A-1","type":"static","connected":true,"current":"/theme/poster.png"},
+                {"name":"OLD","type":"static","connected":false,"current":"/keeper/car7.jpg"}
+            ]}"#,
+        );
+        let old_path = std::env::var("PATH").ok();
+        std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()));
+
+        let live = query_live_backgrounds();
+
+        match old_path {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+        assert_eq!(
+            live,
+            Some(vec!["/theme/poster.png".to_string()]),
+            "the read must return the connected outputs' paths, deduplicated"
+        );
+    }
+
+    /// An unreadable engine is `None`, never an empty/foreign guess: the
+    /// caller must stay conservative on a read failure.
+    #[test]
+    fn live_backgrounds_is_none_when_the_engine_is_unavailable() {
+        let _env = crate::test_utils::env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in ["skwd-helm", "skwd-wall-v2"] {
+            let path = bin.join(name);
+            std::fs::write(&path, "#!/bin/sh\nexit 1\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let old_path = std::env::var("PATH").ok();
+        std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()));
+
+        let live = query_live_backgrounds();
+
+        match old_path {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+        assert_eq!(live, None, "an engine that cannot answer yields None");
     }
 
     /// Save must consult the authority: the noctalia-v5 save path captures
