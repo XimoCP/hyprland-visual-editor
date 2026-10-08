@@ -12,6 +12,7 @@ use crate::theme_manager::{
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -1287,6 +1288,35 @@ fn reassert_custom_scheme_blocking(
     }
 }
 
+/// Live count of detached re-assert workers.
+///
+/// WHY it exists: a worker reads PROCESS-GLOBAL state — `PATH` to resolve the
+/// `noctalia` stub, `SKWD_WALL_V2_CONFIG`/`HOME` to reach the engine config
+/// and the colour-authority descriptor. The test harness restores those
+/// globals when a test ends, so a worker that outlives its test would run
+/// against the NEXT test's sandbox and leak a `color-scheme-set` into its
+/// stub log or write the engine config behind its back. The harness waits on
+/// this counter (see `ColorStub::drop`) before releasing the sandbox.
+///
+/// Production never reads it; it only guards the test sandbox.
+static REASSERT_WORKERS_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+
+/// Decrements [`REASSERT_WORKERS_ACTIVE`] when the worker ends, panic or not.
+struct ReassertWorkerGuard;
+
+impl Drop for ReassertWorkerGuard {
+    fn drop(&mut self) {
+        REASSERT_WORKERS_ACTIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether every detached re-assert worker has finished. Test-only: the
+/// sandbox harness polls it before restoring its process-global environment.
+#[cfg(test)]
+pub(crate) fn reassert_workers_idle() -> bool {
+    REASSERT_WORKERS_ACTIVE.load(Ordering::SeqCst) == 0
+}
+
 /// Fire-and-forget the single-shot re-assert after an apply restored a
 /// custom palette while the engine owns the scheme.
 ///
@@ -1299,7 +1329,9 @@ fn reassert_custom_scheme_blocking(
 /// (W2), the worker restores it once the palette is verified (or at the
 /// bounded cap); `None` keeps today's behaviour byte-for-byte.
 fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<String>) {
+    REASSERT_WORKERS_ACTIVE.fetch_add(1, Ordering::SeqCst);
     std::thread::spawn(move || {
+        let _active = ReassertWorkerGuard;
         let (settle, max_sets, delay, cap) = color_reassert_timing();
         reassert_custom_scheme_blocking(&palette_name, settle, max_sets, delay, cap);
         // The palette is now verified live (or the bounded cap was hit, or
@@ -3999,6 +4031,21 @@ exit 0
 
     impl Drop for ColorStub {
         fn drop(&mut self) {
+            // A detached re-assert worker reads PROCESS-GLOBAL state: `PATH`
+            // to resolve this stub's `noctalia`, and `SKWD_WALL_V2_CONFIG` /
+            // `HOME` to reach the engine config and the colour-authority
+            // descriptor. Keep THIS sandbox (and the serial test's globals)
+            // installed until every worker has finished, so a worker can
+            // never outlive its test and leak a `color-scheme-set` into the
+            // next test's stub log or write the next test's engine config.
+            //
+            // Bounded: the worker exits by itself at its attempt cap
+            // (production worst case settle + cap ≈ 10 s), and the wait can
+            // never hang the suite.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !reassert_workers_idle() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
             for (k, v) in &self.saved {
                 match v {
                     Some(val) => std::env::set_var(k, val),
@@ -5475,6 +5522,41 @@ exit 0
         assert_eq!(sets, 4, "owner re-assert keeps its bounded shape");
         std::thread::sleep(Duration::from_millis(500));
         assert_eq!(stub.sets(), 4, "gave up at the cap: no war");
+    }
+
+    /// The re-assert worker is DETACHED and reads PROCESS-GLOBAL state:
+    /// `PATH` to resolve this stub's `noctalia`, and `SKWD_WALL_V2_CONFIG` /
+    /// `HOME` to reach the engine config and the colour-authority descriptor.
+    /// With the production timing profile the worker lives ~4 s — well past
+    /// the apply — so before the handshake it outlived its test and leaked
+    /// its later `color-scheme-set` calls into the NEXT serial test's stub
+    /// log (and its release could rewrite that test's engine config). This
+    /// pins the `ColorStub::drop` handshake: right after the worker's first
+    /// re-assert it is mid-delay, so a drop that did NOT wait would leave
+    /// the counter non-zero deterministically.
+    #[test]
+    #[serial]
+    fn a_detached_reassert_worker_never_outlives_its_stub_sandbox() {
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), false);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+        let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        assert_eq!(sets, 2, "one sync set plus the worker's first re-assert");
+        assert!(
+            !reassert_workers_idle(),
+            "precondition: the production-timing worker is still mid-delay"
+        );
+        drop(stub); // must block until the worker finishes
+        assert!(
+            reassert_workers_idle(),
+            "dropping the stub must wait for its detached worker"
+        );
     }
 
     // ── Save-side static background: record what the painter shows ──

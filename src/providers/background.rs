@@ -352,9 +352,14 @@ pub fn hold_color_authority() -> Result<Option<ColourAuthorityHold>, String> {
 
 /// Put the engine's colour authority back EXACTLY as it was — the paired
 /// release for a hold that was disarmed into a worker. `Ok(true)` when the
-/// config was rewritten, `Ok(false)` when there was nothing to do (config
-/// gone, or a concurrent write won), `Err` an honest failure the caller
-/// logs and carries on from.
+/// config was rewritten, `Ok(false)` when there was nothing to do, `Err` an
+/// honest failure the caller logs and carries on from.
+///
+/// `Ok(false)` covers three cases: the config is gone, a concurrent write
+/// won (the current value is no longer the `off` this hold wrote), or a
+/// valid colour-authority descriptor says a theme still owns the palette —
+/// in that last case the mute is DELIBERATE and is kept, along with its
+/// crash marker, so the engine stays `off` while the theme rules.
 pub fn release_color_authority(previous_value: &str) -> Result<bool, String> {
     crate::providers::skwd_policy::restore_color_authority(previous_value)
 }

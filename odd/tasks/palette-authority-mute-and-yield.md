@@ -195,7 +195,9 @@ Tests (all in temporary sandboxes — the keeper's live config is never read, wr
 Evidence (commands run from `/home/ximo/Proyectos/hve`):
 
 - Baseline `cargo test`: `1457 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`.
-- After: `cargo test`: `1465 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`.
+- After: `cargo test`: `1465 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` — see the
+  correction below: this run was green but the suite failed intermittently; the honest post-fix
+  figure is `1466 passed; 0 failed`.
 - `cargo build`: clean, no warnings.
 - Non-vacuous checks (throwaway breaks, reverted; `sha256sum` confirmed the files returned to their
   pre-break bytes `b35e9772…` / `a678e813…`):
@@ -212,6 +214,56 @@ Limits (honest, not covered by W1):
 - The mute does not survive HVE's disappearance: the startup sweep replays the marker and un-mutes the
   engine (the deliberate crash-safety trade documented in the module). An uninstall with HVE not running
   cannot be repaired by HVE.
+
+### W1 — correction: the full suite was not green (fix commit on this branch)
+
+The writer reported `1465 passed; 0 failed`, but on this machine the full suite failed intermittently, and
+the failure is W1's, not pre-existing:
+
+- `providers::noctalia::tests::v5_apply_no_wallpaper_assets_never_yields_even_when_owner` —
+  `assert_eq!(stub.sets(), 4)` saw `left: 5` ("gave up at the cap: no war").
+- `providers::noctalia::tests::v5_apply_static_yields_before_the_static_hand_off` — the engine config did
+  not read `"policy": "off"` after the 500 ms settle.
+
+Root cause (demonstrated, not guessed): W1 replaced the three production-timing apply tests' adaptive
+wait — a deadline loop that stayed alive until the re-assert worker's terminal restore — with
+`poll("color-scheme-set", 2)` plus a fixed 1500 ms sleep. The re-assert worker is DETACHED and, under the
+production timing profile, lives ~4 s (settle 2 s + delay 2 s + the bounded cap), so the test now returned
+while the worker was still mid-delay. The worker reads PROCESS-GLOBAL state — `PATH` for the `noctalia`
+stub, `SKWD_WALL_V2_CONFIG` / `HOME` for the engine config and the descriptor — so the next `#[serial]`
+test installed its own sandbox and the leftover worker ran against it:
+
+- its post-delay `color-scheme-get` hit the NEXT test's stub (scheme reset to `custom skwd-wall`), so it
+  re-issued `color-scheme-set` into that test's log (the observed `left: 5`); each further test reset the
+  scheme again, so the worker leaked up to its 3-set cap across two or three following tests;
+- its `release_color_authority` wrote the previous value back into whatever config read `off` at that
+  moment, which could clobber a victim's held mute (the `"policy": "off"` failure).
+
+Evidence (thread-named `noctalia` calls with `date +%s.%N` timestamps): the worker
+`reassert[...v5_apply_yields_before_handoff_and_holds_the_mute_while_the_theme_rules]` ran
+`color-scheme-set custom JokerTheme` at `…000.07`, `…002.14` and `…004.22` after its own test had ended;
+the failing `v5_apply_non_custom_palette_ignores_owner` ran at `…004.09`–`…004.14` and counted the
+`…004.22` set. A deterministic subset reproduction (`cargo test -- --test-threads=24 v5_apply skwd_policy`)
+failed 1 of 2 runs before the fix and 0 of 4 after.
+
+Fix (test isolation; no assert weakened, no blind sleep added):
+
+- `spawn_custom_scheme_reassert` keeps a live count of detached workers (`REASSERT_WORKERS_ACTIVE`,
+  decremented by an RAII guard) and exposes `#[cfg(test)] reassert_workers_idle()`.
+- `ColorStub::drop` waits — bounded to 20 s — for every worker to finish BEFORE restoring `PATH` /
+  `SKWD_WALL_V2_CONFIG` / `HOME`, so the sandbox a worker depends on is still installed when it runs. The
+  `#[serial]` guard is held for the whole test function and locals drop before it, so the next serial test
+  cannot start until the worker is done.
+- New regression test `a_detached_reassert_worker_never_outlives_its_stub_sandbox` pins the handshake
+  (non-vacuous: with the wait disabled it fails deterministically right after the worker's first
+  re-assert).
+
+Evidence after the fix: `cargo test` twice — `1466 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`
+(`145.16 s` / `144.88 s`); `cargo build` clean, no warnings. The 1466 count is W1's 1465 plus the new
+regression test.
+
+Status: unchanged for the feature (W1 done). The `1465 passed; 0 failed` line in the W1 evidence above was
+a run that got lucky; this section is the corrected evidence.
 
 Evidence collected while planning (07-08-oct-2026, this machine):
 
