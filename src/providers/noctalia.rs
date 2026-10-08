@@ -4271,21 +4271,25 @@ exit 0
     // scheme (`theme.policy == "wallpaper"`), regenerates the wallpaper
     // palette asynchronously AFTER HVE's synchronous apply steps, and
     // re-imposes it. W2 flips the policy to `off` BEFORE the wallpaper
-    // hand-off, holds it through the apply, and restores the previous
-    // value once the theme palette is verified (or at the bounded cap);
-    // any exit path before the worker hand-off must still restore.
+    // hand-off and holds it through the apply; W1 extends that hold: while
+    // the theme owns the palette (its colour-authority descriptor exists),
+    // releasing never puts the engine's value back — the mute outlives the
+    // apply. Only an apply that leaves NO owner (no descriptor) restores the
+    // engine's own value, and any exit path before the worker hand-off still
+    // restores when no owner was declared.
 
     #[test]
     #[serial]
-    fn v5_apply_yields_before_handoff_and_restores_after_verification() {
+    fn v5_apply_yields_before_handoff_and_holds_the_mute_while_the_theme_rules() {
         // (a) The ownership decision is taken BEFORE the flip: the fixture
         // is OWNER_TRAP_JSON (policy wallpaper, NO themeMode follow), so
         // after the flip the config reads `off` and re-evaluating ownership
         // there would answer FALSE — denying the very re-assert that must
-        // run (the W2 trap). The wallet of proof: apply returns with the
-        // authority still held off, the worker still re-asserts (2 sets),
-        // and the value comes back to EXACTLY its original bytes only after
-        // the palette is verified.
+        // run (the W2 trap). W1: once this apply writes the theme's
+        // colour-authority descriptor the theme OWNS the palette, so the
+        // worker verifies and re-asserts (2 sets) but its release must KEEP
+        // the mute: `theme.policy` stays `off`, byte-for-byte, and the
+        // crash marker stays pending.
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_TRAP_JSON), false);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
@@ -4301,31 +4305,74 @@ exit 0
             "the authority must be held off through the apply, got: {}",
             held
         );
-        // The worker verifies the palette (2 s settle), then restores.
-        let deadline = Instant::now() + Duration::from_secs(12);
-        loop {
-            let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
-            if cfg == OWNER_TRAP_JSON {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "colour authority must come back exactly, still: {}",
-                cfg
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let final_cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
-        assert_eq!(final_cfg, OWNER_TRAP_JSON, "restored byte-for-byte");
-        assert!(
-            !background::color_authority_held(),
-            "the worker's restore must clear the marker"
-        );
+        // The worker verifies the palette (2 s settle) and re-asserts.
         let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
         assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
-        // Let the worker's final verifying get and thread teardown finish so
-        // no detached thread outlives this test into the next serial one.
+        // Let the worker's release run, then prove it wrote nothing.
         std::thread::sleep(Duration::from_millis(1500));
+        let final_cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert_eq!(
+            final_cfg, held,
+            "the mute must survive the worker's release byte-for-byte"
+        );
+        assert!(
+            !final_cfg.contains("\"policy\": \"wallpaper\""),
+            "the engine's own value must NOT come back while the theme rules"
+        );
+        assert!(
+            background::color_authority_held(),
+            "the held mute keeps the crash marker"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_non_custom_theme_restores_an_already_held_engine() {
+        // W1 lifecycle end to end: a custom theme holds the mute past its
+        // apply (descriptor present, marker pending). Re-applying a theme
+        // that claims NO palette must hand the engine its own value back —
+        // the mute must never get stuck on with no owner.
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_TRAP_JSON), true);
+        let first = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            first.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker3.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(first.path());
+        assert!(res.is_ok(), "first apply must succeed: {:?}", res);
+        // The worker verifies + re-asserts, then its release KEEPS the mute.
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(500));
+        let held = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
+        assert!(
+            held.contains("\"policy\": \"off\""),
+            "precondition: the first apply holds the mute, got: {}",
+            held
+        );
+        assert!(
+            background::color_authority_held(),
+            "precondition: the crash marker is pending"
+        );
+
+        // Second apply: a non-custom theme (no palette) claims no authority.
+        let second = stub.custom_theme("wallpaper vibrant", false);
+        std::fs::write(
+            second.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            "/tmp/joker4.png",
+        )
+        .unwrap();
+        let res = NoctaliaV5Provider::new().apply(second.path());
+        assert!(res.is_ok(), "second apply must succeed: {:?}", res);
+        assert_eq!(
+            std::fs::read_to_string(&stub.skwd_cfg).unwrap(),
+            OWNER_TRAP_JSON,
+            "a theme with no palette must give the engine its own value back"
+        );
+        assert!(
+            !background::color_authority_held(),
+            "the restore clears the pending marker"
+        );
     }
 
     #[test]
@@ -5119,28 +5166,21 @@ exit 0
             0,
             "no hand-off may run before the yield"
         );
-        // The worker verified the palette, then restored the authority
-        // byte-for-byte and cleared the marker.
-        let deadline = Instant::now() + Duration::from_secs(8);
-        loop {
-            let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
-            if cfg == OWNER_TRAP_JSON {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "colour authority must come back exactly, still: {}",
-                cfg
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert!(
-            !background::color_authority_held(),
-            "the worker's restore must clear the marker"
-        );
+        // W1: the theme owns the palette, so after the worker verifies and
+        // releases, the mute must still hold — config `off`, marker pending.
         let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
         assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
         std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            std::fs::read_to_string(&stub.skwd_cfg)
+                .unwrap()
+                .contains("\"policy\": \"off\""),
+            "the mute must outlive the animated apply while the theme rules"
+        );
+        assert!(
+            background::color_authority_held(),
+            "the held mute keeps the crash marker"
+        );
     }
 
     #[test]
@@ -5148,8 +5188,9 @@ exit 0
     fn v5_apply_static_yields_before_the_static_hand_off() {
         // (b) A static-only apply: W4 moves the yield earlier, it must not
         // alter the static path's guarantees — the yield still precedes the
-        // static hand-off, the re-assert still fires, and the authority
-        // comes back byte-for-byte.
+        // static hand-off and the re-assert still fires. W1: because this
+        // theme owns the palette, the mute then holds (config stays `off`,
+        // marker stays pending) instead of restoring.
         //
         // Engine order (2026-09-26): a STILL image now goes to the fast engine
         // first (`skwd-wall-v2` ~3ms vs `skwd-helm` ~616ms), the other staying
@@ -5178,35 +5219,33 @@ exit 0
             count_prefix(&stub, "delegation saw policy off") >= 1,
             "the static hand-off must see the flip"
         );
-        let deadline = Instant::now() + Duration::from_secs(8);
-        loop {
-            let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
-            if cfg == OWNER_JSON {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "colour authority must come back exactly, still: {}",
-                cfg
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert!(!background::color_authority_held());
+        // W1: the theme owns the palette, so the mute must outlive the
+        // static apply too — config stays `off`, marker stays pending.
         let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
         assert_eq!(sets, 2, "re-assert behaviour unchanged");
         std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            std::fs::read_to_string(&stub.skwd_cfg)
+                .unwrap()
+                .contains("\"policy\": \"off\""),
+            "the mute must outlive the static apply while the theme rules"
+        );
+        assert!(
+            background::color_authority_held(),
+            "the held mute keeps the crash marker"
+        );
     }
 
     #[test]
     #[serial]
-    fn v5_apply_both_branches_single_yield_single_restore() {
+    fn v5_apply_both_branches_single_yield_single_hold() {
         // (c) One apply in which BOTH wallpaper branches run (the animated
         // hand-off fails, so the static restore follows): exactly ONE
-        // yield, ONE marker, ONE restore. The yield covers the whole
-        // phase, never per-branch. Mid-apply the authority is held off
-        // (the video hand-off already saw the flip), the marker exists;
-        // after the worker verifies, the value comes back byte-for-byte
-        // and the marker is gone.
+        // yield, ONE marker, ONE hold. The yield covers the whole phase,
+        // never per-branch. Mid-apply the authority is held off (the video
+        // hand-off already saw the flip), the marker exists; W1 keeps that
+        // state after the worker verifies, because this theme owns the
+        // palette.
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_TRAP_JSON), false);
         enable_delegation(&stub, "1"); // both delegations fail -> static runs too
         let theme = animated_theme(&stub);
@@ -5237,25 +5276,11 @@ exit 0
             background::color_authority_held(),
             "one active yield -> one marker"
         );
-        // The worker verifies, then restores; the guard was disarmed in its
-        // favour, so the file and the marker change exactly once.
-        let deadline = Instant::now() + Duration::from_secs(12);
-        loop {
-            let cfg = std::fs::read_to_string(&stub.skwd_cfg).unwrap();
-            if cfg == OWNER_TRAP_JSON {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "restore pending, still: {}",
-                cfg
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert!(
-            !background::color_authority_held(),
-            "the single restore must clear the marker"
-        );
+        // W1: the theme owns the palette, so the single release keeps the
+        // mute: one yield, one marker, and the file never moves again.
+        let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
+        std::thread::sleep(Duration::from_millis(1500));
         drop(_tracing);
         let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
         assert_eq!(
@@ -5264,9 +5289,15 @@ exit 0
             "exactly one yield per apply, got: {}",
             text
         );
-        let sets = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
-        assert_eq!(sets, 2, "one sync set plus exactly one re-assert");
-        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(
+            std::fs::read_to_string(&stub.skwd_cfg).unwrap(),
+            held,
+            "the held mute must not rewrite one byte after the flip"
+        );
+        assert!(
+            background::color_authority_held(),
+            "the held mute keeps its single marker"
+        );
     }
 
     #[test]

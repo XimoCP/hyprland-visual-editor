@@ -45,6 +45,19 @@
 //! only after the value is back. `recover_crashed_yield` replays the repair
 //! on the next start.
 //!
+//! ## Hold lifetime (W1 of `odd/tasks/palette-authority-mute-and-yield.md`)
+//!
+//! The yield is not only "around one apply": while a VALID colour-authority
+//! descriptor exists a theme owns the palette, and the engine must stay mute
+//! for as long as that ownership holds. `restore_color_authority` therefore
+//! consults the descriptor: with an owner it leaves `off` and KEEPS the
+//! marker (the recorded previous value + the crash-safety net); with no
+//! owner (descriptor absent or cleared) it puts the engine's own value back
+//! and clears the marker, so releasing never re-mutes. A crash or restart
+//! still replays the marker at startup and un-mutes the engine — the mute
+//! does not survive HVE's disappearance (documented limit: an uninstall with
+//! HVE not running cannot be repaired by HVE).
+//!
 //! ## Never-panic contract
 //!
 //! Every failure is an honest `Result` error the caller logs and carries on
@@ -550,9 +563,16 @@ fn read_marker() -> Result<Option<YieldMarker>, String> {
 ///
 /// `Ok(None)`: no ownership (missing/unparsable config, non-`wallpaper`
 /// value, ambiguous anchor) — nothing was written. `Ok(Some(previous))`:
-/// the flip happened, the engine is held off, and the caller MUST arrange
-/// a matching `restore_color_authority(&previous)`. `Err`: honest failure;
-/// the caller logs and carries on.
+/// the engine is held off, and the caller MUST arrange a matching
+/// `restore_color_authority(&previous)`. `Err`: honest failure; the caller
+/// logs and carries on.
+///
+/// W1: when the engine is ALREADY held off by a previous apply and our own
+/// pending marker records the value to put back, `Ok(Some(previous))` is
+/// returned WITHOUT flipping or rewriting anything — the marker is the
+/// memory the release needs to restore the engine once no descriptor owns
+/// the palette. A config that is off with no marker of ours reports
+/// `Ok(None)`, exactly as before.
 pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
@@ -568,7 +588,42 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
     };
     let plan = match plan_yield(&text) {
         Some(p) => p,
-        None => return Ok(None),
+        None => {
+            // W1: the engine may ALREADY be held off by a previous apply —
+            // the mute now outlives the apply, so `theme.policy` reads
+            // `off` when the next one starts. The pending marker remembers
+            // the value that must go back; hand it to the caller's release
+            // so the engine returns the moment no descriptor owns the
+            // palette. A config that is off with NO marker of our own is
+            // not ours to touch: report "nothing to hold" as before.
+            let already_off = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v.get("theme")
+                        .and_then(|t| t.get("policy"))
+                        .and_then(|p| p.as_str())
+                        .map(|s| s == "off")
+                })
+                .unwrap_or(false);
+            if !already_off {
+                return Ok(None);
+            }
+            let ours = read_marker()?;
+            return match ours {
+                Some(marker) if marker.config_path == path.display().to_string() => {
+                    tracing::info!(
+                        "[skwd-policy] engine already held off (theme.policy is \
+                         \"off\"); reusing the pending marker's value \"{}\" for \
+                         this apply's release",
+                        marker.previous_value
+                    );
+                    Ok(Some(marker.previous_value))
+                }
+                // Nothing pending, or a marker for a DIFFERENT config: not
+                // ours, never guessed.
+                _ => Ok(None),
+            };
+        }
     };
     // Marker FIRST, flip second: if the process dies between the two steps
     // the marker says what to restore; the reverse order would leave the
@@ -598,8 +653,16 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
 /// Re-reads the file first (a concurrent engine write is never clobbered
 /// with a stale copy), restores the remembered value, clears the marker.
 /// Returns `Ok(true)` when the file was rewritten, `Ok(false)` when there
-/// was nothing to do (config gone, or the current value is not ours to flip
-/// back).
+/// was nothing to do (config gone, the current value is not ours to flip
+/// back, OR a valid colour-authority descriptor says a theme still owns the
+/// palette).
+///
+/// W1: while a VALID colour-authority descriptor exists the mute is
+/// deliberate and must outlive the apply — the file is left at `off` and
+/// the marker is KEPT (it records the previous value a later genuine
+/// release needs, and it is the crash-safety net the next startup replays).
+/// With no valid descriptor (absent or cleared) the engine's own value comes
+/// back, and the mute is not retried.
 pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
@@ -629,6 +692,21 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
             return Ok(false);
         }
     };
+    // W1: while a VALID colour-authority descriptor exists a theme owns the
+    // palette. The mute is then DELIBERATE and must outlive the apply, so
+    // keep `theme.policy` at `off` (write nothing) and keep the marker —
+    // the marker holds the previous value a later genuine release needs,
+    // AND the crash-safety record the next startup replays. A descriptor
+    // that is absent or unreadable means no theme owns the colours: the
+    // engine's own value comes back below, and the mute is not retried.
+    if crate::color_authority::read_descriptor().is_some() {
+        tracing::info!(
+            "[skwd-policy] mute held: a theme owns the palette (colour-authority \
+             descriptor present); engine colour authority stays \"off\" ({})",
+            path.display()
+        );
+        return Ok(false);
+    }
     // `text` is the fresh file, so a concurrent engine write since the
     // yield is never clobbered with the stale flipped copy.
     write_atomic(&path, &plan.new_text)?;
@@ -783,6 +861,30 @@ mod tests {
             {
                 0
             }
+        }
+
+        /// Declare that a theme owns the palette: writes a valid
+        /// colour-authority descriptor INSIDE this sandbox (the `TempEnv`
+        /// above redirects HOME, so `descriptor_path()` never reaches the
+        /// keeper's live file).
+        fn write_authority(&self) {
+            crate::color_authority::write_descriptor(&sample_authority())
+                .expect("write the colour-authority descriptor in the sandbox");
+        }
+
+        fn has_authority(&self) -> bool {
+            crate::color_authority::descriptor_path().exists()
+        }
+    }
+
+    /// A valid colour-authority descriptor: presence means a theme owns the
+    /// palette and the engine must stay mute.
+    fn sample_authority() -> crate::color_authority::ColorAuthority {
+        crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "JoKer".to_string(),
+            palette_file: "/tmp/themes/JoKer/providers/noctalia-v5/palette.json".to_string(),
+            palette_name: "JokerTheme".to_string(),
         }
     }
 
@@ -1281,5 +1383,240 @@ mod tests {
         // The marker stays (recovery refused to clear what it could not
         // repair) so the next startup retries — the temp sandbox cleans up.
         assert!(env.marker().exists(), "unrepaired marker must survive for retry");
+    }
+
+    // ── W1: hold the mute while a theme rules ─────────────────────────
+    //
+    // WHY: before W1 the yield was undone at the end of every apply, so the
+    // engine published its own palette again on the next background apply,
+    // hotplug or rotation — stealing the theme's colours. The colour-
+    // authority descriptor is the declaration that a theme owns the
+    // palette, so the release primitive now consults it: while a VALID
+    // descriptor exists the engine stays `off` (and the marker — the
+    // crash-safety record — stays with it); with no valid descriptor the
+    // engine's own value comes back and the mute is not retried.
+
+    #[test]
+    fn release_keeps_the_mute_while_a_theme_owns_the_palette() {
+        // (a) With a valid descriptor, finishing the apply must NOT restore
+        // the engine: `theme.policy` stays `off` and no byte moves.
+        let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
+        let yielded = yield_color_authority()
+            .expect("yield is an honest Result")
+            .expect("a wallpaper policy must yield");
+        assert_eq!(yielded, "wallpaper");
+        let held_bytes = env.read();
+        assert!(held_bytes.contains("\"policy\": \"off\""));
+        env.write_authority();
+
+        let wrote = restore_color_authority("wallpaper").expect("release is an honest Result");
+        assert!(
+            !wrote,
+            "release must not rewrite the engine config while a theme owns the palette"
+        );
+        assert_eq!(
+            env.read(),
+            held_bytes,
+            "the held mute must leave the engine config byte-identical"
+        );
+        assert!(
+            env.marker().exists(),
+            "the crash-safety record must outlive the apply while the mute is held"
+        );
+        assert_eq!(env.mode(), 0o600, "the held mute touches no permissions");
+    }
+
+    #[test]
+    fn release_restores_when_no_theme_owns_the_palette() {
+        // (b) No descriptor — never written, or cleared by the step-aside:
+        // the engine's own value must come back and the mute must not be
+        // retried.
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        // The descriptor existed and then the theme let go: exactly the
+        // state the step-aside produces.
+        env.write_authority();
+        crate::color_authority::clear_descriptor().unwrap();
+        assert!(!env.has_authority(), "precondition: no owner");
+
+        let wrote = restore_color_authority("wallpaper").expect("release is an honest Result");
+        assert!(wrote, "with no owner the engine value must be restored");
+        assert_eq!(env.read(), FIXTURE, "restored byte-for-byte");
+        assert!(!env.marker().exists(), "restore clears the crash record");
+    }
+
+    #[test]
+    fn held_mute_still_recovers_on_the_next_start_so_a_crash_never_sticks() {
+        // (c) The marker survives the held mute: if HVE dies while the theme
+        // owns the palette, the next start repairs the engine instead of
+        // leaving it mute forever (the documented limit of an external
+        // uninstall applies, but a crash/restart is covered).
+        let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        env.write_authority();
+        assert!(
+            !restore_color_authority("wallpaper").unwrap(),
+            "the mute is held, so release writes nothing"
+        );
+        assert!(
+            env.marker().exists(),
+            "precondition: the crash record is still pending"
+        );
+
+        // "Crash" + restart: the startup sweep runs the marker.
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        startup_recover_crashed_yield();
+
+        assert_eq!(
+            env.read(),
+            FIXTURE,
+            "startup repair must un-mute the engine byte-for-byte"
+        );
+        assert!(!env.marker().exists(), "startup repair clears the record");
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("startup repair") && text.contains("restored"),
+            "the repair must be logged, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn an_armed_guard_drop_holds_the_mute_when_a_theme_owns_the_palette() {
+        // The RAII exit path obeys the same rule as the worker release: an
+        // early-error exit after a theme claimed the palette must hold.
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        let previous = yield_color_authority()
+            .unwrap()
+            .expect("a wallpaper policy must yield");
+        env.write_authority();
+        {
+            let guard = YieldGuard::new(previous);
+            drop(guard); // armed: the Drop consults the descriptor now
+        }
+        assert!(
+            env.read().contains("\"policy\": \"off\""),
+            "an armed guard must keep the mute while the theme owns the palette"
+        );
+        assert!(
+            env.marker().exists(),
+            "the held mute keeps its crash record after the guard's Drop"
+        );
+    }
+
+    #[test]
+    fn held_mute_touches_no_byte_beyond_the_single_value_token() {
+        // (e) Byte preservation across the whole held lifecycle: only the
+        // one general `theme.policy` value token may ever differ; the
+        // per-background `theme.wallpaperProfiles` dotted `theme.policy`
+        // keys stay `wallpaper` and the held release rewrites nothing.
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        let before = env.read();
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        let held = env.read();
+        assert_eq!(
+            held.len(),
+            before.len() - 11 + 5,
+            "only the one quoted value token (11 -> 5 bytes) may change"
+        );
+        assert_eq!(
+            held.matches("\"theme.policy\": \"wallpaper\"").count(),
+            2,
+            "the dotted per-wallpaper profiles must not be touched"
+        );
+        assert!(!held.contains("\"theme.policy\": \"off\""));
+        assert_eq!(held.matches("\"policy\"").count(), 1);
+
+        env.write_authority();
+        assert!(!restore_color_authority("wallpaper").unwrap(), "mute held");
+        assert_eq!(
+            env.read(),
+            held,
+            "the held mute must not rewrite a single byte"
+        );
+    }
+
+    #[test]
+    fn a_second_apply_while_held_restores_when_the_owner_lets_go() {
+        // W1 lifecycle: once the mute outlives the first apply, a later
+        // apply must still know the value to put back. The pending marker
+        // is that memory, and when the new theme claims NO authority the
+        // engine's own value must return — the mute is never left stuck on.
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        // First apply: flip, then the theme claims the palette.
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        env.write_authority();
+        assert!(
+            !restore_color_authority("wallpaper").unwrap(),
+            "the first apply leaves the mute held"
+        );
+        // Second apply, while held: the flip is already in effect, so the
+        // yield must reuse the pending marker's recorded value instead of
+        // reporting "nothing to hold".
+        let previous = yield_color_authority()
+            .expect("yield is an honest Result")
+            .expect("a held engine must still hand its restore value over");
+        assert_eq!(previous, "wallpaper");
+        // The new theme owns nothing: the descriptor is cleared.
+        crate::color_authority::clear_descriptor().unwrap();
+        // Release: with no owner the engine's own value comes back.
+        assert!(
+            restore_color_authority(&previous).unwrap(),
+            "with no owner the second apply must restore the engine"
+        );
+        assert_eq!(env.read(), FIXTURE, "restored byte-for-byte");
+        assert!(!env.marker().exists(), "the release clears the marker");
+    }
+
+    #[test]
+    fn missing_or_unreadable_engine_config_never_invents_a_hold() {
+        // (d) Engine absent / config unreadable: honest no-op even with a
+        // theme claiming the palette — log and carry on, never guess.
+        {
+            let env = PolicyEnv::new(None, None);
+            env.write_authority();
+            assert!(!env.config.exists(), "sandbox starts with no config");
+            assert!(
+                yield_color_authority().unwrap().is_none(),
+                "a missing config has no authority to yield"
+            );
+            let wrote =
+                restore_color_authority("wallpaper").expect("a missing config is not an error");
+            assert!(!wrote, "nothing to restore when the engine is absent");
+            assert!(!env.config.exists(), "no config may be created");
+            assert!(!env.marker().exists(), "no marker for a non-yield");
+        }
+        {
+            let env = PolicyEnv::new(Some("{{{ not json"), None);
+            env.write_authority();
+            assert!(
+                yield_color_authority().unwrap().is_none(),
+                "an unparsable config must not yield"
+            );
+            let wrote =
+                restore_color_authority("wallpaper").expect("an unparsable config is not an error");
+            assert!(!wrote, "an unparsable config has nothing to restore");
+            assert_eq!(env.read(), "{{{ not json", "foreign bytes stay untouched");
+            assert!(!env.marker().exists(), "no marker for a non-yield");
+        }
     }
 }
