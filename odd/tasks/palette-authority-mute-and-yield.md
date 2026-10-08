@@ -93,6 +93,9 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       theme again -> the theme's palette returns and the engine is mute again; (3) suspend/resume with a
       theme applied -> the palette does not move; (4) change the background outside HVE -> HVE stays out;
       (5) the engine absent/renamed -> HVE degrades honestly and does not guess.
+      Status (08-oct): cross-model verification done for W1 and W2 (each found real defects, all fixed);
+      W3 is orchestrator-verified (Tier 2, observability only). Keeper's live verdict: the general behaviour
+      passes and he likes it; **only case (3), suspend/resume, is still pending**.
 
 ## Acceptance criteria
 
@@ -520,6 +523,21 @@ Limits (honest, not covered without the keeper live):
   out. The cap is a single constant (`MAX_BYTES`) if the keeper needs more.
 - Concurrent writers append with `O_APPEND`; a rotation racing an append can drop at most one line
   (best-effort by design, never an abort).
+
+### Keeper's live verdict (08-oct-2026)
+
+In his words: "a falta de probar lo de suspender... a mi por ahora me parece perfecto y me gusta". So the
+general behaviour is validated live by the keeper (theme rules, mute holds, HVE steps aside on a foreign
+background change) and the **suspend/resume case is still pending**. W4 stays open until that last case is
+run; nothing else in W4 is outstanding.
+
+Delivery state at this point: the new binary and the changed watcher script are installed
+(`~/.local/bin/hve`, `~/.local/bin/assets/scripts/color_watcher.sh`, both md5-verified against the repo),
+with the previous binary kept at `~/.local/bin/hve.pre-palette-mute-2026-10-08` and the previous script at
+`/tmp/opencode/color_watcher.sh.pre-palette-mute`; the restore tag is
+`restore-point/pre-palette-mute-2026-10-08`. The branch is pushed. **Still the keeper's call: the PR**,
+because the accumulated branch is well past the 400-line review budget and has to be sliced (chained PRs)
+or carry a maintainer-approved `size:exception`.
 
 Evidence collected while planning (07-08-oct-2026, this machine):
 - The engine publishes on every apply: `noctalia palette bridge: published scheme and
