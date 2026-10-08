@@ -1330,8 +1330,15 @@ pub(crate) fn reassert_workers_idle() -> bool {
 /// bounded cap); `None` keeps today's behaviour byte-for-byte.
 fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<String>) {
     REASSERT_WORKERS_ACTIVE.fetch_add(1, Ordering::SeqCst);
-    std::thread::spawn(move || {
-        let _active = ReassertWorkerGuard;
+    // The guard is built in the PARENT and moved into the worker, and the
+    // spawn goes through `Builder::spawn` (a `Result`, never a panic). Both
+    // together close the leak the plain `thread::spawn` left open: a spawn
+    // that fails drops the closure in the parent, so the moved guard
+    // decrements and the count can never stay at +1 for the rest of the
+    // process (which would make every later sandbox wait its full deadline).
+    let active = ReassertWorkerGuard;
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let _active = active;
         let (settle, max_sets, delay, cap) = color_reassert_timing();
         reassert_custom_scheme_blocking(&palette_name, settle, max_sets, delay, cap);
         // The palette is now verified live (or the bounded cap was hit, or
@@ -1352,6 +1359,12 @@ fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<Str
             }
         }
     });
+    if let Err(e) = spawned {
+        // The closure (and its guard) was dropped above, so the count is
+        // already back. Say it out loud: a silent failure here would look
+        // exactly like "no worker was ever needed".
+        tracing::warn!("[noctalia-v5] could not spawn the colour re-assert worker: {}", e);
+    }
 }
 
 /// Whether the live Noctalia colour state still matches the theme's saved
@@ -4041,10 +4054,23 @@ exit 0
             //
             // Bounded: the worker exits by itself at its attempt cap
             // (production worst case settle + cap ≈ 10 s), and the wait can
-            // never hang the suite.
+            // never hang the suite. A deadline that expires while a worker is
+            // still alive is the one case the wait cannot fix — it must be
+            // LOUD, because a surviving worker keeps reading this sandbox's
+            // process-global state and would quietly pollute the next test
+            // (exactly the failure this wait was added for). `panicking()`
+            // keeps it from turning a failing test into an abort.
             let deadline = Instant::now() + Duration::from_secs(20);
             while !reassert_workers_idle() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
+            }
+            if !reassert_workers_idle() {
+                let msg = "a detached colour re-assert worker outlived its 20 s deadline: \
+                           its sandbox is about to be restored and the next test can be polluted";
+                eprintln!("ColorStub::drop: {msg}");
+                if !std::thread::panicking() {
+                    panic!("ColorStub::drop: {msg}");
+                }
             }
             for (k, v) in &self.saved {
                 match v {

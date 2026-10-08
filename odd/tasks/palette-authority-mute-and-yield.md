@@ -265,6 +265,27 @@ regression test.
 Status: unchanged for the feature (W1 done). The `1465 passed; 0 failed` line in the W1 evidence above was
 a run that got lucky; this section is the corrected evidence.
 
+### W1 — second correction: the two repairs the cross-model review found (same day)
+
+The cross-model review of the fix above returned `PASS with caveats` with two real holes in the new code,
+both closed in the same file:
+
+- **A deadline that expires must be LOUD.** The bounded wait in `ColorStub::drop` used to fall through in
+  silence: a worker surviving its 20 s deadline would keep reading the sandbox's process-global state and
+  quietly pollute the next test — the exact failure the wait exists to prevent, made undetectable. It now
+  prints and panics (guarded by `std::thread::panicking()`, so a test that was already failing is never
+  turned into an abort).
+- **A failed spawn must not leak the count.** `fetch_add` happened before `std::thread::spawn`, which
+  PANICS on a spawn failure with the closure never running — leaving the count at +1 for the rest of the
+  process, so every later sandbox would pay the full 20 s deadline. The guard is now built in the parent,
+  moved into the worker, and the spawn goes through `Builder::spawn` (a `Result`): a failed spawn drops the
+  closure in the parent, which decrements the count by itself; the failure is logged instead of swallowed.
+
+Evidence after both repairs: `cargo test` — `1466 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`
+(`144.74 s`), `cargo build` clean, no warnings, and the affected subset `cargo test v5_apply` →
+`37 passed; 0 failed`. Verified by the orchestrator (parent spot check), not by the writer's word.
+
+
 Evidence collected while planning (07-08-oct-2026, this machine):
 
 - The engine publishes on every apply: `noctalia palette bridge: published scheme and
