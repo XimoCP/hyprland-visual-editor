@@ -901,3 +901,49 @@ fn apply_four_fragments_with_path(sb: &Sandbox, path: &str) -> Vec<String> {
     }
     warns
 }
+
+// ── A corner radius of 0 is a VALUE, never an omission ──────────────────
+//
+// `decoration.rounding = 0` is what "square corners" means, and the durable
+// fragment must say it explicitly. `geometry.sh` used to drop the whole
+// `decoration` block when the radius was 0 ("nothing to round, nothing to
+// say"), so the next reload fell back to the base config for the missing key
+// (`~/.config/hypr/configs/appearance.lua` sets `rounding = 20`) and the
+// corners snapped back to rounded the moment the durable persist ran: the hot
+// `hyprctl eval` applied 0, then the reload re-rounded it. 0 must travel like
+// any other radius.
+
+/// Read the `rounding` value out of a generated `geometry.lua`, ignoring the
+/// sibling `rounding_power` key. `None` = the fragment omitted rounding.
+fn fragment_rounding(fragment: &str) -> Option<i32> {
+    fragment.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("rounding")?.trim_start();
+        rest.strip_prefix('=')?
+            .trim()
+            .trim_end_matches(',')
+            .trim()
+            .parse()
+            .ok()
+    })
+}
+
+#[test]
+fn sandboxed_geometry_fragment_writes_zero_radius_instead_of_omitting_it() {
+    let sb = Sandbox::build();
+
+    sb.run_apply("geometry.sh", &["2", "0", "5", "5"], true, "0", DRAIN);
+    let zero = std::fs::read_to_string(sb.root.join("assets/fragments/geometry.lua")).unwrap();
+    assert_eq!(
+        fragment_rounding(&zero),
+        Some(0),
+        "radius 0 must be written as decoration.rounding = 0, never omitted: {zero}"
+    );
+
+    sb.run_apply("geometry.sh", &["2", "25", "5", "5"], true, "0", DRAIN);
+    let positive = std::fs::read_to_string(sb.root.join("assets/fragments/geometry.lua")).unwrap();
+    assert_eq!(
+        fragment_rounding(&positive),
+        Some(25),
+        "a positive radius must keep travelling: {positive}"
+    );
+}

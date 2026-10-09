@@ -37,8 +37,11 @@ done
 TARGET_FRAGMENT="$HVE_FRAGMENTS_DIR/geometry.lua"
 
 # 1. INTERNAL FRAGMENT GENERATION (strict line-breaks for the Lua overlay)
-if [ "$BORDER_RADIUS" -gt 0 ]; then
-    cat <<EOF > "$TARGET_FRAGMENT"
+# `decoration.rounding` is written ALWAYS, including 0. Omitting it at 0 (the
+# old "no rounding = nothing to say") let the next reload fall back to the base
+# config's rounding (e.g. appearance.lua: rounding = 20) and re-round the
+# corners the user had just squared. 0 is a value like any other.
+cat <<EOF > "$TARGET_FRAGMENT"
 hl.config({
   general = {
     border_size = $BORDER_SIZE,
@@ -51,17 +54,6 @@ hl.config({
   },
 })
 EOF
-else
-    cat <<EOF > "$TARGET_FRAGMENT"
-hl.config({
-  general = {
-    border_size = $BORDER_SIZE,
-    gaps_in     = $GAPS_IN,
-    gaps_out    = $GAPS_OUT,
-  },
-})
-EOF
-fi
 
 echo "Geometry: border=$BORDER_SIZE radius=$BORDER_RADIUS gaps=${GAPS_IN}/${GAPS_OUT} (lua mode)"
 

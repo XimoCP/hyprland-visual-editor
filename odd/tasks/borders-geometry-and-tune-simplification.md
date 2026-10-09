@@ -588,3 +588,49 @@ started: `SavedPresetCard.apply-text` is declared and never painted, and the Sav
 panel body defaults in `PanelRoot` (`save-button-text` / `save-placeholder`, set
 hardcoded in `main.rs:~4157`) are still English-only — that is Save's CONTENT, a
 separate decision from the chrome.
+
+## B9 — a corner radius of 0 must be WRITTEN, never omitted (regression, found live 2026-10-09)
+
+**Report (the keeper)**: in Borders, setting Corner Radius to 0 applies and then snaps
+back to the previous rounded corners. 1 px and any positive value stick.
+
+**Root cause — verified in the artifacts, not inferred.** The hot path is correct:
+`callbacks::geometry_lua_chunk` (`src/callbacks.rs:941`) sends `decoration.rounding = 0`
+and `hyprctl eval` applies it. The DURABLE fragment is not: `assets/scripts/geometry.sh`
+(lines 40-64) writes the `decoration` block only when `BORDER_RADIUS > 0` and omits it
+entirely at 0 ("no rounding = nothing to say"). `assemble.sh` then rebuilds `overlay.lua`
+and queues a reload, and Hyprland falls back to the base config for the missing key — the
+keeper's `~/.config/hypr/configs/appearance.lua:29` sets `rounding = 20`, and the
+`assets/fragments/geometry.lua` on disk carried `rounding = 25`. So the reload re-rounds
+the corners right after the hot apply painted them square. This is exactly the divergence
+the B1 cross-model warning flagged ("the persisted fragment writes it only when radius > 0"),
+now with a user-visible symptom.
+
+**Fix**: `geometry.sh` always emits `decoration = { rounding = $BORDER_RADIUS, rounding_power = 2 }`.
+`0` is a value like any other, and the Rust hot chunk already agrees with that contract.
+
+**Test (RED first)**: `reload_coalescer::sandboxed_geometry_fragment_writes_zero_radius_instead_of_omitting_it`
+runs the REAL `geometry.sh` inside the existing hermetic `Sandbox` at radius 0 and reads the
+generated `assets/fragments/geometry.lua`; it must carry `rounding = 0`. A second run at 25
+pins the positive case.
+
+**Docs**: `docs/wiki/Configuration.md` documented the omission as intended behaviour; corrected.
+
+**Delivery**: one work-unit commit on `hve2-visual-rewrite`. Tier 2 (single-condition fix in
+one shell script) but verified cross-model (GLM 5.3-flash), because the fragment is what the
+compositor re-reads on every reload.
+
+- [x] B9 — implement + tests + docs. `geometry.sh` always emits
+  `decoration = { rounding = $BORDER_RADIUS, rounding_power = 2 }`; RED-first test
+  `reload_coalescer::sandboxed_geometry_fragment_writes_zero_radius_instead_of_omitting_it`
+  (radius 0 → `Some(0)`, radius 25 → `Some(25)`, real `geometry.sh` in the hermetic Sandbox);
+  `docs/wiki/Configuration.md:44` corrected. Full suite 1505 passed / 0 failed, 0 warnings.
+- [x] B9 verification — cross-model (GLM 5.3-flash). **PASS.** All five claims CONFIRMED.
+  The RED state was reproduced by running `git show HEAD:assets/scripts/geometry.sh` in a
+  `/tmp/opencode` sandbox: at radius 0 the pre-fix fragment carries no `decoration` block
+  (`fragment_rounding` → `None`), the fixed one carries `rounding = 0` (→ `Some(0)`), so the
+  test really discriminates. Adversarial probes at 0/1/25/−3 all emit `rounding` (negative
+  clamps to 0); `border_size`/`gaps_in`/`gaps_out` survive at 0; no other code path omits
+  `decoration.rounding`; nothing weakened; 0 compiler warnings. Corroborating live evidence:
+  the keeper's real `~/.cache/hve/overlay.lua` currently has no `decoration` block while the
+  stale repo fragment still holds `rounding = 25` — the exact snap-back shape.

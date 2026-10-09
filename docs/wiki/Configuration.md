@@ -41,7 +41,7 @@ That block is what a **fresh** file looks like — the defaults from `Config::de
 | `config_version` | number | `8` | Schema version. Migrated forward on load (see below). |
 | `is_system_active` | bool | `false` | Whether HVE's management is on. Toggled by the tray's *Toggle System* and by `hve-ipc pause-restart`. |
 | `border_size` | number | `2` | Window border width, applied through the geometry fragment. |
-| `border_radius` | number | `32` | Corner radius in pixels. The geometry fragment omits `rounding` when it is `0`. |
+| `border_radius` | number | `32` | Corner radius in pixels (`decoration.rounding`). Always written, including `0` (square corners); omitting it at 0 would let the next reload fall back to the base config's rounding. |
 | `gaps_in` | number | `5` | Inner gaps, written as `general.gaps_in`. |
 | `gaps_out` | number | `5` | Outer gaps, written as `general.gaps_out`. |
 | `active_anim_file` | string | `""` | Name of the active animation preset; empty means none. |
