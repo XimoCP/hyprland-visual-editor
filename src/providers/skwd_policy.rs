@@ -708,6 +708,8 @@ pub(crate) fn yield_color_authority() -> Result<Option<String>, String> {
     // the next `recover_crashed_yield`.
     write_marker(&path, &plan.previous_value)?;
     write_atomic(&path, &plan.new_text)?;
+    // A fresh mute supersedes any picker-voice grace anchor.
+    let _ = fs::remove_file(picker_voice_path());
     // While the engine is held off no theme owns the colours: drop any
     // stale descriptor. Best-effort — a failed clear never aborts the apply.
     if let Err(e) = crate::color_authority::clear_descriptor() {
@@ -826,6 +828,164 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
         &format!("theme.policy -> \"{}\" ({})", previous_value, path.display()),
     );
     Ok(true)
+}
+
+/// W6 of `odd/tasks/palette-authority-mute-and-yield.md`.
+///
+/// Let the engine's own picker SPEAK: with our pending marker, put
+/// `theme.policy` back to the engine's own value while KEEPING the marker and
+/// the descriptor, so the engine publishes (its picker paints itself from the
+/// background) and the silence can be taken back the moment the picker
+/// closes. The overlay keeps following the theme snapshot (the descriptor is
+/// untouched), so the keeper's own colours do not flicker while he browses.
+///
+/// `Ok(false)` when there is nothing to suspend: no marker of ours, the
+/// config is gone, or `theme.policy` is not the `"off"` we wrote.
+pub(crate) fn suspend_color_authority() -> Result<bool, String> {
+    let Some(marker) = read_marker()? else {
+        return Ok(false);
+    };
+    let path = PathBuf::from(&marker.config_path);
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(format!(
+                "[skwd-policy] cannot read engine config {} to suspend the mute: {}",
+                path.display(),
+                e
+            ))
+        }
+    };
+    let Some(plan) = plan_restore(&text, &marker.previous_value) else {
+        return Ok(false);
+    };
+    write_atomic(&path, &plan.new_text)?;
+    // A new suspension supersedes any previous grace anchor.
+    let _ = fs::remove_file(picker_voice_path());
+    tracing::info!(
+        "[skwd-policy] engine picker open: the mute is released for the picker \
+         (theme.policy -> \"{}\"); the descriptor is kept",
+        marker.previous_value
+    );
+    crate::decision_log::record(
+        "PICKER VOICE",
+        &format!(
+            "engine picker open; the engine speaks again (theme.policy -> \"{}\"), descriptor kept",
+            marker.previous_value
+        ),
+    );
+    Ok(true)
+}
+
+/// W6: take the silence back after the picker closed. Flips `theme.policy`
+/// to `off` again only when the engine's own `"wallpaper"` value is live (our
+/// marker keeps the memory). `Ok(false)` when there is nothing to re-hold
+/// (no marker, config gone, or the value is not ours to flip).
+pub(crate) fn rehold_color_authority() -> Result<bool, String> {
+    let Some(marker) = read_marker()? else {
+        return Ok(false);
+    };
+    let path = PathBuf::from(&marker.config_path);
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(format!(
+                "[skwd-policy] cannot read engine config {} to re-hold the mute: {}",
+                path.display(),
+                e
+            ))
+        }
+    };
+    let Some(plan) = plan_yield(&text) else {
+        return Ok(false);
+    };
+    write_atomic(&path, &plan.new_text)?;
+    // Anchor the grace window: a publish already in flight (or HVE's own
+    // re-assert) may still land just after this close, and must not be read
+    // as the keeper's hand.
+    let anchor = serde_json::json!({ "closed_at": now_epoch_secs() }).to_string();
+    let _ = fs::write(picker_voice_path(), anchor);
+    tracing::info!("[skwd-policy] engine picker closed: the mute is back (theme.policy -> \"off\")");
+    crate::decision_log::record(
+        "PICKER QUIET",
+        "engine picker closed; the engine is silenced again",
+    );
+    Ok(true)
+}
+
+/// W6: whether HVE has SUSPENDED the mute so the engine's own picker can
+/// speak — our marker is pending AND `theme.policy` is back at the engine's
+/// own value. Read-only; a crash between the marker write and the flip cannot
+/// look like this (the flip is what makes it visible), and a marker with no
+/// live flip is the `"off"` mute itself.
+pub(crate) fn color_authority_suspended() -> bool {
+    let Ok(Some(marker)) = read_marker() else {
+        return false;
+    };
+    let Ok(text) = fs::read_to_string(&marker.config_path) else {
+        return false;
+    };
+    let policy = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| {
+            v.get("theme")
+                .and_then(|t| t.get("policy"))
+                .and_then(|p| p.as_str())
+                .map(str::to_string)
+        });
+    // Compare against the value our marker remembers, not merely "not off": a
+    // keeper hand-edit to another value must never look like our suspension.
+    policy.as_deref() == Some(marker.previous_value.as_str())
+}
+
+/// The keeper-voice grace window after a suspension ends, in seconds.
+///
+/// The engine publishes asynchronously: a palette write can land just after
+/// the picker closes (and HVE's own re-assert of the theme's palette also
+/// touches the same watched files). Inside this window a palette change is
+/// still treated as the ENGINE's/HVE's, never the keeper's hand, so a browse
+/// can never release the theme by accident. Once the mute is re-held the
+/// engine cannot publish at all, so the window never needs to be long.
+const PICKER_VOICE_GRACE_SECS: u64 = 20;
+
+/// File recording when the last suspension ended (the grace anchor).
+fn picker_voice_path() -> PathBuf {
+    hve_cache_dir().join("picker-voice.json")
+}
+
+fn now_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// W6: a suspension ended recently. Combined with
+/// [`color_authority_suspended`], this is the guard the palette-change refusal
+/// must use: inside the grace, an engine publish that just landed is still the
+/// engine's, not the keeper's manual change.
+pub(crate) fn color_authority_recently_suspended() -> bool {
+    if color_authority_suspended() {
+        return true;
+    }
+    let Ok(text) = fs::read_to_string(picker_voice_path()) else {
+        return false;
+    };
+    let closed_at = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("closed_at").and_then(|c| c.as_u64()));
+    match closed_at {
+        Some(closed_at) => now_epoch_secs().saturating_sub(closed_at) < PICKER_VOICE_GRACE_SECS,
+        None => false,
+    }
+}
+
+/// Test-only: the grace file path, so a test can plant or clear the anchor.
+#[cfg(test)]
+pub(crate) fn picker_voice_path_for_test() -> PathBuf {
+    picker_voice_path()
 }
 
 /// Repair a yield that a crash left un-restored: reads the marker, puts
@@ -1814,6 +1974,113 @@ mod tests {
             log_text().contains("ENGINE UNREADABLE"),
             "an unparsable engine config must be logged as unreadable, got: {}",
             log_text()
+        );
+    }
+
+    // ── W6: the picker speaks while open, the silence returns on close ──
+
+    /// Hold the mute the way an apply does, then let the provider re-claim
+    /// (the descriptor is written right after the hold). Leaves the sandbox
+    /// in the "theme owns the palette, engine muted" state.
+    fn muted_with_claim() -> PolicyEnv {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        env.write_authority();
+        let previous = yield_color_authority().unwrap().expect("the engine owns the scheme");
+        assert_eq!(previous, "wallpaper");
+        env.write_authority();
+        assert!(env.read().contains("\"policy\": \"off\""));
+        env
+    }
+
+    /// The keeper's rule: with a theme claiming the palette, suspending puts
+    /// `theme.policy` back so the engine's picker can paint itself, and it
+    /// KEEPS the marker and the claim — the silence must be re-holdable.
+    #[test]
+    fn suspend_lets_the_engine_speak_and_keeps_the_claim() {
+        let env = muted_with_claim();
+
+        assert!(
+            suspend_color_authority().unwrap(),
+            "the suspension must rewrite the config"
+        );
+        assert!(
+            env.read().contains("\"policy\": \"wallpaper\""),
+            "the engine's own value must be back, got: {}",
+            env.read()
+        );
+        assert!(env.marker().exists(), "the marker must survive the suspension");
+        assert!(
+            env.has_authority(),
+            "the claim must survive: the overlay keeps the theme"
+        );
+        assert!(color_authority_suspended(), "the suspension must be visible");
+    }
+
+    /// The picker closed with nothing applied: the silence comes back and the
+    /// marker stays (it is still the memory a later real release needs).
+    #[test]
+    fn rehold_takes_the_silence_back_after_the_picker_closes() {
+        let env = muted_with_claim();
+        suspend_color_authority().unwrap();
+        assert!(color_authority_suspended());
+
+        assert!(
+            rehold_color_authority().unwrap(),
+            "the re-hold must rewrite the config"
+        );
+        assert!(env.read().contains("\"policy\": \"off\""));
+        assert!(!color_authority_suspended(), "the suspension is over");
+        assert!(
+            env.marker().exists(),
+            "the marker is still the memory for a real release"
+        );
+    }
+
+    /// No pending marker: nothing to suspend, and the predicate stays false.
+    #[test]
+    fn suspend_is_a_noop_without_our_marker() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        assert!(!suspend_color_authority().unwrap());
+        assert!(!color_authority_suspended());
+        assert!(!rehold_color_authority().unwrap());
+        // The config is untouched.
+        assert!(env.read().contains("\"policy\": \"wallpaper\""));
+    }
+
+    /// The grace window: a publish already in flight (and HVE's own re-assert
+    /// of the theme's palette) may land just after the close, so the guard
+    /// must stay on for a short window and then switch off.
+    #[test]
+    fn recently_suspended_covers_the_grace_after_a_close() {
+        let _env = muted_with_claim();
+        assert!(!color_authority_recently_suspended(), "nothing happened yet");
+
+        suspend_color_authority().unwrap();
+        assert!(color_authority_recently_suspended(), "suspended: guarded");
+
+        rehold_color_authority().unwrap();
+        assert!(
+            color_authority_recently_suspended(),
+            "the grace must cover the close itself"
+        );
+
+        fs::remove_file(picker_voice_path_for_test()).unwrap();
+        assert!(
+            !color_authority_recently_suspended(),
+            "with the anchor gone and the mute held, the guard is off again"
+        );
+    }
+
+    /// A keeper (or engine) hand-edit to another value must never look like our
+    /// suspension, or the W5 guard would stay armed with no picker open.
+    #[test]
+    fn a_foreign_policy_value_is_not_a_suspension() {
+        let env = muted_with_claim();
+        suspend_color_authority().unwrap();
+        fs::write(&env.config, r#"{"theme":{"policy":"fixed"}}"#).unwrap();
+        assert!(
+            !color_authority_suspended(),
+            "a foreign value is not our suspension"
         );
     }
 }

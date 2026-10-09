@@ -64,7 +64,7 @@ struct Cli {
     verbose: u8,
 }
 
-fn project_dir() -> PathBuf {
+pub(crate) fn project_dir() -> PathBuf {
     // Runtime project root (works for `cargo run` and installed binary)
     // Check: current dir, parent of exe, CARGO_MANIFEST_DIR fallback
     let candidates = [
@@ -2753,6 +2753,12 @@ fn main() -> Result<(), slint::PlatformError> {
     // theme — HVE steps aside until a theme is applied again. Idempotent and
     // best-effort: a failed spawn is logged and never aborts startup.
     crate::providers::start_foreign_change_watch();
+    // ── W6: let the engine's own picker speak while it is open ─────────
+    // The keeper's rule (09-oct): the picker paints its UI from the
+    // background, so opening it must release the silence temporarily; closing
+    // it without a background change must give the theme its colours back,
+    // with no HVE re-entry. A separate, cheap watch: presence only.
+    crate::providers::start_picker_voice_watch();
     // A crash between masking and restoring would leave the desktop without
     // blur, border and shadow (and the next apply would make it permanent).
     // Replay it before anything else touches the compositor.

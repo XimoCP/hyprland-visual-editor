@@ -521,6 +521,17 @@ fn cmd_assert_color_authority(proj: &Path) -> String {
 /// (W2) or a theme re-apply touches it. Answers `noop` to the watcher, exactly
 /// like the refusal always did.
 fn handle_keeper_palette_change() -> String {
+    // W6: while the picker-voice suspension is live — or inside its short
+    // grace window after the picker closes — the engine is publishing on
+    // purpose (or HVE is re-asserting the theme), so this palette change is
+    // NOT the keeper's hand. Never release the theme for it.
+    if crate::providers::skwd_policy::color_authority_recently_suspended() {
+        crate::decision_log::record(
+            "PICKER VOICE CHANGE",
+            "the engine published for its own picker (or just after it closed); the theme keeps the colours",
+        );
+        return "noop\n".to_string();
+    }
     if let Some(descriptor) = crate::color_authority::read_descriptor() {
         match crate::color_authority::mark_keeper_palette(&descriptor.backend, &descriptor.theme) {
             Ok(()) => crate::decision_log::record(
@@ -559,8 +570,10 @@ fn cmd_repair_color_authority(proj: &Path) -> String {
 /// File-based state, like cmd_refresh_theme: the IPC thread must never
 /// lock SharedState (see its invariant in app_state.rs), so the applied
 /// theme comes from the on-disk config and the providers from a fresh
-/// file-based manager, exactly as main() builds it.
-fn resolve_applied_authority(proj: &Path) -> String {
+/// file-based manager, exactly as main() builds it. `pub(crate)` so the W6
+/// picker-voice watch can give the theme its colours back when the picker
+/// closes without a background change.
+pub(crate) fn resolve_applied_authority(proj: &Path) -> String {
     let cfg = Config::load();
     let config_dir = dirs::config_dir()
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
@@ -1205,5 +1218,62 @@ mod tests {
         let (decision, detail) = reassert_decision(crate::hypr_ipc::ReassertPermit::Resume);
         assert_eq!(decision, "ASSERT GRANTED");
         assert_eq!(detail, "source=resume");
+    }
+
+    /// W6: while the engine is speaking for its own OPEN picker, a palette
+    /// change is the ENGINE's, not the keeper's hand — the refusal must NOT
+    /// release the theme's colours, or a mere browse would end the theme.
+    #[test]
+    fn a_refused_reassert_keeps_the_theme_while_the_engine_speaks_for_its_picker() {
+        let _env = crate::test_utils::TempEnv::new();
+        // The engine config lives in the sandbox (TempEnv redirects HOME).
+        let config = dirs::config_dir()
+            .expect("config dir")
+            .join("skwd-wall-v2")
+            .join("config.json");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config,
+            r#"{"theme":{"policy":"wallpaper"},"noctalia":{"themeMode":"follow"}}"#,
+        )
+        .unwrap();
+
+        let authority = crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "Work".to_string(),
+            palette_file: "/tmp/hve/themes/Work/providers/noctalia-v5/palette.json".to_string(),
+            palette_name: "JokerTheme".to_string(),
+        };
+        // A theme claims the palette, then HVE suspends the mute for the picker.
+        crate::providers::skwd_policy::yield_color_authority()
+            .unwrap()
+            .expect("the engine owns the scheme");
+        crate::color_authority::write_descriptor(&authority).unwrap();
+        crate::providers::skwd_policy::suspend_color_authority().unwrap();
+        assert!(crate::providers::skwd_policy::color_authority_suspended());
+
+        let response = handle_keeper_palette_change();
+
+        assert_eq!(response, "noop\n");
+        assert!(
+            !crate::color_authority::keeper_owns_palette(),
+            "the engine's own picker publish must never release the theme's colours"
+        );
+        assert_eq!(
+            crate::color_authority::read_descriptor(),
+            Some(authority.clone()),
+            "the theme must still own the palette"
+        );
+
+        // And the grace after the close keeps the guard on: a publish already
+        // in flight (or HVE's own re-assert) must not release the theme either.
+        crate::providers::skwd_policy::rehold_color_authority().unwrap();
+        assert!(crate::providers::skwd_policy::color_authority_recently_suspended());
+        assert_eq!(handle_keeper_palette_change(), "noop\n");
+        assert!(
+            !crate::color_authority::keeper_owns_palette(),
+            "the grace window must keep the theme's colours after the picker closes"
+        );
+        assert_eq!(crate::color_authority::read_descriptor(), Some(authority));
     }
 }

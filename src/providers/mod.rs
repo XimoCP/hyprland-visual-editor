@@ -17,6 +17,9 @@ pub mod wallpaper_authority;
 /// `background` router directly.
 pub use background::start_foreign_change_watch;
 
+/// W6 re-export: `main` starts the picker-voice watch through the same router.
+pub use background::start_picker_voice_watch;
+
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme_manager::{ThemeManager, ThemeProvider};

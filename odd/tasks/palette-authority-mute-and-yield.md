@@ -134,9 +134,47 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       and unreachable while the marker exists (the marker makes `hve_theme_owns_colours` false, so the watcher
       never asks and no permit is consumed); two SUGGESTIONS (defensive `keeper_owns_palette()` in the
       descriptor-absent startup repair; best-effort marker unlink). All left as-is, recorded here.
+- [ ] **W6 — Let the engine's own picker SPEAK while it is open, and take the silence back on close.**
+      Requested live by the keeper (09-oct-2026): the engine's picker paints its own UI from the
+      background, a property he values; while the mute is held that painting is lost. His rule: opening
+      the picker releases the silence so the interface paints, but closing it without applying anything
+      must give the theme back its colours WITHOUT re-entering HVE ("si me equivoco y abro skwd sin
+      querer… zas, ya perdimos el control"). So the release is TEMPORARY, tied to the picker being open —
+      not the permanent step-aside. Return point before touching this: tag
+      `restore-point/pre-picker-voice-2026-10-09` -> `ec2d8c3`.
+      Design: a fast watch (`PICKER_VOICE_POLL_INTERVAL`) samples the engine's picker presence (the
+      existing cheap `/proc` scan) and drives a pure decision over (theme claims?, picker?, suspended?):
+      - `Speak`: a theme claims and the picker opened -> `skwd_policy::suspend_color_authority()` puts
+        `theme.policy` back to the engine's own value KEEPING our marker and the descriptor, so the engine
+        publishes and its picker paints itself. The overlay keeps the theme snapshot (descriptor intact).
+      - `Quiet`: the picker closed while suspended -> if a foreign background is live, the claim goes
+        (`release_claim`, the same path the step-aside uses); otherwise `rehold_color_authority()` puts
+        the mute back and the app re-asserts the theme's palette (a no-op when nothing drifted).
+      - `Nothing` otherwise (no claim; picker unknown; HVE itself acting).
+      Guard: while suspended, a palette-file change is the ENGINE's, not the keeper's hand, so
+      `handle_keeper_palette_change` returns noop WITHOUT writing the W5 keeper marker.
+      Tests: the pure decision, the suspend/rehold config+marker lifecycle, the suspended predicate, and
+      the refusal-guard while suspended.
+      **Done** (commit pending). `src/providers/skwd_policy.rs` (`suspend_color_authority`,
+      `rehold_color_authority`, `color_authority_suspended`, `color_authority_recently_suspended`),
+      `src/providers/background.rs` (`picker_voice_action`, `start_picker_voice_watch`, `picker_voice_tick`,
+      `release_claim` extracted from the step-aside), `src/ipc.rs` (guard), `src/main.rs` + `mod.rs` (wiring).
+      Wires `project_dir`/`resolve_applied_authority` to `pub(crate)`. RED proven: disabling the ipc guard
+      fails its test.
+- [x] **W6 verification — cross-model (GLM 5.3-flash). PASS, twice.** First pass: 5/5 claims CONFIRMED,
+      discriminating proofs observed, adversarial state analysis. It found one real WARNING: a palette
+      publish landing just after the picker closed (including HVE's own re-assert of the theme's palette,
+      which rewrites the same watched files) could be misread as the keeper's hand and permanently release
+      the theme — precisely the loss the keeper feared. **Fixed with a grace window**: `rehold` anchors
+      `closed_at` in `picker-voice.json`; `color_authority_recently_suspended()` = suspended OR inside a
+      20 s grace; the ipc guard uses it. Also tightened `color_authority_suspended()` to compare against the
+      marker's `previous_value`. Second pass: the WARNING is **CLOSED** (ordering trace: the anchor is on
+      disk before the re-assert can change files; the guard sees it), each new adversarial scenario is
+      correct or self-healing, no new defect. Residual accepted: an engine publish taking longer than 20 s
+      to land falls back to the keeper's-hand reading (recoverable, logged). Suite **1519 passed / 0 failed,
+      0 warnings**.
 
 ## Acceptance criteria
-
 - With a theme applied, no engine publish can change the live palette - including after a wake, a
   monitor hotplug and a background rotation.
 - A background change HVE did not ask for wins: the palette stays as the new background set it, and HVE

@@ -657,17 +657,23 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
     {
         return Ok(StepAsideOutcome::Held);
     }
-    // Step aside. ORDER MATTERS: with the descriptor still present
-    // `restore_color_authority` would keep the mute (a theme owns the
-    // palette); clearing it first makes the release genuine.
+    release_claim(
+        "a background HVE did not paint is live and the keeper's program is running; descriptor cleared",
+    )?;
+    Ok(StepAsideOutcome::SteppedAside)
+}
+
+/// Release the theme's claim on the palette and the engine mute: the ONE path
+/// the background step-aside and the picker-voice close both use.
+///
+/// ORDER MATTERS: with the descriptor still present `restore_color_authority`
+/// would keep the mute (a theme owns the palette); clearing it first makes the
+/// release genuine. The pending marker is the value a genuine release must put
+/// back; its absence is not an error (the mute may never have been ours).
+fn release_claim(reason: &str) -> Result<(), String> {
     crate::color_authority::clear_descriptor()
         .map_err(|e| format!("[background] cannot clear colour-authority descriptor: {e}"))?;
-    crate::decision_log::record(
-        "STEPPED ASIDE",
-        "a background HVE did not paint is live and the keeper's program is running; descriptor cleared",
-    );
-    // The pending marker is the value a genuine release must put back; its
-    // absence is not an error (the mute may never have been ours).
+    crate::decision_log::record("STEPPED ASIDE", reason);
     let pending = crate::providers::skwd_policy::held_previous_value();
     let released = match pending.as_deref() {
         Some(previous) => release_color_authority(previous),
@@ -676,32 +682,30 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
     match (pending.as_deref(), released) {
         (_, Ok(true)) => {
             tracing::info!(
-                "[background] a background HVE did not paint is live: stepped aside \
-                 (descriptor cleared, engine mute released)"
+                "[background] claim released: descriptor cleared, engine mute released ({reason})"
             );
             crate::decision_log::record(
                 "MUTE RELEASED",
-                "step-aside put the engine's own value back",
+                "claim release put the engine's own value back",
             );
         }
         (Some(_), Ok(false)) => {
             tracing::info!(
-                "[background] a background HVE did not paint is live: stepped aside \
-                 (descriptor cleared; the engine mute was already back)"
+                "[background] claim released: descriptor cleared; the engine mute was already \
+                 back ({reason})"
             );
             crate::decision_log::record(
                 "MUTE RELEASED",
-                "step-aside: the engine mute was already back",
+                "claim release: the engine mute was already back",
             );
         }
         (None, Ok(false)) => {
             tracing::info!(
-                "[background] a background HVE did not paint is live: stepped aside \
-                 (descriptor cleared; no pending engine mute to release)"
+                "[background] claim released: descriptor cleared; no pending engine mute ({reason})"
             );
             crate::decision_log::record(
                 "MUTE RELEASED",
-                "step-aside: no pending engine mute to release",
+                "claim release: no pending engine mute to release",
             );
         }
         (_, Err(e)) => {
@@ -709,18 +713,16 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
             // lost: the next watch tick retries it through
             // `complete_pending_release`. Say exactly that, never "released".
             tracing::warn!(
-                "[background] stepped aside (descriptor cleared) but could not release \
-                 the engine mute yet: {e}; the release stays pending and will be retried"
+                "[background] claim released (descriptor cleared) but could not release the \
+                 engine mute: {e}; the release stays pending and will be retried"
             );
             crate::decision_log::record(
                 "MUTE RELEASE PENDING",
-                &format!(
-                    "step-aside could not release the engine mute yet: {e}; will retry"
-                ),
+                &format!("claim release could not release the engine mute yet: {e}; will retry"),
             );
         }
     }
-    Ok(StepAsideOutcome::SteppedAside)
+    Ok(())
 }
 
 /// Complete a release a previous step-aside left pending: the descriptor is
@@ -796,6 +798,130 @@ pub fn start_foreign_change_watch() {
     if let Err(e) = spawned {
         STARTED.store(false, Ordering::SeqCst);
         tracing::warn!("[background] cannot start the foreign-background watch: {e}");
+    }
+}
+
+// ── W6: the engine's own picker speaks while it is open ──────────────
+
+/// What the picker-voice watch should do this tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerVoiceAction {
+    /// Nothing to change (no claim, picker unknown, or already in place).
+    Nothing,
+    /// A theme claims and the picker just opened: let the engine publish.
+    Speak,
+    /// The picker closed while suspended: take the silence back (or release
+    /// the claim when the keeper changed the background through it).
+    Quiet,
+}
+
+/// The pure decision behind the picker-voice watch.
+///
+/// - `claims`: a theme currently owns the palette (descriptor present). With
+///   no owner there is no silence to suspend or take back.
+/// - `picker`: the engine's own program presence (`None` = could not tell —
+///   hold, never guess, exactly like the step-aside).
+/// - `suspended`: HVE already released the mute for a previous open.
+///
+/// The keeper's rule (09-oct-2026): opening the picker must let the engine
+/// paint its own UI from the background, but closing it without applying
+/// anything must leave the theme untouched — no permanent takeover.
+pub(crate) fn picker_voice_action(
+    claims: bool,
+    picker: Option<bool>,
+    suspended: bool,
+) -> PickerVoiceAction {
+    if !claims {
+        return PickerVoiceAction::Nothing;
+    }
+    match (picker, suspended) {
+        (Some(true), false) => PickerVoiceAction::Speak,
+        (Some(false), true) => PickerVoiceAction::Quiet,
+        _ => PickerVoiceAction::Nothing,
+    }
+}
+
+/// How often the picker watch samples the engine's own program presence. Cheap
+/// (a procfs scan) so it can be short: the keeper wants the picker's UI to
+/// paint itself the moment it opens.
+const PICKER_VOICE_POLL_INTERVAL: Duration = Duration::from_millis(600);
+
+/// Start the process-lifetime watch that lets the engine's own picker SPEAK
+/// while it is open and takes the silence back when it closes. Idempotent; a
+/// failed spawn is logged and never aborts startup.
+pub fn start_picker_voice_watch() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("hve-picker-voice-watch".into())
+        .spawn(|| loop {
+            std::thread::sleep(PICKER_VOICE_POLL_INTERVAL);
+            if let Err(e) = picker_voice_tick() {
+                tracing::warn!("[background] picker-voice check failed: {e}");
+            }
+        });
+    if let Err(e) = spawned {
+        STARTED.store(false, Ordering::SeqCst);
+        tracing::warn!("[background] cannot start the picker-voice watch: {e}");
+    }
+}
+
+/// One picker-voice tick: decide with [`picker_voice_action`] and apply it.
+///
+/// `Quiet` distinguishes the two closes: a foreign background (the keeper
+/// used the picker to change it) releases the claim through the step-aside
+/// path; anything else re-holds the mute and gives the theme its colours back
+/// (a no-op when the engine painted nothing).
+fn picker_voice_tick() -> Result<(), String> {
+    // HVE's own apply owns the state between the mute flip and the descriptor
+    // write; never fight it.
+    if hve_is_acting() {
+        return Ok(());
+    }
+    let descriptor = crate::color_authority::read_descriptor();
+    let suspended = crate::providers::skwd_policy::color_authority_suspended();
+    match picker_voice_action(descriptor.is_some(), engine_picker_running(), suspended) {
+        PickerVoiceAction::Nothing => Ok(()),
+        PickerVoiceAction::Speak => {
+            crate::providers::skwd_policy::suspend_color_authority()?;
+            Ok(())
+        }
+        PickerVoiceAction::Quiet => {
+            let declared = descriptor
+                .as_ref()
+                .map(declared_backgrounds_for)
+                .unwrap_or_default()
+                .iter()
+                .map(|path| canonical_for_compare(path))
+                .collect::<Vec<String>>();
+            let live = crate::providers::wallpaper_authority::query_live_backgrounds().map(|paths| {
+                paths
+                    .iter()
+                    .map(|path| canonical_for_compare(path))
+                    .collect::<Vec<String>>()
+            });
+            // The picker was open, so a foreign live background is the
+            // keeper's own pick, never an engine reconcile.
+            let foreign = decide_palette_authority(
+                live.as_deref(),
+                &declared,
+                false,
+                Some(true),
+                true,
+            ) == PaletteAuthorityVerdict::StepAside;
+            if foreign {
+                release_claim(
+                    "the keeper changed the background from the engine's own picker; descriptor cleared",
+                )
+            } else {
+                crate::providers::skwd_policy::rehold_color_authority()?;
+                // Give the theme its colours back; a no-op when nothing drifted.
+                let _ = crate::ipc::resolve_applied_authority(&crate::project_dir());
+                Ok(())
+            }
+        }
     }
 }
 
@@ -2280,5 +2406,27 @@ mod tests {
             base,
             "a failed hold must not leave the process claiming HVE is acting"
         );
+    }
+
+    // ── W6: the picker-voice decision ─────────────────────────────────
+
+    #[test]
+    fn picker_voice_decision_covers_the_states() {
+        use super::PickerVoiceAction::{Nothing, Quiet, Speak};
+
+        // No theme claims the palette: nothing to suspend or take back.
+        assert_eq!(picker_voice_action(false, Some(true), false), Nothing);
+        assert_eq!(picker_voice_action(false, Some(false), true), Nothing);
+        // A theme claims and the picker just opened: let the engine speak.
+        assert_eq!(picker_voice_action(true, Some(true), false), Speak);
+        // Already speaking: nothing to do.
+        assert_eq!(picker_voice_action(true, Some(true), true), Nothing);
+        // The picker closed while suspended: take the silence back.
+        assert_eq!(picker_voice_action(true, Some(false), true), Quiet);
+        // The picker closed but we never suspended: nothing.
+        assert_eq!(picker_voice_action(true, Some(false), false), Nothing);
+        // Presence unknown: HOLD, never guess.
+        assert_eq!(picker_voice_action(true, None, false), Nothing);
+        assert_eq!(picker_voice_action(true, None, true), Nothing);
     }
 }
