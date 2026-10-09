@@ -472,8 +472,9 @@ fn resolve_assert_color_authority(
 /// (`odd/tasks/palette-defence-on-monitor-events.md`) or a resume from
 /// suspend (`odd/tasks/palette-defence-covers-suspend-resume.md`). With
 /// neither, the change is presumed legitimate (the keeper's own
-/// wallpaper/theme change) and HVE does nothing, so a manual change is never
-/// reverted.
+/// wallpaper/theme change): HVE does not overwrite it, and it hands the
+/// COLOURS to the keeper (W5) — the theme snapshot stops painting HVE's own
+/// overlay while the engine mute, a skwd-side concern, stays held.
 ///
 /// Both sources funnel through one entry point, and the decision is logged
 /// (D4): a refusal used to be completely invisible, which is why the 18:29
@@ -499,9 +500,9 @@ fn cmd_assert_color_authority(proj: &Path) -> String {
     if permit == crate::hypr_ipc::ReassertPermit::None {
         tracing::info!(
             "[colour-defence] re-assert REFUSED (no monitor event, no resume grace): \
-             the palette change is presumed legitimate, leaving it alone"
+             the keeper changed the palette; releasing the theme's colours to him, engine stays mute"
         );
-        return "noop\n".to_string();
+        return handle_keeper_palette_change();
     }
     tracing::info!(
         "[colour-defence] re-assert GRANTED (source={})",
@@ -510,10 +511,46 @@ fn cmd_assert_color_authority(proj: &Path) -> String {
     resolve_applied_authority(proj)
 }
 
+/// The legitimate-change branch of `assert-color-authority` (W5 of
+/// `odd/tasks/palette-authority-mute-and-yield.md`): the keeper changed the
+/// palette by hand, so the theme's frozen snapshot stops painting HVE's own
+/// overlay and the LIVE palette (Noctalia's) rules it.
+///
+/// The descriptor is KEPT on purpose: skwd and Noctalia are separate. The
+/// engine mute is a skwd-side concern, and only a foreign BACKGROUND change
+/// (W2) or a theme re-apply touches it. Answers `noop` to the watcher, exactly
+/// like the refusal always did.
+fn handle_keeper_palette_change() -> String {
+    if let Some(descriptor) = crate::color_authority::read_descriptor() {
+        match crate::color_authority::mark_keeper_palette(&descriptor.backend, &descriptor.theme) {
+            Ok(()) => crate::decision_log::record(
+                "KEEPER PALETTE",
+                "the keeper changed the palette by hand; the theme's colours are released to the overlay and the engine stays mute",
+            ),
+            Err(e) => crate::decision_log::record(
+                "KEEPER PALETTE FAILED",
+                &format!("cannot mark the keeper palette (the theme keeps owning the colours): {e}"),
+            ),
+        }
+    }
+    // No descriptor: no theme claims the colours, so the live palette already
+    // wins and there is nothing to mark.
+    "noop\n".to_string()
+}
+
 /// The startup repair: a hijack that happened while HVE was off is not a
 /// palette change, so it is not gated by the monitor window. It routes
-/// through the same providers, only without the permission check.
+/// through the same providers, only without the permission check. While the
+/// keeper owns the palette by hand (W5) there is nothing to repair: a restart
+/// must never revert the palette he chose.
 fn cmd_repair_color_authority(proj: &Path) -> String {
+    if crate::color_authority::keeper_owns_palette() {
+        crate::decision_log::record(
+            "REPAIR SKIPPED",
+            "the keeper owns the palette by hand; the applied theme is not re-asserted",
+        );
+        return "noop\n".to_string();
+    }
     resolve_applied_authority(proj)
 }
 
@@ -1031,6 +1068,67 @@ mod tests {
         );
     }
 
+    // ── W5: a hand-made palette change releases the COLOURS, not the engine ──
+    //
+    // The keeper's decision (09-oct-2026): skwd and Noctalia are separate.
+    // Noctalia is the colour source; only skwd steals. So a legitimate change
+    // (no monitor event) must stop HVE painting its own overlay from the theme
+    // snapshot — the live palette rules — while the descriptor, and with it
+    // the engine mute, stays.
+
+    /// The refusal branch hands the colours to the keeper and KEEPS the
+    /// descriptor: releasing the engine mute on a Noctalia event is exactly
+    /// the conflation the keeper forbade.
+    #[test]
+    fn a_refused_reassert_hands_the_colours_to_the_keeper_and_keeps_the_mute() {
+        let _env = crate::test_utils::TempEnv::new();
+        let authority = crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "Work".to_string(),
+            palette_file: "/tmp/hve/themes/Work/providers/noctalia-v5/palette.json".to_string(),
+            palette_name: "JokerTheme".to_string(),
+        };
+        crate::color_authority::write_descriptor(&authority).expect("claim must be written");
+
+        let response = handle_keeper_palette_change();
+
+        assert_eq!(response, "noop\n", "the watcher must still see a quiet answer");
+        assert!(
+            crate::color_authority::keeper_owns_palette(),
+            "the keeper must own the palette now"
+        );
+        assert_eq!(
+            crate::color_authority::read_descriptor(),
+            Some(authority),
+            "the descriptor must survive: the engine mute is a skwd-side concern"
+        );
+    }
+
+    /// With no theme claiming the colours there is nothing to take over; the
+    /// live palette already wins and no stale marker may be planted.
+    #[test]
+    fn a_refused_reassert_without_a_claim_marks_nothing() {
+        let _env = crate::test_utils::TempEnv::new();
+        assert_eq!(handle_keeper_palette_change(), "noop\n");
+        assert!(!crate::color_authority::keeper_owns_palette());
+    }
+
+    /// The startup repair re-asserts the applied theme's colours. While the
+    /// keeper owns the palette by hand it must stay quiet, or a restart would
+    /// revert the palette he chose.
+    #[test]
+    fn the_startup_repair_is_skipped_while_the_keeper_owns_the_palette() {
+        let _env = crate::test_utils::TempEnv::new();
+        crate::color_authority::mark_keeper_palette("noctalia-v5", "Work")
+            .expect("mark must succeed");
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(
+            cmd_repair_color_authority(project.path()),
+            "noop\n",
+            "the repair must not re-assert the theme while the keeper owns the palette"
+        );
+    }
+
     /// T3 (odd/tasks/palette-defence-covers-suspend-resume.md): a refused
     /// re-assert was invisible on 2026-10-01 (only `noop` in the watcher log),
     /// which is why the resume bug took hours to diagnose. The gate must log
@@ -1075,8 +1173,15 @@ mod tests {
             "a refusal must say so, with its reason, next time"
         );
         assert!(
-            body.contains("\"noop\\n\""),
-            "the refusal must still answer noop to the watcher"
+            body.contains("handle_keeper_palette_change()"),
+            "the refusal must hand the colours to the keeper (W5), not just answer noop"
+        );
+        let helper_index = code
+            .find("fn handle_keeper_palette_change")
+            .expect("the keeper-palette handler must exist (W5)");
+        assert!(
+            code[helper_index..].contains("\"noop\\n\""),
+            "the keeper-palette handler must still answer noop to the watcher"
         );
     }
 

@@ -97,6 +97,43 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       W3 is orchestrator-verified (Tier 2, observability only). Keeper's live verdict: the general behaviour
       passes and he likes it; **only case (3), suspend/resume, is still pending** — parked on purpose until
       the case happens and the keeper gives his verdict. Delivery: one PR with `size:exception`.
+- [x] **W5 — skwd and Noctalia are separate: a hand-made palette change releases the COLOURS, never the engine.**
+      Reported live by the keeper (09-oct-2026): with theme `Work` applied he changed Noctalia's palette by
+      hand and HVE's window borders stayed on the theme's frozen colours. Evidence: the watcher regenerated
+      the overlay and `colors.sh` logged `[HVE] Colors from: applied theme snapshot`; the live Noctalia
+      palette was already the new one (`~/.config/hypr/noctalia.lua`: primary `rgb(61afef)`), while the
+      overlay still carried the theme snapshot (`primary #2ec436`, joker green/purple). Root cause:
+      `assert-color-authority` with no monitor event was correctly "presumed legitimate" — HVE stopped
+      overwriting the palette — but it returned `noop`, so HVE's own overlay kept painting from the theme
+      snapshot instead of the live palette.
+      **Keeper's decision (09-oct, in session): D6 — skwd and Noctalia are separate.** Noctalia is the colour
+      SOURCE; only skwd steals. A hand-made palette change must release the theme's colours for the overlay
+      (the borders follow the live palette) while the engine stays MUTE: the mute is a skwd-side concern and
+      only a foreign BACKGROUND change (W2) or a theme re-apply touches it. Concretely: "hasta no queramos
+      que skwd hable, mejor que se quede calladito".
+      Design: a **keeper-palette marker** in HVE's cache dir, written on the legitimate-change path
+      (`cmd_assert_color_authority`, permit `None`) and cleared by `write_descriptor` (a theme re-claims) and
+      `clear_descriptor` (step-aside / theme removal). Consumed by `colors.sh` (`_hve_theme_palette_file`
+      returns nothing ⇒ priority 10 skipped ⇒ the live Noctalia palette wins) and by `hve_theme_owns_colours`
+      (the watcher stops asking). `cmd_repair_color_authority` becomes a no-op while the marker exists, so a
+      restart does not revert the keeper's palette. The descriptor is KEPT, so the W1 mute holds.
+      **Done.** `src/color_authority.rs` (marker API + `write_atomic` refactor), `src/ipc.rs`
+      (`handle_keeper_palette_change`, repair skip, refusal doc), `assets/scripts/colors.sh` (the gate).
+      Tests: marker lifecycle (round trip, cleared by write/clear descriptor), refusal marks it only when a
+      theme claims, the repair is skipped while it exists, and the contract — with a valid descriptor AND the
+      marker the live palette wins over the snapshot and the watcher answers `REFUSED`. RED proven: with the
+      gate removed the contract test fails (snapshot `#67abe4` vs live `#e4aa67`). Full suite **1512 passed /
+      0 failed, 0 warnings**; the architecture pin that keeps `colors.sh` backend-agnostic still holds.
+- [x] **W5 verification — cross-model (GLM 5.3-flash). PASS on all five claims.** Discriminating proof run
+      in a `/tmp/opencode` sandbox: with the same descriptor, the marker is what flips `#67abe4` (snapshot) to
+      `#e4aa67` (live) and `OWNS` to `REFUSED`. Separation proven: `handle_keeper_palette_change` never calls
+      `clear_descriptor` / `release_color_authority`, and every descriptor-clearing path in the repo belongs to
+      skwd-side background logic, theme removal, or a theme re-apply — no Noctalia palette change can release
+      the mute. Nothing weakened (the one modified source-scan test was STRENGTHENED). Findings: one WARNING
+      that the monitor-event GRANTED path could re-assert the theme over the keeper's palette is pre-existing
+      and unreachable while the marker exists (the marker makes `hve_theme_owns_colours` false, so the watcher
+      never asks and no permit is consumed); two SUGGESTIONS (defensive `keeper_owns_palette()` in the
+      descriptor-absent startup repair; best-effort marker unlink). All left as-is, recorded here.
 
 ## Acceptance criteria
 

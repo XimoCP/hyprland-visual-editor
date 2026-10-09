@@ -118,6 +118,14 @@ _hve_theme_palette_file() {
     local descriptor="$safe_dir/color-authority.json"
     [ -f "$descriptor" ] || return 1
 
+    # W5 (odd/tasks/palette-authority-mute-and-yield.md): the keeper changed
+    # the palette by hand, so this script must NOT paint the overlay from the
+    # theme's frozen snapshot — the live palette rules. The descriptor itself
+    # stays: silencing the background engine is a separate concern and only
+    # the background logic touches it. The marker is written by the app on the
+    # legitimate-change path and cleared when a theme claims the colours.
+    [ -f "$safe_dir/keeper-palette.json" ] && return 1
+
     local cfg="$HVE_CONFIG_DIR/config.json"
     [ -f "$cfg" ] || return 1
 

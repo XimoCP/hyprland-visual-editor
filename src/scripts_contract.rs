@@ -549,6 +549,54 @@ fn applied_theme_snapshot_wins_over_live_palette() {
     );
 }
 
+/// W5 (`odd/tasks/palette-authority-mute-and-yield.md`): the keeper changed
+/// Noctalia's palette by hand, so the marker is set. The theme's frozen
+/// snapshot must stop painting HVE's overlay (the live palette wins) while the
+/// descriptor stays — the engine mute is a skwd-side concern. And the watcher
+/// must stop asking: `hve_theme_owns_colours` says the theme no longer owns.
+#[test]
+fn the_keeper_palette_marker_makes_the_live_palette_win_and_stops_the_ask() {
+    let home = tempfile::tempdir().unwrap();
+    write_hve_config(home.path(), r#"{"last_applied_theme": "Animation"}"#);
+    let snapshot = write_descriptor_snapshot(home.path(), "Animation", THEME_SNAPSHOT_JSON);
+    write_color_authority(home.path(), "Animation", &snapshot, "JokerTheme");
+    write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
+    // The app writes the marker on the legitimate-change path.
+    let cache = home.path().join(".cache").join("hve");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(
+        cache.join("keeper-palette.json"),
+        r#"{"backend":"noctalia-v5","theme":"Animation"}"#,
+    )
+    .unwrap();
+
+    let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
+    assert_eq!(
+        colors["primary"].as_str().unwrap(),
+        "#e4aa67",
+        "with the keeper owning the palette the LIVE palette must win, not the snapshot"
+    );
+
+    let out = run_bash(
+        &format!(
+            "source \"{}\" >/dev/null 2>&1; \
+             if hve_theme_owns_colours >/dev/null 2>&1; then echo OWNS; else echo REFUSED; fi",
+            scripts_dir().join("colors.sh").display()
+        ),
+        &[],
+        &[
+            ("HOME", home.path().to_str().unwrap()),
+            ("HVE_SAFE_DIR", cache.to_str().unwrap()),
+        ],
+        home.path(),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "REFUSED",
+        "the watcher must stop asking for a re-assert while the keeper owns the palette"
+    );
+}
+
 /// With no theme applied, behaviour is exactly today's: the live wins.
 #[test]
 fn no_theme_config_falls_through_to_live_palette() {
