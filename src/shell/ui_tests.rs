@@ -1104,6 +1104,120 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     save_slice_png(seam, "slice_seam.png");
     win.set_gallery_slice_delta_base(0);
     win.set_gallery_slice_rebasing(false);
+
+    // ── Hide/show cycle: the ring settles on the ACTIVE card ───────────
+    // The window is the SAME Slint window across hide/show, so the keeper's
+    // last slider position survives hiding. This drives the controller seam:
+    // a real hidden -> shown transition runs the registered hook, which snaps
+    // focus onto the active card and settles the ring (the startup pair). The
+    // frame saved at the end is what the keeper sees on return.
+    use slint::Model as _;
+    let active = 9usize;
+    {
+        let model = win.get_gallery_cards();
+        let vm = model
+            .as_any()
+            .downcast_ref::<VecModel<crate::GalleryCardData>>()
+            .expect("the cards model is a VecModel");
+        for i in 0..vm.row_count() {
+            let mut row = vm.row_data(i).unwrap();
+            row.is_active = i == active;
+            vm.set_row_data(i, row);
+        }
+    }
+    assert_eq!(
+        crate::gallery_initial_focus(&win),
+        active,
+        "precondition: the active theme is the card the ring must settle on"
+    );
+    // The keeper left the slider on real 2 before hiding: focused index,
+    // delta-base, focus-pos and the tile labels all sit there.
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(count, 2, stage_w))));
+    win.set_gallery_focused(2);
+    win.set_gallery_slice_delta_base(2);
+    win.set_gallery_slice_focus_pos(2.0);
+    let stale = win.window().take_snapshot().expect("stale slider snapshot");
+    save_slice_png(stale.clone(), "slice_stale_before_show.png");
+
+    // The hook mirrors `refresh_slice_ring` (relabel the ring for the focused
+    // slot, snap delta-base + focus-pos to it) and calls the very helper
+    // `main` registers, so this test cannot drift from production.
+    let refresh: std::sync::Arc<dyn Fn() + Send + Sync> = {
+        let weak = win.as_weak();
+        std::sync::Arc::new(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let focused = w.get_gallery_focused().max(0) as usize;
+            w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+                count, focused, stage_w,
+            ))));
+            w.set_gallery_slice_delta_base(focused as i32);
+            crate::shell::gallery::views::slice_reel::snap();
+            w.set_gallery_slice_focus_pos(focused as f32);
+        })
+    };
+    let (fake, _calls) = crate::composer::tests::FakeComposer::new();
+    let mut controller = crate::composer::Controller::new(Box::new(fake));
+    let hook_win = win.as_weak();
+    controller.set_show_hook(std::sync::Arc::new(move || {
+        if let Some(w) = hook_win.upgrade() {
+            crate::recenter_gallery_on_active(&w, refresh.as_ref());
+        }
+    }));
+
+    // Hidden, then shown: one real transition.
+    controller.set_window_hidden(true);
+    let _ = controller.show_window(&win);
+    assert!(!controller.window_hidden(), "the show must clear the hidden state");
+
+    assert_eq!(
+        win.get_gallery_focused(),
+        active as i32,
+        "returning from hidden must focus the active theme, not the stale slot"
+    );
+    assert_eq!(
+        win.get_gallery_slice_delta_base(),
+        active as i32,
+        "the ring must settle with delta-base on the active card"
+    );
+    assert_eq!(
+        win.get_gallery_slice_focus_pos(),
+        active as f32,
+        "zero drift: focus-pos must equal delta-base when settled"
+    );
+    // The labels must be exactly the production ring for the active card and
+    // the grown (center) tile must be the active one.
+    let expected = late_slice_tiles(count, active, stage_w);
+    let tiles = win.get_gallery_slice_tiles();
+    assert_eq!(
+        tiles.row_count(),
+        expected.len(),
+        "the ring must carry one label per visible slot"
+    );
+    for (i, want) in expected.iter().enumerate() {
+        let got = tiles.row_data(i).expect("every slot has a label");
+        assert_eq!(got.real_index, want.real_index, "slot {i} label");
+        assert_eq!(got.delta, want.delta, "slot {i} delta");
+        assert_eq!(got.is_expanded, want.is_expanded, "slot {i} growth");
+        assert_eq!(got.fade, want.fade, "slot {i} fade");
+        assert_eq!(got.dist, want.dist, "slot {i} distance");
+    }
+    let expanded = (0..tiles.row_count())
+        .filter_map(|i| tiles.row_data(i))
+        .find(|t| t.is_expanded)
+        .expect("exactly one grown tile");
+    assert_eq!(
+        expanded.real_index as usize, active,
+        "the grown center card must be the active theme"
+    );
+
+    // The ring visibly moved: the central band differs from the stale frame.
+    let recentered = win.window().take_snapshot().expect("recentered snapshot");
+    save_slice_png(recentered.clone(), "slice_recentered_on_active_after_show.png");
+    let moved = frame_diff(&stale, &recentered, (400, 212, 1520, 732));
+    assert!(
+        moved > 1000,
+        "the ring must repaint the central band onto the active card: only {moved} pixels differ"
+    );
 }
 
 // ── Ctrl+arrows deploy the drawers: visual proof ───────────────────────

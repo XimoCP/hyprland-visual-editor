@@ -11,6 +11,7 @@
 
 use crate::show_state::{ShowState, ShowStateMachine};
 use slint::ComponentHandle;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -214,6 +215,8 @@ pub struct Controller {
     gallery_session: bool,
     composer: Box<dyn Composer>,
     show_state: ShowStateMachine,
+    /// Runs once per real hidden -> shown transition (gallery recenter).
+    show_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Controller {
@@ -226,7 +229,18 @@ impl Controller {
             gallery_session: false,
             composer,
             show_state: ShowStateMachine::new(),
+            show_hook: None,
         }
+    }
+
+    /// Register the hook that runs on every REAL hidden -> shown transition.
+    ///
+    /// The shell uses it to recenter the gallery slider on the active theme:
+    /// the window is the same Slint window across hide/show, so without it the
+    /// slider keeps wherever the keeper left it. A plain raise of a visible
+    /// window and a re-entrant show never run it.
+    pub fn set_show_hook(&mut self, hook: Arc<dyn Fn() + Send + Sync>) {
+        self.show_hook = Some(hook);
     }
 
     /// Accessors for ShowStateMachine — needed by countdown.rs and
@@ -380,6 +394,12 @@ impl Controller {
             // Panel navigation warms per-section focus via SystemSection/BordersSection FocusScope.
         }
         self.window_hidden = false;
+        // The window is already back on screen: run the shell's show hook
+        // (the gallery recenter) exactly once per real transition. A plain
+        // raise and a re-entrant show return above, so they never reach here.
+        if let Some(hook) = &self.show_hook {
+            hook();
+        }
         // Defer fullscreen to settle (focus confirm or timeout). Keep
         // sync_global_after_show as-is — it is already called inside
         // HyprlandComposer::show via sync_after_show/show_and_sync.
@@ -459,6 +479,7 @@ pub fn startup_fullscreen_sanity() {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// Initialize the headless Slint test backend on the current thread.
@@ -1290,6 +1311,96 @@ pub(crate) mod tests {
             calls.lock().unwrap().is_empty(),
             "a show in flight must not re-dispatch, got: {:?}",
             *calls.lock().unwrap()
+        );
+    }
+
+    // ── Show-time recenter hook (gallery-recenter-on-show) ─────────────
+    // The hidden -> shown funnel is the ONE place the gallery recenter can
+    // hang off: exactly one run per real transition, never on a plain raise
+    // and never on a re-entrant show.
+
+    /// A raise from hidden runs the registered hook exactly once, after the
+    /// hidden flag clears (the window is already back on screen).
+    #[test]
+    fn test_show_window_from_hidden_runs_the_show_hook_once() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_hook = hits.clone();
+        controller.set_show_hook(Arc::new(move || {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        controller.set_window_hidden(true);
+        let fast = controller.show_window(&win);
+
+        assert!(fast, "a hidden window takes the show fast path");
+        assert!(!controller.window_hidden(), "show must clear the hidden state");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "a real hidden -> shown transition must run the hook exactly once"
+        );
+    }
+
+    /// A plain raise of an already-visible window is not a show: the hook
+    /// must stay idle, so bringing the window forward never yanks the
+    /// gallery back onto the active theme.
+    #[test]
+    fn test_show_window_on_a_visible_window_never_runs_the_show_hook() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_hook = hits.clone();
+        controller.set_show_hook(Arc::new(move || {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        assert!(!controller.window_hidden(), "precondition: the window is visible");
+        let _ = controller.show_window(&win);
+        let _ = controller.show_window(&win);
+
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "a raise of a visible window must never run the show hook"
+        );
+    }
+
+    /// The show state machine refuses a re-entrant show, so the hook must not
+    /// run again while a show is still in flight.
+    #[test]
+    fn test_show_window_in_flight_does_not_rerun_the_show_hook() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_hook = hits.clone();
+        controller.set_show_hook(Arc::new(move || {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        controller.set_window_hidden(true);
+        let _ = controller.show_window(&win);
+        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the first show runs the hook once");
+
+        // IPC edge: the hidden flag is forced back while the show is in flight.
+        controller.set_window_hidden(true);
+        let _ = controller.show_window(&win);
+
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "a show in flight must not run the hook again"
         );
     }
 

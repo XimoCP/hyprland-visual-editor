@@ -599,6 +599,21 @@ pub(crate) fn gallery_initial_focus(window: &crate::MainWindow) -> usize {
         .unwrap_or(0)
 }
 
+/// Recenter the gallery slider on the active theme and settle the slice ring.
+///
+/// The ONE recenter pair: `gallery_initial_focus` (active card, 0 when no
+/// theme is active or the list is empty) then the ring refresh, which snaps
+/// `delta-base` and `focus-pos` together (zero drift). Startup already uses
+/// this pair; the show hook reuses it so the window reopens on whatever is
+/// actually applied instead of wherever the keeper left the slider.
+pub(crate) fn recenter_gallery_on_active(
+    window: &crate::MainWindow,
+    refresh_slice_ring: &(dyn Fn() + Send + Sync),
+) {
+    window.set_gallery_focused(crate::gallery_initial_focus(window) as i32);
+    refresh_slice_ring();
+}
+
 /// True when any gallery card carries the active mark.
 pub(crate) fn gallery_has_active(window: &crate::MainWindow) -> bool {
     use slint::Model as _;
@@ -5406,6 +5421,25 @@ fn main() -> Result<(), slint::PlatformError> {
     let composer_driver = Box::new(composer::HyprlandComposer::new());
     let controller = composer::Controller::new(composer_driver);
     composer::init_global(controller);
+
+    // ── SUPER+H return-from-hidden: recenter the gallery on the active theme ──
+    // The window is the SAME Slint window across hide/show, so the slider
+    // keeps wherever the keeper left it. Every REAL hidden -> shown
+    // transition re-snaps focus onto the active card and settles the ring —
+    // the exact startup pair, so the carousel opens on what is applied. The
+    // Mosaic cursor is not touched, and a plain raise of a visible window
+    // never runs the hook.
+    {
+        let weak = window.as_weak();
+        let refresh = refresh_slice_ring.clone();
+        if let Some(mut ctrl) = composer::global_controller() {
+            ctrl.set_show_hook(Arc::new(move || {
+                if let Some(w) = weak.upgrade() {
+                    crate::recenter_gallery_on_active(&w, refresh.as_ref());
+                }
+            }));
+        }
+    }
 
     // ── IPC server (Unix socket) ──
     ipc::start_ipc_server(window.as_weak(), proj.clone());
