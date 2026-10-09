@@ -511,61 +511,10 @@ fn apply_depth() -> usize {
 }
 
 // ── The keeper's own program (is the change really his?) ──────────────
-
-/// The engine's own picker/window program. Its presence means the keeper is
-/// driving the engine by hand; the daemon is `skwd-walld`, a different name,
-/// so the two never collide.
-const ENGINE_PICKER_BIN: &str = "skwd-wall-v2";
-
-/// Whether the engine's own picker program is running right now, by scanning
-/// a procfs-like directory for a numeric pid whose `comm` is the picker.
-/// `Some(true)` = found, `Some(false)` = the table was readable and it is not
-/// there, `None` = the table could not be read (the caller then holds,
-/// conservatively). Cheap: one directory scan and one small file read per
-/// pid, no subprocess and no new dependency.
-fn picker_running_in(proc_dir: &Path) -> Option<bool> {
-    let entries = std::fs::read_dir(proc_dir).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if !name.bytes().all(|b| b.is_ascii_digit()) {
-            continue;
-        }
-        if let Ok(comm) = std::fs::read_to_string(proc_dir.join(name).join("comm")) {
-            if comm.trim() == ENGINE_PICKER_BIN {
-                return Some(true);
-            }
-        }
-    }
-    Some(false)
-}
-
-/// The production picker probe: the real `/proc`.
-fn engine_picker_running() -> Option<bool> {
-    #[cfg(test)]
-    {
-        if let Some(forced) = test_keeper_acting_override() {
-            return Some(forced);
-        }
-    }
-    picker_running_in(Path::new("/proc"))
-}
-
-/// Test-only override of [`engine_picker_running`]: `Some(v)` forces the
-/// answer so a hermetic test never depends on what runs on the box; `None`
-/// uses the real scan. Compiled only under `cfg(test)`, so production always
-/// reads `/proc`.
-#[cfg(test)]
-static TEST_KEEPER_ACTING: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(0);
-
-#[cfg(test)]
-fn test_keeper_acting_override() -> Option<bool> {
-    match TEST_KEEPER_ACTING.load(Ordering::SeqCst) {
-        1 => Some(true),
-        -1 => Some(false),
-        _ => None,
-    }
-}
+//
+// The probe itself is ENGINE knowledge (the program name is the engine's own),
+// so it lives in the engine adapter (`providers::skwd_engine`) and this router
+// only ASKS the capability. See `skwd_engine::picker_is_running`.
 
 /// Canonicalize a background path for comparison when it exists on disk; fall
 /// back to the string as-is when it does not (a path that cannot be resolved
@@ -651,7 +600,7 @@ pub fn step_aside_if_foreign() -> Result<StepAsideOutcome, String> {
         live.as_deref(),
         &declared,
         hve_is_acting(),
-        engine_picker_running(),
+        crate::providers::skwd_engine::picker_is_running(),
         true,
     ) == PaletteAuthorityVerdict::Hold
     {
@@ -882,7 +831,11 @@ fn picker_voice_tick() -> Result<(), String> {
     }
     let descriptor = crate::color_authority::read_descriptor();
     let suspended = crate::providers::skwd_policy::color_authority_suspended();
-    match picker_voice_action(descriptor.is_some(), engine_picker_running(), suspended) {
+    match picker_voice_action(
+        descriptor.is_some(),
+        crate::providers::skwd_engine::picker_is_running(),
+        suspended,
+    ) {
         PickerVoiceAction::Nothing => Ok(()),
         PickerVoiceAction::Speak => {
             crate::providers::skwd_policy::suspend_color_authority()?;
@@ -1715,42 +1668,8 @@ mod tests {
         );
     }
 
-    /// The picker probe reads a procfs-like table: the engine's own program
-    /// counts, the daemon's different name does not, an empty table is
-    /// "not running", and an unreadable table degrades to "unknown".
-    #[test]
-    fn the_keeper_program_signal_reads_the_process_table() {
-        let tmp = tempfile::tempdir().unwrap();
-        let pid = tmp.path().join("4242");
-        std::fs::create_dir_all(&pid).unwrap();
-        std::fs::write(pid.join("comm"), "skwd-wall-v2\n").unwrap();
-        assert_eq!(
-            picker_running_in(tmp.path()),
-            Some(true),
-            "the engine's own picker program must be recognised"
-        );
-
-        // The daemon's name is different: it must NOT count as the keeper's UI.
-        std::fs::write(pid.join("comm"), "skwd-walld\n").unwrap();
-        assert_eq!(
-            picker_running_in(tmp.path()),
-            Some(false),
-            "the daemon is not the keeper's picker"
-        );
-
-        let empty = tempfile::tempdir().unwrap();
-        assert_eq!(
-            picker_running_in(empty.path()),
-            Some(false),
-            "a readable table with no picker is 'not running'"
-        );
-
-        assert_eq!(
-            picker_running_in(&tmp.path().join("missing")),
-            None,
-            "an unreadable table degrades to unknown, never a guess"
-        );
-    }
+    // The picker PROBE's own tests moved with it: `skwd_engine` now owns both
+    // the engine's program name and the process-table read.
 
     // ── W2: the step-aside shell (descriptor + mute lifecycle) ────────
     //
@@ -1842,7 +1761,7 @@ mod tests {
             std::env::set_var("HVE_REASSERT_PROFILE", "fast");
             let old_path = saved[2].1.clone().unwrap_or_default();
             std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path));
-            TEST_KEEPER_ACTING.store(if keeper_acting { 1 } else { -1 }, Ordering::SeqCst);
+            crate::providers::skwd_engine::set_picker_running_for_test(Some(keeper_acting));
             Self {
                 config,
                 saved,
@@ -1859,7 +1778,7 @@ mod tests {
     impl Drop for ForeignSandbox {
         fn drop(&mut self) {
             // Reset the forced keeper signal before the env lock is released.
-            TEST_KEEPER_ACTING.store(0, Ordering::SeqCst);
+            crate::providers::skwd_engine::set_picker_running_for_test(None);
             for (k, v) in &self.saved {
                 match v {
                     Some(val) => std::env::set_var(k, val),

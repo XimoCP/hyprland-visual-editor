@@ -158,6 +158,78 @@ fn run_delegate_apply(bin: &str, path_str: &str) -> Result<(), String> {
     }
 }
 
+// ── The engine's own picker program: presence probe (W2/W6 of
+// `odd/tasks/palette-authority-mute-and-yield.md`) ─────────────────────
+//
+// The engine's own picker/window program is `skwd-wall-v2` — a DIFFERENT
+// process name from the `skwd-walld` daemon — so its presence means the
+// keeper is driving the engine by hand. That is engine knowledge, so it lives
+// HERE with the engine adapter; the `apply-background` router only asks this
+// capability and never names the program itself.
+
+/// The engine's own picker/window program.
+const ENGINE_PICKER_BIN: &str = "skwd-wall-v2";
+
+/// Whether the engine's own picker program is running right now, by scanning a
+/// procfs-like directory for a numeric pid whose `comm` is the picker.
+/// `Some(true)` = found, `Some(false)` = the table was readable and it is not
+/// there, `None` = the table could not be read (the caller then holds,
+/// conservatively). Cheap: one directory scan and one small file read per pid,
+/// no subprocess and no new dependency.
+pub(crate) fn picker_running_in(proc_dir: &Path) -> Option<bool> {
+    let entries = std::fs::read_dir(proc_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(comm) = std::fs::read_to_string(proc_dir.join(name).join("comm")) {
+            if comm.trim() == ENGINE_PICKER_BIN {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
+
+/// The production picker probe: the real `/proc`.
+pub(crate) fn picker_is_running() -> Option<bool> {
+    #[cfg(test)]
+    {
+        if let Some(forced) = test_picker_override() {
+            return Some(forced);
+        }
+    }
+    picker_running_in(Path::new("/proc"))
+}
+
+/// Test-only override of [`picker_is_running`]: `Some(v)` forces the answer so
+/// a hermetic test never depends on what runs on the box; `None` uses the real
+/// scan. Compiled only under `cfg(test)`, so production always reads `/proc`.
+#[cfg(test)]
+static TEST_PICKER_RUNNING: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(0);
+
+#[cfg(test)]
+fn test_picker_override() -> Option<bool> {
+    match TEST_PICKER_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+        1 => Some(true),
+        -1 => Some(false),
+        _ => None,
+    }
+}
+
+/// Test-only: force the picker answer (`Some`), or clear it (`None`).
+#[cfg(test)]
+pub(crate) fn set_picker_running_for_test(value: Option<bool>) {
+    let raw = match value {
+        Some(true) => 1,
+        Some(false) => -1,
+        None => 0,
+    };
+    TEST_PICKER_RUNNING.store(raw, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +466,44 @@ mod tests {
         assert!(
             !available,
             "a symlink to a regular file is not a listening socket"
+        );
+    }
+
+    /// W2/W6: the picker probe reads a procfs-like table — the engine's own
+    /// program counts, the daemon's different name does not, an empty table is
+    /// "not running", and an unreadable table degrades to "unknown". It lives
+    /// here because the probe is ENGINE knowledge (moved from `background`).
+    #[test]
+    fn the_keeper_program_signal_reads_the_process_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid = tmp.path().join("4242");
+        std::fs::create_dir_all(&pid).unwrap();
+        std::fs::write(pid.join("comm"), "skwd-wall-v2\n").unwrap();
+        assert_eq!(
+            picker_running_in(tmp.path()),
+            Some(true),
+            "the engine's own picker program must be recognised"
+        );
+
+        // The daemon's name is different: it must NOT count as the keeper's UI.
+        std::fs::write(pid.join("comm"), "skwd-walld\n").unwrap();
+        assert_eq!(
+            picker_running_in(tmp.path()),
+            Some(false),
+            "the daemon is not the keeper's picker"
+        );
+
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            picker_running_in(empty.path()),
+            Some(false),
+            "a readable table with no picker is 'not running'"
+        );
+
+        assert_eq!(
+            picker_running_in(&tmp.path().join("missing")),
+            None,
+            "an unreadable table degrades to unknown, never a guess"
         );
     }
 }

@@ -525,7 +525,7 @@ fn handle_keeper_palette_change() -> String {
     // grace window after the picker closes — the engine is publishing on
     // purpose (or HVE is re-asserting the theme), so this palette change is
     // NOT the keeper's hand. Never release the theme for it.
-    if crate::providers::skwd_policy::color_authority_recently_suspended() {
+    if crate::providers::color_authority_recently_suspended() {
         crate::decision_log::record(
             "PICKER VOICE CHANGE",
             "the engine published for its own picker (or just after it closed); the theme keeps the colours",
