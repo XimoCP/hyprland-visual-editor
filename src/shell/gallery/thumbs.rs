@@ -1005,56 +1005,43 @@ mod tests {
         assert_eq!(jobs[1].name, "C");
     }
 
-    // ── FIX1: wallpapers.json provider discovery ─────────────────────
+    // ── FIX1: a declared wallpaper record beats the loose scan ───────
 
     #[test]
-    fn find_source_prefers_wallpaper_json_over_loose_scan() {
+    fn find_source_prefers_the_declared_wallpaper_over_the_loose_scan() {
         let dir = tempfile::tempdir().expect("tmp");
-        let real = dir.path().join("real.png");
-        image::RgbaImage::from_pixel(10, 10, image::Rgba([0u8, 0, 0, 255])).save(&real).unwrap();
-        let prov = dir.path().join("providers/noctalia");
-        std::fs::create_dir_all(&prov).unwrap();
-        let json = serde_json::json!({
-            "wallpapers": { "DP-3": { "dark": real.to_string_lossy(), "light": real.to_string_lossy() } },
-            "defaultWallpaper": "/nope/missing.png"
-        });
-        std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&json).unwrap()).unwrap();
-        // loose file that would be found by scan but should be ignored when JSON hits
+        // The declared source lives OUTSIDE the theme tree, so the loose
+        // image scan could never be what found it.
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        let declared = src_dir.path().join("declared.png");
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([0u8, 0, 0, 255])).save(&declared).unwrap();
+        // Loose file that the scan would find but must not decide.
         std::fs::write(dir.path().join("loose.jpg"), b"dummy").unwrap();
-        let found = plan_preview_source(dir.path()).expect("json source");
-        assert_eq!(found, PreviewSpec::Image(real));
+        let prov = dir.path().join("providers/noctalia-v5");
+        std::fs::create_dir_all(&prov).unwrap();
+        std::fs::write(prov.join("wallpaper.txt"), format!("{}\n", declared.display())).unwrap();
+        let found = plan_preview_source(dir.path()).expect("declared source");
+        assert_eq!(
+            found,
+            PreviewSpec::Image(declared),
+            "a declared wallpaper record must win over the loose scan"
+        );
     }
 
     #[test]
-    fn find_source_json_falls_back_to_scan_when_candidates_missing() {
+    fn find_source_falls_back_to_scan_when_the_declared_target_is_missing() {
         let dir = tempfile::tempdir().expect("tmp");
-        let prov = dir.path().join("providers/wallpaper");
+        let prov = dir.path().join("providers/noctalia-v5");
         std::fs::create_dir_all(&prov).unwrap();
-        let json = serde_json::json!({
-            "wallpapers": { "DP-3": { "dark": "/tmp/missing-a.png", "light": "/tmp/missing-b.png" } },
-            "defaultWallpaper": "/tmp/missing-c.png"
-        });
-        std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&json).unwrap()).unwrap();
+        std::fs::write(prov.join("wallpaper.txt"), "/tmp/missing-wallpaper.png\n").unwrap();
         let loose = dir.path().join("fallback.png");
         image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255])).save(&loose).unwrap();
         let found = plan_preview_source(dir.path()).expect("fallback scan");
-        assert_eq!(found, PreviewSpec::Image(loose));
-    }
-
-    #[test]
-    fn find_source_discovers_wallpaper_txt_and_json_takes_priority() {
-        let dir = tempfile::tempdir().expect("tmp");
-        let a = dir.path().join("a.png"); image::RgbaImage::from_pixel(10,10,image::Rgba([0u8,0,0,255])).save(&a).unwrap();
-        let b = dir.path().join("b.png"); image::RgbaImage::from_pixel(10,10,image::Rgba([1u8,1,1,255])).save(&b).unwrap();
-        let tp = dir.path().join("providers/noctalia-v5/wallpaper.txt");
-        std::fs::create_dir_all(tp.parent().unwrap()).unwrap();
-        std::fs::write(&tp, format!("{}\n", a.display())).unwrap();
-        assert_eq!(plan_preview_source(dir.path()), Some(PreviewSpec::Image(a.clone())));
-        let prov = dir.path().join("providers/noctalia");
-        std::fs::create_dir_all(&prov).unwrap();
-        let j = serde_json::json!({"wallpapers":{"DP-3":{"dark":b.to_string_lossy()}}});
-        std::fs::write(prov.join("wallpapers.json"), serde_json::to_string(&j).unwrap()).unwrap();
-        assert_eq!(plan_preview_source(dir.path()), Some(PreviewSpec::Image(b)), "JSON priority over txt");
+        assert_eq!(
+            found,
+            PreviewSpec::Image(loose),
+            "a declaration whose target is missing must fall through to the loose scan"
+        );
     }
 
     // ── Piano 3 RED: mpvpaper video-assignment discovery contracts ──
@@ -1131,46 +1118,6 @@ mod tests {
             }}),
         );
         assert_eq!(video_assignment(dir.path()), Some(chosen), "DP-1 sorts before HDMI-A-1");
-    }
-
-    /// The preserved sorted, deterministic provider-directory iteration:
-    /// when two shipped directories declare the SAME role, the theme's
-    /// `providers/` tree is read in sorted order, so the record under the
-    /// lexically-first directory decides. (The retired `wallpaper` id
-    /// stores a byte-copy of the same cache record the first directory
-    /// holds, so both directories declare through the same format.)
-    ///
-    /// Replaces the old test that scanned arbitrary UNKNOWN directory
-    /// names for a hardcoded record file — that blind scan of every
-    /// backend layout is exactly the coupling this seam removed: an id
-    /// the registry does not ship now declares nothing.
-    #[test]
-    fn manifest_sources_resolve_in_sorted_provider_dir_order() {
-        let src_dir = tempfile::tempdir().expect("src tmp");
-        // Sources live OUTSIDE the theme tree so the loose image scan can
-        // never be what found them.
-        let early = src_dir.path().join("a.png");
-        let late = src_dir.path().join("z.png");
-        std::fs::write(&early, b"a").expect("fixture");
-        std::fs::write(&late, b"z").expect("fixture");
-
-        let dir = tempfile::tempdir().expect("tmp");
-        for (sub, target) in [("noctalia", &early), ("wallpaper", &late)] {
-            let provider_dir = dir.path().join("providers").join(sub);
-            std::fs::create_dir_all(&provider_dir).expect("mkdir");
-            let j = serde_json::json!({"wallpapers":{"DP-3":{"dark": target.to_string_lossy()}}});
-            std::fs::write(
-                provider_dir.join("wallpapers.json"),
-                serde_json::to_string(&j).unwrap(),
-            )
-            .expect("record");
-        }
-        assert_eq!(
-            plan_preview_source(dir.path()),
-            Some(PreviewSpec::Image(early)),
-            "providers/noctalia sorts before providers/wallpaper: sorted \
-             provider-directory order must decide which declaration wins"
-        );
     }
 
     #[test]
@@ -1260,17 +1207,16 @@ mod tests {
     #[test]
     fn find_source_prefers_assigned_image_over_full_legacy_chain() {
         let dir = tempfile::tempdir().expect("tmp");
-        let assigned = dir.path().join("assigned.png");
+        // The assigned image lives OUTSIDE the theme tree, so the loose scan
+        // could never be what resolved it.
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        let assigned = src_dir.path().join("assigned.png");
         image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255])).save(&assigned).unwrap();
         let stale = dir.path().join("stale.png");
         image::RgbaImage::from_pixel(10, 10, image::Rgba([9u8, 9, 9, 255])).save(&stale).unwrap();
         let v5 = dir.path().join("providers/noctalia-v5");
         std::fs::create_dir_all(&v5).unwrap();
         std::fs::write(v5.join("wallpaper.txt"), format!("{}\n", stale.display())).unwrap();
-        let noc = dir.path().join("providers/noctalia");
-        std::fs::create_dir_all(&noc).unwrap();
-        let j = serde_json::json!({"wallpapers":{"DP-3":{"dark":stale.to_string_lossy()}}});
-        std::fs::write(noc.join("wallpapers.json"), serde_json::to_string(&j).unwrap()).unwrap();
         write_assignments(
             &v5,
             serde_json::json!({"assignments":{"*":{"filename":"a.png","local_path":assigned.to_string_lossy()}}}),
@@ -1279,7 +1225,7 @@ mod tests {
         assert_eq!(
             plan_preview_source(dir.path()),
             Some(PreviewSpec::Image(assigned)),
-            "assignment beats wallpapers.json, wallpaper.txt and loose scan"
+            "the live assignment beats the wallpaper text and the loose scan"
         );
     }
 
@@ -2183,19 +2129,19 @@ mod tests {
     //
     // The `read-preview-source` unit replaced the OLD hardcoded stages
     // with provider declarations. Two sub-stages changed behaviour and
-    // had NO coverage. All three fixtures below were first written with
+    // had NO coverage. Both fixtures below were first written with
     // the verifier's exact OLD expectations and observed RED
-    // (`None` vs `Some(Image(imgA))`, `None` vs `Some(imgA)`,
-    // `Some(imgA)` vs `Some(imgB)`); they now pin the DECIDED contract.
+    // (`None` vs `Some(Image(imgA))`, `None` vs `Some(imgA)`); they now
+    // pin the DECIDED contract.
     //
     // D1 and D2A are the SAME fact pattern: a record owned by the
     // `noctalia-v5` save/apply path, planted under the `noctalia` (v4)
     // id. Restoring either would make the v4 provider declare a record
     // format it has never written nor applied — a phantom declaration.
     // Evidence (this corrective unit, 2026-09-29):
-    //   - `NoctaliaV4Provider::save` copies `settings.json`,
-    //     `colors.json`, `plugins.json`, `noctalia-colors.conf`,
-    //     `noctalia-colors.lua` and `wallpapers.json` — nothing else;
+    //   - the v4 provider's save copied only its own cache files
+    //     (`settings.json`, `colors.json`, `plugins.json`, the rendered
+    //     `noctalia-colors.*` pair and `wallpapers.json`) — nothing else;
     //   - across ALL 34 committed revisions of `src/providers/noctalia.rs`,
     //     `wallpaper.txt` and `bg_info::save_manifest` appear ONLY inside
     //     the v5 impl block (v4: 0 occurrences), and
@@ -2205,13 +2151,19 @@ mod tests {
     //     `mpvpaper-assignments.json` files and every `wallpaper.txt`
     //     under `providers/noctalia-v5/` — never under `providers/noctalia/`.
     // The OLD scan simply reached further than any writer ever did.
+    // Since 2026-10-11 the retired v4 id ships no declarer at all, so these
+    // dirs are unreachable through the registry too — the same contract,
+    // stated one level up.
 
     /// D1 pin — verifier's exact fixture: a theme carrying ONLY
     /// `providers/noctalia/wallpaper.txt` → `imgA`. OLD resolved
     /// `Some(Image(imgA))` (`wallpaper_from_txt` tried the v4 path after
-    /// the v5 one); the decided contract is `None`: v4 never writes that
-    /// record, so its provider declares no `WallpaperText`. The loose
+    /// the v5 one); the decided contract is `None`: v4 never wrote that
+    /// record, so its provider declared no `WallpaperText`. The loose
     /// scan cannot find `imgA` either — it lives outside the theme.
+    ///
+    /// Since the retired v4 backend left the product the id resolves no
+    /// declarer at all, which is the same contract stated one level up.
     #[test]
     fn wallpaper_txt_under_the_v4_id_declares_nothing() {
         let src = tempfile::tempdir().expect("src tmp");
@@ -2231,17 +2183,11 @@ mod tests {
              writer ever produced that record, so it declares nothing"
         );
 
-        // Provider-level half of the same pin: the v4 declarer must state
-        // no WallpaperText slot for its own directory, whatever a stray
-        // file there is called.
-        let declarer = crate::providers::declaration_provider("noctalia")
-            .expect("the v4 id is a shipped declarer");
+        // Provider-level half of the same pin: the retired id ships no
+        // declarer, so whatever a stray file there is called, nothing reads it.
         assert!(
-            declarer
-                .preview_sources(&v4_dir)
-                .iter()
-                .all(|s| s.role != PreviewRole::WallpaperText),
-            "the v4 provider must not declare a wallpaper-text record it never writes"
+            crate::providers::declaration_provider("noctalia").is_none(),
+            "the retired v4 id must resolve no declarer"
         );
     }
 
@@ -2249,8 +2195,8 @@ mod tests {
     /// `providers/noctalia/` → `imgA`. OLD resolved it (the blind
     /// `providers/*/mpvpaper-assignments.json` scan); the decided
     /// contract is `None`: only the `noctalia-v5` save writes that
-    /// manifest and only its apply path restores it, so `noctalia` is
-    /// not its owner. v4 also claims no `WALLPAPERS` capability — it
+    /// manifest and only its apply path restores it, so `noctalia` was
+    /// never its owner. v4 also claimed no `WALLPAPERS` capability — it
     /// cannot own a background assignment.
     #[test]
     fn assignment_manifest_under_the_v4_id_declares_nothing() {
@@ -2279,15 +2225,11 @@ mod tests {
             "a manifest under a dir that owns no assignment record plans no source"
         );
 
-        // Provider-level half: the v4 declarer states no Assignment slot.
-        let declarer = crate::providers::declaration_provider("noctalia")
-            .expect("the v4 id is a shipped declarer");
+        // Provider-level half: the retired id ships no declarer, so it can
+        // state no Assignment slot — nor any other record.
         assert!(
-            declarer
-                .preview_sources(&theme.path().join("providers").join("noctalia"))
-                .iter()
-                .all(|s| s.role != PreviewRole::Assignment),
-            "the v4 provider must not declare an assignment record it neither writes nor applies"
+            crate::providers::declaration_provider("noctalia").is_none(),
+            "the retired v4 id must resolve no declarer"
         );
     }
 
@@ -2335,56 +2277,6 @@ mod tests {
             plan_preview_source(theme.path()),
             Some(PreviewSpec::Image(img_a)),
             "the unknown dir must never supply the planned source"
-        );
-    }
-
-    /// Sorted-directory precedence between two DECLARING dirs (the
-    /// property D2 reported as lost). `collect_declarers` sorts the
-    /// theme's `providers/` tree BEFORE the registry filter, so the order
-    /// is the core's own — never `read_dir`'s: the dirs are created here
-    /// in REVERSE lexical order on purpose. The unknown `aaa-custom` dir
-    /// is included because it sorts FIRST: it must be skipped, not win.
-    ///
-    /// `noctalia` and `wallpaper` are the only two shipped ids that
-    /// declare the SAME role (`WallpaperManifest`, through the v4
-    /// declarer), which is why they are the pair under test; no role has
-    /// two Assignment declarers — `noctalia-v5` is the manifest's only
-    /// owner (see the D2 pin A above).
-    #[test]
-    fn sorted_provider_dir_order_decides_between_two_declaring_dirs() {
-        let src = tempfile::tempdir().expect("src tmp");
-        let unknown = src.path().join("unknown.png");
-        let early = src.path().join("early.png");
-        let late = src.path().join("late.png");
-        std::fs::write(&unknown, b"unknown").expect("fixture");
-        std::fs::write(&early, b"early").expect("fixture");
-        std::fs::write(&late, b"late").expect("fixture");
-
-        let theme = tempfile::tempdir().expect("theme tmp");
-        // Reverse lexical creation order: `wallpaper` first, `noctalia`
-        // last, the unknown id in between.
-        for (sub, target) in [
-            ("wallpaper", &late),
-            ("aaa-custom", &unknown),
-            ("noctalia", &early),
-        ] {
-            let provider_dir = theme.path().join("providers").join(sub);
-            std::fs::create_dir_all(&provider_dir).expect("mkdir");
-            let j = serde_json::json!({"wallpapers":{"DP-3":{"dark": target.to_string_lossy()}}});
-            std::fs::write(
-                provider_dir.join("wallpapers.json"),
-                serde_json::to_string(&j).unwrap(),
-            )
-            .expect("record");
-        }
-
-        assert_eq!(
-            plan_preview_source(theme.path()),
-            Some(PreviewSpec::Image(early)),
-            "providers/aaa-custom sorts first but declares nothing, \
-             providers/noctalia sorts before providers/wallpaper and both \
-             declare: sorted provider-directory order must decide, not \
-             creation/read_dir order"
         );
     }
 
