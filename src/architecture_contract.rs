@@ -82,7 +82,6 @@ const SCANNED_FILES: &[&str] = &[
     "src/providers/background.rs",
     "src/providers/bg_info.rs",
     "src/providers/hve_presets.rs",
-    "src/providers/wallpaper.rs",
     // T5 (2026-10-06): the maintenance packaging module. It joins so its
     // cross-backend tokens cannot hide. It LEGITIMATELY names `noctalia` —
     // its whole job is to re-package the records that provider writes, the
@@ -366,9 +365,13 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/theme.rs", "gsettings", 0),
     ("src/config_guard.rs", "hyprland", 2),
     ("src/hypr_ipc.rs", "hyprland", 9),
-    ("src/providers/noctalia_paths.rs", "hyprctl", 1),
-    ("src/providers/noctalia_paths.rs", "noctalia", 33),
-    ("src/providers/noctalia_paths.rs", "quickshell", 6),
+    // noctalia_paths.rs (2026-10-11): the retired v4 Quickshell paths left
+    // with the v4 backend, so `quickshell` and `hyprctl` (the v4 reload
+    // command) measure 0 and the `noctalia` token counts only the v5 path
+    // module's own identity — lowered 1 → 0, 6 → 0 and 33 → 12.
+    ("src/providers/noctalia_paths.rs", "hyprctl", 0),
+    ("src/providers/noctalia_paths.rs", "noctalia", 12),
+    ("src/providers/noctalia_paths.rs", "quickshell", 0),
     ("assets/scripts/colors.sh", "noctalia", 4),
     ("assets/scripts/colors.sh", "matugen", 2),
     ("assets/scripts/color_watcher.sh", "hyprland", 1),
@@ -393,13 +396,6 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     ("src/providers/wallpaper_authority.rs", "hyprctl", 2),
     // hve_presets.rs declares its one integration claim: `shell() -> "hyprland"`.
     ("src/providers/hve_presets.rs", "hyprland", 1),
-    // wallpaper.rs (inert: no `mod wallpaper;` today, but it ships and is
-    // pending re-wiring) hardcodes Noctalia's cache paths for wallpapers.json.
-    // 4 → 6 (2026-10-05, A3 rename): not a new coupling — the module it has
-    // always imported was renamed `shell` → `noctalia_paths`, so its two
-    // import paths now spell the token. The comment/doc body is stripped
-    // before counting; any mention beyond these imports still fails.
-    ("src/providers/wallpaper.rs", "noctalia", 6),
     // --- Phase-4 visibility baseline (2026-09-29), newly-scanned files ---
     // Read before touching: the desktop-preference capability directory,
     // `src/shell/gallery/slot.rs` and `src/composer/hyprland.rs` joined
@@ -434,7 +430,7 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
 /// shell scripts. A literal "cut at the first `#[cfg(test)]`" would be
 /// WRONG here: `src/main.rs:25-29` registers test-only modules
 /// (`#[cfg(test)] mod scripts_contract;` …) at the top of the file, and
-/// `src/theme_manager.rs:28` plus `src/providers/noctalia_paths.rs:20,165` mention
+/// `src/theme_manager.rs:28` plus `src/providers/noctalia_paths.rs:21` mention
 /// `#[cfg(test)]` inside `//` comments (gone after comment stripping). No
 /// scanned file interleaves tests with production code, so no file is
 /// excluded.
@@ -605,7 +601,6 @@ fn scanner_covers_every_policed_file_and_token() {
         "src/providers/background.rs",
         "src/providers/bg_info.rs",
         "src/providers/hve_presets.rs",
-        "src/providers/wallpaper.rs",
         // Phase-4 blind spots (2026-09-29): the coupling moved out of sight
         // of the old file list — see the two injection tests below.
         "src/theme/desktop_preference/mod.rs",

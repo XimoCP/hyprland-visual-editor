@@ -33,12 +33,13 @@ use crate::theme_manager::{ThemeManager, ThemeProvider};
 /// One shipped desktop-shell backend. Adding a shell is ONE entry here plus
 /// its provider module: the registration router never needs an `if` for it.
 struct ShellBackend {
-    /// The provider id a theme records (`noctalia-v5`, `noctalia`).
+    /// The provider id a theme records (`noctalia-v5`).
     id: &'static str,
     /// True when this shell is running now.
     detect: fn() -> bool,
-    /// The historical fallback: used when no backend detects. The LAST entry
-    /// carries it.
+    /// The historical fallback: used when no backend detects. No shipped
+    /// entry carries it today — the retired v4 entry was the only one — so a
+    /// machine where nothing detects registers no shell backend at all.
     fallback: bool,
     /// Build the live provider (save/apply/list).
     make: fn() -> Box<dyn ThemeProvider>,
@@ -46,35 +47,27 @@ struct ShellBackend {
     declare: fn() -> Box<dyn ThemeProvider>,
 }
 
-/// The shipped shell backends, in detection order. v5 is tried first; v4 is
-/// the historical fallback when nothing detects.
-fn shell_backends() -> [ShellBackend; 2] {
-    [
-        ShellBackend {
-            id: "noctalia-v5",
-            detect: || noctalia_paths::NoctaliaV5Paths.is_active(),
-            fallback: false,
-            make: || Box::new(noctalia::NoctaliaV5Provider::new()) as Box<dyn ThemeProvider>,
-            declare: || Box::new(noctalia::NoctaliaV5Provider::new()) as Box<dyn ThemeProvider>,
-        },
-        ShellBackend {
-            id: "noctalia",
-            detect: || noctalia_paths::NoctaliaV4Paths.is_active(),
-            fallback: true,
-            make: || Box::new(noctalia::NoctaliaV4Provider::new()) as Box<dyn ThemeProvider>,
-            declare: || Box::new(noctalia::NoctaliaV4Provider::new()) as Box<dyn ThemeProvider>,
-        },
-    ]
+/// The shipped shell backends, in detection order. Exactly one shell ships
+/// today: `noctalia-v5`, with no fallback entry behind it (the retired v4
+/// backend used to be that fallback).
+fn shell_backends() -> [ShellBackend; 1] {
+    [ShellBackend {
+        id: "noctalia-v5",
+        detect: || noctalia_paths::NoctaliaV5Paths.is_active(),
+        fallback: false,
+        make: || Box::new(noctalia::NoctaliaV5Provider::new()) as Box<dyn ThemeProvider>,
+        declare: || Box::new(noctalia::NoctaliaV5Provider::new()) as Box<dyn ThemeProvider>,
+    }]
 }
 
 /// Register every provider shipped with HVE, in the canonical order.
 ///
 /// Detection order decides WHICH backend is wanted: the first entry whose
-/// detector fires wins; the fallback entry is used when none detects. The
-/// `Config::disabled_providers` list only SUBTRACTS from that decision: a
-/// disabled wanted backend registers nothing — the other version is never
-/// substituted for it, because the keeper turned that backend off. Unknown
-/// ids match nothing.
+/// detector fires wins; a `fallback` entry — none ships today — would be used
+/// when none detects. The `Config::disabled_providers` list only SUBTRACTS
+/// from that decision: a disabled wanted backend registers nothing — the
+/// other version is never substituted for it, because the keeper turned that
+/// backend off. Unknown ids match nothing.
 ///
 /// `hve-presets` is a provider, not a shell, so it is not part of the backend
 /// list; it registers unless its own id is disabled.
@@ -180,7 +173,7 @@ mod tests {
         /// shell detection pick the v5 provider (the sandboxed
         /// `~/.config/noctalia/profiles` marker is seeded by `write_config`),
         /// `false` leaves the v5 probe negative so registration reaches the
-        /// v4 side of the decision.
+        /// no-backend arm — no fallback entry ships behind v5.
         fn new(v5_active: bool) -> Self {
             let env = TempEnv::new();
             let bin = tempfile::tempdir().expect("stub bin dir");
@@ -278,11 +271,11 @@ mod tests {
     }
 
     /// `disabled_providers` must gate registration at the seam: with the
-    /// shell selecting v5, disabling `noctalia-v5` skips it — and the v4
-    /// provider must NOT be substituted for it, because the keeper turned
+    /// shell selecting v5, disabling `noctalia-v5` skips it — and no other
+    /// shell backend may be substituted for it, because the keeper turned
     /// that backend off. The presets provider must survive untouched.
     #[test]
-    fn disabled_noctalia_v5_is_skipped_without_v4_substitution() {
+    fn disabled_noctalia_v5_is_skipped_without_substitution() {
         let sandbox = ShellSandbox::new(true);
         sandbox.write_config(&["noctalia-v5"]);
 
@@ -290,24 +283,24 @@ mod tests {
         assert_eq!(
             ids,
             vec!["hve-presets"],
-            "a disabled provider must not register, and the other Noctalia \
-             version must not be substituted for it"
+            "a disabled provider must not register, and no other shell \
+             backend may be substituted for it"
         );
     }
 
-    /// Same gate on the v4 side of the decision: both the `else if v4 active`
-    /// branch and the `else` fallback register `NoctaliaV4Provider`, whose id
-    /// is `noctalia`.
+    /// A config that still names the RETIRED v4 id must be inert: `noctalia`
+    /// matches no shipped entry, so it can neither disable the live v5
+    /// backend nor change what registers.
     #[test]
-    fn disabled_noctalia_v4_provider_is_skipped() {
-        let sandbox = ShellSandbox::new(false);
+    fn retired_noctalia_id_in_config_is_inert() {
+        let sandbox = ShellSandbox::new(true);
         sandbox.write_config(&["noctalia"]);
 
         let ids = registered_ids(&sandbox);
         assert_eq!(
             ids,
-            vec!["hve-presets"],
-            "the v4 provider must be skipped when its id is disabled"
+            vec!["noctalia-v5", "hve-presets"],
+            "the retired id must neither disable v5 nor alter registration"
         );
     }
 
@@ -336,17 +329,22 @@ mod tests {
         );
     }
 
-    /// An empty list also preserves the historical v4 fallback selection.
+    /// The deliberate no-backend path (D1 of
+    /// `odd/tasks/remove-noctalia-v4-backend.md`): with v5 not detected and
+    /// no fallback entry behind it, NO shell backend registers — HVE starts
+    /// with `hve-presets` only, and the router's warning is the visible
+    /// signal. Nothing is resurrected in v5's place.
     #[test]
-    fn empty_disabled_list_registers_the_v4_fallback() {
+    fn no_backend_registers_when_v5_is_not_detected() {
         let sandbox = ShellSandbox::new(false);
         sandbox.write_config(&[]);
 
         let ids = registered_ids(&sandbox);
         assert_eq!(
             ids,
-            vec!["noctalia", "hve-presets"],
-            "the v4 fallback must keep registering when nothing is disabled"
+            vec!["hve-presets"],
+            "without a detected shell and with no fallback entry, only presets \
+             may register"
         );
     }
 
@@ -354,13 +352,13 @@ mod tests {
     /// no change to the registered set.
     #[test]
     fn unknown_disabled_id_changes_nothing() {
-        let sandbox = ShellSandbox::new(false);
+        let sandbox = ShellSandbox::new(true);
         sandbox.write_config(&["not-a-real-provider", ""]);
 
         let ids = registered_ids(&sandbox);
         assert_eq!(
             ids,
-            vec!["noctalia", "hve-presets"],
+            vec!["noctalia-v5", "hve-presets"],
             "an unknown id must not skip, panic, or alter registration"
         );
     }
@@ -373,12 +371,11 @@ mod tests {
     /// dir left unrepresented" obligation of that convention.
     #[test]
     fn every_shipped_preview_record_id_resolves_a_declarer() {
-        // The three ids that appear under a theme's `providers/` tree and
-        // own a preview record: `noctalia-v5` (assignment manifest,
-        // painter video, wallpaper text), `noctalia` (v4's own
-        // `wallpapers.json`), `wallpaper` (the retired id's byte-copy of
-        // that same record).
-        for id in ["noctalia-v5", "noctalia", "wallpaper"] {
+        // The ONE id that appears under a theme's `providers/` tree and
+        // owns a preview record: `noctalia-v5` (assignment manifest,
+        // painter video, wallpaper text). The retired `noctalia` and
+        // `wallpaper` ids ship no declarer any more.
+        for id in ["noctalia-v5"] {
             assert!(
                 declaration_provider(id).is_some(),
                 "the shipped id '{id}' owns a preview record and must resolve a declarer"
@@ -493,23 +490,21 @@ end)\n\
     }
 
     /// The registry is data-driven: adding a shell is one entry, and the
-    /// shipped list carries the detection order plus exactly one fallback,
-    /// which must be the LAST entry (v4).
+    /// shipped list carries the detection order with NO fallback entry —
+    /// removing the retired v4 backend removed the historical fallback with
+    /// it (D1 of `odd/tasks/remove-noctalia-v4-backend.md`).
     #[test]
     fn shipped_backends_list_owns_detection_and_construction() {
         let backends = shell_backends();
         assert_eq!(
             backends.iter().map(|b| b.id).collect::<Vec<_>>(),
-            vec!["noctalia-v5", "noctalia"]
+            vec!["noctalia-v5"]
         );
         assert_eq!(
             backends.iter().filter(|b| b.fallback).count(),
-            1,
-            "exactly one backend is the historical fallback"
-        );
-        assert!(
-            !backends[0].fallback && backends[1].fallback,
-            "the fallback must be the last entry"
+            0,
+            "no shipped backend may carry the historical fallback: a machine \
+             where nothing detects registers no shell backend"
         );
     }
 }
