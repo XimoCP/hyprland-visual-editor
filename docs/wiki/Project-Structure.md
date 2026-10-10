@@ -85,12 +85,11 @@ hve/
 | File | Lines | Responsibility |
 |------|-------|----------------|
 | `mod.rs` | 499 | Provider registration router: one entry per shipped backend |
-| `noctalia.rs` | 6550 | Noctalia v4/v5: colours, wallpapers, template processor, mpvpaper manifest |
-| `noctalia_paths.rs` | 474 | Noctalia's own path and launcher knowledge (v4 Quickshell, v5) |
+| `noctalia.rs` | 5762 | Noctalia v5: colours, wallpapers, template processor, mpvpaper manifest |
+| `noctalia_paths.rs` | 258 | Noctalia v5's own path and launcher knowledge |
 | `noctalia_runtime.rs` | 655 | Noctalia runtime access: `noctalia msg` IPC and on-disk paths |
 | `shell_capabilities.rs` | 60 | The shell-capability seam: what the core asks of the running shell |
 | `background.rs` | 1024 | `apply-background` capability router |
-| `wallpaper.rs` | 351 | Wallpaper provider state after parsing `wallpapers.json` |
 | `wallpaper_authority.rs` | 2817 | Single owner of "who controls the wallpaper right now" |
 | `bg_info.rs` | 933 | Shared background (wallpaper) information |
 | `mpvpaper.rs` | 763 | Animated (video) wallpapers for Noctalia v5 themes |

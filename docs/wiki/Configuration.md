@@ -56,7 +56,7 @@ That block is what a **fresh** file looks like — the defaults from `Config::de
 | `theme` | string | `"system"` | `"dark"`, `"light"` or `"system"`; `system` asks the desktop preference. |
 | `last_applied_theme` | string | `""` | Name of the last applied theme, used to re-assert its colours after a restart. |
 | `keybinds_enabled` | bool | `false` | Saved toggle for HVE's shortcut block. Nothing outside `src/config.rs` reads it today: at startup HVE writes the vital `SUPER + H` keybind itself (`src/main.rs` → `src/settings.rs`). |
-| `disabled_providers` | array | `[]` | Provider ids the user turned off, for example `"noctalia"` or `"hve-presets"`. |
+| `disabled_providers` | array | `[]` | Provider ids the user turned off, for example `"noctalia-v5"` or `"hve-presets"`. |
 
 ## 🔄 Migrations
 

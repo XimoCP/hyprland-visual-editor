@@ -129,9 +129,8 @@ tested without spawning anything.
 
 #### 📌 Availability
 
-Animated backgrounds depend on the active provider: they are a **Noctalia v5**
-feature (`providers/noctalia-v5/`). Noctalia v4 and HVE's own presets carry
-no video.
+Animated backgrounds are a **Noctalia v5** feature
+(`providers/noctalia-v5/`); HVE's own presets carry no video.
 
 ### 📦 The theme's own background
 

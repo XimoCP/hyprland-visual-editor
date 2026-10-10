@@ -462,7 +462,7 @@ hve/
 │   │   ├── mod.rs          ← Orquestación del compositor
 │   │   └── hyprland.rs     ← Compose del overlay para Hyprland
 │   └── providers/          ← Providers de temas (captura/restauración por shell)
-│       ├── noctalia.rs     ← Provider Noctalia v4/v5 (colores, wallpapers, plantillas)
+│       ├── noctalia.rs     ← Provider Noctalia v5 (colores, wallpapers, plantillas)
 │       ├── shell.rs        ← Detección de shell activo + rutas por versión
 │       ├── mpvpaper.rs     ← Fondos animados (video) para temas Noctalia v5
 │       └── hve_presets.rs  ← Provider de presets HVE (anim/border/shader/geometría)
@@ -512,7 +512,7 @@ hve/
 | `utils.rs` | 101 | Utilidades varias |
 | `composer/mod.rs` | 488 | Orquestación del ensamblado de overlays |
 | `composer/hyprland.rs` | 367 | Compose del overlay para Hyprland |
-| `providers/noctalia.rs` | 1189 | Provider Noctalia v4/v5: colores, wallpapers, template processor, manifest mpvpaper |
+| `providers/noctalia.rs` | 5762 | Provider Noctalia v5: colores, wallpapers, template processor, manifest mpvpaper |
 | `providers/shell.rs` | 574 | Detección de shell activo y rutas por versión (`ShellProvider`, `ShellDetector`) |
 | `providers/mpvpaper.rs` | 758 | Fondos animados (video) para temas Noctalia v5 |
 | `providers/hve_presets.rs` | 149 | Provider de presets HVE (animación, borde, shader, geometría) |

@@ -83,13 +83,14 @@ subdirectory per provider under `providers/<id>/`.
 
 Two kinds of provider register at startup (`src/providers/mod.rs`):
 
-- **one shell backend** — `noctalia-v5` when Noctalia v5 is detected, else
-  `noctalia` (v4), which is the fallback;
+- **one shell backend** — `noctalia-v5`, registered when Noctalia v5 is
+  detected. There is no fallback: on a machine without v5 no shell backend
+  registers, and HVE starts with presets and geometry only;
 - **`hve-presets`** — HVE's own animation, border, shader and geometry
   presets; it registers unless its id is listed in `disabled_providers`.
 
-A provider id listed in `disabled_providers` is simply not registered; the
-other shell version is never substituted for it.
+A provider id listed in `disabled_providers` is simply not registered; no
+other shell version is ever substituted for it.
 
 - **Save** — `ThemeManager::save` creates the directory, runs each selected
   provider's `save`, and writes `meta.json`.
