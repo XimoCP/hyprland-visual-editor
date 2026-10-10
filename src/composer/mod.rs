@@ -1404,6 +1404,35 @@ pub(crate) mod tests {
         );
     }
 
+    /// The HIDE branch of `toggle_tray` must never run the show hook. A hook
+    /// misplaced into the hide branch would recenter the gallery as the window
+    /// leaves the screen — nearly invisible to the keeper until the next
+    /// reveal, so only a test catches it.
+    #[test]
+    fn test_toggle_tray_hide_never_runs_the_show_hook() {
+        init_test_platform();
+        let win = crate::MainWindow::new().unwrap();
+        let (fake, _calls) = FakeComposer::new();
+        let mut controller = Controller::new(Box::new(fake));
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_hook = hits.clone();
+        controller.set_show_hook(Arc::new(move || {
+            hits_hook.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        assert!(!controller.window_hidden(), "precondition: the window is visible");
+        let toggled = controller.toggle_tray(&win);
+
+        assert!(toggled, "toggle_tray takes the hide path on a visible window");
+        assert!(controller.window_hidden(), "toggle_tray must hide the visible window");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "hiding must never run the show hook"
+        );
+    }
+
     // ── Read-only query verbs (capability-routing Phase 3) ────────────
 
     /// The core asks for a query by EXPLICIT selector, never by a

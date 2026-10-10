@@ -1139,9 +1139,14 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     let stale = win.window().take_snapshot().expect("stale slider snapshot");
     save_slice_png(stale.clone(), "slice_stale_before_show.png");
 
-    // The hook mirrors `refresh_slice_ring` (relabel the ring for the focused
-    // slot, snap delta-base + focus-pos to it) and calls the very helper
-    // `main` registers, so this test cannot drift from production.
+    // The hook calls the REAL production seam: `recenter_gallery_on_active`
+    // (the helper `main` registers), the `Controller::show_window` hidden ->
+    // shown transition and `gallery_initial_focus`. The `refresh` closure
+    // below, however, is a HAND-COPIED replica of `refresh_slice_ring`: it
+    // relabels the ring and snaps delta-base + focus-pos, but omits the
+    // virtual-focus atomic store and the 16 ms `gallery-slice-rebasing`
+    // toggle. A change inside that production closure would therefore NOT
+    // fail this test — only the seam above is pinned here.
     let refresh: std::sync::Arc<dyn Fn() + Send + Sync> = {
         let weak = win.as_weak();
         std::sync::Arc::new(move || {
@@ -1218,6 +1223,25 @@ fn slice_focus_flow_renders_settled_and_midflight() {
         moved > 1000,
         "the ring must repaint the central band onto the active card: only {moved} pixels differ"
     );
+}
+
+/// The controller hook is inert until `main` fills the slot: dropping the
+/// registration in `main()` would leave the whole suite green while SUPER+H
+/// stopped recentering the gallery. Source-contract pin (the `ui_tests.rs`
+/// idiom): it proves the registration text is present in `main()`, NOT that
+/// the hook runs at runtime — the controller tests own that half.
+#[test]
+fn main_registers_the_gallery_recenter_show_hook() {
+    let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    for marker in [
+        "ctrl.set_show_hook(Arc::new(move || {",
+        "crate::recenter_gallery_on_active(&w, refresh.as_ref());",
+    ] {
+        assert!(
+            src.contains(marker),
+            "src/main.rs must register the gallery recenter show hook: {marker}"
+        );
+    }
 }
 
 // ── Ctrl+arrows deploy the drawers: visual proof ───────────────────────
