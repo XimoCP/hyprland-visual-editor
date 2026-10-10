@@ -123,22 +123,17 @@ pub fn active_shell() -> Box<dyn shell_capabilities::ShellCapabilities> {
 /// theme's own `providers/` tree records; it never names a backend itself.
 /// `None` for an id this product does not ship and for `hve-presets`
 /// (constructing it needs an `Engine` handle, and it declares no artifacts).
+/// The retired `noctalia` (v4) and `wallpaper` ids ship nothing either: no
+/// alias resurrects them, so their theme dirs declare no preview — which is
+/// what they already did, since those themes are hidden from the gallery.
 ///
 /// Constructing a declarer must stay side-effect free — the only methods the
 /// cleanup and preview seams call are `deletable_artifacts` and
 /// `preview_sources`, both of which only read the theme's own record.
 pub fn declaration_provider(id: &str) -> Option<Box<dyn ThemeProvider>> {
-    // The retired `wallpaper` id (see `src/providers/wallpaper.rs`, inert)
-    // stored a byte-copy of Noctalia v4's OWN cache record — the same
-    // `wallpapers.json` file v4 saves from — so v4 is its read-only
-    // declarer: it parses the record format it owns in whatever provider
-    // directory the core hands it. Themes on disk still carry
-    // `providers/wallpaper/` trees; without this alias their preview source
-    // would silently disappear from the gallery.
-    let lookup = if id == "wallpaper" { "noctalia" } else { id };
     shell_backends()
         .iter()
-        .find(|b| b.id == lookup)
+        .find(|b| b.id == id)
         .map(|b| (b.declare)())
 }
 
@@ -379,6 +374,17 @@ mod tests {
             assert!(
                 declaration_provider(id).is_some(),
                 "the shipped id '{id}' owns a preview record and must resolve a declarer"
+            );
+        }
+
+        // The retired ids resolve NOTHING: no alias may hand a legacy
+        // `providers/noctalia/` or `providers/wallpaper/` tree a declarer for
+        // a record format this product no longer ships (D3 of
+        // `odd/tasks/remove-noctalia-v4-backend.md`).
+        for retired in ["noctalia", "wallpaper"] {
+            assert!(
+                declaration_provider(retired).is_none(),
+                "the retired id '{retired}' must resolve no declarer"
             );
         }
 
