@@ -393,13 +393,10 @@ fn push_mosaic_region(
 }
 
 // ── Page model (Mosaic final scheme) ───────────────────────────────
-// Split the justified-rows block into PAGES. A PAGE = the rows that fit
-// the same central band used for the single Pinterest block today
-// (MOSAIC_PAGE_ROW_COUNT rows). Pure Rust, headless-testable so the UI
-// only mirrors `current`/`total_pages` and the current page's tiles.
-/// Rows per page — equals the band-filling row count so one page == one
-/// central band of justified rows.
-pub const MOSAIC_PAGE_ROW_COUNT: usize = MOSAIC_ROW_COUNT;
+// Split the theme list into PAGES. A PAGE holds up to MOSAIC_PAGE_MAX_TILES
+// themes, a count DERIVED from the elastic hero layout at the minimum tile
+// size. Pure Rust, headless-testable so the UI only mirrors
+// `current`/`total_pages` and the current page's tiles.
 /// Per-column curtain stagger (spec: ~50ms per column).
 pub const MOSAIC_CURTAIN_COL_STAGGER_MS: u64 = 50;
 /// Per-tile curtain wipe duration (spec: ~300ms).
@@ -506,39 +503,42 @@ pub fn mosaic_layout_rows(layout: &MosaicLayout) -> Vec<Vec<usize>> {
     rows
 }
 
-/// Geometric capacity of one page: how many tiles fill MOSAIC_PAGE_ROW_COUNT
-/// rows for a FULL cloned aspect set. Deterministic from stage dims + the
-/// display-aspect pattern. Degenerate (non-positive) stage → 0.
+/// Page size derived from the REAL layout (never a separate geometric
+/// estimate): the largest count, capped at [`MOSAIC_PAGE_MAX_TILES`], whose
+/// hero-band layout keeps every tile at or above [`MOSAIC_MIN_TILE_PX`] on its
+/// smallest edge. Probed across every phase of the display-aspect pattern, so
+/// any page slice of that size is safe. Degenerate (non-positive) stage → 0;
+/// a valid stage always hosts at least one tile.
 pub fn mosaic_page_capacity(stage_w: f32, stage_h: f32) -> usize {
     if !(stage_w > 0.0) || !(stage_h > 0.0) {
         return 0;
     }
-    // Width-based row fill: the band has exactly MOSAIC_PAGE_ROW_COUNT rows
-    // of height th (same band math as justified_hero_layout), so capacity is
-    // how many pattern tiles fit side-by-side within the usable width at that
-    // height, times the row count. A hard cap guards against pathological
-    // inputs: the justified_* packers never wrap past MOSAIC_ROW_COUNT rows,
-    // so any estimate derived from laying out a long probe list reports the
-    // whole list (4096) and collapses every page tile to sub-pixel dust.
-    let g = MOSAIC_GUTTER_PX;
-    let band = stage_h / MOSAIC_BAND_HEIGHT_DIVISOR;
-    let th =
-        (band - (MOSAIC_PAGE_ROW_COUNT as f32 - 1.0) * g) / MOSAIC_PAGE_ROW_COUNT as f32;
-    let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
-    let usable_w = (stage_w - 2.0 * margin).max(1.0);
-    // Hero-centered band capacity: one hero (default square aspect at the
-    // nominal band height, capped) flanked by TWO side rows of width
-    // side_w — each side fits per_side tiles of the average pattern aspect
-    // at height th.
-    let hero_h = 2.0 * th + g;
-    let hero_w = (hero_h * mosaic_display_aspect(0))
-        .min(usable_w * MOSAIC_HERO_MAX_WIDTH_FRACTION)
-        .max(1.0);
-    let side_w = (usable_w - hero_w - 2.0 * g) / 2.0;
-    let avg_aspect =
-        (0..6).map(mosaic_display_aspect).sum::<f32>() / 6.0;
-    let per_side = (((side_w + g) / (th * avg_aspect + g)).round() as usize).max(1);
-    (1 + 4 * per_side).min(64)
+    let fits = |n: usize| -> bool {
+        for phase in 0..10 {
+            let aspects: Vec<f32> =
+                (0..n).map(|i| mosaic_display_aspect(phase + i)).collect();
+            let reals: Vec<usize> = (0..n).collect();
+            let (layout, _) = justified_hero_layout(&aspects, &reals, stage_w, stage_h);
+            if layout.tiles.is_empty()
+                || layout
+                    .tiles
+                    .iter()
+                    .any(|t| t.w.min(t.h) < MOSAIC_MIN_TILE_PX)
+            {
+                return false;
+            }
+        }
+        true
+    };
+    // A valid stage always hosts at least one tile; the floor keeps the page
+    // model from collapsing to 0 on a stage too small for the cap.
+    let mut cap = 1usize;
+    for n in 2..=MOSAIC_PAGE_MAX_TILES {
+        if fits(n) {
+            cap = n;
+        }
+    }
+    cap
 }
 
 /// Per-tile curtain delay (ms) staggered per column (~50ms/column). Tiles
@@ -562,9 +562,9 @@ pub fn mosaic_curtain_delays(tiles: &[MosaicTile]) -> Vec<u64> {
 }
 
 /// Page model: source of truth for mosaic pagination. Holds the real theme
-/// count, the geometric page capacity, the total page count and the current
-/// page. UI mirrors `current`/`total_pages`; `page_render` produces the
-/// current page's geometry inputs (with clone-fill) so the wall never
+/// count, the layout-derived page capacity, the total page count and the
+/// current page. UI mirrors `current`/`total_pages`; `page_render` produces
+/// the current page's geometry inputs (no clone-fill) so the wall never
 /// touches disk.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MosaicPages {
@@ -643,61 +643,23 @@ impl MosaicPages {
         (1..=self.total_pages).collect()
     }
 
-    /// How many clones (repeated real themes) were added to fill the current
-    /// page when the library is smaller than a page. 0 otherwise.
-    pub fn clone_fill_count(&self) -> usize {
-        if self.real_count > 0 && self.real_count < self.capacity {
-            self.capacity - self.real_count
-        } else {
-            0
-        }
-    }
-
-    /// Map a displayed (rendered) tile index to its REAL theme index. In
-    /// clone mode real = displayed % real_count; otherwise the page's real
-    /// block offset + displayed (1:1 within the page). Degenerate capacity 0
-    /// falls back to clamped identity.
-    pub fn clone_real_index(&self, displayed: usize) -> usize {
-        if self.real_count == 0 {
-            return 0;
-        }
-        if self.capacity == 0 {
-            return displayed.min(self.real_count - 1);
-        }
-        if self.real_count < self.capacity {
-            displayed % self.real_count
-        } else {
-            self.current * self.capacity + displayed
-        }
-    }
-
-    /// Aspects + real indices for rendering the current page. Applies
-    /// clone-fill so exactly `capacity` tiles are produced when the library
-    /// is smaller than a page. Purity: no disk, no engine. Degenerate
-    /// capacity 0 falls back to real entries single page.
+    /// Aspects + real indices for rendering the current page: exactly the
+    /// page's real themes, 1:1 — no clone-fill (the elastic layout absorbs the
+    /// leftover instead of repeating a theme). Purity: no disk, no engine.
+    /// Degenerate capacity 0 falls back to the real entries as a single page.
     pub fn page_render(&self) -> (Vec<f32>, Vec<usize>) {
         if self.real_count == 0 {
             return (vec![], vec![]);
         }
-        if self.capacity == 0 {
-            let aspects: Vec<f32> = (0..self.real_count).map(mosaic_display_aspect).collect();
-            let reals: Vec<usize> = (0..self.real_count).collect();
-            return (aspects, reals);
-        }
-        if self.real_count < self.capacity {
-            let aspects: Vec<f32> =
-                (0..self.capacity).map(mosaic_display_aspect).collect();
-            let reals: Vec<usize> =
-                (0..self.capacity).map(|k| k % self.real_count).collect();
-            (aspects, reals)
+        let (start, end) = if self.capacity == 0 {
+            (0, self.real_count)
         } else {
             let start = self.current * self.capacity;
-            let end = ((self.current + 1) * self.capacity).min(self.real_count);
-            let aspects: Vec<f32> =
-                (start..end).map(mosaic_display_aspect).collect();
-            let reals: Vec<usize> = (start..end).collect();
-            (aspects, reals)
-        }
+            (start, (start + self.capacity).min(self.real_count))
+        };
+        let aspects: Vec<f32> = (start..end).map(mosaic_display_aspect).collect();
+        let reals: Vec<usize> = (start..end).collect();
+        (aspects, reals)
     }
 
     /// Jump to an absolute page (clamped, no wrap). Returns true if changed.
@@ -1826,22 +1788,23 @@ mod mosaic_pages_tests {
     }
 
     #[test]
-    fn mosaic_clone_fill_count_and_mapping() {
+    fn mosaic_page_render_is_the_identity_no_clones() {
+        // REWRITTEN (mosaic-elastic-centred-layout): the page no longer pads
+        // with cycled reals. A library smaller than a page renders exactly its
+        // own themes, 1:1; clone_fill_count/clone_real_index are gone with the
+        // clones.
         let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
         let real = 3usize;
-        assert!(cap > real, "need capacity > real for clone-fill test (cap={cap})");
+        assert!(cap > real, "need capacity > real (cap={cap})");
         let p = MosaicPages::new(real, STAGE_W, STAGE_H);
-        assert_eq!(p.clone_fill_count(), cap - real, "clones fill the page");
-        // mapping displayed -> real is cyclic (displayed % real_count)
-        for k in 0..cap {
-            assert_eq!(p.clone_real_index(k), k % real, "displayed {k} -> real {}", k % real);
-        }
-        // page_render yields exactly `capacity` tiles, all mapped to real
         let (aspects, reals) = p.page_render();
-        assert_eq!(aspects.len(), cap, "clone page fills capacity tiles");
-        assert_eq!(reals.len(), cap);
-        for (k, &r) in reals.iter().enumerate() {
-            assert_eq!(r, k % real, "rendered tile {k} maps to real {}", k % real);
+        assert_eq!(aspects.len(), real, "no clone padding: exactly the real themes");
+        assert_eq!(reals, vec![0, 1, 2], "identity mapping");
+        for (k, &a) in aspects.iter().enumerate() {
+            assert!(
+                (a - mosaic_display_aspect(k)).abs() < 1e-4,
+                "aspect {k} follows the display pattern"
+            );
         }
     }
 
@@ -2170,16 +2133,16 @@ mod mosaic_hero_tests {
     }
 
     #[test]
-    fn clone_fill_feeds_the_four_segments() {
-        // Few real themes → page_render clone-fills the page to capacity;
-        // the layout then splits everything across hero + 4 segments with
-        // every real theme present and the reals mapping aligned.
+    fn page_real_mapping_is_complete_and_the_hero_leads() {
+        // REWRITTEN (mosaic-elastic-centred-layout): no clone-fill. The page's
+        // own themes flow into the hero band with every real present and the
+        // hero first in model order.
         let pages = MosaicPages::new(3, STAGE_W, STAGE_H);
         let (aspects, reals) = pages.page_render();
         let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
         assert_eq!(tile_reals.len(), layout.tiles.len());
         for r in &tile_reals {
-            assert!(*r < 3, "clone real {r} must come from the library");
+            assert!(*r < 3, "tile real {r} must come from the library");
         }
         for k in 0..3 {
             assert!(tile_reals.contains(&k), "real {k} must be present");
@@ -2258,19 +2221,19 @@ mod mosaic_hero_tests {
     }
 
     #[test]
-    fn hero_clone_fill_and_aspect_contracts_still_hold() {
-        // Clone-filled page must still respect margins and the aspect
-        // pattern when using the hero layout; row-fill clones may extend
-        // the tile count beyond capacity.
+    fn hero_page_aspect_and_margin_contracts_still_hold() {
+        // REWRITTEN (mosaic-elastic-centred-layout): a library smaller than a
+        // page renders its own themes 1:1 (no clones). The hero layout must
+        // still respect the margins and the aspect pattern.
         let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
         let real = 3usize;
         assert!(cap > real);
         let pages = MosaicPages::new(real, STAGE_W, STAGE_H);
         let (aspects, reals) = pages.page_render();
-        assert_eq!(aspects.len(), cap);
-        assert_eq!(reals.len(), cap);
+        assert_eq!(aspects.len(), real, "no clones: exactly the real themes");
+        assert_eq!(reals.len(), real);
         let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
-        assert!(layout.tiles.len() >= cap, "hero layout keeps at least capacity tiles");
+        assert_eq!(layout.tiles.len(), real, "one tile per real theme");
         assert_eq!(tile_reals.len(), layout.tiles.len());
         let margin = STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION;
         let right = STAGE_W - margin;
@@ -2316,15 +2279,17 @@ mod mosaic_capacity_tests {
     fn open_page_tiles_are_never_dust() {
         // The exact broken scenario: 6 real themes opening at 1920x1080 —
         // one hero rendered and the rest of the wall collapsed to dust.
+        // REWRITTEN (mosaic-elastic-centred-layout): the page renders its 6
+        // themes 1:1 (no clones), so it must yield 6 tiles, not capacity.
         let (sw, sh) = (1920.0f32, 1080.0f32);
         let cap = mosaic_page_capacity(sw, sh);
-        assert!(cap <= 64, "capacity {cap}");
+        assert!(cap <= MOSAIC_PAGE_MAX_TILES, "capacity {cap}");
         let pg = MosaicPages::new(6, sw, sh);
         let (aspects, reals) = pg.page_render();
-        assert_eq!(aspects.len(), cap, "page_render must yield capacity tiles");
-        assert_eq!(reals.len(), cap);
+        assert_eq!(aspects.len(), 6, "page_render yields the 6 real themes");
+        assert_eq!(reals.len(), 6);
         let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, sw, sh);
-        assert!(layout.tiles.len() >= cap);
+        assert_eq!(layout.tiles.len(), 6);
         assert_eq!(tile_reals.len(), layout.tiles.len());
         let margin = sw * MOSAIC_SIDE_MARGIN_FRACTION;
         for t in &layout.tiles {
@@ -2383,19 +2348,18 @@ mod mosaic_unit_a_tests {
     }
 
     #[test]
-    fn clone_fill_exact_contract_3_real_5_capacity_tile4_maps_to_1() {
-        // Hero-centered capacity at this stage is 5; with 3 real themes the
-        // page is in clone-fill mode: displayed k maps to k % 3.
+    fn page_render_three_real_themes_is_identity_no_clone() {
+        // REWRITTEN (mosaic-elastic-centred-layout): 3 real themes render 3
+        // tiles 1:1 — the elastic layout absorbs the leftover instead of
+        // cloning to fill a nominal capacity.
         let p = MosaicPages::new(3, STAGE_W, STAGE_H);
         let cap = p.capacity();
-        assert!(cap >= 4, "need cap >=4 for clone mode cap={cap}");
-        assert!(3 < cap, "real 3 < cap {cap} → clone mode");
-        assert_eq!(p.clone_real_index(4), 1, "displayed 4 → real 1 (4 % 3)");
-        assert_eq!(p.clone_fill_count(), cap - 3);
+        assert!(cap >= 4, "capacity {cap}");
+        assert!(3 < cap, "3 real themes < cap {cap} → one page, no clones");
+        assert_eq!(p.total_pages(), 1);
         let (aspects, reals) = p.page_render();
-        assert_eq!(aspects.len(), cap);
-        assert_eq!(reals.len(), cap);
-        assert_eq!(reals[4], 1);
+        assert_eq!(aspects.len(), 3, "exactly the real themes");
+        assert_eq!(reals, vec![0, 1, 2], "identity mapping");
     }
 
     #[test]
@@ -2562,5 +2526,33 @@ mod mosaic_elastic_tests {
             "hero centre {hero_center} must be usable/2 {}",
             usable_w() / 2.0
         );
+    }
+
+    #[test]
+    fn elastic_page_capacity_is_derived_from_the_layout() {
+        // The keeper's stage packs the full cap of 10 — the old geometric
+        // ESTIMATE said 9, so pagination started one theme too early.
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        assert_eq!(
+            cap, MOSAIC_PAGE_MAX_TILES,
+            "keeper's stage must derive the full cap of 10 from the layout, got {cap}"
+        );
+        // 10 themes → ONE page of 10 distinct tiles.
+        let ten = MosaicPages::new(10, STAGE_W, STAGE_H);
+        assert_eq!(ten.total_pages(), 1, "10 themes must fit one page");
+        assert!(ten.hidden());
+        let (aspects, reals) = ten.page_render();
+        assert_eq!(aspects.len(), 10);
+        assert_eq!(reals, (0..10).collect::<Vec<_>>(), "no clones: reals 1:1");
+        // 11 themes → 2 pages: page 1 = 10 distinct, page 2 = 1.
+        let mut eleven = MosaicPages::new(11, STAGE_W, STAGE_H);
+        assert_eq!(eleven.total_pages(), 2);
+        let (a1, r1) = eleven.page_render();
+        assert_eq!(a1.len(), 10);
+        assert_eq!(r1, (0..10).collect::<Vec<_>>(), "page 1: 10 distinct reals");
+        eleven.step(1);
+        let (a2, r2) = eleven.page_render();
+        assert_eq!(a2.len(), 1, "page 2 holds the single remaining theme");
+        assert_eq!(r2, vec![10]);
     }
 }

@@ -5,8 +5,8 @@
 // covers the stage). A page flip is a curtain: each incoming tile is wiped
 // clean by an opaque cover panel (scale-x, staggered ~50ms/column,
 // ~300ms/tile). reduced-motion swaps the curtain for a plain crossfade.
-// Clone-fill is pure model repetition in Rust — never touches disk; each
-// tile carries its REAL theme index (real-index) so clicks report it.
+// No clone-fill: each page renders its own themes 1:1, so each tile's
+// real-index is the identity over the page's source list (clicks report it).
 // Translated from skwd-wall Mosaic (MIT, © liixini).
 
 import { MosaicCell } from "MosaicCell.slint";
@@ -21,7 +21,7 @@ export struct MosaicTileData {
     y: length,
     w: length,
     h: length,
-    // Real theme index this tile maps to (clone-fill safe: displayed % real).
+    // Real theme index this tile maps to (identity within the page).
     real-index: int,
     // Curtain stagger for this tile (ms) — derived from its column.
     delay-ms: int,
