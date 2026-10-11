@@ -3384,22 +3384,55 @@ fn main() -> Result<(), slint::PlatformError> {
                     buf.make_mut_bytes().copy_from_slice(slat_expanded_rgba.as_raw());
                     slint::Image::from_rgba8(buf)
                 };
-                if let Some(mut row) = model.row_data(idx) {
-                    if row.name.as_str() == &*name {
+                // Fast path: the planned index still points at the same theme.
+                // On a mismatch the theme list was rebuilt while this batch was
+                // in flight, so the positional handshake shifted — repair by
+                // NAME over the model's current rows instead of dropping the
+                // payload (a name absent from the list is a deleted theme, the
+                // only payload we may drop, and never silently).
+                let exact = model
+                    .row_data(idx)
+                    .is_some_and(|row| row.name.as_str() == &*name);
+                let target = if exact {
+                    Some(idx)
+                } else {
+                    let rows: Vec<(usize, String)> = (0..model.row_count())
+                        .filter_map(|i| model.row_data(i).map(|r| (i as usize, r.name.to_string())))
+                        .collect();
+                    match thumbs::resolve_row_index(&rows, idx, &name) {
+                        Some(found) => {
+                            if found != idx {
+                                tracing::debug!(
+                                    theme = %name,
+                                    expected = idx,
+                                    found,
+                                    "gallery thumb index shifted; resolved by name"
+                                );
+                            }
+                            Some(found)
+                        }
+                        None => {
+                            tracing::warn!(
+                                theme = %name,
+                                index = idx,
+                                "gallery thumb dropped: theme no longer in the list"
+                            );
+                            None
+                        }
+                    }
+                };
+                if let Some(found) = target {
+                    if let Some(mut row) = model.row_data(found) {
                         row.thumb = img;
                         row.hero = hero_img;
                         row.slat_image = slat;
                         row.slat_expanded_image = slat_expanded;
-                        model.set_row_data(idx, row);
-                        if thumbs::is_last_completion(&pending) {
-                            refresh_clone(false); // thumb completion: not a flip
-                        }
-                    } else if thumbs::is_last_completion(&pending) {
-                        // Stale row still counts toward batch completion for coalescing
-                        refresh_clone(false);
+                        model.set_row_data(found, row);
                     }
-                } else if thumbs::is_last_completion(&pending) {
-                    refresh_clone(false);
+                }
+                if thumbs::is_last_completion(&pending) {
+                    // Every path counts toward batch completion for coalescing
+                    refresh_clone(false); // thumb completion: not a flip
                 }
             } else if thumbs::is_last_completion(&pending) {
                 refresh_clone(false);

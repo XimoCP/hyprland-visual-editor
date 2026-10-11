@@ -738,6 +738,24 @@ pub fn plan_jobs_with_priority(
     order_jobs(plan_jobs(sources), priority)
 }
 
+/// Pure delivery-lookup: which model row should receive a finished payload?
+/// `rows` is the model's CURRENT `(row_index, theme_name)` snapshot and
+/// `index`/`name` are the pair captured when the job was planned.
+///
+/// The handshake is positional, so a theme list rebuilt while a batch is in
+/// flight shifts every index from the insertion point on. An exact
+/// index+name match still wins (the common case, zero behaviour change); a
+/// shifted index resolves by NAME; a name absent from the list returns `None`
+/// (the theme was deleted — the only payload worth dropping).
+pub fn resolve_row_index(rows: &[(usize, String)], index: usize, name: &str) -> Option<usize> {
+    for (row_index, row_name) in rows {
+        if *row_index == index && row_name == name {
+            return Some(index);
+        }
+    }
+    rows.iter().find(|(_, row_name)| row_name == name).map(|(row_index, _)| *row_index)
+}
+
 /// Coalescing helper: returns true only for the last completion in a batch.
 /// Deterministic, no timers — last-job semantics via atomic pending counter.
 pub fn is_last_completion(pending: &std::sync::atomic::AtomicUsize) -> bool {
