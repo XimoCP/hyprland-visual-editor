@@ -207,6 +207,59 @@ fn reseed_active_border_index_matches_and_clears() {
     assert_eq!(win.get_active_border_index(), -1);
 }
 
+/// U2 (c)/(e)/(f): the keeper's Space theme records the bare stem `Space`
+/// while its file is `<user store>/borders/Space.lua`. That preset's card
+/// lives in the USER half of the list, and user cards CONTINUE the built-in
+/// index space (`PanelRoot.borders-list-len` = built-in files + user names),
+/// so the re-seed has to resolve the stem against the user names and write the
+/// COMBINED index. Resolving against the built-in list alone left the card
+/// unmarked while the border was applied to the desktop.
+#[test]
+fn reseed_marks_a_user_border_card_from_a_legacy_bare_stem() {
+    use slint::{ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_cascade.lua"),
+        SharedString::from("03_duo.lua"),
+        SharedString::from("14_looper.lua"),
+    ])));
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Space"),
+    ])));
+
+    win.set_active_border_index(-1);
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "Space"),
+        3,
+        "the legacy bare stem must mark the user card that continues the index space"
+    );
+    assert_eq!(win.get_active_border_index(), 3);
+
+    // The canonical form marks the very same card — the shipped shape is what
+    // a current record holds.
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "Space.lua"),
+        3,
+        "the canonical `<name>.lua` must mark the same user card"
+    );
+
+    // A built-in file still wins its own card when both halves could match.
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "03_duo"),
+        1,
+        "a bare stem of a BUILT-IN preset must mark the built-in card"
+    );
+
+    // Nothing matches: an explicit -1, never a silent blank.
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "Ghost"),
+        -1,
+        "a stem matching no preset must stay an explicit -1"
+    );
+    assert_eq!(win.get_active_border_index(), -1);
+}
+
 /// Every keyboard-focus move in the panel must leave a --verbose trace:
 /// panel-kbd (the single panel scope) and shell-kbd (shell) report gain
 /// + loss with the FocusReason mapped to a string, through the generic

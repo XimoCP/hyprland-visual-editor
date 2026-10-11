@@ -417,6 +417,43 @@ mod tests {
         );
     }
 
+    /// U2 end to end through the REAL save path: the keeper's Space theme
+    /// records the bare stem `"Space"` while the user store holds
+    /// `borders/Space.lua`. Re-saving that theme must bundle
+    /// `presets/borders/Space.lua` into the package, so the theme carries — and
+    /// installs on another machine — the border it actually uses.
+    #[test]
+    fn save_bundles_a_legacy_bare_stem_preset_into_the_package() {
+        let _env = crate::test_utils::TempEnv::new();
+        let proj = TempDir::new().unwrap();
+        for category in crate::theme_presets::CATEGORIES {
+            fs::create_dir_all(proj.path().join("assets").join(category)).unwrap();
+        }
+
+        // The record an older save left behind: the stem alone, no extension.
+        let mut cfg = Config::default();
+        cfg.active_border_file = "Space".into();
+        cfg.save().unwrap();
+
+        let user_border = dirs::config_dir().unwrap().join("hve/presets/borders");
+        fs::create_dir_all(&user_border).unwrap();
+        let bytes = b"-- keeper's space border\n";
+        fs::write(user_border.join("Space.lua"), bytes).unwrap();
+
+        let theme = TempDir::new().unwrap();
+        let provider = HvePresetsProvider::new(Engine::new(proj.path()));
+        provider
+            .save(theme.path())
+            .expect("a legacy bare stem must never fail a save");
+
+        let bundled = theme.path().join("presets/borders/Space.lua");
+        assert!(
+            bundled.is_file(),
+            "the theme must carry presets/borders/Space.lua for a bare stem record"
+        );
+        assert_eq!(fs::read(&bundled).unwrap(), bytes);
+    }
+
     /// SECURITY: an unsafe `active_anim_file` (a `..` traversal) must never
     /// fail a save, and must never let the bundler write outside the theme
     /// folder. The source is made to exist so the unguarded code would copy it

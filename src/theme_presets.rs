@@ -145,14 +145,20 @@ impl BundledPreset {
 /// The bundle plan: the active presets that are NOT shipped, in category
 /// order. Pure — computed from the recorded actives and the shipped catalog
 /// alone, so it is testable without a user store or a theme dir.
+///
+/// The stored reference is canonicalised ONCE, at this boundary, because this
+/// is what decides the destination file name. A legacy bare stem (`Space`)
+/// therefore plans `Space.lua`, and the shipped check, the copy and the stale
+/// cleanup all agree on that one name instead of three spellings of it.
 pub fn plan_bundle(active: &ActivePresets, shipped: &ShippedPresets) -> Vec<BundledPreset> {
     active
         .entries()
         .into_iter()
+        .map(|(category, file)| (category, PresetStore::canonical_preset_file(file)))
         .filter(|(category, file)| !shipped.is_shipped(category, file))
         .map(|(category, file)| BundledPreset {
             category: category.to_string(),
-            file_name: file.to_string(),
+            file_name: file,
         })
         .collect()
 }
@@ -160,10 +166,12 @@ pub fn plan_bundle(active: &ActivePresets, shipped: &ShippedPresets) -> Vec<Bund
 /// Bundle the theme's custom presets under `{theme_dir}/presets/<category>/`.
 ///
 /// A custom preset is by definition NOT shipped, so its source is the user's
-/// store at `user_presets_root/<category>/<file_name>`. Each planned preset is
-/// copied keeping its real file name; a preset no longer in the plan is removed
-/// from the theme so it carries exactly the custom presets it uses (only for
-/// categories whose shipped set is known).
+/// store at `user_presets_root/<category>/<file_name>`, where `file_name` is
+/// the canonical plan name: a theme that recorded a bare stem resolves to the
+/// real `<name>.lua` rather than being skipped as missing. Each planned preset
+/// is copied keeping its real file name; a preset no longer in the plan is
+/// removed from the theme so it carries exactly the custom presets it uses
+/// (only for categories whose shipped set is known).
 ///
 /// Best-effort by contract: a missing source, an unreadable directory or a
 /// copy error warns and is skipped — the save still succeeds. Returns the
@@ -670,6 +678,101 @@ mod tests {
         assert!(
             !stale_dir.join("old.lua").exists(),
             "a preset the theme no longer uses must not stay behind"
+        );
+    }
+
+    // ── U2 (d): a legacy bare stem bundles its `.lua` ────────────────────
+    // A theme saved before the canonical form records the stem alone
+    // (`active_border_file: "Space"`) while the user store holds
+    // `borders/Space.lua`. Building `<root>/borders/Space` found nothing, so
+    // the theme carried no preset and never installed it on another machine.
+
+    #[test]
+    fn plan_bundle_canonicalises_a_legacy_bare_stem() {
+        let plan = plan_bundle(
+            &active("", "Space", ""),
+            &shipped(&[("borders", &["01_cascade.lua"])]),
+        );
+        assert_eq!(
+            plan,
+            vec![BundledPreset {
+                category: "borders".into(),
+                file_name: "Space.lua".into()
+            }],
+            "a legacy bare stem must plan the canonical `<name>.lua`"
+        );
+    }
+
+    #[test]
+    fn bundle_resolves_a_legacy_bare_stem_to_its_lua_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let user_root = dir.path().join("user");
+        let src = user_root.join("borders/Space.lua");
+        fs::create_dir_all(src.parent().unwrap()).unwrap();
+        let bytes = b"-- keeper's space border\n";
+        fs::write(&src, bytes).unwrap();
+
+        let copied = bundle_theme_presets(
+            &theme,
+            &active("", "Space", ""),
+            &shipped(&[("borders", &[])]),
+            &user_root,
+        );
+
+        assert_eq!(
+            copied,
+            vec![BundledPreset {
+                category: "borders".into(),
+                file_name: "Space.lua".into()
+            }],
+            "the legacy stem must resolve to Space.lua and travel"
+        );
+        assert_eq!(
+            fs::read(theme.join("presets/borders/Space.lua")).unwrap(),
+            bytes,
+            "the theme package must carry presets/borders/Space.lua"
+        );
+    }
+
+    /// The stale cleanup must not delete the file the same run just wrote: the
+    /// keep comparison has to run on the same canonical name as the write.
+    #[test]
+    fn bundle_keeps_a_bundled_file_for_a_legacy_bare_stem() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let user_root = dir.path().join("user");
+        fs::create_dir_all(user_root.join("borders")).unwrap();
+        fs::write(user_root.join("borders/Space.lua"), b"-- space\n").unwrap();
+        let bundled = theme.join("presets/borders");
+        fs::create_dir_all(&bundled).unwrap();
+        fs::write(bundled.join("Space.lua"), b"-- previously bundled\n").unwrap();
+
+        bundle_theme_presets(
+            &theme,
+            &active("", "Space", ""),
+            &shipped(&[("borders", &[])]),
+            &user_root,
+        );
+
+        assert!(
+            bundled.join("Space.lua").is_file(),
+            "a preset the plan still lists must never be removed as stale"
+        );
+    }
+
+    /// A bare stem that canonicalises to a SHIPPED preset must not be copied:
+    /// the shipped rule is checked on the canonical name too, or a legacy
+    /// record would smuggle a built-in preset into the theme package.
+    #[test]
+    fn plan_bundle_never_bundles_a_bare_stem_that_canonicalises_to_a_shipped_preset() {
+        let plan = plan_bundle(
+            &active("", "01_cascade", ""),
+            &shipped(&[("borders", &["01_cascade.lua"])]),
+        );
+        assert!(
+            plan.is_empty(),
+            "a shipped preset must never be copied, got {plan:?}"
         );
     }
 

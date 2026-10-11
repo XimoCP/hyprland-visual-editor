@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::engine::{Engine, PresetInfo};
+use crate::preset_store::PresetStore;
 use crate::tr::Tr;
 use slint::{ModelRc, SharedString};
 
@@ -20,13 +21,18 @@ fn translate_presets(items: &[PresetInfo], tr: &Tr) -> (Vec<SharedString>, Vec<S
 /// means "nothing is active": either the stored file is empty, or it matches
 /// no entry (a renamed/removed preset — a real state, not an error). It is
 /// never `None`: callers must write an explicit index.
+///
+/// The comparison is TOLERANT ([`PresetStore::preset_files_match`]): a theme
+/// saved before the canonical form stores the bare stem (`Space`) while the
+/// scan list holds `Space.lua`, and that stem has to resolve to its card
+/// instead of being dropped by an exact-equality miss.
 fn resolve_active_index(items: &[PresetInfo], active_file: &str) -> i32 {
     if active_file.is_empty() {
         return -1;
     }
     items
         .iter()
-        .position(|i| i.file == active_file)
+        .position(|i| PresetStore::preset_files_match(active_file, &i.file))
         .map(|i| i as i32)
         .unwrap_or(-1)
 }
@@ -109,23 +115,18 @@ pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Confi
 /// value that matches no preset becomes an explicit -1 and logs a warning: a
 /// blank board is honest, a silently blank one is not. Returns the resulting
 /// index (for tracing and tests).
+///
+/// The list it resolves against is the panel's COMBINED one: the scanned
+/// built-in files first, then the user preset stems, whose cards continue the
+/// same index space. A USER preset stored as a bare stem (the keeper's Space
+/// theme records `"Space"` while the file is `borders/Space.lua`) must mark
+/// its user card, not vanish — see [`combined_active_index`].
 pub fn reseed_active_border_index(window: &crate::MainWindow, active_file: &str) -> i32 {
-    use slint::Model as _;
-    let files = window.get_border_files();
-    let index = if active_file.is_empty() {
-        -1
-    } else {
-        (0..files.row_count())
-            .find_map(|i| {
-                files
-                    .row_data(i)
-                    .as_ref()
-                    .map(|f| f.as_str() == active_file)
-                    .unwrap_or(false)
-                    .then_some(i as i32)
-            })
-            .unwrap_or(-1)
-    };
+    let index = combined_active_index(
+        &window.get_border_files(),
+        &window.get_user_border_preset_names(),
+        active_file,
+    );
     if index < 0 && !active_file.is_empty() {
         tracing::warn!(
             "[borders] active_border_file '{}' matches no preset — marker cleared",
@@ -134,6 +135,41 @@ pub fn reseed_active_border_index(window: &crate::MainWindow, active_file: &str)
     }
     window.set_active_border_index(index);
     index
+}
+
+/// The index of `active_file` inside the Borders panel's COMBINED card list:
+/// the scanned built-in files first, then the user preset stems, offset by the
+/// built-in count (`PanelRoot.borders-list-len` builds the same list and the
+/// card click reports the same index space). The comparison is tolerant on
+/// both halves, so a legacy bare stem resolves whether the preset is built-in
+/// or the user's own. `-1` when the reference is empty or matches nothing.
+fn combined_active_index(
+    builtin: &ModelRc<SharedString>,
+    user_names: &ModelRc<SharedString>,
+    active_file: &str,
+) -> i32 {
+    use slint::Model as _;
+
+    fn find(files: &ModelRc<SharedString>, active_file: &str) -> Option<i32> {
+        (0..files.row_count()).find_map(|i| {
+            files
+                .row_data(i)
+                .as_ref()
+                .map(|f| PresetStore::preset_files_match(active_file, f.as_str()))
+                .unwrap_or(false)
+                .then_some(i as i32)
+        })
+    }
+
+    if active_file.is_empty() {
+        return -1;
+    }
+    if let Some(index) = find(builtin, active_file) {
+        return index;
+    }
+    find(user_names, active_file)
+        .map(|index| builtin.row_count() as i32 + index)
+        .unwrap_or(-1)
 }
 
 #[cfg(test)]
@@ -318,6 +354,74 @@ mod tests {
             *active_idx.borrow(),
             -1,
             "a stored file that matches no preset must clear the marker explicitly"
+        );
+    }
+
+    // ── U2 (c): a legacy bare stem resolves against the scanned file ───
+    // A theme saved before the canonical form records the stem alone
+    // (`active_border_file: "Space"`) while the scanned list holds
+    // `Space.lua`. Exact equality dropped the marker with a warning, so the
+    // card showed unmarked even though the border was applied to the desktop.
+
+    #[test]
+    fn test_populate_metadata_resolves_a_bare_stem_against_the_scanned_file() {
+        let items = vec![
+            make_item("03_duo.lua", "Duo", "", "TAG"),
+            make_item("Space.lua", "Space", "", "CUSTOM"),
+        ];
+
+        let active_idx = std::cell::RefCell::new(-1);
+
+        populate_metadata(
+            &items,
+            "Space",
+            |_| {},
+            |_| {},
+            |i| *active_idx.borrow_mut() = i,
+        );
+
+        assert_eq!(
+            *active_idx.borrow(),
+            1,
+            "the legacy bare stem `Space` must resolve to the scanned `Space.lua`"
+        );
+    }
+
+    // ── U2 (e)/(f): the shipped form is unchanged, and an unmatched name
+    // stays an explicit -1 — never a silent blank ──────────────────────
+
+    #[test]
+    fn test_populate_metadata_keeps_the_full_name_and_clears_an_unmatched_one() {
+        let items = vec![make_item("Space.lua", "Space", "", "CUSTOM")];
+
+        let full = std::cell::RefCell::new(-1);
+        populate_metadata(
+            &items,
+            "Space.lua",
+            |_| {},
+            |_| {},
+            |i| *full.borrow_mut() = i,
+        );
+        assert_eq!(
+            *full.borrow(),
+            0,
+            "a full `<name>.lua` must keep resolving exactly as before"
+        );
+
+        // `Ghost` canonicalises to `Ghost.lua`, which is not in the list: the
+        // index stays -1 instead of silently pointing at something else.
+        let unmatched = std::cell::RefCell::new(0);
+        populate_metadata(
+            &items,
+            "Ghost",
+            |_| {},
+            |_| {},
+            |i| *unmatched.borrow_mut() = i,
+        );
+        assert_eq!(
+            *unmatched.borrow(),
+            -1,
+            "a name that matches no preset must stay an explicit -1"
         );
     }
 }

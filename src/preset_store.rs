@@ -59,6 +59,19 @@ impl PresetStore {
         }
     }
 
+    /// Whether a STORED preset reference and a scanned/list file name denote
+    /// the same preset. Both sides canonicalise first, so a legacy bare stem
+    /// (`Space`) matches the `Space.lua` a scan emits, while a name matching
+    /// nothing — and an empty reference — never match anything.
+    ///
+    /// This is the READ half of the canonical form. It TOLERATES a legacy
+    /// record instead of rewriting it: a theme that already works must keep
+    /// working untouched, and its own data is never migrated in place.
+    pub(crate) fn preset_files_match(stored: &str, candidate: &str) -> bool {
+        let stored = Self::canonical_preset_file(stored);
+        !stored.is_empty() && stored == Self::canonical_preset_file(candidate)
+    }
+
     /// A preset name is unsafe when it is empty, contains a path separator
     /// (`/` or `\`), contains a NUL byte, equals `.` or `..`, or starts with
     /// `.`. Interior dots are ALLOWED: the built-in `19_stylized2.5D.lua` and
@@ -583,11 +596,57 @@ mod tests {
         }
     }
 
+    /// The canonical form is the ONE preset-name convention (`<name>.lua`),
+    /// mirroring `_hve_preset_in_dir` in `assets/scripts/utils.sh` instead of
+    /// adding a third one: a bare stem gains the extension, a name that
+    /// already carries a dot is honoured verbatim — so a legacy `*.json` /
+    /// `*.ron` record is never mangled into `*.json.lua` — and an empty
+    /// reference stays empty.
+    #[test]
+    fn canonical_preset_file_adds_the_extension_only_to_a_bare_stem() {
+        assert_eq!(PresetStore::canonical_preset_file("Space"), "Space.lua");
+        assert_eq!(
+            PresetStore::canonical_preset_file("keeper_saved"),
+            "keeper_saved.lua"
+        );
+        assert_eq!(
+            PresetStore::canonical_preset_file("13_the_joker.lua"),
+            "13_the_joker.lua"
+        );
+        assert_eq!(
+            PresetStore::canonical_preset_file("01_night.frag"),
+            "01_night.frag"
+        );
+        assert_eq!(PresetStore::canonical_preset_file("glow.json"), "glow.json");
+        assert_eq!(PresetStore::canonical_preset_file(""), "");
+    }
+
+    /// Tolerant read: a stored reference and a list entry denote the same
+    /// preset exactly when their canonical forms agree. An empty reference,
+    /// and a name that canonicalises to something else, never match.
+    #[test]
+    fn preset_files_match_tolerates_the_legacy_stem_and_stays_strict_otherwise() {
+        assert!(PresetStore::preset_files_match("Space", "Space.lua"));
+        assert!(PresetStore::preset_files_match("Space.lua", "Space"));
+        assert!(PresetStore::preset_files_match("Space.lua", "Space.lua"));
+        assert!(PresetStore::preset_files_match(
+            "13_the_joker",
+            "13_the_joker.lua"
+        ));
+        assert!(!PresetStore::preset_files_match("Space", "SpaceX.lua"));
+        assert!(!PresetStore::preset_files_match("Space.lua", "Space.frag"));
+        assert!(!PresetStore::preset_files_match("", "Space.lua"));
+        assert!(!PresetStore::preset_files_match("Space", ""));
+        assert!(
+            !PresetStore::preset_files_match("glow.json", "glow.json.lua"),
+            "a legacy non-lua record must not match a hypothetical `<name>.lua`"
+        );
+    }
+
     /// A traversal name must be refused BEFORE any filesystem write: the store
     /// must never create or read a path outside `base`.
     #[test]
-    fn save_rejects_traversal_and_writes_nothing_outside_base() {
-        let dir = temp_dir();
+    fn save_rejects_traversal_and_writes_nothing_outside_base() {        let dir = temp_dir();
         let store = PresetStore {
             base: dir.join("borders"),
         };
