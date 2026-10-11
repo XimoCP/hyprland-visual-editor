@@ -335,3 +335,10 @@ the tested stages only.
   - New LOW residue it surfaced, recorded above: a RENAME (count, capacity and page count all
     unchanged) is invisible to the gate; the applied theme can sit off-screen until the next hide →
     show. Pre-existing in `4c2cf9e`/`977c5ca`, not introduced here.
+
+## Closing note (2026-10-11)
+
+The keeper closed the Mosaic topic as finished the same day ("el tema de mosaic lo vamos a dejar por
+zanjado"): no further work on the composition or the applied-tile emphasis. The follow-ups this contract
+ever recorded (the three-per-side packing, the resting scale of the applied tile) are dropped by that
+decision, not deferred silently.
