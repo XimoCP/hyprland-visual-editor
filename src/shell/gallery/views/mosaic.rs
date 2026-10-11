@@ -665,19 +665,29 @@ impl MosaicPages {
 
     /// Sync the model to the library/stage the caller just measured: recompute
     /// when the count or the stage moved, then re-anchor the current page onto
-    /// the ACTIVE theme's page (R2) only when the PARTITION moved.
+    /// the ACTIVE theme's page (R2) only when the ground under the keeper moved:
+    /// the PARTITION (the capacity or the page count before and after differ,
+    /// which is what a repartitioning stage change does) or the LIBRARY (the
+    /// real count changed, which is what a save or a delete does).
+    ///
+    /// Both halves are needed. The library half cannot be derived from the
+    /// active theme's page: a save renumbers every index after the insertion
+    /// point, so the applied theme moves to a different page while the index it
+    /// now holds already existed before — 21 themes with the applied theme at
+    /// index 19 (page 2) becomes 22 themes with it at index 20 (page 3) while
+    /// the capacity (10) and the page count (3) stay put, so a partition-only
+    /// gate leaves the applied theme off screen and the page under the keeper
+    /// silently holding other themes.
     ///
     /// The RECOMPUTE stays on ANY stage change — the tile geometry depends on
-    /// the stage. The RE-ANCHOR does not: a resize (or monitor re-layout) that
-    /// leaves the same capacity and the same page count renders the very same
-    /// pages in the same order, so yanking the keeper back to the active
-    /// theme's page would be a regression. The partition moved when the
-    /// capacity or the page count before and after differ — the library
-    /// changed, or the stage change repartitioned the pages.
+    /// the stage. The RE-ANCHOR does not fire on a stage change that leaves the
+    /// capacity and the page count identical, because such a change renders the
+    /// very same pages in the same order and yanking the keeper would be a
+    /// regression (criterion 8).
     ///
-    /// The opening case relies on that: the gallery's first capacity is
-    /// computed while the window is still hidden, so the hidden → visible stage
-    /// change DOES repartition and re-anchors.
+    /// The opening case rides on the partition half: the gallery's first
+    /// capacity is computed while the window is still hidden, so the hidden →
+    /// visible stage change DOES repartition and re-anchors.
     ///
     /// `is_flip` is the keeper's own page flip, which always wins: a recompute
     /// that coincides with a flip must not steal the page just asked for.
@@ -689,10 +699,12 @@ impl MosaicPages {
         }
         let capacity_before = self.capacity;
         let pages_before = self.total_pages;
+        let count_before = self.real_count;
         self.recompute(real_count, stage_w, stage_h);
         let partition_moved =
             self.capacity != capacity_before || self.total_pages != pages_before;
-        if is_flip || !partition_moved {
+        let library_changed = self.real_count != count_before;
+        if is_flip || !(partition_moved || library_changed) {
             return false;
         }
         self.open_on_active()
@@ -3395,5 +3407,88 @@ mod mosaic_active_hero_tests {
         assert_eq!(pages.geometry_rebuilds(), 1);
         assert!(!pages.sync(23, sw, sh, false), "an idle sync is a no-op");
         assert_eq!(pages.geometry_rebuilds(), 1, "no second rebuild");
+    }
+
+    // ── A LIBRARY change re-anchors too (U9 / R2) ───────────────────────
+    // The partition-only gate from U7 was too narrow: a library edit that keeps
+    // both the capacity and the page count skipped the re-anchor, so the applied
+    // theme slid across a page boundary and stayed off screen while the page
+    // under the keeper silently took a different set of themes. The gate is the
+    // PARTITION (capacity or page count) OR the LIBRARY (the real count before
+    // vs after); a stage change that moves neither still leaves the keeper where
+    // he is (criterion 8). The library half cannot be read off the applied
+    // theme's page, because a save renumbers the indices after the insertion.
+
+    #[test]
+    fn a_library_growth_that_keeps_the_partition_still_re_anchors() {
+        // 21 themes → 3 pages of 10/10/1 with the applied theme at index 19
+        // (page 2). The keeper saves a theme that sorts before it: 22 themes →
+        // 3 pages of 10/10/2 and the SAME theme is now index 20 (page 3). The
+        // capacity (10) and the page count (3) are unchanged, so U7's gate
+        // skipped the re-anchor and left page 2 under the keeper — now holding
+        // theme 19 instead of the applied theme.
+        let mut pages = MosaicPages::new(21, STAGE_W, STAGE_H);
+        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES);
+        assert_eq!(pages.total_pages(), 3, "21 themes → 3 pages of 10/10/1");
+        pages.set_active_theme(Some(19));
+        assert_eq!(pages.page_of(19), Some(1), "the applied theme is on page 2");
+        assert!(pages.go_to(1), "the keeper is looking at it");
+        // The save: the applied theme slides one slot down the list.
+        pages.set_active_theme(Some(20));
+        let re_anchored = pages.sync(22, STAGE_W, STAGE_H, false);
+        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES, "the capacity is unchanged");
+        assert_eq!(pages.total_pages(), 3, "the page count is unchanged");
+        assert!(
+            re_anchored,
+            "a library change must re-anchor even when the partition is unchanged"
+        );
+        assert_eq!(pages.current(), 2, "index 20 of a 10-per-page library is page 3");
+        assert_eq!(pages.current(), pages.page_of(20).unwrap());
+    }
+
+    #[test]
+    fn a_library_shrink_that_keeps_the_partition_still_re_anchors() {
+        // The delete in reverse: 22 themes → 3 pages of 10/10/2 with the applied
+        // theme at index 20 (page 3). The keeper deletes a theme that sorts
+        // before it: 21 themes → 3 pages of 10/10/1 and the theme is now index
+        // 19 (page 2). Same capacity, same page count — the applied theme has
+        // left the page the keeper is on.
+        let mut pages = MosaicPages::new(22, STAGE_W, STAGE_H);
+        assert_eq!(pages.total_pages(), 3, "22 themes → 3 pages of 10/10/2");
+        pages.set_active_theme(Some(20));
+        assert_eq!(pages.page_of(20), Some(2), "the applied theme is on page 3");
+        assert!(pages.go_to(2), "the keeper is looking at it");
+        pages.set_active_theme(Some(19));
+        let re_anchored = pages.sync(21, STAGE_W, STAGE_H, false);
+        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES);
+        assert_eq!(pages.total_pages(), 3);
+        assert!(
+            re_anchored,
+            "the delete pulled the applied theme back across the boundary"
+        );
+        assert_eq!(pages.current(), 1, "index 19 of a 10-per-page library is page 2");
+    }
+
+    #[test]
+    fn a_library_change_that_leaves_the_applied_page_alone_keeps_the_keepers_page() {
+        // The library changed but the applied theme is still on the page the
+        // keeper is looking at (a theme appended at the END of the list moves
+        // neither the partition nor the applied theme's page), so the re-anchor
+        // the library half of the rule asks for lands on the page already
+        // shown: the keeper is not yanked and the composition does not churn,
+        // while the geometry still rebuilds for the new count.
+        let mut pages = MosaicPages::new(21, STAGE_W, STAGE_H);
+        assert_eq!(pages.total_pages(), 3, "21 themes → 3 pages of 10/10/1");
+        pages.set_active_theme(Some(3));
+        assert_eq!(pages.page_of(3), Some(0), "the applied theme is on page 1");
+        assert_eq!(pages.current(), 0, "the keeper is on the applied theme's page");
+        assert!(
+            !pages.sync(22, STAGE_W, STAGE_H, false),
+            "the applied theme is already on screen: the re-anchor is a no-op"
+        );
+        assert_eq!(pages.page_of(3), Some(0), "the applied theme's page did not move");
+        assert_eq!(pages.total_pages(), 3, "and the keeper's page is still valid");
+        assert_eq!(pages.current(), 0, "the keeper keeps the page he was on");
+        assert_eq!(pages.geometry_rebuilds(), 1, "the library change did rebuild the geometry");
     }
 }

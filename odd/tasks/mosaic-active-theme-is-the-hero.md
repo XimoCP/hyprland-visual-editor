@@ -53,13 +53,41 @@ these three rules, which he approved:
   skipping the active one). Pure and testable in the layout/page-model layer.
 - **U2 — R2**: the Mosaic opens on the active theme's page (`go_to(active_index / capacity)` or the
   page that contains it), only when the panel/gallery opens or the library changes — never
-  fighting the keeper's own page flips.
+  fighting the keeper's own page flips. (U7 narrowed this to a partition move; U9 restored the
+  library half. The single rule now lives in "The re-anchor rule" below and in
+  `MosaicPages::sync`, which is its only implementation.)
 - **U3 — R3**: pages without the active theme keep the first-of-page hero (asserted by test).
 - **U4 — tests**: (a) the active theme is the hero of its page; (b) a page without it keeps the
   first-of-page hero; (c) no active theme (empty `last_applied`) → first-of-page everywhere;
   (d) opening lands on the active theme's page; (e) the capacity/page count is unchanged by R1.
 - **U5 — parent**: headless render + reading the PNGs (the active theme must be the big centred
   tile), then install + relaunch for the keeper's live look.
+
+## The re-anchor rule (single source of truth)
+
+`MosaicPages::sync` RECOMPUTES on any stage or real-count change (the tile geometry depends on the
+stage) and RE-ANCHORS the current page onto the active theme's page when **the PARTITION moved OR
+the LIBRARY changed**:
+
+- **the PARTITION moved** — the capacity or the page count before vs after differ. That covers a
+  repartitioning stage change (including the hidden → visible open, whose first capacity was
+  computed on the small hidden stage) and a library change that repaginates.
+- **OR the LIBRARY changed** — the real count before vs after differs, even when the capacity and
+  the page count are both unchanged. 21 themes → 3 pages of 10/10/1 with the applied theme at index
+  19 (page 2) becomes 22 themes → 3 pages of 10/10/2 with the same theme at index 20 (page 3).
+- **Never** on a stage change that leaves the capacity and the page count identical — that is
+  criterion 8 (the pages render in the same order, so re-anchoring would be a regression) — and
+  never when it would steal the keeper's own page flip (`is_flip` always wins).
+
+The library half cannot be derived from the active theme's page: a save renumbers every index after
+the insertion point, so the applied theme lands on a different page while the index it now holds
+ALREADY existed before (measured: `page_of(20)` was already page 3 under the 21-theme partition).
+The real count is the only signal that carries the move.
+
+Consequence to keep in mind: a library edit re-anchors even when the keeper is browsing another
+page. That is what U2's scope ("or the library changes") and the feature's objective (the applied
+theme is always the visible hero) ask for; suppressing it for edits that leave the applied theme's
+page alone would need remembered partition state and is a product decision, not a bug fix.
 
 ## Out of scope
 
@@ -125,9 +153,14 @@ the tested stages only.
 - [x] **U6** — the hero's SHAPE comes from the SLOT, not the theme (D1 / criterion 7).
   (`914c9a3`)
 - [x] **U7** — re-anchor the page only when the PARTITION moved (D2 / criterion 8).
-  (`977c5ca`)
+  (`977c5ca`) — too narrow: it also skipped a LIBRARY change that keeps the partition. Corrected by
+  U9.
 - [x] **U8** — the tests for U6/U7, and the parent's render read of the stable composition. (`86b32b9`, installed `f5af9399…`)  The tests ship inside `914c9a3` / `977c5ca` (one work unit each, tests with their code);
   only the parent's render read of the stable composition is still open.
+- [x] **U9** — re-anchor on a LIBRARY change too: the gate is a partition move OR a real-count
+  change, so the 21 → 22 / 22 → 21 crossing U7 dropped re-anchors again. (Code, tests and this
+  contract landed as ONE work unit; a commit cannot carry its own SHA, so it is recorded in the
+  delivery report and the Engram mirror.)
 
 ## Progress log
 
@@ -188,6 +221,9 @@ the tested stages only.
   - Recorded consequence: a library change that keeps the capacity AND the page count no longer
     re-anchors (23 → 24 themes). That is what criterion 8 asks for; re-anchoring when the keeper saves
     a theme would be a separate product decision.
+  - SUPERSEDED by U9: criterion 8 speaks about STAGE changes, and U2's scope already required the
+    re-anchor when the LIBRARY changes, so that recorded consequence was a dropped guarantee and not a
+    product decision. U9 restores it — see "The re-anchor rule".
 - 2026-10-11 (parent, U8): render read of the STABLE composition, then installed.
   - `86b32b9` adds the pixel-geometry assertion to `mosaic_hero_centered_renders_with_pagination`: the
     two page-2 renders (with and without the active theme) must have EQUAL rects, tile-by-tile, and
@@ -221,7 +257,9 @@ the tested stages only.
   - `977c5ca` U7 (D2 / criterion 8) — the re-anchor policy moved into
     `MosaicPages::sync(real_count, stage_w, stage_h, is_flip)`, which recomputes on ANY
     stage change (the geometry depends on the stage) but re-anchors only when the CAPACITY
-    or the PAGE COUNT before vs after differ; `main.rs` calls it instead of composing
+    or the PAGE COUNT before vs after differ (U9 adds the LIBRARY half: the real count
+    before vs after, so a save/delete that keeps the partition re-anchors too);
+    `main.rs` calls it instead of composing
     `needs_recompute` → `recompute` → `open_on_active` itself. RED observed first with the
     defect carried into `sync`: "an unchanged partition must NOT re-anchor" (the page moved
     2 → 1 on a stage change that kept capacity 10 and 3 pages). Tests: the stage change
@@ -239,3 +277,32 @@ the tested stages only.
     pairing: `justified_hero_layout` and the capacity probe take `reals` as LABELS only,
     and the tile geometry is computed from `aspects` alone.
   - `src/shell/ui_tests.rs` untouched (the parent owns the render test there).
+- 2026-10-11 (delegated writer, U9): the dropped LIBRARY guarantee restored, strict TDD on
+  `hve2-visual-rewrite` from `b6ea997`.
+  - U9 — `MosaicPages::sync` re-anchors when the PARTITION moved **OR** the LIBRARY changed
+    (the real count before vs after), instead of gating on the partition alone. `main.rs` needed no
+    change: it already feeds the fresh count and calls `sync`. (One work-unit commit, code + tests +
+    this contract; its SHA is in the delivery report, since a commit cannot carry its own.)
+  - RED observed first, for the right reason, under the partition-only gate:
+    "a library change must re-anchor even when the partition is unchanged" (growth: 21 → 22 themes,
+    applied theme 19 → 20 crossing page 2 → 3, capacity 10 and page count 3 both unchanged) and
+    "the delete pulled the applied theme back across the boundary" (shrink: 22 → 21, applied theme
+    20 → 19 crossing page 3 → 2).
+  - Rejected on measured evidence: gating on "the applied theme's page before vs after" instead of on
+    the count. A save renumbers the indices after the insertion, so the page the new index resolves to
+    was often already occupied by a DIFFERENT theme: the trace read
+    `cap=10 pages=3 current=1 count=22 active=Some(20) page_of_active=Some(2)` and the "before" read
+    was `Some(2)` as well, so the predicate cannot see the crossing. The real count is the only signal
+    that carries it.
+  - The third test is a preservation guard, not a RED: a library change that keeps the applied theme's
+    page re-anchors onto the page already shown, so the keeper's page and its contents do not churn.
+  - Corrected claims that were false: the `sync` doc comment said "the partition moved when the
+    capacity or the page count before and after differ — the library changed, or the stage change
+    repartitioned the pages". That lists the library change as a CAUSE of a partition move, which is
+    exactly the false equivalence: the library changes and the partition stays put (21 → 22 themes at
+    capacity 10), and the applied theme crosses the boundary unseen. The doc comment now states the
+    rule the code implements (a partition move OR a real-count change).
+  - `cargo test` → 1560 passed, 0 failed (+3); `cargo check --all-targets` → clean.
+  - Left alone on purpose (parent's call): the summary comment in `main.rs:3236-3242` still reads
+    "re-anchor the page onto the active theme ONLY when the partition actually moved", which U9 makes
+    stale; `src/shell/ui_tests.rs` untouched as instructed.
