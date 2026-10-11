@@ -504,6 +504,43 @@ fn community_palette_file_name(name: &str) -> String {
     format!("{}.json", name.replace(' ', "%20"))
 }
 
+/// What a save must do with the theme's own `providers/<id>/palette.json`.
+///
+/// The invariant this serves: `palette.json` exists if and only if the
+/// theme's declared source resolves to a palette. A save is a CAPTURE of
+/// the live truth, so a palette that no longer resolves must not survive as
+/// a leftover from an earlier save — the leftover that painted the
+/// JokerTheme colours under a theme declaring a Catppuccin palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaletteCaptureAction {
+    /// The declared palette resolved to a readable file: copy it in.
+    Copy,
+    /// Nothing resolves, or the source owns no palette at all: drop any
+    /// `palette.json` the theme still carries.
+    RemoveStale,
+}
+
+/// Decide the palette capture from the DECLARED source and the RESOLVED
+/// file. Pure — no IPC, no filesystem, no logging — so the decision is
+/// testable on its own.
+///
+/// `resolved` is the file [`find_palette_path`] returned *and* found on
+/// disk; that function already answers `None` for `builtin`/`wallpaper`,
+/// which own no palette file. An empty name declares nothing either way.
+fn palette_capture_action(
+    source: &str,
+    name: &str,
+    resolved: Option<&Path>,
+) -> PaletteCaptureAction {
+    if name.is_empty() || resolved.is_none() {
+        return PaletteCaptureAction::RemoveStale;
+    }
+    match source {
+        "custom" | "community" => PaletteCaptureAction::Copy,
+        _ => PaletteCaptureAction::RemoveStale,
+    }
+}
+
 /// Find the palette JSON file for a given source and name.
 ///
 /// Sources:
@@ -1003,28 +1040,36 @@ impl ThemeProvider for NoctaliaV5Provider {
         let source = parts.first().copied().unwrap_or("custom");
         let name = parts.get(1).copied().unwrap_or("");
 
-        // 2. Save palette JSON
-        if !name.is_empty() {
-            if let Some(palette_path) = find_palette_path(source, name) {
-                if palette_path.exists() {
-                    fs::copy(&palette_path, provider_dir.join("palette.json"))
-                        .map_err(|e| format!("Cannot copy palette: {}", e))?;
-                    tracing::info!(
-                        "[noctalia-v5] Saved palette from {:?}",
-                        palette_path
-                    );
-                } else {
-                    tracing::warn!(
-                        "[noctalia-v5] Palette file not found: {:?}",
-                        palette_path
-                    );
-                }
-            } else {
+        // 2. Save palette JSON — or make sure the theme carries NO palette it
+        //    does not own. A save is a CAPTURE of the live truth: a theme
+        //    whose declared palette cannot be resolved must not keep the
+        //    `palette.json` an EARLIER save left behind, because apply would
+        //    then paint those foreign colours under this theme's palette name
+        //    (the defect: a theme declaring a Catppuccin community palette
+        //    painted the JokerTheme palette). The invariant held here:
+        //    `palette.json` exists if and only if the declared source
+        //    resolves to a palette.
+        let palette_dest = provider_dir.join("palette.json");
+        let resolved_palette: Option<PathBuf> =
+            find_palette_path(source, name).filter(|path| path.is_file());
+        match palette_capture_action(source, name, resolved_palette.as_deref()) {
+            PaletteCaptureAction::Copy => {
+                let from = resolved_palette.as_deref().ok_or_else(|| {
+                    "Cannot copy palette: the capture decision has no resolved file".to_string()
+                })?;
+                fs::copy(from, &palette_dest)
+                    .map_err(|e| format!("Cannot copy palette: {}", e))?;
+                tracing::info!("[noctalia-v5] Saved palette from {:?}", from);
+            }
+            PaletteCaptureAction::RemoveStale => {
                 tracing::warn!(
-                    "[noctalia-v5] Cannot resolve palette path for source={}, name={}",
+                    "[noctalia-v5] No palette resolves for theme {} (source={}, name={}); \
+                     the theme must not keep a palette it does not own",
+                    theme_dir.display(),
                     source,
                     name
                 );
+                remove_stale_artifact(&palette_dest);
             }
         }
 
@@ -2351,6 +2396,71 @@ mod tests {
             find_palette_path("community", "Ayu Green").as_deref(),
             Some(raw.as_path()),
             "a raw-named community palette must keep resolving"
+        );
+    }
+
+    /// The invariant behind the capture decision: a theme's `palette.json`
+    /// exists if and only if its declared source resolves to a palette. A
+    /// save is a CAPTURE of the live truth, so a theme whose declared
+    /// palette cannot be resolved must not keep the file an EARLIER save
+    /// left behind — that leftover is what painted the JokerTheme colours
+    /// under a theme declaring a Catppuccin palette.
+    #[test]
+    fn palette_capture_action_removes_the_stale_palette_when_nothing_resolves() {
+        assert_eq!(
+            palette_capture_action("community", "Catppuccin Mocha Sapphire", None),
+            PaletteCaptureAction::RemoveStale,
+            "an unresolvable community palette must not leave a foreign palette behind"
+        );
+        assert_eq!(
+            palette_capture_action("custom", "JokerTheme", None),
+            PaletteCaptureAction::RemoveStale,
+            "an unresolvable custom palette must not leave a foreign palette behind"
+        );
+    }
+
+    #[test]
+    fn palette_capture_action_copies_a_resolved_palette() {
+        let resolved = PathBuf::from("/palettes/Catppuccin%20Mocha%20Sapphire.json");
+        assert_eq!(
+            palette_capture_action("community", "Catppuccin Mocha Sapphire", Some(&resolved)),
+            PaletteCaptureAction::Copy
+        );
+        assert_eq!(
+            palette_capture_action("custom", "JokerTheme", Some(&resolved)),
+            PaletteCaptureAction::Copy
+        );
+    }
+
+    #[test]
+    fn palette_capture_action_rejects_an_empty_name() {
+        let resolved = PathBuf::from("/palettes/.json");
+        assert_eq!(
+            palette_capture_action("custom", "", None),
+            PaletteCaptureAction::RemoveStale
+        );
+        assert_eq!(
+            palette_capture_action("custom", "", Some(&resolved)),
+            PaletteCaptureAction::RemoveStale,
+            "an empty name declares no palette, whatever path was resolved"
+        );
+    }
+
+    #[test]
+    fn palette_capture_action_rejects_a_source_that_owns_no_palette() {
+        let resolved = PathBuf::from("/palettes/whatever.json");
+        assert_eq!(
+            palette_capture_action("wallpaper", "vibrant", None),
+            PaletteCaptureAction::RemoveStale
+        );
+        assert_eq!(
+            palette_capture_action("builtin", "Kanagawa", None),
+            PaletteCaptureAction::RemoveStale
+        );
+        assert_eq!(
+            palette_capture_action("wallpaper", "vibrant", Some(&resolved)),
+            PaletteCaptureAction::RemoveStale,
+            "wallpaper/builtin own no palette file, resolved path or not"
         );
     }
 
@@ -4940,6 +5050,70 @@ exit 1
         format!(
             r#"{{"outputs": [{{"name": "DP-3", "current": "{dp_current}", "path": "{dp_current}", "type": "{kind_word}", "connected": true}},{{"name": "HDMI-A-1", "current": "{hdmi_current}", "path": "{hdmi_current}", "type": "{kind_word}", "connected": true}}]}}"#,
         )
+    }
+
+    /// A save is a CAPTURE of the live truth: a theme whose declared palette
+    /// cannot be resolved must not keep the `palette.json` an earlier save
+    /// left behind. The stub answers `custom JokerTheme` while its noctalia
+    /// home carries no such palette, so nothing resolves — the pre-existing
+    /// file is the leftover that must go.
+    #[test]
+    #[serial]
+    fn v5_save_drops_a_stale_palette_the_declared_source_cannot_resolve() {
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-paper", "skwd-paper"),
+            None,
+            "ok",
+            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        let dir = stub.provider_dir(&theme);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("palette.json"), r#"{"palette":"joker"}"#).unwrap();
+
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+
+        assert!(
+            !dir.join("palette.json").exists(),
+            "a theme whose declared palette does not resolve must not keep a foreign palette"
+        );
+    }
+
+    /// The other half of the invariant: when the declared palette DOES
+    /// resolve, the captured bytes are that palette's, byte for byte.
+    #[test]
+    #[serial]
+    fn v5_save_captures_the_resolved_palette_byte_for_byte() {
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-paper", "skwd-paper"),
+            None,
+            "ok",
+            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            "/pictures/stale/car3.jpg",
+        );
+        let theme = TempDir::new().unwrap();
+        let dir = stub.provider_dir(&theme);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("palette.json"), r#"{"palette":"joker"}"#).unwrap();
+        // The live custom palette the stub's `color-scheme-get` names.
+        let live = PathBuf::from(std::env::var("HVE_NOCTALIA_CONFIG").unwrap())
+            .join("palettes")
+            .join("JokerTheme.json");
+        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+        std::fs::write(&live, br##"{"dark":{"mPrimary":"#74c7ec"}}"##).unwrap();
+
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+
+        assert_eq!(
+            std::fs::read(dir.join("palette.json")).unwrap(),
+            std::fs::read(&live).unwrap(),
+            "the captured palette must be the declared palette's bytes"
+        );
     }
 
     #[test]
