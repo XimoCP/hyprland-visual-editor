@@ -285,6 +285,7 @@ pub fn package_theme_dir(
         // No background to package, but the absolute records still name this
         // machine: they go, and the missing packaged equivalent is reported.
         crate::providers::noctalia::drop_absolute_background_records(&provider_dir, false, false);
+        report_remaining_absolute_paths(theme_dir);
         return PackageStatus::Skipped("no background record".into());
     };
 
@@ -371,11 +372,129 @@ pub fn package_theme_dir(
         video == VideoOutcome::Packaged || video == VideoOutcome::Url,
     );
 
+    // The safety net (U3): whatever absolute path is still in the theme is a
+    // leak the sanitizer does not own, and must be visible now.
+    report_remaining_absolute_paths(theme_dir);
+
     PackageStatus::Packaged(PackageSummary {
         poster,
         video,
         presets,
     })
+}
+
+/// Every absolute-path-looking value left in the theme's text files, as
+/// `(file, value)` pairs, in a deterministic order.
+///
+/// The safety net of the sanitizer: a leak a future save reintroduces must be
+/// visible at package time, not discovered by a user. `media/` holds the
+/// packaged binaries (poster, video) and is never scanned; a file that is not
+/// valid UTF-8 is skipped for the same reason.
+pub fn scan_theme_for_absolute_paths(theme_dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut hits: Vec<(PathBuf, String)> = Vec::new();
+    scan_theme_dir(theme_dir, &mut hits);
+    hits
+}
+
+/// Walk `dir` depth-first in sorted order, collecting the hits of every text
+/// file under it. The packaged `media/` directory is skipped whole.
+fn scan_theme_dir(dir: &Path, hits: &mut Vec<(PathBuf, String)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some(crate::theme_media::MEDIA_DIR) {
+                continue;
+            }
+            scan_theme_dir(&path, hits);
+            continue;
+        }
+        // A file that is not valid UTF-8 is a binary, not a text record.
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for value in absolute_paths_in_text(&text) {
+            hits.push((path.clone(), value));
+        }
+    }
+}
+
+/// The absolute-path-looking values in one text: a token that BEGINS with `/`
+/// and is not a `//` or `/*` comment marker.
+///
+/// Anchoring on the token's first character is what keeps a plugin id such as
+/// `noctalia/mpvpaper` (a section header, a manifest key) out of the report:
+/// only a value that starts at the filesystem root is a machine path.
+fn absolute_paths_in_text(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let bytes = line.as_bytes();
+        let mut at_token_start = true;
+        let mut i = 0;
+        while i < bytes.len() {
+            let byte = bytes[i];
+            if is_token_delimiter(byte) {
+                at_token_start = true;
+                i += 1;
+                continue;
+            }
+            if !at_token_start {
+                i += 1;
+                continue;
+            }
+            at_token_start = false;
+            if byte != b'/' || matches!(bytes.get(i + 1), Some(b'/') | Some(b'*')) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let mut end = i;
+            while end < bytes.len() && is_path_char(bytes[end]) {
+                end += 1;
+            }
+            if end > start + 1 {
+                out.push(line[start..end].to_string());
+            }
+            i = end.max(i + 1);
+        }
+    }
+    out
+}
+
+/// Whether `byte` ends a token: whitespace and the punctuation that surrounds
+/// a value in the record formats a theme carries (TOML, JSON, lua).
+fn is_token_delimiter(byte: u8) -> bool {
+    byte.is_ascii_whitespace()
+        || matches!(
+            byte,
+            b'"' | b'\'' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b'=' | b':' | b';' | b'|' | b'<' | b'>'
+        )
+}
+
+/// Whether `byte` can appear inside an absolute path token. ASCII only, so a
+/// multibyte character always ends the token at a valid char boundary.
+fn is_path_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'/' | b'.' | b'-' | b'_' | b'~' | b'+' | b'@' | b'%' | b',' | b'#' | b'$' | b'!'
+        )
+}
+
+/// Report every absolute path left in a packaged theme, naming the file and
+/// the value. Called after the theme has been cleaned: anything reported here
+/// is a leak the sanitizer does not own.
+fn report_remaining_absolute_paths(theme_dir: &Path) {
+    for (file, value) in scan_theme_for_absolute_paths(theme_dir) {
+        tracing::warn!(
+            "[theme-package] absolute path left in the packaged theme: {} names {}",
+            file.display(),
+            value
+        );
+    }
 }
 
 /// Resolve the theme dir for `name` under `themes_root`, guarding the name so
@@ -467,6 +586,30 @@ mod tests {
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// In-memory tracing sink, so the leak report can be asserted without a
+    /// global subscriber (thread-local default only).
+    #[derive(Clone, Default)]
+    struct LogCapture {
+        buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl std::io::Write for LogCapture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.buf.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
     }
 
     // ── Pure argument parsing ────────────────────────────────────────────
@@ -905,6 +1048,95 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&settings).unwrap(),
             "[shell.screenshot]\nconfirm_region = true\n"
+        );
+    }
+
+    // ── U3: the safety net over the whole theme ──────────────────────────
+
+    /// A planted absolute path in a text file is reported with its file and
+    /// value; the packaged binaries under `media/` are never scanned.
+    #[test]
+    fn scan_reports_a_planted_absolute_path_and_skips_media() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Cars");
+        let provider = provider_dir(&theme);
+        fs::create_dir_all(&provider).unwrap();
+        fs::write(
+            provider.join("notes.txt"),
+            "directory = \"/home/someone/Pictures/Wallpapers\"\nrelative = \"media/poster.jpg\"\n",
+        )
+        .unwrap();
+        let media = theme.join("media");
+        fs::create_dir_all(&media).unwrap();
+        fs::write(media.join("poster.jpg"), b"\xff\xd8\xff /home/someone/secret.png").unwrap();
+
+        let hits = scan_theme_for_absolute_paths(&theme);
+
+        assert_eq!(
+            hits,
+            vec![(
+                provider.join("notes.txt"),
+                "/home/someone/Pictures/Wallpapers".to_string()
+            )],
+            "the planted path must be reported and the media binary must not"
+        );
+    }
+
+    /// A theme that carries no absolute path is reported clean.
+    #[test]
+    fn scan_reports_a_clean_theme_as_clean() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Cars");
+        let provider = provider_dir(&theme);
+        fs::create_dir_all(&provider).unwrap();
+        fs::write(
+            provider.join("settings.toml"),
+            "[plugin_settings.\"noctalia/mpvpaper\"]\nvideo_directory = \"media/wallpapers\"\n",
+        )
+        .unwrap();
+        fs::write(provider.join("poster.txt"), "poster=media/poster.jpg\n").unwrap();
+        fs::write(provider.join("notes.lua"), "-- // a comment, not a path\n").unwrap();
+
+        assert!(
+            scan_theme_for_absolute_paths(&theme).is_empty(),
+            "a clean theme must report nothing"
+        );
+    }
+
+    /// The packaging pass reports a leak it did not create: a planted path in
+    /// a file the sanitizer does not own still surfaces, named by file and
+    /// value.
+    #[test]
+    fn package_theme_warns_about_a_path_it_cannot_clean() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"\xff\xd8\xffwallpaper";
+        let (theme, _image) = write_static_theme(root.path(), "Static", bytes);
+        fs::write(
+            provider_dir(&theme).join("notes.txt"),
+            "url = \"/home/someone/Pictures\"\n",
+        )
+        .unwrap();
+
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("notes.txt") && text.contains("/home/someone/Pictures"),
+            "the leak report must name the file and the value, got: {text}"
         );
     }
 
