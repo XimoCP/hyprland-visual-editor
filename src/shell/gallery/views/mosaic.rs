@@ -233,6 +233,11 @@ pub const MOSAIC_PAGE_MAX_TILES: usize = 10;
 /// two side regions (left / right), each scaled to fill its region EXACTLY, so
 /// the band is even edge-to-edge with NO holes and NO duplicates.
 ///
+/// "First" is the MODEL order, not the library order: `MosaicPages::page_render`
+/// leads with the ACTIVE theme on the page that contains it, so the hero is the
+/// applied theme there, and the page's first theme everywhere else. This
+/// function never reorders — it takes model order as given.
+///
 /// Every page starts from its own centred hero, so page 2 is arranged exactly
 /// like page 1. The tiles grow or shrink to absorb the leftover: a side region
 /// with one theme becomes a single full-height tile; two or more become two
@@ -565,7 +570,9 @@ pub fn mosaic_curtain_delays(tiles: &[MosaicTile]) -> Vec<u64> {
 /// count, the layout-derived page capacity, the total page count and the
 /// current page. UI mirrors `current`/`total_pages`; `page_render` produces
 /// the current page's geometry inputs (no clone-fill) so the wall never
-/// touches disk.
+/// touches disk. The ACTIVE theme decides which page opens (R2) and leads the
+/// arrays of the page that contains it (R1), so it is always the hero the
+/// keeper sees.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MosaicPages {
     real_count: usize,
@@ -577,6 +584,11 @@ pub struct MosaicPages {
     /// (None = no cursor). Stored as the theme, not the tile position, so a
     /// recompute can re-anchor the ring to the same theme.
     cursor_theme: Option<usize>,
+    /// The ACTIVE theme (the one applied), as its real index in the library
+    /// (None = nothing active). The page that CONTAINS it leads its arrays
+    /// with it, so it becomes that page's hero; pages that do not contain it
+    /// keep their first-of-page hero.
+    active_theme: Option<usize>,
     /// The stage the current `capacity` was computed FOR. The capacity now
     /// depends on the stage size (it probes the real layout against the
     /// minimum tile), so a stale capacity is a real defect: the gallery opens
@@ -605,6 +617,7 @@ impl MosaicPages {
             current: 0,
             geometry_rebuilds: 0,
             cursor_theme: None,
+            active_theme: None,
             stage: (stage_w, stage_h),
         }
     }
@@ -653,6 +666,15 @@ impl MosaicPages {
     /// cursor, so a later recompute re-anchors to the same THEME.
     pub fn set_cursor_theme(&mut self, theme: Option<usize>) { self.cursor_theme = theme; }
 
+    /// The ACTIVE theme (the one applied), as its real index (None = nothing
+    /// active). The page that contains it leads its arrays with it.
+    pub fn active_theme(&self) -> Option<usize> { self.active_theme }
+
+    /// Store the active theme. The caller sets this from the library snapshot
+    /// (`GalleryCardData::is_active`) before every render, so the page that
+    /// holds it renders it as the hero.
+    pub fn set_active_theme(&mut self, theme: Option<usize>) { self.active_theme = theme; }
+
     /// Re-anchor the stored theme onto `tile_reals` (a page's model-order real
     /// mapping): the position of the same theme, the first tile when the theme
     /// has left the page, or None when there is no cursor. Pure — the UI just
@@ -685,7 +707,12 @@ impl MosaicPages {
 
     /// Aspects + real indices for rendering the current page: exactly the
     /// page's real themes, 1:1 — no clone-fill (the elastic layout absorbs the
-    /// leftover instead of repeating a theme). Purity: no disk, no engine.
+    /// leftover instead of repeating a theme). The ACTIVE theme, when this page
+    /// contains it, leads the arrays: the hero is the FIRST entry in model
+    /// order, so leading with it is what makes it the big centred tile (R1).
+    /// Every other page keeps its list order, so its first theme stays the
+    /// hero (R3). Each aspect travels with its theme, so a theme keeps its
+    /// shape wherever the reorder puts it. Purity: no disk, no engine.
     /// Degenerate capacity 0 falls back to the real entries as a single page.
     pub fn page_render(&self) -> (Vec<f32>, Vec<usize>) {
         if self.real_count == 0 {
@@ -697,8 +724,18 @@ impl MosaicPages {
             let start = self.current * self.capacity;
             (start, (start + self.capacity).min(self.real_count))
         };
-        let aspects: Vec<f32> = (start..end).map(mosaic_display_aspect).collect();
-        let reals: Vec<usize> = (start..end).collect();
+        let mut reals: Vec<usize> = (start..end).collect();
+        // Hero first: move the active theme to the head of THIS page's array.
+        // `position` misses whenever it is not on this page (another page, an
+        // empty library, an out-of-range index), which leaves the page in list
+        // order — the R3 fallback.
+        if let Some(active) = self.active_theme {
+            if let Some(pos) = reals.iter().position(|&r| r == active) {
+                let active = reals.remove(pos);
+                reals.insert(0, active);
+            }
+        }
+        let aspects: Vec<f32> = reals.iter().map(|&i| mosaic_display_aspect(i)).collect();
         (aspects, reals)
     }
 
@@ -2824,5 +2861,96 @@ mod mosaic_elastic_tests {
             "800x600 must hold fewer than the cap, got {small}"
         );
         assert!(small >= 1, "a valid stage always hosts at least one tile");
+    }
+}
+
+// ── The active theme is the hero (odd/tasks/mosaic-active-theme-is-the-hero) ──
+// The page that CONTAINS the active theme must render it as the hero — the big
+// centred tile — with the rest of that page's themes flowing around it. Pages
+// that do NOT contain it keep the first-of-page hero, and with no active theme
+// every page keeps the first-of-page hero.
+mod mosaic_active_hero_tests {
+    use super::*;
+
+    /// The keeper's real stage: one full page of 10 (from the measured
+    /// evidence in `mosaic_elastic_tests`).
+    const STAGE_W: f32 = 2374.0;
+    const STAGE_H: f32 = 1290.0;
+
+    fn band_h() -> f32 {
+        STAGE_H / MOSAIC_BAND_HEIGHT_DIVISOR
+    }
+
+    fn th_h() -> f32 {
+        (band_h() - (MOSAIC_ROW_COUNT as f32 - 1.0) * MOSAIC_GUTTER_PX) / MOSAIC_ROW_COUNT as f32
+    }
+
+    fn usable_w() -> f32 {
+        STAGE_W - 2.0 * STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION
+    }
+
+    /// The hero's centre in usable coordinates (the band is centred, so the
+    /// hero centre is a fixed property of the composition, not of the theme).
+    fn hero_centre(layout: &MosaicLayout) -> f32 {
+        let hero = layout.tiles[0];
+        hero.x - layout.offset_x + hero.w / 2.0
+    }
+
+    fn identity_slice(start: usize, len: usize) -> Vec<usize> {
+        (start..start + len).collect()
+    }
+
+    #[test]
+    fn the_active_theme_is_the_hero_of_its_page() {
+        let mut pages = MosaicPages::new(12, STAGE_W, STAGE_H);
+        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES, "keeper's stage hosts a full page");
+        assert_eq!(pages.total_pages(), 2, "12 themes → 2 pages");
+        // The active theme sits INSIDE page 1, not first, so nothing but the
+        // reorder can move it onto the hero slot.
+        pages.set_active_theme(Some(4));
+        let (aspects, reals) = pages.page_render();
+        assert_eq!(
+            reals,
+            vec![4, 0, 1, 2, 3, 5, 6, 7, 8, 9],
+            "the active theme leads its page, then the rest in list order"
+        );
+        let mut sorted = reals.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            identity_slice(0, 10),
+            "every theme of the page is still present exactly once"
+        );
+        let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
+        assert_eq!(tile_reals[0], 4, "the hero tile maps to the active theme");
+        let hero = layout.tiles[0];
+        assert!(
+            hero.h > th_h() + 1.0,
+            "tile 0 must be the hero band: h {} vs th {}",
+            hero.h,
+            th_h()
+        );
+        assert!(
+            (hero_centre(&layout) - usable_w() / 2.0).abs() < 2.0,
+            "the active hero must stay centred"
+        );
+    }
+
+    #[test]
+    fn the_active_theme_leaves_capacity_and_page_count_alone() {
+        let mut with_active = MosaicPages::new(23, STAGE_W, STAGE_H);
+        let plain = MosaicPages::new(23, STAGE_W, STAGE_H);
+        with_active.set_active_theme(Some(13));
+        assert_eq!(
+            with_active.capacity(),
+            plain.capacity(),
+            "the capacity is derived from the page's SHAPES, not from who is the hero"
+        );
+        assert_eq!(
+            with_active.total_pages(),
+            plain.total_pages(),
+            "the page count must not change with an active theme"
+        );
+        assert_eq!(with_active.page_numbers(), plain.page_numbers());
     }
 }
