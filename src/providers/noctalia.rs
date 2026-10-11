@@ -265,89 +265,78 @@ fn is_layout_section(header: &str) -> bool {
         })
 }
 
-/// The layout a settings.toml text declares, as `(section, keys)` pairs in
-/// file order — only the sections [`is_layout_section`] accepts. Keys are
-/// the direct `key = …` entries of each such section, in file order;
-/// nested tables arrive as their own `[section.table]` headers.
-///
+/// The section name inside a settings.toml header line's CODE (comment
+/// already stripped): `[bar]` -> `bar`, `[[bar.x.capsule_group]]` ->
+/// `bar.x.capsule_group`, surrounding quotes trimmed. `None` when the
+/// line is not a header. Handles the `[[array-of-tables]]` spelling the
+/// refutation measured in Noctalia's own re-persist — the old parser
+/// read it as a name that never matched layout and let it terminate the
+/// enclosing section (LOW of the refutation).
+fn section_header_name(code: &str) -> Option<String> {
+    let inner = code.strip_prefix('[')?;
+    let inner = inner.strip_prefix('[').unwrap_or(inner);
+    let name = inner
+        .split(']')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'');
+    Some(name.to_string())
+}
+
+/// The layout section NAMES a settings.toml text declares — only the
+/// headers [`is_layout_section`] accepts, in file order, each name once.
 /// Line-based, like every other settings.toml reader in this module (there
 /// is no toml crate): blank lines and comments are skipped (`#` always
-/// starts one in this machine-written file), and a header's name is the
-/// text inside `[...]` with surrounding quotes trimmed.
-fn layout_entries(raw: &str) -> Vec<(String, Vec<String>)> {
-    let mut out: Vec<(String, Vec<String>)> = Vec::new();
-    let mut in_layout = false;
+/// starts one in this machine-written file), indentation is ignored, and
+/// both `[section]` and `[[array-of-tables]]` headers parse.
+fn layout_sections(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     for line in raw.lines() {
         let stripped = line.trim();
         if stripped.is_empty() || stripped.starts_with('#') {
             continue;
         }
         let code = stripped.split('#').next().unwrap_or("").trim();
-        if let Some(header) = code.strip_prefix('[') {
-            let name = header
-                .split(']')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .trim_matches(|c| c == '"' || c == '\'');
-            in_layout = is_layout_section(name);
-            if in_layout {
-                out.push((name.to_string(), Vec::new()));
-            }
-            continue;
-        }
-        if !in_layout {
-            continue;
-        }
-        if let Some(eq_at) = code.find('=') {
-            let key = code[..eq_at].trim();
-            if !key.is_empty() {
-                if let Some((_, keys)) = out.last_mut() {
-                    keys.push(key.to_string());
-                }
+        if let Some(name) = section_header_name(code) {
+            if is_layout_section(&name) && !out.contains(&name) {
+                out.push(name);
             }
         }
     }
     out
 }
 
-/// U1 of `odd/tasks/noctalia-layout-survives-the-apply.md`: is the layout
-/// the theme's settings.toml declares still in force in the live one?
-/// Pure — two texts in, the missing items out (empty vec = in force).
+/// U1 + U5 of `odd/tasks/noctalia-layout-survives-the-apply.md`: is the
+/// layout the theme's settings.toml declares still in force in the live
+/// one? Pure — two texts in, the missing sections out (empty vec = in
+/// force).
 ///
-/// Structural, never textual: every layout section the theme declares must
-/// exist in the live text, and every direct key of such a section must
-/// exist there too — but VALUES are never compared, and sections outside
-/// the layout (`[hooks]`, `[wallpaper*]`, `config_version`, `[plugins]` …)
-/// are never consulted, because Noctalia legitimately rewrites those on
-/// its own re-persist. A theme declaring no layout is vacuously in force
-/// (there is nothing to enforce).
+/// THE RULE: layout is in force iff every layout SECTION the theme
+/// declares is present in the live text. Headers only — indentation,
+/// comments, quotes and `[[array-of-tables]]` spellings all parse; keys
+/// and VALUES are never compared. What Noctalia's re-persist destroys is
+/// whole sections: the keeper's failing apply dropped `[hooks]` and then
+/// `[bar]` ENTIRELY, and the ratchet kept it gone.
 ///
-/// The report names the missing items for the apply log: a whole missing
-/// section is reported as `[section]` alone (its keys would only be
-/// noise), a surviving section that lost a key as `[section].key`.
+/// THE LIMIT, stated: keys INSIDE a surviving section are deliberately
+/// invisible, because Noctalia migrates its own schema under sections
+/// that stay present — the measured healthy JoKer pair (the packaged
+/// theme vs its live re-persist, `THEME_MIGRATED` / `LIVE_MIGRATED` in
+/// the tests) differs by five key renames while the section set is
+/// identical. A section that survives but lost declared keys therefore
+/// reads as in force; the guard only catches the whole-section loss the
+/// ratchet actually produces. A theme declaring no layout is vacuously
+/// in force (there is nothing to enforce).
+///
+/// The report names each missing section once, whole: `[section]`.
 fn missing_theme_layout(theme_settings: &str, live_settings: &str) -> Vec<String> {
-    let declared = layout_entries(theme_settings);
-    let live = layout_entries(live_settings);
-    let mut missing = Vec::new();
-    for (section, keys) in declared {
-        match live
-            .iter()
-            .find(|(live_section, _)| live_section == &section)
-        {
-            // The whole section is gone: report it once, whole — its keys
-            // would only be noise in the log.
-            None => missing.push(format!("[{section}]")),
-            Some((_, live_keys)) => {
-                for key in keys {
-                    if !live_keys.iter().any(|live_key| live_key == &key) {
-                        missing.push(format!("[{section}].{key}"));
-                    }
-                }
-            }
-        }
-    }
-    missing
+    let live = layout_sections(live_settings);
+    layout_sections(theme_settings)
+        .into_iter()
+        .filter(|name| !live.contains(name))
+        .map(|name| format!("[{name}]"))
+        .collect()
 }
 
 /// What [`sanitize_settings_toml`] did to a settings.toml text.
@@ -683,7 +672,7 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
     };
     // A theme that declares no layout has nothing to enforce (U3-c):
     // no settle, no read of the live file, no repair.
-    if layout_entries(&theme).is_empty() {
+    if layout_sections(&theme).is_empty() {
         tracing::debug!(
             "[noctalia-v5] Theme declares no layout sections; nothing to verify"
         );
@@ -6758,13 +6747,20 @@ exit 1
         );
     }
 
-    // ── U1: the pure layout predicate ──
+    // ── U1 + U5: the pure layout predicate ──
     //
     // WHY these exist: `verify_and_repair_layout` must decide from DATA
     // alone whether Noctalia's re-persist wiped the theme's layout — no
     // I/O, no CLI — so the decision is pinned here and the apply path
     // stays a thin shell around it
-    // (`odd/tasks/noctalia-layout-survives-the-apply.md`, U1 + U3-e).
+    // (`odd/tasks/noctalia-layout-survives-the-apply.md`, U1 + U5 + U3-e).
+    // U5 corrected U1 after the verification refuted it: the predicate is
+    // SECTION-presence only — the key-presence half reported five false
+    // items on the keeper's REAL healthy pair (Noctalia migrates keys
+    // inside sections that stay present), repaired a healthy state, and
+    // was blind to `[[array-of-tables]]` headers. The repudiated
+    // `layout_predicate_reports_a_key_missing_from_a_surviving_section`
+    // test went with that half.
 
     /// A theme's packaged settings.toml carrying every layout family the
     /// predicate enforces, plus the sections Noctalia legitimately
@@ -6856,21 +6852,6 @@ path = "/tmp/stale.png"
         );
     }
 
-    /// A section that SURVIVED but lost a declared key is a layout change
-    /// too (a bar that lost its widgets list is not the theme's bar).
-    /// Values are deliberately NOT compared — only the key's presence —
-    /// so the drift must be a missing key line, not an emptied value.
-    #[test]
-    fn layout_predicate_reports_a_key_missing_from_a_surviving_section() {
-        let live = THEME_LAYOUT.replace("widgets = [\"clock\", \"weather\"]\n", "");
-        assert_eq!(
-            missing_theme_layout(THEME_LAYOUT, &live),
-            vec!["[bar.default].widgets"],
-            "a surviving section that lost a declared key must be reported by \
-             that key"
-        );
-    }
-
     /// U3-(c), pure half: a theme that declares no layout has nothing to
     /// enforce, whatever the live file carries.
     #[test]
@@ -6897,6 +6878,140 @@ path = "/tmp/stale.png"
         assert!(
             missing_theme_layout(machine_only, WIPED_SETTINGS).is_empty(),
             "machine and behaviour sections must never count as layout"
+        );
+    }
+
+    /// The theme side of the keeper's REAL migrated pair, condensed from
+    /// `~/.config/hve/themes/JoKer/providers/noctalia-v5/settings.toml`
+    /// (measured 2026-10-11): layout sections in Noctalia's own packaged
+    /// spelling, including the two `[[array-of-tables]]` capsule groups.
+    const THEME_MIGRATED: &str = r#"config_version = 14
+
+[bar]
+order = [ "default", "barra_lateral" ]
+
+    [bar.barra_lateral]
+    auto_hide = true
+    start = [ "widget" ]
+
+        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        id = "g1"
+        members = [ "sysmon", "network_rx" ]
+
+        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        id = "g2"
+        members = [ "cpu", "network_tx" ]
+
+    [bar.default]
+    position = "left"
+    radius_bottom_right = 20
+    radius_top_right = 20
+    start = [ "launcher", "clock" ]
+
+[desktop_widgets]
+schema_version = 2
+
+[dock]
+enabled = true
+
+[shell]
+lang = "es"
+
+[widget.clock]
+color = "secondary"
+scale = 1.3
+"#;
+
+    /// The live side of the keeper's REAL migrated pair, condensed from
+    /// `~/.local/state/noctalia/settings.toml` — Noctalia's own re-persist
+    /// of `THEME_MIGRATED`. The section set is IDENTICAL; Noctalia
+    /// migrated five keys inside it (`auto_hide` -> `smart_auto_hide`;
+    /// `[bar.default]` dropped `position` / `radius_bottom_right` /
+    /// `radius_top_right` for `concave_edge_corners` / `radius`;
+    /// `[widget.clock]` dropped `color` for `capsule` / `capsule_fill`)
+    /// and re-indented the sub-tables.
+    const LIVE_MIGRATED: &str = r#"config_version = 14
+
+[bar]
+order = [ "default", "barra_lateral" ]
+
+    [bar.barra_lateral]
+    smart_auto_hide = true
+    start = [ "widget" ]
+
+        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        id = "g1"
+        members = [ "sysmon", "network_rx" ]
+
+        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        id = "g2"
+        members = [ "cpu", "network_tx" ]
+
+    [bar.default]
+    concave_edge_corners = false
+    radius = 0
+    start = [ "launcher", "clock" ]
+
+[desktop_widgets]
+schema_version = 2
+
+[dock]
+enabled = true
+
+[shell]
+lang = "es"
+
+[widget.clock]
+capsule = true
+capsule_fill = "on_secondary"
+scale = 1.3
+"#;
+
+    /// U5 (the correction of U1 after the verification refuted it): the
+    /// REAL migrated pair measured on the keeper's files must report the
+    /// layout IN FORCE. The refuted key-presence predicate reported five
+    /// missing items on exactly this pair, repaired a healthy state, and
+    /// failed acceptance criterion 4 on the keeper's own data.
+    #[test]
+    fn layout_predicate_reports_the_real_migrated_pair_in_force() {
+        assert!(
+            missing_theme_layout(THEME_MIGRATED, LIVE_MIGRATED).is_empty(),
+            "the keeper's real migrated pair must report the layout in force"
+        );
+    }
+
+    /// U5 / LOW of the refutation: `[[array-of-tables]]` headers must be
+    /// SEEN. The theme declares the capsule groups, so a live file that
+    /// lost them is drift; the old line parser read `[[bar...]]` as a
+    /// header name that never matched layout (and let it terminate the
+    /// enclosing section), so it saw nothing in either text.
+    #[test]
+    fn layout_predicate_sees_array_of_tables_sections() {
+        let g1 = r#"        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        id = "g1"
+        members = [ "sysmon", "network_rx" ]
+
+"#;
+        let g2 = r#"        [[bar.barra_lateral.capsule_group]]
+        enabled = true
+        id = "g2"
+        members = [ "cpu", "network_tx" ]
+
+"#;
+        // BOTH entries must go: one surviving `[[...]]` entry still
+        // declares the section (array-of-tables entries are instances of
+        // one table, not sections of their own).
+        let live_without_groups = LIVE_MIGRATED.replace(g1, "").replace(g2, "");
+        assert_eq!(
+            missing_theme_layout(THEME_MIGRATED, &live_without_groups),
+            vec!["[bar.barra_lateral.capsule_group]"],
+            "a declared array-of-tables section missing from the live file must \
+             be reported by name, exactly once"
         );
     }
 
