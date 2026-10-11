@@ -276,9 +276,9 @@ fn reseed_after_a_save_moves_the_marker_to_the_newly_saved_card() {
         SharedString::from("03_duo.lua"),
     ])));
     // `aa_first` is the USER preset that was active: built-in count (2) + 0.
-    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
-        SharedString::from("aa_first"),
-    ])));
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "aa_first",
+    )])));
     win.set_active_border_index(2);
 
     // The tune pane just saved `Space`: the refreshed list keeps `aa_first`

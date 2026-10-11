@@ -734,7 +734,8 @@ mod tests {
     /// A traversal name must be refused BEFORE any filesystem write: the store
     /// must never create or read a path outside `base`.
     #[test]
-    fn save_rejects_traversal_and_writes_nothing_outside_base() {        let dir = temp_dir();
+    fn save_rejects_traversal_and_writes_nothing_outside_base() {
+        let dir = temp_dir();
         let store = PresetStore {
             base: dir.join("borders"),
         };
