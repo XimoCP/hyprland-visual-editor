@@ -266,6 +266,11 @@ fn reseed_marks_a_user_border_card_from_a_legacy_bare_stem() {
 /// highlights the card that WAS active — a preset the desktop no longer has
 /// loaded — until the section is re-entered. The handler now re-derives the
 /// marker from the recorded value right after the refresh.
+///
+/// The order the fixture states is the order `PresetStore::list` really
+/// produces: `names.sort()`, so the stems are BYTEWISE sorted and `Space`
+/// (0x53) leads `aa_first` (0x61). Both movements are covered — one save that
+/// pushes the marker forward, one that pulls it back.
 #[test]
 fn reseed_after_a_save_moves_the_marker_to_the_newly_saved_card() {
     use slint::{ModelRc, SharedString, VecModel};
@@ -281,11 +286,11 @@ fn reseed_after_a_save_moves_the_marker_to_the_newly_saved_card() {
     )])));
     win.set_active_border_index(2);
 
-    // The tune pane just saved `Space`: the refreshed list keeps `aa_first`
-    // first, and the new stem continues the index space after it.
+    // The tune pane just saved `zz_saved`: the refreshed list is bytewise
+    // sorted, so the new stem continues the index space AFTER `aa_first`.
     win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
         SharedString::from("aa_first"),
-        SharedString::from("Space"),
+        SharedString::from("zz_saved"),
     ])));
 
     assert_eq!(
@@ -295,11 +300,33 @@ fn reseed_after_a_save_moves_the_marker_to_the_newly_saved_card() {
          the preset that was just saved"
     );
     assert_eq!(
-        crate::presets::reseed_active_border_index(&win, "Space.lua"),
+        crate::presets::reseed_active_border_index(&win, "zz_saved.lua"),
         3,
         "re-deriving from the recorded value must mark the card just saved"
     );
     assert_eq!(win.get_active_border_index(), 3);
+
+    // Saving `Space` next: bytewise it sorts BEFORE both stems, so the cards
+    // shift to the right and the marker has to move BACK.
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Space"),
+        SharedString::from("aa_first"),
+        SharedString::from("zz_saved"),
+    ])));
+
+    assert_eq!(
+        win.get_active_border_index(),
+        3,
+        "fixture: the untouched marker now highlights `aa_first`, not the preset \
+         that was just saved"
+    );
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "Space.lua"),
+        2,
+        "re-deriving must follow the card just saved, not the index the previous \
+         save left"
+    );
+    assert_eq!(win.get_active_border_index(), 2);
 }
 
 /// U11: the same refresh, one branch later. The save wrote the file and

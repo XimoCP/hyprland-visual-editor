@@ -852,6 +852,31 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// `list` returns the user preset STEMS BYTEWISE SORTED (`names.sort()` on
+    /// `String`), so an uppercase stem leads the lowercase ones: `Space` (0x53)
+    /// precedes `aa_first` (0x61). Consumers index the user cards by exactly this
+    /// order, so a fixture that claims the reverse states an order the store
+    /// cannot produce.
+    #[test]
+    fn list_sorts_the_stems_bytewise_so_an_uppercase_stem_leads() {
+        let dir = temp_dir();
+        let store = PresetStore {
+            base: dir.join("borders"),
+        };
+        fs::create_dir_all(&store.base).unwrap();
+        for name in ["aa_first", "zz_saved", "ab_saved", "Space"] {
+            fs::write(store.base.join(format!("{name}.lua")), "-- x\n").unwrap();
+        }
+
+        assert_eq!(
+            store.list(),
+            vec!["Space", "aa_first", "ab_saved", "zz_saved"],
+            "the stems are bytewise sorted, never case-insensitively grouped"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A traversal name must be refused BEFORE any filesystem write: the store
     /// must never create or read a path outside `base`.
     #[test]
