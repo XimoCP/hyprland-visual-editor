@@ -573,6 +573,10 @@ pub struct MosaicPages {
     total_pages: usize,
     current: usize,
     geometry_rebuilds: usize,
+    /// The mosaic cursor's IDENTITY: the real theme index the ring sits on
+    /// (None = no cursor). Stored as the theme, not the tile position, so a
+    /// recompute can re-anchor the ring to the same theme.
+    cursor_theme: Option<usize>,
 }
 
 impl MosaicPages {
@@ -593,6 +597,7 @@ impl MosaicPages {
             total_pages,
             current: 0,
             geometry_rebuilds: 0,
+            cursor_theme: None,
         }
     }
 
@@ -621,6 +626,22 @@ impl MosaicPages {
     pub fn capacity(&self) -> usize { self.capacity }
     pub fn real_count(&self) -> usize { self.real_count }
     pub fn geometry_rebuilds(&self) -> usize { self.geometry_rebuilds }
+
+    /// The theme the cursor ring sits on (None = no cursor).
+    pub fn cursor_theme(&self) -> Option<usize> { self.cursor_theme }
+
+    /// Store the cursor's identity. The caller sets this whenever it moves the
+    /// cursor, so a later recompute re-anchors to the same THEME.
+    pub fn set_cursor_theme(&mut self, theme: Option<usize>) { self.cursor_theme = theme; }
+
+    /// Re-anchor the stored theme onto `tile_reals` (a page's model-order real
+    /// mapping): the position of the same theme, the first tile when the theme
+    /// has left the page, or None when there is no cursor. Pure — the UI just
+    /// applies the position it returns.
+    pub fn anchor_cursor(&self, tile_reals: &[usize]) -> Option<usize> {
+        let theme = self.cursor_theme?;
+        Some(tile_reals.iter().position(|&r| r == theme).unwrap_or(0))
+    }
 
     /// Flip pages: +1 next, −1 previous. Clamped, no wrap. Returns true if
     /// the current page actually changed.
@@ -2554,5 +2575,30 @@ mod mosaic_elastic_tests {
         let (a2, r2) = eleven.page_render();
         assert_eq!(a2.len(), 1, "page 2 holds the single remaining theme");
         assert_eq!(r2, vec![10]);
+    }
+
+    #[test]
+    fn elastic_cursor_reanchors_to_the_theme() {
+        // The cursor is stored as the THEME (its real index), not as a tile
+        // position, so a recompute keeps the ring on the same theme.
+        let mut pages = MosaicPages::new(20, STAGE_W, STAGE_H);
+        let (_, reals) = pages.page_render();
+        pages.set_cursor_theme(Some(4));
+        assert_eq!(pages.anchor_cursor(&reals), Some(4), "theme 4 sits at position 4");
+        // Recompute with the same stage: the theme is re-anchored, not the
+        // stale position.
+        pages.recompute(20, STAGE_W, STAGE_H);
+        let (_, reals2) = pages.page_render();
+        assert_eq!(
+            pages.anchor_cursor(&reals2),
+            Some(4),
+            "recompute must re-anchor the cursor to the same theme"
+        );
+        // A theme that is no longer on the page lands on the first tile.
+        pages.set_cursor_theme(Some(999));
+        assert_eq!(pages.anchor_cursor(&reals2), Some(0), "gone theme → first tile");
+        // No cursor → no anchor (the ring stays hidden).
+        pages.set_cursor_theme(None);
+        assert_eq!(pages.anchor_cursor(&reals2), None);
     }
 }

@@ -890,6 +890,21 @@ fn mosaic_tile_real(window: &crate::MainWindow, pos: i32) -> Option<i32> {
     tiles.row_data(pos as usize).map(|t| t.real_index)
 }
 
+/// Remember the mosaic cursor's IDENTITY (the theme shown at `pos`) in the page
+/// model, so a later recompute re-anchors the ring to the same THEME instead of
+/// the same tile position. Called wherever the cursor is placed.
+fn remember_mosaic_cursor_theme(
+    window: &crate::MainWindow,
+    pages: &std::sync::Arc<
+        std::sync::Mutex<crate::shell::gallery::views::mosaic::MosaicPages>,
+    >,
+    pos: i32,
+) {
+    if let Ok(mut p) = pages.lock() {
+        p.set_cursor_theme(mosaic_tile_real(window, pos).map(|r| r as usize));
+    }
+}
+
 /// The grown mosaic tile's two beats. The card's own morph runs 420ms with a
 /// gentle overshoot; the face starts a little past halfway, so the two beats
 /// read as one gesture instead of two separate steps. Contracting is quicker
@@ -3249,6 +3264,21 @@ fn main() -> Result<(), slint::PlatformError> {
                     },
                 );
             }
+            // Re-anchor the keyboard cursor to its THEME after a recompute
+            // (resize / theme save), so the ring stays on the same theme
+            // instead of the same position. Page flips leave the cursor to the
+            // nav handler, which lands on the new page's first/last tile.
+            if !is_flip {
+                let cur = w.get_gallery_mosaic_cursor();
+                if cur >= 0 {
+                    if pg.cursor_theme().is_none() {
+                        pg.set_cursor_theme(tile_reals.get(cur as usize).copied());
+                    }
+                    if let Some(pos) = pg.anchor_cursor(&tile_reals) {
+                        w.set_gallery_mosaic_cursor(pos as i32);
+                    }
+                }
+            }
         })
     };
     // S2 ring: contiguous zero-gap wall tiles (Rust ring_visible_slots).
@@ -4006,6 +4036,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if cur < 0 {
                     // The first arrow press enters the wall at its first tile.
                     w.set_gallery_mosaic_cursor(0);
+                    remember_mosaic_cursor_theme(&w, &pages, 0);
                     return;
                 }
                 use crate::shell::gallery::views::mosaic::{mosaic_neighbor, MosaicDir};
@@ -4016,7 +4047,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     _ => MosaicDir::Down,
                 };
                 match mosaic_neighbor(&rects, cur as usize, dir) {
-                    Some(next) => w.set_gallery_mosaic_cursor(next as i32),
+                    Some(next) => {
+                        w.set_gallery_mosaic_cursor(next as i32);
+                        remember_mosaic_cursor_theme(&w, &pages, next as i32);
+                    }
                     None => {
                         // An edge of the page: step it and land on the new
                         // page's first tile (or its last, going back). The
@@ -4029,8 +4063,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         let changed = pages.lock().map(|mut p| p.step(step)).unwrap_or(false);
                         if changed {
                             refresh(true);
+                            // Page-edge stepping uses the FRESH tile count.
                             let last = w.get_gallery_mosaic_tiles().row_count().saturating_sub(1) as i32;
-                            w.set_gallery_mosaic_cursor(if step > 0 { 0 } else { last });
+                            let pos = if step > 0 { 0 } else { last };
+                            w.set_gallery_mosaic_cursor(pos);
+                            remember_mosaic_cursor_theme(&w, &pages, pos);
                         }
                     }
                 }
@@ -4041,6 +4078,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let win = window.as_weak();
             let gtm = gallery_tm.clone();
             let shell_c = shell.clone();
+            let pages = mosaic_pages.clone();
             window.on_gallery_mosaic_select(move |pos| {
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     return;
@@ -4049,6 +4087,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(real) = mosaic_tile_real(&w, pos) {
                     // The keyboard continues from where the mouse left off.
                     w.set_gallery_mosaic_cursor(pos);
+                    remember_mosaic_cursor_theme(&w, &pages, pos);
                     open_gallery_info(&w, &gtm, real);
                     grow_mosaic_card(&w, pos);
                 }
@@ -4060,6 +4099,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let win = window.as_weak();
             let gtm = gallery_tm.clone();
             let shell_c = shell.clone();
+            let pages = mosaic_pages.clone();
             window.on_gallery_mosaic_activate(move || {
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     return;
@@ -4068,6 +4108,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let cur = w.get_gallery_mosaic_cursor();
                 if cur < 0 {
                     w.set_gallery_mosaic_cursor(0);
+                    remember_mosaic_cursor_theme(&w, &pages, 0);
                     return;
                 }
                 let Some(real) = mosaic_tile_real(&w, cur) else { return; };
@@ -4106,11 +4147,13 @@ fn main() -> Result<(), slint::PlatformError> {
             // the ring follows the mouse and the keyboard continues from
             // wherever the pointer is (the panel's own convergence rule).
             let win = window.as_weak();
+            let pages = mosaic_pages.clone();
             window.on_gallery_mosaic_cursor_requested(move |pos| {
                 if let Some(w) = win.upgrade() {
                     if w.get_gallery_mosaic_cursor() != pos {
                         w.set_gallery_mosaic_cursor(pos);
                     }
+                    remember_mosaic_cursor_theme(&w, &pages, pos);
                 }
             });
         }
