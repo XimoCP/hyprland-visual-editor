@@ -2009,6 +2009,14 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    untouched.
         let plugin_was_enabled = live_mpvpaper_plugin_enabled();
         let mut settings_restored = false;
+        // U7 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the
+        // layout verification is ARMED here but runs at the END of the
+        // apply — the refuted delivery verified right after step 0 while
+        // the apply still had later writes and reloads to go (the
+        // wallpaper-rotation neutralize writes the live file and reloads,
+        // then `wallpaper-set`, `color-scheme-set`, `templates-apply`),
+        // so a wipe landing on any of them was never caught.
+        let mut layout_guard: Option<(PathBuf, PathBuf)> = None;
         let saved_settings = provider_dir.join("settings.toml");
         if saved_settings.exists() {
             if let Some(state_dir) = noctalia_state_dir() {
@@ -2052,15 +2060,15 @@ impl ThemeProvider for NoctaliaV5Provider {
                     ),
                 }
 
-                // U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`:
-                // Noctalia re-persists its in-memory config ~1 s after the
-                // reload above and can WIPE the layout sections the restore
-                // just put back (the ratchet: once gone, every later apply
-                // looks successful while the layout stays the default).
-                // Verify the theme's layout survived and repair it once —
-                // best-effort exactly like the D4 re-assert above: a
-                // layout problem must never fail the theme apply.
-                verify_and_repair_layout(&saved_settings, &dst);
+                // U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`
+                // (corrected by U6/U7 after the verification refuted the
+                // first delivery): Noctalia re-persists its in-memory
+                // config ~1 s after the reload above and can WIPE the
+                // layout sections the restore just put back (the
+                // ratchet). The verify + bounded surgical repair run at
+                // the END of the apply — see the call site — so no later
+                // step can re-wipe behind it unnoticed.
+                layout_guard = Some((saved_settings.clone(), dst));
             }
         }
 
@@ -2497,6 +2505,21 @@ impl ThemeProvider for NoctaliaV5Provider {
                     spawn_custom_scheme_reassert(restored, previous);
                 }
             }
+        }
+
+        // U7 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the
+        // LAST synchronous step of the apply — every write and reload the
+        // apply performs itself (the settings restore, the D4 re-assert,
+        // the wallpaper-rotation neutralize, `wallpaper-set`,
+        // `color-scheme-set`, `templates-apply`) has already happened, so
+        // the verify samples the state the apply actually leaves behind
+        // (acceptance criterion 2) and no later synchronous step can
+        // re-wipe behind it. Best-effort exactly like the D4 re-assert:
+        // a layout problem must never fail the theme apply. One caveat,
+        // stated: the off-thread colour re-assert spawned just above is
+        // asynchronous by design and can still land after this point.
+        if let Some((saved_settings, live_settings)) = layout_guard {
+            verify_and_repair_layout(&saved_settings, &live_settings);
         }
 
         Ok(())
@@ -7301,7 +7324,9 @@ scale = 1.3
         _bin: tempfile::TempDir,
         /// Every `msg config-reload` the apply raised, one per line.
         log: PathBuf,
-        /// File the stub reads for its wipe mode: `never` / `first` / `always`.
+        /// File the stub reads for its wipe mode: `never` / `first` /
+        /// `always` (on `config-reload`) / `on-templates` (on
+        /// `templates-apply` — the U7 ordering pin).
         mode_file: PathBuf,
         /// Where the stub reads the text it wipes the live file with.
         wipe_src: PathBuf,
@@ -7347,6 +7372,10 @@ scale = 1.3
                  printf 'never' > '{mode}'\n\
                  cp '{src}' '{target}'\n\
                  fi\n\
+                 fi\n\
+                 if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"templates-apply\" ]; then\n\
+                 mode=$(cat '{mode}')\n\
+                 if [ \"$mode\" = \"on-templates\" ]; then cp '{src}' '{target}'; fi\n\
                  fi\n\
                  exit 0\n",
                 log = log.display(),
@@ -7587,6 +7616,95 @@ scale = 1.3
         assert!(
             !live.contains("other-machine"),
             "the repair must never drag the theme's stale wallpaper back"
+        );
+    }
+
+    /// U7 (MEDIUM of the refutation): the verify must run at the END of
+    /// the apply — the refuted one sat after step 0 while the apply
+    /// still performed later writes and reloads (`neutralize` writes the
+    /// live file and reloads, `wallpaper-set`, `color-scheme-set`,
+    /// `templates-apply`, the async palette reassert), so acceptance
+    /// criterion 2 was only sampled early. Here the wipe lands on
+    /// `templates-apply`, the LAST synchronous step the apply sends:
+    /// only an end-of-apply verify can still catch and repair it.
+    #[test]
+    #[serial]
+    fn apply_verifies_after_the_later_steps() {
+        let stub = LayoutStub::new();
+        stub.wipe_mode("on-templates");
+        let theme = stub.theme_with_source(THEME_LAYOUT, "builtin Kanagawa");
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a layout problem must never fail the apply: {res:?}"
+        );
+        assert!(
+            missing_theme_layout(
+                THEME_LAYOUT,
+                &std::fs::read_to_string(stub.live_settings()).unwrap()
+            )
+            .is_empty(),
+            "a wipe landing on a LATER step must still be repaired before the \
+             apply returns"
+        );
+        // Ordering pin: the repair's config-reload must be the LAST line
+        // the stub logged — i.e. after `templates-apply`, never before it.
+        let log = std::fs::read_to_string(&stub.log).unwrap();
+        let templates_at = log
+            .find("msg templates-apply")
+            .expect("the builtin scheme must reach templates-apply");
+        let mut reloads_at = Vec::new();
+        let mut offset = 0;
+        for line in log.lines() {
+            if line.trim() == "msg config-reload" {
+                reloads_at.push(offset);
+            }
+            offset += line.len() + 1;
+        }
+        assert_eq!(
+            reloads_at.len(),
+            2,
+            "one step-0 reload plus exactly one repair reload, live log:\n{log}"
+        );
+        assert!(
+            reloads_at[1] > templates_at,
+            "the verify (and its repair) must run AFTER the apply's last \
+             write/reload, live log:\n{log}"
+        );
+    }
+
+    /// U8-(d) of the correction: the layoutless short-circuit must be
+    /// GENUINELY pinned — with a non-zero settle configured, a theme
+    /// that declares no layout must return without paying it. If the
+    /// short-circuit were deleted, the verify would sleep the full
+    /// settle and this test would see it in the elapsed time.
+    #[test]
+    #[serial]
+    fn apply_with_a_layoutless_theme_skips_the_settle() {
+        let stub = LayoutStub::new();
+        // A settle long enough that "paid it" cannot be confused with
+        // test noise, short enough to keep the test fast when it fails.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "3000");
+        stub.wipe_mode("always");
+        let theme = stub.theme_with(WIPED_SETTINGS);
+
+        let started = std::time::Instant::now();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        let elapsed = started.elapsed();
+        assert!(
+            res.is_ok(),
+            "a layoutless theme must apply cleanly: {res:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "a theme without layout sections must skip the settle entirely, \
+             but the apply took {elapsed:?}"
+        );
+        assert_eq!(
+            stub.reloads(),
+            1,
+            "no declared layout means no repair reload"
         );
     }
 }
