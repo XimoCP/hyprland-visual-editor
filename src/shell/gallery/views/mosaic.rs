@@ -577,6 +577,13 @@ pub struct MosaicPages {
     /// (None = no cursor). Stored as the theme, not the tile position, so a
     /// recompute can re-anchor the ring to the same theme.
     cursor_theme: Option<usize>,
+    /// The stage the current `capacity` was computed FOR. The capacity now
+    /// depends on the stage size (it probes the real layout against the
+    /// minimum tile), so a stale capacity is a real defect: the gallery opens
+    /// while the window is still hidden, computes a small capacity, and would
+    /// keep it after the window takes its real size — paginating a library
+    /// that fits one page into two.
+    stage: (f32, f32),
 }
 
 impl MosaicPages {
@@ -598,7 +605,18 @@ impl MosaicPages {
             current: 0,
             geometry_rebuilds: 0,
             cursor_theme: None,
+            stage: (stage_w, stage_h),
         }
+    }
+
+    /// Whether a refresh must recompute: the real count changed, the stage
+    /// changed, or nothing usable was computed yet (capacity 0). The stage
+    /// half is what keeps a capacity computed for a hidden window from
+    /// outliving the window's real size.
+    pub fn needs_recompute(&self, real_count: usize, stage_w: f32, stage_h: f32) -> bool {
+        self.real_count != real_count
+            || self.capacity == 0
+            || self.stage != (stage_w, stage_h)
     }
 
     /// Recompute on a real-count / stage change. The ONLY operation that
@@ -618,6 +636,7 @@ impl MosaicPages {
         self.capacity = capacity;
         self.total_pages = total_pages;
         self.current = self.current.min(self.total_pages.saturating_sub(1));
+        self.stage = (stage_w, stage_h);
         self.geometry_rebuilds += 1;
     }
 
@@ -1759,6 +1778,27 @@ mod mosaic_pages_tests {
     /// RED capacity==0 case so assertions fail cleanly instead of dividing).
     fn expected_pages(real: usize, cap: usize) -> usize {
         if real == 0 { 0 } else if cap == 0 { 1 } else { (real + cap - 1) / cap }
+    }
+
+    #[test]
+    fn page_model_recomputes_when_the_stage_changes() {
+        let mut p = MosaicPages::new(7, 800.0, 600.0);
+        assert_eq!(p.capacity(), 5, "a small stage caps at 5");
+        assert!(
+            p.needs_recompute(7, 2374.0, 1290.0),
+            "a stage change must ask for a recompute"
+        );
+        assert!(
+            !p.needs_recompute(7, 800.0, 600.0),
+            "the same stage and count needs nothing"
+        );
+        assert!(
+            p.needs_recompute(8, 800.0, 600.0),
+            "a count change still asks for a recompute"
+        );
+        p.recompute(7, 2374.0, 1290.0);
+        assert_eq!(p.capacity(), 10, "the real stage hosts the full cap");
+        assert_eq!(p.total_pages(), 1, "7 themes fit ONE page at the real stage");
     }
 
     #[test]

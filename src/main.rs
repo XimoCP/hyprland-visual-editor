@@ -3209,7 +3209,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let mut pg = pages.lock().unwrap();
-            if pg.real_count() != real_count || pg.capacity() == 0 {
+            if pg.needs_recompute(real_count, stage_w, stage_h) {
                 pg.recompute(real_count, stage_w, stage_h);
             }
             let (aspects, real_indices) = pg.page_render();
