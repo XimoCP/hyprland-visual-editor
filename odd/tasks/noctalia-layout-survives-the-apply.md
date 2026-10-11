@@ -82,6 +82,15 @@ while it was healthy, so this is a loss, not a reload that was ignored.
 - The palette, the wallpaper, the colour-authority mute and the `noctalia/mpvpaper` D4 re-assert: unchanged.
 - Any migration of the keeper's live Noctalia config.
 
+## Verification of U12–U15 (2026-10-11/12, cross-model): verified_with_findings
+
+The identity token closed the seconds-scale hole the second refutation found: the check now
+runs after the settle and again before the repair reload, so the residual window between the
+check and the write is microseconds-to-milliseconds, and the same-theme re-apply also
+supersedes correctly. The U12 scenario test genuinely fails on `c70c198`, the U14 pin really
+dies when the short-circuit is deleted, and nothing else in the apply was weakened. Three
+residues it surfaced are registered below as (e), (f) and (g).
+
 ## Stated limits (U15 — registered, NOT fixed)
 
 - **(a) The colour re-assert worker can still land AFTER the layout worker verified.**
@@ -409,3 +418,26 @@ Corrected as U12 (identity + yield) and U13 (atomic publish) below by a delegate
   67 -> 67 (zero new chunks). The keeper's live Noctalia config, theme packages and
   `sddm-watch.sh` were never touched. Commits `27dac45`, `8721a92`, `9445547`, plus
   this docs commit.
+- **(e) A FAILED apply cancels its predecessor's repair without inheriting the duty.**
+  `APPLY_GENERATION` is bumped as `apply()`'s first statement, but the guard is armed only
+  after the settings copy and the reload succeed, and the worker spawns at the END of the
+  apply. So if apply B bumps the generation and then fails on ANY early-return path
+  (missing provider dir, failed settings copy, failed step-0 `config-reload`, or any
+  synchronous failure between the arm and the spawn), apply A's worker wakes, sees a
+  superseded generation, yields — and NO worker verifies or repairs. A layout wipe that
+  happened during apply A then goes unrepaired until the next SUCCESSFUL apply. The token
+  protects the file, but the failed apply inherits the supersession authority without
+  inheriting the duty. Narrow (needs a wipe during A AND a failing B) and not in the
+  round's scope.
+- **(f) The repair's temporary sibling name is a constant.** `.part-settings.toml` is
+  shared by every worker, so in an extreme schedule in which two workers are inside the
+  atomic write at once, one can delete or rename the other's in-flight temp and publish a
+  partial file. A unique suffix (the generation or the pid) closes it. Practically
+  near-unreachable; registered because this guard's whole subject is concurrency.
+- **(g) The post-repair re-check does not re-test the generation.** After its repair reload
+  the worker sleeps a second settle and re-reads the live file; if a newer apply started
+  during that settle it compares the OLD theme's sections against the NEWER theme's file —
+  and with the keeper's real themes those sets differ in both directions, so it can log
+  "STILL missing after the single repair" against a healthy file. Log-only (no write, no
+  reload after that point), but it is a diagnostic lie in a contract whose whole point is
+  honest diagnosis.
