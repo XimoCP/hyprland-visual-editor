@@ -98,10 +98,52 @@ while it was healthy, so this is a loss, not a reload that was ignored.
 
 ## Work units
 
-- [x] **U1** — the predicate and its documented scope.
-- [x] **U2** — verify + bounded repair wired into the apply.
-- [x] **U3** — the tests above.
+- [x] **U1** — the predicate and its documented scope. **REFUTED by the independent
+  verification (2026-10-11): the predicate compared KEY PRESENCE, which Noctalia's own
+  re-persist migrates — see HIGH-1 below and the correction in U5.**
+- [x] **U2** — verify + bounded repair wired into the apply. **REFUTED by the independent
+  verification (2026-10-11): the repair copied the theme's settings.toml VERBATIM — undoing
+  the D4 plugin protection — and sat mid-apply; see HIGH-2 and MEDIUM below, corrections in
+  U6 and U7.**
+- [x] **U3** — the tests above. **REFUTED with U1/U2: the tolerance test pinned a synthetic
+  layout Noctalia never migrates, so the suite certified a tolerance set reality falsifies;
+  corrected in U8.**
 - [ ] **U4** — the parent's build, install, relaunch and the keeper's live look.
+- [x] **U5** — correction of U1: the predicate at SECTION level (see Progress log for REDs).
+- [x] **U6** — correction of U2's repair: re-add ONLY the missing layout sections; never
+  restore `[plugins]`, never revert the apply's palette/wallpaper writes (two invariants,
+  both proven by tests).
+- [x] **U7** — correction of U2's placement: verify at the END of the apply, after the last
+  write/reload it performs; bounded (verify once, repair at most once); cost stated.
+- [x] **U8** — the tests the refutation demanded (a)–(e), on top of the kept stub harness.
+
+## The refutation (verified against the keeper's real files, 2026-10-11 — recorded as fact)
+
+- **HIGH-1 — the predicate compared KEY PRESENCE, and Noctalia's own re-persist MIGRATES the
+  schema.** Measured on the keeper's real, healthy pair — `~/.local/state/noctalia/settings.toml`
+  (the Noctalia re-persist of the JoKer theme) against
+  `~/.config/hve/themes/JoKer/providers/noctalia-v5/settings.toml`: `[bar.barra_lateral]`
+  renamed `auto_hide` → `smart_auto_hide`; `[bar.default]` lost `position`,
+  `radius_bottom_right`, `radius_top_right` for `concave_edge_corners`, `radius`;
+  `[widget.clock]` lost `color` for `capsule`, `capsule_fill`. So on an INTACT apply the
+  predicate reported five missing items, the repair fired on a healthy state, acceptance
+  criterion 4 failed on the keeper's own data, every apply paid ~3 s and two extra reloads,
+  and a false "Noctalia dropped the theme layout" warning was logged. The tolerance test only
+  pinned a synthetic layout Noctalia never migrates — the suite certified a tolerance set
+  reality falsifies. The keeper's binary was ROLLED BACK to
+  `restore-point/pre-noctalia-layout-guard-2026-10-11` because of this delivery.
+- **HIGH-2 — the repair undid the D4 plugin protection.** It copied the theme's
+  `settings.toml` VERBATIM (including its `[plugins] enabled` list) and ran `config-reload`
+  AFTER the D4 `plugin_reassert_action` block — exactly the operation D4 exists to forbid. A
+  firing repair re-enabled or disabled `noctalia/mpvpaper` behind the keeper's back.
+- **MEDIUM — the verify sat mid-apply.** It ran at the end of step 0, but the apply still
+  performed later writes and reloads: `neutralize_noctalia_wallpaper_rotation` (writes the
+  live file and runs its own `config-reload`), `wallpaper-set`, `color-scheme-set`,
+  `templates-apply`, and an async palette reassert; the keeper's `sddm-watch.sh` also fires
+  `templates-apply` after any rewrite it heals. Acceptance criterion 2 was only sampled early.
+- **LOW — `[[array-of-tables]]` was invisible** to the line parser (a `[[...]]` header parsed
+  as a name that never matched layout and terminated the enclosing section), so the
+  layoutless short-circuit and the post-repair re-check were not really pinned.
 
 ## Progress log
 
@@ -130,3 +172,51 @@ while it was healthy, so this is a loss, not a reload that was ignored.
   `cargo check --all-targets` clean, no warnings. Commit `198a2bc`. Tests use a new `LayoutStub` (stub `noctalia`
   on PATH whose `config-reload` wipes the live file: never / first / always) — the keeper's live config, theme
   packages and `sddm-watch.sh` were never touched.
+- 2026-10-11 (independent verification): **U1–U3 REFUTED** — HIGH-1 / HIGH-2 / MEDIUM / LOW as recorded in
+  "The refutation" section above, measured against the keeper's real files. The keeper rolled his binary back to
+  `restore-point/pre-noctalia-layout-guard-2026-10-11`; a delegated writer was asked to correct the delivery as
+  U5–U8 below. Commits `d8de95e` / `198a2bc` stay in history as the refuted baseline.
+- 2026-10-11 (delegated writer, correction): **U5 done** — the predicate is now SECTION-presence only
+  (`missing_theme_layout`, rule and stated limit documented in one comment): layout is in force iff every layout
+  section the theme declares is present in the live text; keys inside a surviving section are invisible because
+  Noctalia migrates its schema under sections that stay present. New `section_header_name` parses `[section]` AND
+  `[[array-of-tables]]` headers (indentation, comments, quotes), fixing the LOW finding. The repudiated
+  `layout_predicate_reports_a_key_missing_from_a_surviving_section` test went with the old half. RED observed
+  (`cargo test layout_predicate`, pre-implementation): `layout_predicate_reports_the_real_migrated_pair_in_force`
+  FAILED and `layout_predicate_sees_array_of_tables_sections` FAILED with left = `[bar.barra_lateral].auto_hide,
+  [bar.default].position, [bar.default].radius_bottom_right, [bar.default].radius_top_right, [widget.clock].color` —
+  exactly the refutation's five false positives — and no sight of the `[[...]]` capsule-group sections. The fixture
+  pair `THEME_MIGRATED` / `LIVE_MIGRATED` is condensed from the keeper's real files (read-only); his files were
+  never touched. Commit `243a753`.
+- 2026-10-11 (delegated writer, correction): **U6 done** — `restore_missing_layout_sections(theme, live)` re-adds
+  ONLY the missing layout sections (verbatim blocks, theme order, first occurrence, appended at the end); every
+  other live byte is left alone. `verify_and_repair_layout` now `fs::write`s that text instead of `fs::copy`ing the
+  theme. The two invariants are pinned pure (on texts) and through the real apply path. RED observed:
+  `repair_readds_only_missing_sections_and_preserves_every_other_byte` FAILED with `layout was missing` against a
+  stubbed repair; `apply_repairs_a_wiped_layout_exactly_once` FAILED with "the repair must re-add the layout
+  without touching a byte of the file it found";
+  `apply_repair_keeps_plugins_off_and_keeps_the_apply_writes` FAILED with "every byte of the mid-apply live state
+  must survive the repair" — all against the refuted verbatim copy. The bounded test was strengthened: after the
+  failing rewrite the last wipe stands (no second repair). Commit `deb95d4`.
+- 2026-10-11 (delegated writer, correction): **U7 done** — the verify is armed at step 0 (`layout_guard`) and runs
+  as the LAST synchronous step of the apply, after the rotation neutralize, `wallpaper-set`, `color-scheme-set`
+  and `templates-apply`; the D4 re-assert and every other apply step are untouched. Cost stated on the function and
+  the call site: one 1.5 s settle per layout-declaring apply, one extra reload + one extra settle only on a real
+  repair, zero for layoutless themes; the off-thread colour re-assert can still land after the verify
+  (asynchronous by design). RED observed: `apply_verifies_after_the_later_steps` FAILED with "a wipe landing on a
+  LATER step must still be repaired before the apply returns" — the stub wiped on `templates-apply`, the last
+  synchronous step, and the mid-apply verify never saw it. Commit `b10bfae`.
+- 2026-10-11 (delegated writer, correction): **U8 done** — the refutation's test list, all on the kept `LayoutStub`
+  harness: (a) `layout_predicate_reports_the_real_migrated_pair_in_force` (the measured pair, U5); (b)
+  `layout_predicate_reports_wiped_sections_as_whole` + `apply_repairs_a_wiped_layout_exactly_once` (whole-section
+  wipe detected and repaired ONCE); (c) the pure byte-preservation test +
+  `apply_repair_keeps_plugins_off_and_keeps_the_apply_writes` (repair leaves `[plugins]` and the applied
+  palette/wallpaper writes untouched); (d) `apply_with_a_layoutless_theme_never_repairs` kept + the genuine pin
+  `apply_with_a_layoutless_theme_skips_the_settle` (3000 ms settle configured, layoutless theme must return
+  without paying it — deleting the short-circuit fails the test on elapsed time);
+  (e) `apply_repair_is_bounded_when_the_rewrite_does_not_stick` (one repair attempt even when every reload
+  re-wipes). Final checks on the correction tree: `cargo test` 1606 passed / 0 failed; `cargo check --all-targets`
+  clean. `rustfmt --check` chunk count on `noctalia.rs` back to the pre-task baseline (67 — repo-wide fmt
+  uncleanliness is pre-existing and out of scope). The keeper's live Noctalia config, theme packages and
+  `sddm-watch.sh` were never touched; the migrated-pair fixtures were condensed from READ-ONLY measurements.
+  Commits `243a753`, `deb95d4`, `b10bfae`.
