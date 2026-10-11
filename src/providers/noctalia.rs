@@ -4929,12 +4929,15 @@ exit 0
             }
             std::fs::write(state_dir.join("daemon.json"), daemon_json).unwrap();
             std::fs::write(state_dir.join("wallpaper-get"), wallpaper_get).unwrap();
+            // The scheme `color-scheme-get` answers with; `with_scheme`
+            // overrides it for tests that need another palette source.
+            std::fs::write(state_dir.join("scheme"), "custom JokerTheme\n").unwrap();
             std::fs::write(state_dir.join("log"), b"").unwrap();
             let noctalia_stub = r#"#!/bin/sh
 STATE="${NOCTALIA_STUB_STATE:?missing stub state}"
 printf '%s\n' "$*" >> "$STATE/log"
 if [ "$1" = "msg" ] && [ "$2" = "color-scheme-get" ]; then
-  printf 'custom JokerTheme\n'
+  cat "$STATE/scheme"
   exit 0
 fi
 if [ "$1" = "msg" ] && [ "$2" = "wallpaper-get" ]; then
@@ -5011,6 +5014,14 @@ exit 1
 
         fn provider_dir(&self, theme: &TempDir) -> PathBuf {
             theme.path().join("providers").join("noctalia-v5")
+        }
+
+        /// Answer `color-scheme-get` with another live scheme, so a save can
+        /// be driven for any palette source (the default is `custom
+        /// JokerTheme`).
+        fn with_scheme(self, scheme: &str) -> Self {
+            std::fs::write(self._tmp.path().join("state").join("scheme"), scheme).unwrap();
+            self
         }
 
         fn wallpaper_txt(&self, theme: &TempDir) -> Option<String> {
@@ -5113,6 +5124,59 @@ exit 1
             std::fs::read(dir.join("palette.json")).unwrap(),
             std::fs::read(&live).unwrap(),
             "the captured palette must be the declared palette's bytes"
+        );
+    }
+
+    /// The exact live case, end to end: the theme declares
+    /// `community Catppuccin Mocha Sapphire`, Noctalia holds that palette
+    /// under its ENCODED file name, and the save must capture those bytes
+    /// instead of the JokerTheme palette an earlier save left in the theme.
+    #[test]
+    #[serial]
+    fn v5_save_captures_a_community_palette_whose_name_has_spaces() {
+        let stub = SaveStub::new(
+            &save_layers_doc("skwd-paper", "skwd-paper"),
+            None,
+            "ok",
+            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            "/pictures/stale/car3.jpg",
+        )
+        .with_scheme("community Catppuccin Mocha Sapphire\n");
+        let theme = TempDir::new().unwrap();
+        let dir = stub.provider_dir(&theme);
+        std::fs::create_dir_all(&dir).unwrap();
+        // The leftover a previous save wrote: the JokerTheme palette.
+        std::fs::write(
+            dir.join("palette.json"),
+            br##"{"dark":{"mPrimary":"#2ec436"}}"##,
+        )
+        .unwrap();
+
+        // Noctalia's own community store, under the file name it writes.
+        let community = PathBuf::from(std::env::var("HOME").unwrap())
+            .join(".local")
+            .join("state")
+            .join("noctalia")
+            .join("community-palettes");
+        std::fs::create_dir_all(&community).unwrap();
+        std::fs::write(
+            community.join("Catppuccin%20Mocha%20Sapphire.json"),
+            br##"{"dark":{"mPrimary":"#74c7ec","mSurface":"#1e1e2e"}}"##,
+        )
+        .unwrap();
+
+        NoctaliaV5Provider::new()
+            .save(theme.path())
+            .expect("save must succeed");
+
+        let captured = String::from_utf8(std::fs::read(dir.join("palette.json")).unwrap()).unwrap();
+        assert!(
+            captured.contains("#74c7ec"),
+            "the captured palette must be the declared community palette: {captured}"
+        );
+        assert!(
+            !captured.contains("#2ec436"),
+            "the leftover JokerTheme palette must not survive the capture: {captured}"
         );
     }
 
