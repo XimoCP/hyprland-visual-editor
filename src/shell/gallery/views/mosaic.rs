@@ -236,7 +236,9 @@ pub const MOSAIC_PAGE_MAX_TILES: usize = 10;
 /// "First" is the MODEL order, not the library order: `MosaicPages::page_render`
 /// leads with the ACTIVE theme on the page that contains it, so the hero is the
 /// applied theme there, and the page's first theme everywhere else. This
-/// function never reorders — it takes model order as given.
+/// function never reorders — it takes model order as given. The `aspects` are
+/// SLOT-keyed, so which theme ends up in slot 0 changes the picture, never the
+/// geometry.
 ///
 /// Every page starts from its own centred hero, so page 2 is arranged exactly
 /// like page 1. The tiles grow or shrink to absorb the leftover: a side region
@@ -514,6 +516,13 @@ pub fn mosaic_layout_rows(layout: &MosaicLayout) -> Vec<Vec<usize>> {
 /// smallest edge. Probed across every phase of the display-aspect pattern, so
 /// any page slice of that size is safe. Degenerate (non-positive) stage → 0;
 /// a valid stage always hosts at least one tile.
+///
+/// The probe walks the 10 phase windows over tile POSITIONS, which is literally
+/// what the layout uses: `page_render` builds the aspects from the page's slot
+/// indices, so a page's aspects are exactly one probed window (rotated by
+/// `start % 10`). The minimum-edge guarantee therefore holds whatever theme is
+/// active — the reorder moves reals only, and `justified_hero_layout` computes
+/// its geometry from `aspects` alone.
 pub fn mosaic_page_capacity(stage_w: f32, stage_h: f32) -> usize {
     if !(stage_w > 0.0) || !(stage_h > 0.0) {
         return 0;
@@ -571,8 +580,9 @@ pub fn mosaic_curtain_delays(tiles: &[MosaicTile]) -> Vec<u64> {
 /// current page. UI mirrors `current`/`total_pages`; `page_render` produces
 /// the current page's geometry inputs (no clone-fill) so the wall never
 /// touches disk. The ACTIVE theme decides which page opens (R2) and leads the
-/// arrays of the page that contains it (R1), so it is always the hero the
-/// keeper sees.
+/// REALS of the page that contains it (R1), so it is always the hero the
+/// keeper sees; the geometry stays keyed to the page's slots, so applying a
+/// different theme never reshapes the composition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MosaicPages {
     real_count: usize,
@@ -585,9 +595,9 @@ pub struct MosaicPages {
     /// recompute can re-anchor the ring to the same theme.
     cursor_theme: Option<usize>,
     /// The ACTIVE theme (the one applied), as its real index in the library
-    /// (None = nothing active). The page that CONTAINS it leads its arrays
-    /// with it, so it becomes that page's hero; pages that do not contain it
-    /// keep their first-of-page hero.
+    /// (None = nothing active). The page that CONTAINS it leads its reals with
+    /// it, so it becomes that page's hero; pages that do not contain it keep
+    /// their first-of-page hero.
     active_theme: Option<usize>,
     /// The stage the current `capacity` was computed FOR. The capacity now
     /// depends on the stage size (it probes the real layout against the
@@ -732,12 +742,23 @@ impl MosaicPages {
     /// Aspects + real indices for rendering the current page: exactly the
     /// page's real themes, 1:1 — no clone-fill (the elastic layout absorbs the
     /// leftover instead of repeating a theme). The ACTIVE theme, when this page
-    /// contains it, leads the arrays: the hero is the FIRST entry in model
+    /// contains it, leads the REALS: the hero is the FIRST entry in model
     /// order, so leading with it is what makes it the big centred tile (R1).
     /// Every other page keeps its list order, so its first theme stays the
-    /// hero (R3). Each aspect travels with its theme, so a theme keeps its
-    /// shape wherever the reorder puts it. Purity: no disk, no engine.
-    /// Degenerate capacity 0 falls back to the real entries as a single page.
+    /// hero (R3).
+    ///
+    /// The aspects are built from the page's NATURAL order (`start..end`), so
+    /// `aspects[i]` describes SLOT `i` and `reals[i]` names the theme drawn
+    /// there. The display aspect is SYNTHETIC and index-keyed
+    /// ([`mosaic_display_aspect`]) — a theme has no shape of its own — so a
+    /// stable composition is the product requirement: changing which theme is
+    /// APPLIED must move only the pictures, never the tile geometry. Building
+    /// the aspects from the reordered reals did exactly the opposite: the
+    /// active theme dragged its own phase (wide 1.95 for library index 2) onto
+    /// the hero slot and reshaped the whole page.
+    ///
+    /// Purity: no disk, no engine. Degenerate capacity 0 falls back to the real
+    /// entries as a single page.
     pub fn page_render(&self) -> (Vec<f32>, Vec<usize>) {
         if self.real_count == 0 {
             return (vec![], vec![]);
@@ -748,6 +769,8 @@ impl MosaicPages {
             let start = self.current * self.capacity;
             (start, (start + self.capacity).min(self.real_count))
         };
+        // Slot-keyed shapes: the page's own phases, in list order.
+        let aspects: Vec<f32> = (start..end).map(mosaic_display_aspect).collect();
         let mut reals: Vec<usize> = (start..end).collect();
         // Hero first: move the active theme to the head of THIS page's array.
         // `position` misses whenever it is not on this page (another page, an
@@ -759,7 +782,6 @@ impl MosaicPages {
                 reals.insert(0, active);
             }
         }
-        let aspects: Vec<f32> = reals.iter().map(|&i| mosaic_display_aspect(i)).collect();
         (aspects, reals)
     }
 
@@ -3148,5 +3170,103 @@ mod mosaic_active_hero_tests {
                 }
             }
         }
+    }
+
+    /// Render one page through the real pipeline (`page_render` → hero layout),
+    /// with an optional active theme — exactly what `refresh_mosaic_page` does.
+    fn render_page(
+        count: usize,
+        sw: f32,
+        sh: f32,
+        page: usize,
+        active: Option<usize>,
+    ) -> (MosaicLayout, Vec<usize>, Vec<f32>) {
+        let mut pages = MosaicPages::new(count, sw, sh);
+        pages.set_active_theme(active);
+        pages.go_to(page);
+        let (aspects, reals) = pages.page_render();
+        let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, sw, sh);
+        (layout, tile_reals, aspects)
+    }
+
+    #[test]
+    fn the_composition_is_invariant_to_which_theme_is_active() {
+        // Criterion 7 / D1: the per-tile aspect is SYNTHETIC and keyed by the
+        // page SLOT, so moving a theme onto the hero slot may move its PICTURE
+        // and nothing else. Building the aspects from the reordered reals made
+        // the active theme drag its own phase into slot 0 and reshape the whole
+        // page, which is the defect the keeper saw as "se ha descompensado".
+        for (sw, sh) in [(STAGE_W, STAGE_H), (1280.0, 720.0)] {
+            for count in [3usize, 11, 23] {
+                let plain = MosaicPages::new(count, sw, sh);
+                assert!(plain.capacity() >= 3, "stage {sw}x{sh} must host a hero band");
+                for page in 0..plain.total_pages() {
+                    let start = page * plain.capacity();
+                    let end = (start + plain.capacity()).min(count);
+                    let (plain_layout, plain_reals, plain_aspects) =
+                        render_page(count, sw, sh, page, None);
+                    assert_eq!(
+                        plain_reals,
+                        (start..end).collect::<Vec<_>>(),
+                        "no active theme: the page renders its slice in list order"
+                    );
+                    for active in start..end {
+                        let (layout, tile_reals, aspects) =
+                            render_page(count, sw, sh, page, Some(active));
+                        assert_eq!(
+                            aspects, plain_aspects,
+                            "{count} themes @ {sw}x{sh} page {page}, active {active}: the \
+                             page's SHAPES must belong to its slots, not to its themes"
+                        );
+                        assert_eq!(
+                            layout.tiles, plain_layout.tiles,
+                            "{count} themes @ {sw}x{sh} page {page}, active {active}: the \
+                             geometry must not change with the active theme"
+                        );
+                        assert_eq!(
+                            tile_reals[0], active,
+                            "{count} themes @ {sw}x{sh} page {page}, active {active}: the \
+                             active theme must still be the hero"
+                        );
+                        let mut with = tile_reals.clone();
+                        let mut without = plain_reals.clone();
+                        with.sort_unstable();
+                        without.sort_unstable();
+                        assert_eq!(
+                            with, without,
+                            "{count} themes @ {sw}x{sh} page {page}, active {active}: only \
+                             the pictures may move"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_hero_slot_keeps_the_pages_first_shape() {
+        // D1 as the keeper hit it: library index 2 (JoKer) is the WIDE phase,
+        // so theme-keyed aspects gave the hero nearly twice the width of the
+        // square phase the page's first slot always had.
+        let mut pages = MosaicPages::new(12, STAGE_W, STAGE_H);
+        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES);
+        pages.set_active_theme(Some(2));
+        let (aspects, reals) = pages.page_render();
+        assert_eq!(reals[0], 2, "the active theme leads its page");
+        assert!(
+            (mosaic_display_aspect(2) - MOSAIC_ASPECT_WIDE).abs() < 1e-6,
+            "library index 2 is the WIDE phase"
+        );
+        assert!(
+            (aspects[0] - mosaic_display_aspect(0)).abs() < 1e-6,
+            "the hero slot keeps the page's FIRST shape ({}) and not the active theme's \
+             own phase ({})",
+            mosaic_display_aspect(0),
+            mosaic_display_aspect(2)
+        );
+        assert!(
+            (aspects[0] - MOSAIC_ASPECT_SQUARE).abs() < 1e-6,
+            "slot 0 of page 1 is the square phase"
+        );
     }
 }
