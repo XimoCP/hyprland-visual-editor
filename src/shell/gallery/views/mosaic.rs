@@ -3003,4 +3003,64 @@ mod mosaic_active_hero_tests {
         let (_, reals2_layout) = justified_hero_layout(&aspects2, &reals2, STAGE_W, STAGE_H);
         assert_eq!(reals2_layout[0], 11);
     }
+
+    #[test]
+    fn a_page_without_the_active_theme_keeps_the_first_of_page_hero() {
+        let mut pages = MosaicPages::new(23, STAGE_W, STAGE_H);
+        pages.set_active_theme(Some(13)); // page 2
+        assert_eq!(pages.current(), 0, "no open yet: still page 1");
+        let (aspects, reals) = pages.page_render();
+        assert_eq!(
+            reals,
+            identity_slice(0, 10),
+            "page 1 does not hold the active theme: it keeps its own order"
+        );
+        let (_, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
+        assert_eq!(tile_reals[0], 0, "page 1 keeps ITS first theme as the hero");
+        // The keeper steps to the page that holds it, then steps back.
+        assert!(pages.open_on_active());
+        assert_eq!(pages.current(), 1);
+        assert!(pages.step(-1), "the keeper's own page flip still wins");
+        let (_, back) = pages.page_render();
+        assert_eq!(
+            back,
+            identity_slice(0, 10),
+            "a page without the active theme re-renders in list order"
+        );
+    }
+
+    #[test]
+    fn without_an_active_theme_every_page_keeps_the_first_of_page_hero() {
+        let mut pages = MosaicPages::new(23, STAGE_W, STAGE_H);
+        assert_eq!(pages.active_theme(), None, "a fresh model has no active theme");
+        assert!(!pages.open_on_active(), "nothing to open on");
+        for _ in 0..pages.total_pages() {
+            let start = pages.current() * pages.capacity();
+            let (aspects, reals) = pages.page_render();
+            assert_eq!(
+                reals,
+                identity_slice(start, reals.len()),
+                "page {} renders its slice in order",
+                pages.current()
+            );
+            let (_, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
+            assert_eq!(
+                tile_reals[0], start,
+                "page {} keeps its FIRST theme as the hero",
+                pages.current()
+            );
+            pages.step(1);
+        }
+        // An active index that is not in the library is ignored the same way.
+        pages.go_to(0);
+        pages.set_active_theme(Some(999));
+        assert_eq!(
+            pages.page_of(999),
+            None,
+            "no page holds a theme that is not in the library"
+        );
+        assert!(!pages.open_on_active(), "an out-of-range active theme moves nothing");
+        let (_, reals) = pages.page_render();
+        assert_eq!(reals, identity_slice(0, 10), "out-of-range active: identity");
+    }
 }
