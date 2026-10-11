@@ -3,10 +3,12 @@
 **Locator**: `odd/tasks/mosaic-elastic-centred-layout.md`
 **Engram mirror**: topic `odd/mosaic-elastic-centred-layout/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: IN PROGRESS (keeper authorized 2026-10-11: "vamos a partir siempre de la grande del
-medio y a partir de ahí vamos acomodando hasta cumplir con el espacio máximo de 10, luego
-pasamos a la siguiente página y se va acomodando de la misma manera que el primero... de forma
-dinámica desde el centro. Vamos a probarlo.")
+**Status**: DONE (2026-10-11) — the elastic centred layout landed, the parent read the renders,
+and the keeper's own live check found one follow-up defect (a stale page capacity when the
+stage changes) which is fixed and installed. Authorized 2026-10-11: "vamos a partir siempre de
+la grande del medio y a partir de ahí vamos acomodando hasta cumplir con el espacio máximo de 10,
+luego pasamos a la siguiente página y se va acomodando de la misma manera que el primero... de
+forma dinámica desde el centro. Vamos a probarlo."
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~350-500 authored changed lines (layout rework + tests) → single PR.
 **Route**: delegated writer (`src/shell/gallery/views/mosaic.rs`, `src/main.rs`), parent
@@ -111,11 +113,43 @@ more capable than the estimate assumes. And when the hero band is not viable
 
 ## Work units
 
-- [ ] **U1** — the elastic centred layout (no clones, minimum size, hero for 1-3 tiles).
-- [ ] **U2** — the page size derived from the layout, cap 10.
-- [ ] **U3** — the cursor re-anchored to the theme.
-- [ ] **U4** — the pure tests.
-- [ ] **U5** — the parent's render read + install.
+- [x] **U1** — the elastic centred layout (no clones, minimum size, hero for 1-3 tiles). — `eaa8420`
+- [x] **U2** — the page size derived from the layout, cap 10. — `a4107a9`
+- [x] **U3** — the cursor re-anchored to the theme. — `b33ffa7`
+- [x] **U4** — the pure tests. — `00e6de2`
+- [x] **U5** — the parent's render read + install. — read by eye; installed and relaunched.
+
+## Verification result (U5)
+
+- Suite at the end of U4: **1543 passed, 0 failed**; `cargo check --all-targets` clean; no new
+  dependency. The writer rewrote six existing tests that pinned the old clone-fill behaviour and
+  deleted none; it also removed `clone_fill_count`, `clone_real_index` and `MOSAIC_PAGE_ROW_COUNT`
+  as dead.
+- The parent READ both renders with its own eyes (the project's rule for visual changes), same
+  fixture before and after: BEFORE 10 tiles of which one was a repeat; AFTER **9 tiles, all
+  distinct**, the hero centred and the band even with no holes in both cases. The before render is
+  kept at `/tmp/opencode/render-before-mosaic/mosaic_hero.png`.
+- Budget: U1 alone rewrote 479 lines of one function, over the 400-line PR heuristic; the writer
+  flagged it for the keeper's call on splitting.
+
+## Follow-up found by the keeper's live check and FIXED here
+
+The keeper saw 7 themes paginated into 2 pages. Cause: the capacity is now derived from the real
+layout against the 96 px minimum tile, so it DEPENDS on the stage size (measured: 5 at 800x600,
+9 at 1600x900, 10 at 2374x1290), and the page model was computed once while the window was still
+hidden; the refresh guard only asked whether the theme COUNT had changed, so the small-stage
+capacity outlived the window's real size. Before this work the capacity was size-insensitive (9
+for every stage), which is why the guard's missing half was invisible.
+
+Fix in `971b465`: `MosaicPages` remembers the stage it computed for and
+`needs_recompute(real_count, stage_w, stage_h)` is the single place that decides. Test: a model
+built for 800x600 (capacity 5) asks for a recompute at 2374x1290 and then holds all 7 themes on
+ONE page. Suite after the fix: 1544 passed, 0 failed.
+
+## Next (separate contract)
+
+`odd/tasks/mosaic-active-theme-is-the-hero.md` — the keeper decided the ACTIVE theme must always be
+the hero, and the Mosaic must open on its page. Planned, not started.
 
 ## Progress log
 
