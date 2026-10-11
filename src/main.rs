@@ -5330,29 +5330,53 @@ fn main() -> Result<(), slint::PlatformError> {
                     w.set_tune_dirty(false);
                     // D4: remove hidden draft after save + re-apply saved border
                     PresetStore::remove_draft(&proj_c);
-                    {
-                        let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                        // U1: the file is written and is about to go live, so it
-                        // IS the active preset — record it (canonical form) and
-                        // persist. Without this a theme saved next read whatever
-                        // the config still held (the previous preset, or none)
-                        // while the desktop showed this one: the look did not
-                        // travel with the theme.
-                        record_saved_preset_active(
-                            st.cfg_mut(),
-                            SavedPresetSlot::Border,
-                            &name_str,
-                        );
-                        let _ = st.cfg().save();
-                        if let Err(e) = st.engine().apply_border(&name_str) {
-                            tracing::error!("[borders][preset] re-apply after save failed: {}", e);
-                            drop(st);
-                            if let Some(w) = weak.upgrade() {
-                                w.set_border_save_error(slint::SharedString::from(
-                                    &format!("Border apply failed: {}", e),
-                                ));
+                    // U7: apply FIRST. The file is on disk, but until the desktop
+                    // has taken it the saved preset is NOT the active one: writing
+                    // the record before a failed apply left the config naming a
+                    // preset the desktop never showed, and the theme saved next
+                    // carried that wrong look.
+                    let preset_file = PresetStore::canonical_preset_file(&name_str);
+                    let applied = {
+                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        st.engine().apply_border(&preset_file)
+                    };
+                    if let Err(e) = applied {
+                        tracing::error!("[borders][preset] re-apply after save failed: {}", e);
+                        w.set_border_save_error(slint::SharedString::from(&format!(
+                            "Border apply failed: {}",
+                            e
+                        )));
+                    } else {
+                        let recorded = {
+                            let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                            // U1: the file is written and live, so it IS the
+                            // active preset — record it (canonical form) so the
+                            // theme saved next carries the look that is on the
+                            // desktop.
+                            let recorded = record_saved_preset_active(
+                                st.cfg_mut(),
+                                SavedPresetSlot::Border,
+                                &name_str,
+                            );
+                            // U7: the persist error is NOT discarded. A silent
+                            // write failure reintroduced Bug 1 exactly: the
+                            // theme saved next reads the OLD preset back off
+                            // disk while the desktop shows the new one.
+                            if let Err(e) = st.cfg().save() {
+                                tracing::warn!(
+                                    "[borders][preset] could not persist the active preset {}: {}",
+                                    recorded,
+                                    e
+                                );
                             }
-                        }
+                            recorded
+                        };
+                        // U8: re-derive the marker from the RECORDED value
+                        // against the list just refreshed. The new stem can sort
+                        // next to the previous card, and the untouched index
+                        // would then highlight a card that was never active
+                        // until the section was re-entered.
+                        crate::presets::reseed_active_border_index(&w, &recorded);
                     }
                 }
                 r
@@ -5558,22 +5582,37 @@ fn main() -> Result<(), slint::PlatformError> {
                     // The working state is now the saved preset.
                     w.set_motion_dirty(false);
                     // Re-apply the just-saved preset so the desktop matches it.
-                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                    // U1: the saved preset is the ACTIVE one from here on
-                    // (mirrors the Borders save path).
-                    record_saved_preset_active(
-                        st.cfg_mut(),
-                        SavedPresetSlot::Animation,
-                        &name_str,
-                    );
-                    let _ = st.cfg().save();
-                    if let Err(e) = st.engine().apply_animation(&name_str) {
+                    // U7: apply FIRST, then record — mirrors the Borders save
+                    // path (see `on_panel_save_border_preset`).
+                    let preset_file =
+                        crate::preset_store::PresetStore::canonical_preset_file(&name_str);
+                    let applied = {
+                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        st.engine().apply_animation(&preset_file)
+                    };
+                    if let Err(e) = applied {
                         tracing::error!("[motion][preset] re-apply after save failed: {}", e);
-                        drop(st);
-                        if let Some(w) = weak.upgrade() {
-                            w.set_animation_save_error(slint::SharedString::from(
-                                &format!("Animation apply failed: {}", e),
-                            ));
+                        w.set_animation_save_error(slint::SharedString::from(&format!(
+                            "Animation apply failed: {}",
+                            e
+                        )));
+                    } else {
+                        let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        // U1: the saved preset is the ACTIVE one from here on
+                        // (mirrors the Borders save path).
+                        let recorded = record_saved_preset_active(
+                            st.cfg_mut(),
+                            SavedPresetSlot::Animation,
+                            &name_str,
+                        );
+                        // U7: never swallow the persist error — see the Borders
+                        // save path.
+                        if let Err(e) = st.cfg().save() {
+                            tracing::warn!(
+                                "[motion][preset] could not persist the active preset {}: {}",
+                                recorded,
+                                e
+                            );
                         }
                     }
                 }
@@ -7731,5 +7770,78 @@ mod tests {
                 "a click on {clicked:?} must record {recorded:?}"
             );
         }
+    }
+
+    // ── U7: apply first, and never swallow the persist error ─────────────
+    // Two ordering facts, for both tune panes:
+    //  * the record was written and persisted BEFORE the live re-apply, so a
+    //    failed apply left the config naming a preset the desktop never showed;
+    //  * `let _ = st.cfg().save()` discarded the write error, which silently
+    //    reintroduced Bug 1 — the theme saved next read the OLD preset back off
+    //    disk while the desktop showed the new one.
+
+    #[test]
+    fn both_tune_pane_save_handlers_apply_before_recording_and_keep_the_persist_error() {
+        let code = main_rs_code();
+        for (sig, apply_call) in [
+            (
+                "window.on_panel_save_border_preset(",
+                "apply_border",
+            ),
+            (
+                "window.on_panel_save_animation_preset(",
+                "apply_animation",
+            ),
+        ] {
+            let handler = fn_body(&code, sig);
+            let apply = handler
+                .find(apply_call)
+                .unwrap_or_else(|| panic!("{sig} must apply the saved preset, got: {handler}"));
+            let record = handler
+                .find("record_saved_preset_active")
+                .unwrap_or_else(|| panic!("{sig} must record the saved preset, got: {handler}"));
+            assert!(
+                apply < record,
+                "{sig} must apply the preset BEFORE recording it: a record that \
+                 outlives a failed apply names a preset the desktop never showed, got: {handler}"
+            );
+            assert!(
+                handler.contains("if let Err(e) = st.cfg().save()"),
+                "{sig} must inspect the persist result, got: {handler}"
+            );
+            assert!(
+                !handler.contains("let _ = st.cfg().save()"),
+                "{sig} must not swallow a config write failure: the theme saved next \
+                 would record the OLD preset, got: {handler}"
+            );
+        }
+    }
+
+    // ── U8: the marker is re-derived from the RECORDED value after the save ──
+    // The save refreshes `user_border_preset_names` (stems, sorted) without
+    // re-deriving the index, so when the new stem lands before the previously
+    // active card the untouched `active_border_index` highlighted a card that
+    // was never active until the section was re-entered.
+
+    #[test]
+    fn the_border_save_handler_re_derives_the_marker_from_the_recorded_value() {
+        let code = main_rs_code();
+        let handler = fn_body(&code, "window.on_panel_save_border_preset(");
+        let refresh = handler
+            .find("set_user_border_preset_names")
+            .unwrap_or_else(|| panic!("the save must refresh the user preset list, got: {handler}"));
+        let reseed = handler.find("reseed_active_border_index").unwrap_or_else(|| {
+            panic!("the save must re-derive the pane marker from the recorded value, got: {handler}")
+        });
+        assert!(
+            refresh < reseed,
+            "the marker must be re-derived AFTER the list refresh, or it is derived \
+             from the list it is about to replace, got: {handler}"
+        );
+        assert!(
+            handler.contains("reseed_active_border_index(&w, &recorded)"),
+            "the marker must be re-derived from the RECORDED value, not from the name \
+             the pane typed, got: {handler}"
+        );
     }
 }

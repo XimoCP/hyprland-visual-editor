@@ -260,6 +260,48 @@ fn reseed_marks_a_user_border_card_from_a_legacy_bare_stem() {
     assert_eq!(win.get_active_border_index(), -1);
 }
 
+/// U8: the state the Save handler must re-derive the marker FROM. A save
+/// refreshes the user preset list (stems, sorted); when the new stem lands
+/// beside the previously active card, the untouched `active_border_index`
+/// highlights the card that WAS active — a preset the desktop no longer has
+/// loaded — until the section is re-entered. The handler now re-derives the
+/// marker from the recorded value right after the refresh.
+#[test]
+fn reseed_after_a_save_moves_the_marker_to_the_newly_saved_card() {
+    use slint::{ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_cascade.lua"),
+        SharedString::from("03_duo.lua"),
+    ])));
+    // `aa_first` is the USER preset that was active: built-in count (2) + 0.
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("aa_first"),
+    ])));
+    win.set_active_border_index(2);
+
+    // The tune pane just saved `Space`: the refreshed list keeps `aa_first`
+    // first, and the new stem continues the index space after it.
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("aa_first"),
+        SharedString::from("Space"),
+    ])));
+
+    assert_eq!(
+        win.get_active_border_index(),
+        2,
+        "fixture: the untouched marker still highlights `aa_first`, which is not \
+         the preset that was just saved"
+    );
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "Space.lua"),
+        3,
+        "re-deriving from the recorded value must mark the card just saved"
+    );
+    assert_eq!(win.get_active_border_index(), 3);
+}
+
 /// Every keyboard-focus move in the panel must leave a --verbose trace:
 /// panel-kbd (the single panel scope) and shell-kbd (shell) report gain
 /// + loss with the FocusReason mapped to a string, through the generic
