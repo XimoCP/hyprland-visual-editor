@@ -663,6 +663,41 @@ impl MosaicPages {
         self.geometry_rebuilds += 1;
     }
 
+    /// Sync the model to the library/stage the caller just measured: recompute
+    /// when the count or the stage moved, then re-anchor the current page onto
+    /// the ACTIVE theme's page (R2) only when the PARTITION moved.
+    ///
+    /// The RECOMPUTE stays on ANY stage change — the tile geometry depends on
+    /// the stage. The RE-ANCHOR does not: a resize (or monitor re-layout) that
+    /// leaves the same capacity and the same page count renders the very same
+    /// pages in the same order, so yanking the keeper back to the active
+    /// theme's page would be a regression. The partition moved when the
+    /// capacity or the page count before and after differ — the library
+    /// changed, or the stage change repartitioned the pages.
+    ///
+    /// The opening case relies on that: the gallery's first capacity is
+    /// computed while the window is still hidden, so the hidden → visible stage
+    /// change DOES repartition and re-anchors.
+    ///
+    /// `is_flip` is the keeper's own page flip, which always wins: a recompute
+    /// that coincides with a flip must not steal the page just asked for.
+    ///
+    /// Returns whether the call re-anchored the current page.
+    pub fn sync(&mut self, real_count: usize, stage_w: f32, stage_h: f32, is_flip: bool) -> bool {
+        if !self.needs_recompute(real_count, stage_w, stage_h) {
+            return false;
+        }
+        let capacity_before = self.capacity;
+        let pages_before = self.total_pages;
+        self.recompute(real_count, stage_w, stage_h);
+        let partition_moved =
+            self.capacity != capacity_before || self.total_pages != pages_before;
+        if is_flip || !partition_moved {
+            return false;
+        }
+        self.open_on_active()
+    }
+
     pub fn current(&self) -> usize { self.current }
     pub fn total_pages(&self) -> usize { self.total_pages }
     pub fn capacity(&self) -> usize { self.capacity }
@@ -3268,5 +3303,97 @@ mod mosaic_active_hero_tests {
             (aspects[0] - MOSAIC_ASPECT_SQUARE).abs() < 1e-6,
             "slot 0 of page 1 is the square phase"
         );
+    }
+
+    // ── Re-anchor only when the PARTITION moved (D2 / criterion 8) ──────
+    // The recompute stays on ANY stage change (the geometry depends on the
+    // stage); only the RE-ANCHOR is gated.
+
+    #[test]
+    fn a_stage_change_that_keeps_the_partition_does_not_move_the_page() {
+        // A resize (or monitor re-layout) that leaves the capacity and the page
+        // count identical renders the very same pages in the same order, so it
+        // must not drag the keeper back to the active theme's page.
+        let mut pages = MosaicPages::new(23, STAGE_W, STAGE_H);
+        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES);
+        assert_eq!(pages.total_pages(), 3, "23 themes → 3 pages of 10/10/3");
+        pages.set_active_theme(Some(13));
+        assert_eq!(pages.page_of(13), Some(1), "theme 13 lives on page 2");
+        assert!(pages.go_to(2), "the keeper is browsing page 3");
+        let (sw, sh) = (STAGE_W + 1.0, STAGE_H);
+        assert_eq!(
+            mosaic_page_capacity(sw, sh),
+            MOSAIC_PAGE_MAX_TILES,
+            "the resized stage keeps the same capacity"
+        );
+        assert!(
+            pages.needs_recompute(23, sw, sh),
+            "the stage moved: the geometry must still recompute"
+        );
+        assert!(
+            !pages.sync(23, sw, sh, false),
+            "an unchanged partition must NOT re-anchor"
+        );
+        assert_eq!(pages.current(), 2, "the keeper keeps the page he was on");
+        assert_eq!(pages.geometry_rebuilds(), 1, "the geometry did recompute");
+    }
+
+    #[test]
+    fn the_hidden_to_visible_stage_change_still_lands_on_the_active_page() {
+        // The gallery's FIRST capacity is computed while the window is still
+        // hidden, so it is derived from a smaller stage. Showing the window
+        // repartitions the pages — the same page INDEX then holds a different
+        // set of themes — so the open must re-anchor.
+        let mut pages = MosaicPages::new(23, 800.0, 600.0);
+        assert_eq!(pages.capacity(), 5, "the hidden window's small stage");
+        assert_eq!(pages.total_pages(), 5, "23 themes → 5 pages of 5");
+        pages.set_active_theme(Some(13));
+        assert_eq!(pages.page_of(13), Some(2));
+        assert!(
+            pages.sync(23, STAGE_W, STAGE_H, false),
+            "the open must land on the active theme's page"
+        );
+        assert_eq!(pages.total_pages(), 3, "the real stage repartitions");
+        assert_eq!(pages.current(), 1, "page 2 of the real partition holds theme 13");
+    }
+
+    #[test]
+    fn a_library_change_that_repartitions_still_re_anchors() {
+        let mut pages = MosaicPages::new(21, STAGE_W, STAGE_H);
+        assert_eq!(pages.total_pages(), 3, "21 themes → 3 pages of 10/10/1");
+        pages.set_active_theme(Some(3));
+        assert!(pages.go_to(2), "the keeper is browsing the last page");
+        assert!(
+            pages.sync(12, STAGE_W, STAGE_H, false),
+            "a library change that repartitions must re-anchor"
+        );
+        assert_eq!(pages.total_pages(), 2, "12 themes → 2 pages");
+        assert_eq!(pages.current(), 0, "and the page is the active theme's");
+    }
+
+    #[test]
+    fn a_keeper_page_flip_still_wins_over_the_re_anchor() {
+        let mut pages = MosaicPages::new(23, 800.0, 600.0);
+        pages.set_active_theme(Some(13));
+        assert!(pages.go_to(3), "the keeper flips away from the active page");
+        assert!(!pages.sync(23, STAGE_W, STAGE_H, true), "a flip never re-anchors");
+        assert_ne!(
+            pages.current(),
+            pages.page_of(13).unwrap(),
+            "the keeper's own page wins over the active theme's page"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_partition_without_an_active_theme_does_nothing() {
+        let mut pages = MosaicPages::new(23, STAGE_W, STAGE_H);
+        assert_eq!(pages.active_theme(), None, "nothing is applied");
+        assert!(pages.go_to(2));
+        let (sw, sh) = (STAGE_W + 1.0, STAGE_H);
+        assert!(!pages.sync(23, sw, sh, false), "nothing to re-anchor");
+        assert_eq!(pages.current(), 2, "the page stays put");
+        assert_eq!(pages.geometry_rebuilds(), 1);
+        assert!(!pages.sync(23, sw, sh, false), "an idle sync is a no-op");
+        assert_eq!(pages.geometry_rebuilds(), 1, "no second rebuild");
     }
 }
