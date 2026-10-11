@@ -5347,37 +5347,42 @@ fn main() -> Result<(), slint::PlatformError> {
                             e
                         )));
                     } else {
-                        let recorded = {
-                            let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                            // U1: the file is written and live, so it IS the
-                            // active preset — record it (canonical form) so the
-                            // theme saved next carries the look that is on the
-                            // desktop.
-                            let recorded = record_saved_preset_active(
-                                st.cfg_mut(),
-                                SavedPresetSlot::Border,
-                                &name_str,
+                        let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        // U1: the file is written and live, so it IS the
+                        // active preset — record it (canonical form) so the
+                        // theme saved next carries the look that is on the
+                        // desktop.
+                        let recorded = record_saved_preset_active(
+                            st.cfg_mut(),
+                            SavedPresetSlot::Border,
+                            &name_str,
+                        );
+                        // U7: the persist error is NOT discarded. A silent
+                        // write failure reintroduced Bug 1 exactly: the
+                        // theme saved next reads the OLD preset back off
+                        // disk while the desktop shows the new one.
+                        if let Err(e) = st.cfg().save() {
+                            tracing::warn!(
+                                "[borders][preset] could not persist the active preset {}: {}",
+                                recorded,
+                                e
                             );
-                            // U7: the persist error is NOT discarded. A silent
-                            // write failure reintroduced Bug 1 exactly: the
-                            // theme saved next reads the OLD preset back off
-                            // disk while the desktop shows the new one.
-                            if let Err(e) = st.cfg().save() {
-                                tracing::warn!(
-                                    "[borders][preset] could not persist the active preset {}: {}",
-                                    recorded,
-                                    e
-                                );
-                            }
-                            recorded
-                        };
-                        // U8: re-derive the marker from the RECORDED value
-                        // against the list just refreshed. The new stem can sort
-                        // next to the previous card, and the untouched index
-                        // would then highlight a card that was never active
-                        // until the section was re-entered.
-                        crate::presets::reseed_active_border_index(&w, &recorded);
+                        }
                     }
+                    // U8 + U11: the marker is re-derived from the RECORDED value,
+                    // and it is re-derived in EVERY branch because the list
+                    // refresh above happens in every branch too. The value is what
+                    // the config holds once the save is done: the preset just
+                    // recorded, or — when the live apply failed — the one that is
+                    // still active. Re-deriving only inside the success branch left
+                    // a failed apply with a refreshed list and an untouched index,
+                    // which then highlighted whatever card the shifted list put
+                    // there: the U8 defect, surviving in a rarer branch.
+                    let recorded = {
+                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        st.cfg().active_border_file.clone()
+                    };
+                    crate::presets::reseed_active_border_index(&w, &recorded);
                 }
                 r
             } else {
@@ -5615,6 +5620,15 @@ fn main() -> Result<(), slint::PlatformError> {
                             );
                         }
                     }
+                    // U11: the Motion twin of the Borders marker re-derive, in
+                    // every branch for the same reason — the list refresh above
+                    // is unconditional, and the value the marker must follow is
+                    // what the config holds once the save is done.
+                    let recorded = {
+                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        st.cfg().active_anim_file.clone()
+                    };
+                    crate::presets::reseed_active_anim_index(&w, &recorded);
                 }
                 r
             } else {
@@ -7488,6 +7502,16 @@ mod tests {
         panic!("{sig}: body must close");
     }
 
+    /// Leading whitespace of the first line of `body` containing `needle` —
+    /// the only honest way to pin that a statement is a SIBLING of a branch
+    /// rather than nested inside it, in a handler that cannot be invoked.
+    fn indent_of(body: &str, needle: &str) -> usize {
+        body.lines()
+            .find(|l| l.contains(needle))
+            .map(|l| l.len() - l.trim_start().len())
+            .unwrap_or_else(|| panic!("`{needle}` must appear in the handler, got: {body}"))
+    }
+
     /// Comment-stripped production body of `src/main.rs` for wiring pins.
     fn main_rs_code() -> String {
         let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
@@ -7682,10 +7706,12 @@ mod tests {
             let handler = fn_body(&code, sig);
             let write = handler
                 .find(".save(&name_str, &content)")
-                .unwrap_or_else(|| panic!("{sig} must write the preset through the store, got: {handler}"));
-            let record = handler.find("record_saved_preset_active").unwrap_or_else(|| {
-                panic!("{sig} must record the preset it saved, got: {handler}")
-            });
+                .unwrap_or_else(|| {
+                    panic!("{sig} must write the preset through the store, got: {handler}")
+                });
+            let record = handler
+                .find("record_saved_preset_active")
+                .unwrap_or_else(|| panic!("{sig} must record the preset it saved, got: {handler}"));
             assert!(
                 write < record,
                 "{sig} must not record a preset the store refused: a refused save wrote \
@@ -7890,6 +7916,54 @@ mod tests {
             handler.contains("reseed_active_border_index(&w, &recorded)"),
             "the marker must be re-derived from the RECORDED value, not from the name \
              the pane typed, got: {handler}"
+        );
+    }
+
+    // ── U11: the marker agrees with the refreshed list in EVERY branch ────
+    // The save refreshes the user preset list in every branch, but the re-derive
+    // added by U8 lived only inside the live-apply SUCCESS branch. When the apply
+    // failed, the list had gained a stem and the untouched index could point at a
+    // card that is not the active preset — the U8 defect surviving in a rarer
+    // branch. The Motion twin had no re-derive at all, in any branch.
+
+    #[test]
+    fn the_border_save_handler_re_derives_the_marker_outside_the_success_branch() {
+        let code = main_rs_code();
+        let handler = fn_body(&code, "window.on_panel_save_border_preset(");
+        let reseed = indent_of(&handler, "reseed_active_border_index");
+        let failure = indent_of(&handler, "if let Err(e) = applied");
+        assert!(
+            reseed <= failure,
+            "the marker must be re-derived in EVERY branch, not inside the success one: \
+             a failed live apply still refreshed the preset list, so an index left \
+             untouched highlights whatever card the shifted list puts there (re-derive at \
+             indent {reseed}, failure branch at {failure}), got: {handler}"
+        );
+    }
+
+    #[test]
+    fn the_motion_save_handler_re_derives_the_marker_in_every_branch() {
+        let code = main_rs_code();
+        let handler = fn_body(&code, "window.on_panel_save_animation_preset(");
+        let refresh = handler
+            .find("set_user_animation_preset_names")
+            .unwrap_or_else(|| panic!("the save must refresh the animation list, got: {handler}"));
+        let reseed = handler.find("reseed_active_anim_index").unwrap_or_else(|| {
+            panic!(
+                "the Motion save must re-derive its marker from the recorded value, got: {handler}"
+            )
+        });
+        assert!(
+            refresh < reseed,
+            "the Motion marker must be re-derived AFTER the list refresh, or it is derived \
+             from the list it is about to replace, got: {handler}"
+        );
+        let reseed = indent_of(&handler, "reseed_active_anim_index");
+        let failure = indent_of(&handler, "if let Err(e) = applied");
+        assert!(
+            reseed <= failure,
+            "the Motion marker must be re-derived in EVERY branch, not inside the success \
+             one (re-derive at indent {reseed}, failure branch at {failure}), got: {handler}"
         );
     }
 }

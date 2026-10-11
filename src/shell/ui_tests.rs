@@ -302,6 +302,103 @@ fn reseed_after_a_save_moves_the_marker_to_the_newly_saved_card() {
     assert_eq!(win.get_active_border_index(), 3);
 }
 
+/// U11: the same refresh, one branch later. The save wrote the file and
+/// refreshed the list, then the live apply FAILED — so nothing was recorded and
+/// the config still names `aa_first`. `PresetStore::list` sorts bytewise, so the
+/// refreshed list puts `Space` FIRST and `aa_first` moves to the end: the
+/// untouched index (2) now highlights `Space`, a card that is NOT the active
+/// preset, until the section is re-entered. Re-deriving from the record the
+/// config still holds puts the marker back on `aa_first`.
+#[test]
+fn reseed_after_a_failed_apply_marks_the_still_active_card_not_the_stale_index() {
+    use slint::{Model, ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_cascade.lua"),
+        SharedString::from("03_duo.lua"),
+    ])));
+    // `aa_first` is the USER preset that was active: built-in count (2) + 0.
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "aa_first",
+    )])));
+    win.set_active_border_index(2);
+
+    // The save refreshed the list the way `PresetStore::list` does.
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Space"),
+        SharedString::from("aa_first"),
+    ])));
+    let first_user_card = win.get_user_border_preset_names();
+    assert_eq!(
+        first_user_card.row_data(0).unwrap().as_str(),
+        "Space",
+        "fixture: the list is bytewise sorted, so `Space` (0x53) leads `aa_first` (0x61)"
+    );
+    assert_eq!(
+        win.get_active_border_index(),
+        2,
+        "fixture: the untouched marker now highlights `Space`, which the failed apply \
+         never made active"
+    );
+    assert_eq!(
+        crate::presets::reseed_active_border_index(&win, "aa_first.lua"),
+        3,
+        "the marker must be re-derived from the record the config still holds, not from \
+         the index the previous list left"
+    );
+    assert_eq!(win.get_active_border_index(), 3);
+}
+
+/// U11, Motion half: the Motion panel continues the same index space
+/// (`motion-list-len` = scanned files + user stems) and a USER animation card
+/// sends the bare stem. `reseed_active_anim_index` resolves that stem against
+/// the combined list, so the save's re-derive marks the card it just saved
+/// instead of leaving the marker on whatever was clicked last.
+#[test]
+fn reseed_marks_a_user_animation_card_from_a_bare_stem() {
+    use slint::{ModelRc, SharedString, VecModel};
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from("01_bezier.lua"),
+        SharedString::from("02_slide.lua"),
+    ])));
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "keeper_curve",
+    )])));
+
+    win.set_active_anim_index(-1);
+    assert_eq!(
+        crate::presets::reseed_active_anim_index(&win, "keeper_curve"),
+        2,
+        "a user animation saved from the tune pane must mark its user card"
+    );
+    assert_eq!(win.get_active_anim_index(), 2);
+
+    // The canonical record marks the very same card.
+    assert_eq!(
+        crate::presets::reseed_active_anim_index(&win, "keeper_curve.lua"),
+        2,
+        "the canonical `<name>.lua` must mark the same user card"
+    );
+
+    // A scanned file still wins its own card when both halves could match.
+    assert_eq!(
+        crate::presets::reseed_active_anim_index(&win, "02_slide"),
+        1,
+        "a bare stem of a SCANNED animation must mark the scanned card"
+    );
+
+    // Nothing matches: an explicit -1, never a silent blank.
+    assert_eq!(
+        crate::presets::reseed_active_anim_index(&win, "Ghost"),
+        -1,
+        "a stem matching no preset must stay an explicit -1"
+    );
+    assert_eq!(win.get_active_anim_index(), -1);
+}
+
 /// Every keyboard-focus move in the panel must leave a --verbose trace:
 /// panel-kbd (the single panel scope) and shell-kbd (shell) report gain
 /// + loss with the FocusReason mapped to a string, through the generic

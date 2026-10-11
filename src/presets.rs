@@ -137,6 +137,33 @@ pub fn reseed_active_border_index(window: &crate::MainWindow, active_file: &str)
     index
 }
 
+/// The Motion twin of [`reseed_active_border_index`]: re-seed
+/// `active-anim-index` from the persisted `active_anim_file` against the Motion
+/// panel's CURRENT list.
+///
+/// The Motion panel continues the same index space as Borders
+/// (`PanelRoot.motion-list-len` = scanned `anim-files` + `user-animation-preset-
+/// names`, and its card click reports `motion-focused-index`), so a USER
+/// animation saved from the tune pane — stored as a bare stem — has to mark its
+/// user card rather than leaving the marker where the last click put it. The
+/// resolution is the same tolerant, combined one `combined_active_index`
+/// performs for Borders; only the models differ.
+pub fn reseed_active_anim_index(window: &crate::MainWindow, active_file: &str) -> i32 {
+    let index = combined_active_index(
+        &window.get_anim_files(),
+        &window.get_user_animation_preset_names(),
+        active_file,
+    );
+    if index < 0 && !active_file.is_empty() {
+        tracing::warn!(
+            "[motion] active_anim_file '{}' matches no preset — marker cleared",
+            active_file
+        );
+    }
+    window.set_active_anim_index(index);
+    index
+}
+
 /// The index of `active_file` inside the Borders panel's COMBINED card list:
 /// the scanned built-in files first, then the user preset stems, offset by the
 /// built-in count (`PanelRoot.borders-list-len` builds the same list and the
