@@ -339,6 +339,82 @@ fn missing_theme_layout(theme_settings: &str, live_settings: &str) -> Vec<String
         .collect()
 }
 
+/// U6 of `odd/tasks/noctalia-layout-survives-the-apply.md`: re-add ONLY
+/// the layout sections missing from the live text — copied verbatim from
+/// the theme, in theme order, first occurrence of each — appended at the
+/// end. Every other byte of the live text is left alone. Pure, so both
+/// repair invariants are pinned on texts. `None` when nothing is
+/// missing (the caller then performs no rewrite at all).
+///
+/// THE TWO INVARIANTS (HIGH-2 of the refutation; the refuted repair
+/// copied the theme's settings.toml VERBATIM, undoing both):
+/// - it must never restore the theme's `[plugins]` list — a verbatim
+///   copy + reload re-enables a plugin the keeper turned off, the very
+///   operation D4 exists to forbid;
+/// - it must never revert the palette / wallpaper state the apply (and
+///   Noctalia's own re-persist of it) wrote after step 0's copy.
+///
+/// Appending whole section blocks is safe TOML: a missing `[bar]` may be
+/// defined after its surviving `[bar.<name>]` sub-tables (defining a
+/// super-table later is legal as long as it was never defined), and a
+/// block carries its header, keys, comments and `[[array-of-tables]]`
+/// bodies verbatim up to the next header.
+fn restore_missing_layout_sections(theme_settings: &str, live_settings: &str) -> Option<String> {
+    let live = layout_sections(live_settings);
+    let missing: Vec<String> = layout_sections(theme_settings)
+        .into_iter()
+        .filter(|name| !live.contains(name))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    // First occurrence of each missing section, in theme order: the
+    // header line plus every line up to (excluding) the next header.
+    let mut blocks: Vec<Vec<String>> = Vec::new();
+    let mut emitted: Vec<String> = Vec::new();
+    let mut capture: Option<usize> = None;
+    for line in theme_settings.split('\n') {
+        let stripped = line.trim();
+        if stripped.is_empty() || stripped.starts_with('#') {
+            if let Some(i) = capture {
+                blocks[i].push(line.to_string());
+            }
+            continue;
+        }
+        let code = stripped.split('#').next().unwrap_or("").trim();
+        if let Some(name) = section_header_name(code) {
+            capture = if missing.contains(&name) && !emitted.contains(&name) {
+                emitted.push(name.clone());
+                blocks.push(vec![line.to_string()]);
+                Some(blocks.len() - 1)
+            } else {
+                None
+            };
+            continue;
+        }
+        if let Some(i) = capture {
+            blocks[i].push(line.to_string());
+        }
+    }
+    let mut out = String::with_capacity(theme_settings.len() + live_settings.len());
+    out.push_str(live_settings);
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !out.is_empty() {
+        // One blank line separates the untouched live text from the
+        // re-added blocks.
+        out.push('\n');
+    }
+    for block in &blocks {
+        for line in block {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    Some(out)
+}
+
 /// What [`sanitize_settings_toml`] did to a settings.toml text.
 ///
 /// `rewritten` counts the absolute values that pointed INSIDE the theme and
@@ -645,10 +721,11 @@ fn layout_settle_delay() -> Duration {
         .unwrap_or(LAYOUT_SETTLE)
 }
 
-/// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`: after step 0
-/// copied the theme's settings.toml over the live one and reloaded,
-/// verify the theme's LAYOUT is still in force — and repair it exactly
-/// once when it is not.
+/// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`, corrected by
+/// U6/U7 after the verification refuted the first delivery: after the
+/// apply's LAST write/reload (moved to the end of the apply — see the
+/// call site), verify the theme's LAYOUT is still in force, and repair it
+/// exactly once when it is not.
 ///
 /// Noctalia re-persists its IN-MEMORY config on its own IPC-driven
 /// changes; when that re-persist drops the layout sections the live file
@@ -659,6 +736,21 @@ fn layout_settle_delay() -> Duration {
 /// never an apply error, and the rewrite + reload happens AT MOST ONCE —
 /// no loop — so a rewrite that does not stick is logged honestly and left
 /// for the keeper's live look instead of fighting Noctalia forever.
+///
+/// The rewrite is SURGICAL (U6, HIGH-2 of the refutation):
+/// [`restore_missing_layout_sections`] re-adds only the missing layout
+/// sections and leaves every other byte alone, so the repair can neither
+/// restore the theme's `[plugins]` list (the D4 protection this module
+/// already earned) nor revert the palette / wallpaper state the apply
+/// itself wrote. The refuted repair copied the theme's file VERBATIM and
+/// did both.
+///
+/// COST per apply (honest, U7): a theme that declares layout pays ONE
+/// settle ([`LAYOUT_SETTLE`], 1.5 s) before the read — Noctalia's own
+/// re-persist lands ~1 s after the last reload, so a verify at t+0 would
+/// only read HVE's own copy. When the layout is actually missing, the
+/// repair adds ONE reload and ONE more settle (re-check). A theme
+/// declaring no layout short-circuits before any of it: zero cost.
 fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
     let theme = match fs::read_to_string(saved_settings) {
         Ok(text) => text,
@@ -671,7 +763,8 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
         }
     };
     // A theme that declares no layout has nothing to enforce (U3-c):
-    // no settle, no read of the live file, no repair.
+    // no settle, no read of the live file, no repair. The short-circuit
+    // is pinned by `apply_with_a_layoutless_theme_skips_the_settle`.
     if layout_sections(&theme).is_empty() {
         tracing::debug!(
             "[noctalia-v5] Theme declares no layout sections; nothing to verify"
@@ -692,16 +785,16 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
         }
     };
     let missing = missing_theme_layout(&theme, &live);
-    if missing.is_empty() {
-        tracing::debug!("[noctalia-v5] Theme layout verified in force after the reload");
+    let Some(repaired) = restore_missing_layout_sections(&theme, &live) else {
+        tracing::debug!("[noctalia-v5] Theme layout verified in force at the end of the apply");
         return;
-    }
+    };
     tracing::warn!(
-        "[noctalia-v5] Noctalia dropped the theme layout after the reload (missing: {}); \
-         rewriting settings.toml from the theme and reloading once",
+        "[noctalia-v5] Noctalia dropped the theme layout during the apply (missing: {}); \
+         re-adding ONLY those sections to the live settings.toml and reloading once",
         missing.join(", ")
     );
-    if let Err(e) = fs::copy(saved_settings, live_settings) {
+    if let Err(e) = fs::write(live_settings, repaired) {
         tracing::warn!(
             "[noctalia-v5] Cannot repair the live settings.toml layout: {}",
             e
@@ -7015,6 +7108,58 @@ scale = 1.3
         );
     }
 
+    // ── U6: the surgical repair, pure half ──
+
+    /// U6 (HIGH-2 of the refutation): the repair re-adds ONLY the
+    /// missing layout sections. The live text at repair time carries the
+    /// keeper's `[plugins]` state (D4 protects it) and the wallpaper /
+    /// palette the apply wrote — a verbatim theme copy (the refuted
+    /// repair) restores all of that behind the keeper's back. Both
+    /// invariants and the byte preservation are pinned here, on texts.
+    #[test]
+    fn repair_readds_only_missing_sections_and_preserves_every_other_byte() {
+        // The live state the repair must find AFTER the apply's later
+        // steps: the plugin stayed off, the applied wallpaper persisted,
+        // and Noctalia re-persisted everything but the layout sections.
+        let live = "config_version = 14\n\n\
+            [plugins]\nenabled = []\n\n\
+            [wallpaper]\npath = \"/apply/wrote/this.png\"\n\n\
+            [theme]\ncustom_palette = \"JokerTheme\"\n";
+        let repaired =
+            restore_missing_layout_sections(THEME_LAYOUT, live).expect("layout was missing");
+        // Every pre-existing byte survives verbatim (the repair appends)...
+        assert!(
+            repaired.starts_with(live),
+            "the repair must leave every pre-existing live byte alone"
+        );
+        // ...the theme's machine state does NOT come back...
+        assert!(
+            !repaired.contains("noctalia/mpvpaper"),
+            "the repair must never restore the theme's [plugins] list (D4)"
+        );
+        assert!(
+            !repaired.contains("other-machine"),
+            "the repair must never revert the wallpaper the apply wrote"
+        );
+        // ...and the layout is back in force, each section exactly once.
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &repaired).is_empty(),
+            "the repaired text must carry the theme's layout in force"
+        );
+        for section in layout_sections(THEME_LAYOUT) {
+            assert_eq!(
+                repaired.matches(&format!("[{section}]")).count(),
+                1,
+                "section [{section}] must appear exactly once after the repair"
+            );
+        }
+        // Nothing missing any more -> no second rewrite (bounded repair).
+        assert!(
+            restore_missing_layout_sections(THEME_LAYOUT, &repaired).is_none(),
+            "an in-force layout must produce no further rewrite"
+        );
+    }
+
     // ── Unit 1c2: `reassert_colours` through the stub harness ──
     //
     // The existing `ColorStub` seam (stub `noctalia` on PATH + invocation
@@ -7131,13 +7276,23 @@ scale = 1.3
         assert_eq!(scheme.trim(), "custom JokerTheme");
     }
 
-    // ── U2/U3: the apply-time layout guard ──
+    // ── U2/U3 + U6/U7: the apply-time layout guard ──
     //
     // The `LayoutStub` seam simulates the ratchet the keeper's journal
     // captured: a stub `noctalia` on PATH whose `config-reload` may wipe
     // the LIVE settings.toml back to the layout-less text, exactly like
     // Noctalia's own re-persist did — so the guard's bounded repair is
     // observed through the real apply path.
+
+    /// The live state AFTER the apply's D4 re-assert and its wallpaper /
+    /// palette writes, as Noctalia re-persists it mid-apply: every
+    /// layout section is gone, the rest (the plugin the keeper left OFF,
+    /// the wallpaper the apply set, the palette selection) is current.
+    /// The repair must put the layout back and touch NONE of it.
+    const POST_APPLY_WIPED: &str = "config_version = 14\n\n\
+        [plugins]\nenabled = []\n\n\
+        [wallpaper]\npath = \"/apply/wrote/this.png\"\n\n\
+        [theme]\ncustom_palette = \"JokerTheme\"\n";
 
     struct LayoutStub {
         /// Restored first: `Drop` puts these env values back.
@@ -7148,6 +7303,8 @@ scale = 1.3
         log: PathBuf,
         /// File the stub reads for its wipe mode: `never` / `first` / `always`.
         mode_file: PathBuf,
+        /// Where the stub reads the text it wipes the live file with.
+        wipe_src: PathBuf,
         /// The live settings.toml the stub may wipe.
         target: PathBuf,
         /// Shared env lock, released last.
@@ -7215,6 +7372,7 @@ scale = 1.3
                 _bin: bin,
                 log,
                 mode_file,
+                wipe_src,
                 target,
                 _env: env,
             }
@@ -7223,6 +7381,12 @@ scale = 1.3
         /// What the stub's next `config-reload` does to the live file.
         fn wipe_mode(&self, mode: &str) {
             std::fs::write(&self.mode_file, mode).unwrap();
+        }
+
+        /// The text the stub wipes the live file with — tests replace it
+        /// to simulate Noctalia re-persisting a DIFFERENT live state.
+        fn wipe_source(&self) -> &Path {
+            &self.wipe_src
         }
 
         /// How many `msg config-reload` calls the apply raised: 1 is the
@@ -7247,6 +7411,16 @@ scale = 1.3
             let dir = theme.path().join("providers").join("noctalia-v5");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("settings.toml"), settings).unwrap();
+            theme
+        }
+
+        /// The same theme plus a `source.txt`, so apply also runs
+        /// `color-scheme-set` + `templates-apply` around the layout guard
+        /// (the U7 ordering pin).
+        fn theme_with_source(&self, settings: &str, source: &str) -> TempDir {
+            let theme = self.theme_with(settings);
+            let dir = theme.path().join("providers").join("noctalia-v5");
+            std::fs::write(dir.join("source.txt"), source).unwrap();
             theme
         }
     }
@@ -7282,9 +7456,14 @@ scale = 1.3
             2,
             "one step-0 reload plus exactly one repair reload"
         );
-        assert_eq!(
-            std::fs::read_to_string(stub.live_settings()).unwrap(),
-            THEME_LAYOUT,
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            live.starts_with(WIPED_SETTINGS),
+            "the repair must re-add the layout without touching a byte of the \
+             file it found"
+        );
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
             "the repair must leave the theme's layout in the live file"
         );
     }
@@ -7350,10 +7529,64 @@ scale = 1.3
             2,
             "the repair must reload once and never loop"
         );
-        assert_ne!(
+        assert_eq!(
             std::fs::read_to_string(stub.live_settings()).unwrap(),
-            THEME_LAYOUT,
-            "precondition of this world: the rewrite cannot stick"
+            WIPED_SETTINGS,
+            "the last wipe stands: no second repair may fire after the \
+             bounded re-check"
+        );
+    }
+
+    /// U6 (HIGH-2 of the refutation): a firing repair must NOT undo D4
+    /// nor clobber the apply's own writes. The live state at repair time
+    /// (the stub's wipe = Noctalia's re-persist after the D4 re-assert
+    /// and the wallpaper/palette writes) carries the plugin the keeper
+    /// left OFF and the wallpaper the apply set — the repair re-adds the
+    /// layout sections and leaves everything else alone. The refuted
+    /// verbatim copy restored the theme's `[plugins] enabled` list and
+    /// its stale wallpaper path here.
+    #[test]
+    #[serial]
+    fn apply_repair_keeps_plugins_off_and_keeps_the_apply_writes() {
+        let stub = LayoutStub::new();
+        std::fs::write(stub.wipe_source(), POST_APPLY_WIPED).unwrap();
+        stub.wipe_mode("first");
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a layout problem must never fail the apply: {res:?}"
+        );
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "one step-0 reload plus exactly one repair reload"
+        );
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            live.starts_with(POST_APPLY_WIPED),
+            "every byte of the mid-apply live state must survive the repair"
+        );
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
+            "the repair must put the theme's layout back"
+        );
+        assert!(
+            !live.contains("noctalia/mpvpaper"),
+            "the repair must never restore the theme's [plugins] list (D4)"
+        );
+        assert!(
+            live.contains("enabled = []"),
+            "the keeper's plugin-off state must survive the repair"
+        );
+        assert!(
+            live.contains("path = \"/apply/wrote/this.png\""),
+            "the wallpaper the apply wrote must survive the repair"
+        );
+        assert!(
+            !live.contains("other-machine"),
+            "the repair must never drag the theme's stale wallpaper back"
         );
     }
 }
