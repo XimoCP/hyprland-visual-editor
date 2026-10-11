@@ -75,6 +75,38 @@ these three rules, which he approved:
 4. Other pages keep their first theme as the hero.
 5. With no active theme: every page keeps the first-of-page hero.
 6. The rendered PNG shows the active theme centred (parent's eyes).
+7. Changing which theme is ACTIVE must not change the composition: with the same library, stage and
+   page, the tile geometry is identical and only the pictures move (two renders, one comparison).
+8. A stage change that leaves the capacity and the page count unchanged must NOT move the current page.
+
+## Post-delivery findings (2026-10-11, keeper's live look)
+
+The keeper rejected the installed result: "queda mal, se ha descompensado, ahora es muy grande y el
+borde no está bien colocado y se posiciona de los temas cercanos". Two defects, both confirmed.
+
+**D1 — the hero's SHAPE followed the theme (criterion 7).** The Mosaic's per-tile aspect is SYNTHETIC and
+INDEX-KEYED: `mosaic_display_aspect(idx)` cycles 10 fixed phases (square / portrait / wide, `mosaic.rs:93-109`).
+`page_render` builds the aspects AFTER reordering the reals (`mosaic.rs:762`), so `aspects[0]` is the phase of
+the ACTIVE theme, and `justified_hero_layout` sizes the hero as `band × aspects[0]` (`mosaic.rs:311-314`).
+Moving the active theme into the hero slot therefore RESHAPES the page: JoKer is library index 2 → the WIDE
+phase (1.95) instead of the square phase (1.0) the old first-theme hero always had, so the hero nearly
+doubles and the side regions shrink. Independently recomputed with the real constants (band 540, usable
+1766.4, gutter 12): page 2 without an active theme = `[9,10,11]` → hero width 540; with theme 11 active =
+`[11,9,10]` → hero width 388.8, sides 601.2 → 676.8. The parent's earlier "the two renders have the same
+geometry" was wrong (eyeballed on scaled PNGs; it is now retracted).
+
+**D2 — the re-anchor fires on any stage change (criterion 8).** `needs_recompute` compares the STAGE TUPLE,
+not the capacity (`mosaic.rs:629-633`), and `main.rs:3236-3248` calls `open_on_active()` after ANY recompute
+with `!is_flip`. So a resize or monitor re-layout that leaves the capacity identical still drags the keeper
+back to the active theme's page (e.g. 23 themes, capacity 10, keeper browsing page 3 → yanked to page 1),
+where before `4c2cf9e` a resize kept the page index. The opening case must survive: the first capacity is
+computed while the window is still hidden, so the open has to re-anchor.
+
+The independent verification cleared the rest: the reorder is correct at every position, R2 never fights a
+keeper flip, no panic path on an empty library / no active theme / out-of-range index / capacity 0, and the
+mosaic cursor follows its theme through the reorder. It also noted, as unproven, that the capacity probe
+models only the 10 phase windows and not an arbitrary permutation, so the 96 px tile floor is asserted for
+the tested stages only.
 
 ## Checks
 
@@ -90,6 +122,9 @@ these three rules, which he approved:
 - [x] **U3** — R3 + the no-active-theme fallback. (`3dda7cf`)
 - [x] **U4** — the tests. (`4167681`)
 - [x] **U5** — the parent's render read + install. (`044fd00`, installed `6ace583e…`)
+- [ ] **U6** — the hero's SHAPE comes from the SLOT, not the theme (D1 / criterion 7).
+- [ ] **U7** — re-anchor the page only when the PARTITION moved (D2 / criterion 8).
+- [ ] **U8** — the tests for U6/U7, and the parent's render read of the stable composition.
 
 ## Progress log
 
