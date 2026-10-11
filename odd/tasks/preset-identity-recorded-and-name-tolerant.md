@@ -3,8 +3,9 @@
 **Locator**: `odd/tasks/preset-identity-recorded-and-name-tolerant.md`
 **Engram mirror**: topic `odd/preset-identity-recorded-and-name-tolerant/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: U1–U3 DONE pending review; the parent's U4 (release build, backup + install `~/.local/bin/hve`,
-relaunch, the keeper's live look) is outstanding. Nothing pushed. Was IN PROGRESS from 2026-10-11 16:02, after the
+**Status**: U1–U3 DONE pending review; **U5–U9 (round 2, the corrections the independent verification found) DONE**, nothing
+pushed. The parent's U4 (release build, backup + install `~/.local/bin/hve`, relaunch, the keeper's live look) is
+outstanding. Was IN PROGRESS from 2026-10-11 16:02, after the
 active-theme-hero work closed and released `src/main.rs`. The keeper authorized it earlier the same day ("cuando
 terminemos lo que se está haciendo lanzas a continuación esto que hemos hablado").
 **TDD**: strict — runner `cargo test`
@@ -63,6 +64,55 @@ verified by reading the code, not inferred from the symptom.
 - **U4 — parent**: `cargo test`, `cargo check --all-targets`, release build, backup + install
   `~/.local/bin/hve`, relaunch with the window shown for the keeper's live look.
 
+## Corrections — round 2 (the independent verification's findings)
+
+An independent verification of U1–U3 (different model, fresh context) found two real defects — one of them a
+REGRESSION U1 itself introduced — plus small ones. The scope is to fix them, not to redesign anything else.
+
+- **U5 — MEDIUM, the regression U1 introduced**: the card-click deactivation toggle compared by EXACT equality
+  (`st.cfg().active_border_file == file_str`, `src/main.rs` ~:5179 and ~:5229). U1 records the CANONICAL
+  `<name>.lua` while a user-preset card still sends the bare STEM (`SavedPresetCard.slint:24` defaults
+  `apply-value` to `preset-name`, and `PresetStore::list` returns stems), so clicking the ACTIVE card of a
+  preset saved from the tune pane re-applied it and wrote the stem back into the config instead of
+  deactivating it. Both halves fixed: a tolerant compare (`preset_files_match`) so the two spellings are the
+  same preset, and canonicalising the recorded value (the click is where the bare stem came from), so the
+  config stops flip-flopping between the two forms.
+- **U6 — MEDIUM**: `PresetStore::canonical_preset_file` kept any name carrying a dot verbatim while
+  `PresetStore::save` ALWAYS writes `format!("{}.lua", name)`, and `validate_name` allows interior dots
+  (`src/preset_store.rs:75-78`). Saving `my.preset` therefore wrote `borders/my.preset.lua` and recorded
+  `my.preset` — a name with no file: the marker warned and cleared, the bundler skipped it and the live
+  re-apply failed (observed in the shell resolver, see the log).
+- **U7 — LOW**: the record was written and persisted BEFORE the live re-apply (`src/main.rs` ~:5292-5306 and
+  the Motion twin), so a failed apply left the config naming a preset the desktop never showed; and
+  `let _ = st.cfg().save()` discarded the write error, so a config write failure silently reintroduced the
+  Bug 1 symptom (the theme saved next recorded the OLD preset).
+- **U8 — LOW**: the Borders save refreshed `user_border_preset_names` (stems, sorted) without re-deriving the
+  index, so the untouched `active_border_index` could highlight a card that was never active until the section
+  was re-entered.
+- **U9 — trivial**: `src/preset_store.rs` had lost the newline inside the signature of the SECURITY test
+  `save_rejects_traversal_and_writes_nothing_outside_base()`.
+
+### Round-2 acceptance
+
+1. `cargo test` green, `cargo check --all-targets` clean.
+2. Clicking the ACTIVE card of a preset saved from the tune pane DEACTIVATES it — border and Motion.
+3. A click on any other card records the canonical `<name>.lua`.
+4. A preset saved as `my.preset` records `my.preset.lua`, and that record resolves in the marker and bundles.
+5. A legacy `*.json` record is still honoured verbatim, and a bare `Space` still resolves to `Space.lua`.
+6. A failed live apply leaves the config on the previous preset, and a config write failure is logged.
+7. After a save the Borders marker marks the card that was just saved, not the previously active one.
+
+## Recorded, NOT fixed (out of this round's scope)
+
+- The Motion pane has the U8 twin: `on_panel_save_animation_preset` refreshes `user_animation_preset_names`
+  without re-deriving `active_anim_index`, and no animation equivalent of `reseed_active_border_index` exists.
+- The two card-click handlers still persist with `let _ = st.cfg().save()` — the same swallowed-error shape U7
+  fixes, but U7 names only the two save handlers.
+- A preset whose own NAME ends in a container extension (`keeper.json`, file `keeper.json.lua`) is read by the
+  pure canonical rule as a legacy file record. The rule decides from the name alone because matching and the
+  bundle plan are pure and have no store to probe; the corner is documented in the rule's comment, and only a
+  typed name can take that shape.
+
 ## Out of scope
 
 - JoKer's animation `"prueba1"`: the file does not exist anywhere, so tolerance cannot fix it. The keeper
@@ -95,6 +145,16 @@ verified by reading the code, not inferred from the symptom.
 - [x] **U2** — one canonical name form + tolerant read in the marker and the bundler. Commit `6f1cc7f`.
 - [x] **U3** — the tests above (a)–(f): RED observed first for every behaviour change; see the log.
 - [ ] **U4** — the parent's build, install, relaunch and the keeper's live look.
+
+### Round 2 (the verification's corrections)
+
+- [x] **U5** — the card-click toggle compares tolerantly and records the canonical file (borders + animations).
+  Commit `21cfee6`.
+- [x] **U6** — the canonical rule names the file `save` writes when the name carries an interior dot.
+  Commit `b8e1ce8`.
+- [x] **U7** — apply before recording, and the persist error is logged instead of swallowed. Commit `a585f8a`.
+- [x] **U8** — the Borders save re-derives the pane marker from the recorded value. Commit `a585f8a`.
+- [x] **U9** — the lost newline in the traversal save test's signature. Commit `b0671f5`.
 
 ## Progress log
 
@@ -151,3 +211,44 @@ verified by reading the code, not inferred from the symptom.
   `src/theme_presets.rs`, `src/providers/hve_presets.rs`, `src/shell/ui_tests.rs`. No dependency added, no theme
   data rewritten, no migration. U4 (build, backup + install, relaunch, the keeper's live look) belongs to the
   parent.
+- 2026-10-11 (**round 2 start**): the independent verification's findings queued as U5–U9; nothing else in the
+  contract was touched, and the keeper's theme/preset data was left exactly as it is (no migration).
+- 2026-10-11 (**U6**, commit `b8e1ce8`): RED observed first — 5 assertion failures, each for the right reason:
+  `canonical_preset_file("my.preset")` returned `"my.preset"` (want `"my.preset.lua"`), the same on the
+  filesystem-backed test (`save` really had written `my.preset.lua`), `populate_metadata` resolved the record to
+  `-1` instead of `0` (border and animation halves), `plan_bundle` planned `file_name: "my.preset"` and the
+  bundler copied nothing (`left: []`). Landed the deliberate rule: a reference that already ends in a preset
+  FILE extension (`lua`, `frag`) or in a legacy record extension (`json`, `ron`) stays VERBATIM, everything else
+  is a STEM and gains `.lua` — which is exactly what `save` writes. `PRESET_FILE_EXTENSIONS` names the set once.
+  **Evidence for the rule** (empirical, the shell resolver `assets/scripts/utils.sh` sourced with a temp user
+  store): `Space` → `…/borders/Space.lua`, `Space.lua` → `…/borders/Space.lua`, `my.preset` → NOT FOUND,
+  `my.preset.lua` → `…/borders/my.preset.lua`, `13_the_joker` and `13_the_joker.lua` → both built-in. So the
+  interior-dot stem really did miss in the live apply, and BOTH spellings of a `*.lua` file really do resolve.
+  Renamed the U2 test to `canonical_preset_file_honours_a_file_extension_and_extends_a_stem` (its old name and
+  doc stated the rule that was wrong). `cargo test` → 1578 passed / 0 failed.
+- 2026-10-11 (**U5**, commit `21cfee6`): RED observed first — the two behaviour tests failed to COMPILE
+  (`cannot find function preset_card_click`) and the construction pin failed with "…`window.on_panel_apply_border(`
+  must decide through the shared card-click rule", because the handlers compared `== file_str`. Landed
+  `preset_card_click(active, clicked) -> (is_deactivating, recorded_value)`: tolerant compare
+  (`preset_files_match`) + canonical record, called by BOTH card-click handlers (Borders, Motion). The value
+  handed to `engine().apply_border/apply_animation` is the canonical one, checked against the shell resolver
+  above, and the tune-pane read-back receives it too (`sync_border_tune_pane` strips `.lua` and the reader
+  appends it again). `cargo test` → 1581 passed / 0 failed.
+- 2026-10-11 (**U7 + U8**, commit `a585f8a`): RED observed first — the applier pin failed with
+  "`window.on_panel_save_border_preset(` must apply the preset BEFORE recording it" and the marker pin with
+  "the save must re-derive the pane marker from the recorded value"; both handlers recorded and persisted
+  before the live apply and used `let _ = st.cfg().save()`. Landed: apply first (the canonical file), record
+  only on success, `if let Err(e) = st.cfg().save()` + `tracing::warn!` (the shape `src/main.rs` ~:4015 uses),
+  and `reseed_active_border_index(&w, &recorded)` right after the list refresh. Added the behaviour test
+  `reseed_after_a_save_moves_the_marker_to_the_newly_saved_card` (ui_tests.rs): with the stale marker the card
+  that WAS active stays marked, and re-deriving from the recorded value marks the card just saved. `cargo test`
+  → 1584 passed / 0 failed. Decision: U8 stays Borders-only — the Motion pane has the same shape but no
+  equivalent re-seed helper, and inventing one is outside this round (recorded above).
+- 2026-10-11 (**U9**, commit `b0671f5`): RED observed first — `cargo fmt --check` printed
+  `-    fn save_rejects_traversal_and_writes_nothing_outside_base() {        let dir = temp_dir();`. Restored
+  the newline, logic untouched. `cargo fmt --check` still FAILS repo-wide (pre-existing: 55 files, `src/main.rs`
+  207 hunks, `src/shell/ui_tests.rs` 372 at the round's start commit; `openspec/config.yaml:31` even records
+  "formatter: none installed"), so "clean" was never true at HEAD. Measured per file instead, from a detached
+  worktree of `097b603` against the tree after U9: `src/main.rs` 207 → 202, `src/preset_store.rs` 33 → 32 (the
+  U9 hunk, gone), `src/presets.rs` 7 → 7, `src/theme_presets.rs` 1 → 1, `src/shell/ui_tests.rs` 372 → 372 — no
+  new fmt noise, one pre-existing defect fixed.
