@@ -384,6 +384,18 @@ pub(crate) fn borders_entry_should_seed(
     is_panel_closed || prev_section != Some(crate::shell::nav::PanelSection::Borders)
 }
 
+/// Whether a `section-selected` event enters the Save section and must re-read
+/// the theme list from the managers.
+///
+/// Entering Save is the safety net for the applied-theme marks: an apply path
+/// that forgets `sync_applied_theme` would otherwise leave the Save list
+/// marking the previous theme while the carousel marks the new one. The
+/// refresh is cheap and idempotent, so every entry — opening the panel onto
+/// Save or switching to it — refreshes; there is no case worth skipping.
+pub(crate) fn save_section_entry_needs_refresh(target: crate::shell::nav::PanelSection) -> bool {
+    target == crate::shell::nav::PanelSection::Save
+}
+
 /// Build `BorderParams` from the window's current tune state (D4 live path).
 /// `size` comes from the sealed config because the tune pane no longer owns a
 /// geometry model of its own.
@@ -4366,6 +4378,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         };
                         crate::seed_borders_pane_from_persisted(&w, &proj_c, &active_file, geometry);
                     }
+                }
+            }
+            // Entering Save re-reads the theme list from the managers, so a
+            // stale list (an apply path that forgot the sync, a theme changed
+            // elsewhere) can never be displayed. Lock discipline: the state
+            // lock is taken alone for the refresh and no engine call runs
+            // while it is held.
+            if save_section_entry_needs_refresh(target) {
+                if let Some(w) = weak.upgrade() {
+                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    st.refresh_theme_list(&w);
                 }
             }
         });

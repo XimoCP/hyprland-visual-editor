@@ -18776,3 +18776,55 @@ fn sync_applied_theme_converges_both_surfaces_and_keeps_bakes() {
         );
     }
 }
+
+// ── Entering Save must refresh the theme list (safety net) ───────────
+// Even if a future apply path forgets the shared funnel, opening Save can
+// never show a stale list: the section entry re-reads the managers. The
+// decision is a pure predicate so it is directly testable; the wiring itself
+// is asserted by construction below.
+#[test]
+fn save_section_entry_needs_refresh_only_for_save() {
+    use crate::shell::nav::PanelSection;
+    assert!(
+        crate::save_section_entry_needs_refresh(PanelSection::Save),
+        "entering Save must refresh the theme list"
+    );
+    for other in [
+        PanelSection::Borders,
+        PanelSection::Motion,
+        PanelSection::Filters,
+        PanelSection::System,
+    ] {
+        assert!(
+            !crate::save_section_entry_needs_refresh(other),
+            "{other:?} must not trigger the Save refresh"
+        );
+    }
+}
+
+#[test]
+fn entering_save_refreshes_theme_list_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let handler = main
+        .split("window.on_panel_section_selected")
+        .nth(1)
+        .expect("main.rs must wire on_panel_section_selected");
+    let handler = handler
+        .split("window.on_panel_back")
+        .next()
+        .unwrap_or(handler);
+    // Comment lines are stripped: a commented-out call must not pass.
+    let code: String = handler
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code.contains("save_section_entry_needs_refresh"),
+        "the section-selected handler must gate the Save refresh through the predicate"
+    );
+    assert!(
+        code.contains("refresh_theme_list"),
+        "entering Save must refresh the panel theme list from the managers"
+    );
+}
