@@ -3328,9 +3328,9 @@ fn mosaic_hero_centered_renders_with_pagination() {
     // rectangle with the theme it shows. Shared by the three renders below so
     // the baseline and the active-theme case go through the identical pipeline
     // (page_render → hero layout → curtain delays → snapshot).
-    let render_page = |win: &crate::MainWindow, pg: &MosaicPages, name: &str| {
+    let render_page = |win: &crate::MainWindow, pg: &MosaicPages, sx: f32, sy: f32, name: &str| {
         let (aspects, real_indices) = pg.page_render();
-        let (layout, tile_reals) = justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+        let (layout, tile_reals) = justified_hero_layout(&aspects, &real_indices, sx, sy);
         let delays = mosaic_curtain_delays(&layout.tiles);
         let tiles: Vec<crate::MosaicTileData> = layout
             .tiles
@@ -3387,11 +3387,11 @@ fn mosaic_hero_centered_renders_with_pagination() {
         painted
     };
 
-    let _page1 = render_page(&win, &pg, "mosaic_hero.png");
+    let _page1 = render_page(&win, &pg, stage_w, stage_h, "mosaic_hero.png");
 
     // The SAME page 2 with no active theme: R3's shape (its first theme leads).
     assert!(pg.go_to(1), "page 2 exists");
-    let page2_plain = render_page(&win, &pg, "mosaic_page2_first_of_page.png");
+    let page2_plain = render_page(&win, &pg, stage_w, stage_h, "mosaic_page2_first_of_page.png");
 
     // R1 + R2 together, the state a theme apply actually produces: the active
     // theme sits on a LATER page, so the Mosaic must open there with it as the
@@ -3410,7 +3410,7 @@ fn mosaic_hero_centered_renders_with_pagination() {
         pg.current(),
         pg.total_pages()
     );
-    let page2_active = render_page(&win, &pg, "mosaic_hero_active_theme.png");
+    let page2_active = render_page(&win, &pg, stage_w, stage_h, "mosaic_hero_active_theme.png");
 
     // Acceptance 7, at pixel geometry: the active theme takes the hero SLOT and
     // nothing else about the page may move. The two page-2 renders must differ
@@ -3443,6 +3443,45 @@ fn mosaic_hero_centered_renders_with_pagination() {
         pictures(&page2_active),
         "the active theme must actually lead the page's slots"
     );
+
+    // The keeper's own desktop shape: 7 themes on the 2400x1350 stage, which is
+    // ONE page (the capacity there is 10), with and without the applied theme.
+    // He judges this composition by eye, so it gets its own artifacts and the
+    // same slot-owned-geometry guarantee.
+    let desktop = (2400.0f32, 1350.0f32);
+    let mut keeper = MosaicPages::new(7, desktop.0, desktop.1);
+    assert_eq!(
+        keeper.total_pages(),
+        1,
+        "7 themes must fit one page at the desktop stage"
+    );
+    let keeper_plain = render_page(&win, &keeper, desktop.0, desktop.1, "keeper_7_plain.png");
+    keeper.set_active_theme(Some(2)); // the applied theme, third in the library
+    let keeper_active = render_page(&win, &keeper, desktop.0, desktop.1, "keeper_7_active.png");
+    assert_eq!(
+        rects(&keeper_plain),
+        rects(&keeper_active),
+        "the keeper's desktop page must keep its geometry when the active theme moves"
+    );
+    assert_ne!(
+        pictures(&keeper_plain),
+        pictures(&keeper_active),
+        "the keeper's applied theme must lead his page"
+    );
+
+    // The same 7 themes on the secondary monitor (1200x750), where they paginate
+    // 5 + 2 — the composition the keeper says looks homogeneous. Pinned so the
+    // two stages can be compared tile for tile.
+    let small = (1200.0f32, 750.0f32);
+    let mut small_pages = MosaicPages::new(7, small.0, small.1);
+    assert!(
+        small_pages.total_pages() > 1,
+        "the small stage must paginate (capacity {})",
+        small_pages.capacity()
+    );
+    let _small_page1 = render_page(&win, &small_pages, small.0, small.1, "small_7_page1.png");
+    assert!(small_pages.go_to(1), "the small stage has a second page");
+    let _small_page2 = render_page(&win, &small_pages, small.0, small.1, "small_7_page2.png");
 }
 
 fn bright_mosaic_thumb() -> slint::Image {
