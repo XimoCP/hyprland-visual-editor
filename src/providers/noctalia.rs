@@ -635,6 +635,125 @@ fn neutralize_noctalia_wallpaper_rotation() {
     }
 }
 
+/// How long the layout verification waits for Noctalia's own re-persist
+/// to land before reading the live settings.toml. U2 of
+/// `odd/tasks/noctalia-layout-survives-the-apply.md`: the keeper's journal
+/// places that rewrite ~1 s after `config-reload` (the wipe had landed by
+/// ~2.5 s), so a verify at t+0 would only read the copy HVE just wrote and
+/// would certify a layout that is about to disappear. One bounded settle,
+/// never a poll loop. `HVE_LAYOUT_SETTLE_MS` overrides the delay for the
+/// hermetic tests, which drive the wipe through a stub CLI.
+const LAYOUT_SETTLE: Duration = Duration::from_millis(1500);
+
+/// The settle delay for this process (see [`LAYOUT_SETTLE`]). An unparseable
+/// override falls back to the production delay — a test seam must never be
+/// able to shorten the real guard by being mistyped.
+fn layout_settle_delay() -> Duration {
+    std::env::var("HVE_LAYOUT_SETTLE_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(LAYOUT_SETTLE)
+}
+
+/// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`: after step 0
+/// copied the theme's settings.toml over the live one and reloaded,
+/// verify the theme's LAYOUT is still in force — and repair it exactly
+/// once when it is not.
+///
+/// Noctalia re-persists its IN-MEMORY config on its own IPC-driven
+/// changes; when that re-persist drops the layout sections the live file
+/// ratchets down and no later apply brings them back (the keeper's failing
+/// apply: 11741 B copied, 2471 B left, no `[bar]`). The repair is the SAME
+/// SHAPE as the D4 `noctalia/mpvpaper` re-assert applied after the reload
+/// and carries the SAME best-effort contract: every failure is a warning,
+/// never an apply error, and the rewrite + reload happens AT MOST ONCE —
+/// no loop — so a rewrite that does not stick is logged honestly and left
+/// for the keeper's live look instead of fighting Noctalia forever.
+fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
+    let theme = match fs::read_to_string(saved_settings) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot read the theme's settings.toml to verify its layout: {}",
+                e
+            );
+            return;
+        }
+    };
+    // A theme that declares no layout has nothing to enforce (U3-c):
+    // no settle, no read of the live file, no repair.
+    if layout_entries(&theme).is_empty() {
+        tracing::debug!(
+            "[noctalia-v5] Theme declares no layout sections; nothing to verify"
+        );
+        return;
+    }
+    // One bounded settle for Noctalia's own re-persist — see
+    // LAYOUT_SETTLE for why the verify cannot read the live file at t+0.
+    std::thread::sleep(layout_settle_delay());
+    let live = match fs::read_to_string(live_settings) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot read the live settings.toml to verify the theme layout: {}",
+                e
+            );
+            return;
+        }
+    };
+    let missing = missing_theme_layout(&theme, &live);
+    if missing.is_empty() {
+        tracing::debug!("[noctalia-v5] Theme layout verified in force after the reload");
+        return;
+    }
+    tracing::warn!(
+        "[noctalia-v5] Noctalia dropped the theme layout after the reload (missing: {}); \
+         rewriting settings.toml from the theme and reloading once",
+        missing.join(", ")
+    );
+    if let Err(e) = fs::copy(saved_settings, live_settings) {
+        tracing::warn!(
+            "[noctalia-v5] Cannot repair the live settings.toml layout: {}",
+            e
+        );
+        return;
+    }
+    if let Err(e) = noctalia_msg(&["msg", "config-reload"]) {
+        tracing::warn!(
+            "[noctalia-v5] Config reload after the layout repair failed: {}",
+            e
+        );
+        return;
+    }
+    // The single bounded re-check: log whether the ONE repair held, and
+    // stop there either way — never a second repair, never a loop.
+    std::thread::sleep(layout_settle_delay());
+    let after = match fs::read_to_string(live_settings) {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot re-read the live settings.toml after the layout repair: {}",
+                e
+            );
+            return;
+        }
+    };
+    let still_missing = missing_theme_layout(&theme, &after);
+    if still_missing.is_empty() {
+        tracing::info!(
+            "[noctalia-v5] Theme layout repaired in the live settings.toml (was missing: {})",
+            missing.join(", ")
+        );
+    } else {
+        tracing::warn!(
+            "[noctalia-v5] Theme layout STILL missing after the single repair (missing: {}); \
+             Noctalia rewrote it again — the apply stops here by design",
+            still_missing.join(", ")
+        );
+    }
+}
+
 /// What apply must do to `noctalia/mpvpaper` after `config-reload` so the
 /// theme cannot change whether the plugin is enabled (D4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1850,6 +1969,16 @@ impl ThemeProvider for NoctaliaV5Provider {
                         "[noctalia-v5] Unknown pre-apply plugin state; leaving reloaded plugins as-is"
                     ),
                 }
+
+                // U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`:
+                // Noctalia re-persists its in-memory config ~1 s after the
+                // reload above and can WIPE the layout sections the restore
+                // just put back (the ratchet: once gone, every later apply
+                // looks successful while the layout stays the default).
+                // Verify the theme's layout survived and repair it once —
+                // best-effort exactly like the D4 re-assert above: a
+                // layout problem must never fail the theme apply.
+                verify_and_repair_layout(&saved_settings, &dst);
             }
         }
 
@@ -6885,5 +7014,231 @@ path = "/tmp/stale.png"
         );
         let scheme = std::fs::read_to_string(stub.state_dir.join("scheme")).unwrap();
         assert_eq!(scheme.trim(), "custom JokerTheme");
+    }
+
+    // ── U2/U3: the apply-time layout guard ──
+    //
+    // The `LayoutStub` seam simulates the ratchet the keeper's journal
+    // captured: a stub `noctalia` on PATH whose `config-reload` may wipe
+    // the LIVE settings.toml back to the layout-less text, exactly like
+    // Noctalia's own re-persist did — so the guard's bounded repair is
+    // observed through the real apply path.
+
+    struct LayoutStub {
+        /// Restored first: `Drop` puts these env values back.
+        saved: Vec<(&'static str, Option<String>)>,
+        /// The stub `noctalia` bin dir, lives on PATH until restored above.
+        _bin: tempfile::TempDir,
+        /// Every `msg config-reload` the apply raised, one per line.
+        log: PathBuf,
+        /// File the stub reads for its wipe mode: `never` / `first` / `always`.
+        mode_file: PathBuf,
+        /// The live settings.toml the stub may wipe.
+        target: PathBuf,
+        /// Shared env lock, released last.
+        _env: crate::test_utils::TempEnv,
+    }
+
+    impl LayoutStub {
+        /// The stub child inherits the sandboxed `HOME`, so the live
+        /// target is `$HOME/.local/state/noctalia/settings.toml` — the
+        /// real `noctalia_state_dir()` resolution, hermetically redirected.
+        fn new() -> Self {
+            let env = crate::test_utils::TempEnv::new();
+            let bin = tempfile::tempdir().expect("stub bin dir");
+            let keys = ["PATH", "HVE_LAYOUT_SETTLE_MS"];
+            let saved: Vec<(&'static str, Option<String>)> = keys
+                .iter()
+                .map(|k| (*k, std::env::var(k).ok()))
+                .collect();
+
+            let live_dir = PathBuf::from(std::env::var("HOME").unwrap())
+                .join(".local")
+                .join("state")
+                .join("noctalia");
+            std::fs::create_dir_all(&live_dir).expect("sandboxed state dir");
+            let target = live_dir.join("settings.toml");
+            let log = bin.path().join("ipc.log");
+            let mode_file = bin.path().join("wipe-mode");
+            std::fs::write(&log, b"").unwrap();
+            std::fs::write(&mode_file, "never").unwrap();
+            let wipe_src = bin.path().join("wiped.toml");
+            std::fs::write(&wipe_src, WIPED_SETTINGS).unwrap();
+
+            let stub = format!(
+                "#!/bin/sh\n\
+                 printf '%s\\n' \"$*\" >> '{log}'\n\
+                 if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"config-reload\" ]; then\n\
+                 mode=$(cat '{mode}')\n\
+                 if [ \"$mode\" = \"always\" ]; then cp '{src}' '{target}'; fi\n\
+                 if [ \"$mode\" = \"first\" ]; then\n\
+                 printf 'never' > '{mode}'\n\
+                 cp '{src}' '{target}'\n\
+                 fi\n\
+                 fi\n\
+                 exit 0\n",
+                log = log.display(),
+                mode = mode_file.display(),
+                src = wipe_src.display(),
+                target = target.display(),
+            );
+            let noctalia = bin.path().join("noctalia");
+            std::fs::write(&noctalia, stub).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&noctalia, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            let orig_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{}", bin.path().display(), orig_path));
+            // Tests must not pay the production settle: the stub wipes
+            // synchronously inside `config-reload`.
+            std::env::set_var("HVE_LAYOUT_SETTLE_MS", "0");
+            Self {
+                saved,
+                _bin: bin,
+                log,
+                mode_file,
+                target,
+                _env: env,
+            }
+        }
+
+        /// What the stub's next `config-reload` does to the live file.
+        fn wipe_mode(&self, mode: &str) {
+            std::fs::write(&self.mode_file, mode).unwrap();
+        }
+
+        /// How many `msg config-reload` calls the apply raised: 1 is the
+        /// step-0 reload, 2 means the repair fired exactly once.
+        fn reloads(&self) -> usize {
+            std::fs::read_to_string(&self.log)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| l.trim() == "msg config-reload")
+                .count()
+        }
+
+        fn live_settings(&self) -> &Path {
+            &self.target
+        }
+
+        /// A theme whose `providers/noctalia-v5/settings.toml` carries the
+        /// given text — and nothing else, so apply's wallpaper, palette
+        /// and video phases stay inert around the step-0 restore.
+        fn theme_with(&self, settings: &str) -> TempDir {
+            let theme = TempDir::new().unwrap();
+            let dir = theme.path().join("providers").join("noctalia-v5");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("settings.toml"), settings).unwrap();
+            theme
+        }
+    }
+
+    impl Drop for LayoutStub {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// U3-(a): a live file whose layout was wiped after the reload must
+    /// trigger the repair — one rewrite, one extra reload — and the apply
+    /// still succeeds (best-effort, like the D4 re-assert).
+    #[test]
+    #[serial]
+    fn apply_repairs_a_wiped_layout_exactly_once() {
+        let stub = LayoutStub::new();
+        stub.wipe_mode("first");
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a layout problem must never fail the apply: {res:?}"
+        );
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "one step-0 reload plus exactly one repair reload"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stub.live_settings()).unwrap(),
+            THEME_LAYOUT,
+            "the repair must leave the theme's layout in the live file"
+        );
+    }
+
+    /// U3-(b): an intact live layout must not be rewritten — the repair's
+    /// signature (a second `config-reload`) never appears.
+    #[test]
+    #[serial]
+    fn apply_over_an_intact_layout_repairs_nothing() {
+        let stub = LayoutStub::new();
+        // Default wipe mode `never`: the healthy apply the keeper's
+        // sampler measured, where Noctalia's re-persist keeps the layout.
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "the healthy apply must succeed: {res:?}");
+        assert_eq!(
+            stub.reloads(),
+            1,
+            "an intact layout must not trigger a repair reload"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stub.live_settings()).unwrap(),
+            THEME_LAYOUT,
+            "step 0's copy must stand un-repaired"
+        );
+    }
+
+    /// U3-(c): a theme that declares no layout has nothing to enforce —
+    /// even a reload that wipes the live file must not trigger a repair.
+    #[test]
+    #[serial]
+    fn apply_with_a_layoutless_theme_never_repairs() {
+        let stub = LayoutStub::new();
+        stub.wipe_mode("always");
+        let theme = stub.theme_with(WIPED_SETTINGS);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "a layoutless theme must apply cleanly: {res:?}");
+        assert_eq!(
+            stub.reloads(),
+            1,
+            "no declared layout means no repair reload"
+        );
+    }
+
+    /// U3-(d): when every reload wipes the file, the repair still stops at
+    /// ONE attempt — never a loop — and the apply stays best-effort.
+    #[test]
+    #[serial]
+    fn apply_repair_is_bounded_when_the_rewrite_does_not_stick() {
+        let stub = LayoutStub::new();
+        stub.wipe_mode("always");
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a repair that cannot stick must never fail the apply: {res:?}"
+        );
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "the repair must reload once and never loop"
+        );
+        assert_ne!(
+            std::fs::read_to_string(stub.live_settings()).unwrap(),
+            THEME_LAYOUT,
+            "precondition of this world: the rewrite cannot stick"
+        );
     }
 }
