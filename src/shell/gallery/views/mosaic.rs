@@ -2901,16 +2901,25 @@ mod mosaic_active_hero_tests {
     const STAGE_W: f32 = 2374.0;
     const STAGE_H: f32 = 1290.0;
 
-    fn band_h() -> f32 {
-        STAGE_H / MOSAIC_BAND_HEIGHT_DIVISOR
+    fn band_h_of(stage_h: f32) -> f32 {
+        stage_h / MOSAIC_BAND_HEIGHT_DIVISOR
+    }
+
+    fn th_h_of(stage_h: f32) -> f32 {
+        (band_h_of(stage_h) - (MOSAIC_ROW_COUNT as f32 - 1.0) * MOSAIC_GUTTER_PX)
+            / MOSAIC_ROW_COUNT as f32
+    }
+
+    fn usable_w_of(stage_w: f32) -> f32 {
+        stage_w - 2.0 * stage_w * MOSAIC_SIDE_MARGIN_FRACTION
     }
 
     fn th_h() -> f32 {
-        (band_h() - (MOSAIC_ROW_COUNT as f32 - 1.0) * MOSAIC_GUTTER_PX) / MOSAIC_ROW_COUNT as f32
+        th_h_of(STAGE_H)
     }
 
     fn usable_w() -> f32 {
-        STAGE_W - 2.0 * STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION
+        usable_w_of(STAGE_W)
     }
 
     /// The hero's centre in usable coordinates (the band is centred, so the
@@ -3062,5 +3071,82 @@ mod mosaic_active_hero_tests {
         assert!(!pages.open_on_active(), "an out-of-range active theme moves nothing");
         let (_, reals) = pages.page_render();
         assert_eq!(reals, identity_slice(0, 10), "out-of-range active: identity");
+    }
+
+    #[test]
+    fn active_hero_acceptance_sweep() {
+        // The whole feature as one contract: for EVERY active index of every
+        // library size, on a stage at the 10-tile cap and on a smaller stage
+        // that binds the minimum-tile floor, the Mosaic opens on the page that
+        // contains the active theme, that page leads with it on the hero slot,
+        // the hero stays centred at the band height, no tile drops below the
+        // minimum edge, every page keeps exactly its own themes, and neither
+        // the capacity nor the page count changes with an active theme.
+        for (sw, sh) in [(STAGE_W, STAGE_H), (1280.0, 720.0)] {
+            let th = th_h_of(sh);
+            let usable = usable_w_of(sw);
+            for count in [1usize, 2, 3, 5, 11, 23, 47] {
+                let plain = MosaicPages::new(count, sw, sh);
+                for active in 0..count {
+                    let mut pages = MosaicPages::new(count, sw, sh);
+                    pages.set_active_theme(Some(active));
+                    pages.open_on_active();
+                    assert_eq!(
+                        pages.current(),
+                        pages.page_of(active).unwrap(),
+                        "{sw}x{sh} / {count} themes / active {active}: wrong open page"
+                    );
+                    assert_eq!(
+                        pages.capacity(),
+                        plain.capacity(),
+                        "{sw}x{sh} / {count} themes / active {active}: capacity moved"
+                    );
+                    assert_eq!(
+                        pages.total_pages(),
+                        plain.total_pages(),
+                        "{sw}x{sh} / {count} themes / active {active}: page count moved"
+                    );
+                    let start = pages.current() * pages.capacity();
+                    let (aspects, reals) = pages.page_render();
+                    assert_eq!(
+                        reals[0], active,
+                        "{sw}x{sh} / {count} themes / active {active}: does not lead its page"
+                    );
+                    let mut sorted = reals.clone();
+                    sorted.sort_unstable();
+                    assert_eq!(
+                        sorted,
+                        identity_slice(start, reals.len()),
+                        "{sw}x{sh} / {count} themes / active {active}: page themes changed"
+                    );
+                    let (layout, tile_reals) =
+                        justified_hero_layout(&aspects, &reals, sw, sh);
+                    assert_eq!(
+                        tile_reals[0], active,
+                        "{sw}x{sh} / {count} themes / active {active}: hero maps elsewhere"
+                    );
+                    for t in &layout.tiles {
+                        assert!(
+                            t.w.min(t.h) >= MOSAIC_MIN_TILE_PX - 1e-3,
+                            "{sw}x{sh} / {count} themes / active {active}: tile {t:?} \
+                             fell below the minimum {}",
+                            MOSAIC_MIN_TILE_PX
+                        );
+                    }
+                    if reals.len() >= 3 {
+                        assert!(
+                            layout.tiles[0].h > th + 1.0,
+                            "{sw}x{sh} / {count} themes / active {active}: tile 0 is not \
+                             the hero band: h {} vs th {th}",
+                            layout.tiles[0].h
+                        );
+                        assert!(
+                            (hero_centre(&layout) - usable / 2.0).abs() < 2.0,
+                            "{sw}x{sh} / {count} themes / active {active}: hero must be centred"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
