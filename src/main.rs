@@ -3234,12 +3234,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 (0..real_count).find(|&i| cards.row_data(i).is_some_and(|row| row.is_active)),
             );
             // Recompute the partition for the measured stage and re-anchor the
-            // page onto the active theme ONLY when the partition actually moved:
-            // a resize that keeps the same capacity and page count must not drag
-            // the keeper off the page he is browsing, while the hidden → visible
-            // open (first capacity computed on a small hidden stage) still lands
-            // on the active theme's page. A keeper page flip always wins. The
-            // policy lives in `MosaicPages::sync`.
+            // page onto the active theme when the PARTITION moved (a stage
+            // change repartitions the pages, so the stored page index would
+            // mean a different set of themes) or when the LIBRARY changed (a
+            // save or a delete shifts every index after it). A resize that keeps
+            // the same capacity and page count and does not change the theme
+            // count must not drag the keeper off the page he is browsing. The
+            // hidden → visible open (first capacity computed on a small hidden
+            // stage) still lands on the active theme's page, and a keeper page
+            // flip always wins. The policy lives in `MosaicPages::sync`.
             pg.sync(real_count, stage_w, stage_h, is_flip);
             let (aspects, real_indices) = pg.page_render();
             // Hero-centered layout: returns tiles PLUS the per-tile real

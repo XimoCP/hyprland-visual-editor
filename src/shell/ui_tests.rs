@@ -3285,7 +3285,7 @@ fn mosaic_hero_centered_renders_with_pagination() {
 
     // Synthetic cards with PLAIN gradient thumbs (mosaic cells are
     // rectangles — the parallelogram slat bakes are Slice-only).
-    let count = 12usize; // capacity 10 at this stage → page 2 exists
+    let count = 12usize; // capacity 9 at this stage → page 2 exists
     let mut cards: Vec<crate::GalleryCardData> = Vec::new();
     for i in 0..count {
         let img = slint::Image::from_rgba8({
