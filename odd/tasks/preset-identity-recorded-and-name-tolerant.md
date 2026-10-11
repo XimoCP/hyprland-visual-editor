@@ -3,9 +3,10 @@
 **Locator**: `odd/tasks/preset-identity-recorded-and-name-tolerant.md`
 **Engram mirror**: topic `odd/preset-identity-recorded-and-name-tolerant/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: IN PROGRESS — started 2026-10-11 16:02, after the active-theme-hero work closed and released
-`src/main.rs`. The keeper authorized it earlier the same day ("cuando terminemos lo que se está haciendo
-lanzas a continuación esto que hemos hablado").
+**Status**: U1–U3 DONE pending review; the parent's U4 (release build, backup + install `~/.local/bin/hve`,
+relaunch, the keeper's live look) is outstanding. Nothing pushed. Was IN PROGRESS from 2026-10-11 16:02, after the
+active-theme-hero work closed and released `src/main.rs`. The keeper authorized it earlier the same day ("cuando
+terminemos lo que se está haciendo lanzas a continuación esto que hemos hablado").
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~120–200 authored changed lines → single PR.
 **Route**: delegated writer (`src/main.rs`, `src/presets.rs`, `src/theme_presets.rs`), parent verification
@@ -90,12 +91,63 @@ verified by reading the code, not inferred from the symptom.
 
 ## Work units
 
-- [ ] **U1** — a saved preset is recorded as the active preset (borders + animations).
-- [ ] **U2** — one canonical name form + tolerant read in the marker and the bundler.
-- [ ] **U3** — the tests above.
+- [x] **U1** — a saved preset is recorded as the active preset (borders + animations). Commit `3c1f9dd`.
+- [x] **U2** — one canonical name form + tolerant read in the marker and the bundler. Commit `6f1cc7f`.
+- [x] **U3** — the tests above (a)–(f): RED observed first for every behaviour change; see the log.
 - [ ] **U4** — the parent's build, install, relaunch and the keeper's live look.
 
 ## Progress log
 
 - 2026-10-11: both defects found in a read-only review while the active-theme-hero writer ran; queued by the
   keeper to start right after it. NOT started.
+- 2026-10-11 (**U1**, commit `3c1f9dd`): RED observed first — the construction pin on both save-handler bodies
+  failed with "must record the just-saved preset as the active one" while the extracted handler body showed no
+  recording at all; the two behaviour tests then failed to compile against the missing helper. Landed
+  `record_saved_preset_active` + `SavedPresetSlot` in `src/main.rs`, called by both handlers just before the live
+  re-apply, followed by `cfg().save()`. Both record the canonical `<name>.lua`, whose form is defined once as
+  `PresetStore::canonical_preset_file` (the mirror of `_hve_preset_in_dir`, applied on write).
+  **Decision (U1)**: the save does NOT refresh the pane marker. The marker is a view derived from the recorded
+  config value against the window's lists, and the Borders section already re-derives it from the persisted value
+  on every entry (`seed_borders_pane_from_persisted`); recording once keeps a single source of truth instead of a
+  second, save-local copy that could drift. Handlers verified by construction, the rule behaviourally.
+  `cargo test` → 1563 passed / 0 failed.
+- 2026-10-11 (**U2**, commit `6f1cc7f`): RED observed first — 4 assertion failures against the pre-fix code:
+  `plan_bundle` planned `file_name: "Space"`, the bundle copied nothing (`left: []` vs `[ {borders, Space.lua} ]`),
+  the stale cleanup removed the file the plan still listed, and `reseed_active_border_index("Space")` returned `-1`
+  instead of the user card's combined index `3`. Landed `PresetStore::preset_files_match` (canonical equality; an
+  empty reference never matches), canonicalisation inside `plan_bundle` (once, at the boundary that decides the
+  destination name) and a tolerant `reseed_active_border_index`.
+  **Finding 1**: `reseed_active_border_index` resolved against the scanned BUILT-IN files alone, so tolerance by
+  itself would NOT have marked the keeper's card: `Space.lua` is a USER preset, and user cards continue the same
+  index space in `BordersListPane` (`builtin-names.length + i == active-index`). The resolution now covers the
+  panel's combined list (built-in files first, then the user stems offset by the built-in count) — the same index
+  space a card click reports, so click and re-entry can never disagree.
+  **Finding 2**: `remove_stale_bundled_presets` compares the on-disk name with the plan name, so canonicalising
+  only the source path would have written `Space.lua` and then deleted it as "stale" in the same run. The canonical
+  form had to reach the PLAN, which is where it now lives.
+  **Finding 3**: the card click stores a USER preset as a bare stem (`PanelRoot` passes
+  `user-border-preset-names[i]`, a stem) — that is where the bare `Space` came from. The canonical form on write
+  would have to land in the click handler too; left untouched deliberately (out of the authorized scope, and the
+  tolerant read makes the stem harmless), and recorded here so the next pass can decide it with the evidence.
+  `cargo test` → 1573 passed / 0 failed.
+- 2026-10-11 (**U3**): the tests the contract lists, all with a RED observed before the change that makes them
+  pass. (a) + (b) `saving_a_border_preset_records_it_as_the_active_border` /
+  `saving_an_animation_preset_records_it_as_the_active_animation` (commit `3c1f9dd`), plus the construction pin
+  `both_tune_pane_save_handlers_record_the_saved_preset_as_active`. (c)
+  `test_populate_metadata_resolves_a_bare_stem_against_the_scanned_file` and
+  `reseed_marks_a_user_border_card_from_a_legacy_bare_stem` (the combined user-card index).
+  (d) `plan_bundle_canonicalises_a_legacy_bare_stem`, `bundle_resolves_a_legacy_bare_stem_to_its_lua_file`,
+  `bundle_keeps_a_bundled_file_for_a_legacy_bare_stem` and, end to end through the real provider save path,
+  `save_bundles_a_legacy_bare_stem_preset_into_the_package`. (e)
+  `test_populate_metadata_keeps_the_full_name_and_clears_an_unmatched_one` (full names unchanged) and
+  `canonical_preset_file_adds_the_extension_only_to_a_bare_stem` (a `*.json` record is left verbatim).
+  (f) `preset_files_match_tolerates_the_legacy_stem_and_stays_strict_otherwise` and the unmatched half of the
+  marker tests — an explicit `-1`, never a silent blank. Extra guard:
+  `plan_bundle_never_bundles_a_bare_stem_that_canonicalises_to_a_shipped_preset`.
+  Out of scope, unchanged: JoKer's `active_anim_file: "prueba1"` names no file anywhere, so tolerance cannot fix
+  it — the keeper picks a real animation and re-saves.
+- 2026-10-11 (**U1–U3 closed for review**, nothing pushed): `cargo test` → 1573 passed / 0 failed;
+  `cargo check --all-targets` → clean. Files touched: `src/main.rs`, `src/preset_store.rs`, `src/presets.rs`,
+  `src/theme_presets.rs`, `src/providers/hve_presets.rs`, `src/shell/ui_tests.rs`. No dependency added, no theme
+  data rewritten, no migration. U4 (build, backup + install, relaunch, the keeper's live look) belongs to the
+  parent.
