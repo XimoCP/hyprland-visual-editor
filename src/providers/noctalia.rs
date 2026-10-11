@@ -9,7 +9,7 @@ use crate::theme_manager::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Remove a stale background artifact, logging failures instead of
@@ -748,6 +748,27 @@ fn layout_settle_delay() -> Duration {
         .unwrap_or(LAYOUT_SETTLE)
 }
 
+/// U12 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the
+/// apply-generation token. Every `apply()` increments this counter at its
+/// START, and the detached layout-verify worker captures the value of the
+/// apply that spawned it. After its settle and BEFORE it writes anything,
+/// the worker compares — a superseded worker must never lay ITS theme's
+/// layout over a NEWER apply's file: with the keeper's real themes the
+/// section sets differ (JoKer vs Space, measured), so a superseded
+/// worker would always find "its" sections missing from the newer theme's
+/// healthy file and append them — the desktop would render the old
+/// theme's bar under the new theme. U9 (the detached worker) recreated
+/// the hazard the synchronous version never had: apply and verify used
+/// to be serialized on one thread, so a newer apply could not start
+/// mid-verify.
+static APPLY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Whether `generation` is still the newest apply generation — i.e. no
+/// newer `apply()` has started since the worker's apply captured it.
+fn layout_generation_is_current(generation: u64) -> bool {
+    APPLY_GENERATION.load(Ordering::SeqCst) == generation
+}
+
 /// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`, corrected by
 /// U6/U7 after the verification refuted the first delivery, and by U9
 /// after the keeper felt the correction's regression: after the apply's
@@ -779,6 +800,17 @@ fn layout_settle_delay() -> Duration {
 /// surgical repair and the bounded-once rule below are unchanged; only
 /// WHERE the wait and the work happen moved off the UI thread.
 ///
+/// IDENTITY (U12 — the hole U9 opened): the detached worker carries the
+/// GENERATION of the apply that spawned it
+/// ([`APPLY_GENERATION`]) and, after its settle and again immediately
+/// before its reload, yields when a newer apply has started. Without
+/// this, the refutation's timeline replays on the keeper's real themes:
+/// apply A ends, worker A arms, the keeper clicks B; worker A then wakes
+/// against B's healthy file, finds A's sections "missing" (the section
+/// sets differ between his themes — measured), appends A's blocks and
+/// reloads — the desktop renders A's bar under B. A superseded worker
+/// must never write and never reload.
+///
 /// COST per apply (honest, U7 + U9): a theme that declares layout pays
 /// ONE settle ([`LAYOUT_SETTLE`], 1.5 s) on the WORKER before the read —
 /// Noctalia's own re-persist lands ~1 s after the last reload, so a
@@ -786,7 +818,7 @@ fn layout_settle_delay() -> Duration {
 /// actually missing, the repair adds ONE reload and ONE more settle
 /// (re-check). None of it blocks the apply or the transition. A theme
 /// declaring no layout short-circuits before any of it: zero cost.
-fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
+fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generation: u64) {
     let theme = match fs::read_to_string(saved_settings) {
         Ok(text) => text,
         Err(e) => {
@@ -809,6 +841,18 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
     // One bounded settle for Noctalia's own re-persist — see
     // LAYOUT_SETTLE for why the verify cannot read the live file at t+0.
     std::thread::sleep(layout_settle_delay());
+    // U12: the settle slept, so a NEWER apply may have started in the
+    // meantime (the keeper clicking the next theme while this worker
+    // waited). Its file is now the current one; laying THIS theme's
+    // layout over it would render the old theme's bar under the new
+    // theme. Yield BEFORE reading, writing or reloading anything.
+    if !layout_generation_is_current(generation) {
+        tracing::info!(
+            "[noctalia-v5] A newer theme apply started while this layout verify \
+             settled; yielding WITHOUT writing or reloading (superseded generation {generation})"
+        );
+        return;
+    }
     let live = match fs::read_to_string(live_settings) {
         Ok(text) => text,
         Err(e) => {
@@ -833,6 +877,18 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
         tracing::warn!(
             "[noctalia-v5] Cannot repair the live settings.toml layout: {}",
             e
+        );
+        return;
+    }
+    // U12, second check: re-verify IMMEDIATE BEFORE the reload — the
+    // window between the write and the reload is microseconds wide, but
+    // a newer apply landing in it must not receive a reload issued on
+    // behalf of the superseded theme. The newer apply runs its own
+    // `config-reload`; this one stays quiet.
+    if !layout_generation_is_current(generation) {
+        tracing::info!(
+            "[noctalia-v5] A newer theme apply started before the layout repair \
+             could reload; skipping the reload (superseded generation {generation})"
         );
         return;
     }
@@ -924,7 +980,16 @@ pub(crate) fn layout_verify_workers_idle() -> bool {
 /// detached by design, single-shot, bounded, never touches Slint state,
 /// and every failure is a warning — a layout problem must never fail the
 /// theme apply.
-fn spawn_layout_verify_and_repair(saved_settings: PathBuf, live_settings: PathBuf) {
+///
+/// U12: the worker captures the APPLY GENERATION at spawn time and yields
+/// (no write, no reload) when a newer apply has started — see
+/// [`verify_and_repair_layout`] for why a superseded worker must never
+/// lay its theme's layout over a newer apply's file.
+fn spawn_layout_verify_and_repair(
+    saved_settings: PathBuf,
+    live_settings: PathBuf,
+    generation: u64,
+) {
     LAYOUT_VERIFY_WORKERS_ACTIVE.fetch_add(1, Ordering::SeqCst);
     // Same spawn discipline as `spawn_custom_scheme_reassert`: the guard
     // is built in the PARENT and moved into the worker, and the spawn goes
@@ -938,7 +1003,7 @@ fn spawn_layout_verify_and_repair(saved_settings: PathBuf, live_settings: PathBu
         .name("hve-noctalia-layout-verify".to_string())
         .spawn(move || {
             let _active = active;
-            verify_and_repair_layout(&saved_settings, &live_settings);
+            verify_and_repair_layout(&saved_settings, &live_settings, generation);
         });
     if let Err(e) = spawned {
         // The closure (and its guard) was dropped above, so the count is
@@ -2101,6 +2166,13 @@ impl ThemeProvider for NoctaliaV5Provider {
     }
 
     fn apply(&self, theme_dir: &Path) -> Result<(), String> {
+        // U12 of `odd/tasks/noctalia-layout-survives-the-apply.md`: EVERY
+        // apply bumps the generation token at its START, before any
+        // write. The layout-verify worker spawned at the END of this
+        // apply carries this value and yields when a newer apply starts
+        // — a superseded worker must never lay its theme's layout over a
+        // newer apply's file (see [`APPLY_GENERATION`]).
+        let generation = APPLY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         let provider_dir = theme_dir.join("providers").join(self.id());
         if !provider_dir.exists() {
             return Err("Noctalia v5 provider data not found in theme".into());
@@ -2133,7 +2205,7 @@ impl ThemeProvider for NoctaliaV5Provider {
         // so a wipe landing on any of them was never caught. U9: the
         // verify then runs OFF the UI thread — see
         // `spawn_layout_verify_and_repair`.
-        let mut layout_guard: Option<(PathBuf, PathBuf)> = None;
+        let mut layout_guard: Option<(PathBuf, PathBuf, u64)> = None;
         let saved_settings = provider_dir.join("settings.toml");
         if saved_settings.exists() {
             if let Some(state_dir) = noctalia_state_dir() {
@@ -2186,8 +2258,10 @@ impl ThemeProvider for NoctaliaV5Provider {
                 // ratchet). The verify + bounded surgical repair are
                 // SPAWNED at the END of the apply — see the call site —
                 // so no later step can re-wipe behind it unnoticed, and
-                // the wait never blocks the UI thread.
-                layout_guard = Some((saved_settings.clone(), dst));
+                // the wait never blocks the UI thread. U12: the guard
+                // carries this apply's generation, so the worker can
+                // yield to a newer apply instead of overwriting its file.
+                layout_guard = Some((saved_settings.clone(), dst, generation));
             }
         }
 
@@ -2642,8 +2716,8 @@ impl ThemeProvider for NoctaliaV5Provider {
         // re-assert spawned above and this verify worker are both
         // asynchronous by design and can still land after the apply
         // returns.
-        if let Some((saved_settings, live_settings)) = layout_guard {
-            spawn_layout_verify_and_repair(saved_settings, live_settings);
+        if let Some((saved_settings, live_settings, generation)) = layout_guard {
+            spawn_layout_verify_and_repair(saved_settings, live_settings, generation);
         }
 
         Ok(())
@@ -7044,6 +7118,71 @@ format = "%H:%M"
 path = "/tmp/stale.png"
 "#;
 
+    // ── U12: the apply-generation token ──
+    //
+    // U9 (7a6f1f5) moved the layout verify onto a DETACHED worker so the
+    // apply would stop freezing the UI thread — it did. But the worker
+    // carried no identity: with the keeper's REAL themes, whose layout
+    // SECTION SETS DIFFER (measured — JoKer declares [desktop_widgets],
+    // [widget.battery], [shell.screenshot], ... ; Space declares
+    // [widget.tray], [widget.workspaces], [widget.volume], ... ; only
+    // [bar] is shared), `missing_theme_layout(A, live_of_B)` is
+    // NON-EMPTY in both directions on healthy files. So a superseded
+    // worker wakes after a NEWER apply already replaced the live file,
+    // decides ITS sections are missing from the newer theme's healthy
+    // file, appends its own blocks and reloads — the desktop renders the
+    // OLD theme's bar under the NEW theme. The synchronous version could
+    // not do this (apply and verify were serialized on one thread);
+    // moving it off-thread created the hole. The fixtures below mirror
+    // that measured asymmetry.
+
+    /// JoKer-like packaged settings.toml (U12): the layout sections
+    /// Space does NOT declare, condensed from the keeper's real files
+    /// (READ-ONLY measurement).
+    const THEME_LAYOUT_A: &str = r#"config_version = "5.0"
+
+[wallpaper]
+path = "/here/a.png"
+
+[plugins]
+enabled = []
+
+[bar]
+position = "left"
+
+[desktop_widgets]
+enabled = true
+
+[widget.battery]
+interval = 30
+
+[shell.screenshot]
+dir = "/shots"
+"#;
+
+    /// Space-like packaged settings.toml (U12): a DIFFERENT layout set —
+    /// Space carries its own widget set, none of which JoKer declares.
+    const THEME_LAYOUT_B: &str = r#"config_version = "5.0"
+
+[wallpaper]
+path = "/here/b.png"
+
+[plugins]
+enabled = []
+
+[bar]
+position = "bottom"
+
+[widget.tray]
+hidden = []
+
+[widget.volume]
+step = 5
+
+[widget.workspaces]
+count = 6
+"#;
+
     /// U3-(e): the legitimate rewrites must still report "in force" — a
     /// changed wallpaper path, a bumped `config_version`, and a live file
     /// where `[hooks]` / `[plugins]` differ from (or are absent vs) the
@@ -7973,6 +8112,92 @@ scale = 1.3
         assert!(
             missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
             "the off-thread repair must leave the theme's layout in the live file"
+        );
+    }
+
+    /// U12 — the refutation's EXACT scenario, on the keeper's measured
+    /// asymmetry: apply A (JoKer-like), then apply B (Space-like) before
+    /// A's worker has finished its settle; let BOTH workers complete.
+    /// A's worker is superseded: it must yield WITHOUT writing and
+    /// WITHOUT reloading, so the live file still carries exactly B's
+    /// healthy layout. Without the generation token the superseded
+    /// worker wakes, finds A's sections missing from B's healthy file,
+    /// appends A's blocks and reloads — B's theme renders A's bar.
+    #[test]
+    #[serial]
+    fn superseded_layout_worker_yields_to_the_newer_apply() {
+        let stub = LayoutStub::new();
+        // The settle must outlast BOTH applies (each is a handful of
+        // stub-CLI spawns, well under 100 ms here), so A's worker only
+        // wakes AFTER B's apply replaced the live file — the
+        // refutation's timeline (the keeper clicked B 0.4 s after A
+        // ended; worker A woke at ~1.5 s). Margin: >10x the applies' cost.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "1200");
+        // Fixture sanity — the measured asymmetry itself: on HEALTHY
+        // files each theme's layout is "missing" from the other's.
+        assert!(
+            !missing_theme_layout(THEME_LAYOUT_A, THEME_LAYOUT_B).is_empty(),
+            "fixture must mirror the real asymmetry: A's layout is not in B's file"
+        );
+        assert!(
+            !missing_theme_layout(THEME_LAYOUT_B, THEME_LAYOUT_A).is_empty(),
+            "fixture must mirror the real asymmetry: B's layout is not in A's file"
+        );
+
+        let theme_a = stub.theme_with(THEME_LAYOUT_A);
+        let res = NoctaliaV5Provider::new().apply(theme_a.path());
+        assert!(res.is_ok(), "apply A must succeed: {res:?}");
+        let theme_b = stub.theme_with(THEME_LAYOUT_B);
+        let res = NoctaliaV5Provider::new().apply(theme_b.path());
+        assert!(res.is_ok(), "apply B must succeed: {res:?}");
+
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "only the two applies' step-0 reloads: A's superseded worker \
+             must not fire a repair reload"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stub.live_settings()).unwrap(),
+            THEME_LAYOUT_B,
+            "A's superseded worker must never lay A's layout over B's file — \
+             no append, B's step-0 copy must stand byte-for-byte"
+        );
+    }
+
+    /// U12 control — the healthy case must still work under the
+    /// generation token: the CURRENT apply's worker still detects and
+    /// repairs a wipe (here B's `templates-apply` wipes the live file),
+    /// while the superseded predecessor yields. Three reloads, not four:
+    /// A's step-0, B's step-0, B's repair — A's worker adds none.
+    #[test]
+    #[serial]
+    fn current_apply_worker_still_repairs_a_wipe_after_its_predecessor_yielded() {
+        let stub = LayoutStub::new();
+        // Same margin reasoning as the sibling test above.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "1200");
+        stub.wipe_mode("on-templates");
+        let theme_a = stub.theme_with(THEME_LAYOUT_A);
+        let theme_b = stub.theme_with_source(THEME_LAYOUT_B, "builtin Kanagawa");
+
+        let res = NoctaliaV5Provider::new().apply(theme_a.path());
+        assert!(res.is_ok(), "apply A must succeed: {res:?}");
+        let res = NoctaliaV5Provider::new().apply(theme_b.path());
+        assert!(res.is_ok(), "apply B must succeed: {res:?}");
+
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            3,
+            "A's superseded worker must yield (no reload); B's current worker \
+             repairs the wipe with exactly one — live log:\n{}",
+            std::fs::read_to_string(&stub.log).unwrap_or_default()
+        );
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            missing_theme_layout(THEME_LAYOUT_B, &live).is_empty(),
+            "the CURRENT apply's worker must still detect and repair the wipe"
         );
     }
 }
