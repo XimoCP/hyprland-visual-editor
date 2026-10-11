@@ -85,12 +85,33 @@ these three rules, which he approved:
 
 ## Work units
 
-- [ ] **U1** — R1: the active theme leads its page.
-- [ ] **U2** — R2: open on the active theme's page.
-- [ ] **U3** — R3 + the no-active-theme fallback.
-- [ ] **U4** — the tests.
+- [x] **U1** — R1: the active theme leads its page. (`9cdf66a`)
+- [x] **U2** — R2: open on the active theme's page. (`4c2cf9e`)
+- [x] **U3** — R3 + the no-active-theme fallback. (`3dda7cf`)
+- [x] **U4** — the tests. (`4167681`)
 - [ ] **U5** — the parent's render read + install.
 
 ## Progress log
 
 - 2026-10-11: decision taken and rules agreed; contract written; NOT started (session closed).
+- 2026-10-11 (delegated writer): U1–U4 implemented and committed on `hve2-visual-rewrite`.
+  - `9cdf66a` U1 — `MosaicPages` gained `active_theme` (+ accessors) and `page_render` leads
+    the containing page's arrays with it, aspects travelling with their theme. 2 tests.
+  - `4c2cf9e` U2 — `page_of` / `open_on_active`; `main.rs` feeds `is_active` on every refresh
+    and re-opens on the active page on any non-flip recompute; the show hook re-anchors the
+    Mosaic page beside the Slider's ring recenter. 1 test (+ the RED observed by stubbing
+    `open_on_active` to a no-op: "the open must move the page").
+  - `3dda7cf` U3 — the R3 guard tests (page without the active theme, no active theme at all,
+    out-of-range active index). Both were checked against the wrong turn "lead EVERY page with
+    the active theme": each one fails on it.
+  - `4167681` U4 — acceptance sweep: every active index of 7 library sizes on 2 stages
+    (one at the 10-tile cap, one binding the minimum-tile floor) opens on the containing page,
+    leads with it on the hero slot centred at band height, keeps every tile ≥ 96 px, keeps each
+    page's own themes, and moves neither the capacity nor the page count.
+  - Verification: `cargo test` → 1550 passed, 0 failed; `cargo check --all-targets` → clean.
+  - Interpretation recorded for the parent: "opens on the active theme's page" was wired to the
+    recompute gate (`!is_flip`), so a STAGE change re-anchors too. That is deliberate: the first
+    capacity is computed while the window is still hidden, so a stage change repartitions the
+    pages and the old page INDEX then means a different set of themes. A keeper page flip never
+    recomputes and a coincident recompute honours the flip.
+  - U5 (headless render + reading the PNGs, install, keeper's live look) is the parent's.
