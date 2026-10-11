@@ -769,6 +769,42 @@ fn layout_generation_is_current(generation: u64) -> bool {
     APPLY_GENERATION.load(Ordering::SeqCst) == generation
 }
 
+/// U13 of `odd/tasks/noctalia-layout-survives-the-apply.md`: publish
+/// `text` at `path` through a temporary SIBLING file plus `rename` (the
+/// [`crate::theme_presets`] `copy_preset` idiom), never with an in-place
+/// truncate-and-write.
+///
+/// WHY: this path is shared by writers that can run CONCURRENTLY with
+/// the detached layout-repair worker — the apply's own settings restore
+/// (`fs::copy`), the rotation neutralizer's `fs::write`, and the
+/// keeper's watchdog outside HVE. A truncate-and-write in place lets a
+/// reader of the same path observe a torn file (half the old bytes,
+/// half the new); rename is atomic at the filesystem level, so every
+/// concurrent reader sees either the complete old file or the complete
+/// new one. What it does NOT cover is registered in the contract (U15):
+/// other writers of this path are still in-place, and a process exit
+/// after writing the temporary but before the rename leaves the old
+/// file intact plus a stale `.part-` sibling.
+fn write_settings_atomically(path: &Path, text: &str) -> std::io::Result<()> {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid settings destination {}", path.display()),
+        ));
+    };
+    let tmp = path.with_file_name(format!(".part-{name}"));
+    let _ = std::fs::remove_file(&tmp);
+    if let Err(e) = fs::write(&tmp, text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`, corrected by
 /// U6/U7 after the verification refuted the first delivery, and by U9
 /// after the keeper felt the correction's regression: after the apply's
@@ -873,7 +909,11 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generat
          re-adding ONLY those sections to the live settings.toml and reloading once",
         missing.join(", ")
     );
-    if let Err(e) = fs::write(live_settings, repaired) {
+    // U13: atomic publish (temporary sibling + rename) — this path is
+    // shared with the apply's own copy, the rotation neutralizer and
+    // the keeper's watchdog, so an in-place truncate could tear the
+    // file under one of them.
+    if let Err(e) = write_settings_atomically(live_settings, &repaired) {
         tracing::warn!(
             "[noctalia-v5] Cannot repair the live settings.toml layout: {}",
             e
@@ -8198,6 +8238,57 @@ scale = 1.3
         assert!(
             missing_theme_layout(THEME_LAYOUT_B, &live).is_empty(),
             "the CURRENT apply's worker must still detect and repair the wipe"
+        );
+    }
+
+    /// U13 — the worker's repair write shares the live settings.toml
+    /// path with OTHER writers that can touch it at the same time (the
+    /// apply's own `fs::copy`, the rotation neutralizer's `fs::write`,
+    /// the keeper's watchdog): it must never truncate the shared file IN
+    /// PLACE — a reader racing that truncate can see a torn file.
+    /// Publish through a temporary sibling + rename instead (the
+    /// `copy_preset` idiom): every reader then sees either the old file
+    /// or the complete new one. Pinned by INODE: an in-place
+    /// `fs::write` keeps the inode, a rename replaces it.
+    #[test]
+    #[serial]
+    fn layout_repair_publishes_the_live_file_atomically() {
+        use std::os::unix::fs::MetadataExt;
+        let stub = LayoutStub::new();
+        // Settle long enough that the inode is captured while the
+        // worker is still asleep, short enough to keep the test fast.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "1000");
+        stub.wipe_mode("first");
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a layout problem must never fail the apply: {res:?}"
+        );
+        // The worker is asleep for its settle: capture the inode the
+        // apply's copy + the stub's wipe left behind.
+        let before = std::fs::metadata(stub.live_settings())
+            .expect("the live settings.toml exists after the apply")
+            .ino();
+        stub.wait_for_verify();
+        let after = std::fs::metadata(stub.live_settings())
+            .expect("the live settings.toml exists after the repair");
+        assert_ne!(
+            after.ino(),
+            before,
+            "the repair must publish through a temporary sibling + rename (the \
+             inode must be replaced), never truncate the shared file in place"
+        );
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
+            "the atomic repair must still leave the theme's layout in force"
+        );
+        let tmp = stub.live_settings().with_file_name(".part-settings.toml");
+        assert!(
+            !tmp.exists(),
+            "the temporary sibling must be renamed away, never left behind"
         );
     }
 }
