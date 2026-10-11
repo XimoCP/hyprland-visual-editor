@@ -272,7 +272,19 @@ pub fn package_theme_dir(
         .map(|p| assignment_candidates(p, &provider_dir))
         .unwrap_or_default();
     let sources = resolve_background_sources(&provider_dir, &manifest_candidates);
+
+    // The theme's saved settings are cleaned whether or not there is a
+    // background left to (re)package: a pass that has nothing else to do must
+    // still not leave a personal path in the theme.
+    let settings = provider_dir.join("settings.toml");
+    if settings.is_file() {
+        crate::providers::noctalia::sanitize_settings_file(&settings, theme_dir);
+    }
+
     let Some(poster_source) = sources.poster else {
+        // No background to package, but the absolute records still name this
+        // machine: they go, and the missing packaged equivalent is reported.
+        crate::providers::noctalia::drop_absolute_background_records(&provider_dir, false, false);
         return PackageStatus::Skipped("no background record".into());
     };
 
@@ -349,6 +361,15 @@ pub fn package_theme_dir(
             0
         }
     };
+
+    // The absolute records are what the resolution above read: they go now,
+    // after the packaged equivalents exist. `poster.txt` / `video-media.txt`
+    // is what a target machine resolves.
+    crate::providers::noctalia::drop_absolute_background_records(
+        &provider_dir,
+        poster,
+        video == VideoOutcome::Packaged || video == VideoOutcome::Url,
+    );
 
     PackageStatus::Packaged(PackageSummary {
         poster,
@@ -702,6 +723,188 @@ mod tests {
         assert!(
             !theme.join("presets/borders/shipped.lua").exists(),
             "a shipped preset must never be copied into the theme"
+        );
+    }
+
+    // ── U2: a packaged theme carries no personal path ────────────────────
+
+    /// The absolute wallpaper record names the machine that saved the theme.
+    /// The packaged `poster.txt` is what travels, so the record goes.
+    #[test]
+    fn package_theme_drops_the_absolute_wallpaper_record() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"\xff\xd8\xffwallpaper";
+        let (theme, _image) = write_static_theme(root.path(), "Static", bytes);
+
+        let status = package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        assert!(
+            matches!(status, PackageStatus::Packaged(_)),
+            "the theme must still package, got {status:?}"
+        );
+        assert!(
+            !provider_dir(&theme).join("wallpaper.txt").exists(),
+            "the absolute wallpaper record must not survive packaging"
+        );
+        assert!(
+            provider_dir(&theme).join("poster.txt").exists(),
+            "the packaged poster record must survive instead"
+        );
+    }
+
+    /// Same for the painter video record: `video-media.txt` travels, the
+    /// absolute `video.txt` goes.
+    #[test]
+    fn package_theme_drops_the_absolute_video_record() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Clip");
+        let provider = provider_dir(&theme);
+        fs::create_dir_all(&provider).unwrap();
+        let video = root.path().join("clip.mp4");
+        fs::write(&video, b"tiny-video-bytes").unwrap();
+        fs::write(
+            provider.join("video.txt"),
+            format!("path={}\npainter=\nnamespace=\npid=0\n", video.display()),
+        )
+        .unwrap();
+
+        let status = package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        assert!(matches!(status, PackageStatus::Packaged(_)), "got {status:?}");
+        assert!(
+            !provider.join("video.txt").exists(),
+            "the absolute video record must not survive packaging"
+        );
+        assert!(
+            provider.join("video-media.txt").exists(),
+            "the packaged video record must survive instead"
+        );
+    }
+
+    /// Packaging re-cleans an OLD theme: its saved settings.toml loses every
+    /// machine-only path and keeps every other byte.
+    /// A settings.toml whose only absolute values point INSIDE the theme is
+    /// rewritten, not dropped: the log says so and never claims a drop.
+    #[test]
+    fn package_theme_rewrites_an_in_theme_path_without_reporting_a_drop() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"\xff\xd8\xffwallpaper";
+        let (theme, _image) = write_static_theme(root.path(), "Static", bytes);
+        let inside = theme.join("media").join("poster.jpg");
+        fs::write(
+            provider_dir(&theme).join("settings.toml"),
+            format!("[wallpaper.default]\n    path = \"{}\"\n", inside.display()),
+        )
+        .unwrap();
+
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        assert_eq!(
+            fs::read_to_string(provider_dir(&theme).join("settings.toml")).unwrap(),
+            "[wallpaper.default]\n    path = \"media/poster.jpg\"\n",
+            "an in-theme asset must stay reachable as a theme-relative path"
+        );
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("Rewrote 1"),
+            "the rewrite must be reported, got: {text}"
+        );
+        assert!(
+            !text.contains("machine-only value"),
+            "an in-theme rewrite is not a machine-only drop, got: {text}"
+        );
+    }
+
+    #[test]
+    fn package_theme_sanitizes_the_saved_settings_toml() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"\xff\xd8\xffwallpaper";
+        let (theme, _image) = write_static_theme(root.path(), "Static", bytes);
+        let settings = provider_dir(&theme).join("settings.toml");
+        fs::write(
+            &settings,
+            "[hooks]\n\
+             started = \"/home/ximo/.local/share/sddm/themes/SilentDinamic/sddm-sync.sh\"\n\
+             \n\
+             [plugins]\n\
+             enabled = [ \"noctalia/mpvpaper\" ]\n\
+             \n\
+             [wallpaper]\n\
+             directory = \"/home/ximo/Pictures/Wallpapers/Cars\"\n\
+             transition_on_startup = true\n",
+        )
+        .unwrap();
+
+        package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            "[hooks]\n\
+             \n\
+             [plugins]\n\
+             enabled = [ \"noctalia/mpvpaper\" ]\n\
+             \n\
+             [wallpaper]\n\
+             transition_on_startup = true\n",
+            "the machine-only lines must go and every other byte must stay"
+        );
+    }
+
+    /// A theme with no resolvable background is SKIPPED, and its settings are
+    /// still cleaned: the packaging pass must not leave a personal path
+    /// behind just because it had nothing else to do.
+    #[test]
+    fn package_theme_sanitizes_settings_even_when_it_skips() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Empty");
+        let provider = provider_dir(&theme);
+        fs::create_dir_all(&provider).unwrap();
+        let settings = provider.join("settings.toml");
+        fs::write(
+            &settings,
+            "[shell.screenshot]\ndirectory = \"/home/ximo/Pictures/Screenshots\"\nconfirm_region = true\n",
+        )
+        .unwrap();
+
+        let status = package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        assert!(matches!(status, PackageStatus::Skipped(_)), "got {status:?}");
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            "[shell.screenshot]\nconfirm_region = true\n"
         );
     }
 

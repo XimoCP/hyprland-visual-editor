@@ -378,6 +378,102 @@ pub fn sanitize_settings_toml(text: &str, theme_dir: &Path) -> (String, Sanitize
     (out, report)
 }
 
+/// Drop the theme's absolute background records (`wallpaper.txt`,
+/// `video.txt`).
+///
+/// They name the machine that saved the theme, so they must not travel: the
+/// packaged equivalent (`poster.txt` / `video-media.txt`) is what a target
+/// machine resolves. A record with NO packaged equivalent still goes — a
+/// foreign absolute path is the defect being removed — and that loss is
+/// reported instead of hidden.
+pub fn drop_absolute_background_records(
+    provider_dir: &Path,
+    has_packaged_poster: bool,
+    has_packaged_video: bool,
+) {
+    let static_record = provider_dir.join("wallpaper.txt");
+    if static_record.exists() {
+        remove_stale_artifact(&static_record);
+        if has_packaged_poster {
+            tracing::info!(
+                "[noctalia-v5] Dropped the absolute wallpaper record {} — the packaged poster.txt travels instead",
+                static_record.display()
+            );
+        } else {
+            tracing::warn!(
+                "[noctalia-v5] Dropped the absolute wallpaper record {} with no packaged poster to replace it",
+                static_record.display()
+            );
+        }
+    }
+    let video_record = provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE);
+    if video_record.exists() {
+        remove_stale_artifact(&video_record);
+        if has_packaged_video {
+            tracing::info!(
+                "[noctalia-v5] Dropped the absolute video record {} — the packaged video-media.txt travels instead",
+                video_record.display()
+            );
+        } else {
+            tracing::warn!(
+                "[noctalia-v5] Dropped the absolute video record {} with no packaged video to replace it",
+                video_record.display()
+            );
+        }
+    }
+}
+
+/// Sanitize a `settings.toml` that lives inside a theme, in place.
+///
+/// The theme must be clean from the moment it is saved or packaged: a
+/// machine-only path that reaches disk is one nobody looks at again until a
+/// foreign machine restores it. Best-effort — an unreadable or unwritable file
+/// only warns; the save or the package still succeeds.
+pub(crate) fn sanitize_settings_file(dest: &Path, theme_dir: &Path) {
+    let raw = match fs::read_to_string(dest) {
+        Ok(raw) => raw,
+        Err(e) => {
+            tracing::warn!(
+                "[noctalia-v5] Cannot read {} to sanitize it: {}",
+                dest.display(),
+                e
+            );
+            return;
+        }
+    };
+    let (clean, report) = sanitize_settings_toml(&raw, theme_dir);
+    if report.is_empty() {
+        tracing::debug!(
+            "[noctalia-v5] {} carries no machine-only path",
+            dest.display()
+        );
+        return;
+    }
+    if let Err(e) = fs::write(dest, &clean) {
+        tracing::warn!(
+            "[noctalia-v5] Cannot write the sanitized {}: {}",
+            dest.display(),
+            e
+        );
+        return;
+    }
+    if report.rewritten > 0 {
+        tracing::info!(
+            "[noctalia-v5] Rewrote {} settings.toml path(s) to theme-relative in {}",
+            report.rewritten,
+            dest.display()
+        );
+    }
+    if report.dropped > 0 {
+        tracing::warn!(
+            "[noctalia-v5] Dropped {} machine-only value(s) from {}: {}",
+            report.dropped,
+            dest.display(),
+            report.dropped_keys.join(", ")
+        );
+    }
+}
+
 /// Phase 2 wiring: turn off Noctalia's own static-wallpaper rotation in the
 /// LIVE settings.toml after the theme restore re-armed it, then ask
 /// Noctalia to reload. Best-effort and idempotent: a missing file, a
@@ -1354,11 +1450,18 @@ impl ThemeProvider for NoctaliaV5Provider {
         // 5. Save full Noctalia v5 settings (bar, OSD, widgets, layout, everything)
         //    v5 stores its settings in ~/.local/state/noctalia/settings.toml, NOT
         //    in ~/.config/noctalia/settings.json (which is a v4 artifact).
+        //
+        //    The copy is then SANITIZED: the live file names this machine's
+        //    paths (sddm hook scripts, wallpaper folders, screenshot dirs), and
+        //    a theme that carries them overwrites a foreign machine's settings
+        //    with ours on apply. The look travels; the machine's paths do not.
         let v5_settings = noctalia_state_dir().map(|d| d.join("settings.toml"));
         if let Some(settings_path) = v5_settings {
             if settings_path.exists() {
-                fs::copy(&settings_path, provider_dir.join("settings.toml"))
+                let dest = provider_dir.join("settings.toml");
+                fs::copy(&settings_path, &dest)
                     .map_err(|e| format!("Cannot copy settings.toml: {}", e))?;
+                sanitize_settings_file(&dest, theme_dir);
                 tracing::info!("[noctalia-v5] Saved settings.toml");
             }
         }
@@ -1519,6 +1622,15 @@ impl ThemeProvider for NoctaliaV5Provider {
         if !video_packaged {
             crate::theme_media::remove_theme_video(theme_dir, &provider_dir);
         }
+
+        // 6d. Drop the absolute background records. `wallpaper.txt` and
+        //     `video.txt` name files on THIS machine, so a theme carrying them
+        //     hands a foreign machine the keeper's paths — or, for the sddm
+        //     hook case, someone else's script. The packaged `poster.txt` /
+        //     `video-media.txt` written above is what a target machine
+        //     resolves. A record with no packaged equivalent still goes (the
+        //     foreign absolute path is the defect), and says so in the log.
+        drop_absolute_background_records(&provider_dir, packaged, video_packaged);
 
         // 7. Save animated wallpaper manifest (mpvpaper plugin), reference only.
         //    Only for the honest legacy capture (unreachable authority, or a
@@ -2835,6 +2947,66 @@ mod tests {
         assert_eq!(clean, "[wallpaper]\n");
         assert_eq!(report.dropped, 1);
         assert_eq!(report.rewritten, 0);
+    }
+
+    /// U2: the absolute background records must not survive a save. They name
+    /// THIS machine; the packaged equivalent is what a target machine
+    /// resolves. A record WITH a packaged equivalent is dropped quietly
+    /// (info), one WITHOUT is still dropped and the loss is reported (warn) —
+    /// a foreign absolute path is the defect being removed.
+    #[test]
+    fn drop_absolute_background_records_removes_them_and_reports_the_loss() {
+        let root = TempDir::new().unwrap();
+        let provider = root.path().join("providers").join("noctalia-v5");
+        fs::create_dir_all(&provider).unwrap();
+        fs::write(provider.join("wallpaper.txt"), "/home/ximo/Pictures/a.png").unwrap();
+        fs::write(provider.join("video.txt"), "path=/home/ximo/v.mp4\n").unwrap();
+
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        drop_absolute_background_records(&provider, true, false);
+
+        assert!(
+            !provider.join("wallpaper.txt").exists(),
+            "the absolute wallpaper record must go"
+        );
+        assert!(
+            !provider.join("video.txt").exists(),
+            "the absolute video record must go"
+        );
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        assert!(
+            text.contains("INFO") && text.contains("wallpaper.txt"),
+            "a dropped record WITH a packaged equivalent must be reported at info, got: {text}"
+        );
+        assert!(
+            text.contains("WARN") && text.contains("video.txt"),
+            "a dropped record WITHOUT a packaged equivalent must warn, got: {text}"
+        );
+    }
+
+    /// A provider dir that carries no absolute record stays quiet and is not
+    /// touched.
+    #[test]
+    fn drop_absolute_background_records_is_a_no_op_without_records() {
+        let root = TempDir::new().unwrap();
+        let provider = root.path().join("providers").join("noctalia-v5");
+        fs::create_dir_all(&provider).unwrap();
+        fs::write(provider.join("poster.txt"), "poster=media/poster.jpg\n").unwrap();
+
+        drop_absolute_background_records(&provider, true, true);
+
+        assert_eq!(
+            fs::read_to_string(provider.join("poster.txt")).unwrap(),
+            "poster=media/poster.jpg\n",
+            "the packaged record is what travels and must stay"
+        );
     }
 
     /// The shipped settings.toml shape, end to end: the keeper's own file
@@ -5491,29 +5663,49 @@ exit 1
         );
     }
 
+    /// A real image file with distinct bytes, so "which path did the save
+    /// record?" stays observable through the packaged poster: the absolute
+    /// background records no longer survive a save (U2), and a fake path has
+    /// no poster to package.
+    fn real_wallpaper(dir: &Path, name: &str, bytes: &[u8]) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
     #[test]
     #[serial]
     fn v5_save_skwd_static_records_daemon_current_not_wallpaper_get() {
         // The keeper's case: Noctalia reports the stale car3.jpg while the
         // suite paints joker1.png on both outputs. Save must record what
-        // the painter actually has.
-        let stale = "/pictures/stale/car3.jpg";
-        let live_path = "/pictures/live/joker1.png";
+        // the painter actually has — read from the packaged poster, because
+        // the absolute record does not survive the save.
+        let fixtures = TempDir::new().unwrap();
+        let stale = real_wallpaper(fixtures.path(), "car3.jpg", b"stale-wallpaper-get");
+        let live_path = real_wallpaper(fixtures.path(), "joker1.png", b"daemon-current");
         let stub = SaveStub::new(
             &save_layers_doc("skwd-paper", "skwd-paper"),
             None,
             "ok",
-            &save_daemon_doc("static", live_path, live_path),
-            stale,
+            &save_daemon_doc("static", &live_path, &live_path),
+            &stale,
         );
         let theme = TempDir::new().unwrap();
         NoctaliaV5Provider::new()
             .save(theme.path())
             .expect("save must succeed");
         assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(live_path),
-            "skwd paints a static scene: wallpaper.txt must hold the daemon current, not the stale wallpaper-get"
+            std::fs::read(theme.path().join("media").join("poster.png")).unwrap(),
+            b"daemon-current",
+            "skwd paints a static scene: the save must record the daemon current, not the stale wallpaper-get"
+        );
+        assert!(
+            !theme.path().join("media").join("poster.jpg").exists(),
+            "the stale wallpaper-get value must never be packaged"
+        );
+        assert!(
+            stub.wallpaper_txt(&theme).is_none(),
+            "the absolute wallpaper record must not survive a save"
         );
     }
 
@@ -5526,20 +5718,25 @@ exit 1
         // skwd-painted fullscreen static. The daemon reports static joker1
         // for both; wallpaper-get is the stale car3. Absence is not
         // disagreement: save must record the proven output's current.
-        let live_path = "/pictures/live/joker1.png";
-        let stale = "/pictures/stale/car3.jpg";
+        let fixtures = TempDir::new().unwrap();
+        let live_path = real_wallpaper(fixtures.path(), "joker1.png", b"proven-output-current");
+        let stale = real_wallpaper(fixtures.path(), "car3.jpg", b"stale-wallpaper-get");
         let layers = r#"{"DP-3":{"levels":{"0":[],"1":[{"address":"0x1","x":0,"y":0,"w":272,"h":144,"alpha":1,"namespace":"noctalia-desktop-widget-weather-0000000000000001","pid":250289}]}},"HDMI-A-1":{"levels":{"0":[{"address":"0x2","x":0,"y":0,"w":1440,"h":900,"alpha":1,"namespace":"skwd-paper","pid":439102}],"1":[]}}}"#;
         let monitors = r#"[{"name":"DP-3","width":2560,"height":1440,"x":0,"y":0,"scale":1.0},{"name":"HDMI-A-1","width":1440,"height":900,"x":0,"y":0,"scale":1.0}]"#;
-        let daemon = save_daemon_doc("static", live_path, live_path);
-        let stub = SaveStub::new(layers, Some(monitors), "ok", &daemon, stale);
+        let daemon = save_daemon_doc("static", &live_path, &live_path);
+        let stub = SaveStub::new(layers, Some(monitors), "ok", &daemon, &stale);
         let theme = TempDir::new().unwrap();
         NoctaliaV5Provider::new()
             .save(theme.path())
             .expect("save must succeed");
         assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(live_path),
-            "partial scene (one output absent, one proven skwd static): wallpaper.txt must hold the daemon current, not the stale wallpaper-get"
+            std::fs::read(theme.path().join("media").join("poster.png")).unwrap(),
+            b"proven-output-current",
+            "partial scene (one output absent, one proven skwd static): the save must record the daemon current, not the stale wallpaper-get"
+        );
+        assert!(
+            stub.wallpaper_txt(&theme).is_none(),
+            "the absolute wallpaper record must not survive a save"
         );
     }
 
@@ -5551,22 +5748,27 @@ exit 1
         // screen: with the video identity unresolvable (daemon names a file
         // that does not exist) the save vetoes honestly and keeps the
         // wallpaper-get value, writing no video record.
-        let stale = "/pictures/stale/car3.jpg";
+        let fixtures = TempDir::new().unwrap();
+        let stale = real_wallpaper(fixtures.path(), "car3.jpg", b"wallpaper-get-value");
         let layers = save_layers_doc("skwd-wall-vk", "skwd-paper");
         let daemon = r#"{"outputs": [{"name": "DP-3", "current": "/nonexistent/slugcat.mp4", "path": "/nonexistent/slugcat.mp4", "type": "video", "connected": true},{"name": "HDMI-A-1", "current": "/pictures/live/joker1.png", "path": "/pictures/live/joker1.png", "type": "static", "connected": true}]}"#;
-        let stub = SaveStub::new(&layers, None, "ok", daemon, stale);
+        let stub = SaveStub::new(&layers, None, "ok", daemon, &stale);
         let theme = TempDir::new().unwrap();
         NoctaliaV5Provider::new()
             .save(theme.path())
             .expect("save must succeed");
         assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(stale),
-            "static-vs-video conflict: wallpaper.txt must keep the wallpaper-get value"
+            std::fs::read(theme.path().join("media").join("poster.jpg")).unwrap(),
+            b"wallpaper-get-value",
+            "static-vs-video conflict: the save must keep the wallpaper-get value"
         );
         assert!(
             !stub.provider_dir(&theme).join("video.txt").exists(),
             "unresolvable video: no painter video record may appear"
+        );
+        assert!(
+            stub.wallpaper_txt(&theme).is_none(),
+            "the absolute wallpaper record must not survive a save"
         );
     }
 
@@ -5606,27 +5808,33 @@ exit 1
     #[serial]
     fn v5_save_non_skwd_painter_keeps_wallpaper_get() {
         // An unknown painter owns the layer: the suite has nothing to say,
-        // so save keeps today's behaviour byte-for-byte.
-        let stale = "/pictures/stale/car3.jpg";
+        // so save keeps today's behaviour byte-for-byte — read from the
+        // packaged poster, since the absolute record does not survive.
+        let fixtures = TempDir::new().unwrap();
+        let stale = real_wallpaper(fixtures.path(), "car3.jpg", b"wallpaper-get-value");
         let stub = SaveStub::new(
             &save_layers_doc("mystery-layer", "mystery-layer"),
             None,
             "ok",
             &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
-            stale,
+            &stale,
         );
         let theme = TempDir::new().unwrap();
         NoctaliaV5Provider::new()
             .save(theme.path())
             .expect("save must succeed");
         assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(stale),
-            "non-skwd painter: wallpaper.txt must keep the wallpaper-get value"
+            std::fs::read(theme.path().join("media").join("poster.jpg")).unwrap(),
+            b"wallpaper-get-value",
+            "non-skwd painter: the save must keep the wallpaper-get value"
         );
         assert!(
             !stub.provider_dir(&theme).join("video.txt").exists(),
             "no video on top: no painter video record may appear"
+        );
+        assert!(
+            stub.wallpaper_txt(&theme).is_none(),
+            "the absolute wallpaper record must not survive a save"
         );
     }
 
@@ -5636,13 +5844,14 @@ exit 1
         // The suite paints, but its daemon answers garbage: save must fall
         // back to wallpaper-get (never an empty or guessed path) and warn
         // naming the output and the cause.
-        let stale = "/pictures/stale/car3.jpg";
-        let stub = SaveStub::new(
+        let fixtures = TempDir::new().unwrap();
+        let stale = real_wallpaper(fixtures.path(), "car3.jpg", b"wallpaper-get-value");
+        let _stub = SaveStub::new(
             &save_layers_doc("skwd-paper", "skwd-paper"),
             None,
             "garbage",
             "",
-            stale,
+            &stale,
         );
         let capture = LogCapture::default();
         let subscriber = tracing_subscriber::fmt()
@@ -5657,9 +5866,9 @@ exit 1
             .save(theme.path())
             .expect("save must succeed");
         assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(stale),
-            "unusable daemon: wallpaper.txt must fall back to the wallpaper-get value"
+            std::fs::read(theme.path().join("media").join("poster.jpg")).unwrap(),
+            b"wallpaper-get-value",
+            "unusable daemon: the save must fall back to the wallpaper-get value"
         );
         let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
         assert!(
@@ -5678,8 +5887,9 @@ exit 1
     #[serial]
     fn v5_save_video_on_top_writes_no_static_record() {
         // A skwd native video on top with a resolvable daemon path is an
-        // exact video today: video.txt only, no wallpaper.txt. The static
-        // fix must not touch the video arm.
+        // exact video today: no wallpaper.txt, and the packaged video record
+        // instead of the absolute video.txt. The static fix must not touch
+        // the video arm.
         let media_tmp = TempDir::new().unwrap();
         let video = media_tmp.path().join("slugcat.mp4");
         std::fs::write(&video, b"fake video").unwrap();
@@ -5699,21 +5909,38 @@ exit 1
             !stub.provider_dir(&theme).join("wallpaper.txt").exists(),
             "exact video on top: no static record may be written"
         );
-        let record = std::fs::read_to_string(stub.provider_dir(&theme).join("video.txt"))
-            .expect("exact video must write video.txt");
         assert!(
-            record.contains(&video_str),
-            "video.txt must hold the resolved video path, got: {}",
-            record
+            !stub
+                .provider_dir(&theme)
+                .join(wallpaper_authority::PAINTER_VIDEO_FILE)
+                .exists(),
+            "the absolute video record must not survive a save"
         );
+        assert_eq!(
+            std::fs::read(
+                theme
+                    .path()
+                    .join("media")
+                    .join(crate::theme_media::VIDEO_FILE_NAME)
+            )
+            .unwrap(),
+            b"fake video",
+            "the video must travel packaged inside the theme"
+        );
+        let record = std::fs::read_to_string(
+            stub.provider_dir(&theme)
+                .join(crate::theme_media::VIDEO_RECORD_FILE),
+        )
+        .expect("the packaged video record must travel instead");
+        assert_eq!(record.trim(), "video=media/background.mp4");
     }
 
     // ── Theme packages T1: save carries its own background ────────────
     //
     // WHY these exist: a copied theme folder must travel with its look. The
-    // absolute wallpaper/video records stay byte-for-byte (old themes keep
-    // resolving); the background is additionally packaged under
-    // `{theme}/media/` and named by a theme-relative `poster.txt` record.
+    // background is packaged under `{theme}/media/` and named by a
+    // theme-relative `poster.txt` record, and the absolute wallpaper/video
+    // records do NOT survive the save (U2 — they name this machine).
     // Packaging is best-effort: a broken video or a missing ffmpeg can never
     // fail a save.
     fn ffmpeg_available() -> bool {
@@ -5787,10 +6014,9 @@ exit 1
             std::fs::metadata(&poster).unwrap().len(),
             record.trim()
         );
-        assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(src_str.as_str()),
-            "the existing absolute wallpaper record must stay readable and unchanged"
+        assert!(
+            stub.wallpaper_txt(&theme).is_none(),
+            "the absolute wallpaper record must not survive a save: the packaged poster travels instead"
         );
     }
 
@@ -5843,15 +6069,19 @@ exit 1
             decoded.height(),
             record.trim()
         );
-        let painter = std::fs::read_to_string(
-            stub.provider_dir(&theme)
-                .join(wallpaper_authority::PAINTER_VIDEO_FILE),
-        )
-        .expect("the absolute painter video record must stay unchanged");
+        let painter = stub
+            .provider_dir(&theme)
+            .join(wallpaper_authority::PAINTER_VIDEO_FILE);
         assert!(
-            painter.contains(&video_str),
-            "the existing absolute video record must stay readable, got: {painter}"
+            !painter.exists(),
+            "the absolute painter video record must not survive a save: the packaged video travels instead"
         );
+        let packaged = std::fs::read_to_string(
+            stub.provider_dir(&theme)
+                .join(crate::theme_media::VIDEO_RECORD_FILE),
+        )
+        .expect("a video save must record the packaged video");
+        assert_eq!(packaged.trim(), "video=media/background.mp4");
     }
 
     #[test]
@@ -5955,20 +6185,19 @@ exit 1
             "a re-save with no poster source must remove every media/poster.* file, found {strays:?}"
         );
 
-        // Apply must now fall back to the absolute wallpaper.txt record the
-        // first save left in place (still a real path here).
-        assert_eq!(
-            stub.wallpaper_txt(&theme).as_deref(),
-            Some(src_str.as_str()),
-            "the absolute wallpaper record must survive the failed re-package"
+        // The absolute record does not survive a save either (U2): with no
+        // packaged poster left the theme owns no background, so apply must
+        // paint nothing instead of resurrecting a stale image.
+        assert!(
+            stub.wallpaper_txt(&theme).is_none(),
+            "the absolute wallpaper record must not survive a save"
         );
         let res = NoctaliaV5Provider::new().apply(theme.path());
         assert!(res.is_ok(), "apply must succeed: {res:?}");
         let log = stub.logged();
-        let expected = format!("msg wallpaper-set  {src_str}");
         assert!(
-            log.lines().any(|l| l == expected),
-            "apply must fall back to the absolute wallpaper.txt value, log was:\n{log}"
+            !log.contains("wallpaper-set"),
+            "apply must not paint a background the theme no longer owns, log was:\n{log}"
         );
         assert!(
             !log.contains("media/poster"),
@@ -6065,14 +6294,12 @@ exit 1
             std::fs::read_to_string(stub.provider_dir(&theme).join(crate::theme_media::VIDEO_RECORD_FILE))
                 .expect("save must write the theme-relative video record");
         assert_eq!(record.trim(), "video=media/background.mp4");
-        let painter = std::fs::read_to_string(
-            stub.provider_dir(&theme)
-                .join(wallpaper_authority::PAINTER_VIDEO_FILE),
-        )
-        .expect("the absolute painter video record must stay unchanged");
         assert!(
-            painter.contains(&video_str),
-            "the existing absolute video record must stay readable, got: {painter}"
+            !stub
+                .provider_dir(&theme)
+                .join(wallpaper_authority::PAINTER_VIDEO_FILE)
+                .exists(),
+            "the absolute painter video record must not survive a save"
         );
     }
 
