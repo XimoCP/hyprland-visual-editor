@@ -3321,31 +3321,81 @@ fn mosaic_hero_centered_renders_with_pagination() {
     // Real page pipeline: MosaicPages → page_render → hero layout.
     let stage_w = 1920.0f32;
     let stage_h = 1080.0f32;
-    let pg = MosaicPages::new(count, stage_w, stage_h);
+    let mut pg = MosaicPages::new(count, stage_w, stage_h);
     assert!(pg.total_pages() >= 2, "12 themes must paginate (capacity {})", pg.capacity());
-    let (aspects, real_indices) = pg.page_render();
-    let (layout, tile_reals) = justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
-    let delays = mosaic_curtain_delays(&layout.tiles);
-    let tiles: Vec<crate::MosaicTileData> = layout
-        .tiles
-        .iter()
-        .zip(tile_reals.iter())
-        .zip(delays.iter())
-        .map(|((t, r), d)| crate::MosaicTileData {
-            x: t.x, y: t.y, w: t.w, h: t.h,
-            real_index: *r as i32,
-            delay_ms: *d as i32,
-        })
-        .collect();
-    win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles)));
-    win.set_gallery_mosaic_current_page(pg.current() as i32);
-    win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
-    win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
-        pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
-    )));
 
-    let snap = win.window().take_snapshot().expect("mosaic snapshot");
-    save_slice_png(snap, "mosaic_hero.png");
+    // Paint whatever page `pg` currently stands on. Shared by the two renders
+    // below so the baseline and the active-theme case go through the identical
+    // pipeline (page_render → hero layout → curtain delays → snapshot).
+    let render_page = |win: &crate::MainWindow, pg: &MosaicPages, name: &str| {
+        let (aspects, real_indices) = pg.page_render();
+        let (layout, tile_reals) = justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+        let delays = mosaic_curtain_delays(&layout.tiles);
+        let tiles: Vec<crate::MosaicTileData> = layout
+            .tiles
+            .iter()
+            .zip(tile_reals.iter())
+            .zip(delays.iter())
+            .map(|((t, r), d)| crate::MosaicTileData {
+                x: t.x, y: t.y, w: t.w, h: t.h,
+                real_index: *r as i32,
+                delay_ms: *d as i32,
+            })
+            .collect();
+        let tile_count = tiles.len();
+        win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles)));
+        win.set_gallery_mosaic_current_page(pg.current() as i32);
+        win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
+        win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
+            pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+        )));
+
+        eprintln!(
+            "[render] {name}: page {}/{} tiles={} aspects={} reals={:?}",
+            pg.current(),
+            pg.total_pages(),
+            tile_count,
+            aspects.len(),
+            tile_reals.iter().take(4).collect::<Vec<_>>()
+        );
+        assert!(
+            tile_count > 0,
+            "page {} of {} must render at least one tile ({name})",
+            pg.current(),
+            pg.total_pages()
+        );
+
+        focus_settle();
+        let snap = win.window().take_snapshot().expect("mosaic snapshot");
+        save_slice_png(snap, name);
+    };
+
+    render_page(&win, &pg, "mosaic_hero.png");
+
+    // The SAME page 2 with no active theme: R3's shape (its first theme leads).
+    // Same tiles, same layout — only the order differs, so the pair isolates
+    // the reorder from everything else the layout does.
+    assert!(pg.go_to(1), "page 2 exists");
+    render_page(&win, &pg, "mosaic_page2_first_of_page.png");
+
+    // R1 + R2 together, the state a theme apply actually produces: the active
+    // theme sits on a LATER page, so the Mosaic must open there with it as the
+    // centred hero. A render of page 1 here would show nothing about the
+    // change, so this artifact is the one that has to be read.
+    pg.set_active_theme(Some(count - 1));
+    let moved = pg.open_on_active();
+    assert_eq!(
+        pg.current(),
+        pg.page_of(count - 1).expect("the active theme has a page"),
+        "the mosaic must stand on the page that holds the active theme (moved={moved})"
+    );
+    assert!(
+        pg.current() > 0,
+        "the active theme is on a later page (page {} of {})",
+        pg.current(),
+        pg.total_pages()
+    );
+    render_page(&win, &pg, "mosaic_hero_active_theme.png");
 }
 
 fn bright_mosaic_thumb() -> slint::Image {
