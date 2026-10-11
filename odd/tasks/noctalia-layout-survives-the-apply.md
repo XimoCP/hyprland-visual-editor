@@ -3,8 +3,14 @@
 **Locator**: `odd/tasks/noctalia-layout-survives-the-apply.md`
 **Engram mirror**: topic `odd/noctalia-layout-survives-the-apply/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: IN PROGRESS — decided by the keeper 2026-10-11 ("el tema de noctalia que lo haga un subagente
-gratuito… mimo 2.6 free"), right after the Mosaic topic was closed as finished.
+**Status**: DELIVERED, INSTALLED and PUSHED — the keeper's binary is `ada51b11d226cc45e7b7fc8a2e5cbb46`
+(1611 tests green) and the branch is in sync with `origin/hve2-visual-rewrite` at `e45d1cf`.
+Open: U4 (the keeper's live look) and the THREE REGISTERED RESIDUES (e), (f) and (g) in "Stated limits"
+— the keeper decided 2026-10-12 to leave them registered and fix them next, in a FRESH SESSION
+("lo arreglamos ahora mismo pero con una ventana de contexto limpia"). This file is the handoff.
+**Next round, in this order**: (e) a FAILED apply must not cancel its predecessor's repair without a
+replacement worker; (f) the repair's temporary sibling name must be unique per worker; (g) the
+post-repair re-check must re-test the generation before logging anything.
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~120–220 authored changed lines → single PR.
 **Route**: delegated writer (`src/providers/noctalia.rs`), parent verification including the keeper's live look.
