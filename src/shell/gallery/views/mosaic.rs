@@ -2601,4 +2601,188 @@ mod mosaic_elastic_tests {
         pages.set_cursor_theme(None);
         assert_eq!(pages.anchor_cursor(&reals2), None);
     }
+
+    // ── Structural helpers for the acceptance sweep ──────────────────
+
+    fn band_h() -> f32 {
+        STAGE_H / MOSAIC_BAND_HEIGHT_DIVISOR
+    }
+
+    fn th_h() -> f32 {
+        (band_h() - (MOSAIC_ROW_COUNT as f32 - 1.0) * MOSAIC_GUTTER_PX) / MOSAIC_ROW_COUNT as f32
+    }
+
+    /// No overlap, band vertically filled, heights are exactly `th` or `band`,
+    /// and every row (top / bottom, the hero counted in both) tiles the usable
+    /// width with gutters only. One tile is exempt from the row check.
+    fn assert_band_partition(layout: &MosaicLayout, n: usize) {
+        let g = MOSAIC_GUTTER_PX;
+        let band = band_h();
+        let th = th_h();
+        let usable = usable_w();
+        let ox = layout.offset_x;
+        let oy = layout.offset_y;
+        let local = |i: usize| -> (f32, f32, f32, f32) {
+            let t = layout.tiles[i];
+            (t.x - ox, t.y - oy, t.w, t.h)
+        };
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (xi, yi, wi, hi) = local(i);
+                let (xj, yj, wj, hj) = local(j);
+                let ox_overlap = (xi + wi).min(xj + wj) - xi.max(xj);
+                let oy_overlap = (yi + hi).min(yj + hj) - yi.max(yj);
+                assert!(
+                    ox_overlap <= 1e-2 || oy_overlap <= 1e-2,
+                    "n={n}: tiles {i} and {j} overlap"
+                );
+            }
+        }
+        let top = (0..n).map(|i| local(i).1).fold(f32::MAX, f32::min);
+        let bottom = (0..n).map(|i| local(i).1 + local(i).3).fold(f32::MIN, f32::max);
+        assert!((top - 0.0).abs() < 1e-2, "n={n}: band top {top} must be 0");
+        assert!((bottom - band).abs() < 1e-2, "n={n}: band bottom {bottom} must be {band}");
+        for i in 0..n {
+            let h = local(i).3;
+            assert!(
+                (h - th).abs() < 1e-2 || (h - band).abs() < 1e-2,
+                "n={n}: tile {i} height {h} is neither th {th} nor band {band}"
+            );
+        }
+        if n == 1 {
+            return;
+        }
+        // Rows: a tile belongs to a row band when its y-range overlaps it, so a
+        // full-height tile (and the hero) counts in BOTH rows.
+        for row_y in [0.0f32, th + g] {
+            let mut spans: Vec<(f32, f32)> = Vec::new();
+            for i in 0..n {
+                let (x, y, w, h) = local(i);
+                if y < row_y + th - 1e-2 && y + h > row_y + 1e-2 {
+                    spans.push((x, x + w));
+                }
+            }
+            spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            assert!(
+                (spans[0].0 - 0.0).abs() < 0.5,
+                "n={n}: row {row_y} not flush left: {:?}",
+                spans[0]
+            );
+            assert!(
+                (spans.last().unwrap().1 - usable).abs() < 0.5,
+                "n={n}: row {row_y} not flush right: {:?}",
+                spans.last()
+            );
+            for pair in spans.windows(2) {
+                let gap = pair[1].0 - pair[0].1;
+                assert!(
+                    (gap - g).abs() < 0.5,
+                    "n={n}: row {row_y} gap {gap} is not the gutter {g}: {pair:?}"
+                );
+            }
+        }
+    }
+
+    fn local_hero_centre(layout: &MosaicLayout) -> f32 {
+        let h = layout.tiles[0];
+        h.x - layout.offset_x + h.w / 2.0
+    }
+
+    #[test]
+    fn elastic_sweep_one_to_twenty_is_distinct_and_fills_the_band() {
+        for n in 1..=20 {
+            let (layout, reals) = hero_layout(n);
+            assert_eq!(layout.tiles.len(), n, "n={n}: exactly one tile per theme");
+            assert_eq!(reals, (0..n).collect::<Vec<_>>(), "n={n}: identity real mapping");
+            let mut distinct = reals.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            assert_eq!(distinct.len(), n, "n={n}: no repeated theme");
+            assert_band_partition(&layout, n);
+            if n >= 3 {
+                assert!(
+                    (local_hero_centre(&layout) - usable_w() / 2.0).abs() < 2.0,
+                    "n={n}: hero must be centred"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn elastic_small_counts_are_centred_with_no_hole() {
+        for n in 1..=3 {
+            let (layout, reals) = hero_layout(n);
+            assert_eq!(layout.tiles.len(), n);
+            assert_eq!(reals, (0..n).collect::<Vec<_>>());
+            assert_band_partition(&layout, n);
+            let left = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+            let right = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+            let centre = (left + right) / 2.0;
+            assert!(
+                (centre - STAGE_W / 2.0).abs() < 2.0,
+                "n={n}: composition centre {centre} must be the stage centre"
+            );
+        }
+    }
+
+    #[test]
+    fn elastic_pages_cap_at_ten_and_page_two_mirrors_page_one() {
+        assert_eq!(MOSAIC_PAGE_MAX_TILES, 10, "the keeper's cap is 10");
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        assert!(cap <= MOSAIC_PAGE_MAX_TILES, "capacity {cap} exceeds the cap");
+        assert_eq!(cap, 10, "the keeper's stage holds the full cap of 10");
+        // 7 themes → one page, 7 distinct, hero centred (the keeper's case).
+        let seven = MosaicPages::new(7, STAGE_W, STAGE_H);
+        assert_eq!(seven.total_pages(), 1);
+        let (a7, r7) = seven.page_render();
+        assert_eq!(r7, (0..7).collect::<Vec<_>>());
+        let (l7, _) = justified_hero_layout(&a7, &r7, STAGE_W, STAGE_H);
+        assert_eq!(l7.tiles.len(), 7, "7 themes: 7 distinct tiles");
+        assert!(
+            (local_hero_centre(&l7) - usable_w() / 2.0).abs() < 2.0,
+            "7 themes: hero centred"
+        );
+        // 11 themes → page 1 = 10 distinct; page 2 = 1, centred like page 1.
+        let mut eleven = MosaicPages::new(11, STAGE_W, STAGE_H);
+        assert_eq!(eleven.total_pages(), 2);
+        let (a1, r1) = eleven.page_render();
+        assert_eq!(r1, (0..10).collect::<Vec<_>>(), "page 1: 10 distinct themes");
+        let (l1, _) = justified_hero_layout(&a1, &r1, STAGE_W, STAGE_H);
+        assert!(
+            (local_hero_centre(&l1) - usable_w() / 2.0).abs() < 2.0,
+            "page 1: hero centred"
+        );
+        eleven.step(1);
+        let (a2, r2) = eleven.page_render();
+        assert_eq!(r2, vec![10], "page 2: the single remaining theme");
+        let (l2, _) = justified_hero_layout(&a2, &r2, STAGE_W, STAGE_H);
+        assert_eq!(l2.tiles.len(), 1);
+        assert!(
+            (local_hero_centre(&l2) - usable_w() / 2.0).abs() < 2.0,
+            "page 2 must be arranged like page 1 (its first theme centred)"
+        );
+    }
+
+    #[test]
+    fn elastic_capacity_floor_keeps_tiles_at_the_minimum() {
+        // Every page slice up to the capacity keeps every tile at or above the
+        // minimum edge.
+        let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
+        for n in 1..=cap {
+            let (layout, _) = hero_layout(n);
+            for t in &layout.tiles {
+                assert!(
+                    t.w.min(t.h) >= MOSAIC_MIN_TILE_PX - 1e-3,
+                    "n={n}: tile {t:?} fell below the minimum {MOSAIC_MIN_TILE_PX}"
+                );
+            }
+        }
+        // A small stage binds the floor, so the capacity drops below the cap.
+        let small = mosaic_page_capacity(800.0, 600.0);
+        assert!(
+            small < MOSAIC_PAGE_MAX_TILES,
+            "800x600 must hold fewer than the cap, got {small}"
+        );
+        assert!(small >= 1, "a valid stage always hosts at least one tile");
+    }
 }
