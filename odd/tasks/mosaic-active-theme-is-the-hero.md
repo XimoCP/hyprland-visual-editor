@@ -126,8 +126,7 @@ the tested stages only.
   (`914c9a3`)
 - [x] **U7** — re-anchor the page only when the PARTITION moved (D2 / criterion 8).
   (`977c5ca`)
-- [ ] **U8** — the tests for U6/U7, and the parent's render read of the stable composition.
-  The tests ship inside `914c9a3` / `977c5ca` (one work unit each, tests with their code);
+- [x] **U8** — the tests for U6/U7, and the parent's render read of the stable composition. (`86b32b9`, installed `f5af9399…`)  The tests ship inside `914c9a3` / `977c5ca` (one work unit each, tests with their code);
   only the parent's render read of the stable composition is still open.
 
 ## Progress log
@@ -174,6 +173,38 @@ the tested stages only.
     relaunched with the window mapped at `11:53` local for the keeper's live look.
   - Cross-model verification (a different model from the writer's) launched on the six commits;
     its verdict is recorded separately when it lands.
+- 2026-10-11 (writer, U6/U7): the two post-delivery defects fixed.
+  - `914c9a3` U6 — `page_render` builds `aspects` from the page's NATURAL order (`start..end`) and
+    reorders only `reals`: `aspects[i]` describes SLOT i, `reals[i]` names the theme painted there.
+    RED observed first, for the right reason: with theme 1 active the aspects read `[0.72, 1.0, 1.95]`
+    against the natural `[1.0, 0.72, 1.95]`. The doc comments claiming "each aspect travels with its
+    theme" are corrected. `mosaic_page_capacity` needed no change and is now MORE accurate: it walks
+    the 10 phase windows over positions, which is literally what the layout receives, so the 96 px
+    floor no longer depends on the active theme and the verifier's "unmodeled permutation" caveat closes.
+  - `977c5ca` U7 — the policy moved into `MosaicPages::sync(...)`: recompute on any stage change (the
+    geometry depends on it) but re-anchor only when the PARTITION changed (capacity or page count).
+    RED observed first: "an unchanged partition must NOT re-anchor" with the page moving 2 → 1.
+  - `cargo test` 1557 passed / 0 failed (+7); `cargo check --all-targets` clean.
+  - Recorded consequence: a library change that keeps the capacity AND the page count no longer
+    re-anchors (23 → 24 themes). That is what criterion 8 asks for; re-anchoring when the keeper saves
+    a theme would be a separate product decision.
+- 2026-10-11 (parent, U8): render read of the STABLE composition, then installed.
+  - `86b32b9` adds the pixel-geometry assertion to `mosaic_hero_centered_renders_with_pagination`: the
+    two page-2 renders (with and without the active theme) must have EQUAL rects, tile-by-tile, and
+    DIFFERENT pictures. That is criterion 7 at the render level, and it is the check the D1 defect failed.
+  - The same commit made the artifacts honest: one `focus_settle()` (320 ms) snapshotted the tiles
+    MID-REVEAL — the curtain ramps over 600 ms and each tile reveals over 300 ms after a 50 ms-per-column
+    stagger — so the painted width was the clip, not the tile (page-2 tiles measured 464 and 416 px wide
+    instead of 540 and 601). Four settles (~1280 ms) settle the page.
+  - Measured from the settled PNGs at row y=500 (the parent's own scan, no eyeballing): page 2 without an
+    active theme and page 2 with theme 11 active both show tiles at x=77 width 601, x=690 width 540,
+    x=1242 width 601 — identical, with the pictures `[9,10,11]` vs `[11,9,10]`. The hero is CENTRED with
+    the two full-height side tiles flanking it; that is the pre-change composition, restored exactly.
+  - `cargo test` after the U8 test change: 1557 passed, 0 failed. Release built, previous binary backed up
+    to `~/.local/bin/hve.pre-hero-shape-fix-2026-10-11` (`6ace583e…`), installed `f5af9399…`, relaunched
+    with the window mapped at `12:59` local for the keeper's live look.
+  - Cross-model verification of the correction (different model from the writer's) launched; recorded
+    separately when it lands.
 - 2026-10-11 (delegated writer, U6–U8 correction): both confirmed defects fixed on
   `hve2-visual-rewrite`, strict TDD. `cargo test` → 1557 passed, 0 failed;
   `cargo check --all-targets` → clean.
