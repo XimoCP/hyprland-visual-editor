@@ -3,9 +3,9 @@
 **Locator**: `odd/tasks/preset-identity-recorded-and-name-tolerant.md`
 **Engram mirror**: topic `odd/preset-identity-recorded-and-name-tolerant/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: QUEUED — approved by the keeper 2026-10-11 ("cuando terminemos lo que se está haciendo lanzas
-a continuación esto que hemos hablado"). Starts only after the active-theme-hero writer releases the tree:
-both fixes touch `src/main.rs`, which that writer holds.
+**Status**: IN PROGRESS — started 2026-10-11 16:02, after the active-theme-hero work closed and released
+`src/main.rs`. The keeper authorized it earlier the same day ("cuando terminemos lo que se está haciendo
+lanzas a continuación esto que hemos hablado").
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~120–200 authored changed lines → single PR.
 **Route**: delegated writer (`src/main.rs`, `src/presets.rs`, `src/theme_presets.rs`), parent verification
