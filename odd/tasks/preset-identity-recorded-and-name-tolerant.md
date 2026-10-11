@@ -3,8 +3,9 @@
 **Locator**: `odd/tasks/preset-identity-recorded-and-name-tolerant.md`
 **Engram mirror**: topic `odd/preset-identity-recorded-and-name-tolerant/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: U1–U3 DONE pending review; **U5–U9 (round 2, the corrections the independent verification found) DONE**, nothing
-pushed. The parent's U4 (release build, backup + install `~/.local/bin/hve`, relaunch, the keeper's live look) is
+**Status**: U1–U3 DONE pending review; **U5–U9 (round 2) DONE**; **U10–U12 (round 3, the second
+verification's LOW residuals) DONE**, nothing pushed. The parent's U4 (release build, backup + install
+`~/.local/bin/hve`, relaunch, the keeper's live look) is
 outstanding. Was IN PROGRESS from 2026-10-11 16:02, after the
 active-theme-hero work closed and released `src/main.rs`. The keeper authorized it earlier the same day ("cuando
 terminemos lo que se está haciendo lanzas a continuación esto que hemos hablado").
@@ -102,16 +103,80 @@ REGRESSION U1 itself introduced — plus small ones. The scope is to fix them, n
 6. A failed live apply leaves the config on the previous preset, and a config write failure is logged.
 7. After a save the Borders marker marks the card that was just saved, not the previously active one.
 
+## Corrections — round 3 (the second verification's LOW residuals)
+
+The independent verification of round 2 returned `verified_with_findings`: `verified`, with four LOW
+residuals. Three are closed here; the fourth is registered below as pre-existing residue and left alone.
+The scope is to close them, not to redesign anything.
+
+- **U10 — LOW**: `PresetStore::save` ALWAYS writes `<name>.lua`, so a name typed as `Space.lua` wrote
+  `Space.lua.lua`. The canonical re-apply that follows resolves the OLD `Space.lua`, so the preset just saved
+  was never applied and nothing warned — `border.sh` / `apply_animation.sh` exit 0 on a miss, so the shell
+  treats "not found" as success with a safe fallback, and the record-only-on-success guard cannot bite
+  because a miss is not a failure. The store now REFUSES a typed name that already ends in a container
+  extension (`lua`, `frag`), names the stem to type instead, and the pane shows it in its existing save-error
+  field. Nothing is written and nothing is recorded. The legacy record extensions (`json`, `ron`) are
+  deliberately not refused: `canonical_preset_file` honours them verbatim on the read side by design.
+- **U11 — LOW**: the Borders save refreshed `user_border_preset_names` in EVERY branch, while the marker
+  re-derive U8 added lived only in the live-apply SUCCESS branch. A failed apply therefore left a refreshed
+  list with an untouched index: since `PresetStore::list` sorts bytewise, a newly saved stem can sort before
+  the card the index points at, and the board then highlighted a preset that is not active until the section
+  was re-entered — the U8 defect surviving in a rarer branch. The re-derive now runs after the branch, from
+  the value the config holds once the save is done, in both tune panes. Motion had no re-derive at all in any
+  branch and gained the twin (`reseed_active_anim_index`, resolving against the panel's combined list).
+- **U12 — LOW**: the U8 fixture stated an order the real list cannot produce. It claimed the refreshed user
+  list keeps `aa_first` first after saving `Space`, but `PresetStore::list` sorts the stems bytewise, so
+  `Space` (0x53) leads `aa_first` (0x61). The demonstrated scenario is real; the fixture now uses a genuinely
+  sorted pair and covers both movements — a save that pushes the marker forward and one that pulls it back.
+
+### Round-3 acceptance
+
+1. `cargo test` green, `cargo check --all-targets` clean.
+2. Typing `Space.lua` into a tune pane's save form refuses the save, shows the error in the pane, writes NO
+   file, records NOTHING and leaves the live state untouched; typing `Space` still saves exactly as today.
+3. A legacy `*.json` / `*.ron` record still resolves and still bundles.
+4. A save whose live apply FAILED leaves the marker on the preset that is still active, in both tune panes.
+5. After a save, the marker follows the card just saved whether that moves the index forward or back.
+
 ## Recorded, NOT fixed (out of this round's scope)
 
-- The Motion pane has the U8 twin: `on_panel_save_animation_preset` refreshes `user_animation_preset_names`
-  without re-deriving `active_anim_index`, and no animation equivalent of `reseed_active_border_index` exists.
+- The Motion pane HAD the U8 twin: `on_panel_save_animation_preset` refreshed `user_animation_preset_names`
+  without re-deriving `active_anim_index`, and no animation equivalent of `reseed_active_border_index`
+  existed. Closed in round 3 by U11, which added `reseed_active_anim_index` and the re-derive in both
+  branches.
+- `PresetStore::rename` carries the U10 trap: it appends `.lua` to the TYPED new name, so a rename to
+  `New.lua` writes `New.lua.lua` — verified empirically (`rename("old_preset", "New.lua")` → `Ok(())`, and
+  the only file in the store is `New.lua.lua`). U10 was scoped to `save` and the guard was NOT extended to
+  `rename` unasked; the refusal belongs to the same rule when the rename form is next touched.
 - The two card-click handlers still persist with `let _ = st.cfg().save()` — the same swallowed-error shape U7
   fixes, but U7 names only the two save handlers.
 - A preset whose own NAME ends in a container extension (`keeper.json`, file `keeper.json.lua`) is read by the
-  pure canonical rule as a legacy file record. The rule decides from the name alone because matching and the
-  bundle plan are pure and have no store to probe; the corner is documented in the rule's comment, and only a
-  typed name can take that shape.
+  pure canonical rule as a legacy file record, and `save("keeper.json")` writes `keeper.json.lua` while
+  `canonical_preset_file("keeper.json")` stays verbatim — so the record names no file. U10 does not refuse
+  these names on purpose: the legacy record shapes are honoured verbatim on the read side by design, and the
+  corner is documented in the rule's comment. Only a typed name can take that shape.
+
+### Pre-existing residue — the RAW recorded value on the apply paths (registered, NOT fixed)
+
+Not introduced and not worsened by rounds 1–3. Two apply paths hand the recorded preset name to the engine
+WITHOUT canonicalising it, unlike the marker (`preset_files_match`) and the bundler (`plan_bundle`):
+
+- `src/providers/hve_presets.rs:196-204` (border) and `:185-195` (animation): a theme apply runs
+  `let _ = self.engine.apply_border(v)` / `apply_animation(v)` and SWALLOWS the result, then copies the raw
+  `v` into the config.
+- `src/main.rs:134-137` (`teardown_border_draft`): re-applies `st.cfg().active_border_file` raw; the error IS
+  logged and surfaced as shell status text, so only the raw value is shared with the provider path.
+
+**Trigger**: a theme whose record is an interior-dot stem — `my.preset`, `19_stylized2.5D`, the shape a save
+BEFORE U6 could write, or the shape of the shipped `19_stylized2.5D` if a theme record drops its extension.
+The tolerant marker canonicalises it to `my.preset.lua`, resolves it against the scanned list and marks the
+card, and `plan_bundle` canonicalises it so the `.lua` ships in the package — while the live apply probes the
+raw `my.preset`, which the shell resolver does not find (verified in U6: `my.preset` → NOT FOUND,
+`my.preset.lua` → found). A theme whose record holds the canonical `<name>.lua`, or a bare stem with no
+interior dot (`Space`), is unaffected: both resolve in the shell resolver.
+
+Left alone because fixing it means changing two apply paths outside this round's authorized files, and
+because the residue needs a record shape the current save can no longer produce.
 
 ## Out of scope
 
@@ -155,6 +220,15 @@ REGRESSION U1 itself introduced — plus small ones. The scope is to fix them, n
 - [x] **U7** — apply before recording, and the persist error is logged instead of swallowed. Commit `a585f8a`.
 - [x] **U8** — the Borders save re-derives the pane marker from the recorded value. Commit `a585f8a`.
 - [x] **U9** — the lost newline in the traversal save test's signature. Commit `b0671f5`.
+
+### Round 3 (the second verification's LOW residuals)
+
+- [x] **U10** — a typed name that already carries a preset file extension is refused instead of saved as
+  `<name>.lua.lua`. Commit `0ba3336`.
+- [x] **U11** — the pane marker is re-derived in EVERY save branch, in both tune panes, with the Motion twin
+  added (`reseed_active_anim_index`). Commit `4780b33`.
+- [x] **U12** — the U8 fixture states the bytewise order `PresetStore::list` really produces, and covers the
+  marker moving forward and back. Commit `bab5e21`.
 
 ## Progress log
 
@@ -252,3 +326,48 @@ REGRESSION U1 itself introduced — plus small ones. The scope is to fix them, n
   worktree of `097b603` against the tree after U9: `src/main.rs` 207 → 202, `src/preset_store.rs` 33 → 32 (the
   U9 hunk, gone), `src/presets.rs` 7 → 7, `src/theme_presets.rs` 1 → 1, `src/shell/ui_tests.rs` 372 → 372 — no
   new fmt noise, one pre-existing defect fixed.
+- 2026-10-11 (**round 3 start**): the second verification's four LOW residuals queued as U10–U12 plus the raw
+  recorded value as registered residue. The keeper's theme and preset data still untouched (no migration).
+- 2026-10-11 (**U10**, commit `0ba3336`): RED observed first —
+  `save_refuses_a_name_that_already_carries_a_preset_file_extension` failed with
+  "a name already carrying `.lua` must be refused, got: Ok(())": the store really did write `Space.lua.lua`
+  and leave the existing `Space.lua` alone, so the preset just saved was unreachable and the canonical
+  re-apply went to the OLD file, silently. Landed `PRESET_CONTAINER_EXTENSIONS` (`lua`, `frag`, deliberately
+  NOT the legacy record shapes), one shared `preset_extension` reader, and
+  `refuse_a_name_that_already_carries_the_extension` called by `save` after `validate_name` — the refusal
+  names the stem to type instead and reaches the pane through the handler's existing `if let Err(e) = result`
+  → `set_border_save_error` / `set_animation_save_error`. Because `save` returns `Err`, the whole
+  `if r.is_ok()` block is skipped: no file, no record, no apply. Extra pin
+  `both_tune_pane_save_handlers_gate_the_record_on_the_store_write_and_show_the_error` (the store write
+  precedes the record, which it already did — the missing piece was the refusal itself, kept as a regression
+  guard). Regression guard `save_still_accepts_a_stem_and_a_legacy_record_name`: `Space`, `my.preset` and
+  `glow.json` still reach the store. `cargo test` → 1587 passed / 0 failed.
+- 2026-10-11 (**U11**, commit `4780b33`): RED observed first — `the_motion_save_handler_re_derives_the_marker_
+  in_every_branch` failed with "the Motion save must re-derive its marker from the recorded value", and
+  `the_border_save_handler_re_derives_the_marker_outside_the_success_branch` failed with "the marker must be
+  re-derived in EVERY branch … (re-derive at indent 24, failure branch at 20)" — the nested call it exists to
+  catch. The two behaviour tests failed to COMPILE first (`cannot find function reseed_active_anim_index`).
+  Landed: both save handlers read the value the config holds once the save is done and re-derive AFTER the
+  apply/record branch (Borders keeps `reseed_active_border_index(&w, &recorded)`, so the U8 pin still holds),
+  and `reseed_active_anim_index` resolves the recorded value against the Motion panel's combined list
+  (`anim-files` + `user-animation-preset-names`; `PanelRoot.motion-list-len` and its card click use the same
+  index space). New pins use `indent_of` (leading whitespace) — the only honest way to pin "sibling of the
+  branch, not nested in it" for a handler no test can invoke. Decision: the Motion twin IS the cheap version
+  of the same fix here (the helper mirrors a tested one and the index space is confirmed by the panel), so it
+  is done rather than re-registered. `cargo test` → 1591 passed / 0 failed. `cargo fmt --check` re-measured per
+  file against a detached worktree of `6f8ff4c`, so the new pins add NO fmt noise: `src/main.rs` 202 → 202,
+  `src/preset_store.rs` 32 → 32, `src/presets.rs` 7 → 7, `src/shell/ui_tests.rs` 372 → 372 (repo-wide
+  1544 → 1544); the three hunks the first draft of the pins produced were reworded/re-broken to rustfmt's own
+  preferred shape instead of reformatting anything else.
+- 2026-10-11 (**U12**, commit `bab5e21`): the fixture's stated order was impossible, so the RED was an
+  arithmetic one: the first attempt at the second save used a stem sorting BETWEEN the two, and the assertion
+  caught that the card keeps the index the previous save left ("re-deriving must follow the card just saved,
+  not the index the previous save left": `left: 3, right: 2`). The fixture now saves `zz_saved` (marker
+  FORWARD, 2 → 3) and then `Space` (marker BACK, 3 → 2), and the bytewise order is pinned against the real
+  store by `list_sorts_the_stems_bytewise_so_an_uppercase_stem_leads` (`Space`, `aa_first`, `ab_saved`,
+  `zz_saved`). `cargo test` → 1592 passed / 0 failed.
+- 2026-10-11 (**U10–U12 closed for review**, nothing pushed): `cargo test` → 1592 passed / 0 failed;
+  `cargo check --all-targets` → clean. Files touched in round 3: `src/preset_store.rs`, `src/main.rs`,
+  `src/presets.rs`, `src/shell/ui_tests.rs`. No dependency added, no theme or preset data rewritten, no
+  migration, no release build, no install. U4 still belongs to the parent. The U11 and U12 commit SHAs were
+  rewritten by the `fixup!` that folded the fmt cleanup into U11 (nothing is pushed).
