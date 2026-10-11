@@ -116,6 +116,18 @@ while it was healthy, so this is a loss, not a reload that was ignored.
 - [x] **U7** — correction of U2's placement: verify at the END of the apply, after the last
   write/reload it performs; bounded (verify once, repair at most once); cost stated.
 - [x] **U8** — the tests the refutation demanded (a)–(e), on top of the kept stub harness.
+- [x] **U9** — correction of U7's regression: the verify + bounded repair moved OFF the
+  apply's critical path onto a detached worker (the apply runs on the UI thread; the
+  settle froze the transition — the keeper felt it live). Behaviour intact: same
+  predicate, same surgical repair, same bounded-once rule; only WHERE the wait and the
+  work happen changed.
+- [x] **U10** — the repair restores EVERY entry of a repeated `[[array-of-tables]]`
+  block (it restored only the first, leaving `group:g2` dangling while the check
+  reported `[]`), and no longer claims success on a half-restored layout.
+- [x] **U11** — the small ones: the entry-loss detection limit documented next to the
+  existing stated limits (presence semantics kept, no predicate redesign), and the
+  format-note baseline corrected in the U8 entry below (measured: the baseline is 64,
+  not 67; 67 is the REFUTED delivery's count).
 
 ## The refutation (verified against the keeper's real files, 2026-10-11 — recorded as fact)
 
@@ -216,7 +228,50 @@ while it was healthy, so this is a loss, not a reload that was ignored.
   without paying it — deleting the short-circuit fails the test on elapsed time);
   (e) `apply_repair_is_bounded_when_the_rewrite_does_not_stick` (one repair attempt even when every reload
   re-wipes). Final checks on the correction tree: `cargo test` 1606 passed / 0 failed; `cargo check --all-targets`
-  clean. `rustfmt --check` chunk count on `noctalia.rs` back to the pre-task baseline (67 — repo-wide fmt
-  uncleanliness is pre-existing and out of scope). The keeper's live Noctalia config, theme packages and
+  clean. ~~`rustfmt --check` chunk count on `noctalia.rs` back to the pre-task baseline (67 — repo-wide fmt
+  uncleanliness is pre-existing and out of scope).~~ **CORRECTED by U11 (2026-10-11, measured with the same
+  rustfmt): the pre-task baseline `8e52f99` is 64 chunks, not 67; 67 is the count of the REFUTED delivery
+  (`198a2bc`, +3 added with the U2/U3 guard code — `d8de95e` still measured 64). What U5–U8 added: nothing to
+  the count (64 -> 67 happened in the refuted commit; every correction commit held 67). What they did NOT do:
+  bring it back to the true baseline of 64 — the refuted delivery's 3 chunks were never removed. Repo-wide fmt
+  uncleanliness remains pre-existing and out of scope; this round (U9–U11) re-measured and added zero new
+  chunks (67 before, 67 after).** The keeper's live Noctalia config, theme packages and
   `sddm-watch.sh` were never touched; the migrated-pair fixtures were condensed from READ-ONLY measurements.
   Commits `243a753`, `deb95d4`, `b10bfae`.
+- 2026-10-11 (delegated writer, second correction round): **U9 done** — the keeper felt U7's regression live
+  ("ahora me parece que algo rasca y antes era todo fluido"): the apply runs SYNCHRONOUSLY ON THE UI THREAD
+  (Slint callback -> gallery slot `apply_theme` -> theme manager `apply` -> provider `apply`, no spawn on that
+  path), so `verify_and_repair_layout`'s two `LAYOUT_SETTLE` sleeps (1.5 s each, up to ~3 s) froze the
+  transition mid-flight — the transition's own cadence was unchanged (0.50 + 0.95 + 0.40 = 1.85 s) while the
+  wall-clock from Noctalia's config reload to the visible wallpaper grew by ~1 s. The verify + bounded repair
+  now runs on a DETACHED worker (`spawn_layout_verify_and_repair`, spawned as the apply's last step) — the
+  established idiom of the off-thread colour re-assert, same spawn discipline (`Builder::spawn`, guard built in
+  the parent, worker-active counter the `LayoutStub` harness now waits on exactly like `ColorStub` waits on the
+  re-assert counter). The predicate, the surgical repair and the bounded-once rule are UNCHANGED; only WHERE
+  the wait and the work happen moved. RED observed (`cargo test apply_returns_without_waiting_...`, pre-
+  implementation): FAILED with "the apply must return without waiting for the layout settle ... but it took
+  2.127087703s" (settle override 1000 ms, threshold 500 ms) — the sync apply paid both settles. After the
+  spawn: apply returns in ~50 ms and the detached worker still detects and repairs the wipe (reloads 2, layout
+  in force — `stub.wait_for_verify()` pins the worker's final state; every pre-existing layout test gained the
+  same wait). Commit `7a6f1f5`.
+- 2026-10-11 (delegated writer, second correction round): **U10 done** — verified against the keeper's real
+  files: a whole-layout wipe left `bar.barra_lateral.capsule_group` restored as 1 of 2 entries while
+  `center = [ "group:g1", "ram", "group:g2" ]` still referenced the missing `group:g2`, and
+  `missing_theme_layout` then reported `[]` — the apply logged success on a HALF-restored layout (JoKer, Night
+  and Work carry two groups each; Space one, so it never showed there). `restore_missing_layout_sections`
+  captured only the FIRST block per missing name (`!emitted.contains`); it now takes EVERY block whose header
+  names a missing section, in theme order — so everything the repair recognised as missing is fully back before
+  it writes and the check's success claim is honest. A plain `[section]` occurs once in valid TOML, so nothing
+  changes for it. RED observed (`cargo test repair_restores_every_entry_...`, pre-implementation): FAILED with
+  "both array-of-tables entries must land, not just the first — left: 1, right: 2". After the fix: both entries
+  land, the check reports in force, and a second repair finds nothing to rewrite (bounded, idempotent).
+  Commit `9835101`.
+- 2026-10-11 (delegated writer, second correction round): **U11 done** — (a) the entry-loss limit documented
+  next to the existing stated limit in `missing_theme_layout`'s doc: losing ONE of several entries of a
+  repeated `[[array-of-tables]]` block is invisible to the presence predicate (it counts the table NAME, not
+  its entries); stated by design, no predicate redesign — the repair restores entries only when the whole
+  table is gone (U10). (b) The format-note claim corrected in the U8 entry above with measurements: baseline
+  `8e52f99` = 64 chunks, `d8de95e` = 64, refuted `198a2bc` = 67 (+3), corrections held 67, this round 67 -> 67
+  (zero new chunks). Final checks on this round's tree: `cargo test` 1608 passed / 0 failed;
+  `cargo check --all-targets` clean. The keeper's live Noctalia config, theme packages and `sddm-watch.sh`
+  were never touched. Commits `7a6f1f5`, `9835101`, plus this docs commit.

@@ -329,6 +329,17 @@ fn layout_sections(raw: &str) -> Vec<String> {
 /// ratchet actually produces. A theme declaring no layout is vacuously
 /// in force (there is nothing to enforce).
 ///
+/// THE SECOND LIMIT, stated (U11): losing ONE of several entries of a
+/// repeated `[[array-of-tables]]` block is likewise INVISIBLE — presence
+/// semantics count the TABLE NAME, not its entries, and one surviving
+/// entry already declares the name. The repair (U10) restores every
+/// entry only when the whole table is missing; a live file that kept one
+/// entry of a multi-entry table reads as in force even if the theme
+/// declared two. Stated limit, by design: entry loss is not what the
+/// ratchet produces (it drops whole sections), and counting entries
+/// would move the predicate toward the textual equality the contract
+/// forbids.
+///
 /// The report names each missing section once, whole: `[section]`.
 fn missing_theme_layout(theme_settings: &str, live_settings: &str) -> Vec<String> {
     let live = layout_sections(live_settings);
