@@ -98,12 +98,35 @@ while it was healthy, so this is a loss, not a reload that was ignored.
 
 ## Work units
 
-- [ ] **U1** — the predicate and its documented scope.
-- [ ] **U2** — verify + bounded repair wired into the apply.
-- [ ] **U3** — the tests above.
+- [x] **U1** — the predicate and its documented scope.
+- [x] **U2** — verify + bounded repair wired into the apply.
+- [x] **U3** — the tests above.
 - [ ] **U4** — the parent's build, install, relaunch and the keeper's live look.
 
 ## Progress log
 
 - 2026-10-11: reported by the keeper, diagnosed to the mechanism above with evidence, and queued as contract
   the same day. NOT started.
+- 2026-10-11 (delegated writer): **U1 done** — `missing_theme_layout(theme, live)` in
+  `src/providers/noctalia.rs`, a pure line-based decision (no toml crate, module convention). Layout scope
+  chosen and documented: `[bar]`, `[bar.*]`, `[desktop_widgets]`, `[desktop_widgets.*]`, `[dock]`, `[dock.*]`,
+  `[shell]`, `[shell.*]` and `[widget.*]`; NOT layout (documented in `is_layout_section`): `[plugins]` (machine
+  state, owned by the D4 re-assert), `[hooks]`, `[wallpaper*]`, `[osd*]`, `config_version`. Key PRESENCE is
+  compared, never values, so Noctalia's legitimate rewrites pass. RED observed (TDD, `cargo test layout_predicate`):
+  with the decision stubbed to "in force", `layout_predicate_reports_wiped_sections_as_whole` and
+  `layout_predicate_reports_a_key_missing_from_a_surviving_section` failed with `left: []` — the stub certified a
+  wiped layout. One test correction during the unit: an emptied `widgets = []` still carries the key, so the
+  key-loss test removes the key line (presence semantics, per the documented choice). Commit `d8de95e`.
+- 2026-10-11 (delegated writer): **U2 + U3 done** — `verify_and_repair_layout` wired after step 0's reload and
+  the D4 plugin re-assert, same best-effort shape (warn-only, never fails the apply). One design addition beyond
+  the literal contract wording, flagged for the parent: a single bounded SETTLE (`LAYOUT_SETTLE`, 1500 ms,
+  `HVE_LAYOUT_SETTLE_MS` test override) before the verify, because the journal places Noctalia's re-persist
+  ~1 s after the reload — a verify at t+0 would only read HVE's own copy and certify a layout about to vanish.
+  A theme declaring no layout short-circuits before the settle (no cost for layoutless themes, keeps the existing
+  rotation-neutralize test fast). Repair is bounded by construction: copy + reload ONCE, then one re-check that
+  only LOGS whether it stuck. RED observed with the helper stubbed to a no-op: `apply_repairs_a_wiped_layout_exactly_once`
+  failed with `reloads: left 1, right 2`, and `apply_repair_is_bounded_when_the_rewrite_does_not_stick` failed the
+  same way — the repair never fired. After implementation: `cargo test` 1601 passed / 0 failed;
+  `cargo check --all-targets` clean, no warnings. Commit `198a2bc`. Tests use a new `LayoutStub` (stub `noctalia`
+  on PATH whose `config-reload` wipes the live file: never / first / always) — the keeper's live config, theme
+  packages and `sddm-watch.sh` were never touched.
