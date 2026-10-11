@@ -70,8 +70,8 @@ stage) and RE-ANCHORS the current page onto the active theme's page when **the P
 the LIBRARY changed**:
 
 - **the PARTITION moved** — the capacity or the page count before vs after differ. That covers a
-  repartitioning stage change (including the hidden → visible open, whose first capacity was
-  computed on the small hidden stage) and a library change that repaginates.
+  repartitioning stage change and the gallery open (the model is constructed degenerate with capacity
+  0, so the first valid capacity is itself a partition move).
 - **OR the LIBRARY changed** — the real count before vs after differs, even when the capacity and
   the page count are both unchanged. 21 themes → 3 pages of 10/10/1 with the applied theme at index
   19 (page 2) becomes 22 themes → 3 pages of 10/10/2 with the same theme at index 20 (page 3).
@@ -82,7 +82,16 @@ the LIBRARY changed**:
 The library half cannot be derived from the active theme's page: a save renumbers every index after
 the insertion point, so the applied theme lands on a different page while the index it now holds
 ALREADY existed before (measured: `page_of(20)` was already page 3 under the 21-theme partition).
-The real count is the only signal that carries the move.
+Within `sync`'s current inputs the real count is the only signal that carries the move; remembering
+the previous index or matching the applied theme by name would carry it too, at the cost of changing
+the call contract.
+
+Known residue (LOW, pre-existing — it was already there before `95028d1`): a library change that
+keeps the count, the capacity and the page count — a RENAME, which re-sorts the list and renumbers
+every index — is invisible to `needs_recompute`, so the applied theme can sit off-screen until the
+next hide → show (the composer show hook re-anchors unconditionally) or any count/partition change.
+Making the gate see a reorder needs the previous active index or a name match, i.e. a call-contract
+change; it is a follow-up decision, not part of this fix.
 
 Consequence to keep in mind: a library edit re-anchors even when the keeper is browsing another
 page. That is what U2's scope ("or the library changes") and the feature's objective (the applied
@@ -306,3 +315,23 @@ the tested stages only.
   - Left alone on purpose (parent's call): the summary comment in `main.rs:3236-3242` still reads
     "re-anchor the page onto the active theme ONLY when the partition actually moved", which U9 makes
     stale; `src/shell/ui_tests.rs` untouched as instructed.
+  - `64780f8` (parent) then corrected that stale comment in `main.rs` and the "capacity 10 at this
+    stage" note in `src/shell/ui_tests.rs` (it is 9 at 1920×1080, as the test's own artifacts show).
+    Comment-only; `cargo test` 1560 passed / 0 failed. Release built, previous binary backed up to
+    `~/.local/bin/hve.pre-library-reanchor-2026-10-11`, installed `4870d829…`, relaunched.
+- 2026-10-11 (independent verification of U9, different model from the writer): `verified_with_findings`.
+  - Confirmed by static tracing: the three cases are right (a pure stage change with an unchanged
+    count never re-anchors; the first compute does, because capacity 0 → ≥1 is itself a partition
+    move; a count change with an unchanged partition re-anchors in BOTH directions, 21 → 22 and
+    22 → 21, with the index crossing page 2 → 3 and back). No path where a pure stage or geometry
+    event changes the real count, so D2 cannot come back. The RED pair does fail on `95028d1`'s parent
+    at `assert!(re_anchored, …)`, and the third test is a preservation guard, as disclosed.
+  - Confirmed the writer's rejected alternative was right to reject: with `main.rs` setting the active
+    index BEFORE `sync`, the only identity inside is the NEW index, already resolvable to the same
+    page under the pre-insert partition — the predicate cannot see the crossing.
+  - Wording corrected in this contract on the strength of that review: the gallery open re-anchors
+    because the model starts degenerate at capacity 0 (not "the first capacity was probed on a small
+    hidden stage"), and "the real count is the only signal" holds within `sync`'s current inputs only.
+  - New LOW residue it surfaced, recorded above: a RENAME (count, capacity and page count all
+    unchanged) is invisible to the gate; the applied theme can sit off-screen until the next hide →
+    show. Pre-existing in `4c2cf9e`/`977c5ca`, not introduced here.
