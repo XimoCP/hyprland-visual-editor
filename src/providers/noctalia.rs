@@ -241,6 +241,143 @@ fn has_wallpaper_automation_section(raw: &str) -> bool {
     })
 }
 
+/// What [`sanitize_settings_toml`] did to a settings.toml text.
+///
+/// `rewritten` counts the absolute values that pointed INSIDE the theme and
+/// were turned into theme-relative ones (the packaged asset stays reachable).
+/// `dropped` counts the machine-only absolute values whose whole line went
+/// away, and `dropped_keys` names them in file order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SanitizeReport {
+    /// How many in-theme absolute values became theme-relative.
+    pub rewritten: usize,
+    /// How many machine-only lines were dropped.
+    pub dropped: usize,
+    /// The key of every dropped line, in file order.
+    pub dropped_keys: Vec<String>,
+}
+
+impl SanitizeReport {
+    /// Whether the sanitizer left the text byte-identical.
+    pub fn is_empty(&self) -> bool {
+        self.rewritten == 0 && self.dropped == 0
+    }
+}
+
+/// The `key` of a `key = value` line and the byte range of the value's
+/// CONTENT inside that line (quotes excluded), when the value is a single
+/// token.
+struct ValueToken<'a> {
+    key: &'a str,
+    value: &'a str,
+    content: std::ops::Range<usize>,
+}
+
+/// Read one settings.toml line as `key = value`, when the value is a single
+/// token: a quoted string or a bare word. Anything else — a section header, a
+/// comment, a blank line, a line with no `=`, or a compound value such as an
+/// array — is `None`, so the caller leaves it alone.
+///
+/// Machine-written file: no `#` inside quoted values, so a `#` always starts a
+/// trailing comment (the same convention as [`mpvpaper_enabled_in_settings`]).
+fn keyed_value_token(line: &str) -> Option<ValueToken<'_>> {
+    let code = line.split('#').next().unwrap_or("").trim_end();
+    if code.trim().is_empty() {
+        return None;
+    }
+    let eq_at = code.find('=')?;
+    let key = code[..eq_at].trim();
+    if key.is_empty() {
+        return None;
+    }
+    // `code` is a prefix of `line`, so `eq_at` is valid in both.
+    let after = &line[eq_at + 1..];
+    let value_at = eq_at + 1 + (after.len() - after.trim_start().len());
+    let rest = &line[value_at..];
+    match rest.chars().next()? {
+        quote @ ('"' | '\'') => {
+            let end = rest[1..].find(quote)? + 1;
+            Some(ValueToken {
+                key,
+                value: &rest[1..end],
+                content: value_at + 1..value_at + end,
+            })
+        }
+        '[' => None, // an array is theme content, never one path
+        _ => {
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '#')
+                .unwrap_or(rest.len());
+            if end == 0 {
+                return None;
+            }
+            Some(ValueToken {
+                key,
+                value: &rest[..end],
+                content: value_at..value_at + end,
+            })
+        }
+    }
+}
+
+/// Append `line` to `out`, keeping the original line structure (`split('\n')`
+/// + a separator before every line but the first).
+fn push_line(out: &mut String, first: &mut bool, line: &str) {
+    if !*first {
+        out.push('\n');
+    }
+    *first = false;
+    out.push_str(line);
+}
+
+/// Remove every path that belongs to the machine that saved the theme from a
+/// Noctalia `settings.toml` text, keeping every other byte identical.
+///
+/// Line-based like [`mpvpaper_enabled_in_settings`] (there is no toml crate):
+/// a `key = value` line whose value is an absolute path is either rewritten or
+/// dropped.
+///
+/// - An absolute value INSIDE `theme_dir` is rewritten to its theme-relative
+///   form, so a packaged asset the theme carries stays reachable.
+/// - Any other absolute value is machine-only: the whole line goes. Emptying
+///   the value or guessing a replacement would be a lie.
+/// - Every other line — relative values, non-path values, arrays, comments,
+///   blank lines, section headers — is returned byte-for-byte.
+pub fn sanitize_settings_toml(text: &str, theme_dir: &Path) -> (String, SanitizeReport) {
+    let mut report = SanitizeReport::default();
+    let mut out = String::with_capacity(text.len());
+    let mut first = true;
+    for line in text.split('\n') {
+        if let Some(token) = keyed_value_token(line) {
+            let value = Path::new(token.value);
+            if value.is_absolute() {
+                match value.strip_prefix(theme_dir) {
+                    // The value names an asset the theme itself carries: keep
+                    // it reachable as a theme-relative path.
+                    Ok(relative) if !relative.as_os_str().is_empty() => {
+                        let mut rewritten = String::with_capacity(line.len());
+                        rewritten.push_str(&line[..token.content.start]);
+                        rewritten.push_str(&relative.display().to_string());
+                        rewritten.push_str(&line[token.content.end..]);
+                        report.rewritten += 1;
+                        push_line(&mut out, &mut first, &rewritten);
+                        continue;
+                    }
+                    // Any other absolute value — the theme dir itself
+                    // included — is machine-only: the whole line goes.
+                    _ => {
+                        report.dropped += 1;
+                        report.dropped_keys.push(token.key.to_string());
+                        continue;
+                    }
+                }
+            }
+        }
+        push_line(&mut out, &mut first, line);
+    }
+    (out, report)
+}
+
 /// Phase 2 wiring: turn off Noctalia's own static-wallpaper rotation in the
 /// LIVE settings.toml after the theme restore re-armed it, then ask
 /// Noctalia to reload. Best-effort and idempotent: a missing file, a
@@ -2569,6 +2706,180 @@ mod tests {
         assert!(
             !mpvpaper_enabled_in_settings("[plugins]\nfoo = 1\n"),
             "the boolean reader keeps its false-for-unparseable contract"
+        );
+    }
+
+    // ── U1: settings.toml must carry no personal path ────────────────────
+
+    /// The hook lines name a script that lives on the machine that saved the
+    /// theme — someone else's script, in fact. They are machine-only, so the
+    /// whole line goes, and the section header survives its emptied body.
+    #[test]
+    fn sanitize_drops_machine_only_hook_lines_and_keeps_the_header() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Cars");
+        let raw = "[hooks]\n\
+                   colors_changed = \"/home/ximo/.local/share/sddm/themes/SilentDinamic/sddm-sync.sh\"\n\
+                   shutdown = \"/home/ximo/.local/share/sddm/themes/SilentDinamic/sddm-sync.sh\"\n\
+                   started = \"/home/ximo/.local/share/sddm/themes/SilentDinamic/sddm-sync.sh\"\n\
+                   \n\
+                   [shell]\n\
+                   enabled = true\n";
+
+        let (clean, report) = sanitize_settings_toml(raw, &theme);
+
+        assert_eq!(
+            clean, "[hooks]\n\n[shell]\nenabled = true\n",
+            "a dropped line must vanish whole, leaving the header and the rest"
+        );
+        assert_eq!(report.dropped, 3);
+        assert_eq!(
+            report.dropped_keys,
+            vec!["colors_changed", "shutdown", "started"]
+        );
+        assert_eq!(report.rewritten, 0);
+        assert!(!report.is_empty());
+    }
+
+    /// An absolute value that points INSIDE the theme is not machine-only: it
+    /// names an asset the theme carries, so it is rewritten to the
+    /// theme-relative path instead of being dropped.
+    #[test]
+    fn sanitize_rewrites_an_absolute_path_inside_the_theme() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Cars");
+        let inside = theme.join("media").join("poster.jpg");
+        let raw = format!("[wallpaper.default]\n    path = \"{}\"\n", inside.display());
+
+        let (clean, report) = sanitize_settings_toml(&raw, &theme);
+
+        assert_eq!(
+            clean, "[wallpaper.default]\n    path = \"media/poster.jpg\"\n",
+            "an in-theme asset must stay reachable as a theme-relative path"
+        );
+        assert_eq!(report.rewritten, 1);
+        assert_eq!(report.dropped, 0);
+    }
+
+    /// A rewrite touches the value token only: indentation, key, spacing and
+    /// any trailing comment survive byte-for-byte.
+    #[test]
+    fn sanitize_preserves_indentation_and_a_trailing_comment_on_a_rewrite() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Cars");
+        let inside = theme.join("media").join("poster.jpg");
+        let raw = format!(
+            "[wallpaper.monitors.DP-3]\n    path = \"{}\" # packaged\n",
+            inside.display()
+        );
+
+        let (clean, report) = sanitize_settings_toml(&raw, &theme);
+
+        assert_eq!(
+            clean,
+            "[wallpaper.monitors.DP-3]\n    path = \"media/poster.jpg\" # packaged\n"
+        );
+        assert_eq!(report.rewritten, 1);
+    }
+
+    /// Relative values, non-path values, arrays, comments and blank lines are
+    /// theme content, not machine state: they are returned untouched.
+    #[test]
+    fn sanitize_leaves_relative_non_path_arrays_comments_and_blanks_untouched() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Cars");
+        let raw = "# a comment\n\
+                   \n\
+                   [plugins]\n\
+                   enabled = [ \"kenn/keybind-cheatsheet\", \"noctalia/mpvpaper\" ]\n\
+                   \n\
+                   [wallpaper]\n\
+                   directory = \"media/wallpapers\"\n\
+                   interval_seconds = 600\n\
+                   mode = \"dark\"\n";
+
+        let (clean, report) = sanitize_settings_toml(raw, &theme);
+
+        assert_eq!(clean, raw, "every non-path byte must stay identical");
+        assert!(
+            report.is_empty(),
+            "nothing to report when nothing was rewritten or dropped: {report:?}"
+        );
+    }
+
+    /// A path record can be written unquoted (a bare token). It is still an
+    /// absolute machine path, so the line goes.
+    #[test]
+    fn sanitize_drops_a_bare_absolute_value() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Cars");
+        let raw = "[wallpaper]\ndirectory = /home/ximo/Pictures/Wallpapers/Cars\ntransition_on_startup = true\n";
+
+        let (clean, report) = sanitize_settings_toml(raw, &theme);
+
+        assert_eq!(clean, "[wallpaper]\ntransition_on_startup = true\n");
+        assert_eq!(report.dropped, 1);
+        assert_eq!(report.dropped_keys, vec!["directory"]);
+    }
+
+    /// The theme dir itself is not an asset inside it: rewriting it would
+    /// leave an empty value, so it is dropped like any other machine path.
+    #[test]
+    fn sanitize_drops_a_value_that_is_the_theme_dir_itself() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Cars");
+        let raw = format!("[wallpaper]\ndirectory = \"{}\"\n", theme.display());
+
+        let (clean, report) = sanitize_settings_toml(&raw, &theme);
+
+        assert_eq!(clean, "[wallpaper]\n");
+        assert_eq!(report.dropped, 1);
+        assert_eq!(report.rewritten, 0);
+    }
+
+    /// The shipped settings.toml shape, end to end: the keeper's own file
+    /// loses every machine path and keeps every other byte. This is the
+    /// contract's own observed key set (hooks, wallpaper, screenshot, plugin
+    /// video dir, per-monitor paths).
+    #[test]
+    fn sanitize_cleans_the_observed_shipped_key_set() {
+        let root = TempDir::new().unwrap();
+        let theme = root.path().join("Animation");
+        let inside = theme.join("media").join("poster.jpg");
+        let raw = format!(
+            "[hooks]\n\
+             started = \"/home/ximo/.local/share/sddm/themes/SilentDinamic/sddm-sync.sh\"\n\
+             \n\
+             [plugin_settings.\"noctalia/mpvpaper\"]\n\
+             video_directory = \"/home/ximo/Pictures/LiveWallpapers\"\n\
+             \n\
+             [shell.screenshot]\n\
+             directory = \"/home/ximo/Pictures/Screenshots\"\n\
+             \n\
+             [wallpaper]\n\
+             directory = \"/home/ximo/Pictures/Wallpapers/Cars\"\n\
+             \n\
+             [wallpaper.default]\n\
+             path = \"{}\"\n\
+             \n\
+             [wallpaper.monitors.DP-3]\n\
+             path = \"/home/ximo/.cache/hve/thumbs/c628e057fad10c72-frame.png\"\n",
+            inside.display()
+        );
+
+        let (clean, report) = sanitize_settings_toml(&raw, &theme);
+
+        assert!(!clean.contains("/home/"), "no personal path may survive: {clean}");
+        assert!(
+            clean.contains("path = \"media/poster.jpg\""),
+            "the in-theme asset must stay reachable: {clean}"
+        );
+        assert!(clean.contains("[hooks]\n") && clean.contains("[wallpaper.monitors.DP-3]\n"));
+        assert_eq!(report.dropped, 5);
+        assert_eq!(report.rewritten, 1);
+        assert_eq!(
+            report.dropped_keys,
+            vec!["started", "video_directory", "directory", "directory", "path"]
         );
     }
 
