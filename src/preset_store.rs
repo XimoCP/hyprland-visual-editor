@@ -10,6 +10,16 @@ use crate::border_preset::BorderParams;
 /// `<name>.json.lua`. See [`PresetStore::canonical_preset_file`].
 const PRESET_FILE_EXTENSIONS: [&str; 4] = ["lua", "frag", "json", "ron"];
 
+/// The extensions the store APPENDS itself, and therefore the ones a typed name
+/// must NOT already carry: [`PresetStore::save`] always writes `<name>.lua`, so
+/// accepting `Space.lua` wrote `Space.lua.lua` — a file no reader resolves. The
+/// live re-apply then hit the OLD `Space.lua` and the shell resolver treats a
+/// miss as success with a safe fallback, so the trap was silent. The legacy
+/// record extensions (`json`, `ron`) are deliberately NOT here: they are
+/// honoured verbatim on the read side, and refusing them would break that
+/// promise.
+const PRESET_CONTAINER_EXTENSIONS: [&str; 2] = ["lua", "frag"];
+
 /// User preset store for borders and animations.
 /// Built-in presets live in `assets/{borders,animations}/`.
 /// User presets live in `~/.config/hve/presets/{borders,animations}/`.
@@ -48,6 +58,39 @@ impl PresetStore {
             .map_err(|e| format!("Cannot create preset dir {}: {}", self.base.display(), e))
     }
 
+    /// The lowercased extension of `name`, or `None` for a bare stem. Shared by
+    /// [`Self::canonical_preset_file`] and the save guard so both read a name the
+    /// same way.
+    fn preset_extension(name: &str) -> Option<String> {
+        std::path::Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+    }
+
+    /// Refuse a typed name that already carries one of the extensions
+    /// [`Self::save`] appends itself ([`PRESET_CONTAINER_EXTENSIONS`]).
+    ///
+    /// The name is REFUSED, never silently rewritten: rewriting it would save a
+    /// preset under a name the user never typed, and `save` returning `Ok` for a
+    /// file it did not write is what made the original trap silent. The caller
+    /// shows this message in the pane's existing save-error field, and records
+    /// nothing.
+    fn refuse_a_name_that_already_carries_the_extension(name: &str) -> Result<(), String> {
+        let extension = Self::preset_extension(name).unwrap_or_default();
+        if PRESET_CONTAINER_EXTENSIONS.contains(&extension.as_str()) {
+            let stem = std::path::Path::new(name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(name);
+            return Err(format!(
+                "Preset name '{}' already carries the file extension '.{}' — save it as '{}' instead",
+                name, extension, stem
+            ));
+        }
+        Ok(())
+    }
+
     /// The canonical form of a preset REFERENCE: the file name WITH its
     /// extension (`13_the_joker.lua`), the shape `assets/scripts/scan.sh`
     /// emits and that the window's preset lists hold.
@@ -81,10 +124,7 @@ impl PresetStore {
         if name.is_empty() {
             return String::new();
         }
-        let extension = std::path::Path::new(name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase);
+        let extension = Self::preset_extension(name);
         match extension {
             Some(extension) if PRESET_FILE_EXTENSIONS.contains(&extension.as_str()) => {
                 name.to_string()
@@ -162,8 +202,14 @@ impl PresetStore {
 
     /// Save a user preset. Overwrites if it already exists.
     /// `content` is the full Lua file content (header + config).
+    ///
+    /// A name that already carries the extension this appends (`Space.lua`,
+    /// `01_night.frag`) is REFUSED with a message instead of being written as
+    /// `<name>.lua.lua` — see
+    /// [`Self::refuse_a_name_that_already_carries_the_extension`].
     pub fn save(&self, name: &str, content: &str) -> Result<(), String> {
         Self::validate_name(name)?;
+        Self::refuse_a_name_that_already_carries_the_extension(name)?;
         self.init()?;
         let path = self.base.join(format!("{}.lua", name));
         fs::write(&path, content)
@@ -729,6 +775,81 @@ mod tests {
             !PresetStore::preset_files_match("glow.json", "glow.json.lua"),
             "a legacy non-lua record must not match a hypothetical `<name>.lua`"
         );
+    }
+
+    // ── U10: a typed name that already carries the extension is a trap ──
+    // `save` ALWAYS writes `<name>.lua`, so a name typed as `Space.lua` wrote
+    // `Space.lua.lua` — a file no reader can see. The canonical apply that
+    // follows resolves the OLD `Space.lua`, so the preset just saved was never
+    // applied and nothing warned: the shell resolver treats "not found" as
+    // success with a safe fallback, so the only honest answer is to refuse the
+    // save with a message the pane already knows how to show.
+
+    /// The refusal itself, checked against the real filesystem: no file is
+    /// written, and the preset the typed name already points at is untouched.
+    #[test]
+    fn save_refuses_a_name_that_already_carries_a_preset_file_extension() {
+        let dir = temp_dir();
+        let store = PresetStore {
+            base: dir.join("borders"),
+        };
+        fs::create_dir_all(&store.base).unwrap();
+        // The preset the typo would have silently collided with.
+        fs::write(store.base.join("Space.lua"), "-- THE ACTIVE PRESET\n").unwrap();
+
+        let err = store.save("Space.lua", "-- the new look\n");
+        assert!(
+            err.is_err(),
+            "a name already carrying `.lua` must be refused, got: {err:?}"
+        );
+        assert!(
+            !store.base.join("Space.lua.lua").exists(),
+            "the refusal must write NOTHING: `<name>.lua.lua` is invisible to every reader"
+        );
+        assert_eq!(
+            fs::read_to_string(store.base.join("Space.lua")).unwrap(),
+            "-- THE ACTIVE PRESET\n",
+            "the refusal must not overwrite the preset the typed name already points at"
+        );
+
+        // `.frag` is the other container extension a preset file can carry.
+        let frag = store.save("01_night.frag", "-- x\n");
+        assert!(
+            frag.is_err(),
+            "`.frag` names a preset FILE too, got: {frag:?}"
+        );
+        assert!(
+            !store.base.join("01_night.frag.lua").exists(),
+            "a `.frag` name must not produce `<name>.frag.lua`"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The guard is narrow on purpose: a plain STEM (with or without an interior
+    /// dot) still saves, and a name carrying a LEGACY record extension still
+    /// reaches the store untouched — `canonical_preset_file` honours `*.json` /
+    /// `*.ron` verbatim on the read side by design, so the write side must not
+    /// start refusing them.
+    #[test]
+    fn save_still_accepts_a_stem_and_a_legacy_record_name() {
+        let dir = temp_dir();
+        let store = PresetStore {
+            base: dir.join("borders"),
+        };
+
+        store.save("Space", "-- a").unwrap();
+        store.save("my.preset", "-- b").unwrap();
+        store.save("glow.json", "-- c").unwrap();
+
+        assert!(store.base.join("Space.lua").is_file());
+        assert!(store.base.join("my.preset.lua").is_file());
+        assert!(
+            store.base.join("glow.json.lua").is_file(),
+            "a legacy record name is not a preset file extension: the save stays allowed"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A traversal name must be refused BEFORE any filesystem write: the store

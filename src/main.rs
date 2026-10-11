@@ -7655,6 +7655,54 @@ mod tests {
         }
     }
 
+    // ── U10: a typed name that already carries the extension is refused ──
+    // `PresetStore::save` always writes `<name>.lua`, so a name typed as
+    // `Space.lua` wrote `Space.lua.lua`: a file no reader resolves. The live
+    // re-apply then hit the OLD `Space.lua` and the shell resolver treats a miss
+    // as success with a safe fallback, so nothing warned and the record-only-on-
+    // success guard could not bite. The store now refuses that name; all the
+    // handler has to do is not record anything it did not really save, and show
+    // the refusal in the pane's existing save-error field.
+
+    /// Both tune-pane save handlers: the store write comes FIRST, nothing is
+    /// recorded unless it succeeded, and the failure reaches the pane.
+    #[test]
+    fn both_tune_pane_save_handlers_gate_the_record_on_the_store_write_and_show_the_error() {
+        let code = main_rs_code();
+        for (sig, error_field) in [
+            (
+                "window.on_panel_save_border_preset(",
+                "set_border_save_error",
+            ),
+            (
+                "window.on_panel_save_animation_preset(",
+                "set_animation_save_error",
+            ),
+        ] {
+            let handler = fn_body(&code, sig);
+            let write = handler
+                .find(".save(&name_str, &content)")
+                .unwrap_or_else(|| panic!("{sig} must write the preset through the store, got: {handler}"));
+            let record = handler.find("record_saved_preset_active").unwrap_or_else(|| {
+                panic!("{sig} must record the preset it saved, got: {handler}")
+            });
+            assert!(
+                write < record,
+                "{sig} must not record a preset the store refused: a refused save wrote \
+                 NO file, so a record written anyway names nothing, got: {handler}"
+            );
+            assert!(
+                handler.contains("if r.is_ok()"),
+                "{sig} must gate the refresh, the apply and the record on the store \
+                 result, got: {handler}"
+            );
+            assert!(
+                handler.contains(error_field),
+                "{sig} must surface a refused save through {error_field}, got: {handler}"
+            );
+        }
+    }
+
     /// U1 (a): a border preset saved from the tune pane becomes the recorded
     /// ACTIVE border, in the canonical form (the full `<name>.lua`), and a
     /// theme saved next therefore carries the look that is live.
