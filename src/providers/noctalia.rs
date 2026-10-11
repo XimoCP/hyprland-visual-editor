@@ -339,12 +339,12 @@ fn missing_theme_layout(theme_settings: &str, live_settings: &str) -> Vec<String
         .collect()
 }
 
-/// U6 of `odd/tasks/noctalia-layout-survives-the-apply.md`: re-add ONLY
-/// the layout sections missing from the live text — copied verbatim from
-/// the theme, in theme order, first occurrence of each — appended at the
-/// end. Every other byte of the live text is left alone. Pure, so both
-/// repair invariants are pinned on texts. `None` when nothing is
-/// missing (the caller then performs no rewrite at all).
+/// U6 of `odd/tasks/noctalia-layout-survives-the-apply.md`, corrected by
+/// U10: re-add ONLY the layout sections missing from the live text —
+/// copied verbatim from the theme, in theme order, EVERY entry of each —
+/// appended at the end. Every other byte of the live text is left alone.
+/// Pure, so both repair invariants are pinned on texts. `None` when
+/// nothing is missing (the caller then performs no rewrite at all).
 ///
 /// THE TWO INVARIANTS (HIGH-2 of the refutation; the refuted repair
 /// copied the theme's settings.toml VERBATIM, undoing both):
@@ -353,6 +353,19 @@ fn missing_theme_layout(theme_settings: &str, live_settings: &str) -> Vec<String
 ///   operation D4 exists to forbid;
 /// - it must never revert the palette / wallpaper state the apply (and
 ///   Noctalia's own re-persist of it) wrote after step 0's copy.
+///
+/// EVERY ENTRY of a repeated block (U10, verified against the keeper's
+/// real files): a `[[array-of-tables]]` header may repeat — each
+/// occurrence is ONE ARRAY ENTRY the theme declares (JoKer, Night and
+/// Work carry two `[[bar.barra_lateral.capsule_group]]` entries while
+/// `center = [ "group:g1", "ram", "group:g2" ]` references them by id).
+/// The refuted repair restored only the FIRST entry of each repeated
+/// block, so the bar came back missing `group:g2` with the reference
+/// dangling — and the presence-based check then reported `[]`, letting
+/// the apply log success on a HALF-restored layout. Restoring every
+/// occurrence closes that: whatever the repair recognised as missing is
+/// fully back before it writes. A plain `[section]` occurs once in valid
+/// TOML, so nothing changes for it.
 ///
 /// Appending whole section blocks is safe TOML: a missing `[bar]` may be
 /// defined after its surviving `[bar.<name>]` sub-tables (defining a
@@ -368,10 +381,10 @@ fn restore_missing_layout_sections(theme_settings: &str, live_settings: &str) ->
     if missing.is_empty() {
         return None;
     }
-    // First occurrence of each missing section, in theme order: the
-    // header line plus every line up to (excluding) the next header.
+    // Every block whose header names a missing section, in theme order:
+    // the header line plus every line up to (excluding) the next header.
+    // Repeats are NOT deduplicated — see the U10 note above.
     let mut blocks: Vec<Vec<String>> = Vec::new();
-    let mut emitted: Vec<String> = Vec::new();
     let mut capture: Option<usize> = None;
     for line in theme_settings.split('\n') {
         let stripped = line.trim();
@@ -383,8 +396,7 @@ fn restore_missing_layout_sections(theme_settings: &str, live_settings: &str) ->
         }
         let code = stripped.split('#').next().unwrap_or("").trim();
         if let Some(name) = section_header_name(code) {
-            capture = if missing.contains(&name) && !emitted.contains(&name) {
-                emitted.push(name.clone());
+            capture = if missing.contains(&name) {
                 blocks.push(vec![line.to_string()]);
                 Some(blocks.len() - 1)
             } else {
@@ -7280,6 +7292,53 @@ scale = 1.3
         // Nothing missing any more -> no second rewrite (bounded repair).
         assert!(
             restore_missing_layout_sections(THEME_LAYOUT, &repaired).is_none(),
+            "an in-force layout must produce no further rewrite"
+        );
+    }
+
+    /// U10 of `odd/tasks/noctalia-layout-survives-the-apply.md` (verified
+    /// against the keeper's real files): the repair must restore EVERY
+    /// entry of a repeated `[[array-of-tables]]` block. JoKer, Night and
+    /// Work carry TWO `[[bar.barra_lateral.capsule_group]]` entries while
+    /// `center = [ "group:g1", "ram", "group:g2" ]` references them; the
+    /// refuted repair restored 1 of 2, left the `group:g2` reference
+    /// dangling, and the presence-based check reported `[]` — so the
+    /// apply logged SUCCESS on a half-restored layout.
+    #[test]
+    fn repair_restores_every_entry_of_a_repeated_block() {
+        // A wipe of the WHOLE layout (the ratchet the keeper measured):
+        // nothing of the theme's bar survives, both capsule-group entries
+        // included. Only the machine/behaviour state is current.
+        let live = "config_version = 14\n\n\
+            [plugins]\nenabled = []\n\n\
+            [wallpaper]\npath = \"/apply/wrote/this.png\"\n";
+        let repaired =
+            restore_missing_layout_sections(THEME_MIGRATED, live).expect("layout was missing");
+        assert_eq!(
+            repaired
+                .matches("[[bar.barra_lateral.capsule_group]]")
+                .count(),
+            2,
+            "both array-of-tables entries must land, not just the first"
+        );
+        assert!(
+            repaired.contains("id = \"g1\""),
+            "the first entry must land"
+        );
+        assert!(
+            repaired.contains("id = \"g2\""),
+            "the second entry must land — the keeper's real themes reference it \
+             from a `center = [..., \"group:g2\"]` list, and dropping it leaves \
+             that reference dangling"
+        );
+        assert!(
+            missing_theme_layout(THEME_MIGRATED, &repaired).is_empty(),
+            "the check afterwards must report the layout in force"
+        );
+        // Nothing it recognised as missing stays missing, so nothing left
+        // to rewrite: the repair stays bounded and idempotent.
+        assert!(
+            restore_missing_layout_sections(THEME_MIGRATED, &repaired).is_none(),
             "an in-force layout must produce no further rewrite"
         );
     }
