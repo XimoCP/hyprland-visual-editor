@@ -2696,6 +2696,51 @@ impl InterludeState {
     }
 }
 
+/// Size cap for the persistent log before it is rotated to `hve.log.1`.
+const LOG_ROTATE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Pure rotation predicate: rotate only once the current log grew past the cap.
+fn log_rotate_due(len: u64) -> bool {
+    len > LOG_ROTATE_BYTES
+}
+
+/// `$XDG_CACHE_HOME/hve` (falling back to `~/.cache/hve`) — the same directory
+/// that already holds the single-instance lock, so the log travels with it.
+fn log_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(home).join(".cache")
+        })
+        .join("hve")
+}
+
+/// Open (creating if needed) `hve.log` in `dir` for append, rotating a previous
+/// oversized file to `hve.log.1` first. Any failure is returned so the caller
+/// can degrade to console-only logging: logging must never fail startup or
+/// panic. No new dependency — a plain append-only file, rotated once here.
+fn open_log_file_in(dir: &std::path::Path) -> std::io::Result<std::sync::Mutex<std::fs::File>> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("hve.log");
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if log_rotate_due(meta.len()) {
+            // Replaces any previous `hve.log.1` (atomic rename on Unix).
+            // Best-effort: a failed rotation must not cost us the file layer.
+            let _ = std::fs::rename(&path, dir.join("hve.log.1"));
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    Ok(std::sync::Mutex::new(file))
+}
+
+/// Production entry point: the log lives in the cache dir, next to the lock.
+fn open_log_file() -> std::io::Result<std::sync::Mutex<std::fs::File>> {
+    open_log_file_in(&log_dir())
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     // Hidden maintenance flags run without starting Slint and exit before any
     // GUI setup (no window, no single-instance lock, no watcher).
@@ -2705,15 +2750,41 @@ fn main() -> Result<(), slint::PlatformError> {
     let cli = Cli::parse();
 
     // ── Structured logging ──
+    // Console output stays exactly as it was (same builder, same default
+    // writer, same filter). ADDITIVE file layer: the gallery/preview pipeline
+    // must leave a trail when HVE runs as a tray process, where no console
+    // survives the run. The file is a plain append-only `Mutex<File>` writer
+    // (no new dependency, no timer, no background thread), rotated once here.
     let filter = match cli.verbose {
         0 => EnvFilter::new("info"),
         1 => EnvFilter::new("debug"),
         _ => EnvFilter::new("trace"),
     }
     .add_directive("calloop=off".parse().unwrap());
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    match open_log_file() {
+        Ok(log_file) => {
+            use tracing_subscriber::layer::SubscriberExt;
+            use tracing_subscriber::util::SubscriberInitExt;
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .finish()
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(log_file)
+                        .with_ansi(false),
+                )
+                .init();
+        }
+        Err(e) => {
+            // A log failure degrades to console-only logging — never startup.
+            eprintln!(
+                "hve: cannot open the log file under {} ({}); logging to the console only",
+                log_dir().display(),
+                e
+            );
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+        }
+    }
 
     // ── Multi-instance protection ──
     // Use Arc<Mutex<Option>> so restart callback can release the lock before spawning
@@ -5557,6 +5628,36 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── U1: the persistent log rotates once at startup, by size ──
+
+    #[test]
+    fn the_log_rotates_only_past_the_two_mib_cap() {
+        assert!(!log_rotate_due(0), "an empty log never rotates");
+        assert!(!log_rotate_due(LOG_ROTATE_BYTES), "exactly at the cap is still fine");
+        assert!(log_rotate_due(LOG_ROTATE_BYTES + 1), "one byte past the cap rotates");
+    }
+
+    #[test]
+    fn an_oversized_log_rotates_and_an_unwritable_dir_degrades_to_err() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("hve.log");
+        std::fs::write(&log, vec![b'x'; (LOG_ROTATE_BYTES + 1) as usize]).expect("oversized log");
+        std::fs::write(dir.path().join("hve.log.1"), b"old rotation").expect("previous rotation");
+
+        let writer = open_log_file_in(dir.path()).expect("open must succeed");
+        drop(writer);
+
+        let rotated = std::fs::read(dir.path().join("hve.log.1")).expect("rotated file");
+        assert_eq!(rotated.len() as u64, LOG_ROTATE_BYTES + 1, "oversized file replaced .1");
+        assert_eq!(std::fs::metadata(&log).expect("fresh log").len(), 0, "fresh log starts empty");
+
+        // Degradation path: a path that cannot be a directory yields Err, never
+        // a panic — the caller falls back to console-only logging.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"not a dir").expect("blocker file");
+        assert!(open_log_file_in(&blocker.join("hve")).is_err(), "unusable dir must return Err");
+    }
 
     // ── W1: the transition masks must actually reach the compositor ──
     // `hyprctl keyword` is rejected by Hyprland's non-legacy (Lua) parser, so
