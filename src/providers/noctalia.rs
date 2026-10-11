@@ -241,6 +241,115 @@ fn has_wallpaper_automation_section(raw: &str) -> bool {
     })
 }
 
+/// Whether a settings.toml section header names part of the Noctalia
+/// LAYOUT — the structure the keeper SEES on screen, as opposed to machine
+/// or behaviour state.
+///
+/// U1 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the roots that
+/// count are `[bar]` (plus its per-bar tables `[bar.<name>]`, which carry
+/// the bar widgets), `[desktop_widgets]`, `[dock]`, `[shell]` and the
+/// per-widget `[widget.<name>]` tables. Deliberately NOT layout:
+/// `[plugins]` (machine state, owned by the D4 re-assert), `[hooks]`
+/// (behaviour the keeper's watchdog heals), `[wallpaper*]`, `[osd*]` and
+/// everything else — those may legitimately change under a live apply, so
+/// demanding them would turn this guard into the textual equality the
+/// contract forbids.
+fn is_layout_section(header: &str) -> bool {
+    ["bar", "desktop_widgets", "dock", "shell", "widget"]
+        .iter()
+        .any(|root| {
+            header == *root
+                || header
+                    .strip_prefix(root)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+}
+
+/// The layout a settings.toml text declares, as `(section, keys)` pairs in
+/// file order — only the sections [`is_layout_section`] accepts. Keys are
+/// the direct `key = …` entries of each such section, in file order;
+/// nested tables arrive as their own `[section.table]` headers.
+///
+/// Line-based, like every other settings.toml reader in this module (there
+/// is no toml crate): blank lines and comments are skipped (`#` always
+/// starts one in this machine-written file), and a header's name is the
+/// text inside `[...]` with surrounding quotes trimmed.
+fn layout_entries(raw: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut in_layout = false;
+    for line in raw.lines() {
+        let stripped = line.trim();
+        if stripped.is_empty() || stripped.starts_with('#') {
+            continue;
+        }
+        let code = stripped.split('#').next().unwrap_or("").trim();
+        if let Some(header) = code.strip_prefix('[') {
+            let name = header
+                .split(']')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'');
+            in_layout = is_layout_section(name);
+            if in_layout {
+                out.push((name.to_string(), Vec::new()));
+            }
+            continue;
+        }
+        if !in_layout {
+            continue;
+        }
+        if let Some(eq_at) = code.find('=') {
+            let key = code[..eq_at].trim();
+            if !key.is_empty() {
+                if let Some((_, keys)) = out.last_mut() {
+                    keys.push(key.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// U1 of `odd/tasks/noctalia-layout-survives-the-apply.md`: is the layout
+/// the theme's settings.toml declares still in force in the live one?
+/// Pure — two texts in, the missing items out (empty vec = in force).
+///
+/// Structural, never textual: every layout section the theme declares must
+/// exist in the live text, and every direct key of such a section must
+/// exist there too — but VALUES are never compared, and sections outside
+/// the layout (`[hooks]`, `[wallpaper*]`, `config_version`, `[plugins]` …)
+/// are never consulted, because Noctalia legitimately rewrites those on
+/// its own re-persist. A theme declaring no layout is vacuously in force
+/// (there is nothing to enforce).
+///
+/// The report names the missing items for the apply log: a whole missing
+/// section is reported as `[section]` alone (its keys would only be
+/// noise), a surviving section that lost a key as `[section].key`.
+fn missing_theme_layout(theme_settings: &str, live_settings: &str) -> Vec<String> {
+    let declared = layout_entries(theme_settings);
+    let live = layout_entries(live_settings);
+    let mut missing = Vec::new();
+    for (section, keys) in declared {
+        match live
+            .iter()
+            .find(|(live_section, _)| live_section == &section)
+        {
+            // The whole section is gone: report it once, whole — its keys
+            // would only be noise in the log.
+            None => missing.push(format!("[{section}]")),
+            Some((_, live_keys)) => {
+                for key in keys {
+                    if !live_keys.iter().any(|live_key| live_key == &key) {
+                        missing.push(format!("[{section}].{key}"));
+                    }
+                }
+            }
+        }
+    }
+    missing
+}
+
 /// What [`sanitize_settings_toml`] did to a settings.toml text.
 ///
 /// `rewritten` counts the absolute values that pointed INSIDE the theme and
@@ -6517,6 +6626,148 @@ exit 1
         assert!(
             palette_needs_reassert(Some("custom theme-blue"), None, snapshot, "theme-blue"),
             "a missing live palette must re-assert even when the scheme matches"
+        );
+    }
+
+    // ── U1: the pure layout predicate ──
+    //
+    // WHY these exist: `verify_and_repair_layout` must decide from DATA
+    // alone whether Noctalia's re-persist wiped the theme's layout — no
+    // I/O, no CLI — so the decision is pinned here and the apply path
+    // stays a thin shell around it
+    // (`odd/tasks/noctalia-layout-survives-the-apply.md`, U1 + U3-e).
+
+    /// A theme's packaged settings.toml carrying every layout family the
+    /// predicate enforces, plus the sections Noctalia legitimately
+    /// rewrites (`config_version`, `[hooks]`, `[wallpaper]`, `[plugins]`).
+    const THEME_LAYOUT: &str = r#"config_version = "1.2"
+
+[hooks]
+community_ids = ["abc"]
+
+[wallpaper]
+path = "/home/other-machine/wall.png"
+
+[plugins]
+enabled = ["noctalia/mpvpaper"]
+
+[bar]
+position = "left"
+
+[bar.default]
+widgets = ["clock", "weather"]
+
+[desktop_widgets]
+enabled = true
+
+[dock]
+enabled = true
+
+[shell]
+enabled = true
+
+[widget.clock]
+format = "%H:%M"
+"#;
+
+    /// The live settings.toml the ratchet leaves behind when the
+    /// re-persist drops every layout section (the keeper's failing apply
+    /// ended at 2471 B with no `[bar]`).
+    const WIPED_SETTINGS: &str = r#"config_version = "1.0"
+
+[wallpaper]
+path = "/tmp/stale.png"
+"#;
+
+    /// U3-(e): the legitimate rewrites must still report "in force" — a
+    /// changed wallpaper path, a bumped `config_version`, and a live file
+    /// where `[hooks]` / `[plugins]` differ from (or are absent vs) the
+    /// packaged text. None of those is the layout.
+    #[test]
+    fn layout_predicate_tolerates_the_legitimate_rewrites() {
+        let live = THEME_LAYOUT
+            .replace("/home/other-machine/wall.png", "/here/current.png")
+            .replace("config_version = \"1.2\"", "config_version = \"2.0\"");
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
+            "a changed wallpaper path and a bumped config_version must still \
+             report the layout in force"
+        );
+        // A live file carrying ONLY the layout sections — no [hooks], no
+        // [plugins], no [wallpaper] — is also in force.
+        let layout_only = THEME_LAYOUT
+            .split("\n[bar]\n")
+            .collect::<Vec<_>>()
+            .last()
+            .map(|tail| format!("[bar]\n{tail}"))
+            .unwrap();
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &layout_only).is_empty(),
+            "a live file that lost only machine/behaviour sections must still \
+             report the layout in force"
+        );
+    }
+
+    /// A wiped live file must report each missing section ONCE, whole —
+    /// never one noisy item per key of a section that is not there.
+    #[test]
+    fn layout_predicate_reports_wiped_sections_as_whole() {
+        assert_eq!(
+            missing_theme_layout(THEME_LAYOUT, WIPED_SETTINGS),
+            vec![
+                "[bar]",
+                "[bar.default]",
+                "[desktop_widgets]",
+                "[dock]",
+                "[shell]",
+                "[widget.clock]",
+            ],
+            "every declared layout section missing from the live file must be \
+             reported by name, without listing its keys"
+        );
+    }
+
+    /// A section that SURVIVED but lost a declared key is a layout change
+    /// too (a bar that lost its widgets list is not the theme's bar).
+    /// Values are deliberately NOT compared — only the key's presence —
+    /// so the drift must be a missing key line, not an emptied value.
+    #[test]
+    fn layout_predicate_reports_a_key_missing_from_a_surviving_section() {
+        let live = THEME_LAYOUT.replace("widgets = [\"clock\", \"weather\"]\n", "");
+        assert_eq!(
+            missing_theme_layout(THEME_LAYOUT, &live),
+            vec!["[bar.default].widgets"],
+            "a surviving section that lost a declared key must be reported by \
+             that key"
+        );
+    }
+
+    /// U3-(c), pure half: a theme that declares no layout has nothing to
+    /// enforce, whatever the live file carries.
+    #[test]
+    fn layout_predicate_theme_without_layout_is_vacuously_in_force() {
+        assert!(
+            missing_theme_layout(WIPED_SETTINGS, "").is_empty(),
+            "no declared layout means nothing to enforce"
+        );
+        assert!(
+            missing_theme_layout(WIPED_SETTINGS, THEME_LAYOUT).is_empty(),
+            "a layoutless theme must not demand anything of the live file"
+        );
+    }
+
+    /// `[plugins]`, `[hooks]` and `[wallpaper]` are machine/behaviour
+    /// state, never layout: a theme carrying only those declares no
+    /// layout, and their absence from the live file is not drift.
+    #[test]
+    fn layout_predicate_never_demands_machine_sections() {
+        let machine_only = "config_version = \"1.2\"\n\n\
+            [hooks]\ncommunity_ids = []\n\n\
+            [plugins]\nenabled = []\n\n\
+            [wallpaper]\npath = \"/x.png\"\n";
+        assert!(
+            missing_theme_layout(machine_only, WIPED_SETTINGS).is_empty(),
+            "machine and behaviour sections must never count as layout"
         );
     }
 
