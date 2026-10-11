@@ -41,6 +41,24 @@ impl PresetStore {
             .map_err(|e| format!("Cannot create preset dir {}: {}", self.base.display(), e))
     }
 
+    /// The canonical form of a preset REFERENCE: the full file name WITH its
+    /// extension (`13_the_joker.lua`), the shape `assets/scripts/scan.sh`
+    /// emits and that the window's preset lists hold.
+    ///
+    /// Mirrors `_hve_preset_in_dir` in `assets/scripts/utils.sh` rather than
+    /// inventing a third convention: a name that already carries a dot is
+    /// honoured verbatim, and a name without one means `<name>.lua`. A legacy
+    /// bare stem (`Space`) therefore canonicalises to `Space.lua`, while a
+    /// legacy `*.json` / `*.ron` reference is left exactly as it is. An empty
+    /// name stays empty (callers treat empty as "nothing active").
+    pub(crate) fn canonical_preset_file(name: &str) -> String {
+        if name.is_empty() || name.contains('.') {
+            name.to_string()
+        } else {
+            format!("{}.lua", name)
+        }
+    }
+
     /// A preset name is unsafe when it is empty, contains a path separator
     /// (`/` or `\`), contains a NUL byte, equals `.` or `..`, or starts with
     /// `.`. Interior dots are ALLOWED: the built-in `19_stylized2.5D.lua` and

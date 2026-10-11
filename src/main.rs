@@ -396,6 +396,49 @@ pub(crate) fn save_section_entry_needs_refresh(target: crate::shell::nav::PanelS
     target == crate::shell::nav::PanelSection::Save
 }
 
+/// The `Config` slot a preset saved from a tune pane is recorded into. The two
+/// tune panes (Borders, Motion) each own one active slot, and naming the slot
+/// keeps the recording rule from silently writing the wrong one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SavedPresetSlot {
+    Border,
+    Animation,
+}
+
+/// Record a preset just SAVED from a tune pane as the ACTIVE one, so the live
+/// look and the recorded look agree.
+///
+/// Both save handlers used to write the file, apply it live and clear the dirty
+/// marker without recording it, so a theme saved next read whatever the config
+/// still held — the previous preset, or none at all — and the look did not
+/// travel with the theme.
+///
+/// The name is recorded in the canonical form
+/// ([`crate::preset_store::PresetStore::canonical_preset_file`]: the full
+/// `<name>.lua`), the form the window's preset lists hold and the marker and
+/// the bundler resolve against. Returns the value recorded.
+///
+/// The marker (`active_border_index` / `active_anim_index`) is deliberately NOT
+/// refreshed here: it is a view derived from this config value against the
+/// window's lists, and the Borders section re-derives it from the persisted
+/// value on every entry (`seed_borders_pane_from_persisted`). Recording once
+/// keeps a single source of truth instead of a second, save-local copy.
+pub(crate) fn record_saved_preset_active(
+    cfg: &mut crate::config::Config,
+    slot: SavedPresetSlot,
+    saved_name: &str,
+) -> String {
+    let canonical = crate::preset_store::PresetStore::canonical_preset_file(saved_name);
+    let field = match slot {
+        SavedPresetSlot::Border => &mut cfg.active_border_file,
+        SavedPresetSlot::Animation => &mut cfg.active_anim_file,
+    };
+    if *field != canonical {
+        *field = canonical.clone();
+    }
+    canonical
+}
+
 /// Build `BorderParams` from the window's current tune state (D4 live path).
 /// `size` comes from the sealed config because the tune pane no longer owns a
 /// geometry model of its own.
@@ -5239,7 +5282,19 @@ fn main() -> Result<(), slint::PlatformError> {
                     // D4: remove hidden draft after save + re-apply saved border
                     PresetStore::remove_draft(&proj_c);
                     {
-                        let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                        // U1: the file is written and is about to go live, so it
+                        // IS the active preset — record it (canonical form) and
+                        // persist. Without this a theme saved next read whatever
+                        // the config still held (the previous preset, or none)
+                        // while the desktop showed this one: the look did not
+                        // travel with the theme.
+                        record_saved_preset_active(
+                            st.cfg_mut(),
+                            SavedPresetSlot::Border,
+                            &name_str,
+                        );
+                        let _ = st.cfg().save();
                         if let Err(e) = st.engine().apply_border(&name_str) {
                             tracing::error!("[borders][preset] re-apply after save failed: {}", e);
                             drop(st);
@@ -5454,7 +5509,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     // The working state is now the saved preset.
                     w.set_motion_dirty(false);
                     // Re-apply the just-saved preset so the desktop matches it.
-                    let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
+                    // U1: the saved preset is the ACTIVE one from here on
+                    // (mirrors the Borders save path).
+                    record_saved_preset_active(
+                        st.cfg_mut(),
+                        SavedPresetSlot::Animation,
+                        &name_str,
+                    );
+                    let _ = st.cfg().save();
                     if let Err(e) = st.engine().apply_animation(&name_str) {
                         tracing::error!("[motion][preset] re-apply after save failed: {}", e);
                         drop(st);
@@ -7461,6 +7524,87 @@ mod tests {
         assert!(
             handler.contains("gallery_style = style"),
             "the chrome callback must persist the chosen style"
+        );
+    }
+
+    // ── U1: a preset saved from a tune pane is recorded as the ACTIVE one ──
+    // Both save handlers wrote the file, applied it live and cleared the dirty
+    // marker, but never wrote the ACTIVE preset into the config. A theme saved
+    // right afterwards therefore recorded the OLD or an EMPTY preset: the look
+    // was live on the desktop and did not travel with the theme. The handler
+    // BODIES are pinned by construction (the previous construction pin in this
+    // file, `entering_borders_reseeds_active_index_by_construction`, set the
+    // precedent), because a behaviour test would need the live window, a real
+    // `border.sh` and a real user store. The recording rule itself is pinned
+    // behaviourally by the two tests below, without touching disk.
+
+    #[test]
+    fn both_tune_pane_save_handlers_record_the_saved_preset_as_active() {
+        let code = main_rs_code();
+        for (sig, slot) in [
+            (
+                "window.on_panel_save_border_preset(",
+                "SavedPresetSlot::Border",
+            ),
+            (
+                "window.on_panel_save_animation_preset(",
+                "SavedPresetSlot::Animation",
+            ),
+        ] {
+            let handler = fn_body(&code, sig);
+            assert!(
+                handler.contains("record_saved_preset_active"),
+                "{sig} must record the just-saved preset as the active one, got: {handler}"
+            );
+            assert!(
+                handler.contains(slot),
+                "{sig} must record into {slot}, got: {handler}"
+            );
+            assert!(
+                handler.contains("cfg().save()"),
+                "{sig} must persist the recorded preset, got: {handler}"
+            );
+        }
+    }
+
+    /// U1 (a): a border preset saved from the tune pane becomes the recorded
+    /// ACTIVE border, in the canonical form (the full `<name>.lua`), and a
+    /// theme saved next therefore carries the look that is live.
+    #[test]
+    fn saving_a_border_preset_records_it_as_the_active_border() {
+        let mut cfg = crate::config::Config::default();
+        cfg.active_border_file = "03_duo.lua".into();
+        cfg.active_anim_file = "11_futurista.lua".into();
+
+        record_saved_preset_active(&mut cfg, SavedPresetSlot::Border, "keeper_border");
+
+        assert_eq!(
+            cfg.active_border_file, "keeper_border.lua",
+            "the saved border must be recorded as active, with its extension"
+        );
+        assert_eq!(
+            cfg.active_anim_file, "11_futurista.lua",
+            "recording a border must never touch the animation slot"
+        );
+    }
+
+    /// U1 (b): the same for an animation preset. A name that already carries
+    /// the extension is recorded as it is — never doubled.
+    #[test]
+    fn saving_an_animation_preset_records_it_as_the_active_animation() {
+        let mut cfg = crate::config::Config::default();
+        cfg.active_anim_file = "11_futurista.lua".into();
+        cfg.active_border_file = "03_duo.lua".into();
+
+        record_saved_preset_active(&mut cfg, SavedPresetSlot::Animation, "keeper_motion.lua");
+
+        assert_eq!(
+            cfg.active_anim_file, "keeper_motion.lua",
+            "the saved animation must be recorded as active, extension not doubled"
+        );
+        assert_eq!(
+            cfg.active_border_file, "03_duo.lua",
+            "recording an animation must never touch the border slot"
         );
     }
 
