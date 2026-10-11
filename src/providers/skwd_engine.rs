@@ -83,8 +83,8 @@ pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     } else {
         ["skwd-wall-v2", "skwd-helm"]
     };
-    for bin in order {
-        match run_delegate_apply(bin, path_str) {
+    for (attempt, bin) in order.iter().enumerate() {
+        match run_delegate_apply(bin, path_str, delegate_timeout(attempt)) {
             Ok(()) => {
                 tracing::info!("[skwd-wall] delegated wallpaper to {}: {}", bin, path_str);
                 return true;
@@ -114,16 +114,38 @@ fn is_video_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Bounded wait for one delegation `apply` call, so a hung daemon helper can
+/// Bounded wait for ONE delegation `apply` call, so a hung daemon helper can
 /// never freeze the theme apply (never held across I/O locks).
 ///
 /// This runs on the UI thread, so the number is milliseconds the window cannot
-/// repaint. Measured worst case for a single engine is ~616ms (`skwd-helm` on a
-/// still image), so 700ms covers a healthy helper with margin while still
-/// capping a genuinely hung one.
-const DELEGATE_TIMEOUT: Duration = Duration::from_millis(700);
+/// repaint. The FIRST attempt is always the engine this machine measured as fast
+/// for that role, so a short cap is honest there: an engine that slow means the
+/// daemon is busy, and falling through to the other one is the cheaper path. The
+/// FALLBACK keeps a long cap, because it may be the engine that is slow for the
+/// role (616 ms measured for `skwd-helm` on a still image).
+///
+/// Measured on this machine (2026-09-26), healthy single-engine times:
+///   still image: `skwd-wall-v2` ~3 ms   | `skwd-helm` ~616 ms
+///   video:       `skwd-wall-v2` ~472 ms | `skwd-helm` ~90 ms
+///
+/// The failure this split fixes (keeper's log, 2026-10-11): `skwd-wall-v2` timed
+/// out at the single 700 ms cap on still images six times while the fallback
+/// answered ~150 ms later — 700 ms of frozen window spent waiting for an engine
+/// that was never going to answer.
+const FIRST_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(300);
+const FALLBACK_TIMEOUT: Duration = Duration::from_millis(800);
 
-fn run_delegate_apply(bin: &str, path_str: &str) -> Result<(), String> {
+/// The cap for `attempt`: 0 is the preferred engine, every later one is the
+/// fallback.
+fn delegate_timeout(attempt: usize) -> Duration {
+    if attempt == 0 {
+        FIRST_ATTEMPT_TIMEOUT
+    } else {
+        FALLBACK_TIMEOUT
+    }
+}
+
+fn run_delegate_apply(bin: &str, path_str: &str, timeout: Duration) -> Result<(), String> {
     let mut child = std::process::Command::new(bin)
         .arg("apply")
         .arg(path_str)
@@ -147,10 +169,10 @@ fn run_delegate_apply(bin: &str, path_str: &str) -> Result<(), String> {
                 return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
             }
             None => {
-                if start.elapsed() >= DELEGATE_TIMEOUT {
+                if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!("timed out after {:?}", DELEGATE_TIMEOUT));
+                    return Err(format!("timed out after {:?}", timeout));
                 }
                 std::thread::sleep(Duration::from_millis(25));
             }
@@ -235,6 +257,39 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use tempfile::TempDir;
+
+    /// The measured healthy times this machine recorded (2026-09-26, see the
+    /// comment above the caps). The test pins the RELATIONSHIP the design needs:
+    /// the first attempt gets a short cap because it is always the engine that
+    /// is fast for the role, and the fallback keeps a long one because it may be
+    /// the slow-for-the-role engine (616 ms measured on a still image).
+    const MEASURED_FASTEST_FIRST_ATTEMPT_MS: u128 = 90; // skwd-helm on a video
+    const MEASURED_SLOWEST_FALLBACK_MS: u128 = 616; // skwd-helm on a still image
+
+    #[test]
+    fn delegate_timeout_keeps_the_first_attempt_short_and_the_fallback_long() {
+        let first = delegate_timeout(0).as_millis();
+        let fallback = delegate_timeout(1).as_millis();
+
+        assert!(
+            first >= MEASURED_FASTEST_FIRST_ATTEMPT_MS,
+            "the first attempt must still cover the fastest healthy engine (got {first} ms)"
+        );
+        assert!(
+            fallback >= MEASURED_SLOWEST_FALLBACK_MS,
+            "the fallback must still cover the slowest healthy engine (got {fallback} ms)"
+        );
+        assert!(
+            first < fallback,
+            "a hung preferred engine must cost less than a hung fallback ({first} vs {fallback} ms)"
+        );
+    }
+
+    #[test]
+    fn delegate_timeout_treats_every_later_attempt_as_the_fallback() {
+        assert_eq!(delegate_timeout(1), delegate_timeout(2));
+        assert_eq!(delegate_timeout(1), delegate_timeout(7));
+    }
 
     #[test]
     #[serial]
