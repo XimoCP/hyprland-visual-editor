@@ -82,6 +82,38 @@ while it was healthy, so this is a loss, not a reload that was ignored.
 - The palette, the wallpaper, the colour-authority mute and the `noctalia/mpvpaper` D4 re-assert: unchanged.
 - Any migration of the keeper's live Noctalia config.
 
+## Stated limits (U15 — registered, NOT fixed)
+
+- **(a) The colour re-assert worker can still land AFTER the layout worker verified.**
+  Both are detached by design (U9 / the off-thread colour re-assert idiom); neither
+  coordinates with the other. A colour re-assert that rewrites live state after the
+  layout verify ran is out of this contract's control — same asynchronous-by-design
+  caveat U7 already stated, kept registered here.
+- **(b) A detached write during process exit can still truncate the file — from the OTHER
+  writers.** U13 covers exactly ONE writer: the layout repair worker now publishes through
+  a temporary sibling + `rename`, so IT can leave only the complete old file, the complete
+  new file, or (exit between temp write and rename) the old file plus a stale
+  `.part-settings.toml` sibling — never a torn `settings.toml`. It does NOT cover the
+  apply's own `fs::copy` (step 0), the rotation neutralizer's `fs::write`, Noctalia's own
+  re-persist, or the keeper's watchdog: all still truncate-and-write in place, and a
+  process exit or crash mid-write of any of them can leave `~/.local/state/noctalia/settings.toml`
+  truncated. Converting those is out of this contract's authorized scope.
+- **(c) `ColorStub` waits only for re-assert workers**, not for layout-verify workers: a
+  future test author who arms a layout worker through a `ColorStub` sandbox (a theme
+  carrying `providers/noctalia-v5/settings.toml`) must ALSO wait for the layout worker
+  (`wait_for_verify`, as `LayoutStub` does) before the sandbox's process-global env is
+  restored — otherwise the worker can outlive the test with a stale PATH/HOME, exactly
+  the pollution failure `LayoutStub::drop` and `ColorStub::drop` exist to prevent.
+- **(d) The timing pins are margins with conditions, not guarantees.** The
+  `elapsed < 500 ms` pin (`apply_returns_without_waiting_for_the_layout_verify`) and the
+  re-pinned worker pin (`elapsed < 1500 ms` against a 3000 ms configured settle, U14)
+  both separate "paid a multi-hundred-ms settle" from test noise with a wide margin; their
+  conditions are: tests run `#[serial]`, the stub `noctalia` CLI on the sandboxed PATH must
+  resolve and exit in milliseconds, and the machine must not be so loaded that a stub CLI
+  invocation itself takes hundreds of ms. Under extreme CI load they could flake by
+  slowing the measured side, never by hiding a real regression (a deleted short-circuit
+  pays 3000 ms — measured 3.10 s in the mutation check — and cannot pass).
+
 ## Acceptance criteria
 
 1. `cargo test` green, `cargo check --all-targets` clean.
@@ -128,6 +160,22 @@ while it was healthy, so this is a loss, not a reload that was ignored.
   existing stated limits (presence semantics kept, no predicate redesign), and the
   format-note baseline corrected in the U8 entry below (measured: the baseline is 64,
   not 67; 67 is the REFUTED delivery's count).
+- [x] **U12** — the apply-generation token: every `apply()` increments a module-level
+  atomic counter at its START; the detached layout-verify worker captures the generation
+  of the apply that spawned it and, after its settle and again immediately before its
+  reload, yields WITHOUT writing and WITHOUT reloading when a newer apply has started.
+  **Second refutation (independent verification, 2026-10-11): the worker U9 detached
+  carried no identity, so with the keeper's real themes — whose layout section SETS
+  DIFFER — a superseded worker re-laid its theme's layout over a newer apply's file;
+  see the refutation and Progress log below.**
+- [x] **U13** — atomic writes on the live settings.toml from the repair worker: the
+  write publishes through a temporary sibling (`.part-settings.toml`) + `rename`, the
+  `copy_preset` idiom, so the concurrent writers of the same path can never observe a
+  torn file.
+- [x] **U14** — the layoutless short-circuit re-pinned on the WORKER: the round-2 pin
+  measured the APPLY's elapsed time, which U9's off-thread move had left vacuous.
+- [x] **U15** — the limits this round does NOT fix, registered in the contract (see
+  "Stated limits" below), not silently left implicit.
 
 ## The refutation (verified against the keeper's real files, 2026-10-11 — recorded as fact)
 
@@ -156,6 +204,32 @@ while it was healthy, so this is a loss, not a reload that was ignored.
 - **LOW — `[[array-of-tables]]` was invisible** to the line parser (a `[[...]]` header parsed
   as a name that never matched layout and terminated the enclosing section), so the
   layoutless short-circuit and the post-repair re-check were not really pinned.
+
+## The second refutation (verified against the keeper's real theme files, 2026-10-11 — recorded as fact)
+
+- **HIGH — the detached worker carries no identity, and it re-kills the bug the contract
+  exists to kill.** `7a6f1f5` moved the layout verify onto a DETACHED thread so the apply
+  would stop freezing the UI thread (it did — the stutter is gone and that part stands).
+  But `spawn_layout_verify_and_repair` (:927-952) captured two `PathBuf`s and nothing
+  else, and `verify_and_repair_layout` (:812-845) read, decided, wrote and ran
+  `config-reload` with no check that ITS apply was still the current one. Measured on the
+  keeper's real themes, the two themes' layout SECTION SETS DIFFER: JoKer declares
+  `[desktop_widgets]`, `[desktop_widgets.grid]`, `[[bar.barra_lateral.capsule_group]]` ×2,
+  `[widget.battery]`, `[widget.sysmon]`, `[widget.mpvpaper]`, `[widget.network_rx]`,
+  `[widget.network_tx]`, `[shell.screenshot]`, `[shell.session]` — none of which Space
+  declares; Space declares `[widget.tray]`, `[widget.workspaces]`, `[widget.bluetooth]`,
+  `[widget.volume]`, `[widget.session]` — none of which JoKer declares. So
+  `missing_theme_layout(A, live_of_B)` is NON-EMPTY in BOTH directions on HEALTHY files.
+  Timeline: apply A ends, worker A armed; the keeper clicks B 0.4 s later; at t≈1.5 s
+  worker A reads B's live file, decides A's sections are missing, APPENDS A's blocks and
+  reloads — the desktop renders A's bar under B. The synchronous version could not do
+  this because apply and verify were serialized on one thread; moving it off-thread
+  created a new correctness hole.
+- **MEDIUM — two HVE threads doing unsynchronized truncate-and-write on the same file**
+  (`:832`'s `fs::write` in the worker and the apply's `fs::copy` at `:2141`), which can
+  tear the file under a concurrent reader.
+
+Corrected as U12 (identity + yield) and U13 (atomic publish) below by a delegated writer.
 
 ## Progress log
 
@@ -275,3 +349,63 @@ while it was healthy, so this is a loss, not a reload that was ignored.
   (zero new chunks). Final checks on this round's tree: `cargo test` 1608 passed / 0 failed;
   `cargo check --all-targets` clean. The keeper's live Noctalia config, theme packages and `sddm-watch.sh`
   were never touched. Commits `7a6f1f5`, `9835101`, plus this docs commit.
+- 2026-10-11 (independent verification): **U9–U11's delivery REFUTED — the second
+  refutation of this contract** — HIGH/MEDIUM as recorded in "The second refutation"
+  section above, measured against the keeper's real theme files (the asymmetry of the
+  layout section sets between JoKer and Space). The refuted delivery is `7a6f1f5`
+  (the detached worker — its UI-freeze fix stands) plus the guard as it then stood; a
+  delegated writer was asked to correct it as U12–U15 below.
+- 2026-10-11 (delegated writer, third round): **U12 done** — `APPLY_GENERATION`, a
+  module-level `AtomicU64`, incremented at the START of every `apply()`; the worker
+  captures that apply's generation through `layout_guard` and, after its settle and
+  BEFORE it writes anything, yields (log + return, no write, no reload) when a newer
+  apply has started — plus the same check immediately before the repair's
+  `config-reload`. Why stated in code: a superseded worker must never lay its theme's
+  layout over a newer apply's file. Fixtures `THEME_LAYOUT_A` / `THEME_LAYOUT_B` mirror
+  the measured JoKer/Space asymmetry (only `[bar]` shared; `missing_theme_layout`
+  non-empty in both directions — pinned as fixture sanity inside the test). RED observed
+  (`cargo test -- superseded_layout_worker_yields current_apply_worker_still_repairs`,
+  pre-implementation): BOTH FAILED for the right reason —
+  `superseded_layout_worker_yields_to_the_newer_apply` with `reloads: left 3, right 2`
+  (the superseded worker fired a repair reload on B's healthy file — the refutation's
+  timeline reproduced) and `current_apply_worker_still_repairs_a_wipe_after_its_predecessor_yielded`
+  with `left 4, right 3` (the predecessor did not yield). After the token: 2 and 3
+  reloads, live file byte-for-byte B's. The healthy single-apply case (the CURRENT
+  worker still repairs a wipe) was already pinned by
+  `apply_repairs_a_wiped_layout_exactly_once` and `apply_returns_without_waiting_for_the_layout_verify`,
+  both still green. Commit `27dac45`.
+- 2026-10-12 (delegated writer, third round): **U13 done** — `write_settings_atomically`:
+  the repair publishes the live settings.toml through a temporary sibling
+  (`.part-settings.toml`) + `rename`, the `copy_preset` idiom, so no concurrent writer
+  (the apply's `fs::copy`, the rotation neutralizer's `fs::write`, the keeper's
+  watchdog) can observe a torn file from the worker's side. RED observed
+  (`cargo test layout_repair_publishes_the_live_file_atomically`, pre-implementation):
+  FAILED with `assertion left != right — left: 832777, right: 832777` — the in-place
+  write kept the inode; a rename must replace it. After: inode replaced, layout in
+  force, no `.part-` sibling left behind. One correction during the unit, kept honest:
+  the helper's first draft used `let _ = fs::remove_file(...)`, which trips this file's
+  own source-construction guard (`stale_artifact_deletes_log_failures_by_construction`
+  — observed FAILING in the full suite); aligned with `copy_preset`'s fully-qualified
+  `std::fs::remove_file`, guard green again. Commit `8721a92`.
+- 2026-10-12 (delegated writer, third round): **U14 done** — the round-2 pin measured
+  the APPLY's elapsed time, but U9 moved the settle into the worker, so deleting the
+  layoutless short-circuit failed no assertion (the verification proved this by
+  construction). The pin now measures from before the apply until `wait_for_verify()`
+  returns — the WORKER's cost: with a 3000 ms settle configured, a layoutless theme must
+  return (apply + worker) in under 1500 ms. Mutation-checked both ways: with the
+  short-circuit deleted (`&& false`) the test FAILED at `3.102111735s` (the worker paid
+  the settle); restored, green. Commit `9445547`.
+- 2026-10-12 (delegated writer, third round): **U15 done** — the four limits this round
+  does NOT fix registered in the contract's new "Stated limits" section (next to Out of
+  scope): (a) the colour re-assert worker can still land after the layout worker
+  verified; (b) what U13's atomic publish covers (the repair's own write) and what it
+  does not (the apply's copy, the neutralizer's write, Noctalia's re-persist, the
+  watchdog — all in-place), including the exit-between-temp-and-rename residue;
+  (c) `ColorStub` waits only for re-assert workers, so a future test author who arms a
+  layout worker through it must wait for that worker too; (d) the margins and conditions
+  of the `elapsed < 500 ms` pin (U9) and the re-pinned worker pin (U14). Final checks on
+  this round's tree: `cargo test` 1611 passed / 0 failed (1608 before + 3 new);
+  `cargo check --all-targets` clean; `rustfmt --check` chunk count on `noctalia.rs`
+  67 -> 67 (zero new chunks). The keeper's live Noctalia config, theme packages and
+  `sddm-watch.sh` were never touched. Commits `27dac45`, `8721a92`, `9445547`, plus
+  this docs commit.
