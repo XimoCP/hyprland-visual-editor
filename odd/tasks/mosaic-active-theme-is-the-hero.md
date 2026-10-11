@@ -89,7 +89,7 @@ these three rules, which he approved:
 - [x] **U2** — R2: open on the active theme's page. (`4c2cf9e`)
 - [x] **U3** — R3 + the no-active-theme fallback. (`3dda7cf`)
 - [x] **U4** — the tests. (`4167681`)
-- [ ] **U5** — the parent's render read + install.
+- [x] **U5** — the parent's render read + install. (`044fd00`, installed `6ace583e…`)
 
 ## Progress log
 
@@ -115,3 +115,23 @@ these three rules, which he approved:
     pages and the old page INDEX then means a different set of themes. A keeper page flip never
     recomputes and a coincident recompute honours the flip.
   - U5 (headless render + reading the PNGs, install, keeper's live look) is the parent's.
+- 2026-10-11 (parent, U5): render test extended and read by eye; installed.
+  - `044fd00` extends `mosaic_hero_centered_renders_with_pagination` into a 3-artifact sweep
+    through ONE shared pipeline closure: page 1 as before, page 2 with NO active theme
+    (R3's shape) and page 2 with theme 11 active (R1+R2), plus a now-permanent assertion that
+    a rendered page is never empty and a per-artifact line naming page/tiles/reals. The closure
+    needed `focus_settle()` before the snapshot: without it a second `take_snapshot` in the
+    same window returned an unpainted band while the pagination had already updated.
+  - Read PNGs (`/tmp/opencode/render-verify-hero-20261011g`): page 1 → 9 tiles `[0,1,2,…]`
+    with the wide hero centred; page 2 → 3 tiles `[9,10,11]` and `[11,9,10]`. **The two page-2
+    renders have the SAME geometry** (wide tile at the LEFT, then two narrower) and differ only
+    in which gradient fills each slot. So R1 is proven (the active theme takes the hero slot)
+    and the LEFT position is the elastic layout's own shape for a 3-tile page, not something
+    this change introduced. If the keeper wants the hero centred on a small last page, that is
+    a separate layout change, out of this contract's scope.
+  - `cargo test` after the test change: 1550 passed, 0 failed.
+  - Release built, previous binary backed up to `~/.local/bin/hve.backup-2026-10-11`
+    (`e9f40e93005af17e7139c1654481255e`), installed `6ace583e3f610dc278a863dfa9c8bb10`,
+    relaunched with the window mapped at `11:53` local for the keeper's live look.
+  - Cross-model verification (a different model from the writer's) launched on the six commits;
+    its verdict is recorded separately when it lands.
