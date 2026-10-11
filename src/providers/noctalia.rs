@@ -867,7 +867,9 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generat
     };
     // A theme that declares no layout has nothing to enforce (U3-c):
     // no settle, no read of the live file, no repair. The short-circuit
-    // is pinned by `apply_with_a_layoutless_theme_skips_the_settle`.
+    // is pinned by `apply_with_a_layoutless_theme_skips_the_settle` —
+    // U14 re-pinned it to measure THIS worker's settle, since U9 moved
+    // the settle off the apply thread.
     if layout_sections(&theme).is_empty() {
         tracing::debug!(
             "[noctalia-v5] Theme declares no layout sections; nothing to verify"
@@ -8069,11 +8071,17 @@ scale = 1.3
         );
     }
 
-    /// U8-(d) of the correction: the layoutless short-circuit must be
-    /// GENUINELY pinned — with a non-zero settle configured, a theme
-    /// that declares no layout must return without paying it. If the
-    /// short-circuit were deleted, the verify would sleep the full
-    /// settle and this test would see it in the elapsed time.
+    /// U8-(d) of the correction, RE-PINNED by U14: the layoutless
+    /// short-circuit must be GENUINELY pinned — with a non-zero settle
+    /// configured, a theme that declares no layout must return without
+    /// paying it. U9 moved the settle onto the DETACHED worker, so the
+    /// old pin (measuring the APPLY's elapsed time) went VACUOUS: the
+    /// apply never paid the settle either way, so deleting the
+    /// short-circuit failed no assertion (the independent verification
+    /// proved this by construction). The pin now measures the WORKER:
+    /// from before the apply until its detached worker is idle. Were
+    /// the short-circuit deleted, that worker would sleep the full
+    /// 3000 ms settle and this test would see it.
     #[test]
     #[serial]
     fn apply_with_a_layoutless_theme_skips_the_settle() {
@@ -8084,19 +8092,23 @@ scale = 1.3
         stub.wipe_mode("always");
         let theme = stub.theme_with(WIPED_SETTINGS);
 
+        // U14: measure the WORKER, not the apply — the settle lives on
+        // the detached worker since U9, so the apply's own elapsed time
+        // pins nothing.
         let started = std::time::Instant::now();
         let res = NoctaliaV5Provider::new().apply(theme.path());
-        let elapsed = started.elapsed();
         assert!(
             res.is_ok(),
             "a layoutless theme must apply cleanly: {res:?}"
         );
+        stub.wait_for_verify();
+        let elapsed = started.elapsed();
         assert!(
             elapsed < Duration::from_millis(1500),
-            "a theme without layout sections must skip the settle entirely, \
-             but the apply took {elapsed:?}"
+            "a theme without layout sections must skip the settle entirely — \
+             neither the apply nor its detached worker may pay it, but they \
+             took {elapsed:?}"
         );
-        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             1,
