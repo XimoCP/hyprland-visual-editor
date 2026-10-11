@@ -1,0 +1,9 @@
+{
+  "active_anim_file": "09_seda_silk.lua",
+  "active_border_file": "03_duo.lua",
+  "active_shader_file": "",
+  "border_radius": 0,
+  "border_size": 3,
+  "gaps_in": 3,
+  "gaps_out": 5
+}
