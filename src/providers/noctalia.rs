@@ -708,6 +708,10 @@ fn neutralize_noctalia_wallpaper_rotation() {
 /// would certify a layout that is about to disappear. One bounded settle,
 /// never a poll loop. `HVE_LAYOUT_SETTLE_MS` overrides the delay for the
 /// hermetic tests, which drive the wipe through a stub CLI.
+///
+/// U9: this settle is paid by the DETACHED verify worker
+/// ([`spawn_layout_verify_and_repair`]), never by the UI thread — the
+/// apply returns without waiting for it.
 const LAYOUT_SETTLE: Duration = Duration::from_millis(1500);
 
 /// The settle delay for this process (see [`LAYOUT_SETTLE`]). An unparseable
@@ -722,10 +726,11 @@ fn layout_settle_delay() -> Duration {
 }
 
 /// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`, corrected by
-/// U6/U7 after the verification refuted the first delivery: after the
-/// apply's LAST write/reload (moved to the end of the apply — see the
-/// call site), verify the theme's LAYOUT is still in force, and repair it
-/// exactly once when it is not.
+/// U6/U7 after the verification refuted the first delivery, and by U9
+/// after the keeper felt the correction's regression: after the apply's
+/// LAST write/reload (the call site arms it at the end of the apply),
+/// verify the theme's LAYOUT is still in force, and repair it exactly
+/// once when it is not.
 ///
 /// Noctalia re-persists its IN-MEMORY config on its own IPC-driven
 /// changes; when that re-persist drops the layout sections the live file
@@ -745,11 +750,18 @@ fn layout_settle_delay() -> Duration {
 /// itself wrote. The refuted repair copied the theme's file VERBATIM and
 /// did both.
 ///
-/// COST per apply (honest, U7): a theme that declares layout pays ONE
-/// settle ([`LAYOUT_SETTLE`], 1.5 s) before the read — Noctalia's own
-/// re-persist lands ~1 s after the last reload, so a verify at t+0 would
-/// only read HVE's own copy. When the layout is actually missing, the
-/// repair adds ONE reload and ONE more settle (re-check). A theme
+/// PLACEMENT (U9 — the regression the keeper felt): this function runs on
+/// a DETACHED worker — [`spawn_layout_verify_and_repair`] — after the
+/// apply returned, never on the apply's critical path. The predicate, the
+/// surgical repair and the bounded-once rule below are unchanged; only
+/// WHERE the wait and the work happen moved off the UI thread.
+///
+/// COST per apply (honest, U7 + U9): a theme that declares layout pays
+/// ONE settle ([`LAYOUT_SETTLE`], 1.5 s) on the WORKER before the read —
+/// Noctalia's own re-persist lands ~1 s after the last reload, so a
+/// verify at t+0 would only read HVE's own copy. When the layout is
+/// actually missing, the repair adds ONE reload and ONE more settle
+/// (re-check). None of it blocks the apply or the transition. A theme
 /// declaring no layout short-circuits before any of it: zero cost.
 fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
     let theme = match fs::read_to_string(saved_settings) {
@@ -832,6 +844,86 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path) {
             "[noctalia-v5] Theme layout STILL missing after the single repair (missing: {}); \
              Noctalia rewrote it again — the apply stops here by design",
             still_missing.join(", ")
+        );
+    }
+}
+
+/// Live count of detached layout-verify workers (U9 of
+/// `odd/tasks/noctalia-layout-survives-the-apply.md`).
+///
+/// WHY it exists: same reason as [`REASSERT_WORKERS_ACTIVE`] — the worker
+/// reads PROCESS-GLOBAL state (`PATH` to resolve the `noctalia` binary,
+/// `HVE_LAYOUT_SETTLE_MS`, the sandboxed `HOME`) and may write the live
+/// settings.toml through its bounded repair. The `LayoutStub` test
+/// harness waits on this counter (see `LayoutStub::drop`) before
+/// releasing its sandbox, so a worker can never outlive its test.
+///
+/// Production never reads it; it only guards the test sandbox.
+static LAYOUT_VERIFY_WORKERS_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+
+/// Decrements [`LAYOUT_VERIFY_WORKERS_ACTIVE`] when the worker ends,
+/// panic or not.
+struct LayoutVerifyWorkerGuard;
+
+impl Drop for LayoutVerifyWorkerGuard {
+    fn drop(&mut self) {
+        LAYOUT_VERIFY_WORKERS_ACTIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether every detached layout-verify worker has finished. Test-only:
+/// the sandbox harness polls it before restoring its process-global env.
+#[cfg(test)]
+pub(crate) fn layout_verify_workers_idle() -> bool {
+    LAYOUT_VERIFY_WORKERS_ACTIVE.load(Ordering::SeqCst) == 0
+}
+
+/// U9 of `odd/tasks/noctalia-layout-survives-the-apply.md` — the
+/// regression the keeper felt live ("ahora me parece que algo rasca y
+/// antes era todo fluido"): fire-and-forget the layout verify + bounded
+/// repair AFTER the apply returned.
+///
+/// WHY the check cannot block the transition: the apply runs
+/// SYNCHRONOUSLY ON THE UI THREAD — the call chain is a Slint callback ->
+/// the gallery slot `apply_theme` -> the theme manager `apply` -> this
+/// provider's `apply`, with no spawn anywhere on that path.
+/// `verify_and_repair_layout` waits for Noctalia's re-persist
+/// ([`LAYOUT_SETTLE`], 1.5 s) before its read and again before the
+/// post-repair re-check — up to ~3 s of UI FREEZE in the middle of the
+/// theme transition (measured from the keeper's own log: the transition's
+/// cadence is unchanged at 0.50 + 0.95 + 0.40 = 1.85 s, but the
+/// wall-clock from Noctalia's config reload to the visible wallpaper
+/// grew by ~1 s; the keeper perceives the freeze as stutter). None of
+/// that wait is needed by the apply itself: the check only has to observe
+/// the live file AFTER the apply's last write — a few ms after this
+/// spawn — so it runs here, following the established idiom of the
+/// off-thread colour re-assert (`spawn_custom_scheme_reassert`):
+/// detached by design, single-shot, bounded, never touches Slint state,
+/// and every failure is a warning — a layout problem must never fail the
+/// theme apply.
+fn spawn_layout_verify_and_repair(saved_settings: PathBuf, live_settings: PathBuf) {
+    LAYOUT_VERIFY_WORKERS_ACTIVE.fetch_add(1, Ordering::SeqCst);
+    // Same spawn discipline as `spawn_custom_scheme_reassert`: the guard
+    // is built in the PARENT and moved into the worker, and the spawn goes
+    // through `Builder::spawn` (a `Result`, never a panic), so a spawn
+    // that fails drops the closure in the parent, the moved guard
+    // decrements, and the counter can never stay at +1 for the rest of
+    // the process (which would make every later sandbox wait its full
+    // deadline).
+    let active = LayoutVerifyWorkerGuard;
+    let spawned = std::thread::Builder::new()
+        .name("hve-noctalia-layout-verify".to_string())
+        .spawn(move || {
+            let _active = active;
+            verify_and_repair_layout(&saved_settings, &live_settings);
+        });
+    if let Err(e) = spawned {
+        // The closure (and its guard) was dropped above, so the count is
+        // already back. Say it out loud: a silent failure here would look
+        // exactly like "no verify was ever needed".
+        tracing::warn!(
+            "[noctalia-v5] could not spawn the layout verify worker: {}",
+            e
         );
     }
 }
@@ -2010,12 +2102,14 @@ impl ThemeProvider for NoctaliaV5Provider {
         let plugin_was_enabled = live_mpvpaper_plugin_enabled();
         let mut settings_restored = false;
         // U7 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the
-        // layout verification is ARMED here but runs at the END of the
+        // layout verification is ARMED here but SPAWNED at the END of the
         // apply — the refuted delivery verified right after step 0 while
         // the apply still had later writes and reloads to go (the
         // wallpaper-rotation neutralize writes the live file and reloads,
         // then `wallpaper-set`, `color-scheme-set`, `templates-apply`),
-        // so a wipe landing on any of them was never caught.
+        // so a wipe landing on any of them was never caught. U9: the
+        // verify then runs OFF the UI thread — see
+        // `spawn_layout_verify_and_repair`.
         let mut layout_guard: Option<(PathBuf, PathBuf)> = None;
         let saved_settings = provider_dir.join("settings.toml");
         if saved_settings.exists() {
@@ -2062,12 +2156,14 @@ impl ThemeProvider for NoctaliaV5Provider {
 
                 // U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`
                 // (corrected by U6/U7 after the verification refuted the
-                // first delivery): Noctalia re-persists its in-memory
+                // first delivery, and by U9 after the keeper felt the
+                // settle's UI freeze): Noctalia re-persists its in-memory
                 // config ~1 s after the reload above and can WIPE the
                 // layout sections the restore just put back (the
-                // ratchet). The verify + bounded surgical repair run at
-                // the END of the apply — see the call site — so no later
-                // step can re-wipe behind it unnoticed.
+                // ratchet). The verify + bounded surgical repair are
+                // SPAWNED at the END of the apply — see the call site —
+                // so no later step can re-wipe behind it unnoticed, and
+                // the wait never blocks the UI thread.
                 layout_guard = Some((saved_settings.clone(), dst));
             }
         }
@@ -2507,19 +2603,24 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        // U7 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the
-        // LAST synchronous step of the apply — every write and reload the
+        // U7 + U9 of `odd/tasks/noctalia-layout-survives-the-apply.md`:
+        // this is the LAST step of the apply — every write and reload the
         // apply performs itself (the settings restore, the D4 re-assert,
         // the wallpaper-rotation neutralize, `wallpaper-set`,
         // `color-scheme-set`, `templates-apply`) has already happened, so
         // the verify samples the state the apply actually leaves behind
         // (acceptance criterion 2) and no later synchronous step can
-        // re-wipe behind it. Best-effort exactly like the D4 re-assert:
-        // a layout problem must never fail the theme apply. One caveat,
-        // stated: the off-thread colour re-assert spawned just above is
-        // asynchronous by design and can still land after this point.
+        // re-wipe behind it. U9: the verify itself runs OFF-THREAD on a
+        // detached worker (see `spawn_layout_verify_and_repair` for why
+        // the settle must never freeze the UI thread mid-transition) —
+        // the apply returns without waiting for it. Best-effort exactly
+        // like the D4 re-assert: a layout problem must never fail the
+        // theme apply. One caveat, stated: the off-thread colour
+        // re-assert spawned above and this verify worker are both
+        // asynchronous by design and can still land after the apply
+        // returns.
         if let Some((saved_settings, live_settings)) = layout_guard {
-            verify_and_repair_layout(&saved_settings, &live_settings);
+            spawn_layout_verify_and_repair(saved_settings, live_settings);
         }
 
         Ok(())
@@ -7412,6 +7513,25 @@ scale = 1.3
             std::fs::write(&self.mode_file, mode).unwrap();
         }
 
+        /// Block until the detached layout-verify worker has finished (its
+        /// production settle included), so post-apply assertions observe
+        /// its FINAL state. U9 moved the verify off the apply's critical
+        /// path, so it runs concurrently with the test body — the same
+        /// wait `Drop` performs, exposed so a test can pin the worker's
+        /// own outcome. Bounded: the worker exits by itself (one settle +
+        /// one bounded repair + one re-check settle), so this can never
+        /// hang the suite.
+        fn wait_for_verify(&self) {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !layout_verify_workers_idle() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(
+                layout_verify_workers_idle(),
+                "the layout-verify worker outlived its 20 s deadline"
+            );
+        }
+
         /// The text the stub wipes the live file with — tests replace it
         /// to simulate Noctalia re-persisting a DIFFERENT live state.
         fn wipe_source(&self) -> &Path {
@@ -7456,6 +7576,26 @@ scale = 1.3
 
     impl Drop for LayoutStub {
         fn drop(&mut self) {
+            // The detached layout-verify worker (U9) reads PROCESS-GLOBAL
+            // state: `PATH` to resolve this stub's `noctalia`,
+            // `HVE_LAYOUT_SETTLE_MS` for its settle, the sandboxed `HOME`
+            // to reach the live settings.toml — and its bounded repair may
+            // still WRITE that file. Keep THIS sandbox installed until the
+            // worker has finished — same wait and same loud deadline
+            // contract as `ColorStub::drop`, so a worker can never
+            // outlive its test and pollute the next sandbox.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !layout_verify_workers_idle() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if !layout_verify_workers_idle() {
+                let msg = "a detached layout-verify worker outlived its 20 s deadline: \
+                           its sandbox is about to be restored and the next test can be polluted";
+                eprintln!("LayoutStub::drop: {msg}");
+                if !std::thread::panicking() {
+                    panic!("LayoutStub::drop: {msg}");
+                }
+            }
             for (k, v) in &self.saved {
                 match v {
                     Some(val) => std::env::set_var(k, val),
@@ -7480,6 +7620,7 @@ scale = 1.3
             res.is_ok(),
             "a layout problem must never fail the apply: {res:?}"
         );
+        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             2,
@@ -7509,6 +7650,7 @@ scale = 1.3
 
         let res = NoctaliaV5Provider::new().apply(theme.path());
         assert!(res.is_ok(), "the healthy apply must succeed: {res:?}");
+        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             1,
@@ -7532,6 +7674,7 @@ scale = 1.3
 
         let res = NoctaliaV5Provider::new().apply(theme.path());
         assert!(res.is_ok(), "a layoutless theme must apply cleanly: {res:?}");
+        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             1,
@@ -7553,6 +7696,7 @@ scale = 1.3
             res.is_ok(),
             "a repair that cannot stick must never fail the apply: {res:?}"
         );
+        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             2,
@@ -7587,6 +7731,7 @@ scale = 1.3
             res.is_ok(),
             "a layout problem must never fail the apply: {res:?}"
         );
+        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             2,
@@ -7639,14 +7784,15 @@ scale = 1.3
             res.is_ok(),
             "a layout problem must never fail the apply: {res:?}"
         );
+        stub.wait_for_verify();
         assert!(
             missing_theme_layout(
                 THEME_LAYOUT,
                 &std::fs::read_to_string(stub.live_settings()).unwrap()
             )
             .is_empty(),
-            "a wipe landing on a LATER step must still be repaired before the \
-             apply returns"
+            "a wipe landing on a LATER step must still be repaired — by the \
+             off-thread verify, shortly after the apply returns"
         );
         // Ordering pin: the repair's config-reload must be the LAST line
         // the stub logged — i.e. after `templates-apply`, never before it.
@@ -7701,10 +7847,62 @@ scale = 1.3
             "a theme without layout sections must skip the settle entirely, \
              but the apply took {elapsed:?}"
         );
+        stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
             1,
             "no declared layout means no repair reload"
+        );
+    }
+
+    /// U9 of `odd/tasks/noctalia-layout-survives-the-apply.md` — the
+    /// regression the keeper FELT ("ahora me parece que algo rasca y
+    /// antes era todo fluido"): the theme apply runs SYNCHRONOUSLY ON THE
+    /// UI THREAD (Slint callback -> gallery slot `apply_theme` -> theme
+    /// manager `apply` -> provider `apply`, no spawn on that path), so
+    /// the verify's settle froze the transition for up to ~3 s while the
+    /// wallpaper cadence itself (1.85 s) was unchanged. The apply must
+    /// return WITHOUT waiting; the verify + bounded repair runs AFTERWARDS
+    /// on a detached worker — the same idiom the off-thread colour
+    /// re-assert uses. The check must still detect and repair a wipe that
+    /// landed on the apply's own steps, only later.
+    #[test]
+    #[serial]
+    fn apply_returns_without_waiting_for_the_layout_verify() {
+        let stub = LayoutStub::new();
+        // A settle long enough that "waited for it" cannot be confused
+        // with test noise, short enough to keep the test fast when it
+        // fails. The worker pays it twice (settle + post-repair re-check)
+        // off-thread; `wait_for_verify` below absorbs that.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "1000");
+        stub.wipe_mode("first");
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let started = std::time::Instant::now();
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        let elapsed = started.elapsed();
+        assert!(
+            res.is_ok(),
+            "a layout problem must never fail the apply: {res:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "the apply must return without waiting for the layout settle \
+             (the verify runs off-thread on a spawned worker), but it took {elapsed:?}"
+        );
+        // The check still runs AFTER the apply returned: the detached
+        // worker sees the wipe the step-0 reload left and repairs it.
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "the off-thread verify must still detect and repair the wipe \
+             (one step-0 reload plus exactly one repair reload)"
+        );
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
+            "the off-thread repair must leave the theme's layout in the live file"
         );
     }
 }
