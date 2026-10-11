@@ -2080,6 +2080,97 @@ mod tests {
     }
 
     #[test]
+    fn same_role_declarations_are_decided_by_the_incoming_order() {
+        // The tie-break the retired v4 pins used to cover, restored on the
+        // consumer half: `collect_declarers` hands the declarers over in
+        // SORTED provider-directory order, and the core must take the FIRST
+        // declaration of a role — not the first by id, not the first by file
+        // name. Both assertions run over the SAME fixtures and only the
+        // incoming order changes, so the pair discriminates the order from
+        // every other rule that could have picked a winner.
+        let src_dir = tempfile::tempdir().expect("src tmp");
+        let first_src = src_dir.path().join("first.png");
+        let second_src = src_dir.path().join("second.png");
+        std::fs::write(&first_src, b"first image bytes").expect("fixture");
+        std::fs::write(&second_src, b"second image bytes").expect("fixture");
+
+        let theme = tempfile::tempdir().expect("theme tmp");
+        let a_dir = theme.path().join("providers").join("shell-a");
+        let b_dir = theme.path().join("providers").join("shell-b");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        std::fs::create_dir_all(&b_dir).unwrap();
+        std::fs::write(a_dir.join("a.rec"), format!("{}\n", first_src.display())).unwrap();
+        std::fs::write(b_dir.join("b.rec"), format!("{}\n", second_src.display())).unwrap();
+
+        // Sorted provider-directory order: shell-a, then shell-b.
+        let sorted = vec![
+            fake_declarer(
+                &a_dir,
+                "shell-a",
+                "a.rec",
+                PreviewRole::WallpaperManifest,
+                PreviewSourceKind::Image,
+            ),
+            fake_declarer(
+                &b_dir,
+                "shell-b",
+                "b.rec",
+                PreviewRole::WallpaperManifest,
+                PreviewSourceKind::Image,
+            ),
+        ];
+        assert_eq!(
+            plan_with(theme.path(), &sorted),
+            Some(PreviewSpec::Image(first_src.clone())),
+            "the first declaration of the role in sorted directory order wins the tie"
+        );
+
+        // The same two declarers, reversed: the other one must win now, which
+        // is what proves the incoming order is what decided.
+        let reversed = vec![
+            fake_declarer(
+                &b_dir,
+                "shell-b",
+                "b.rec",
+                PreviewRole::WallpaperManifest,
+                PreviewSourceKind::Image,
+            ),
+            fake_declarer(
+                &a_dir,
+                "shell-a",
+                "a.rec",
+                PreviewRole::WallpaperManifest,
+                PreviewSourceKind::Image,
+            ),
+        ];
+        assert_eq!(
+            plan_with(theme.path(), &reversed),
+            Some(PreviewSpec::Image(second_src)),
+            "reversing the declarations must reverse the winner"
+        );
+    }
+
+    #[test]
+    fn collect_declarers_keeps_only_the_ids_the_registry_resolves() {
+        // The storage contract behind the tie-break: a `providers/{id}/`
+        // directory whose id the registry does not resolve declares nothing
+        // and is dropped, and the surviving declarer keeps its own directory.
+        // Order between two RESOLVABLE declarers only becomes observable when
+        // a second shipped shell exists — today exactly one id resolves — so
+        // the tie-break itself is pinned by the test above.
+        let theme = tempfile::tempdir().expect("theme tmp");
+        let live = theme.path().join("providers").join("noctalia-v5");
+        let retired = theme.path().join("providers").join("aaa-retired");
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::create_dir_all(&retired).unwrap();
+
+        let declarers = collect_declarers(theme.path());
+        assert_eq!(declarers.len(), 1, "only the resolvable id declares");
+        assert_eq!(declarers[0].0, live, "the surviving declarer keeps its own directory");
+        assert_eq!(declarers[0].1.id(), "noctalia-v5");
+    }
+
+    #[test]
     fn painter_video_declaration_beats_wallpaper_manifest() {
         // The preserved chain puts the painter's video record BEFORE the
         // static wallpaper manifest: a usable declared video must plan to
