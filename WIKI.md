@@ -298,7 +298,7 @@ HVE integra fondos de pantalla animados (video) para temas de **Noctalia v5** a 
 - **Manifiesto ligero por tema**: los temas guardan solo referencias, no bytes de video, en `{theme_dir}/providers/noctalia-v5/mpvpaper-assignments.json` — asignaciones por salida (`*` = todas, o un conector como `DP-3`) con `filename`, `local_path`, `url` y `sha256` opcional.
 - **Cascada de resolución al aplicar**: (1) `local_path` existe en disco → se usa sin descarga; (2) `filename` ya está en `video_directory` → se usa; (3) hay `url` → se descarga con `curl` y se verifica el `sha256` si está presente; (4) si no → se advierte y se omite (nunca falla la aplicación del tema).
 - **Aplicar/limpiar**: como el plugin solo lee `assignments.json` al arrancar, HVE escribe el archivo y "rebota" el plugin (`noctalia msg plugins disable/enable noctalia/mpvpaper`). Los temas **sin** manifiesto envían `clear-all` primero, de modo que un video previo no pueda secuestrar la pantalla.
-- **Disponibilidad**: depende del provider activo (Noctalia v5). Noctalia v4 y los presets de HVE no usan video.
+- **Disponibilidad**: es una capacidad del provider activo (Noctalia v5). Los presets de HVE no usan video.
 
 ### IPC (Comunicación entre procesos)
 
