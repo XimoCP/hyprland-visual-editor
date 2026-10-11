@@ -122,9 +122,13 @@ the tested stages only.
 - [x] **U3** — R3 + the no-active-theme fallback. (`3dda7cf`)
 - [x] **U4** — the tests. (`4167681`)
 - [x] **U5** — the parent's render read + install. (`044fd00`, installed `6ace583e…`)
-- [ ] **U6** — the hero's SHAPE comes from the SLOT, not the theme (D1 / criterion 7).
-- [ ] **U7** — re-anchor the page only when the PARTITION moved (D2 / criterion 8).
+- [x] **U6** — the hero's SHAPE comes from the SLOT, not the theme (D1 / criterion 7).
+  (`914c9a3`)
+- [x] **U7** — re-anchor the page only when the PARTITION moved (D2 / criterion 8).
+  (`977c5ca`)
 - [ ] **U8** — the tests for U6/U7, and the parent's render read of the stable composition.
+  The tests ship inside `914c9a3` / `977c5ca` (one work unit each, tests with their code);
+  only the parent's render read of the stable composition is still open.
 
 ## Progress log
 
@@ -170,3 +174,37 @@ the tested stages only.
     relaunched with the window mapped at `11:53` local for the keeper's live look.
   - Cross-model verification (a different model from the writer's) launched on the six commits;
     its verdict is recorded separately when it lands.
+- 2026-10-11 (delegated writer, U6–U8 correction): both confirmed defects fixed on
+  `hve2-visual-rewrite`, strict TDD. `cargo test` → 1557 passed, 0 failed;
+  `cargo check --all-targets` → clean.
+  - `914c9a3` U6 (D1 / criterion 7) — `page_render` builds the aspects from the page's
+    NATURAL order (`start..end`), so `aspects[i]` describes SLOT `i` and `reals[i]` names
+    the theme drawn there; only the reals are reordered. RED observed first, for the right
+    reason: with theme 1 active on the only page of a 3-theme library the aspects read
+    `[0.72, 1.0, 1.95]` against the page's own natural `[1.0, 0.72, 1.95]`, and theme 2
+    (JoKer, the WIDE phase) claimed slot 0's shape (`1.95` against `1.0`). The doc
+    comments that claimed each aspect travels with its theme are corrected. Tests: the
+    invariance sweep (two stages × three library sizes × every active index of every page:
+    identical aspects AND identical tile geometry, `tile_reals` permuted only, the active
+    theme still leading the hero slot) plus the D1 case.
+  - `977c5ca` U7 (D2 / criterion 8) — the re-anchor policy moved into
+    `MosaicPages::sync(real_count, stage_w, stage_h, is_flip)`, which recomputes on ANY
+    stage change (the geometry depends on the stage) but re-anchors only when the CAPACITY
+    or the PAGE COUNT before vs after differ; `main.rs` calls it instead of composing
+    `needs_recompute` → `recompute` → `open_on_active` itself. RED observed first with the
+    defect carried into `sync`: "an unchanged partition must NOT re-anchor" (the page moved
+    2 → 1 on a stage change that kept capacity 10 and 3 pages). Tests: the stage change
+    that keeps the partition leaves the page alone while still rebuilding the geometry,
+    the hidden → visible open still lands on the active theme's page, a library change that
+    repartitions still re-anchors, a keeper flip beats the re-anchor, and an idle sync with
+    no active theme is a no-op.
+  - U8's tests ship inside those two commits, one work unit each with its code; the U8 box
+    stays open only for the parent's render read of the stable composition.
+  - Findings for the parent: `mosaic_page_capacity` needed NO change and is now MORE
+    accurate — its probe walks the 10 phase windows over tile POSITIONS, which is literally
+    the aspects the layout now receives (`start % 10` rotation), so the 96 px minimum-edge
+    floor no longer depends on which theme is active and the "unproven permutation" caveat
+    recorded in the findings above is closed. Nothing else assumed the old theme-keyed
+    pairing: `justified_hero_layout` and the capacity probe take `reals` as LABELS only,
+    and the tile geometry is computed from `aspects` alone.
+  - `src/shell/ui_tests.rs` untouched (the parent owns the render test there).
