@@ -1712,6 +1712,41 @@ mod tests {
         assert_eq!(ordered3.iter().map(|j| j.index).collect::<Vec<_>>(), vec![0,1]);
     }
 
+    // ── U2/U3: name-based delivery lookup for a shifted index ──────────────
+
+    fn rows(names: &[&str]) -> Vec<(usize, String)> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (i, (*n).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn resolve_row_index_exact_match_wins() {
+        let model = rows(&["Animation", "Cars", "Fantasy", "Space"]);
+        assert_eq!(resolve_row_index(&model, 2, "Fantasy"), Some(2));
+        assert_eq!(resolve_row_index(&model, 0, "Animation"), Some(0));
+    }
+
+    #[test]
+    fn resolve_row_index_resolves_a_shifted_index_by_name() {
+        // "Fantasy" was planned at index 2; a rebuild inserted a theme before
+        // it, so the payload now arrives for an index that holds another row.
+        let planned = rows(&["Animation", "Cars", "Fantasy", "Space"]);
+        let rebuilt = rows(&["Animation", "Cars", "New", "Fantasy", "Space"]);
+        assert_eq!(resolve_row_index(&rebuilt, 2, "Fantasy"), Some(3), "found by name, not by index");
+        // The planned pair itself still resolves when nothing moved.
+        assert_eq!(resolve_row_index(&planned, 2, "Fantasy"), Some(2));
+    }
+
+    #[test]
+    fn resolve_row_index_returns_none_when_the_name_is_gone() {
+        let rebuilt = rows(&["Animation", "Cars", "Space"]);
+        assert_eq!(resolve_row_index(&rebuilt, 2, "Fantasy"), None, "deleted theme resolves to nothing");
+        assert_eq!(resolve_row_index(&[], 0, "Fantasy"), None, "empty model resolves to nothing");
+    }
+
     #[test]
     fn preheat_plan_for_42_sources_coalesces_to_single_refresh() {
         use std::sync::atomic::{AtomicUsize, Ordering};
