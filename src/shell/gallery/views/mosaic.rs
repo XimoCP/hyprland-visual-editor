@@ -675,6 +675,30 @@ impl MosaicPages {
     /// holds it renders it as the hero.
     pub fn set_active_theme(&mut self, theme: Option<usize>) { self.active_theme = theme; }
 
+    /// The page index that CONTAINS `theme`, or None when it is not in the
+    /// library / there is no page. Pure.
+    pub fn page_of(&self, theme: usize) -> Option<usize> {
+        if self.total_pages == 0 || theme >= self.real_count {
+            return None;
+        }
+        if self.capacity == 0 {
+            // Degenerate capacity renders the whole library as one page.
+            return Some(0);
+        }
+        Some((theme / self.capacity).min(self.total_pages - 1))
+    }
+
+    /// Open on the active theme's page (R2): the Mosaic must not open on page 1
+    /// while the theme it should centre lives on a page the keeper cannot see.
+    /// A no-op — false — when nothing is active. Returns true when the current
+    /// page changed.
+    pub fn open_on_active(&mut self) -> bool {
+        match self.active_theme.and_then(|theme| self.page_of(theme)) {
+            Some(page) => self.go_to(page),
+            None => false,
+        }
+    }
+
     /// Re-anchor the stored theme onto `tile_reals` (a page's model-order real
     /// mapping): the position of the same theme, the first tile when the theme
     /// has left the page, or None when there is no cursor. Pure — the UI just
@@ -2952,5 +2976,31 @@ mod mosaic_active_hero_tests {
             "the page count must not change with an active theme"
         );
         assert_eq!(with_active.page_numbers(), plain.page_numbers());
+    }
+
+    #[test]
+    fn opening_lands_on_the_active_themes_page() {
+        let mut pages = MosaicPages::new(23, STAGE_W, STAGE_H);
+        assert_eq!(pages.total_pages(), 3, "23 themes → 3 pages of 10/10/3");
+        assert_eq!(pages.current(), 0, "a fresh model opens on page 1");
+        pages.set_active_theme(Some(13));
+        assert_eq!(pages.page_of(13), Some(1), "theme 13 lives on page 2");
+        assert!(pages.open_on_active(), "the open must move the page");
+        assert_eq!(pages.current(), 1, "the Mosaic opens on the active theme's page");
+        let (aspects, reals) = pages.page_render();
+        assert_eq!(reals[0], 13, "the opened page leads with the active theme");
+        let (_, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
+        assert_eq!(tile_reals[0], 13, "and renders it as the hero");
+        assert!(!pages.open_on_active(), "already there: the open is idempotent");
+        // A 2-page library: the active theme on the LAST (partial) page.
+        let mut two = MosaicPages::new(12, STAGE_W, STAGE_H);
+        two.set_active_theme(Some(11));
+        assert_eq!(two.page_of(11), Some(1), "the last theme sits on page 2");
+        assert!(two.open_on_active());
+        assert_eq!(two.current(), 1);
+        let (aspects2, reals2) = two.page_render();
+        assert_eq!(reals2, vec![11, 10], "the partial page leads with the active theme");
+        let (_, reals2_layout) = justified_hero_layout(&aspects2, &reals2, STAGE_W, STAGE_H);
+        assert_eq!(reals2_layout[0], 11);
     }
 }

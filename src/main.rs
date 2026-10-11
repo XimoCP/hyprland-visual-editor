@@ -626,6 +626,24 @@ pub(crate) fn recenter_gallery_on_active(
     refresh_slice_ring();
 }
 
+/// Recenter the Mosaic page model on the ACTIVE theme's page and re-render.
+///
+/// The Mosaic's half of `recenter_gallery_on_active` (R2: the Mosaic must open
+/// on the active theme's page): the window is the SAME Slint window across
+/// hide/show, so the page model keeps wherever the keeper left it. Every REAL
+/// hidden → shown transition re-anchors the page onto the active theme, so the
+/// keeper opens on what is actually applied instead of a page that happens to
+/// hold it. The mosaic CURSOR is not touched — only the page.
+pub(crate) fn recenter_mosaic_on_active(
+    pages: &std::sync::Mutex<crate::shell::gallery::views::mosaic::MosaicPages>,
+    refresh_mosaic_page: &(dyn Fn(bool) + Send + Sync),
+) {
+    if let Ok(mut p) = pages.lock() {
+        p.open_on_active();
+    }
+    refresh_mosaic_page(false);
+}
+
 /// True when any gallery card carries the active mark.
 pub(crate) fn gallery_has_active(window: &crate::MainWindow) -> bool {
     use slint::Model as _;
@@ -3209,8 +3227,25 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let mut pg = pages.lock().unwrap();
+            // The ACTIVE theme, from the same library snapshot the tiles read:
+            // it decides which page opens (R2) and leads that page's arrays
+            // (R1), so the applied theme is always the hero on screen.
+            pg.set_active_theme(
+                (0..real_count).find(|&i| cards.row_data(i).is_some_and(|row| row.is_active)),
+            );
             if pg.needs_recompute(real_count, stage_w, stage_h) {
                 pg.recompute(real_count, stage_w, stage_h);
+                // Re-open on the active theme's page whenever the partition
+                // moved: the library changed (themes added / removed) or the
+                // stage changed — which repartitions the pages, so the old page
+                // INDEX now means a different set of themes (the gallery
+                // computes its first capacity while the window is still hidden).
+                // A keeper page flip passes is_flip and always wins: step()
+                // never recomputes, and a coincident recompute must not yank
+                // the page the keeper just asked for.
+                if !is_flip {
+                    pg.open_on_active();
+                }
             }
             let (aspects, real_indices) = pg.page_render();
             // Hero-centered layout: returns tiles PLUS the per-tile real
@@ -5558,15 +5593,19 @@ fn main() -> Result<(), slint::PlatformError> {
     // keeps wherever the keeper left it. Every REAL hidden -> shown
     // transition re-snaps focus onto the active card and settles the ring —
     // the exact startup pair, so the carousel opens on what is applied. The
-    // Mosaic cursor is not touched, and a plain raise of a visible window
-    // never runs the hook.
+    // Mosaic re-anchors its PAGE the same way (same event, same intent: the
+    // applied theme is what the keeper must see); neither view's cursor is
+    // touched, and a plain raise of a visible window never runs the hook.
     {
         let weak = window.as_weak();
         let refresh = refresh_slice_ring.clone();
+        let pages = mosaic_pages.clone();
+        let refresh_mosaic = refresh_mosaic_page.clone();
         if let Some(mut ctrl) = composer::global_controller() {
             ctrl.set_show_hook(Arc::new(move || {
                 if let Some(w) = weak.upgrade() {
                     crate::recenter_gallery_on_active(&w, refresh.as_ref());
+                    crate::recenter_mosaic_on_active(&pages, refresh_mosaic.as_ref());
                 }
             }));
         }
