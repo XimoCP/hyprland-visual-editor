@@ -439,6 +439,38 @@ pub(crate) fn record_saved_preset_active(
     canonical
 }
 
+/// What a preset CARD click does to the recorded identity: whether it
+/// DEACTIVATES the preset (a second click on the active card) and the value the
+/// config must then hold. Returns `(is_deactivating, recorded_value)`.
+///
+/// Two decisions, and both used to be wrong in the same place:
+///
+/// * The comparison is TOLERANT ([`PresetStore::preset_files_match`]). The
+///   recorded value is the canonical `<name>.lua` (see
+///   [`record_saved_preset_active`]), while a USER preset card sends the bare
+///   STEM — `SavedPresetCard.apply-value` defaults to the displayed name and
+///   `PresetStore::list` returns stems. Exact equality made a click on the
+///   active card re-apply the preset instead of deactivating it.
+/// * The recorded value is CANONICAL. The click is where the bare stem
+///   originally came from, so canonicalising here is the root fix: the config
+///   stops flip-flopping between `Space` and `Space.lua`, and the live apply
+///   gets a name the shell resolver can find (both spellings resolve for a
+///   `*.lua` file — `_hve_preset_in_dir` probes `$dir/<name>` for a dotted name
+///   and `$dir/<name>.lua` otherwise — while an interior-dot stem such as
+///   `my.preset` resolves ONLY as `my.preset.lua`).
+///
+/// An empty record means "nothing active", so a click always activates; a click
+/// on a preset that is already active clears the record (the empty string), the
+/// value `apply_border("none")` / `apply_animation("none")` expect.
+pub(crate) fn preset_card_click(active: &str, clicked: &str) -> (bool, String) {
+    let canonical = crate::preset_store::PresetStore::canonical_preset_file(clicked);
+    if crate::preset_store::PresetStore::preset_files_match(active, clicked) {
+        (true, String::new())
+    } else {
+        (false, canonical)
+    }
+}
+
 /// Build `BorderParams` from the window's current tune state (D4 live path).
 /// `size` comes from the sealed config because the tune pane no longer owns a
 /// geometry model of its own.
@@ -5174,19 +5206,27 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             use crate::callbacks::BorderGeometry;
             let file_str = file.to_string();
-            let (is_deact, result) = {
+            let (is_deact, recorded, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                let is_deact = st.cfg().active_border_file == file_str;
-                let new = if is_deact { String::new() } else { file_str.clone() };
-                st.cfg_mut().active_border_file = new.clone();
+                // U5: the toggle compares TOLERANTLY, so the canonical
+                // `<stem>.lua` record and the bare stem a USER card sends are
+                // the SAME preset again; and it records the CANONICAL file name,
+                // which is where the stem originally came from — the config no
+                // longer flip-flops between the two spellings.
+                let (is_deact, recorded) =
+                    preset_card_click(&st.cfg().active_border_file, &file_str);
+                st.cfg_mut().active_border_file = recorded.clone();
                 let _ = st.cfg().save();
-                let arg = if is_deact { "none" } else { &new };
-                let res = st.engine().apply_border(arg);
                 // D3: a card carries border IDENTITY only. Geometry is
                 // persisted state the loaded theme wrote (and Hyprland
                 // renders), so a click preserves it — the retired lookup
                 // table used to overwrite it with 2/32/5/5 on every pick.
-                (is_deact, res)
+                let res = if is_deact {
+                    st.engine().apply_border("none")
+                } else {
+                    st.engine().apply_border(&recorded)
+                };
+                (is_deact, recorded, res)
             };
             if let Err(e) = result {
                 tracing::error!("[HVE] Border error: {}", e);
@@ -5201,8 +5241,10 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(w) = weak.upgrade() {
                 w.set_active_border_index(if is_deact { -1 } else { idx });
                 // Tune pane population lives in the single shared sync (used
-                // by the manual path and both theme-apply paths alike).
-                let file = if is_deact { String::new() } else { file_str.clone() };
+                // by the manual path and both theme-apply paths alike). The
+                // canonical record is what the read-back wants: it strips
+                // `.lua` and appends it again.
+                let file = if is_deact { String::new() } else { recorded };
                 crate::sync_border_tune_pane(&w, &proj_c, &file, geometry);
             }
         });
@@ -5224,15 +5266,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let file_str = file.to_string();
-            let (is_deact, result) = {
+            let (is_deact, recorded, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                let is_deact = st.cfg().active_anim_file == file_str;
-                let new = if is_deact { String::new() } else { file_str.clone() };
-                st.cfg_mut().active_anim_file = new.clone();
+                // U5: mirrors the Borders card click — tolerant compare, so the
+                // canonical record and the bare stem a USER card sends toggle
+                // the same preset; canonical record, so the config never holds
+                // the stem the click arrived with.
+                let (is_deact, recorded) =
+                    preset_card_click(&st.cfg().active_anim_file, &file_str);
+                st.cfg_mut().active_anim_file = recorded.clone();
                 let _ = st.cfg().save();
-                let arg = if is_deact { "none" } else { &new };
-                let res = st.engine().apply_animation(arg);
-                (is_deact, res)
+                let res = if is_deact {
+                    st.engine().apply_animation("none")
+                } else {
+                    st.engine().apply_animation(&recorded)
+                };
+                (is_deact, recorded, res)
             };
             if let Err(e) = result {
                 tracing::error!("[HVE] Animation error: {}", e);
@@ -5242,7 +5291,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // Phase 4 — reflect the applied preset's curve/speed/style in
                 // the pane (shared read-back, mirroring the Borders apply path).
                 // Deactivation passes an empty name, which leaves the pane as-is.
-                let file = if is_deact { String::new() } else { file_str.clone() };
+                let file = if is_deact { String::new() } else { recorded };
                 crate::sync_motion_tune_pane(&w, &proj_c, &file);
             }
         });
@@ -7608,4 +7657,79 @@ mod tests {
         );
     }
 
+    // ── U5: the card-click toggle is TOLERANT and records CANONICAL ──────
+    // U1 records the canonical `<name>.lua` when a preset is saved from the tune
+    // pane, while a USER preset card still sends the bare stem
+    // (`SavedPresetCard.apply-value` defaults to the displayed name and
+    // `PresetStore::list` returns stems). Comparing the two spellings by
+    // equality made a click on the ACTIVE card fail to deactivate:
+    // `"Space.lua" == "Space"` is false, so the click re-applied the preset and
+    // wrote the stem back into the config. The toggle only worked while both
+    // sides were stems.
+
+    /// Both halves of the fix, in both panes: the handlers decide through the
+    /// shared rule and never compare the two spellings by equality.
+    #[test]
+    fn both_preset_card_click_handlers_toggle_tolerantly_and_record_canonically() {
+        let code = main_rs_code();
+        for sig in [
+            "window.on_panel_apply_border(",
+            "window.on_panel_apply_animation(",
+        ] {
+            let handler = fn_body(&code, sig);
+            assert!(
+                handler.contains("preset_card_click"),
+                "{sig} must decide through the shared card-click rule, got: {handler}"
+            );
+            assert!(
+                !handler.contains("== file_str"),
+                "{sig} must not compare the active preset with the clicked one by equality, got: {handler}"
+            );
+        }
+    }
+
+    /// The regression in one assertion: a canonical record and the bare stem are
+    /// the SAME preset, so the second click DEACTIVATES it instead of re-applying
+    /// it. An empty record means "nothing active" and never toggles.
+    #[test]
+    fn preset_card_click_deactivates_the_active_preset_in_either_spelling() {
+        for (active, clicked) in [
+            ("Space.lua", "Space"),
+            ("Space", "Space.lua"),
+            ("13_the_joker.lua", "13_the_joker.lua"),
+            ("my.preset.lua", "my.preset"),
+        ] {
+            assert_eq!(
+                preset_card_click(active, clicked),
+                (true, String::new()),
+                "{clicked:?} is the active preset ({active:?}): the click must DEACTIVATE it"
+            );
+        }
+
+        assert_eq!(
+            preset_card_click("", "Space"),
+            (false, "Space.lua".to_string()),
+            "with nothing active a click activates, it never toggles"
+        );
+    }
+
+    /// The other half: the click records the CANONICAL form of what it clicked,
+    /// which is the file the store holds — so the config stops flip-flopping
+    /// between the stem and `<stem>.lua`.
+    #[test]
+    fn preset_card_click_records_the_canonical_form() {
+        for (clicked, recorded) in [
+            ("Space", "Space.lua"),
+            ("13_the_joker", "13_the_joker.lua"),
+            ("my.preset", "my.preset.lua"),
+            ("19_stylized2.5D", "19_stylized2.5D.lua"),
+            ("13_the_joker.lua", "13_the_joker.lua"),
+        ] {
+            assert_eq!(
+                preset_card_click("03_duo.lua", clicked),
+                (false, recorded.to_string()),
+                "a click on {clicked:?} must record {recorded:?}"
+            );
+        }
+    }
 }
