@@ -484,12 +484,32 @@ fn parse_custom_palette_name(text: &str) -> Option<String> {
     Some(name.replace('/', "_"))
 }
 
+/// The file name Noctalia stores a COMMUNITY palette under: URL-ENCODED,
+/// spaces as `%20`, with the `.json` extension every palette file carries.
+/// `Catppuccin Mocha Sapphire` → `Catppuccin%20Mocha%20Sapphire.json`
+/// (verified against the live `community-palettes` dir, 47 files, all
+/// `<encoded name>.json`).
+///
+/// The pre-fix lookup joined the RAW name with no extension, so it built a
+/// path that could not exist for any palette — the save warned and silently
+/// kept the palette of an earlier save.
+///
+/// `%` itself is deliberately NOT encoded: a name that already carries
+/// `%20` must not become `%2520`, and the raw fallback in
+/// [`find_palette_path`] covers any name the encoded form misses.
+fn community_palette_file_name(name: &str) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    format!("{}.json", name.replace(' ', "%20"))
+}
+
 /// Find the palette JSON file for a given source and name.
 ///
 /// Sources:
 /// - `custom`       → ~/.config/noctalia/palettes/<name>.json
 /// - `builtin`      → No file — built-in palettes are internal to Noctalia
-/// - `community`    → ~/.local/state/noctalia/community-palettes/<name>
+/// - `community`    → ~/.local/state/noctalia/community-palettes/<encoded name>
 /// - `wallpaper`    → No file — extracted from wallpaper at runtime
 fn find_palette_path(source: &str, name: &str) -> Option<PathBuf> {
     match source {
@@ -497,15 +517,21 @@ fn find_palette_path(source: &str, name: &str) -> Option<PathBuf> {
             noctalia_config_dir().map(|d| d.join("palettes").join(format!("{}.json", name)))
         }
         "community" => {
-            let home = std::env::var("HOME").ok()?;
-            Some(
-                PathBuf::from(home)
-                    .join(".local")
-                    .join("state")
-                    .join("noctalia")
-                    .join("community-palettes")
-                    .join(name),
-            )
+            // Encoded name FIRST (what Noctalia writes), raw as the
+            // fallback so a palette stored under its unencoded name keeps
+            // resolving. With neither on disk the encoded path comes back:
+            // it is the canonical location, so a warning names the file
+            // that is genuinely missing.
+            let dir = noctalia_state_dir()?.join("community-palettes");
+            let encoded = dir.join(community_palette_file_name(name));
+            if encoded.is_file() {
+                return Some(encoded);
+            }
+            let raw = dir.join(format!("{}.json", name));
+            if raw.is_file() {
+                return Some(raw);
+            }
+            Some(encoded)
         }
         _ => None,
     }
@@ -2252,6 +2278,80 @@ mod tests {
         let path = path.unwrap();
         assert!(path.ends_with("JokerTheme.json"));
         assert!(path.to_string_lossy().contains("palettes"));
+    }
+
+    /// The exact live case: Noctalia stores a community palette under its
+    /// URL-ENCODED name (`Catppuccin%20Mocha%20Sapphire.json`), so the RAW
+    /// name HVE used to build never resolved — the save warned and silently
+    /// kept the palette an earlier save had left behind.
+    #[test]
+    fn community_lookup_resolves_the_encoded_file_name() {
+        let _env = crate::test_utils::TempEnv::new();
+        let home = PathBuf::from(std::env::var("HOME").unwrap());
+        let dir = home
+            .join(".local")
+            .join("state")
+            .join("noctalia")
+            .join("community-palettes");
+        std::fs::create_dir_all(&dir).unwrap();
+        let encoded = dir.join("Catppuccin%20Mocha%20Sapphire.json");
+        std::fs::write(&encoded, br##"{"dark":{"mPrimary":"#74c7ec"}}"##).unwrap();
+
+        assert_eq!(
+            find_palette_path("community", "Catppuccin Mocha Sapphire").as_deref(),
+            Some(encoded.as_path()),
+            "the community palette must resolve to the file Noctalia actually wrote"
+        );
+    }
+
+    /// The encoding Noctalia applies to its community palette file names:
+    /// spaces become `%20`, the `.json` extension is kept, and an
+    /// already-encoded name is NOT encoded twice (`%` stays `%`, so `%20`
+    /// never becomes `%2520`).
+    #[test]
+    fn community_palette_file_name_encodes_spaces_only() {
+        assert_eq!(
+            community_palette_file_name("Catppuccin Mocha Sapphire"),
+            "Catppuccin%20Mocha%20Sapphire.json"
+        );
+        assert_eq!(
+            community_palette_file_name("Ayu"),
+            "Ayu.json",
+            "a name without spaces keeps its file name apart from the extension"
+        );
+        assert_eq!(
+            community_palette_file_name(""),
+            "",
+            "no name, no palette file; the capture decision rejects it first"
+        );
+        assert_eq!(
+            community_palette_file_name("Catppuccin%20Mocha"),
+            "Catppuccin%20Mocha.json",
+            "an already-encoded name must not be encoded twice"
+        );
+    }
+
+    /// The raw name stays a valid lookup: a palette stored WITHOUT the
+    /// encoding (whatever wrote it) still resolves, so the encoded form
+    /// adds a convention instead of replacing one.
+    #[test]
+    fn community_lookup_falls_back_to_the_raw_file_name() {
+        let _env = crate::test_utils::TempEnv::new();
+        let home = PathBuf::from(std::env::var("HOME").unwrap());
+        let dir = home
+            .join(".local")
+            .join("state")
+            .join("noctalia")
+            .join("community-palettes");
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("Ayu Green.json");
+        std::fs::write(&raw, br##"{"dark":{"mPrimary":"#b8bb26"}}"##).unwrap();
+
+        assert_eq!(
+            find_palette_path("community", "Ayu Green").as_deref(),
+            Some(raw.as_path()),
+            "a raw-named community palette must keep resolving"
+        );
     }
 
     #[test]
