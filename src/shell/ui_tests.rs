@@ -3324,9 +3324,10 @@ fn mosaic_hero_centered_renders_with_pagination() {
     let mut pg = MosaicPages::new(count, stage_w, stage_h);
     assert!(pg.total_pages() >= 2, "12 themes must paginate (capacity {})", pg.capacity());
 
-    // Paint whatever page `pg` currently stands on. Shared by the two renders
-    // below so the baseline and the active-theme case go through the identical
-    // pipeline (page_render → hero layout → curtain delays → snapshot).
+    // Paint whatever page `pg` currently stands on, and return each tile's
+    // rectangle with the theme it shows. Shared by the three renders below so
+    // the baseline and the active-theme case go through the identical pipeline
+    // (page_render → hero layout → curtain delays → snapshot).
     let render_page = |win: &crate::MainWindow, pg: &MosaicPages, name: &str| {
         let (aspects, real_indices) = pg.page_render();
         let (layout, tile_reals) = justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
@@ -3343,6 +3344,13 @@ fn mosaic_hero_centered_renders_with_pagination() {
             })
             .collect();
         let tile_count = tiles.len();
+        // Geometry and picture are recorded separately: the composition is
+        // SLOT-owned, the picture is theme-owned, and the caller below asserts
+        // exactly that split.
+        let painted: Vec<((f32, f32, f32, f32), i32)> = tiles
+            .iter()
+            .map(|t| ((t.x, t.y, t.w, t.h), t.real_index))
+            .collect();
         win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(tiles)));
         win.set_gallery_mosaic_current_page(pg.current() as i32);
         win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
@@ -3351,12 +3359,12 @@ fn mosaic_hero_centered_renders_with_pagination() {
         )));
 
         eprintln!(
-            "[render] {name}: page {}/{} tiles={} aspects={} reals={:?}",
+            "[render] {name}: page {}/{} tiles={} reals={:?} rects={:?}",
             pg.current(),
             pg.total_pages(),
             tile_count,
-            aspects.len(),
-            tile_reals.iter().take(4).collect::<Vec<_>>()
+            painted.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+            painted.iter().take(3).map(|(g, _)| *g).collect::<Vec<_>>()
         );
         assert!(
             tile_count > 0,
@@ -3365,18 +3373,25 @@ fn mosaic_hero_centered_renders_with_pagination() {
             pg.total_pages()
         );
 
-        focus_settle();
+        // The page transition ramps `curtain-phase` over 600 ms and each tile
+        // reveals over 300 ms starting at its 50 ms-per-column stagger, so a
+        // single focus_settle (320 ms of mock time) snapshots the tiles
+        // MID-REVEAL: the painted width is the clip, not the tile. Four settles
+        // (~1280 ms) carry every tile past its window, which is what makes the
+        // artifacts geometrically comparable.
+        for _ in 0..4 {
+            focus_settle();
+        }
         let snap = win.window().take_snapshot().expect("mosaic snapshot");
         save_slice_png(snap, name);
+        painted
     };
 
-    render_page(&win, &pg, "mosaic_hero.png");
+    let _page1 = render_page(&win, &pg, "mosaic_hero.png");
 
     // The SAME page 2 with no active theme: R3's shape (its first theme leads).
-    // Same tiles, same layout — only the order differs, so the pair isolates
-    // the reorder from everything else the layout does.
     assert!(pg.go_to(1), "page 2 exists");
-    render_page(&win, &pg, "mosaic_page2_first_of_page.png");
+    let page2_plain = render_page(&win, &pg, "mosaic_page2_first_of_page.png");
 
     // R1 + R2 together, the state a theme apply actually produces: the active
     // theme sits on a LATER page, so the Mosaic must open there with it as the
@@ -3395,7 +3410,39 @@ fn mosaic_hero_centered_renders_with_pagination() {
         pg.current(),
         pg.total_pages()
     );
-    render_page(&win, &pg, "mosaic_hero_active_theme.png");
+    let page2_active = render_page(&win, &pg, "mosaic_hero_active_theme.png");
+
+    // Acceptance 7, at pixel geometry: the active theme takes the hero SLOT and
+    // nothing else about the page may move. The two page-2 renders must differ
+    // ONLY in which theme each rectangle shows. (This is the check that the
+    // delivered D1 defect failed: the hero used to adopt the active theme's
+    // shape phase, so the whole composition reflowed on every theme apply.)
+    let rects = |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(g, _)| *g).collect::<Vec<_>>();
+    let pictures = |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(_, r)| *r).collect::<Vec<_>>();
+    assert_eq!(
+        rects(&page2_plain).len(),
+        rects(&page2_active).len(),
+        "the reorder must not add or drop a tile"
+    );
+    for (i, (plain, active)) in rects(&page2_plain)
+        .iter()
+        .zip(rects(&page2_active).iter())
+        .enumerate()
+    {
+        assert!(
+            (plain.0 - active.0).abs() < 0.01
+                && (plain.1 - active.1).abs() < 0.01
+                && (plain.2 - active.2).abs() < 0.01
+                && (plain.3 - active.3).abs() < 0.01,
+            "slot {i} moved: {plain:?} without an active theme vs {active:?} with one — \
+             the composition belongs to the slot, not to the theme"
+        );
+    }
+    assert_ne!(
+        pictures(&page2_plain),
+        pictures(&page2_active),
+        "the active theme must actually lead the page's slots"
+    );
 }
 
 fn bright_mosaic_thumb() -> slint::Image {
