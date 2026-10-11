@@ -16623,8 +16623,20 @@ fn gallery_apply_refreshes_shared_preset_state_by_construction() {
         .next()
         .unwrap_or(handler);
     assert!(
-        handler.contains("reload_config_after_theme"),
-        "the gallery apply path must refresh shared preset state from disk via reload_config_after_theme"
+        handler.contains("sync_applied_theme"),
+        "the gallery apply path must converge both surfaces through sync_applied_theme"
+    );
+    // The disk-first refresh now lives INSIDE that funnel: pin the chain so a
+    // helper that forgot `mark_theme_applied` (and with it
+    // `reload_config_after_theme`) cannot pass.
+    let helper = main
+        .split("fn sync_applied_theme")
+        .nth(1)
+        .expect("main.rs must define sync_applied_theme");
+    let helper = helper.split("\n}").next().unwrap_or(helper);
+    assert!(
+        helper.contains("mark_theme_applied"),
+        "sync_applied_theme must refresh shared preset state from disk via mark_theme_applied"
     );
 }
 
@@ -18634,3 +18646,133 @@ fn motion_chrome_labels_follow_the_language() {
     assert_lang("en");
 }
 
+// ── Theme apply must sync BOTH surfaces (divergence defect) ──────────
+// Defect (keeper 2026-10-11): applying from the gallery rebuilt the carousel
+// from `gallery_tm` but never refreshed the panel's Save list, so the slider
+// marked the new theme while Save kept marking the previous one. The single
+// funnel `sync_applied_theme` converges the main manager, the panel list and
+// the gallery cards, and keeps the baked thumbs (in-place `sync_cards`, no
+// ModelRc replacement).
+#[test]
+fn sync_applied_theme_converges_both_surfaces_and_keeps_bakes() {
+    use slint::{Model as _, ModelRc, SharedString, VecModel};
+    let _env = crate::test_utils::TempEnv::new();
+    init_test_platform();
+    let config_dir = dirs::config_dir()
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h: String| std::path::PathBuf::from(h).join(".config"))
+        })
+        .expect("sandboxed config dir");
+    for name in ["Alpha", "Beta", "Gamma"] {
+        let dir = config_dir.join("hve").join("themes").join(name);
+        std::fs::create_dir_all(&dir).expect("theme dir");
+        std::fs::write(
+            dir.join("meta.json"),
+            r#"{"saved_at":"","description":"","providers":[]}"#,
+        )
+        .expect("meta.json");
+    }
+
+    // Main manager (panel side) starts with NO active theme; the gallery
+    // manager has already applied Beta (the slot did it on the card click).
+    let main_tm = crate::theme_manager::ThemeManager::new(&config_dir);
+    let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let engine = crate::engine::Engine::new(&proj);
+    let state: crate::app_state::SharedState = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::app_state::AppState::new(crate::config::Config::load(), engine, main_tm),
+    ));
+    let gallery_tm = std::sync::Mutex::new(crate::theme_manager::ThemeManager::new(&config_dir));
+    gallery_tm.lock().unwrap().last_applied = "Beta".to_string();
+
+    // Headless window: gallery cards carry stale bakes and mark nothing.
+    let win = crate::MainWindow::new().unwrap();
+    fn baked_row(name: &str) -> crate::GalleryCardData {
+        let img = slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4));
+        crate::GalleryCardData {
+            name: SharedString::from(name),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(1, 2, 3),
+            primary: slint::Color::from_rgb_u8(0, 0, 0),
+            secondary: slint::Color::from_rgb_u8(0, 0, 0),
+            tertiary: slint::Color::from_rgb_u8(0, 0, 0),
+            surface: slint::Color::from_rgb_u8(0, 0, 0),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: img.clone(),
+            hero: img.clone(),
+            slat_image: img.clone(),
+            slat_expanded_image: img,
+        }
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(vec![
+        baked_row("Alpha"),
+        baked_row("Beta"),
+        baked_row("Gamma"),
+    ])));
+
+    crate::sync_applied_theme(&win, &state, &gallery_tm, "Beta");
+
+    // BOTH managers converge on the same name — the state divergence is gone.
+    assert_eq!(
+        state.lock().unwrap().theme_manager().last_applied,
+        "Beta",
+        "the panel manager must mark the applied theme"
+    );
+    assert_eq!(
+        state.lock().unwrap().cfg().last_applied_theme,
+        "Beta",
+        "the persisted mark must follow the apply"
+    );
+    assert_eq!(
+        gallery_tm.lock().unwrap().last_applied,
+        "Beta",
+        "the gallery manager keeps its own applied name"
+    );
+
+    // Panel Save list: exactly Beta is active and the active index follows.
+    let names = win.get_theme_names();
+    let actives = win.get_theme_is_actives();
+    let beta_idx = (0..names.row_count())
+        .find(|i| names.row_data(*i).is_some_and(|n| n.as_str() == "Beta"))
+        .expect("Beta must be listed in the Save list");
+    assert!(
+        actives.row_data(beta_idx).unwrap_or(false),
+        "the Save list must mark Beta active after the apply"
+    );
+    assert_eq!(
+        (0..actives.row_count())
+            .filter(|i| actives.row_data(*i).unwrap_or(false))
+            .count(),
+        1,
+        "exactly one theme may be marked active"
+    );
+    assert_eq!(
+        win.get_active_theme_index(),
+        beta_idx as i32,
+        "the panel's active index must follow the applied theme"
+    );
+
+    // Gallery cards: the active flag followed, and the bakes survived the
+    // in-place sync (no ModelRc replacement, no dropped thumbnails).
+    let cards = win.get_gallery_cards();
+    for i in 0..cards.row_count() {
+        let row = cards.row_data(i).unwrap();
+        let is_beta = row.name.as_str() == "Beta";
+        assert_eq!(row.is_active, is_beta, "card {} active flag", row.name.as_str());
+        assert!(
+            row.thumb.size().width > 0
+                && row.hero.size().width > 0
+                && row.slat_image.size().width > 0
+                && row.slat_expanded_image.size().width > 0,
+            "card {} must keep its baked thumbs",
+            row.name.as_str()
+        );
+    }
+}

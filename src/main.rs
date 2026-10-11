@@ -1005,6 +1005,106 @@ fn refresh_invalidation_set(last_applied: &str) -> std::collections::HashSet<Str
     invalidated
 }
 
+/// Build gallery card rows from a theme manager's list.
+///
+/// The SINGLE row builder: startup, the Save refresh and the post-apply sync
+/// all go through it, so the three cannot drift into three slightly different
+/// card shapes. Images are left empty on purpose — the thumb scheduler fills
+/// them, and `sync_cards` preserves any bake already on the row.
+fn gallery_cards_from_tm(
+    tm: &crate::theme_manager::ThemeManager,
+) -> Vec<crate::GalleryCardData> {
+    use slint::{ModelRc, SharedString, VecModel};
+    tm.list()
+        .unwrap_or_default()
+        .iter()
+        .map(|info| {
+            let card = crate::shell::gallery::ThemeCard::from_info(info);
+            crate::GalleryCardData {
+                name: SharedString::from(info.name.as_str()),
+                saved_at: SharedString::from(info.saved_at.as_str()),
+                is_active: info.is_active,
+                providers: ModelRc::new(VecModel::from(
+                    info.providers
+                        .iter()
+                        .map(|p| SharedString::from(p.as_str()))
+                        .collect::<Vec<_>>(),
+                )),
+                accent: crate::theme::parse_hex(&card.colors.accent),
+                primary: crate::theme::parse_hex(&card.colors.primary),
+                secondary: crate::theme::parse_hex(&card.colors.secondary),
+                tertiary: crate::theme::parse_hex(&card.colors.tertiary),
+                surface: crate::theme::parse_hex(&card.colors.surface),
+                border_size: card.border.size,
+                border_radius: card.border.radius,
+                border_color: crate::theme::parse_hex(&card.border.color),
+                shader: SharedString::from(card.shader.clone().unwrap_or_default()),
+                thumb_path: SharedString::from(
+                    card.thumb_path
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                ),
+                // Filled asynchronously by the thumbs pipeline (4.7).
+                thumb: slint::Image::default(),
+                // Aspect-true hero for the expanded card (HF5).
+                hero: slint::Image::default(),
+                // S4b baked slat variants (tip-to-tip, no internal padding).
+                slat_image: slint::Image::default(),
+                slat_expanded_image: slint::Image::default(),
+            }
+        })
+        .collect()
+}
+
+/// Mark `name` applied and refresh BOTH theme surfaces from it: the panel's
+/// Save list (`refresh_theme_list` — names, active marks and active index) and
+/// the gallery carousel (the existing in-place `sync_cards`, which preserves
+/// baked thumbs instead of replacing the model).
+///
+/// The ONE funnel every apply path uses, so the two surfaces converge by
+/// construction instead of each path remembering to refresh the other one.
+/// The main-manager mark goes through `mark_theme_applied`, which keeps the
+/// reload-first discipline (disk is the source of truth after a provider
+/// round-trip) — this must never be re-implemented here.
+///
+/// Lock discipline: the state lock and the gallery lock are taken one at a
+/// time, never nested, and no engine call happens while either is held.
+/// `mark_theme_applied` does config file I/O, not engine work.
+pub(crate) fn sync_applied_theme(
+    window: &crate::MainWindow,
+    state: &crate::app_state::SharedState,
+    gallery_tm: &std::sync::Mutex<crate::theme_manager::ThemeManager>,
+    name: &str,
+) {
+    // 1 + 2: converge the main manager, the persisted mark and the panel list.
+    // The state lock is taken alone and released before the gallery lock below.
+    {
+        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+        st.mark_theme_applied(name);
+        st.refresh_theme_list(window);
+    }
+    // 3: rebuild the gallery cards in place from the gallery manager. The
+    // gallery lock is taken alone, after the state lock is released.
+    let new_rows = {
+        let gtm = gallery_tm.lock().unwrap_or_else(|e| e.into_inner());
+        gallery_cards_from_tm(&gtm)
+    };
+    let model_rc = window.get_gallery_cards();
+    if let Some(model) = model_rc
+        .as_any()
+        .downcast_ref::<slint::VecModel<crate::GalleryCardData>>()
+    {
+        // In-place sync — no ModelRc replacement (preserves delegates and
+        // baked thumbs; see sync_cards).
+        crate::shell::gallery::model::sync_cards(model, new_rows);
+    } else {
+        // Fallback only if the model is not yet initialized (should not
+        // happen after startup).
+        window.set_gallery_cards(slint::ModelRc::new(slint::VecModel::from(new_rows)));
+    }
+}
+
 /// Rebuild window gallery cards from gallery_tm in place (keeps baked thumbs)
 /// then refresh mosaic + slice ring. Shared by Save rename/delete/refresh/
 /// overwrite so the Gallery follows without restart. `invalidate` names the
@@ -1021,36 +1121,7 @@ fn sync_save_gallery_ui(
     // The theme list changed: whatever the info panel was showing may be
     // renamed, overwritten or gone, so it closes rather than showing stale data.
     close_gallery_info(w);
-    let new_rows: Vec<crate::GalleryCardData> = {
-        let gtm = gallery_tm.lock().unwrap();
-        gtm.list().unwrap_or_default().iter().map(|info| {
-            let card = crate::shell::gallery::ThemeCard::from_info(info);
-            crate::GalleryCardData {
-                name: slint::SharedString::from(info.name.as_str()),
-                saved_at: slint::SharedString::from(info.saved_at.as_str()),
-                is_active: info.is_active,
-                providers: slint::ModelRc::new(slint::VecModel::from(
-                    info.providers.iter().map(|p| slint::SharedString::from(p.as_str())).collect::<Vec<_>>(),
-                )),
-                accent: crate::theme::parse_hex(&card.colors.accent),
-                primary: crate::theme::parse_hex(&card.colors.primary),
-                secondary: crate::theme::parse_hex(&card.colors.secondary),
-                tertiary: crate::theme::parse_hex(&card.colors.tertiary),
-                surface: crate::theme::parse_hex(&card.colors.surface),
-                border_size: card.border.size,
-                border_radius: card.border.radius,
-                border_color: crate::theme::parse_hex(&card.border.color),
-                shader: slint::SharedString::from(card.shader.clone().unwrap_or_default()),
-                thumb_path: slint::SharedString::from(
-                    card.thumb_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
-                ),
-                thumb: slint::Image::default(),
-                hero: slint::Image::default(),
-                slat_image: slint::Image::default(),
-                slat_expanded_image: slint::Image::default(),
-            }
-        }).collect()
-    };
+    let new_rows = gallery_cards_from_tm(&gallery_tm.lock().unwrap());
     let model_rc = w.get_gallery_cards();
     if let Some(model) = model_rc.as_any().downcast_ref::<slint::VecModel<crate::GalleryCardData>>() {
         crate::shell::gallery::model::sync_cards(model, new_rows);
@@ -3440,57 +3511,13 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     {
-        fn to_gallery_cards(tm: &crate::theme_manager::ThemeManager) -> Vec<crate::GalleryCardData> {
-
-            let infos = tm.list().unwrap_or_default();
-            infos
-                .iter()
-                .map(|info| {
-                    let card = crate::shell::gallery::ThemeCard::from_info(info);
-                    let providers_model = ModelRc::new(VecModel::from(
-                        info.providers
-                            .iter()
-                            .map(|p| SharedString::from(p.as_str()))
-                            .collect::<Vec<_>>(),
-                    ));
-                    crate::GalleryCardData {
-                        name: SharedString::from(info.name.as_str()),
-                        saved_at: SharedString::from(info.saved_at.as_str()),
-                        is_active: info.is_active,
-                        providers: providers_model,
-                        accent: crate::theme::parse_hex(&card.colors.accent),
-                        primary: crate::theme::parse_hex(&card.colors.primary),
-                        secondary: crate::theme::parse_hex(&card.colors.secondary),
-                        tertiary: crate::theme::parse_hex(&card.colors.tertiary),
-                        surface: crate::theme::parse_hex(&card.colors.surface),
-                        border_size: card.border.size,
-                        border_radius: card.border.radius,
-                        border_color: crate::theme::parse_hex(&card.border.color),
-                        shader: SharedString::from(card.shader.clone().unwrap_or_default()),
-                        thumb_path: SharedString::from(
-                            card.thumb_path
-                                .as_ref()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default(),
-                        ),
-                        // Filled asynchronously by the thumbs pipeline (4.7).
-                        thumb: slint::Image::default(),
-                        // Aspect-true hero for the expanded card (HF5).
-                        hero: slint::Image::default(),
-                        // S4b baked slat variants (tip-to-tip, no internal padding).
-                        slat_image: slint::Image::default(),
-                        slat_expanded_image: slint::Image::default(),
-                    }
-                })
-                .collect()
-        }
         window.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(
             Vec::<crate::MosaicTileData>::new(),
         )));
         window.set_gallery_slice_tiles(ModelRc::new(VecModel::from(
             Vec::<crate::SliceTileData>::new(),
         )));
-        let cards = to_gallery_cards(&gallery_tm.lock().unwrap());
+        let cards = gallery_cards_from_tm(&gallery_tm.lock().unwrap());
         // S5 bake carry-over: if a previous card model exists (watcher
         // refresh, style re-entry), reuse its baked images so the wall never
         // blanks; schedule_thumbs' guard then skips already-painted rows.
@@ -3583,34 +3610,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(name) = name_opt {
                     let outcome = slot.apply_theme(&name);
                     if outcome == crate::shell::gallery::slot::ApplyOutcome::Applied {
-                        // Persist the active mark for the NEXT startup: tm.apply
-                        // holds it in memory (gallery_tm), cfg carries it on
-                        // disk — both managers seed last_applied from cfg, so
-                        // the gallery opens on this card instead of index 0.
-                        // Disk write + late-bound SharedState refresh (the
-                        // gallery_state_slot is filled once AppState exists).
-                        let mut cfg = crate::config::Config::load();
-                        cfg.last_applied_theme = name.clone();
-                        let _ = cfg.save();
-                        // Refresh the in-memory copy from the disk the
-                        // provider apply just wrote: without this AppState.cfg
-                        // still carries the previous manual preset files, so
-                        // the Borders panel would re-seed its marker from the
-                        // manual value and any later in-memory save would
-                        // revert the disk. Lock discipline: the slot guard is
-                        // dropped before the reload, so only the state lock is
-                        // held across its brief load/save — never two locks at
-                        // once, and no engine calls while held (same policy as
-                        // every other SharedState callback).
+                        // Persist the active mark for the NEXT startup and
+                        // refresh BOTH surfaces in one funnel. `tm.apply` holds
+                        // the name in memory (gallery_tm); `sync_applied_theme`
+                        // mirrors it into the panel manager + cfg (reload-first,
+                        // so the provider's own disk writes survive) and
+                        // refreshes the Save list AND the carousel together —
+                        // the slider and the panel can no longer disagree. The
+                        // mark lands in cfg, which both managers seed
+                        // last_applied from, so the gallery opens on this card
+                        // instead of index 0. The gallery_state_slot is
+                        // late-bound (filled once AppState exists). Lock
+                        // discipline: the helper takes the state lock and the
+                        // gallery lock one at a time — never nested — and calls
+                        // no engine while either is held.
                         let shared = gallery_state_c
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .clone();
-                        if let Some(ref shared) = shared {
-                            shared
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .reload_config_after_theme(&name);
+                        if let Some(w) = win.upgrade() {
+                            if let Some(ref shared) = shared {
+                                sync_applied_theme(&w, shared, &tm, &name);
+                            }
                         }
                         // The theme carried a border: populate the Borders
                         // tune pane through the same shared sync a manual
@@ -3634,21 +3655,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             crate::sync_border_tune_pane(&w, &proj_c, &applied_border, geometry);
                             crate::presets::reseed_active_border_index(&w, &applied_border);
                         }
-                        let new_rows = to_gallery_cards(&tm.lock().unwrap());
-                        if let Some(w) = win.upgrade() {
-                            // R3.1: in-place sync — no ModelRc replacement (preserves delegates,
-                            // avoids dropping 42 bindings). Startup's carry_over_bakes stays for
-                            // the first population; here sync_cards absorbs bake preservation.
-                            let model_rc = w.get_gallery_cards();
-                            if let Some(model) = model_rc
-                                .as_any()
-                                .downcast_ref::<VecModel<crate::GalleryCardData>>()
-                            {
-                                crate::shell::gallery::model::sync_cards(model, new_rows);
-                            } else {
-                                // Fallback only if model not yet initialized (should not happen after startup)
-                                w.set_gallery_cards(ModelRc::new(VecModel::from(new_rows)));
-                            }
+                        if win.upgrade().is_some() {
+                            // The carousel cards were rebuilt in place by
+                            // sync_applied_theme above (baked thumbs preserved);
+                            // only the mosaic page repaint is left here.
                             refresh(false); // theme apply: not a page flip
                             // keep strip position — theme apply does not re-trigger slide
                         }
@@ -4635,14 +4645,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 if outcome != crate::shell::gallery::slot::ApplyOutcome::Applied {
                     return; // NotFound / Failed: nothing to sync
                 }
-                // Dual-manager sync: mirror active into main manager AND
-                // persist to cfg so the next startup resolves the same card.
-                {
-                    let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                    st.mark_theme_applied(&name);
-                    if let Some(w) = weak.upgrade() {
-                        st.refresh_theme_list(&w);
-                    }
+                // Dual-manager sync through the ONE funnel: mark the applied
+                // theme (reload-first) and refresh the Save list AND the
+                // carousel together, so the two surfaces agree by construction
+                // instead of this path remembering the other one.
+                if let Some(w) = weak.upgrade() {
+                    sync_applied_theme(&w, &state_c, &gallery_tm_c, &name);
                 }
                 // The theme carried a border: populate the Borders tune pane
                 // through the same shared sync a manual border click uses
@@ -4661,56 +4669,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     crate::presets::reseed_active_border_index(&w, &applied_border);
                 }
                 if let Some(w) = weak.upgrade() {
-                    // In-place card sync (preserves baked thumbs, like gallery click)
-                    let new_rows: Vec<crate::GalleryCardData> = {
-                        let gtm = gallery_tm_c.lock().unwrap();
-                        let infos = gtm.list().unwrap_or_default();
-                        infos
-                            .iter()
-                            .map(|info| {
-                                let card = crate::shell::gallery::ThemeCard::from_info(info);
-                                crate::GalleryCardData {
-                                    name: slint::SharedString::from(info.name.as_str()),
-                                    saved_at: slint::SharedString::from(info.saved_at.as_str()),
-                                    is_active: info.is_active,
-                                    providers: slint::ModelRc::new(slint::VecModel::from(
-                                        info.providers
-                                            .iter()
-                                            .map(|p| slint::SharedString::from(p.as_str()))
-                                            .collect::<Vec<_>>(),
-                                    )),
-                                    accent: crate::theme::parse_hex(&card.colors.accent),
-                                    primary: crate::theme::parse_hex(&card.colors.primary),
-                                    secondary: crate::theme::parse_hex(&card.colors.secondary),
-                                    tertiary: crate::theme::parse_hex(&card.colors.tertiary),
-                                    surface: crate::theme::parse_hex(&card.colors.surface),
-                                    border_size: card.border.size,
-                                    border_radius: card.border.radius,
-                                    border_color: crate::theme::parse_hex(&card.border.color),
-                                    shader: slint::SharedString::from(card.shader.clone().unwrap_or_default()),
-                                    thumb_path: slint::SharedString::from(
-                                        card.thumb_path
-                                            .as_ref()
-                                            .map(|p| p.to_string_lossy().to_string())
-                                            .unwrap_or_default(),
-                                    ),
-                                    thumb: slint::Image::default(),
-                                    hero: slint::Image::default(),
-                                    slat_image: slint::Image::default(),
-                                    slat_expanded_image: slint::Image::default(),
-                                }
-                            })
-                            .collect()
-                    };
-                    let model_rc = w.get_gallery_cards();
-                    if let Some(model) = model_rc
-                        .as_any()
-                        .downcast_ref::<slint::VecModel<crate::GalleryCardData>>()
-                    {
-                        crate::shell::gallery::model::sync_cards(model, new_rows);
-                    } else {
-                        w.set_gallery_cards(slint::ModelRc::new(slint::VecModel::from(new_rows)));
-                    }
+                    // Cards were rebuilt in place by sync_applied_theme above
+                    // (baked thumbs preserved); only the focus and the other
+                    // gallery views are left to this path.
                     w.set_gallery_focused(idx);
                     refresh_mosaic_page_c(false);
                     refresh_slice_ring_c();
