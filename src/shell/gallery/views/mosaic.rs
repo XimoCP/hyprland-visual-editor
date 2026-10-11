@@ -219,18 +219,35 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
 /// Hero max width as fraction of usable width (45% cap).
 pub const MOSAIC_HERO_MAX_WIDTH_FRACTION: f32 = 0.45;
 
-/// Pack `aspects` into a hero mosaic: one hero per super-band (2 rows)
-/// spanning the full band height, CENTERED in the band (user request —
-/// supersedes the old left/right alternation). The top row fills the LEFT
-/// region, the bottom row the RIGHT region; each side is CLONE-FILLED from
-/// the page's non-hero cycle (cycled real indices) until its natural width
-/// reaches its region, then justified to EXACTLY that region — even band,
-/// no ragged holes. Side rows can only shrink (h ≤ th), never overflow the
-/// band. Degenerate (<2 remaining tiles or regions too narrow) falls back
-/// to normal rows with the identity real mapping. Returns the layout plus
-/// the per-tile real mapping in push order (hero, top row, bottom row) —
-/// clones carry cycled reals. Reuses `MOSAIC_GUTTER_PX` everywhere and
-/// stays inside 4% margins.
+/// Minimum edge (px) a tile may have on a page. The page size is DERIVED by
+/// probing the real layout (never a separate geometric estimate): the largest
+/// count whose every tile still clears this floor, capped at
+/// [`MOSAIC_PAGE_MAX_TILES`].
+pub const MOSAIC_MIN_TILE_PX: f32 = 96.0;
+
+/// Hard cap on tiles per page — the keeper's "espacio máximo de 10".
+pub const MOSAIC_PAGE_MAX_TILES: usize = 10;
+
+/// Pack `aspects` into the elastic hero band: the page's FIRST theme is the
+/// hero, CENTRED and spanning the full band height; the rest flow around it in
+/// two side regions (left / right), each scaled to fill its region EXACTLY, so
+/// the band is even edge-to-edge with NO holes and NO duplicates.
+///
+/// Every page starts from its own centred hero, so page 2 is arranged exactly
+/// like page 1. The tiles grow or shrink to absorb the leftover: a side region
+/// with one theme becomes a single full-height tile; two or more become two
+/// rows of height `th`, each justified to land on the region width (the cover
+/// crop absorbs the distortion). There is no clone padding — the real theme
+/// mapping is the identity over the page's source list.
+///
+/// Small counts keep the composition centred with no hole: one theme is a lone
+/// centred tile; two are two full-height tiles filling the usable width; three
+/// are the centred hero flanked by one full-height tile per side.
+///
+/// Degenerate stages (non-positive dimensions) or an empty input return an
+/// empty layout. Reuses `MOSAIC_GUTTER_PX` everywhere and stays inside the 4%
+/// symmetric margins. Returns the layout plus the per-tile real mapping in
+/// model order (hero first, then the left region, then the right region).
 pub fn justified_hero_layout(
     aspects: &[f32],
     reals: &[usize],
@@ -253,265 +270,126 @@ pub fn justified_hero_layout(
     let band = stage_h / MOSAIC_BAND_HEIGHT_DIVISOR;
     let th = (band - (MOSAIC_ROW_COUNT as f32 - 1.0) * g) / MOSAIC_ROW_COUNT as f32;
     let sanitize = |a: f32| if a.is_finite() && a > 0.0 { a } else { MOSAIC_DEFAULT_ASPECT };
-    // Fixed per-page target (original packing contract): each row aims for
-    // half the page's total aspect sum.
-    let target = aspects.iter().map(|&a| sanitize(a)).sum::<f32>() / MOSAIC_ROW_COUNT as f32;
-    // (aspect, real) rows — reals ride along so the mapping stays exact.
-    let real_at = |i: usize| -> usize {
-        if reals.is_empty() { i } else { reals[i % reals.len()] }
-    };
-    let mut rows: Vec<Vec<(f32, usize)>> = Vec::new();
-    let mut sums: Vec<f32> = Vec::new();
-    for (i, &raw) in aspects.iter().enumerate() {
-        let a = sanitize(raw);
-        let open_new = match rows.len() {
-            0 => true,
-            n => n < MOSAIC_ROW_COUNT && sums[n - 1] + a * 0.5 > target,
-        };
-        if open_new {
-            rows.push(vec![(a, real_at(i))]);
-            sums.push(a);
-        } else {
-            let n = rows.len() - 1;
-            rows[n].push((a, real_at(i)));
-            sums[n] += a;
-        }
-    }
+    let real_at = |i: usize| -> usize { if reals.is_empty() { i } else { reals[i % reals.len()] } };
     let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
     let usable_w = stage_w - 2.0 * margin;
-    let hero_h = 2.0 * th + g;
-    let hero_max_w = usable_w * MOSAIC_HERO_MAX_WIDTH_FRACTION;
-    // Row-fill clone cap (safety): regions are ~half the usable width, so a
-    // handful of clones always suffices; the cap only guards pathological
-    // aspect data.
-    const MAX_ROW_FILL_CLONES: usize = 24;
-    // Non-hero cycle (aspect, real) for clone-filling the side rows:
-    // row0[1..] (everything after the hero) + every later row in order.
-    let cycle: Vec<(f32, usize)> = {
-        let mut c: Vec<(f32, usize)> = Vec::new();
-        for (ri, r) in rows.iter().enumerate() {
-            let skip = if ri == 0 { 1 } else { 0 }; // row0[0] is the hero
-            for pair in r.iter().skip(skip) {
-                c.push(*pair);
-            }
-        }
-        c
-    };
 
-    // Clone-fill `row` (consumes the shared cursor) until its natural width
-    // reaches `region`. Returns the extended row.
-    let fill_to = |row: Vec<(f32, usize)>, region: f32, cursor: &mut usize| -> Vec<(f32, usize)> {
-        let mut r = row;
-        if cycle.is_empty() || region <= 0.0 {
-            return r;
-        }
-        let mut adds = 0usize;
-        loop {
-            let sum: f32 = r.iter().map(|(a, _)| *a).sum();
-            let natural = th * sum + (r.len() as f32 - 1.0) * g;
-            if natural >= region || adds >= MAX_ROW_FILL_CLONES {
-                break;
-            }
-            r.push(cycle[*cursor % cycle.len()]);
-            *cursor += 1;
-            adds += 1;
-        }
-        r
-    };
+    let n = aspects.len();
+    let mut tiles: Vec<MosaicTile> = Vec::with_capacity(n);
+    let mut tile_reals: Vec<usize> = Vec::with_capacity(n);
 
-    let n_rows = rows.len();
-    let mut tiles: Vec<MosaicTile> = Vec::with_capacity(aspects.len());
-    let mut tile_reals: Vec<usize> = Vec::with_capacity(aspects.len());
-    let mut y = 0.0f32;
-    let mut max_w: f32 = 0.0;
-    let mut r = 0usize;
-    while r < n_rows {
-        if r + 1 >= n_rows {
-            // Lone row — normal single row layout (last row keeps th, shrink-to-fit).
-            let row = &rows[r];
-            let sum = sums[r];
-            let k = row.len();
-            let nat_w = th * sum + (k as f32 - 1.0) * g;
-            let h_initial = th;
-            let (h_r, gutter_h) = if nat_w > usable_w {
-                let avail = usable_w - (k as f32 - 1.0) * g;
-                if avail > 0.0 {
-                    (avail / sum, g)
-                } else {
-                    let factor = if nat_w > 0.0 { usable_w / nat_w } else { 1.0 };
-                    (h_initial * factor, g * factor)
-                }
-            } else {
-                (h_initial, g)
-            };
-            let row_w = h_r * sum + (k as f32 - 1.0) * gutter_h;
-            if row_w > max_w {
-                max_w = row_w;
-            }
-            let mut x = 0.0f32;
-            for (a, real) in row {
-                let w = h_r * a;
-                tiles.push(MosaicTile { x, y, w, h: h_r });
-                tile_reals.push(*real);
-                x += w + gutter_h;
-            }
-            y += h_r + g;
-            r += 1;
-        } else {
-            let row0 = &rows[r];
-            let row1 = &rows[r + 1];
-            let sum0 = sums[r];
-            let sum1 = sums[r + 1];
-            let remaining = row0.len().saturating_sub(1) + row1.len();
-            let hero_pair = row0[0];
-            let hero_uncapped_w = hero_h * hero_pair.0;
-            let hero_w = hero_uncapped_w.min(hero_max_w).max(1.0);
-            let top_natural: Vec<(f32, usize)> = row0.iter().skip(1).copied().collect();
-            let bottom_natural: Vec<(f32, usize)> = row1.clone();
-            // Hero-centered band with FOUR segments flowing around the hero:
-            // top-left, top-right, bottom-left, bottom-right. Each segment is
-            // one row of height th filling its region width L exactly (tiles
-            // scale uniformly — cover crop absorbs the distortion), so the
-            // band is even with NO holes anywhere.
-            let region_l = (usable_w - hero_w - 2.0 * g) / 2.0;
-            let mut queue: Vec<(f32, usize)> = Vec::with_capacity(top_natural.len() + bottom_natural.len());
-            queue.extend(top_natural.iter().copied());
-            queue.extend(bottom_natural.iter().copied());
-            // Distribute the queue evenly across the 4 segments (extra tiles
-            // go to the leading segments), then clone-fill any segment that
-            // is still short of half its region.
-            let seg_count = 4usize;
-            let base = queue.len() / seg_count;
-            let extra = queue.len() % seg_count;
-            let mut segs: Vec<Vec<(f32, usize)>> = Vec::with_capacity(seg_count);
-            let mut qi = 0usize;
-            for s in 0..seg_count {
-                let take = base + if s < extra { 1 } else { 0 };
-                segs.push(queue[qi..qi + take].to_vec());
-                qi += take;
-            }
-            let cycle_len_probe = cycle.len().max(1);
-            let mut probe_cursor = queue.len() % cycle_len_probe;
-            for seg in segs.iter_mut() {
-                *seg = fill_to(std::mem::take(seg), region_l, &mut probe_cursor);
-            }
-            let regions_viable = remaining >= seg_count
-                && region_l >= th * 0.6
-                && segs.iter().all(|seg| !seg.is_empty());
-            if !regions_viable {
-                // Degenerate — fallback to normal two rows (identity mapping).
-                let nat0 = th * sum0 + (row0.len() as f32 - 1.0) * g;
-                let nat1 = th * sum1 + (row1.len() as f32 - 1.0) * g;
-                let big_w = nat0.max(nat1);
-                let is_last1 = r + 1 + 1 == n_rows;
-                let h0_initial = (big_w - (row0.len() as f32 - 1.0) * g) / sum0;
-                let (h0, gutter0) = if big_w > usable_w {
-                    let avail = usable_w - (row0.len() as f32 - 1.0) * g;
-                    if avail > 0.0 {
-                        (avail / sum0, g)
-                    } else {
-                        let factor = if big_w > 0.0 { usable_w / big_w } else { 1.0 };
-                        (h0_initial * factor, g * factor)
-                    }
-                } else {
-                    (h0_initial, g)
-                };
-                let row0_w = h0 * sum0 + (row0.len() as f32 - 1.0) * gutter0;
-                if row0_w > max_w {
-                    max_w = row0_w;
-                }
-                let mut x = 0.0f32;
-                let y0 = y;
-                for (a, real) in row0 {
-                    let w = h0 * a;
-                    tiles.push(MosaicTile { x, y: y0, w, h: h0 });
-                    tile_reals.push(*real);
-                    x += w + gutter0;
-                }
-                let h1_initial = if is_last1 {
-                    th
-                } else {
-                    (big_w - (row1.len() as f32 - 1.0) * g) / sum1
-                };
-                let row1_nat_w = if is_last1 { nat1 } else { big_w };
-                let (h1, gutter1) = if row1_nat_w > usable_w {
-                    let avail = usable_w - (row1.len() as f32 - 1.0) * g;
-                    if avail > 0.0 {
-                        (avail / sum1, g)
-                    } else {
-                        let factor = if row1_nat_w > 0.0 { usable_w / row1_nat_w } else { 1.0 };
-                        (h1_initial * factor, g * factor)
-                    }
-                } else {
-                    (h1_initial, g)
-                };
-                let row1_w = h1 * sum1 + (row1.len() as f32 - 1.0) * gutter1;
-                if row1_w > max_w {
-                    max_w = row1_w;
-                }
-                let y1 = y + h0 + g;
-                let mut x1 = 0.0f32;
-                for (a, real) in row1 {
-                    let w = h1 * a;
-                    tiles.push(MosaicTile { x: x1, y: y1, w, h: h1 });
-                    tile_reals.push(*real);
-                    x1 += w + gutter1;
-                }
-                y += h0 + g + h1 + g;
-                r += 2;
-            } else {
-                // Hero band — hero CENTERED spanning the full band height;
-                // FOUR segments (top-left, top-right, bottom-left,
-                // bottom-right) of height th fill their regions exactly via
-                // a uniform per-segment tile scale (cover crop absorbs it).
-                // No corner holes: every region is filled edge-to-edge.
-                let hero_x = (usable_w - hero_w) / 2.0;
-                let seg_h = th;
-                let seg_x = [
-                    0.0f32,
-                    hero_x + hero_w + g,
-                    0.0f32,
-                    hero_x + hero_w + g,
-                ];
-                let seg_y = [y, y, y + th + g, y + th + g];
-                if usable_w > max_w {
-                    max_w = usable_w;
-                }
-                tiles.push(MosaicTile { x: hero_x, y, w: hero_w, h: hero_h });
-                tile_reals.push(hero_pair.1);
-                for s in 0..seg_count {
-                    let seg = &segs[s];
-                    let sum: f32 = seg.iter().map(|(a, _)| *a).sum();
-                    // Uniform scale so scaled tile widths + gutters land
-                    // EXACTLY on the region width.
-                    let scale = if sum > 0.0 {
-                        (region_l - (seg.len() as f32 - 1.0) * g) / (th * sum)
-                    } else {
-                        1.0
-                    };
-                    let mut x = seg_x[s];
-                    for (a, real) in seg {
-                        let w = th * a * scale;
-                        tiles.push(MosaicTile { x, y: seg_y[s], w, h: seg_h });
-                        tile_reals.push(*real);
-                        x += w + g;
-                    }
-                }
-                y += hero_h + g;
-                r += 2;
-            }
-        }
+    if n == 1 {
+        // One big tile, CENTRED, spanning the band height.
+        let h = band;
+        let w = (h * sanitize(aspects[0]))
+            .min(usable_w * MOSAIC_HERO_MAX_WIDTH_FRACTION)
+            .max(1.0);
+        tiles.push(MosaicTile { x: (usable_w - w) / 2.0, y: 0.0, w, h });
+        tile_reals.push(real_at(0));
+    } else if n == 2 {
+        // Two full-height tiles filling the usable width: the composition is
+        // centred edge-to-edge, so no hole is left on either side.
+        let h = band;
+        let a0 = sanitize(aspects[0]);
+        let a1 = sanitize(aspects[1]);
+        let sum = a0 + a1;
+        let scale = if sum > 0.0 { (usable_w - g) / (h * sum) } else { 1.0 };
+        let w0 = (h * a0 * scale).clamp(1.0, (usable_w - g - 1.0).max(1.0));
+        tiles.push(MosaicTile { x: 0.0, y: 0.0, w: w0, h });
+        tiles.push(MosaicTile { x: w0 + g, y: 0.0, w: (usable_w - g - w0).max(1.0), h });
+        tile_reals.push(real_at(0));
+        tile_reals.push(real_at(1));
+    } else {
+        // Hero CENTRED, spanning the band height; the rest flows into the two
+        // side regions, each a 2-row block (or a single full-height tile when
+        // it holds only one theme) scaled to fill its region exactly.
+        let hero_w = (band * sanitize(aspects[0]))
+            .min(usable_w * MOSAIC_HERO_MAX_WIDTH_FRACTION)
+            .min((usable_w - 2.0 * g - 2.0).max(1.0))
+            .max(1.0);
+        let hero_x = (usable_w - hero_w) / 2.0;
+        let region_l = ((usable_w - hero_w - 2.0 * g) / 2.0).max(1.0);
+        // Model order: hero first, then the left region, then the right region.
+        tiles.push(MosaicTile { x: hero_x, y: 0.0, w: hero_w, h: band });
+        tile_reals.push(real_at(0));
+
+        let rem: Vec<(f32, usize)> =
+            (1..n).map(|i| (sanitize(aspects[i]), real_at(i))).collect();
+        let left_n = rem.len() / 2;
+        let (left_items, right_items) = rem.split_at(left_n);
+        push_mosaic_region(left_items, 0.0, region_l, band, th, g, &mut tiles, &mut tile_reals);
+        push_mosaic_region(
+            right_items,
+            hero_x + hero_w + g,
+            region_l,
+            band,
+            th,
+            g,
+            &mut tiles,
+            &mut tile_reals,
+        );
     }
-    let content_h = (y - g).max(0.0);
-    let content_w = max_w;
-    let offset_x = margin + ((usable_w - content_w) / 2.0).max(0.0);
+
+    // Local bounds → content box + centring inside the usable width. Every
+    // branch is already laid out inside `[0, usable_w]`; the offset just adds
+    // the symmetric margin.
+    let min_x = tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+    let max_x = tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+    let content_w = max_x - min_x;
+    let content_h = band;
+    let offset_x = margin + ((usable_w - content_w) / 2.0) - min_x;
     let offset_y = ((stage_h - content_h) / 2.0).max(0.0);
-    let mut out_tiles = tiles;
-    for t in &mut out_tiles {
+    for t in &mut tiles {
         t.x += offset_x;
         t.y += offset_y;
     }
-    (MosaicLayout { tiles: out_tiles, content_w, content_h, offset_x, offset_y }, tile_reals)
+    (MosaicLayout { tiles, content_w, content_h, offset_x, offset_y }, tile_reals)
+}
+
+/// Fill one side region (`region_l` wide, `band` tall) with `items`, in model
+/// order. One item → a single full-height tile; two or more → two rows of
+/// height `th` (extra to the top row), each scaled uniformly so its tiles +
+/// gutters land EXACTLY on the region width. No duplicates, no holes.
+#[allow(clippy::too_many_arguments)]
+fn push_mosaic_region(
+    items: &[(f32, usize)],
+    base_x: f32,
+    region_l: f32,
+    band: f32,
+    th: f32,
+    g: f32,
+    tiles: &mut Vec<MosaicTile>,
+    reals: &mut Vec<usize>,
+) {
+    match items.len() {
+        0 => {}
+        1 => {
+            tiles.push(MosaicTile { x: base_x, y: 0.0, w: region_l, h: band });
+            reals.push(items[0].1);
+        }
+        k => {
+            let top_n = (k + 1) / 2;
+            let (top, bottom) = items.split_at(top_n);
+            for (row, y) in [(top, 0.0f32), (bottom, th + g)] {
+                if row.is_empty() {
+                    continue;
+                }
+                let sum: f32 = row.iter().map(|(a, _)| *a).sum();
+                let scale = if sum > 0.0 {
+                    (region_l - (row.len() as f32 - 1.0) * g) / (th * sum)
+                } else {
+                    1.0
+                };
+                let mut x = base_x;
+                for (a, real) in row {
+                    let w = (th * a * scale).max(1.0);
+                    tiles.push(MosaicTile { x, y, w, h: th });
+                    reals.push(*real);
+                    x += w + g;
+                }
+            }
+        }
+    }
 }
 
 // ── Page model (Mosaic final scheme) ───────────────────────────────
@@ -2342,29 +2220,41 @@ mod mosaic_hero_tests {
     }
 
     #[test]
-    fn hero_degenerate_fallback_preserves_layout() {
-        // 2 tiles: rows [1,1] → remaining after hero =1 (<2) → fallback to normal 2 rows
-        // Hero detection should find 0 heroes in that degenerate band.
+    fn hero_small_counts_are_centred_with_no_hole() {
+        // REWRITTEN (mosaic-elastic-centred-layout): the old contract fell
+        // back to two left-aligned rows (no hero) for 1-3 themes, leaving a
+        // hole on the right. The new contract keeps the composition centred
+        // and hole-free: 2 themes are two full-height tiles filling the usable
+        // width, 1 theme is a lone centred tile.
+        let margin = STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION;
+        let usable = STAGE_W - 2.0 * margin;
         let aspects: Vec<f32> = (0..2).map(mosaic_display_aspect).collect();
         let reals: Vec<usize> = (0..2).collect();
         let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
-        assert_eq!(layout.tiles.len(), 2);
-        assert_eq!(tile_reals, vec![0, 1], "degenerate keeps identity mapping");
-        let heroes = hero_tiles(&layout);
+        assert_eq!(layout.tiles.len(), 2, "two themes render two tiles");
+        assert_eq!(tile_reals, vec![0, 1], "identity mapping, no clones");
+        // Both tiles span the band height and together fill the usable width.
+        let left = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        let right = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        assert!((left - margin).abs() < 1.0, "left edge {left} at margin {margin}");
         assert!(
-            heroes.is_empty(),
-            "degenerate band with <2 remaining must fallback to no hero, got {:?}", heroes
+            (right - (STAGE_W - margin)).abs() < 1.0,
+            "right edge {right} at stage_w - margin {}",
+            STAGE_W - margin
         );
-        let margin = STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION;
         for t in &layout.tiles {
-            assert!(t.x + 1.0 >= margin);
+            assert!(t.h >= hero_band_height() - 1.0, "tile {} must span the band", t.h);
+            assert!(t.x + 1.0 >= margin && t.x + t.w - 1.0 <= STAGE_W - margin);
         }
+
         let single_reals = vec![7usize];
         let (single, single_map) =
             justified_hero_layout(&[MOSAIC_ASPECT_WIDE], &single_reals, STAGE_W, STAGE_H);
         assert_eq!(single.tiles.len(), 1);
         assert_eq!(single_map, vec![7], "single tile keeps its real");
-        assert!(hero_tiles(&single).is_empty(), "single tile must not be hero");
+        let hero = single.tiles[0];
+        let centre = hero.x - single.offset_x + hero.w / 2.0;
+        assert!((centre - usable / 2.0).abs() < 2.0, "lone tile must be centred");
     }
 
     #[test]
@@ -2627,5 +2517,50 @@ mod mosaic_unit_a_tests {
             MosaicTileRect { x: 100.0, y: 100.0, w: 100.0, h: 100.0 },
         ];
         assert_eq!(mosaic_neighbor(&tiles, 0, MosaicDir::Down), Some(2), "centre 450: nearest is 150 (index 2)");
+    }
+}
+
+// ── Elastic centred layout contracts (mosaic-elastic-centred-layout) ──
+// The keeper's stage, measured 2026-10-11. One page starts from a big
+// CENTRED hero; the rest flow around it; tiles grow or shrink to absorb
+// the leftover; NO duplicates ever.
+#[cfg(test)]
+mod mosaic_elastic_tests {
+    use super::*;
+
+    /// The keeper's real stage (from the measured evidence).
+    const STAGE_W: f32 = 2374.0;
+    const STAGE_H: f32 = 1290.0;
+
+    fn hero_layout(n: usize) -> (MosaicLayout, Vec<usize>) {
+        let aspects: Vec<f32> = (0..n).map(mosaic_display_aspect).collect();
+        let reals: Vec<usize> = (0..n).collect();
+        justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H)
+    }
+
+    fn usable_w() -> f32 {
+        STAGE_W - 2.0 * STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION
+    }
+
+    #[test]
+    fn elastic_hero_band_has_no_clones_and_is_centred() {
+        let (layout, reals) = hero_layout(7);
+        assert_eq!(
+            layout.tiles.len(),
+            7,
+            "7 themes must render exactly 7 tiles (no clone padding)"
+        );
+        assert_eq!(reals.len(), 7);
+        let mut distinct = reals.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 7, "no repeated theme");
+        let hero = layout.tiles[0];
+        let hero_center = hero.x - layout.offset_x + hero.w / 2.0;
+        assert!(
+            (hero_center - usable_w() / 2.0).abs() < 2.0,
+            "hero centre {hero_center} must be usable/2 {}",
+            usable_w() / 2.0
+        );
     }
 }
