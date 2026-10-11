@@ -387,6 +387,47 @@ mod tests {
         );
     }
 
+    // ── U6: the same for an interior-dot STEM ──────────────────────────
+    // `save("my.preset")` writes `my.preset.lua`, while a record written before
+    // that rule held the name as typed. Resolving it clears the marker from the
+    // real file for BOTH pane slots (the helper is shared by borders,
+    // animations and shaders).
+
+    #[test]
+    fn test_populate_metadata_resolves_an_interior_dot_stem() {
+        // Borders: the recorded `my.preset` must find `my.preset.lua`.
+        let borders = vec![make_item("my.preset.lua", "Mine", "", "CUSTOM")];
+        let border_idx = std::cell::RefCell::new(-1);
+        populate_metadata(
+            &borders,
+            "my.preset",
+            |_| {},
+            |_| {},
+            |i| *border_idx.borrow_mut() = i,
+        );
+        assert_eq!(
+            *border_idx.borrow(),
+            0,
+            "an interior-dot border record must resolve to the file the save wrote"
+        );
+
+        // Animations: its own list and its own active field, same rule.
+        let animations = vec![make_item("keeper.anim.lua", "Keeper", "", "CUSTOM")];
+        let anim_idx = std::cell::RefCell::new(-1);
+        populate_metadata(
+            &animations,
+            "keeper.anim",
+            |_| {},
+            |_| {},
+            |i| *anim_idx.borrow_mut() = i,
+        );
+        assert_eq!(
+            *anim_idx.borrow(),
+            0,
+            "an interior-dot animation record must resolve to the file the save wrote"
+        );
+    }
+
     // ── U2 (e)/(f): the shipped form is unchanged, and an unmatched name
     // stays an explicit -1 — never a silent blank ──────────────────────
 

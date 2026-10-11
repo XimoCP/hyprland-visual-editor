@@ -776,6 +776,58 @@ mod tests {
         );
     }
 
+    // ── U6: an interior-dot STEM plans and bundles its real file ─────────
+    // `save("my.preset")` writes `borders/my.preset.lua` while a record written
+    // before that rule held `my.preset`. The plan built `<root>/borders/my.preset`,
+    // found nothing and carried no preset.
+
+    #[test]
+    fn plan_bundle_canonicalises_an_interior_dot_stem() {
+        let plan = plan_bundle(
+            &active("", "my.preset", ""),
+            &shipped(&[("borders", &["01_cascade.lua"])]),
+        );
+        assert_eq!(
+            plan,
+            vec![BundledPreset {
+                category: "borders".into(),
+                file_name: "my.preset.lua".into()
+            }],
+            "an interior-dot stem must plan the file the store wrote"
+        );
+    }
+
+    #[test]
+    fn bundle_resolves_an_interior_dot_stem_to_its_lua_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let user_root = dir.path().join("user");
+        let src = user_root.join("borders/my.preset.lua");
+        fs::create_dir_all(src.parent().unwrap()).unwrap();
+        let bytes = b"-- interior dot border\n";
+        fs::write(&src, bytes).unwrap();
+
+        let copied = bundle_theme_presets(
+            &theme,
+            &active("", "my.preset", ""),
+            &shipped(&[("borders", &[])]),
+            &user_root,
+        );
+
+        assert_eq!(
+            copied,
+            vec![BundledPreset {
+                category: "borders".into(),
+                file_name: "my.preset.lua".into()
+            }],
+            "the interior-dot stem must resolve to my.preset.lua and travel"
+        );
+        assert_eq!(
+            fs::read(theme.join("presets/borders/my.preset.lua")).unwrap(),
+            bytes
+        );
+    }
+
     #[test]
     fn install_installs_a_bundled_preset_absent_from_the_store() {
         let dir = tempfile::tempdir().unwrap();

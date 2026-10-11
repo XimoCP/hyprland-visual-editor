@@ -3,6 +3,13 @@ use std::path::PathBuf;
 
 use crate::border_preset::BorderParams;
 
+/// Extensions that name a preset FILE rather than a STEM: the two container
+/// extensions the store and `assets/{borders,animations,shaders}` actually hold
+/// (`lua`, `frag`), plus the two legacy record shapes (`json`, `ron`) an older
+/// theme may still reference — honoured verbatim instead of being mangled into
+/// `<name>.json.lua`. See [`PresetStore::canonical_preset_file`].
+const PRESET_FILE_EXTENSIONS: [&str; 4] = ["lua", "frag", "json", "ron"];
+
 /// User preset store for borders and animations.
 /// Built-in presets live in `assets/{borders,animations}/`.
 /// User presets live in `~/.config/hve/presets/{borders,animations}/`.
@@ -41,21 +48,48 @@ impl PresetStore {
             .map_err(|e| format!("Cannot create preset dir {}: {}", self.base.display(), e))
     }
 
-    /// The canonical form of a preset REFERENCE: the full file name WITH its
+    /// The canonical form of a preset REFERENCE: the file name WITH its
     /// extension (`13_the_joker.lua`), the shape `assets/scripts/scan.sh`
     /// emits and that the window's preset lists hold.
     ///
-    /// Mirrors `_hve_preset_in_dir` in `assets/scripts/utils.sh` rather than
-    /// inventing a third convention: a name that already carries a dot is
-    /// honoured verbatim, and a name without one means `<name>.lua`. A legacy
-    /// bare stem (`Space`) therefore canonicalises to `Space.lua`, while a
-    /// legacy `*.json` / `*.ron` reference is left exactly as it is. An empty
-    /// name stays empty (callers treat empty as "nothing active").
+    /// THE RULE — a reference fixing the extension of a file the store can hold
+    /// is a FILE NAME and stays verbatim; everything else is a STEM and gains
+    /// `.lua`, which is exactly what [`PresetStore::save`] writes. The verbatim
+    /// side covers the two live container extensions (`lua`, `frag`) and the two
+    /// legacy record extensions (`json`, `ron`), so an old theme's `glow.json`
+    /// record keeps naming its file instead of being mangled into
+    /// `glow.json.lua`.
+    ///
+    /// The stem side is the part that used to be wrong: a name carrying an
+    /// INTERIOR DOT was honoured verbatim, but `save("my.preset")` writes
+    /// `my.preset.lua`. A record of `my.preset` therefore named no file at all —
+    /// the marker warned and cleared, the bundler skipped it and the live
+    /// re-apply missed. The shipped preset `19_stylized2.5D` (`19_stylized2.5D.lua`)
+    /// is the same shape.
+    ///
+    /// Mirrors `_hve_preset_in_dir` in `assets/scripts/utils.sh` only where the
+    /// shell is right: the shell honours a dotted name verbatim too, but only
+    /// when that very file exists, so it can see through `my.preset`. The Rust
+    /// rule decides from the NAME alone, because matching, [`Self::preset_files_match`]
+    /// and `theme_presets::plan_bundle` are pure and have no store to probe. That
+    /// costs one corner: a preset whose own name ends in one of those extensions
+    /// (`keeper.json`, file `keeper.json.lua`) reads as a legacy file record.
+    /// Only a typed name can take that shape — never one HVE wrote.
+    ///
+    /// An empty reference stays empty (callers treat empty as "nothing active").
     pub(crate) fn canonical_preset_file(name: &str) -> String {
-        if name.is_empty() || name.contains('.') {
-            name.to_string()
-        } else {
-            format!("{}.lua", name)
+        if name.is_empty() {
+            return String::new();
+        }
+        let extension = std::path::Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        match extension {
+            Some(extension) if PRESET_FILE_EXTENSIONS.contains(&extension.as_str()) => {
+                name.to_string()
+            }
+            _ => format!("{}.lua", name),
         }
     }
 
@@ -598,12 +632,13 @@ mod tests {
 
     /// The canonical form is the ONE preset-name convention (`<name>.lua`),
     /// mirroring `_hve_preset_in_dir` in `assets/scripts/utils.sh` instead of
-    /// adding a third one: a bare stem gains the extension, a name that
-    /// already carries a dot is honoured verbatim — so a legacy `*.json` /
+    /// adding a third one: a stem gains the extension, a reference that already
+    /// ends in a preset FILE extension (`lua`, `frag`) or in a legacy record
+    /// extension (`json`, `ron`) is honoured verbatim — so a legacy `*.json` /
     /// `*.ron` record is never mangled into `*.json.lua` — and an empty
     /// reference stays empty.
     #[test]
-    fn canonical_preset_file_adds_the_extension_only_to_a_bare_stem() {
+    fn canonical_preset_file_honours_a_file_extension_and_extends_a_stem() {
         assert_eq!(PresetStore::canonical_preset_file("Space"), "Space.lua");
         assert_eq!(
             PresetStore::canonical_preset_file("keeper_saved"),
@@ -619,6 +654,59 @@ mod tests {
         );
         assert_eq!(PresetStore::canonical_preset_file("glow.json"), "glow.json");
         assert_eq!(PresetStore::canonical_preset_file(""), "");
+    }
+
+    // ── U6: an interior dot is not an extension ────────────────────────
+    // `validate_name` allows interior dots, but `save` ALWAYS writes
+    // `<name>.lua`. The old rule kept any dotted name verbatim, so saving
+    // `my.preset` wrote `borders/my.preset.lua` and recorded `my.preset` — a
+    // name with no file behind it: the marker warned and cleared, the bundler
+    // skipped it and the live re-apply missed.
+
+    /// The rule reads a dotted name that does NOT carry a preset file extension
+    /// as a stem. `19_stylized2.5D` is the shipped preset that made this real:
+    /// its STEM carries the dot, its file is `19_stylized2.5D.lua`.
+    #[test]
+    fn canonical_preset_file_reads_an_interior_dot_as_a_stem() {
+        assert_eq!(
+            PresetStore::canonical_preset_file("my.preset"),
+            "my.preset.lua"
+        );
+        assert_eq!(
+            PresetStore::canonical_preset_file("19_stylized2.5D"),
+            "19_stylized2.5D.lua",
+            "a dotted STEM must gain its extension like any other stem"
+        );
+        // The legacy record shapes keep naming their file verbatim: fixing the
+        // interior dot must not trade away the U2 promise.
+        assert_eq!(PresetStore::canonical_preset_file("glow.json"), "glow.json");
+        assert_eq!(
+            PresetStore::canonical_preset_file("legacy.ron"),
+            "legacy.ron"
+        );
+    }
+
+    /// The record must name the file `save` WROTE, checked against the real
+    /// filesystem rather than against the rule alone.
+    #[test]
+    fn an_interior_dot_name_records_the_file_save_writes() {
+        let dir = temp_dir();
+        let store = PresetStore {
+            base: dir.join("borders"),
+        };
+        store.save("my.preset", "-- interior dot\n").unwrap();
+
+        assert!(
+            store.base.join("my.preset.lua").is_file(),
+            "fixture: `save` writes `<name>.lua` whatever the name carries"
+        );
+        assert_eq!(
+            PresetStore::canonical_preset_file("my.preset"),
+            "my.preset.lua",
+            "the recorded value must be the file that was just written"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Tolerant read: a stored reference and a list entry denote the same
