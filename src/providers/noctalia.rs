@@ -1005,6 +1005,22 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generat
     // The single bounded re-check: log whether the ONE repair held, and
     // stop there either way — never a second repair, never a loop.
     std::thread::sleep(layout_settle_delay());
+    // U18 (residue (g) of the contract): the settle slept, so a newer
+    // apply may have started during it (the keeper clicking the next
+    // theme). Without this re-check the comparison below runs the OLD
+    // theme's sections against the NEWER theme's healthy file — and with
+    // the real themes' differing section sets that logs the false
+    // diagnostic "STILL missing after the single repair" against a
+    // healthy file. Log-only after this point, but it is a diagnostic
+    // lie; yield with the honest message instead.
+    if !layout_generation_is_current(generation) {
+        tracing::info!(
+            "[noctalia-v5] A newer theme apply started during the post-repair \
+             settle; skipping the post-repair re-check (superseded generation \
+             {generation})"
+        );
+        return;
+    }
     let after = match fs::read_to_string(live_settings) {
         Ok(text) => text,
         Err(e) => {
@@ -8512,6 +8528,178 @@ scale = 1.3
                 .contains(&std::process::id().to_string()),
             "the sibling must be unique per process too: two HVE processes \
              could run a repair at the same wall-clock moment"
+        );
+    }
+
+    // ── U18: the post-repair re-check must re-test the generation ──
+    //
+    // The re-check is LOG-ONLY (no write, no reload after it), so the
+    // honest pin needs the worker's LOG TEXT. A thread-local subscriber
+    // (`set_default` — the repo's `capture_logs` idiom) does NOT reach a
+    // spawned thread (verified in tracing-core: set_default installs a
+    // thread-local dispatcher; a fresh worker falls back to the GLOBAL
+    // default), so these tests install a process-wide capture subscriber
+    // ONCE, and each test clears + reads the shared buffer around its
+    // own window. All tests that touch the layout worker are `#[serial]`,
+    // and only they can emit the pinned lines, so an absence assertion
+    // inside the cleared window sees exactly this test's worker.
+
+    /// The shared in-memory tracing sink (see above for why it must be
+    /// process-wide, not thread-local).
+    #[derive(Clone, Default)]
+    struct GlobalLogCapture {
+        buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl std::io::Write for GlobalLogCapture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.buf.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for GlobalLogCapture {
+        type Writer = GlobalLogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    static GLOBAL_LOG_CAPTURE: std::sync::OnceLock<GlobalLogCapture> =
+        std::sync::OnceLock::new();
+
+    fn install_global_log_capture() -> GlobalLogCapture {
+        GLOBAL_LOG_CAPTURE.get_or_init(|| {
+            let capture = GlobalLogCapture::default();
+            // Best-effort: if a global default is already set (it never is
+            // in this suite), capture is degraded, never failing a test.
+            let _ = tracing::subscriber::set_global_default(
+                tracing_subscriber::fmt()
+                    .with_writer(capture.clone())
+                    .with_ansi(false)
+                    .without_time()
+                    .with_max_level(tracing::Level::INFO)
+                    .finish(),
+            );
+            capture
+        })
+        .clone()
+    }
+
+    fn u18_read_capture(capture: &GlobalLogCapture) -> String {
+        String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string()
+    }
+
+    fn u18_clear_capture(capture: &GlobalLogCapture) {
+        capture.buf.lock().unwrap().clear();
+    }
+
+    /// U18 (residue (g) of the contract): the post-repair re-check must
+    /// re-test the generation BEFORE comparing anything. Apply A repairs
+    /// its wipe; while worker A is inside its post-repair settle, apply
+    /// B (a different theme — the measured section-set asymmetry) writes
+    /// the live file. Worker A must NOT then compare A's OLD sections
+    /// against B's healthy file (that logs the false diagnostic "STILL
+    /// missing after the single repair" against a healthy file — the
+    /// diagnostic lie the residue describes); it must yield with the
+    /// honest superseded message and leave B's file untouched.
+    #[test]
+    #[serial]
+    fn a_worker_superseded_in_its_post_repair_settle_skips_the_misleading_recheck() {
+        let capture = install_global_log_capture();
+        u18_clear_capture(&capture);
+        let stub = LayoutStub::new();
+        // The settle must outlast both applies' whole cost (each is a
+        // handful of stub-CLI spawns, well under 100 ms here) so both
+        // applies land inside worker A's post-repair settle — the same
+        // margin reasoning as the U12 sibling tests.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "1200");
+        // Fixture sanity — A's layout is NOT in B's healthy file, so the
+        // absent re-check would really log the false diagnostic here.
+        assert!(
+            !missing_theme_layout(THEME_LAYOUT_A, THEME_LAYOUT_B).is_empty(),
+            "fixture must mirror the real asymmetry for the re-check to bite"
+        );
+        stub.wipe_mode("first");
+        let theme_a = stub.theme_with(THEME_LAYOUT_A);
+        let res = NoctaliaV5Provider::new().apply(theme_a.path());
+        assert!(res.is_ok(), "apply A must succeed: {res:?}");
+
+        // Wait until A's repair FIRED (the second reload): worker A is
+        // then inside its post-repair settle — B's apply must be picked
+        // up by the GENERATION RE-CHECK, not by the file comparison.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while stub.reloads() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            stub.reloads() >= 2,
+            "worker A never fired its repair reload — live log:\n{}",
+            std::fs::read_to_string(&stub.log).unwrap_or_default()
+        );
+
+        let theme_b = stub.theme_with(THEME_LAYOUT_B);
+        let res = NoctaliaV5Provider::new().apply(theme_b.path());
+        assert!(res.is_ok(), "apply B must succeed: {res:?}");
+
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            3,
+            "A's step-0 + A's repair + B's step-0: neither worker may add a \
+             reload — live log:\n{}",
+            std::fs::read_to_string(&stub.log).unwrap_or_default()
+        );
+        assert_eq!(
+            std::fs::read_to_string(stub.live_settings()).unwrap(),
+            THEME_LAYOUT_B,
+            "B's healthy file must stand byte-for-byte"
+        );
+        let text = u18_read_capture(&capture);
+        assert!(
+            !text.contains("STILL missing after the single repair"),
+            "the false diagnostic must never be logged against B's healthy \
+             file — live capture:\n{text}"
+        );
+        assert!(
+            text.contains("skipping the post-repair re-check"),
+            "the superseded worker must log the honest superseded message \
+             instead — live capture:\n{text}"
+        );
+    }
+
+    /// U18 control: the still-current case keeps its honest re-check —
+    /// with every reload re-wiping, the ONE bounded repair logs that the
+    /// layout is STILL missing. Removing the U18 re-check must not be
+    /// done by removing the re-check itself.
+    #[test]
+    #[serial]
+    fn a_current_worker_still_runs_the_post_repair_recheck() {
+        let capture = install_global_log_capture();
+        u18_clear_capture(&capture);
+        let stub = LayoutStub::new();
+        stub.wipe_mode("always");
+        let theme = stub.theme_with(THEME_LAYOUT);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a repair that cannot stick must never fail the apply: {res:?}"
+        );
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "one step-0 reload plus exactly one repair reload"
+        );
+        let text = u18_read_capture(&capture);
+        assert!(
+            text.contains("STILL missing after the single repair"),
+            "the still-current worker must keep logging the honest \
+             re-check result — live capture:\n{text}"
         );
     }
 }
