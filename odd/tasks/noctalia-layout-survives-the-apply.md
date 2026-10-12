@@ -4,13 +4,18 @@
 **Engram mirror**: topic `odd/noctalia-layout-survives-the-apply/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
 **Status**: DELIVERED, INSTALLED and PUSHED — the keeper's binary is `ada51b11d226cc45e7b7fc8a2e5cbb46`
-(1611 tests green) and the branch is in sync with `origin/hve2-visual-rewrite` at `e45d1cf`.
-Open: U4 (the keeper's live look) and the THREE REGISTERED RESIDUES (e), (f) and (g) in "Stated limits"
-— the keeper decided 2026-10-12 to leave them registered and fix them next, in a FRESH SESSION
-("lo arreglamos ahora mismo pero con una ventana de contexto limpia"). This file is the handoff.
-**Next round, in this order**: (e) a FAILED apply must not cancel its predecessor's repair without a
+(that build ran 1611 tests green). HEAD is now `6687ea1`, three commits ahead of
+`origin/hve2-visual-rewrite` (`a985c9f`).
+**ROUND 4 CLOSED (2026-10-12)**: the THREE REGISTERED RESIDUES (e), (f) and (g) are fixed as U16, U17
+and U18 — commits `7180cc8`, `a6f59cc`, `6687ea1`; `cargo test` 1616 passed / 0 failed; `cargo check
+--all-targets` clean; independent cross-model verification (mimo-v2.6-flash) **VERIFIED**. Two new LOW
+residuals this round did NOT close are registered as (h) and (i) in "Stated limits". U4 (the keeper's
+live look) is STILL OPEN; nothing pushed this round.
+**This round, in this order**: (e) a FAILED apply must not cancel its predecessor's repair without a
 replacement worker; (f) the repair's temporary sibling name must be unique per worker; (g) the
 post-repair re-check must re-test the generation before logging anything.
+**Route (round 4)**: delegated writer (`src/providers/noctalia.rs`) on the paid writer, independent
+cross-model verification after; strict TDD, runner `cargo test`.
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~120–220 authored changed lines → single PR.
 **Route**: delegated writer (`src/providers/noctalia.rs`), parent verification including the keeper's live look.
@@ -191,6 +196,46 @@ residues it surfaced are registered below as (e), (f) and (g).
   measured the APPLY's elapsed time, which U9's off-thread move had left vacuous.
 - [x] **U15** — the limits this round does NOT fix, registered in the contract (see
   "Stated limits" below), not silently left implicit.
+- [x] **U16** (round 4 — residue **(e)**) — **DONE, commit `7180cc8`** (+176/-30). The generation now
+  bumps immediately before the apply's first write to the live settings.toml (`:2333`, the single
+  `fetch_add` site; `fs::copy` at `:2334`) and a `Drop` guard (`LayoutVerifySpawnDuty`, `:772-801`)
+  spawns the verify on every exit path once the duty is taken (`:2345-2347`) — Ok, Err, panic unwind.
+  Cross-model verified. One residual it did NOT close is registered as (h). Original spec:
+  a FAILED apply must not cancel its predecessor's
+  layout repair without inheriting the duty. Today `APPLY_GENERATION` is bumped at `apply()`'s
+  FIRST statement (`src/providers/noctalia.rs:2217`) but the guard is armed only after the
+  settings copy + step-0 `config-reload` succeed (`:2306`) and the worker spawns at the END
+  (`:2761`). So an apply B that bumps the generation and then fails on ANY early-return path
+  (missing provider dir `:2220`, failed `fs::copy` `:2256`, failed step-0 reload `:2261`, or any
+  synchronous failure before the spawn) leaves apply A's worker to wake, see a superseded
+  generation, yield — and NO worker verifies or repairs. Fix must make supersession coincide with
+  the apply TAKING the duty (bump/adopt at the arm point) and must spawn the verify on EVERY exit
+  path once armed, including an error return, so a failure cannot strand the live file unchecked.
+  Pinned by tests: (i) B fails BEFORE any live write (missing provider dir) → A's worker still
+  repairs A's wipe; (ii) B writes then fails before the spawn → a worker still verifies the live
+  file.
+- [x] **U17** (round 4 — residue **(f)**) — **DONE, commit `a6f59cc`** (+70/-5). `atomic_temp_sibling`
+  (`:848-864`) names the temp `.part-<name>.<pid>-<generation>-<seq>` (a `SeqCst` counter); the
+  publish stays write-temp + rename-replaces-inode and every `std::fs::remove_file` stays fully
+  qualified. Cross-model verified. Original spec:
+  the repair's temporary sibling name must be unique per
+  worker. `write_settings_atomically` (`:788-806`) hard-codes `.part-settings.toml` (`:795`), so two
+  workers inside the atomic write can delete/rename each other's in-flight temp and publish a
+  partial file. Make the suffix unique (the apply generation and/or the pid). Pinned by a test that
+  the temp name is not the constant one and that concurrent publishes cannot collide.
+- [x] **U18** (round 4 — residue **(g)**) — **DONE, commit `6687ea1`** (+188). The re-check sits
+  immediately after the post-repair settle (`:1016-1023`), before the re-read/comparison; a superseded
+  worker logs the honest "skipping the post-repair re-check" and returns. Non-obvious infra: a
+  process-wide `GlobalLogCapture` subscriber (`:8467-8575`) because the repo's `capture_logs` idiom is
+  thread-local and never reaches a spawned worker. Cross-model verified; its timing margin is
+  registered as (i). Original spec:
+  the post-repair re-check must re-test the generation
+  before logging anything. `verify_and_repair_layout` sleeps a second settle after its repair reload
+  (`:946`) and then compares the OLD theme's sections against the live file (`:957-969`) with no
+  generation re-check; if a newer apply started during that settle the comparison is against a
+  newer theme's file and can log "STILL missing after the single repair" on a healthy file — a
+  diagnostic lie. Re-check `layout_generation_is_current(generation)` after the post-repair settle
+  and return with an honest "superseded" log instead of the misleading comparison.
 
 ## The refutation (verified against the keeper's real files, 2026-10-11 — recorded as fact)
 
@@ -424,7 +469,47 @@ Corrected as U12 (identity + yield) and U13 (atomic publish) below by a delegate
   67 -> 67 (zero new chunks). The keeper's live Noctalia config, theme packages and
   `sddm-watch.sh` were never touched. Commits `27dac45`, `8721a92`, `9445547`, plus
   this docs commit.
-- **(e) A FAILED apply cancels its predecessor's repair without inheriting the duty.**
+- 2026-10-12 (delegated writer, ROUND 4): **U16 done** — residue (e). The generation bump moved from
+  `apply()`'s first statement to immediately before the apply's first write to the live settings.toml
+  (`:2333`, the single `fetch_add` site; `fs::copy` at `:2334`), and the duty now rides a `Drop` guard
+  (`LayoutVerifySpawnDuty`, `:772-801`) that spawns the verify on EVERY exit path once the duty is
+  taken (`:2345-2347`) — Ok, Err and panic unwind. Early returns (missing provider dir, no
+  settings.toml, no state dir) never touch the generation now, so they no longer supersede a
+  predecessor's worker; a late failure still spawns a verify. A design note worth keeping: the
+  contract's suggested inner-function shape would have moved apply's 557-line body out of the trait
+  impl (Rust forbids inherent fns there, ~1100 lines of churn), so the writer used the Drop-guard idiom
+  the file already uses, same semantics. RED observed (pre-implementation): both new tests panicked
+  with `left: 1, right: 2` (no repair reload). Commit `7180cc8` (+176/-30).
+- 2026-10-12 (delegated writer, ROUND 4): **U17 done** — residue (f). The temp sibling is now
+  `.part-<name>.<pid>-<generation>-<seq>` (`atomic_temp_sibling`, `:848-864`; the sequence is a
+  `SeqCst` counter), so two in-flight workers cannot delete or rename each other's temp. The publish
+  is otherwise unchanged (write-temp + rename-replaces-inode) and every `std::fs::remove_file` stays
+  fully qualified (the source-construction guard). RED: compile RED (`E0425`) for the new helper — a
+  true two-thread race is not honestly observable with this helper, so uniqueness is pinned by
+  construction (`the_atomic_publish_temporary_sibling_is_unique_per_invocation`) plus the strengthened
+  U13 inode pin (now also scans for a leftover of ANY `.part-` name). Commit `a6f59cc` (+70/-5).
+- 2026-10-12 (delegated writer, ROUND 4): **U18 done** — residue (g). `verify_and_repair_layout` now
+  re-checks `layout_generation_is_current(generation)` immediately after its post-repair settle
+  (`:1016-1023`), BEFORE the re-read/comparison; a superseded worker logs the honest "skipping the
+  post-repair re-check (superseded generation N)" and returns, so the false "STILL missing" warn
+  (`:1041`) is unreachable in that case. The still-current path is unchanged (control test
+  `a_current_worker_still_runs_the_post_repair_recheck`). Non-obvious infra: the repo's `capture_logs`
+  idiom is thread-local and does NOT reach a spawned worker, so the test adds a process-wide
+  `GlobalLogCapture` subscriber (`:8467-8575`). RED: the superseded test captured the exact false
+  diagnostic against theme-B's healthy file. Commit `6687ea1` (+188).
+- 2026-10-12 (independent verification, mimo-v2.6-flash, read-only): **U16/U17/U18 VERIFIED** on
+  `a985c9f..6687ea1`. `cargo test` 1616 passed / 0 failed (1611 + 5 new); `cargo check --all-targets`
+  clean; focused runs green. The verifier confirmed the single `fetch_add` site, the single
+  `spawn_layout_verify_and_repair` call site, that no existing guarantee was weakened, and that the
+  duty guard interacts correctly with `LAYOUT_VERIFY_WORKERS_ACTIVE` (the harness can never sample
+  "idle" while a spawn is pending). Two LOW findings, both registered below as (h) and (i).
+
+## Stated limits carried across rounds
+
+Round 4 closes the round-3 residues **(e)**, **(f)** and **(g)** (see U16/U17/U18); the two residuals
+round 4 itself surfaced are **(h)** and **(i)** at the end of this block.
+
+- **(e) A FAILED apply cancels its predecessor's repair without inheriting the duty.** → **U16 (round 4) — FIXED (`7180cc8`)**
   `APPLY_GENERATION` is bumped as `apply()`'s first statement, but the guard is armed only
   after the settings copy and the reload succeed, and the worker spawns at the END of the
   apply. So if apply B bumps the generation and then fails on ANY early-return path
@@ -435,15 +520,35 @@ Corrected as U12 (identity + yield) and U13 (atomic publish) below by a delegate
   protects the file, but the failed apply inherits the supersession authority without
   inheriting the duty. Narrow (needs a wipe during A AND a failing B) and not in the
   round's scope.
-- **(f) The repair's temporary sibling name is a constant.** `.part-settings.toml` is
+- **(f) The repair's temporary sibling name is a constant.** → **U17 (round 4) — FIXED (`a6f59cc`)** `.part-settings.toml` is
   shared by every worker, so in an extreme schedule in which two workers are inside the
   atomic write at once, one can delete or rename the other's in-flight temp and publish a
   partial file. A unique suffix (the generation or the pid) closes it. Practically
   near-unreachable; registered because this guard's whole subject is concurrency.
-- **(g) The post-repair re-check does not re-test the generation.** After its repair reload
+- **(g) The post-repair re-check does not re-test the generation.** → **U18 (round 4) — FIXED (`6687ea1`)** After its repair reload
   the worker sleeps a second settle and re-reads the live file; if a newer apply started
   during that settle it compares the OLD theme's sections against the NEWER theme's file —
   and with the keeper's real themes those sets differ in both directions, so it can log
   "STILL missing after the single repair" against a healthy file. Log-only (no write, no
   reload after that point), but it is a diagnostic lie in a contract whose whole point is
   honest diagnosis.
+- **(h) A failure of the apply's own `fs::copy` after the generation bump still strands the live
+  file.** → **NEW, registered by round 4's verification (LOW).** In U16 the generation is bumped at
+  `:2333` and the duty is taken at `:2345-2347`, AFTER the `fs::copy` at `:2334`. So in the
+  microseconds between the bump and the copy, a failure of the copy itself leaves the duty `None`
+  while the predecessor's worker has already been superseded and yields — no worker verifies or
+  repairs, and a partially-written copy can leave a truncated live file unchecked. Round 4 SHRANK
+  the exposure from "any early failure" to exactly this one `fs::copy` failure, but did not close it.
+  WHY it is not trivially closed: bumping after the copy reopens the second-refutation window (a
+  predecessor's worker appending its theme's sections over the newer apply's fresh copy), and taking
+  the duty BEFORE the copy would make the verify compare THIS theme's sections against a live file
+  the copy never replaced (the predecessor's) — the same cross-theme hazard in reverse. Closing it
+  honestly needs the failed apply to HAND BACK the predecessor's duty (stash the last armed guard) or
+  an atomic copy, both out of this round's scope. Needs a wipe during A AND an `fs::copy` I/O
+  failure in B.
+- **(i) The U18 superseded-recheck test is pinned on a timing margin not covered by limit (d).**
+  → **NEW, registered by round 4's verification (LOW).**
+  `a_worker_superseded_in_its_post_repair_settle_skips_the_misleading_recheck` requires apply B to
+  land inside worker A's post-repair settle (~1200 ms in the test). Under extreme load it flaks to
+  FAIL (loud, never masking), but this margin is not among the conditions stated in (d), which covers
+  only the U9/U14 elapsed pins.
