@@ -169,8 +169,9 @@ fn resolve_background_sources(
     manifest_candidates: &[PathBuf],
 ) -> BackgroundSources {
     // 1. Painter-identified video record (video.txt): wins, like the authority
-    //    capture did at save time.
-    if let Some(path) = std::fs::read_to_string(provider_dir.join(
+    //    capture did at save time. W10: bounded — the record is untrusted
+    //    theme input, and an oversized one is refused like a missing one.
+    if let Some(path) = read_theme_text(&provider_dir.join(
         crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE,
     ))
     .ok()
@@ -184,8 +185,8 @@ fn resolve_background_sources(
         }
     }
 
-    // 2. Static wallpaper record.
-    if let Ok(text) = std::fs::read_to_string(provider_dir.join("wallpaper.txt")) {
+    // 2. Static wallpaper record (W10: same bounded read).
+    if let Ok(text) = read_theme_text(&provider_dir.join("wallpaper.txt")) {
         let path = PathBuf::from(text.trim());
         if path.is_file() {
             return sources_for(&path);
@@ -229,8 +230,10 @@ fn sources_for(path: &Path) -> BackgroundSources {
 
 /// Read the theme's `hve-presets` state into the active-preset selection. A
 /// missing or unreadable state is not an error: no presets are bundled.
+/// W10: bounded — an oversized (untrusted) state file refuses like a
+/// missing one (no presets), never an unbounded read.
 fn read_active_presets(state_path: &Path) -> crate::theme_presets::ActivePresets {
-    let Ok(raw) = std::fs::read_to_string(state_path) else {
+    let Ok(raw) = read_theme_text(state_path) else {
         return crate::theme_presets::ActivePresets::default();
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -383,6 +386,200 @@ pub fn package_theme_dir(
     })
 }
 
+// ── W10 (theme-package trust): bounded reads of an untrusted package ──
+//
+// A theme package is UNTRUSTED INPUT: anyone can hand HVE a directory that
+// claims to be a theme. Before these bounds, one file of many GB exhausted
+// memory on apply or on `--package-themes`, and a pathologically deep tree
+// could drive the recursive scan toward the stack limit.
+//
+// WHY THESE NUMBERS, in one place:
+//
+// - 4 MiB PER FILE: the largest legitimate text record a theme carries is
+//   its `settings.toml` (a full bar/layout config), and it measures in the
+//   tens of KiB — 4 MiB is ~100x that headroom, while a multi-GB file is
+//   refused after reading bound+1 bytes instead of being slurped whole.
+// - 64 MiB PER SCAN (total): a legit theme carries well under 1 MiB of
+//   text; the total bounds the peak memory of ONE whole-theme scan even
+//   when every file individually passes. The only overshoot is one
+//   per-file cap (the refusal is decided after the capped read), so the
+//   peak is total + per-file by construction.
+// - DEPTH 32: a real theme tree is `theme/providers/<id>/…` and never runs
+//   deeper than ~5 levels; 32 is order-of-magnitude headroom, and the walk
+//   can never grow toward the 8 MiB stack (a symlink cycle also terminates,
+//   because every lap spends depth AND entries).
+// - 10_000 ENTRIES: real themes carry well under 200 files; the entry cap
+//   bounds the loop work and the collected hits (each hit owns two Strings)
+//   so a directory of millions of entries is refused early.
+//
+// A refusal is always a WARNING plus a graceful skip — the caller keeps
+// whatever it could read, and nothing here ever panics.
+
+/// Per-file bound: see the block above for the WHY of every number.
+pub const MAX_THEME_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Total bytes one whole-theme scan may read — see the block above.
+pub const MAX_THEME_TOTAL_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Directory levels below the theme root the scan may descend — see above.
+pub const MAX_THEME_SCAN_DEPTH: usize = 32;
+
+/// Files + directories one scan may visit — see the block above.
+pub const MAX_THEME_SCAN_ENTRIES: usize = 10_000;
+
+/// The bounds an untrusted theme package is read under ([`scan_theme_for_absolute_paths`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeScanLimits {
+    /// Largest single file the scan reads, in bytes.
+    pub max_file_bytes: u64,
+    /// Total bytes the whole scan may read.
+    pub max_total_bytes: u64,
+    /// Directory levels below the theme root the scan may descend.
+    pub max_depth: usize,
+    /// Files + directories the scan may visit.
+    pub max_entries: usize,
+}
+
+impl Default for ThemeScanLimits {
+    fn default() -> Self {
+        Self {
+            max_file_bytes: MAX_THEME_FILE_BYTES,
+            max_total_bytes: MAX_THEME_TOTAL_SCAN_BYTES,
+            max_depth: MAX_THEME_SCAN_DEPTH,
+            max_entries: MAX_THEME_SCAN_ENTRIES,
+        }
+    }
+}
+
+/// What one bounded scan has left to spend, plus the once-per-scan warning
+/// flags (a pathological package must not emit a warning per entry).
+struct ScanBudget {
+    limits: ThemeScanLimits,
+    entries_left: usize,
+    bytes_left: u64,
+    warned_depth: bool,
+    warned_entries: bool,
+    warned_bytes: bool,
+}
+
+impl ScanBudget {
+    fn new(limits: ThemeScanLimits) -> Self {
+        Self {
+            limits,
+            entries_left: limits.max_entries,
+            bytes_left: limits.max_total_bytes,
+            warned_depth: false,
+            warned_entries: false,
+            warned_bytes: false,
+        }
+    }
+}
+
+/// Why a bounded theme read refused to hand back bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThemeReadError {
+    /// The file is over the per-file bound: the read stopped after
+    /// bound+1 bytes and a warning was already emitted. Callers use
+    /// [`ThemeReadError::is_oversized`] to degrade gracefully (skip this
+    /// file, keep working) instead of hard-failing.
+    TooLarge,
+    /// The file could not be opened or read (or, for [`read_theme_text`],
+    /// is not valid UTF-8).
+    Unreadable(String),
+}
+
+impl ThemeReadError {
+    /// Whether this refusal was the size bound — as opposed to an ordinary
+    /// I/O error, whose handling callers keep byte-for-byte as today.
+    pub fn is_oversized(&self) -> bool {
+        matches!(self, ThemeReadError::TooLarge)
+    }
+}
+
+impl std::fmt::Display for ThemeReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ThemeReadError::TooLarge => write!(
+                f,
+                "larger than the {MAX_THEME_FILE_BYTES}-byte bound for an untrusted theme file"
+            ),
+            ThemeReadError::Unreadable(detail) => write!(f, "{detail}"),
+        }
+    }
+}
+
+/// Read at most `max_bytes` + 1 bytes of `path`.
+///
+/// W10: the bound is enforced by the READ itself (`Read::take`), not by a
+/// stat-then-read — so a file that grows between the check and the read (or
+/// a `/proc` entry that reports size 0) can never open an unbounded window.
+/// A refusal warns (clear, once per file) and comes back as `Err`, never a
+/// panic; ordinary I/O errors come back as `Err` without a warning, so
+/// callers keep their lenient "missing file is not an error" behaviour.
+fn read_theme_bytes_capped(path: &Path, max_bytes: u64) -> Result<Vec<u8>, ThemeReadError> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)
+        .map_err(|e| ThemeReadError::Unreadable(format!("cannot open {}: {e}", path.display())))?;
+    let mut bytes = Vec::new();
+    let mut reader = file.take(max_bytes.saturating_add(1));
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|e| ThemeReadError::Unreadable(format!("cannot read {}: {e}", path.display())))?;
+    if bytes.len() as u64 > max_bytes {
+        tracing::warn!(
+            "[theme-package] refusing to read {}: it is larger than the {}-byte bound \
+             for an untrusted theme file",
+            path.display(),
+            max_bytes
+        );
+        return Err(ThemeReadError::TooLarge);
+    }
+    Ok(bytes)
+}
+
+/// Read one theme text record under the per-file bound ([`MAX_THEME_FILE_BYTES`]).
+///
+/// W10: apply- and package-side reads of a theme package go through this
+/// instead of `fs::read_to_string`, so one oversized (or race-growing) file
+/// can never exhaust memory. A refusal warns and comes back as `Err`;
+/// callers treat it exactly like today's read error (skip / warn / refuse).
+pub fn read_theme_text(path: &Path) -> Result<String, ThemeReadError> {
+    let bytes = read_theme_bytes_capped(path, MAX_THEME_FILE_BYTES)?;
+    String::from_utf8(bytes).map_err(|_| {
+        ThemeReadError::Unreadable(format!("{} is not valid UTF-8 text", path.display()))
+    })
+}
+
+/// Read one theme binary record under the per-file bound (same contract as
+/// [`read_theme_text`], for records that are not text — e.g. `palette.json`
+/// snapshots read as raw bytes).
+pub fn read_theme_bytes(path: &Path) -> Result<Vec<u8>, ThemeReadError> {
+    read_theme_bytes_capped(path, MAX_THEME_FILE_BYTES)
+}
+
+/// Whether `path` is small enough to be COPIED under the per-file bound —
+/// the pre-flight for a `fs::copy` of untrusted theme bytes (a streamed
+/// copy allocates no memory, but it would otherwise plant untrusted bytes
+/// in the live config for a later unbounded read). Warns and answers
+/// `false` when the file is over the bound; a file whose size cannot be
+/// determined answers `true` so the caller's own error handling stays in
+/// charge exactly as today. The stat/copy race it cannot close is bounded:
+/// the copy itself is streamed, never a memory allocation.
+pub fn theme_file_is_bounded(path: &Path) -> bool {
+    match std::fs::metadata(path).map(|m| m.len()) {
+        Ok(len) if len > MAX_THEME_FILE_BYTES => {
+            tracing::warn!(
+                "[theme-package] refusing to copy {}: it is larger than the {}-byte \
+                 bound for an untrusted theme file",
+                path.display(),
+                MAX_THEME_FILE_BYTES
+            );
+            false
+        }
+        _ => true,
+    }
+}
+
 /// Every absolute-path-looking value left in the theme's text files, as
 /// `(file, value)` pairs, in a deterministic order.
 ///
@@ -390,30 +587,105 @@ pub fn package_theme_dir(
 /// visible at package time, not discovered by a user. `media/` holds the
 /// packaged binaries (poster, video) and is never scanned; a file that is not
 /// valid UTF-8 is skipped for the same reason.
+///
+/// W10 (theme-package trust): a theme package is UNTRUSTED input, so the
+/// walk runs under [`ThemeScanLimits::default()`]. A file, tree or entry
+/// count over the bound is refused with a warning and skipped — the scan
+/// returns everything it could read instead of exhausting memory or stack.
 pub fn scan_theme_for_absolute_paths(theme_dir: &Path) -> Vec<(PathBuf, String)> {
+    scan_theme_for_absolute_paths_with_limits(theme_dir, ThemeScanLimits::default())
+}
+
+/// The same scan driven by EXPLICIT limits — the seam the bound tests use
+/// (the production defaults are far too generous to fixture cheaply).
+pub fn scan_theme_for_absolute_paths_with_limits(
+    theme_dir: &Path,
+    limits: ThemeScanLimits,
+) -> Vec<(PathBuf, String)> {
     let mut hits: Vec<(PathBuf, String)> = Vec::new();
-    scan_theme_dir(theme_dir, &mut hits);
+    let mut budget = ScanBudget::new(limits);
+    scan_theme_dir(theme_dir, 0, &mut budget, &mut hits);
     hits
 }
 
 /// Walk `dir` depth-first in sorted order, collecting the hits of every text
 /// file under it. The packaged `media/` directory is skipped whole.
-fn scan_theme_dir(dir: &Path, hits: &mut Vec<(PathBuf, String)>) {
+///
+/// W10: the walk is bounded on four axes ([`ThemeScanLimits`]) and every
+/// refusal is a warning plus a skip, never a panic and never an unbounded
+/// read. `depth` is the number of directory levels below the theme root the
+/// walk has descended; a symlink cycle terminates because every lap spends
+/// both depth and entries.
+fn scan_theme_dir(
+    dir: &Path,
+    depth: usize,
+    budget: &mut ScanBudget,
+    hits: &mut Vec<(PathBuf, String)>,
+) {
+    if depth >= budget.limits.max_depth {
+        if !budget.warned_depth {
+            budget.warned_depth = true;
+            tracing::warn!(
+                "[theme-package] refusing to scan deeper than {} levels under {}: the \
+                 tree is pathologically deep for an untrusted theme package",
+                budget.limits.max_depth,
+                dir.display()
+            );
+        }
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
     for path in paths {
+        if budget.entries_left == 0 {
+            if !budget.warned_entries {
+                budget.warned_entries = true;
+                tracing::warn!(
+                    "[theme-package] refusing to scan past {} entries under {}: the \
+                     package carries too much for an untrusted theme",
+                    budget.limits.max_entries,
+                    dir.display()
+                );
+            }
+            return;
+        }
+        budget.entries_left -= 1;
         if path.is_dir() {
             if path.file_name().and_then(|n| n.to_str()) == Some(crate::theme_media::MEDIA_DIR) {
                 continue;
             }
-            scan_theme_dir(&path, hits);
+            scan_theme_dir(&path, depth + 1, budget, hits);
             continue;
         }
+        // The per-file bound warns inside on a refusal (clear warning, no
+        // read-on); an unreadable or non-UTF-8 file skips like today.
+        let Ok(bytes) = read_theme_bytes_capped(&path, budget.limits.max_file_bytes) else {
+            continue;
+        };
+        let len = bytes.len() as u64;
+        if len > budget.bytes_left {
+            // The refusal is decided AFTER the (already capped) read, so no
+            // stat/read race can open an unbounded window: the scan may
+            // overshoot the total by at most one per-file cap, which is
+            // bounded by construction.
+            budget.bytes_left = 0;
+            if !budget.warned_bytes {
+                budget.warned_bytes = true;
+                tracing::warn!(
+                    "[theme-package] refusing to keep scanning {}: the package already \
+                     spent its {}-byte read budget",
+                    path.display(),
+                    budget.limits.max_total_bytes
+                );
+            }
+            return;
+        }
+        budget.bytes_left -= len;
         // A file that is not valid UTF-8 is a binary, not a text record.
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = String::from_utf8(bytes) else {
             continue;
         };
         for value in absolute_paths_in_text(&text) {
@@ -1236,5 +1508,192 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("Alpha") && text.contains("packaged"), "{text}");
         assert!(text.contains("Empty") && text.contains("skipped"), "{text}");
+    }
+
+    // ── W10: an untrusted package is read under bounds ─────────────────
+
+    /// Install an in-memory WARN capture around `body` and return what was
+    /// logged (same seam the leak-report tests use).
+    fn with_warn_capture(body: impl FnOnce()) -> String {
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        body();
+        let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
+        text
+    }
+
+    /// A file one byte over the per-file bound, carrying a planted absolute
+    /// path at its very START: a size-based refusal must not report it —
+    /// proof the bound is enforced before the content is consumed, not after.
+    #[test]
+    fn scan_refuses_a_file_over_the_per_file_bound_without_reading_it_whole() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Bomb");
+        let provider = provider_dir(&theme);
+        fs::create_dir_all(&provider).unwrap();
+        let mut content = b"/home/someone/secret.png\n".to_vec();
+        content.resize(MAX_THEME_FILE_BYTES as usize + 1, b'x');
+        fs::write(provider.join("notes.txt"), content).unwrap();
+
+        let mut hits = Vec::new();
+        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths(&theme));
+
+        assert!(
+            hits.is_empty(),
+            "an over-bound file must be refused without being read whole, got {hits:?}"
+        );
+        assert!(
+            text.contains("notes.txt") && text.contains("refusing to read"),
+            "the refusal must be a clear warning naming the file, log was:\n{text}"
+        );
+    }
+
+    /// A tree deeper than the depth bound is refused (warned + skipped)
+    /// without recursing to its floor — no stack overflow, no deep read.
+    #[test]
+    fn scan_refuses_a_tree_deeper_than_the_depth_bound_without_overflowing() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Deep");
+        let mut deep = theme.clone();
+        for i in 0..(MAX_THEME_SCAN_DEPTH + 8) {
+            deep = deep.join(format!("d{i:02}"));
+        }
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("notes.txt"), b"url = \"/home/someone/deep.png\"\n").unwrap();
+
+        let mut hits = Vec::new();
+        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths(&theme));
+
+        assert!(
+            hits.is_empty(),
+            "a tree deeper than the bound must be refused without scanning its floor, got {hits:?}"
+        );
+        assert!(
+            text.contains("deeper than"),
+            "the refusal must be a clear warning, log was:\n{text}"
+        );
+    }
+
+    /// The entry bound stops the walk early: of ten files, exactly the bound
+    /// is scanned and the rest is refused with one warning.
+    #[test]
+    fn scan_stops_at_the_entry_bound() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Flood");
+        fs::create_dir_all(&theme).unwrap();
+        for i in 1..=10 {
+            fs::write(
+                theme.join(format!("f{i:02}.txt")),
+                b"/home/someone/flooded.png\n",
+            )
+            .unwrap();
+        }
+        let limits = ThemeScanLimits {
+            max_entries: 3,
+            ..ThemeScanLimits::default()
+        };
+
+        let mut hits = Vec::new();
+        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths_with_limits(&theme, limits));
+
+        assert_eq!(
+            hits.len(),
+            3,
+            "the entry bound must stop the walk after exactly its bound, got {hits:?}"
+        );
+        assert!(
+            text.contains("entries"),
+            "the refusal must be a clear warning naming the bound, log was:\n{text}"
+        );
+    }
+
+    /// The total-bytes bound stops the scan once the budget is spent: the
+    /// first 40-byte file fits, the second busts the remaining 20.
+    #[test]
+    fn scan_stops_at_the_total_bytes_bound() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Guzzler");
+        fs::create_dir_all(&theme).unwrap();
+        for name in ["a.txt", "b.txt"] {
+            let mut content = b"/home/someone/guzzled.png\n".to_vec();
+            content.resize(40, b'x');
+            fs::write(theme.join(name), content).unwrap();
+        }
+        let limits = ThemeScanLimits {
+            max_total_bytes: 60,
+            ..ThemeScanLimits::default()
+        };
+
+        let mut hits = Vec::new();
+        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths_with_limits(&theme, limits));
+
+        assert_eq!(
+            hits.len(),
+            1,
+            "only the file that fits the total budget may be scanned, got {hits:?}"
+        );
+        assert!(
+            text.contains("read budget"),
+            "the refusal must be a clear warning naming the budget, log was:\n{text}"
+        );
+    }
+
+    /// Control: a legitimate record under every bound reads byte-identically
+    /// — multi-byte UTF-8 included.
+    #[test]
+    fn read_theme_text_reads_a_legitimate_file_byte_identically() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("record.txt");
+        let content = "poster = \"media/póster áéí.png\"\n";
+        fs::write(&file, content).unwrap();
+
+        assert_eq!(read_theme_text(&file).unwrap(), content);
+    }
+
+    /// An oversized file is refused with a clear message and never slurped.
+    #[test]
+    fn read_theme_text_refuses_an_oversized_file() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("bomb.txt");
+        fs::write(&file, vec![b'x'; MAX_THEME_FILE_BYTES as usize + 1]).unwrap();
+
+        let err = read_theme_text(&file).expect_err("an over-bound file must be refused");
+        assert!(
+            err.is_oversized(),
+            "an oversized file must refuse as TooLarge, got: {err}"
+        );
+        assert!(err.to_string().contains("bound"), "the refusal must name the bound, got: {err}");
+    }
+
+    /// A missing or non-text file is an ordinary error, not a panic.
+    #[test]
+    fn read_theme_text_passes_ordinary_errors_through() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(read_theme_text(&root.path().join("missing.txt")).is_err());
+
+        let binary = root.path().join("binary.bin");
+        fs::write(&binary, [0xff, 0xfe, 0x00]).unwrap();
+        let err = read_theme_text(&binary).expect_err("non-UTF-8 must not become text");
+        assert!(!err.is_oversized(), "a binary is unreadable, not oversized: {err}");
+        assert!(err.to_string().contains("UTF-8"), "got: {err}");
+    }
+
+    /// The `fs::copy` pre-flight answers honestly on both sides of the bound.
+    #[test]
+    fn theme_file_is_bounded_answers_by_size() {
+        let root = tempfile::tempdir().unwrap();
+        let small = root.path().join("small.toml");
+        fs::write(&small, b"config_version = 14\n").unwrap();
+        assert!(theme_file_is_bounded(&small));
+
+        let bomb = root.path().join("bomb.toml");
+        fs::write(&bomb, vec![b'x'; MAX_THEME_FILE_BYTES as usize + 1]).unwrap();
+        assert!(!theme_file_is_bounded(&bomb), "an over-bound file must be refused");
     }
 }

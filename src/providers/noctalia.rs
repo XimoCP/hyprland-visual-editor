@@ -627,7 +627,10 @@ pub fn drop_absolute_background_records(
 /// foreign machine restores it. Best-effort — an unreadable or unwritable file
 /// only warns; the save or the package still succeeds.
 pub(crate) fn sanitize_settings_file(dest: &Path, theme_dir: &Path) {
-    let raw = match fs::read_to_string(dest) {
+    // W10 (theme-package trust): this file can be a foreign theme's own
+    // `settings.toml`, so the read is bounded — an oversized one refuses
+    // (warns, returns) instead of exhausting memory.
+    let raw = match crate::theme_package::read_theme_text(dest) {
         Ok(raw) => raw,
         Err(e) => {
             tracing::warn!(
@@ -914,7 +917,9 @@ fn atomic_temp_sibling(path: &Path, name: &str, generation: u64) -> PathBuf {
 /// (re-check). None of it blocks the apply or the transition. A theme
 /// declaring no layout short-circuits before any of it: zero cost.
 fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generation: u64) {
-    let theme = match fs::read_to_string(saved_settings) {
+    // W10 (theme-package trust): the theme's settings.toml is untrusted
+    // input — bounded read, refusal keeps today's "warn and do nothing".
+    let theme = match crate::theme_package::read_theme_text(saved_settings) {
         Ok(text) => text,
         Err(e) => {
             tracing::warn!(
@@ -1250,7 +1255,8 @@ fn mpvpaper_can_paint_for_capture() -> Option<bool> {
 fn palette_swatches(provider_dir: &Path) -> Vec<String> {
     const KEYS: [&str; 4] = ["mPrimary", "mSecondary", "mTertiary", "mSurface"];
     for file in ["palette.json", "colors.json"] {
-        let Ok(raw) = fs::read_to_string(provider_dir.join(file)) else {
+        // W10 (theme-package trust): untrusted theme records — bounded.
+        let Ok(raw) = crate::theme_package::read_theme_text(&provider_dir.join(file)) else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -1275,7 +1281,8 @@ fn palette_swatches(provider_dir: &Path) -> Vec<String> {
 fn theme_facts_from_records(provider_dir: &Path) -> Vec<ThemeFact> {
     let mut facts: Vec<ThemeFact> = Vec::new();
 
-    if let Ok(text) = fs::read_to_string(provider_dir.join("source.txt")) {
+    // W10 (theme-package trust): untrusted theme record — bounded read.
+    if let Ok(text) = crate::theme_package::read_theme_text(&provider_dir.join("source.txt")) {
         let mut parts = text.trim().splitn(2, char::is_whitespace);
         let kind = parts.next().unwrap_or("").trim();
         let name = parts.next().unwrap_or("").trim();
@@ -1702,8 +1709,9 @@ impl crate::providers::shell_capabilities::ShellCapabilities for NoctaliaShell {
         themes_root: &std::path::Path,
         theme_name: &str,
     ) -> Option<String> {
-        std::fs::read_to_string(
-            themes_root
+        // W10 (theme-package trust): a theme package's record — bounded.
+        crate::theme_package::read_theme_text(
+            &themes_root
                 .join(theme_name)
                 .join("providers")
                 .join("noctalia-v5")
@@ -1719,7 +1727,8 @@ impl crate::providers::shell_capabilities::ShellCapabilities for NoctaliaShell {
             .join(theme_name)
             .join("providers")
             .join("noctalia-v5");
-        let raw = match std::fs::read_to_string(provider_dir.join("source.txt")) {
+        // W10 (theme-package trust): untrusted theme record — bounded.
+        let raw = match crate::theme_package::read_theme_text(&provider_dir.join("source.txt")) {
             Ok(raw) => raw,
             Err(_) => return false,
         };
@@ -1841,7 +1850,10 @@ impl ThemeProvider for NoctaliaV5Provider {
             });
         }
 
-        if let Ok(text) = fs::read_to_string(provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE))
+        // W10 (theme-package trust): both records below live in the theme's
+        // provider dir — untrusted, so bounded reads.
+        if let Ok(text) =
+            crate::theme_package::read_theme_text(&provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE))
         {
             if let Some(path) = wallpaper_authority::parse_painter_video_record(&text) {
                 out.push(PreviewSource {
@@ -1852,7 +1864,7 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        if let Ok(text) = fs::read_to_string(provider_dir.join("wallpaper.txt")) {
+        if let Ok(text) = crate::theme_package::read_theme_text(&provider_dir.join("wallpaper.txt")) {
             if let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) {
                 out.push(PreviewSource {
                     role: PreviewRole::WallpaperText,
@@ -2347,7 +2359,14 @@ impl ThemeProvider for NoctaliaV5Provider {
         // verify runs OFF the UI thread — see `spawn_layout_verify_and_repair`.
         let spawn_duty = LayoutVerifySpawnDuty(std::cell::Cell::new(None));
         let saved_settings = provider_dir.join("settings.toml");
-        if saved_settings.exists() {
+        // W10 (theme-package trust): the saved settings.toml is untrusted
+        // theme input. An over-bound file is refused BEFORE the copy: the
+        // live config keeps its current state and the apply continues with
+        // every later step (wallpaper, palette) intact — a refusal must
+        // degrade gracefully, never fail the apply and never panic.
+        // (`fs::copy` itself streams, but it would plant untrusted bytes in
+        // the live file for the layout verify to slurp right after.)
+        if saved_settings.exists() && crate::theme_package::theme_file_is_bounded(&saved_settings) {
             if let Some(state_dir) = noctalia_state_dir() {
                 let dst = state_dir.join("settings.toml");
                 // U16: the generation is bumped HERE, immediately before
@@ -2442,8 +2461,9 @@ impl ThemeProvider for NoctaliaV5Provider {
         // T3 theme-first video: the packaged `media/background.mp4` wins over
         // the absolute `video.txt` path, which in turn wins over a recorded
         // url. `None` for every old theme (no record, no media), so their
-        // chain stays byte-for-byte as before.
-        let recorded_absolute: Option<PathBuf> = fs::read_to_string(&painter_record)
+        // chain stays byte-for-byte as before. W10: the record is untrusted
+        // theme input — bounded read, refusal reads as "no record".
+        let recorded_absolute: Option<PathBuf> = crate::theme_package::read_theme_text(&painter_record)
             .ok()
             .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
         let theme_video = crate::theme_media::resolve_theme_video(
@@ -2492,8 +2512,9 @@ impl ThemeProvider for NoctaliaV5Provider {
         let wp_path = provider_dir.join("wallpaper.txt");
         // Same lenient read as before (an unreadable wallpaper.txt must not
         // change the yield behaviour): the non-empty saved path, kept as a
-        // fact for the `apply-background` request built below.
-        let static_wallpaper = fs::read_to_string(&wp_path)
+        // fact for the `apply-background` request built below. W10: bounded
+        // — an oversized (untrusted) record refuses like a missing one.
+        let static_wallpaper = crate::theme_package::read_theme_text(&wp_path)
             .ok()
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
@@ -2748,8 +2769,21 @@ impl ThemeProvider for NoctaliaV5Provider {
                     );
                 }
             } else if wp_path.exists() {
-                let wp = fs::read_to_string(&wp_path)
-                    .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
+                // W10 (theme-package trust): untrusted theme record — bounded
+                // read. A refused (oversized) record degrades to "no static
+                // wallpaper restored", never a failed apply; an ordinary
+                // I/O error keeps today's hard error.
+                let wp = match crate::theme_package::read_theme_text(&wp_path) {
+                    Ok(text) => text,
+                    Err(e) if e.is_oversized() => {
+                        tracing::warn!(
+                            "[noctalia-v5] refusing the oversized theme record wallpaper.txt; \
+                             restoring no static wallpaper ({e})"
+                        );
+                        String::new()
+                    }
+                    Err(e) => return Err(format!("Cannot read wallpaper.txt: {}", e)),
+                };
                 let wp = wp.trim();
                 // W6 (theme-package trust): `wallpaper.txt` is read from the
                 // theme package, so the value is attacker-controlled —
@@ -2781,8 +2815,22 @@ impl ThemeProvider for NoctaliaV5Provider {
         // ownership re-assert at the end fires only for what was set.
         let mut custom_restored: Option<String> = None;
         if source_src.exists() {
-            let raw = fs::read_to_string(&source_src)
-                .map_err(|e| format!("Cannot read source.txt: {}", e))?;
+            // W10 (theme-package trust): untrusted theme record — bounded
+            // read. A refused (oversized) source skips the whole colour
+            // phase gracefully (the wallpaper work already done stands and
+            // the layout duty still spawns via its guard); an ordinary
+            // I/O error keeps today's hard error.
+            let raw = match crate::theme_package::read_theme_text(&source_src) {
+                Ok(text) => text,
+                Err(e) if e.is_oversized() => {
+                    tracing::warn!(
+                        "[noctalia-v5] refusing the oversized theme record source.txt; \
+                         restoring no color scheme ({e})"
+                    );
+                    return Ok(());
+                }
+                Err(e) => return Err(format!("Cannot read source.txt: {}", e)),
+            };
             let scheme = raw.trim();
             let parts: Vec<&str> = scheme.splitn(2, ' ').collect();
             let source = parts.first().copied().unwrap_or("custom");
@@ -2818,7 +2866,13 @@ impl ThemeProvider for NoctaliaV5Provider {
                 );
             }
 
-            if !name.is_empty() && !refused_name && palette_src.exists() {
+            // W10 (theme-package trust): the palette snapshot is untrusted
+            // theme input too — an oversized one is refused (warns inside)
+            // and the custom restore degrades to "no palette copied, no
+            // named scheme set" (the descriptor-clearing branch below).
+            if !name.is_empty() && !refused_name && palette_src.exists()
+                && crate::theme_package::theme_file_is_bounded(&palette_src)
+            {
                 // Custom or community palette — copy the saved palette file back
                 // and restore as "custom" regardless of original source.
                 if let Some(palettes_dir) = noctalia_config_dir().map(|d| d.join("palettes")) {
@@ -2938,11 +2992,15 @@ impl ThemeProvider for NoctaliaV5Provider {
     /// matching is `Ok(())` with no CLI write at all.
     fn reassert_colours(&self, theme_dir: &Path) -> Result<(), String> {
         let provider_dir = theme_dir.join("providers").join(self.id());
-        let snapshot = match fs::read(provider_dir.join("palette.json")) {
+        // W10 (theme-package trust): the applied theme's snapshot and source
+        // are untrusted input — bounded reads; an oversized one refuses
+        // (warns inside) exactly like a missing one (nothing to re-assert).
+        let snapshot = match crate::theme_package::read_theme_bytes(&provider_dir.join("palette.json"))
+        {
             Ok(bytes) if !bytes.is_empty() => bytes,
             _ => return Ok(()),
         };
-        let source = match fs::read_to_string(provider_dir.join("source.txt")) {
+        let source = match crate::theme_package::read_theme_text(&provider_dir.join("source.txt")) {
             Ok(text) => text,
             Err(_) => return Ok(()),
         };
@@ -3028,7 +3086,12 @@ impl ThemeProvider for NoctaliaV5Provider {
     ) -> Option<crate::color_authority::ColorAuthority> {
         let provider_dir = theme_dir.join("providers").join(self.id());
         let palette_src = provider_dir.join("palette.json");
-        let raw = fs::read_to_string(provider_dir.join("source.txt")).ok()?;
+        // W10 (theme-package trust): untrusted theme records — bounded
+        // reads; an oversized one refuses like a missing one (`None`).
+        let raw = match crate::theme_package::read_theme_text(&provider_dir.join("source.txt")) {
+            Ok(raw) => raw,
+            Err(_) => return None,
+        };
         let mut parts = raw.trim().splitn(2, ' ');
         let origin = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("").trim();
@@ -3040,7 +3103,8 @@ impl ThemeProvider for NoctaliaV5Provider {
         }
         // An empty snapshot is no snapshot — the same guard
         // `reassert_colours` applies before it would write bytes back.
-        match fs::read(&palette_src) {
+        // W10: bounded read, refusal reads as "no snapshot".
+        match crate::theme_package::read_theme_bytes(&palette_src) {
             Ok(bytes) if !bytes.is_empty() => {}
             _ => return None,
         }
@@ -3068,7 +3132,9 @@ impl ThemeProvider for NoctaliaV5Provider {
     /// dir cannot be resolved.
     fn deletable_artifacts(&self, theme_dir: &Path) -> Vec<DeletableArtifact> {
         let provider_dir = theme_dir.join("providers").join(self.id());
-        let Ok(text) = fs::read_to_string(provider_dir.join("source.txt")) else {
+        // W10 (theme-package trust): untrusted theme record — bounded read.
+        let Ok(text) = crate::theme_package::read_theme_text(&provider_dir.join("source.txt"))
+        else {
             return Vec::new();
         };
         let Some(safe_name) = parse_custom_palette_name(&text) else {
@@ -8961,4 +9027,37 @@ scale = 1.3
              re-check result — live capture:\n{text}"
         );
     }
+
+    // ── W10 (theme-package trust): the untrusted package read is bounded ──
+
+    /// A theme carrying a `settings.toml` of many GB must never be slurped
+    /// into memory nor copied over the live config: the apply refuses it
+    /// with a clear warning and keeps working with what it CAN read.
+    #[test]
+    #[serial]
+    fn apply_refuses_an_oversized_settings_toml_and_keeps_the_live_file() {
+        let capture = install_global_log_capture();
+        u18_clear_capture(&capture);
+        let stub = LayoutStub::new();
+        // One byte over the per-file bound.
+        let big = "x".repeat(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1);
+        let theme = stub.theme_with(&big);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a refused read must degrade gracefully, never fail the apply: {res:?}"
+        );
+        stub.wait_for_verify();
+        assert!(
+            !stub.live_settings().exists(),
+            "the oversized theme settings must never be copied into the live file"
+        );
+        let text = u18_read_capture(&capture);
+        assert!(
+            text.contains("settings.toml"),
+            "the refusal must be a clear warning naming the file, capture was:\n{text}"
+        );
+    }
+
 }
