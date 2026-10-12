@@ -761,12 +761,49 @@ fn layout_settle_delay() -> Duration {
 /// the hazard the synchronous version never had: apply and verify used
 /// to be serialized on one thread, so a newer apply could not start
 /// mid-verify.
+///
+/// WHEN it is bumped (U16): the bump happens immediately BEFORE an
+/// apply's FIRST write to the live settings.toml — not at the apply's
+/// first statement — so supersession coincides with TAKING the duty. An
+/// apply that fails before touching the live file never supersedes its
+/// predecessor's worker, and the predecessor's worker still repairs.
+/// From the bump on, the apply owns the duty and hand it to its
+/// [`LayoutVerifySpawnDuty`], which spawns the worker on EVERY exit
+/// path — Ok or Err — so a failed apply can never strand the live file
+/// unchecked.
 static APPLY_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Whether `generation` is still the newest apply generation — i.e. no
 /// newer `apply()` has started since the worker's apply captured it.
 fn layout_generation_is_current(generation: u64) -> bool {
     APPLY_GENERATION.load(Ordering::SeqCst) == generation
+}
+
+/// U16 (residue (e) of the contract) — the DUTY of spawning the detached
+/// layout-verify worker. Holds the triple (theme's saved settings.toml,
+/// live settings.toml, captured apply generation) once the apply has
+/// written the live file, and SPAWNS the worker in its `Drop`.
+///
+/// WHY a Drop guard instead of spawning at the end of the apply: the
+/// apply's early returns are `?` on real failure paths (unreadable
+/// `wallpaper.txt`, failed templates, ...) and Rust drops locals on
+/// them exactly like on the normal exit. U7's shape — arm after step 0,
+/// spawn at the end — left every Err path WITHOUT a worker: the live
+/// file was written, a later step failed, and no verify ever ran. The
+/// duty must survive BOTH directions: every exit path AFTER the duty
+/// was taken spawns the verify, and an apply that fails BEFORE it
+/// touched the live file (no duty taken, None stays None) never
+/// supersedes its predecessor's repair. Same guard idiom the file
+/// already uses for the worker-active counter and the colour-authority
+/// hold.
+struct LayoutVerifySpawnDuty(std::cell::Cell<Option<(PathBuf, PathBuf, u64)>>);
+
+impl Drop for LayoutVerifySpawnDuty {
+    fn drop(&mut self) {
+        if let Some((saved_settings, live_settings, generation)) = self.0.take() {
+            spawn_layout_verify_and_repair(saved_settings, live_settings, generation);
+        }
+    }
 }
 
 /// U13 of `odd/tasks/noctalia-layout-survives-the-apply.md`: publish
@@ -2208,13 +2245,6 @@ impl ThemeProvider for NoctaliaV5Provider {
     }
 
     fn apply(&self, theme_dir: &Path) -> Result<(), String> {
-        // U12 of `odd/tasks/noctalia-layout-survives-the-apply.md`: EVERY
-        // apply bumps the generation token at its START, before any
-        // write. The layout-verify worker spawned at the END of this
-        // apply carries this value and yields when a newer apply starts
-        // — a superseded worker must never lay its theme's layout over a
-        // newer apply's file (see [`APPLY_GENERATION`]).
-        let generation = APPLY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         let provider_dir = theme_dir.join("providers").join(self.id());
         if !provider_dir.exists() {
             return Err("Noctalia v5 provider data not found in theme".into());
@@ -2238,24 +2268,43 @@ impl ThemeProvider for NoctaliaV5Provider {
         //    untouched.
         let plugin_was_enabled = live_mpvpaper_plugin_enabled();
         let mut settings_restored = false;
-        // U7 of `odd/tasks/noctalia-layout-survives-the-apply.md`: the
-        // layout verification is ARMED here but SPAWNED at the END of the
-        // apply — the refuted delivery verified right after step 0 while
-        // the apply still had later writes and reloads to go (the
+        // U7 + U16 of `odd/tasks/noctalia-layout-survives-the-apply.md`:
+        // the layout-verify duty is armed here, the moment the apply
+        // writes the live settings.toml, and the worker is SPAWNED by the
+        // guard's `Drop` — on the normal exit AND on every `?` return
+        // below, so an Err after step 0 can never strand the live file
+        // unchecked. The refuted delivery verified right after step 0
+        // while the apply still had later writes and reloads to go (the
         // wallpaper-rotation neutralize writes the live file and reloads,
         // then `wallpaper-set`, `color-scheme-set`, `templates-apply`),
         // so a wipe landing on any of them was never caught. U9: the
-        // verify then runs OFF the UI thread — see
-        // `spawn_layout_verify_and_repair`.
-        let mut layout_guard: Option<(PathBuf, PathBuf, u64)> = None;
+        // verify runs OFF the UI thread — see `spawn_layout_verify_and_repair`.
+        let spawn_duty = LayoutVerifySpawnDuty(std::cell::Cell::new(None));
         let saved_settings = provider_dir.join("settings.toml");
         if saved_settings.exists() {
             if let Some(state_dir) = noctalia_state_dir() {
                 let dst = state_dir.join("settings.toml");
+                // U16: the generation is bumped HERE, immediately before
+                // the FIRST write to the live settings.toml — supersession
+                // coincides with taking the duty (see [`APPLY_GENERATION`]).
+                // The stale first-statement bump made a failed apply cancel
+                // its predecessor's worker without doing anything of its
+                // own.
+                let generation = APPLY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
                 fs::copy(&saved_settings, &dst)
                     .map_err(|e| format!("Cannot restore settings.toml: {}", e))?;
                 settings_restored = true;
                 tracing::info!("[noctalia-v5] Restored settings.toml");
+
+                // U16: the duty is taken as soon as the live file was
+                // touched — from here on the guard spawns the verify on
+                // EVERY exit path of the apply, Ok or Err. The reloaded
+                // config may still wipe the layout even when a later step
+                // fails, so a failure can never strand the live file
+                // unchecked.
+                spawn_duty
+                    .0
+                    .set(Some((saved_settings.clone(), dst.clone(), generation)));
 
                 noctalia_msg(&["msg", "config-reload"])
                     .map_err(|e| format!("Cannot reload config: {}", e))?;
@@ -2298,12 +2347,13 @@ impl ThemeProvider for NoctaliaV5Provider {
                 // config ~1 s after the reload above and can WIPE the
                 // layout sections the restore just put back (the
                 // ratchet). The verify + bounded surgical repair are
-                // SPAWNED at the END of the apply — see the call site —
-                // so no later step can re-wipe behind it unnoticed, and
-                // the wait never blocks the UI thread. U12: the guard
+                // SPAWNED by the duty guard's `Drop` (U16) — after the
+                // apply body, whether it returned Ok or Err
+                // (`spawn_layout_verify_and_repair` runs off the UI
+                // thread) — so no later step can strand the state, and
+                // the wait never blocks the UI thread. U12: the duty
                 // carries this apply's generation, so the worker can
                 // yield to a newer apply instead of overwriting its file.
-                layout_guard = Some((saved_settings.clone(), dst, generation));
             }
         }
 
@@ -2742,7 +2792,7 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        // U7 + U9 of `odd/tasks/noctalia-layout-survives-the-apply.md`:
+        // U7 + U9 + U16 of `odd/tasks/noctalia-layout-survives-the-apply.md`:
         // this is the LAST step of the apply — every write and reload the
         // apply performs itself (the settings restore, the D4 re-assert,
         // the wallpaper-rotation neutralize, `wallpaper-set`,
@@ -2750,17 +2800,14 @@ impl ThemeProvider for NoctaliaV5Provider {
         // the verify samples the state the apply actually leaves behind
         // (acceptance criterion 2) and no later synchronous step can
         // re-wipe behind it. U9: the verify itself runs OFF-THREAD on a
-        // detached worker (see `spawn_layout_verify_and_repair` for why
-        // the settle must never freeze the UI thread mid-transition) —
-        // the apply returns without waiting for it. Best-effort exactly
-        // like the D4 re-assert: a layout problem must never fail the
-        // theme apply. One caveat, stated: the off-thread colour
-        // re-assert spawned above and this verify worker are both
-        // asynchronous by design and can still land after the apply
-        // returns.
-        if let Some((saved_settings, live_settings, generation)) = layout_guard {
-            spawn_layout_verify_and_repair(saved_settings, live_settings, generation);
-        }
+        // detached worker — the apply returns without waiting for it.
+        // U16: the SPAWN happens in `spawn_duty`'s `Drop`, which fires on
+        // this `Ok(())` AND on every `?` return above, so an Err from any
+        // step still hands the duty on. Best-effort exactly like the D4
+        // re-assert: a layout problem must never fail the theme apply.
+        // One caveat, stated: the off-thread colour re-assert spawned
+        // above and this verify worker are both asynchronous by design
+        // and can still land after the apply returns.
 
         Ok(())
     }
@@ -7682,6 +7729,10 @@ scale = 1.3
         mode_file: PathBuf,
         /// Where the stub reads the text it wipes the live file with.
         wipe_src: PathBuf,
+        /// When this file exists, the stub's `templates-apply` exits 1 —
+        /// U16's failure injection: an apply that fails AFTER the live
+        /// settings.toml was written and reloaded.
+        templates_fail_flag: PathBuf,
         /// The live settings.toml the stub may wipe.
         target: PathBuf,
         /// Shared env lock, released last.
@@ -7713,6 +7764,7 @@ scale = 1.3
             std::fs::write(&mode_file, "never").unwrap();
             let wipe_src = bin.path().join("wiped.toml");
             std::fs::write(&wipe_src, WIPED_SETTINGS).unwrap();
+            let templates_fail_flag = bin.path().join("templates-fail");
 
             let stub = format!(
                 "#!/bin/sh\n\
@@ -7728,12 +7780,14 @@ scale = 1.3
                  if [ \"$1\" = \"msg\" ] && [ \"$2\" = \"templates-apply\" ]; then\n\
                  mode=$(cat '{mode}')\n\
                  if [ \"$mode\" = \"on-templates\" ]; then cp '{src}' '{target}'; fi\n\
+                 if [ -f '{fail}' ]; then exit 1; fi\n\
                  fi\n\
                  exit 0\n",
                 log = log.display(),
                 mode = mode_file.display(),
                 src = wipe_src.display(),
                 target = target.display(),
+                fail = templates_fail_flag.display(),
             );
             let noctalia = bin.path().join("noctalia");
             std::fs::write(&noctalia, stub).unwrap();
@@ -7754,9 +7808,17 @@ scale = 1.3
                 log,
                 mode_file,
                 wipe_src,
+                templates_fail_flag,
                 target,
                 _env: env,
             }
+        }
+
+        /// U16: make the stub's `templates-apply` exit 1, so the apply
+        /// fails on a LATER step, after the live settings.toml was
+        /// written and reloaded.
+        fn fail_on_templates(&self) {
+            std::fs::write(&self.templates_fail_flag, b"").unwrap();
         }
 
         /// What the stub's next `config-reload` does to the live file.
@@ -8301,6 +8363,90 @@ scale = 1.3
         assert!(
             !tmp.exists(),
             "the temporary sibling must be renamed away, never left behind"
+        );
+    }
+
+    /// U16 (residue (e) of the contract): a FAILED apply must not cancel
+    /// its predecessor's repair without inheriting the duty. Apply A
+    /// wipes the live layout and its repair worker starts settling;
+    /// apply B then fails on an early path BEFORE it touched the live
+    /// file (no provider data). B must never supersede A's worker: the
+    /// worker sees itself as still current and repairs A's wipe.
+    #[test]
+    #[serial]
+    fn a_failed_early_apply_does_not_supersede_its_predecessors_repair() {
+        let stub = LayoutStub::new();
+        // The settle must outlast apply B's whole (failing) run so the
+        // generation state is settled BEFORE worker A wakes — the same
+        // margin reasoning as the U12 sibling tests.
+        std::env::set_var("HVE_LAYOUT_SETTLE_MS", "1200");
+        stub.wipe_mode("first");
+        let theme_a = stub.theme_with(THEME_LAYOUT);
+
+        let res_a = NoctaliaV5Provider::new().apply(theme_a.path());
+        assert!(res_a.is_ok(), "apply A must succeed: {res_a:?}");
+
+        // Apply B is honest about failing: a theme dir with NO provider
+        // data makes apply return on its first check, before any write.
+        let theme_b = tempfile::TempDir::new().unwrap();
+        let res_b = NoctaliaV5Provider::new().apply(theme_b.path());
+        assert!(
+            res_b.is_err(),
+            "a theme without provider data must fail to apply: {res_b:?}"
+        );
+
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "A's failed-but-early follower must NOT supersede A: the step-0 \
+             reload plus exactly one repair reload — live log:\n{}",
+            std::fs::read_to_string(&stub.log).unwrap_or_default()
+        );
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
+            "A's wipe must still be repaired when the follower failed \
+             before touching the live file"
+        );
+    }
+
+    /// U16 (residue (e) of the contract), second half: an apply that ALREADY
+    /// wrote the live settings.toml and then fails on a later step must
+    /// still spawn the verify — the failure must not strand the live file
+    /// unchecked. Here the injected `templates-apply` failure lands AFTER
+    /// step 0's copy + reload (which wiped the layout): the worker must
+    /// still run and repair.
+    #[test]
+    #[serial]
+    fn a_failed_late_apply_still_spawns_the_layout_verify() {
+        let stub = LayoutStub::new();
+        // The step-0 reload wipes the layout (the ratchet), and the
+        // injected `templates-apply` failure then strands the apply on a
+        // later step. The verify must still run and repair.
+        stub.wipe_mode("first");
+        stub.fail_on_templates();
+        let theme = stub.theme_with_source(THEME_LAYOUT, "builtin Kanagawa");
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_err(),
+            "the injected templates-apply failure must fail the apply: {res:?}"
+        );
+        stub.wait_for_verify();
+        assert_eq!(
+            stub.reloads(),
+            2,
+            "the live file was written and reloaded, so the verify must run \
+             even though the apply returned Err: one step-0 reload plus \
+             exactly one repair reload — live log:\n{}",
+            std::fs::read_to_string(&stub.log).unwrap_or_default()
+        );
+        let live = std::fs::read_to_string(stub.live_settings()).unwrap();
+        assert!(
+            missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
+            "a failed apply must not strand the live file unchecked: the \
+             spawned worker must still repair the wipe"
         );
     }
 }
