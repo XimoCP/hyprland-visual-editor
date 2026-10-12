@@ -821,15 +821,18 @@ impl Drop for LayoutVerifySpawnDuty {
 /// new one. What it does NOT cover is registered in the contract (U15):
 /// other writers of this path are still in-place, and a process exit
 /// after writing the temporary but before the rename leaves the old
-/// file intact plus a stale `.part-` sibling.
-fn write_settings_atomically(path: &Path, text: &str) -> std::io::Result<()> {
+/// file intact plus a stale `.part-` sibling (U17: named with THIS
+/// invocation's unique suffix, so two workers can never hurt each
+/// other's in-flight temporary, and a never-raced stale leftover is
+/// traceable to exactly one write attempt).
+fn write_settings_atomically(path: &Path, text: &str, generation: u64) -> std::io::Result<()> {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("invalid settings destination {}", path.display()),
         ));
     };
-    let tmp = path.with_file_name(format!(".part-{name}"));
+    let tmp = atomic_temp_sibling(path, name, generation);
     let _ = std::fs::remove_file(&tmp);
     if let Err(e) = fs::write(&tmp, text) {
         let _ = std::fs::remove_file(&tmp);
@@ -840,6 +843,25 @@ fn write_settings_atomically(path: &Path, text: &str) -> std::io::Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+/// Monotonic sequence counter for [`atomic_temp_sibling`] — U17: with
+/// pid + generation + sequence, every temporary sibling ever created in
+/// this process is a distinct name, so two workers inside the atomic
+/// write can never delete or rename each other's in-flight temporary
+/// (the duplicate-name hazard the contract's residue (f) describes).
+static ATOMIC_WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// The temporary sibling for an atomic publish of `path` (the bounded
+/// layout repair's only writer): `[ .part-<name>.<pid>-<generation>-<seq> ]`.
+/// Unique per process (pid), per apply (generation) and per invocation
+/// (monotonic sequence) — U17 (residue (f)).
+fn atomic_temp_sibling(path: &Path, name: &str, generation: u64) -> PathBuf {
+    let seq = ATOMIC_WRITE_SEQ.fetch_add(1, Ordering::SeqCst);
+    path.with_file_name(format!(
+        ".part-{name}.{}-{generation}-{seq}",
+        std::process::id()
+    ))
 }
 
 /// U2 of `odd/tasks/noctalia-layout-survives-the-apply.md`, corrected by
@@ -951,8 +973,10 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generat
     // U13: atomic publish (temporary sibling + rename) — this path is
     // shared with the apply's own copy, the rotation neutralizer and
     // the keeper's watchdog, so an in-place truncate could tear the
-    // file under one of them.
-    if let Err(e) = write_settings_atomically(live_settings, &repaired) {
+    // file under one of them. U17: the sibling name carries this
+    // worker's generation plus pid + sequence, so no concurrent write
+    // attempt can touch its in-flight temporary.
+    if let Err(e) = write_settings_atomically(live_settings, &repaired, generation) {
         tracing::warn!(
             "[noctalia-v5] Cannot repair the live settings.toml layout: {}",
             e
@@ -8364,6 +8388,16 @@ scale = 1.3
             !tmp.exists(),
             "the temporary sibling must be renamed away, never left behind"
         );
+        let leftover = std::fs::read_dir(stub.live_settings().parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with(".part-"));
+        assert!(
+            !leftover,
+            "no temporary sibling of ANY name may be left behind — with U17 \
+             the published name is unique per invocation, so a leftover \
+             would be invisible to the old constant-name scan"
+        );
     }
 
     /// U16 (residue (e) of the contract): a FAILED apply must not cancel
@@ -8447,6 +8481,37 @@ scale = 1.3
             missing_theme_layout(THEME_LAYOUT, &live).is_empty(),
             "a failed apply must not strand the live file unchecked: the \
              spawned worker must still repair the wipe"
+        );
+    }
+
+    /// U17 (residue (f) of the contract): the repair's temporary sibling
+    /// used to be the CONSTANT `.part-settings.toml`, shared by every
+    /// worker — two workers inside the atomic write could delete/rename
+    /// each other's in-flight temp and publish a partial file. The
+    /// sibling name is now unique per PROCESS (pid), per APPLY
+    /// (generation) and per INVOCATION (monotonic sequence).
+    #[test]
+    fn the_atomic_publish_temporary_sibling_is_unique_per_invocation() {
+        let base = std::path::Path::new("/state/noctalia/settings.toml");
+        let a = atomic_temp_sibling(base, "settings.toml", 7);
+        let b = atomic_temp_sibling(base, "settings.toml", 7);
+        let c = atomic_temp_sibling(base, "settings.toml", 8);
+        assert_ne!(
+            a, b,
+            "two invocations must never share the sibling, even with the \
+             same generation (two repair workers cannot collide)"
+        );
+        assert_ne!(a, c, "a different apply generation must change the name");
+        assert_ne!(
+            a,
+            base.with_file_name(".part-settings.toml"),
+            "the constant sibling name is the residue: every worker shared it"
+        );
+        assert!(
+            a.to_string_lossy()
+                .contains(&std::process::id().to_string()),
+            "the sibling must be unique per process too: two HVE processes \
+             could run a repair at the same wall-clock moment"
         );
     }
 }
