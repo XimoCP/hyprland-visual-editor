@@ -64,6 +64,24 @@ pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
             return false;
         }
     };
+    // W6 (theme-package trust): this path can come from a THEME PACKAGE
+    // (`wallpaper.txt`, a packaged poster), so its value is
+    // ATTACKER-CONTROLLED. A value that STARTS WITH `-` would be parsed by
+    // `skwd-helm` / `skwd-wall-v2` as an OPTION instead of as the path to
+    // paint (argument injection). Refuse it HERE, before any spawn: no
+    // `--` end-of-options marker is added because neither engine's support
+    // for it can be confirmed from this repo, and an unsupported `--` would
+    // break every real apply. A legitimate wallpaper path — absolute or
+    // relative — never starts with `-`, so this never touches the normal
+    // path.
+    if path_str.starts_with('-') {
+        tracing::warn!(
+            "[skwd-wall] refusing wallpaper path {:?}: a leading '-' could be \
+             read as an option by the engine, not as the path to paint",
+            path_str
+        );
+        return false;
+    }
     // PICK THE RIGHT ENGINE FOR THE JOB, the other as fallback.
     //
     // Measured on this machine (2026-09-26), and the numbers are NOT a
@@ -559,6 +577,148 @@ mod tests {
             picker_running_in(&tmp.path().join("missing")),
             None,
             "an unreadable table degrades to unknown, never a guess"
+        );
+    }
+
+    // ── W6 (`odd/tasks/theme-package-trust.md`): a theme value that could
+    // be read as an option never reaches the engine's argv ──────────────
+
+    /// Stub `skwd-helm` / `skwd-wall-v2` binaries that RECORD every argv
+    /// element they receive (one per line) and succeed — so a test can
+    /// assert the exact argv the delegation constructed, without a real
+    /// engine ever running.
+    fn recording_engine_stubs(bin_dir: &Path, log: &Path) {
+        for bin in ["skwd-helm", "skwd-wall-v2"] {
+            let stub = bin_dir.join(bin);
+            std::fs::write(
+                &stub,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\nexit 0\n",
+                    log.display()
+                ),
+            )
+            .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+    }
+
+    /// Env sandbox for a delegation test: an EXISTING socket file (the
+    /// delegation gate) plus the recording stubs on `PATH`. Holds the
+    /// shared env lock for its whole life and restores every variable on
+    /// drop, so a parallel test never observes the mutation.
+    struct DelegationSandbox {
+        /// Held for the whole test; released LAST on drop.
+        _env: std::sync::MutexGuard<'static, ()>,
+        /// Removed AFTER the variables are restored.
+        _tmp: TempDir,
+        log: PathBuf,
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl DelegationSandbox {
+        fn new() -> Self {
+            let env = crate::test_utils::env_guard();
+            let tmp = TempDir::new().unwrap();
+            let log = tmp.path().join("argv.log");
+            let sock_dir = tmp.path().join("skwd-wall-v2");
+            std::fs::create_dir_all(&sock_dir).unwrap();
+            // A regular file at the socket path is enough for the gate
+            // (`socket.exists()`), and it can never be a live daemon.
+            std::fs::write(sock_dir.join("wall.sock"), b"stub socket").unwrap();
+            let bin_dir = tmp.path().join("bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            recording_engine_stubs(&bin_dir, &log);
+            let saved: Vec<(&'static str, Option<String>)> = [
+                "XDG_RUNTIME_DIR",
+                "SKWD_WALL_V2_SOCK",
+                "PATH",
+            ]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+            let orig_path = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
+            std::env::remove_var("SKWD_WALL_V2_SOCK");
+            std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), orig_path));
+            Self {
+                _env: env,
+                _tmp: tmp,
+                log,
+                saved,
+            }
+        }
+
+        /// Every argv element the stubs received, in order, one per line.
+        fn recorded(&self) -> Vec<String> {
+            std::fs::read_to_string(&self.log)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    impl Drop for DelegationSandbox {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// A LEGITIMATE path must still reach the engine byte for byte: the
+    /// refusal below must never reshape, quote or drop a good value (the
+    /// space in the path proves no re-quoting happens).
+    #[test]
+    #[serial]
+    fn delegate_hands_a_legitimate_path_to_the_engine_byte_identically() {
+        let sandbox = DelegationSandbox::new();
+        let applied = delegate_to_skwd_walld(Path::new("/tmp/legit wall.png"));
+        assert!(applied, "a legitimate path must still be applied");
+        assert_eq!(
+            sandbox.recorded(),
+            vec!["apply", "/tmp/legit wall.png"],
+            "the argv must be exactly `apply <path>`, byte for byte"
+        );
+    }
+
+    /// W6, the defect: the wallpaper path can come from a THEME PACKAGE,
+    /// so it is attacker-controlled. A value that STARTS WITH `-` could be
+    /// parsed by `skwd-helm` / `skwd-wall-v2` as an OPTION instead of as
+    /// the path to paint, so it must be refused BEFORE any spawn — the
+    /// stubs must not have recorded a single argv element.
+    #[test]
+    #[serial]
+    fn delegate_refuses_a_path_that_could_be_read_as_an_option() {
+        let sandbox = DelegationSandbox::new();
+        let applied = delegate_to_skwd_walld(Path::new("-o/tmp/pwned.png"));
+        assert!(!applied, "an option-looking path must not be applied");
+        assert!(
+            sandbox.recorded().is_empty(),
+            "the dangerous argument must never be handed to the engine, argv was: {:?}",
+            sandbox.recorded()
+        );
+    }
+
+    /// An empty path is refused today; pinned so the new leading-dash rule
+    /// keeps that behaviour and never widens into an empty argv element.
+    #[test]
+    #[serial]
+    fn delegate_refuses_an_empty_path_without_spawning() {
+        let sandbox = DelegationSandbox::new();
+        let applied = delegate_to_skwd_walld(Path::new(""));
+        assert!(!applied, "an empty path must not be applied");
+        assert!(
+            sandbox.recorded().is_empty(),
+            "an empty path must never be handed to the engine, argv was: {:?}",
+            sandbox.recorded()
         );
     }
 }

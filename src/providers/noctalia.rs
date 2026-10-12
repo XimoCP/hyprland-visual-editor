@@ -1326,6 +1326,32 @@ fn parse_custom_palette_name(text: &str) -> Option<String> {
     Some(name.replace('/', "_"))
 }
 
+/// W6 (theme-package trust): whether a theme-supplied VALUE (a path) may be
+/// handed to an external program as a positional argument.
+///
+/// WHY the leading dash is refused: the value comes from a theme package,
+/// so it is ATTACKER-CONTROLLED, and a value that STARTS WITH `-` can be
+/// parsed by the external CLI as an OPTION instead of as the value
+/// (argument injection) — the same pattern the colour script already
+/// defends (it rejects a leading dash) and `theme_package.rs` enforces for
+/// maintenance names. Empty is refused because there is nothing to pass.
+///
+/// NO `--` end-of-options marker is inserted: neither `noctalia`'s nor
+/// `skwd-helm`'s support for one can be confirmed from this repo, and an
+/// unsupported `--` would break every real apply — rejection alone carries
+/// the defence. A legitimate wallpaper path — absolute or relative — never
+/// starts with `-`, so the normal path behaves exactly as today.
+fn theme_value_is_safe(value: &str) -> bool {
+    !value.is_empty() && !value.starts_with('-')
+}
+
+/// W6: the stricter form of [`theme_value_is_safe`] for a theme-supplied
+/// NAME — a plain single path component, because the name also shapes the
+/// palette file name on disk (`palettes/<name>.json`).
+fn theme_name_is_plain(name: &str) -> bool {
+    theme_value_is_safe(name) && !name.contains('/') && name != "." && name != ".."
+}
+
 /// The file name Noctalia stores a COMMUNITY palette under: URL-ENCODED,
 /// spaces as `%20`, with the `.json` extension every palette file carries.
 /// `Catppuccin Mocha Sapphire` → `Catppuccin%20Mocha%20Sapphire.json`
@@ -2697,22 +2723,39 @@ impl ThemeProvider for NoctaliaV5Provider {
         if !animated_applied {
             if let Some(poster) = theme_poster {
                 let poster_arg = poster.to_string_lossy().to_string();
-                noctalia_msg(&["msg", "wallpaper-set", "", &poster_arg])
-                    .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
-                tracing::info!(
-                    "[noctalia-v5] Restored theme-packaged poster: {}",
-                    poster.display()
-                );
-                // Best-effort delegation to skwd-walld through the
-                // `apply-background` router, same as the static record below:
-                // the engine gets the SAME resolved absolute path.
-                bg_request.static_wallpaper = Some(poster);
-                background::hand_off_static(&bg_request);
+                // W6 (theme-package trust): the poster resolves from the
+                // theme's own `poster.txt`, so the value is
+                // attacker-controlled — refuse it before any IPC or
+                // hand-off (see `theme_value_is_safe` for WHY).
+                if theme_value_is_safe(&poster_arg) {
+                    noctalia_msg(&["msg", "wallpaper-set", "", &poster_arg])
+                        .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
+                    tracing::info!(
+                        "[noctalia-v5] Restored theme-packaged poster: {}",
+                        poster.display()
+                    );
+                    // Best-effort delegation to skwd-walld through the
+                    // `apply-background` router, same as the static record below:
+                    // the engine gets the SAME resolved absolute path.
+                    bg_request.static_wallpaper = Some(poster);
+                    background::hand_off_static(&bg_request);
+                } else {
+                    tracing::warn!(
+                        "[noctalia-v5] refusing the theme's poster {:?}: a value \
+                         starting with '-' could be read as an option, not as a \
+                         path; restoring no static wallpaper",
+                        poster_arg
+                    );
+                }
             } else if wp_path.exists() {
                 let wp = fs::read_to_string(&wp_path)
                     .map_err(|e| format!("Cannot read wallpaper.txt: {}", e))?;
                 let wp = wp.trim();
-                if !wp.is_empty() {
+                // W6 (theme-package trust): `wallpaper.txt` is read from the
+                // theme package, so the value is attacker-controlled —
+                // refuse it before any IPC or hand-off (see
+                // `theme_value_is_safe` for WHY).
+                if theme_value_is_safe(wp) {
                     noctalia_msg(&["msg", "wallpaper-set", "", wp])
                         .map_err(|e| format!("Cannot set wallpaper: {}", e))?;
                     tracing::info!("[noctalia-v5] Restored wallpaper: {}", wp);
@@ -2722,6 +2765,13 @@ impl ThemeProvider for NoctaliaV5Provider {
                     // on the request so the router hands the engine the SAME path.
                     bg_request.static_wallpaper = Some(PathBuf::from(wp));
                     background::hand_off_static(&bg_request);
+                } else if !wp.is_empty() {
+                    tracing::warn!(
+                        "[noctalia-v5] refusing the theme's wallpaper record {:?}: \
+                         a value starting with '-' could be read as an option, not \
+                         as a path; restoring no static wallpaper",
+                        wp
+                    );
                 }
             }
         }
@@ -2738,11 +2788,39 @@ impl ThemeProvider for NoctaliaV5Provider {
             let source = parts.first().copied().unwrap_or("custom");
             let name = parts.get(1).copied().unwrap_or("");
 
-            if !name.is_empty() && palette_src.exists() {
+            // W6 (theme-package trust): the name comes from the theme's own
+            // `source.txt`, so it is ATTACKER-CONTROLLED — and `safe_name`
+            // only ever flattened `/`, so a name starting with `-` was
+            // handed to `noctalia` as a positional argument and could be
+            // parsed as an OPTION instead of as the name (argument
+            // injection). Decide what WOULD be passed, refuse it before any
+            // copy or any IPC (see `theme_name_is_plain` for WHY), and let
+            // the apply continue with no named scheme restored.
+            let safe_name = name.replace('/', "_");
+            let passed_to_cli: Option<&str> = if name.is_empty() {
+                None
+            } else if palette_src.exists() {
+                // Custom palette: the flattened name shapes a file too.
+                Some(&safe_name)
+            } else if matches!(source, "builtin" | "community") {
+                // Builtin/community: the raw name goes straight to the CLI.
+                Some(name)
+            } else {
+                None
+            };
+            let refused_name = passed_to_cli.is_some_and(|n| !theme_name_is_plain(n));
+            if refused_name {
+                tracing::warn!(
+                    "[noctalia-v5] refusing the theme's palette name {:?}: a value \
+                     starting with '-' could be read as an option, not as a name; \
+                     restoring no named scheme",
+                    name
+                );
+            }
+
+            if !name.is_empty() && !refused_name && palette_src.exists() {
                 // Custom or community palette — copy the saved palette file back
                 // and restore as "custom" regardless of original source.
-                let safe_name = name.replace('/', "_");
-
                 if let Some(palettes_dir) = noctalia_config_dir().map(|d| d.join("palettes")) {
                     fs::create_dir_all(&palettes_dir)
                         .map_err(|e| format!("Cannot create palettes dir: {}", e))?;
@@ -2778,7 +2856,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                     }
                     custom_restored = Some(safe_name);
                 }
-            } else if !name.is_empty() && matches!(source, "builtin" | "community") {
+            } else if !name.is_empty() && !refused_name && matches!(source, "builtin" | "community") {
                 // Builtin or community — no palette file to copy, restore directly.
                 noctalia_msg(&["msg", "color-scheme-set", source, name])
                     .map_err(|e| format!("Cannot set color scheme: {}", e))?;
@@ -2880,6 +2958,21 @@ impl ThemeProvider for NoctaliaV5Provider {
         // Same sanitization the apply path applies before the name touches
         // a file name or a CLI argument (`Command` args never see a shell).
         let safe_name = name.replace('/', "_");
+        // W6 (theme-package trust): this name is read from the APPLIED
+        // THEME's `source.txt` — ATTACKER-CONTROLLED. Refuse a name that
+        // could be read as an option (or is not a plain name) BEFORE it
+        // touches a file name or the CLI (see `theme_name_is_plain` for
+        // WHY): nothing is copied, no IPC runs, there is nothing to
+        // re-assert. A legitimate name passes unchanged.
+        if !theme_name_is_plain(&safe_name) {
+            tracing::warn!(
+                "[noctalia-v5] refusing the theme's palette name {:?} for the \
+                 colour re-assert: a value starting with '-' could be read as an \
+                 option, not as a name",
+                safe_name
+            );
+            return Ok(());
+        }
         // While an apply holds the engine's colour authority off, the hold
         // is in flight and the re-assert worker owns the palette — a
         // watcher-driven re-assert now would fight it. Same held state the
@@ -5186,6 +5279,172 @@ exit 0
         );
         let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
         std::thread::sleep(Duration::from_millis(500));
+    }
+
+    // ── W6 (`odd/tasks/theme-package-trust.md`): a theme value that could
+    // be read as an option never reaches the noctalia argv ──────────────
+
+    /// W6, the defect: `wallpaper.txt` content comes from a THEME PACKAGE,
+    /// so it is attacker-controlled. A value that STARTS WITH `-` could be
+    /// parsed by `noctalia` as an OPTION instead of as the wallpaper path
+    /// (argument injection), so it must be refused before any IPC — the
+    /// stub must never record the dangerous value.
+    #[test]
+    #[serial]
+    fn v5_apply_refuses_a_wallpaper_record_that_looks_like_an_option() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("wallpaper vibrant", false);
+        std::fs::write(
+            theme.path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
+            "-o/tmp/pwned.png",
+        )
+        .unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a refused value must never fail the apply: {:?}",
+            res
+        );
+
+        let log = stub_log(&stub);
+        assert!(
+            !log.contains("-o/tmp/pwned.png"),
+            "the theme's option-looking wallpaper value must never reach the \
+             noctalia argv, log was:\n{log}"
+        );
+    }
+
+    /// W6, the same defect on the palette name from `source.txt`: the name
+    /// is attacker-controlled, a leading `-` would be read as an OPTION,
+    /// and `safe_name` only ever flattened `/` — the gap this closes. No
+    /// `color-scheme-set` may be issued for a refused name, and the apply
+    /// itself must stay green (a refusal is a skip, never a failure).
+    #[test]
+    #[serial]
+    fn v5_apply_refuses_a_palette_name_that_looks_like_an_option() {
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom -hostile", true);
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(
+            res.is_ok(),
+            "a refused palette name must never fail the apply: {:?}",
+            res
+        );
+
+        let log = stub_log(&stub);
+        assert!(
+            !log.contains("-hostile"),
+            "the theme's option-looking palette name must never reach the \
+             noctalia argv, log was:\n{log}"
+        );
+        assert_eq!(
+            stub.sets(),
+            0,
+            "no color-scheme-set may be issued for a refused palette name"
+        );
+    }
+
+    /// W6, the same refusal on the WATCHER-DRIVEN re-assert: it reads the
+    /// applied theme's own `source.txt`, so its name is attacker-controlled
+    /// too — a refused name means no copy, no `color-scheme-set`, and a
+    /// green (Ok) result, exactly like the apply path.
+    #[test]
+    #[serial]
+    fn v5_reassert_refuses_a_palette_name_that_looks_like_an_option() {
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom -hostile", true);
+
+        let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
+        assert!(
+            res.is_ok(),
+            "a refused palette name must never fail the re-assert: {:?}",
+            res
+        );
+
+        let log = stub_log(&stub);
+        assert!(
+            !log.contains("-hostile"),
+            "the theme's option-looking palette name must never reach the \
+             noctalia argv, log was:\n{log}"
+        );
+        assert_eq!(
+            stub.sets(),
+            0,
+            "no color-scheme-set may be issued for a refused palette name"
+        );
+    }
+
+    /// A LEGITIMATE value must still pass through byte for byte: the space
+    /// in the wallpaper path and the exact palette-name line prove the
+    /// refusal never reshapes, quotes or drops a good value.
+    #[test]
+    #[serial]
+    fn v5_apply_hands_legitimate_theme_values_byte_identically() {
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        std::fs::write(
+            theme.path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
+            "/tmp/legit wall.png",
+        )
+        .unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        assert!(
+            log.lines().any(|l| l == "msg wallpaper-set  /tmp/legit wall.png"),
+            "a legitimate wallpaper value must reach the shell byte for byte, \
+             log was:\n{log}"
+        );
+        let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
+        let log = stub_log(&stub);
+        assert!(
+            log.lines().any(|l| l == "color-scheme-set custom JokerTheme"),
+            "a legitimate palette name must reach the shell byte for byte, \
+             log was:\n{log}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    /// Empty values mean "nothing to restore" and are refused today; pinned
+    /// so the new leading-dash rule keeps that behaviour on both values.
+    #[test]
+    #[serial]
+    fn v5_apply_restores_nothing_for_empty_theme_values() {
+        let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
+        let theme = stub.custom_theme("custom ", true);
+        std::fs::write(
+            theme.path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
+            "",
+        )
+        .unwrap();
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        let log = stub_log(&stub);
+        assert!(
+            !log.contains("wallpaper-set"),
+            "an empty wallpaper record must not produce a wallpaper-set, \
+             log was:\n{log}"
+        );
+        assert_eq!(
+            stub.sets(),
+            0,
+            "an empty palette name must not produce a color-scheme-set"
+        );
     }
 
     // ── Theme packages T2: apply resolves the media from the theme ────
