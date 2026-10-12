@@ -337,6 +337,18 @@ export component MainWindow inherits Window {
     // (logical lengths) — drives the mosaic tiles recompute.
     callback gallery-stage-geometry-changed(length, length);
 
+    // ── Theme-trust consent gate (W2, odd/tasks/theme-package-trust.md) ──
+    // Rust owns the flag and the payload: a package that carries shell
+    // hooks or Lua presets is held before it is applied, and the warning
+    // shows what the report found. Continue / Cancel / Escape travel back
+    // through the two callbacks (one shared Cancel route).
+    in property <bool> trust-warning-open: false;
+    in property <string> trust-warning-theme-name: "";
+    in property <[string]> trust-warning-hooks: [];
+    in property <[string]> trust-warning-presets: [];
+    callback trust-warning-confirmed();
+    callback trust-warning-cancelled();
+
     // ── Mutating panel (slice 1 skeleton + slice 2 Save R10 + slice 3 Borders pick + slice 4 tune color-gated + slice 5 Motion + slice 6 Filters) ──
     in-out property <int> panel-section: 0;
     // Keyboard R11 v3 render hooks (headless tests): -1/false = keyboard-driven.
@@ -639,6 +651,12 @@ export component MainWindow inherits Window {
         gallery-mosaic-deselect => { root.gallery-mosaic-deselect(); }
         gallery-mosaic-cursor-requested(pos) => { root.gallery-mosaic-cursor-requested(pos); }
         gallery-stage-geometry-changed(w, h) => { root.gallery-stage-geometry-changed(w, h); }
+        trust-warning-open: root.trust-warning-open;
+        trust-warning-theme-name: root.trust-warning-theme-name;
+        trust-warning-hooks: root.trust-warning-hooks;
+        trust-warning-presets: root.trust-warning-presets;
+        trust-warning-confirmed => { root.trust-warning-confirmed(); }
+        trust-warning-cancelled => { root.trust-warning-cancelled(); }
         panel-back => { root.panel-back(); }
         panel-mouse-trace(reason) => { root.panel-mouse-trace(reason); }
         panel-focus-trace(reason) => { root.panel-focus-trace(reason); }

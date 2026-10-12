@@ -1366,6 +1366,164 @@ static MASK_WRITE_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static THEME_INTERLUDE: std::sync::Mutex<InterludeState> =
     std::sync::Mutex::new(InterludeState::new());
 
+// ── W2: the theme-trust consent gate ─────────────────────────────────────
+//
+// A theme package is UNTRUSTED input: its provider `settings.toml` may
+// carry `[hooks]` shell commands and it may ship Lua presets, both of
+// which execute when the theme is applied (see `theme_trust`). The ONE
+// shared gate below sits in front of BOTH apply paths (gallery card
+// click, panel Save apply) and holds any attempt whose package carries
+// one of those until the keeper confirms the warning.
+//
+// Lock discipline, and it is not optional: NEVER hold this lock while
+// writing to the window. A Slint property write fires its `changed`
+// handlers synchronously, and the panel Escape route (the observer on
+// `panel-save-dialog-mode` in ui/shell.slint) calls straight back into
+// this gate — holding a non-reentrant mutex across that write would
+// deadlock. Every helper here drops the guard first.
+static THEME_TRUST_GATE: std::sync::Mutex<crate::theme_trust::TrustGate> =
+    std::sync::Mutex::new(crate::theme_trust::TrustGate::new());
+
+fn theme_trust_gate() -> std::sync::MutexGuard<'static, crate::theme_trust::TrustGate> {
+    THEME_TRUST_GATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The detector's report as display lines for the warning: hook entries
+/// as `key — command`, presets as `category/file.lua`.
+fn trust_warning_lines(
+    report: &crate::theme_trust::ThemeTrustReport,
+) -> (Vec<slint::SharedString>, Vec<slint::SharedString>) {
+    let hooks = report
+        .shell_hooks
+        .iter()
+        .map(|h| slint::SharedString::from(format!("{} — {}", h.key, h.command)))
+        .collect();
+    let presets = report
+        .lua_presets
+        .iter()
+        .map(|p| slint::SharedString::from(format!("{}/{}", p.category, p.file_name)))
+        .collect();
+    (hooks, presets)
+}
+
+/// Show the warning for one held attempt. Order: payload, then the
+/// borrowed dialog mode, then the flag — the shell's observer only acts
+/// while the flag is already up, so opening never self-cancels.
+fn show_trust_warning(
+    window: &MainWindow,
+    name: &str,
+    report: &crate::theme_trust::ThemeTrustReport,
+) {
+    let (hooks, presets) = trust_warning_lines(report);
+    window.set_trust_warning_theme_name(slint::SharedString::from(name));
+    window.set_trust_warning_hooks(slint::ModelRc::new(slint::VecModel::from(hooks)));
+    window.set_trust_warning_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
+    // While the gate is up, borrow the panel's Save dialog mode with a
+    // value the Save section does not render. panel-kbd answers Escape by
+    // clearing that mode, so Escape on the panel DECLINES the gate
+    // instead of backing out of the panel (observed in ui/shell.slint).
+    window.set_panel_save_dialog_mode(slint::SharedString::from("trust"));
+    window.set_trust_warning_open(true);
+    tracing::warn!(
+        "[theme-trust] apply of '{}' held: package carries {} shell hook(s), {} Lua preset(s)",
+        name,
+        report.shell_hooks.len(),
+        report.lua_presets.len()
+    );
+}
+
+/// Close the warning. Flag first, then the borrowed dialog mode: while
+/// the flag is up, clearing the mode is read as an Escape-cancel.
+fn hide_trust_warning(window: &MainWindow) {
+    window.set_trust_warning_open(false);
+    if window.get_panel_save_dialog_mode().as_str() == "trust" {
+        window.set_panel_save_dialog_mode(slint::SharedString::from(""));
+    }
+}
+
+/// W2: consult the gate before an apply, on BOTH paths. Returns true
+/// only when the apply may proceed exactly as it did before the gate
+/// existed; otherwise the warning is (or already was) showing and the
+/// caller must apply NOTHING.
+///
+/// The package is inspected fresh on every attempt — including the
+/// confirmed re-entry — so the report the warning showed and the report
+/// consulted here can never disagree about what is on disk.
+pub(crate) fn trust_gate_request(
+    window: &MainWindow,
+    name: &str,
+    index: i32,
+    origin: crate::theme_trust::ApplyOrigin,
+    themes_root: &std::path::Path,
+) -> bool {
+    let report = crate::theme_trust::inspect_theme_package(&themes_root.join(name));
+    let decision = {
+        let mut gate = theme_trust_gate();
+        gate.request(name, index, origin, &report)
+    }; // guard dropped BEFORE any window write
+    match decision {
+        crate::theme_trust::GateDecision::Proceed => true,
+        crate::theme_trust::GateDecision::Blocked => {
+            tracing::debug!(
+                "[theme-trust] apply of '{}' ignored while the warning is open",
+                name
+            );
+            false
+        }
+        crate::theme_trust::GateDecision::Hold => {
+            show_trust_warning(window, name, &report);
+            false
+        }
+    }
+}
+
+/// Wire the gate's two callbacks (Continue and the shared Cancel route:
+/// both buttons, Escape on the gallery keyboard, and the panel Escape
+/// observer in ui/shell.slint). Continue re-invokes the SAME entry point
+/// that asked, armed with a one-shot confirmation for that name — so the
+/// apply body itself is untouched and runs exactly as before.
+pub(crate) fn wire_theme_trust_gate(window: &MainWindow) {
+    let confirmed = window.as_weak();
+    window.on_trust_warning_confirmed(move || {
+        let Some(w) = confirmed.upgrade() else { return };
+        let pending = { theme_trust_gate().begin_confirm() };
+        let Some(pending) = pending else {
+            // Nothing held (a duplicate click): just make sure the
+            // warning is not left on screen.
+            hide_trust_warning(&w);
+            return;
+        };
+        hide_trust_warning(&w);
+        tracing::info!(
+            "[theme-trust] keeper confirmed '{}' — re-entering the {:?} apply path",
+            pending.name,
+            pending.origin
+        );
+        match pending.origin {
+            crate::theme_trust::ApplyOrigin::Gallery => {
+                w.invoke_gallery_card_clicked(pending.index)
+            }
+            crate::theme_trust::ApplyOrigin::Panel => {
+                w.invoke_panel_apply_saved_theme(pending.index)
+            }
+        }
+        // One-shot: a re-entry that never reached the gate (the mutating
+        // guard swallowed it, the window went away) must not leave stale
+        // consent behind — the next attempt warns again.
+        theme_trust_gate().finish_confirm();
+    });
+
+    let cancelled = window.as_weak();
+    window.on_trust_warning_cancelled(move || {
+        let Some(w) = cancelled.upgrade() else { return };
+        let dismissed = theme_trust_gate().cancel(); // guard dropped here
+        if dismissed {
+            tracing::info!("[theme-trust] keeper declined — nothing was applied");
+            hide_trust_warning(&w);
+        }
+    });
+}
+
 // Display pump for the slice reel spring (slice_reel owns the physics;
 // this timer owns the wall-clock cadence). Lives on the UI thread only —
 // `slint::Timer` is not Send, hence the thread-local.
@@ -3721,6 +3879,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let guard_block_message = guard_block_message.clone();
             let gallery_state_c = gallery_state_slot.clone();
             let proj_c = proj.clone();
+            // W2: the gate's Continue/Cancel callbacks, wired once before
+            // the two apply paths they guard.
+            wire_theme_trust_gate(&window);
             window.on_gallery_card_clicked(move |idx| {
                 tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-clicked idx={idx}")));
                 if !guard_permits {
@@ -3758,6 +3919,25 @@ fn main() -> Result<(), slint::PlatformError> {
                     guard.list().unwrap_or_default().get(i).map(|info| info.name.clone())
                 };
                 if let Some(name) = name_opt {
+                    // W2 consent gate: a package carrying shell hooks or
+                    // Lua presets is NOT applied in silence. The gate holds
+                    // the attempt and shows the warning; Continue re-invokes
+                    // this SAME callback, which then sees the one-shot
+                    // confirmation and applies exactly as before. While the
+                    // warning is up nothing on disk changes — and with no
+                    // window to warn with, nothing applies either.
+                    let gated = win.upgrade().is_some_and(|w| {
+                        trust_gate_request(
+                            &w,
+                            &name,
+                            idx,
+                            crate::theme_trust::ApplyOrigin::Gallery,
+                            &gallery_themes_root,
+                        )
+                    });
+                    if !gated {
+                        return;
+                    }
                     let outcome = slot.apply_theme(&name);
                     if outcome == crate::shell::gallery::slot::ApplyOutcome::Applied {
                         // Persist the active mark for the NEXT startup and
@@ -4815,6 +4995,21 @@ fn main() -> Result<(), slint::PlatformError> {
                     guard.list().unwrap_or_default().get(i).map(|info| info.name.clone())
                 };
                 let Some(name) = name_opt else { return; };
+                // W2 consent gate: the SAME rule as the gallery path. The
+                // gate holds a risky package and shows the warning; Continue
+                // re-invokes this callback with the one-shot confirmation.
+                let gated = weak.upgrade().is_some_and(|w| {
+                    trust_gate_request(
+                        &w,
+                        &name,
+                        idx,
+                        crate::theme_trust::ApplyOrigin::Panel,
+                        &gallery_themes_root_c,
+                    )
+                });
+                if !gated {
+                    return;
+                }
                 let outcome = slot_c.apply_theme(&name);
                 if outcome != crate::shell::gallery::slot::ApplyOutcome::Applied {
                     return; // NotFound / Failed: nothing to sync

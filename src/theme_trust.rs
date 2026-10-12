@@ -1,6 +1,8 @@
 //! What a theme package carries that can run code when it is applied
-//! (`odd/tasks/theme-package-trust.md`, W1 — detect only: nothing calls this
-//! yet, the gate is W2).
+//! (`odd/tasks/theme-package-trust.md`, W1 — detect, W2 — the consent
+//! gate below): [`inspect_theme_package`] reads a package, and
+//! [`TrustGate`] decides whether an apply attempt proceeds, holds for
+//! the warning, or is blocked behind it.
 //!
 //! A theme folder is UNTRUSTED input. Two things inside it execute when the
 //! theme is applied:
@@ -252,6 +254,142 @@ fn is_lua_file(name: &str) -> bool {
         .extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("lua"))
+}
+
+// ── W2: the consent gate ─────────────────────────────────────────────
+//
+// Detection alone is inert: every APPLY path must consult it and stop
+// when the report is non-empty. The gate is the pure decision layer
+// between the detector and the window — it holds an attempt, remembers
+// it as pending, and only lets it through once the keeper has confirmed
+// the warning (one-shot) or when the package carries nothing risky.
+//
+// It deliberately holds NO UI state and does NO I/O: the caller
+// inspects the package itself, so the report the warning shows and the
+// report consulted on the confirmed re-entry are both read fresh from
+// disk at that moment. Contract: a theme that carries neither hooks nor
+// Lua presets never reaches `Hold` — it applies exactly as it did
+// before this module existed.
+
+/// Which apply path an attempt came from (W2 gates both entry points).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyOrigin {
+    /// `on_gallery_card_clicked` — the gallery card / mosaic tile.
+    Gallery,
+    /// `on_panel_apply_saved_theme` — the panel Save list.
+    Panel,
+}
+
+/// An attempt the gate is holding until the keeper decides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingApply {
+    /// The theme name the attempt resolved to.
+    pub name: String,
+    /// The index the original callback received, to re-invoke it on confirm.
+    pub index: i32,
+    /// Which entry point must be re-invoked to apply after confirmation.
+    pub origin: ApplyOrigin,
+}
+
+/// What the caller must do with one apply attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateDecision {
+    /// Apply exactly as before: nothing risky, or a confirmed theme.
+    Proceed,
+    /// Do NOT apply: the warning is now showing for [`TrustGate::pending`].
+    Hold,
+    /// Do NOT apply: the warning is already open (the gate is modal —
+    /// nothing is applied behind it until the keeper decides).
+    Blocked,
+}
+
+/// One-shot consent state shared by both apply paths.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TrustGate {
+    /// The attempt the warning is currently asking about.
+    pending: Option<PendingApply>,
+    /// The name the keeper confirmed, consumed by the next matching
+    /// [`TrustGate::request`] and cleared by [`TrustGate::finish_confirm`].
+    confirmed: Option<String>,
+}
+
+impl TrustGate {
+    /// A closed gate (no pending attempt, no confirmation).
+    pub const fn new() -> Self {
+        Self {
+            pending: None,
+            confirmed: None,
+        }
+    }
+
+    /// Whether the warning is (or must be) on screen.
+    pub fn is_open(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The attempt being held, for diagnostics.
+    pub fn pending(&self) -> Option<&PendingApply> {
+        self.pending.as_ref()
+    }
+
+    /// The name confirmed but not yet re-entered, for diagnostics.
+    pub fn confirmed(&self) -> Option<&str> {
+        self.confirmed.as_deref()
+    }
+
+    /// Consult the gate for ONE apply attempt.
+    ///
+    /// Order matters and is pinned by test: the modal check wins (nothing
+    /// applies behind an open warning), then the one-shot confirmation,
+    /// then the report — an empty report is the pre-W2 behaviour and is
+    /// never held.
+    pub fn request(
+        &mut self,
+        name: &str,
+        index: i32,
+        origin: ApplyOrigin,
+        report: &ThemeTrustReport,
+    ) -> GateDecision {
+        if self.pending.is_some() {
+            return GateDecision::Blocked;
+        }
+        if self.confirmed.as_deref() == Some(name) {
+            self.confirmed = None;
+            return GateDecision::Proceed;
+        }
+        if report.is_empty() {
+            return GateDecision::Proceed;
+        }
+        self.pending = Some(PendingApply {
+            name: name.to_string(),
+            index,
+            origin,
+        });
+        GateDecision::Hold
+    }
+
+    /// The keeper pressed Continue: take the pending attempt and arm the
+    /// one-shot confirmation for its name. The caller re-invokes the SAME
+    /// entry point, whose `request` then returns [`GateDecision::Proceed`].
+    pub fn begin_confirm(&mut self) -> Option<PendingApply> {
+        let pending = self.pending.take()?;
+        self.confirmed = Some(pending.name.clone());
+        Some(pending)
+    }
+
+    /// Close the one-shot confirmation after the re-invocation returns. A
+    /// re-entry that never reached `request` (the mutating guard, a
+    /// vanished window) must NOT leave stale consent behind: the next
+    /// attempt on that theme warns again.
+    pub fn finish_confirm(&mut self) {
+        self.confirmed = None;
+    }
+
+    /// The keeper pressed Cancel (or Escape): forget the pending attempt
+    /// and change nothing. Returns whether there was one.
+    pub fn cancel(&mut self) -> bool {
+        self.pending.take().is_some()
+    }
 }
 
 #[cfg(test)]
@@ -573,5 +711,186 @@ mod tests {
 
         assert!(report.lua_presets.is_empty(), "got: {:?}", report.lua_presets);
         assert!(report.is_empty());
+    }
+
+    // ── W2: the consent gate decisions ────────────────────────────────
+
+    /// A package that carries a shell hook (the CRITICAL shape).
+    fn risky_theme(root: &Path) -> PathBuf {
+        let theme = root.join("Risky");
+        write_settings(&theme, "[hooks]\nstarted = \"sddm-watch.sh\"\n");
+        theme
+    }
+
+    /// A package that carries neither hooks nor Lua presets.
+    fn clean_theme(root: &Path) -> PathBuf {
+        let theme = root.join("Plain");
+        let provider = theme.join("providers").join("hve-presets");
+        fs::create_dir_all(&provider).unwrap();
+        fs::write(provider.join("state.json"), "{}").unwrap();
+        theme
+    }
+
+    /// W2 acceptance 3 (decision half): a theme carrying hooks is NOT
+    /// applied — the gate holds it and shows the warning — and it applies
+    /// ONLY after the keeper confirms, on the same entry point that asked.
+    #[test]
+    fn gate_holds_a_risky_theme_and_applies_it_only_after_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&risky_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            GateDecision::Hold,
+            "a theme carrying a shell hook must be held, not applied"
+        );
+        assert!(gate.is_open(), "the warning must be open for the held attempt");
+        assert_eq!(
+            gate.pending(),
+            Some(&PendingApply {
+                name: "Risky".into(),
+                index: 3,
+                origin: ApplyOrigin::Gallery,
+            }),
+            "the gate must remember what to apply and which path asked"
+        );
+        // A second attempt while the warning is open changes nothing.
+        assert_eq!(
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            GateDecision::Blocked
+        );
+
+        // Confirm: the pending attempt comes back so the caller can
+        // re-invoke the SAME entry point, armed for exactly that name.
+        let pending = gate.begin_confirm().expect("a held attempt to confirm");
+        assert_eq!(pending.name, "Risky");
+        assert_eq!(pending.origin, ApplyOrigin::Gallery);
+        assert_eq!(
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            GateDecision::Proceed,
+            "the confirmed re-entry must apply exactly as before"
+        );
+        gate.finish_confirm();
+        assert!(!gate.is_open(), "confirming must close the warning");
+        assert_eq!(gate.confirmed(), None, "the confirmation is one-shot");
+
+        // Consent is not remembered forever: applying that theme again
+        // warns again.
+        assert_eq!(
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            GateDecision::Hold,
+            "a second apply of the same risky theme must warn again"
+        );
+    }
+
+    /// W2 acceptance 3 (declining): Cancel forgets the attempt, applies
+    /// nothing, and the next attempt asks again.
+    #[test]
+    fn gate_cancel_changes_nothing_and_the_next_attempt_warns_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&risky_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Risky", 0, ApplyOrigin::Panel, &report),
+            GateDecision::Hold
+        );
+        assert!(gate.cancel(), "declining a held attempt reports it");
+        assert!(!gate.is_open(), "Cancel must close the warning");
+        assert_eq!(gate.pending(), None, "nothing stays pending after Cancel");
+        assert_eq!(
+            gate.confirmed(),
+            None,
+            "Cancel must never arm a confirmation"
+        );
+        assert!(
+            !gate.cancel(),
+            "cancel with nothing pending is a no-op (idempotent)"
+        );
+        assert_eq!(
+            gate.request("Risky", 0, ApplyOrigin::Panel, &report),
+            GateDecision::Hold,
+            "after declining, applying the same theme must warn again"
+        );
+    }
+
+    /// W2 acceptance 2: a theme carrying neither hooks nor Lua presets
+    /// applies exactly as it did before the gate existed — no hold, no
+    /// warning, no pending state.
+    #[test]
+    fn gate_lets_a_theme_with_neither_hooks_nor_lua_apply_without_a_warning() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&clean_theme(tmp.path()));
+        assert!(report.is_empty(), "precondition: the fixture carries nothing");
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Plain", 1, ApplyOrigin::Gallery, &report),
+            GateDecision::Proceed,
+            "the pre-W2 behaviour must be untouched for a clean theme"
+        );
+        assert!(!gate.is_open());
+        assert_eq!(gate.pending(), None);
+        assert_eq!(
+            gate.request("Plain", 1, ApplyOrigin::Panel, &report),
+            GateDecision::Proceed,
+            "the second path must be gated by the same rule"
+        );
+    }
+
+    /// The warning is MODAL: while it is open no other apply attempt gets
+    /// through — not even a clean theme — and the pending attempt stays
+    /// the one the keeper was asked about.
+    #[test]
+    fn gate_is_modal_while_the_warning_is_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let risky = inspect_theme_package(&risky_theme(tmp.path()));
+        let clean = inspect_theme_package(&clean_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Risky", 0, ApplyOrigin::Gallery, &risky),
+            GateDecision::Hold
+        );
+        assert_eq!(
+            gate.request("Plain", 1, ApplyOrigin::Gallery, &clean),
+            GateDecision::Blocked,
+            "nothing may apply behind the open warning"
+        );
+        assert_eq!(
+            gate.request("Other", 2, ApplyOrigin::Panel, &risky),
+            GateDecision::Blocked
+        );
+        assert_eq!(
+            gate.pending().map(|p| p.name.as_str()),
+            Some("Risky"),
+            "the modal keeps the attempt it was opened for"
+        );
+    }
+
+    /// A confirmation that never reached `request` (the mutating guard
+    /// swallowed the re-entry, the window went away) must not leave stale
+    /// consent: the next attempt on that theme warns again.
+    #[test]
+    fn a_confirmation_that_never_reaches_the_request_expires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&risky_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Risky", 5, ApplyOrigin::Gallery, &report),
+            GateDecision::Hold
+        );
+        let pending = gate.begin_confirm().expect("held attempt");
+        assert_eq!(pending.index, 5);
+        // The re-invoke never happened: the caller closes the round trip.
+        gate.finish_confirm();
+        assert!(!gate.is_open());
+        assert_eq!(
+            gate.request("Risky", 5, ApplyOrigin::Gallery, &report),
+            GateDecision::Hold,
+            "an unspent confirmation must not silently apply the theme"
+        );
     }
 }

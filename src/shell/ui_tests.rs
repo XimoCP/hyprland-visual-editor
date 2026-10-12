@@ -19183,3 +19183,456 @@ fn entering_save_refreshes_theme_list_by_construction() {
         "entering Save must refresh the panel theme list from the managers"
     );
 }
+
+// ── W2: the theme-trust consent gate (odd/tasks/theme-package-trust.md) ──
+// A theme that carries shell hooks or Lua presets is not applied in
+// silence: BOTH apply paths consult `theme_trust::TrustGate` first, the
+// warning shows what the package carries, and the theme applies ONLY
+// after the keeper confirms. Declining changes nothing; a package with
+// neither hooks nor Lua presets applies exactly as before.
+
+/// `src/main.rs`'s gate helper, driven through a real window: the flag,
+/// the payload, the confirm round trip and the panel Escape route.
+#[test]
+fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
+    use slint::ComponentHandle as _;
+    use slint::Model as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    crate::wire_theme_trust_gate(&win);
+
+    // One package carrying a shell hook, one carrying neither hooks nor Lua.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("themes");
+    let settings = root.join("Risky").join("providers").join("noctalia-v5");
+    std::fs::create_dir_all(&settings).unwrap();
+    std::fs::write(
+        settings.join("settings.toml"),
+        "[hooks]\nstarted = \"sddm-watch.sh\"\n",
+    )
+    .unwrap();
+    let plain = root.join("Plain").join("providers").join("hve-presets");
+    std::fs::create_dir_all(&plain).unwrap();
+    std::fs::write(plain.join("state.json"), "{}").unwrap();
+    let names = vec!["Risky".to_string(), "Plain".to_string()];
+
+    // Production-shaped apply handlers: the gate decides, the fake apply
+    // only records. The real handlers are pinned by the by-construction
+    // test below.
+    let gallery_applied: std::rc::Rc<std::cell::RefCell<Vec<String>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    {
+        let applied = gallery_applied.clone();
+        let weak = win.as_weak();
+        let root = root.clone();
+        let names = names.clone();
+        win.on_gallery_card_clicked(move |idx| {
+            let name = names[idx as usize].clone();
+            let Some(w) = weak.upgrade() else { return };
+            if crate::trust_gate_request(
+                &w,
+                &name,
+                idx,
+                crate::theme_trust::ApplyOrigin::Gallery,
+                &root,
+            ) {
+                applied.borrow_mut().push(name);
+            }
+        });
+    }
+    let panel_applied: std::rc::Rc<std::cell::RefCell<Vec<String>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    {
+        let applied = panel_applied.clone();
+        let weak = win.as_weak();
+        let root = root.clone();
+        let names = names.clone();
+        win.on_panel_apply_saved_theme(move |idx| {
+            let name = names[idx as usize].clone();
+            let Some(w) = weak.upgrade() else { return };
+            if crate::trust_gate_request(
+                &w,
+                &name,
+                idx,
+                crate::theme_trust::ApplyOrigin::Panel,
+                &root,
+            ) {
+                applied.borrow_mut().push(name);
+            }
+        });
+    }
+
+    // ── Gallery path: held, warning up, nothing applied ──
+    win.invoke_gallery_card_clicked(0);
+    assert!(
+        gallery_applied.borrow().is_empty(),
+        "a risky theme must not apply before the keeper confirms"
+    );
+    assert!(win.get_trust_warning_open(), "the warning must be showing");
+    assert_eq!(win.get_trust_warning_theme_name(), "Risky");
+    assert_eq!(
+        win.get_trust_warning_hooks().row_count(),
+        1,
+        "the warning must carry the hook line the detector reported"
+    );
+    assert_eq!(win.get_trust_warning_presets().row_count(), 0);
+    assert_eq!(
+        win.get_panel_save_dialog_mode(),
+        "trust",
+        "while the gate is open the panel's Escape must be absorbed, not back out"
+    );
+
+    // Confirm: the SAME entry point is re-invoked through the one-shot token.
+    win.invoke_trust_warning_confirmed();
+    assert_eq!(
+        &*gallery_applied.borrow(),
+        &["Risky".to_string()],
+        "confirming must apply exactly the held theme, once"
+    );
+    assert!(!win.get_trust_warning_open(), "confirming must close the warning");
+    assert_eq!(win.get_panel_save_dialog_mode(), "");
+
+    // Applying that risky theme again warns again (consent is one-shot).
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(gallery_applied.borrow().len(), 1, "held again");
+    assert!(win.get_trust_warning_open());
+    win.invoke_trust_warning_cancelled();
+    assert!(!win.get_trust_warning_open(), "Cancel must close the warning");
+    assert_eq!(
+        gallery_applied.borrow().len(),
+        1,
+        "declining must change nothing"
+    );
+
+    // ── Panel path: held, and the panel's own Escape declines ──
+    win.invoke_panel_apply_saved_theme(0);
+    assert!(
+        panel_applied.borrow().is_empty(),
+        "the panel path must be gated by the same rule"
+    );
+    assert!(win.get_trust_warning_open());
+    // One frame elapses before the Escape: Slint's `changed` observer
+    // compares the value against the last pumped one, exactly like the
+    // real event loop (a human keypress always arrives frames later).
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    // panel-kbd answers Escape by clearing `save-dialog-mode`; the shell
+    // turns that write into a cancel callback (no focus stealing needed),
+    // which is queued to the next tick — pump it before asserting.
+    win.set_panel_save_dialog_mode("".into());
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(
+        !win.get_trust_warning_open(),
+        "the panel Escape route must decline the gate"
+    );
+    assert!(panel_applied.borrow().is_empty());
+
+    // Panel confirm round trip.
+    win.invoke_panel_apply_saved_theme(0);
+    assert!(win.get_trust_warning_open());
+    win.invoke_trust_warning_confirmed();
+    assert_eq!(&*panel_applied.borrow(), &["Risky".to_string()]);
+    assert!(!win.get_trust_warning_open());
+
+    // ── A package with neither hooks nor Lua: applies, no warning ──
+    win.invoke_gallery_card_clicked(1);
+    assert_eq!(
+        &*gallery_applied.borrow(),
+        &["Risky".to_string(), "Plain".to_string()],
+        "a clean theme must apply exactly as before"
+    );
+    assert!(!win.get_trust_warning_open(), "a clean theme shows no warning");
+    win.invoke_panel_apply_saved_theme(1);
+    assert_eq!(
+        &*panel_applied.borrow(),
+        &["Risky".to_string(), "Plain".to_string()],
+        "a clean theme must apply on the panel path with no warning"
+    );
+    assert!(!win.get_trust_warning_open());
+}
+
+/// The warning's copy is the honesty contract of this feature: it must
+/// say what the package carries, ask the keeper to judge the source, and
+/// must NEVER be worded as if HVE prevented anything (it is a consent
+/// gate, not a sandbox — nothing is stripped or filtered).
+#[test]
+fn theme_trust_warning_copy_states_the_honest_limit() {
+    let src = std::fs::read_to_string("ui/gallery/TrustWarning.slint")
+        .expect("ui/gallery/TrustWarning.slint must exist");
+    let lower = src.to_lowercase();
+    assert!(
+        lower.contains("consent gate, not a sandbox"),
+        "the copy must state plainly that this is a consent gate, not a sandbox"
+    );
+    assert!(
+        lower.contains("only continue if you trust where this theme came from"),
+        "the copy must ask the keeper to judge where the theme came from"
+    );
+    assert!(lower.contains("shell hook"), "the copy must name the shell hooks");
+    assert!(lower.contains("lua preset"), "the copy must name the Lua presets");
+    assert!(lower.contains("cancel") && lower.contains("continue"), "both decisions must be offered");
+    for banned in [
+        "prevents execution",
+        "blocks execution",
+        "runs in a sandbox",
+        "harmless",
+        "we remove",
+        "is stripped",
+        "safe to apply",
+        "sanitiz",
+    ] {
+        assert!(
+            !lower.contains(banned),
+            "the warning must not claim to prevent execution — found {banned:?}"
+        );
+    }
+}
+
+/// Both apply paths are gated in `src/main.rs` and the confirmed
+/// re-entry re-invokes the SAME entry point (the one-shot token), so
+/// neither path can drift back to a silent apply.
+#[test]
+fn theme_trust_gates_both_apply_paths_by_construction() {
+    let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+    let code_only = |slice: &str| -> String {
+        slice
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let gallery = main
+        .split("window.on_gallery_card_clicked")
+        .nth(1)
+        .expect("main.rs must wire on_gallery_card_clicked");
+    let gallery = gallery.split("window.on_gallery_style_selected").next().unwrap_or(gallery);
+    let gallery = code_only(gallery);
+    let gate_at = gallery
+        .find("trust_gate_request")
+        .expect("the gallery apply path must consult the trust gate");
+    let apply_at = gallery
+        .find("slot.apply_theme(&name)")
+        .expect("the gallery apply path must still apply the theme");
+    assert!(
+        gate_at < apply_at,
+        "the trust gate must run BEFORE the gallery applies the theme"
+    );
+
+    let panel = main
+        .split("window.on_panel_apply_saved_theme")
+        .nth(1)
+        .expect("main.rs must wire on_panel_apply_saved_theme");
+    let panel = panel
+        .split("window.on_panel_rename_saved_theme")
+        .next()
+        .unwrap_or(panel);
+    let panel = code_only(panel);
+    let gate_at = panel
+        .find("trust_gate_request")
+        .expect("the panel apply path must consult the trust gate");
+    let apply_at = panel
+        .find("slot_c.apply_theme(&name)")
+        .expect("the panel apply path must still apply the theme");
+    assert!(
+        gate_at < apply_at,
+        "the trust gate must run BEFORE the panel applies the theme"
+    );
+
+    let wire = main
+        .split("fn wire_theme_trust_gate")
+        .nth(1)
+        .expect("main.rs must wire the trust-gate callbacks");
+    let wire = wire.split("\nfn ").next().unwrap_or(wire);
+    let wire = code_only(wire);
+    assert!(
+        wire.contains("invoke_gallery_card_clicked"),
+        "confirm must re-invoke the gallery entry point that asked"
+    );
+    assert!(
+        wire.contains("invoke_panel_apply_saved_theme"),
+        "confirm must re-invoke the panel entry point that asked"
+    );
+}
+
+/// The warning is an overlay: it must mount AFTER the panel layer in
+/// `ui/shell.slint` (later = in front), and Escape must reach the gate
+/// on both routes — the gallery keyboard, and the panel keyboard through
+/// the absorbed dialog mode.
+#[test]
+fn theme_trust_warning_is_mounted_above_the_panel_and_escape_declines_it() {
+    let shell = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
+    let panel_at = shell
+        .find("panel-morph := PanelRoot")
+        .expect("the panel layer must be declared in shell.slint");
+    let warning_at = shell
+        .find("TrustWarning {")
+        .expect("shell.slint must mount the trust warning");
+    assert!(
+        warning_at > panel_at,
+        "the warning must mount after the panel so it paints above it"
+    );
+    assert!(
+        shell.contains("if (root.trust-warning-open)"),
+        "shell-kbd must route Escape to the gate while it is open"
+    );
+    let changed = shell
+        .split("changed panel-save-dialog-mode")
+        .nth(1)
+        .expect("shell must observe the panel Escape route (panel-kbd clears the dialog mode)");
+    let changed: String = changed.chars().take(600).collect();
+    assert!(
+        changed.contains("trust-warning-cancelled"),
+        "the panel Escape route must decline the gate"
+    );
+}
+
+/// Headless render of the W2 state: the consent gate over the gallery and
+/// over the open panel. PNGs land in THIS run's artifact directory; the
+/// closed baselines prove the overlay is what changed the pixels.
+#[test]
+fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(1);
+    // Reduced motion: every fade is 0ms, so each snapshot is the settled
+    // state instead of a frame of an in-flight animation.
+    win.set_gallery_reduced_motion(true);
+    win.set_is_mutating(false);
+    win.set_panel_section(0);
+
+    let count = 6usize;
+    let mut cards: Vec<crate::GalleryCardData> = Vec::new();
+    for i in 0..count {
+        cards.push(crate::GalleryCardData {
+            name: SharedString::from(format!("Theme {i}")),
+            saved_at: SharedString::from(""),
+            is_active: false,
+            providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
+            secondary: slint::Color::from_rgb_u8(0x44, 0x55, 0x66),
+            tertiary: slint::Color::from_rgb_u8(0x66, 0x77, 0x88),
+            surface: slint::Color::from_rgb_u8(0x11, 0x14, 0x18),
+            border_size: 0,
+            border_radius: 0,
+            border_color: slint::Color::from_rgb_u8(0, 0, 0),
+            shader: SharedString::from(""),
+            thumb_path: SharedString::from(""),
+            thumb: slint::Image::default(),
+            hero: slint::Image::default(),
+            slat_image: slint::Image::default(),
+            slat_expanded_image: slint::Image::default(),
+        });
+    }
+    win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
+    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 1, 1920.0)
+        .into_iter()
+        .map(|t| crate::SliceTileData {
+            delta: t.delta,
+            real_index: t.real_index as i32,
+            is_expanded: t.is_expanded,
+            fade: t.fade,
+            dist: t.dist,
+        })
+        .collect();
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
+    win.set_gallery_slice_delta_base(1);
+    win.set_gallery_slice_focus_pos(1.0);
+
+    // Panel Save list behind the gate (panel frame).
+    win.set_theme_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Risky"),
+        SharedString::from("Plain"),
+    ])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from("2026-10-12"),
+        SharedString::from("2026-10-11"),
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![true, false])));
+    win.set_active_theme_index(0);
+
+    // The payload the detector hands to the warning for a package that
+    // carries a shell hook AND a Lua preset.
+    win.set_trust_warning_theme_name("Risky".into());
+    win.set_trust_warning_hooks(ModelRc::new(VecModel::from(vec![
+        SharedString::from("started — sddm-watch.sh"),
+        SharedString::from("colors_changed — notify-send palette changed"),
+    ])));
+    win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![
+        SharedString::from("animations/Space.lua"),
+    ])));
+
+    let settle = || {
+        for _ in 0..3 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+
+    settle();
+    let gallery_closed = win.window().take_snapshot().expect("gallery, gate closed");
+    save_slice_png(gallery_closed.clone(), "trust_warning_gallery_closed.png");
+
+    win.set_trust_warning_open(true);
+    settle();
+    let gallery_open = win.window().take_snapshot().expect("gallery, gate open");
+    save_slice_png(gallery_open.clone(), "trust_warning_gallery_open.png");
+    let gallery_diff = count_buffer_diff(&gallery_closed, &gallery_open);
+    assert!(
+        gallery_diff > 5000,
+        "the warning must paint over the gallery — got {gallery_diff} changed pixels in the centre band"
+    );
+
+    // Same state over the OPEN panel: the overlay must sit above it.
+    win.set_is_panel_open(true);
+    settle();
+    let panel_open = win.window().take_snapshot().expect("panel, gate open");
+    save_slice_png(panel_open.clone(), "trust_warning_panel_open.png");
+
+    // A package with a long carrier list must scroll inside the card,
+    // never squash its rows or push the buttons out of the card.
+    let many_hooks: Vec<SharedString> = (0..18)
+        .map(|i| SharedString::from(format!("event_{i} — /home/keeper/bin/hook-{i}.sh --with-arguments")))
+        .collect();
+    let many_presets: Vec<SharedString> = (0..24)
+        .map(|i| SharedString::from(format!("animations/preset-{i:02}.lua")))
+        .collect();
+    win.set_trust_warning_hooks(ModelRc::new(VecModel::from(many_hooks)));
+    win.set_trust_warning_presets(ModelRc::new(VecModel::from(many_presets)));
+    win.set_trust_warning_open(true);
+    win.set_is_panel_open(false);
+    settle();
+    let long_list = win.window().take_snapshot().expect("gallery, long carrier list");
+    save_slice_png(long_list.clone(), "trust_warning_gallery_many_carriers.png");
+    assert!(
+        count_buffer_diff(&gallery_open, &long_list) > 1000,
+        "a long carrier list must change what is painted"
+    );
+
+    win.set_trust_warning_open(false);
+    settle();
+    let panel_closed = win.window().take_snapshot().expect("panel, gate closed");
+    save_slice_png(panel_closed.clone(), "trust_warning_panel_closed.png");
+    let panel_diff = count_buffer_diff(&panel_open, &panel_closed);
+    assert!(
+        panel_diff > 5000,
+        "the warning must paint above the open panel — got {panel_diff} changed pixels in the centre band"
+    );
+}
+

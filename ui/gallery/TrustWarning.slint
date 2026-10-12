@@ -1,0 +1,252 @@
+// HVE — Theme trust warning (W2, odd/tasks/theme-package-trust.md).
+//
+// The consent gate in front of BOTH theme-apply paths (gallery card and
+// panel Save list): a package that carries shell hooks or Lua presets is
+// not applied in silence. The warning names what the package carries,
+// what it can do, and asks the keeper to continue only if he trusts
+// where the theme came from. Nothing is filtered or rewritten: Continue
+// applies the package exactly as an ungated apply would, Cancel changes
+// nothing.
+//
+// Honest limit, stated IN the copy (and pinned by test): this is a
+// CONSENT GATE, not a sandbox. Confirming lets the package's code run
+// with the keeper's own permissions, and the copy must never be worded
+// as if HVE prevented that.
+//
+// The component draws no focus of its own (no focus is stolen from the
+// gallery or the panel keyboard): Escape routes to the gate through
+// `ui/shell.slint`.
+//
+// MIT credit: visual language translated from skwd-wall (MIT, © liixini).
+
+import { ScrollView } from "std-widgets.slint";
+import { SkwdTokens } from "../tokens.slint";
+import { HveColors } from "../theme.slint";
+
+export component TrustWarning inherits Rectangle {
+    // What the detector reported, formatted by Rust as display lines.
+    in property <string> theme-name: "";
+    in property <[string]> hook-lines: [];
+    in property <[string]> preset-lines: [];
+    // The gate's open flag (bound from `trust-warning-open`) and the
+    // app's reduced-motion flag: the fade is 0ms when motion is off.
+    in property <bool> open: false;
+    in property <bool> reduced-motion: false;
+    // Continue applies the held theme; Cancel (and Escape) declines it.
+    callback confirmed();
+    callback cancelled();
+
+    // A hidden gate is out of the render tree AND out of hit-testing, so
+    // it can never swallow a click while closed.
+    visible: root.open;
+    opacity: root.open ? 1.0 : 0.0;
+    animate opacity {
+        duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150;
+        easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+
+    width: 100%;
+    height: 100%;
+    // Dim scrim, same family as the shared dialogs but stronger: the gate
+    // is modal, so the surface behind must read as inactive.
+    background: #000000a6;
+
+    // The scrim absorbs every click and declines — clicking outside the
+    // card cancels. It is declared BEFORE the card, so the card and its
+    // controls sit in front of it.
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: default;
+        clicked => { root.cancelled(); }
+    }
+
+    card := Rectangle {
+        width: Math.min(parent.width - 48px, 620px);
+        height: Math.min(parent.height - 32px, 640px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: SkwdTokens.radius-12;
+        background: HveColors.bg-surface;
+        border-width: 1px;
+        border-color: HveColors.accent-amber.transparentize(0.45);
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000090;
+        clip: true;
+
+        // The card absorbs clicks too: only the two buttons act. A
+        // TouchArea ignores a wheel it has no handler for, so the list
+        // below still scrolls.
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            mouse-cursor: default;
+        }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+
+            Text {
+                text: "This theme carries code";
+                font-family: SkwdTokens.font-heading;
+                font-size: SkwdTokens.size-18;
+                font-weight: 700;
+                color: HveColors.accent-amber;
+            }
+
+            Text {
+                text: "\"" + root.theme-name + "\" carries the content below. HVE installs it unchanged when the theme is applied — nothing is removed or rewritten.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-13;
+                color: HveColors.text;
+                wrap: word-wrap;
+            }
+
+            // The carriers themselves, straight from the report. Scrolls
+            // when a package carries more than fits; the buttons below
+            // stay outside it and are always reachable.
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    // Pack the carriers at the top (repo convention, see
+                    // SaveSection): without it the slack is spread between
+                    // the lines and the list reads as unrelated blocks.
+                    alignment: start;
+                    spacing: 12px;
+
+                    if (root.hook-lines.length > 0) : VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Shell hooks (" + root.hook-lines.length + ")";
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 700;
+                            color: HveColors.accent-amber;
+                        }
+                        Text {
+                            text: "Commands this theme's provider runs on its own events (start, wallpaper change, colour change, shutdown).";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for line in root.hook-lines : Text {
+                            text: line;
+                            font-family: SkwdTokens.font-mono;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if (root.preset-lines.length > 0) : VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Lua presets (" + root.preset-lines.length + ")";
+                            font-family: SkwdTokens.font-heading;
+                            font-size: SkwdTokens.size-13;
+                            font-weight: 700;
+                            color: HveColors.accent-amber;
+                        }
+                        Text {
+                            text: "Files copied into your preset store and read by Hyprland when it assembles the overlay.";
+                            font-family: SkwdTokens.font-body;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for line in root.preset-lines : Text {
+                            text: line;
+                            font-family: SkwdTokens.font-mono;
+                            font-size: SkwdTokens.size-12;
+                            color: HveColors.text;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal.";
+                font-family: SkwdTokens.font-body;
+                font-size: SkwdTokens.size-13;
+                color: HveColors.text;
+                wrap: word-wrap;
+            }
+
+            // The honest limit, deliberately hard to miss: consent is not
+            // containment. HVE filters nothing and blocks nothing.
+            Rectangle {
+                border-radius: SkwdTokens.radius-8;
+                background: HveColors.bg-card;
+                border-width: 1px;
+                border-color: HveColors.accent-amber.transparentize(0.55);
+
+                VerticalLayout {
+                    padding: 10px;
+                    Text {
+                        text: "This is a consent gate, not a sandbox: HVE does not filter, block or isolate any of it. If you continue, this theme's code runs as you.";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        color: HveColors.accent-amber;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                Rectangle {
+                    width: 96px;
+                    height: 32px;
+                    border-radius: 6px;
+                    background: trust-cancel.has-hover ? HveColors.bg-hover : HveColors.bg-card;
+                    border-width: 1px;
+                    border-color: HveColors.border;
+                    Text {
+                        text: "Cancel";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        font-weight: 600;
+                        color: HveColors.text;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    trust-cancel := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { root.cancelled(); }
+                    }
+                }
+
+                Rectangle {
+                    width: 112px;
+                    height: 32px;
+                    border-radius: 6px;
+                    background: trust-continue.has-hover
+                        ? HveColors.accent-amber
+                        : HveColors.accent-amber.transparentize(0.2);
+                    Text {
+                        text: "Continue";
+                        font-family: SkwdTokens.font-body;
+                        font-size: SkwdTokens.size-12;
+                        font-weight: 700;
+                        color: HveColors.text;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    trust-continue := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { root.confirmed(); }
+                    }
+                }
+            }
+        }
+    }
+}

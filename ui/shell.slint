@@ -12,6 +12,7 @@ import { ThemeInfoData } from "gallery/ThemeInfoPanel.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { PanelRoot } from "panel/PanelRoot.slint";
+import { TrustWarning } from "gallery/TrustWarning.slint";
 import { AboutItem } from "components.slint";
 // Re-export the token singleton so consumers of this compilation unit (and
 // delivery 4's ui/main.slint) can read it under its own name from Rust.
@@ -140,6 +141,19 @@ export component ShellRoot inherits Rectangle {
     callback gallery-info-close();
     // Stage geometry events from GalleryRoot (logical lengths).
     callback gallery-stage-geometry-changed(length, length);
+
+    // ── Theme-trust consent gate (W2) ──
+    // Shown by BOTH apply paths (gallery card, panel Save list) when the
+    // package carries shell hooks or Lua presets. Rust owns the flag and
+    // the payload; the shared Cancel route is the Continue/Cancel buttons
+    // AND Escape (the gallery keyboard branch below, and the panel
+    // keyboard through the absorbed dialog mode further down).
+    in property <bool> trust-warning-open: false;
+    in property <string> trust-warning-theme-name: "";
+    in property <[string]> trust-warning-hooks: [];
+    in property <[string]> trust-warning-presets: [];
+    callback trust-warning-confirmed();
+    callback trust-warning-cancelled();
 
     // ── Mutating panel (slice 1 skeleton + slice 2 Save + slice 3 Borders pick + slice 5 Motion) ──
     in property <int> panel-section: 0;
@@ -377,6 +391,18 @@ export component ShellRoot inherits Rectangle {
             root.gallery-info-close();
         }
         shell-kbd.focus();
+    }
+    // ── Theme-trust gate, panel Escape route (W2) ──
+    // While the gate is open it borrows the panel's dialog mode with a
+    // value the Save section does not render ("trust"): panel-kbd's own
+    // Escape handler clears the mode instead of backing out of the panel
+    // (`if save-dialog-mode != "" → clear it`), and this observer turns
+    // that write into the shared Cancel. No focus is stolen, so the panel
+    // keyboard keeps working after the gate closes.
+    changed panel-save-dialog-mode => {
+        if (root.trust-warning-open && root.panel-save-dialog-mode != "trust") {
+            root.trust-warning-cancelled();
+        }
     }
     // Theme transition END: the apply cycle dropped Slint's internal focus,
     // so hand the gallery keyboard back to shell-kbd — unless something else
@@ -863,6 +889,12 @@ export component ShellRoot inherits Rectangle {
         // stays here so the panel can be closed from any sub-scope.
         key-pressed(event) => {
             if (event.text == Key.Escape) {
+                // The consent gate is the innermost thing open: Escape
+                // declines it and changes nothing (W2).
+                if (root.trust-warning-open) {
+                    root.trust-warning-cancelled();
+                    return accept;
+                }
                 // The grown mosaic tile contracts first: it is the innermost
                 // thing the user opened.
                 if (root.gallery-mosaic-selected >= 0) {
@@ -940,5 +972,23 @@ export component ShellRoot inherits Rectangle {
             }
             return reject;
         }
+    }
+
+    // ── Theme-trust consent gate (W2) — mounted LAST, so it paints ABOVE
+    // the gallery AND the open panel (later siblings are in front). Both
+    // apply paths reach it: a risky package is held by Rust before
+    // `apply_theme`, this overlay asks, and only Continue re-enters the
+    // apply. A hidden gate is `visible: false`, so it never absorbs a
+    // click while closed. ──
+    trust-overlay := TrustWarning {
+        width: 100%;
+        height: 100%;
+        open: root.trust-warning-open;
+        reduced-motion: root.gallery-reduced-motion;
+        theme-name: root.trust-warning-theme-name;
+        hook-lines: root.trust-warning-hooks;
+        preset-lines: root.trust-warning-presets;
+        confirmed => { root.trust-warning-confirmed(); }
+        cancelled => { root.trust-warning-cancelled(); }
     }
 }
