@@ -24,6 +24,7 @@ mod theme_manager;
 mod theme_media;
 mod theme_package;
 mod theme_presets;
+pub mod theme_trust;
 mod tr;
 mod tray;
 mod utils;
