@@ -126,6 +126,71 @@ fn parse_video_directory(raw: &str, default: PathBuf, home: &str) -> PathBuf {
     default
 }
 
+/// Resolve `path` to its real location: canonicalize the longest existing
+/// ancestor (following symlinks), then re-attach the not-yet-existing
+/// trailing components — which, by definition, cannot be symlinks yet.
+/// Refuses when a `..` or `.` component sits above a non-existent
+/// component: such a path cannot be pinned to a real location, and
+/// refusing is the safe direction.
+fn resolve_real_path(path: &Path) -> Result<PathBuf, String> {
+    let mut ancestor = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(real) = fs::canonicalize(&ancestor) {
+            let mut resolved = real;
+            for component in tail.iter().rev() {
+                resolved.push(component);
+            }
+            return Ok(resolved);
+        }
+        match ancestor.components().next_back() {
+            Some(std::path::Component::Normal(name)) => {
+                tail.push(name.to_os_string());
+                ancestor.pop();
+            }
+            _ => {
+                return Err(format!("cannot resolve '{}' to a real path", path.display()));
+            }
+        }
+    }
+}
+
+/// The known-safe roots a theme's `video_directory` may live under: the
+/// user's media directories. Each root is resolved to its REAL location so
+/// a root reached through a symlink is compared like-for-like against the
+/// resolved candidate.
+fn allowed_video_roots(home: &str) -> Vec<PathBuf> {
+    ["Pictures", "Videos", "Downloads"]
+        .iter()
+        .map(|dir| resolve_real_path(&Path::new(home).join(dir)))
+        .filter_map(Result::ok)
+        .collect()
+}
+
+/// SECURITY (W4 — confinement rule, a deliberate restriction, not an
+/// accident): `video_directory` comes from the theme's settings.toml, which
+/// is UNTRUSTED input. Without this check a hostile theme could set it to
+/// `/home/<user>/.config/hypr` and, through the download+rename in
+/// `download_video`, overwrite arbitrary files of the user's (his Hyprland
+/// config, his watchdog script, a systemd unit…). Only the user's media
+/// roots — `$HOME/Pictures`, `$HOME/Videos`, `$HOME/Downloads` — are
+/// accepted. Anything else is REFUSED with a warning and nothing is
+/// created, downloaded or written.
+fn confine_video_dir(dir: &Path, home: &str) -> Result<PathBuf, String> {
+    let resolved = resolve_real_path(dir)?;
+    for root in allowed_video_roots(home) {
+        if resolved.starts_with(&root) {
+            return Ok(resolved);
+        }
+    }
+    Err(format!(
+        "refusing video_directory '{}': it resolves to '{}', outside the allowed \
+         media roots ($HOME/Pictures, $HOME/Videos, $HOME/Downloads)",
+        dir.display(),
+        resolved.display()
+    ))
+}
+
 /// Expand a leading `~` in a configured path.
 fn expand_home(path: &str, home: &str) -> Option<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
@@ -342,7 +407,19 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("Cannot parse manifest: {}", e))?;
 
     // settings.toml was already restored → video_directory reflects the theme.
+    // SECURITY (W4): that value is UNTRUSTED theme input — confine it to the
+    // user's media roots BEFORE anything resolves or downloads into it. On
+    // refusal the whole apply stops here: no directory is created, no file
+    // downloaded, no live state written.
     let video_dir = video_directory_from_settings();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let video_dir = match confine_video_dir(&video_dir, &home) {
+        Ok(dir) => dir,
+        Err(e) => {
+            tracing::warn!("[mpvpaper] {e}; nothing was created or downloaded");
+            return Err(e);
+        }
+    };
 
     let mut resolved: HashMap<String, String> = HashMap::new();
     let mut failures: Vec<String> = Vec::new();
@@ -497,6 +574,115 @@ video_directory = "~/Videos"
         );
         assert_eq!(expand_home("~", "/home/ximo"), Some(PathBuf::from("/home/ximo")));
         assert_eq!(expand_home("/abs/path.mp4", "/home/ximo"), Some(PathBuf::from("/abs/path.mp4")));
+    }
+
+    /// Sandbox home for the confinement tests: the three media roots exist,
+    /// nothing else does. Never touches the real HOME.
+    fn confine_sandbox(tag: &str) -> PathBuf {
+        let sandbox =
+            std::env::temp_dir().join(format!("mpvpaper-test-confine-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&sandbox);
+        let home = sandbox.join("home");
+        for dir in ["Pictures", "Videos", "Downloads"] {
+            fs::create_dir_all(home.join(dir)).expect("create media root in sandbox");
+        }
+        sandbox
+    }
+
+    #[test]
+    fn confine_video_dir_allows_paths_under_media_roots() {
+        let sandbox = confine_sandbox("ok");
+        let home = sandbox.join("home");
+        let home_s = home.to_string_lossy().to_string();
+
+        // The keeper's real configuration must keep working unchanged.
+        let live = home.join("Pictures").join("LiveWallpapers");
+        fs::create_dir_all(&live).expect("create LiveWallpapers");
+        let real_live = fs::canonicalize(&live).expect("canonicalize LiveWallpapers");
+        assert_eq!(confine_video_dir(&live, &home_s).unwrap(), real_live);
+
+        // A media root itself is allowed.
+        let videos = home.join("Videos");
+        let real_videos = fs::canonicalize(&videos).expect("canonicalize Videos");
+        assert_eq!(confine_video_dir(&videos, &home_s).unwrap(), real_videos);
+
+        // A not-yet-existing subdir under a root resolves and is allowed,
+        // and the check itself creates nothing (download creates it later).
+        let fresh = real_live.join("new-loop");
+        assert_eq!(confine_video_dir(&fresh, &home_s).unwrap(), fresh);
+        assert!(!fresh.exists(), "the confinement check must not create directories");
+
+        let _ = fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn confine_video_dir_refuses_outside_every_root_and_creates_nothing() {
+        let sandbox = confine_sandbox("out");
+        let home = sandbox.join("home");
+        let home_s = home.to_string_lossy().to_string();
+
+        // The hostile shape from the security audit: a theme pointing
+        // video_directory at the keeper's Hyprland config.
+        let hostile = sandbox.join(".config").join("hypr");
+        let err = confine_video_dir(&hostile, &home_s).unwrap_err();
+        assert!(err.contains("allowed"), "unexpected error: {err}");
+        assert!(!hostile.exists(), "a refused directory must not be created");
+
+        // An existing directory outside every root is refused too.
+        let outside = sandbox.join("elsewhere");
+        fs::create_dir_all(&outside).expect("create outside dir");
+        let err = confine_video_dir(&outside, &home_s).unwrap_err();
+        assert!(err.contains("allowed"), "unexpected error: {err}");
+
+        let _ = fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn confine_video_dir_refuses_dotdot_escape() {
+        let sandbox = confine_sandbox("dotdot");
+        let home = sandbox.join("home");
+        let home_s = home.to_string_lossy().to_string();
+
+        // Pictures/../../evil walks out of the allowed roots and must be
+        // refused without creating anything.
+        let escape = home.join("Pictures").join("..").join("..").join("evil-dir");
+        let err = confine_video_dir(&escape, &home_s).unwrap_err();
+        assert!(err.contains("allowed"), "unexpected error: {err}");
+        assert!(
+            !sandbox.join("evil-dir").exists(),
+            "a '..' escape must not create the directory"
+        );
+
+        // A '..' over a non-existent component cannot be pinned to a real
+        // location, so it is refused as well.
+        let unpinnable = home.join("Pictures").join("ghost").join("..").join("..");
+        assert!(confine_video_dir(&unpinnable, &home_s).is_err());
+
+        let _ = fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn confine_video_dir_refuses_symlink_pointing_outside() {
+        let sandbox = confine_sandbox("symlink");
+        let home = sandbox.join("home");
+        let home_s = home.to_string_lossy().to_string();
+
+        // LiveWallpapers is a symlink escaping to a directory outside every
+        // allowed root: resolving the REAL path is what catches it.
+        let outside = sandbox.join("outside-videos");
+        fs::create_dir_all(&outside).expect("create outside dir");
+        let link = home.join("Pictures").join("LiveWallpapers");
+        std::os::unix::fs::symlink(&outside, &link).expect("create escaping symlink");
+
+        let err = confine_video_dir(&link, &home_s).unwrap_err();
+        assert!(err.contains("allowed"), "unexpected error: {err}");
+        assert_eq!(
+            fs::read_dir(&outside).expect("read outside dir").count(),
+            0,
+            "a refused symlink target must receive no files"
+        );
+
+        let _ = fs::remove_dir_all(&sandbox);
     }
 
     #[test]
