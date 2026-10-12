@@ -13,3 +13,8 @@ assets/fragments/
 # published: the uploadable docs are English (docs/wiki/ + README.md).
 docs/wiki-es/
 readme_es.md
+
+# Keeper-only idea ledger. Ideas are private: captured locally, reviewed
+# locally, NEVER published. The folder lives in the working tree but git
+# must never track it.
+odd/ideas/
