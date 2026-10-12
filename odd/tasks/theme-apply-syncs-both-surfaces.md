@@ -3,9 +3,10 @@
 **Locator**: `odd/tasks/theme-apply-syncs-both-surfaces.md`
 **Engram mirror**: topic `odd/theme-apply-syncs-both-surfaces/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: IN PROGRESS (keeper reported 2026-10-11: "cuando cambias un tema debe de
-sincronizarse tanto en el slider, como en los settings en el apartado guardar... ahora he
-entrado y cada uno decía una cosa diferente")
+**Status**: **CLOSED** — the keeper closed it on 2026-10-12 ("vale el 3 listo también"). Reported
+2026-10-11: "cuando cambias un tema debe de sincronizarse tanto en el slider, como en los settings
+en el apartado guardar... ahora he entrado y cada uno decía una cosa diferente". Delivered the same
+day (commits `bd0aba9`, `bbb8ba0`); this file's status and work units were stale, corrected here.
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~80-140 authored changed lines → single PR, no chaining.
 **Route**: delegated writer (one file, `src/main.rs`, plus tests), parent self-check.
@@ -89,11 +90,21 @@ answers, one state.
 
 ## Work units
 
-- [ ] **U1** — the shared sync helper.
-- [ ] **U2** — wire both apply paths to it.
-- [ ] **U3** — the Save-section-entry refresh.
-- [ ] **U4** — tests + parent verification.
+- [x] **U1** — the shared sync helper. Done: `sync_applied_theme` (`src/main.rs:1194`), built on the
+  existing `mark_theme_applied` + `refresh_theme_list` (`:651`) + the in-place card rebuild.
+- [x] **U2** — wire both apply paths to it. Done: called from the gallery branch (`src/main.rs:3782`)
+  and the panel apply path (`:4826`). Commit `bd0aba9`.
+- [x] **U3** — the Save-section-entry refresh. Done: `save_section_entry_needs_refresh`
+  (`src/main.rs:395`) wired in `on_panel_section_selected` (`:4538`). Commit `bbb8ba0`.
+- [x] **U4** — tests + parent verification. Done:
+  `sync_applied_theme_converges_both_surfaces_and_keeps_bakes` and
+  `save_section_entry_needs_refresh_only_for_save` (`src/shell/ui_tests.rs`); full suite green.
 
 ## Progress log
 
 - 2026-10-11: divergence reproduced in code (three findings above); contract written.
+- 2026-10-11: implemented and committed — `bd0aba9` (U1 + U2) and `bbb8ba0` (U3), tests in
+  `src/shell/ui_tests.rs` (U4). The contract's status and work units were never updated.
+- 2026-10-12: **CLOSED by the keeper** ("vale el 3 listo también"). Verified before closing: the
+  four units are in the tree, and `cargo test` (1616 passed) and `cargo check --all-targets` are
+  green on this same code (checked when this round's binary was built from HEAD).
