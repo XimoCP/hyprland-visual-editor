@@ -3152,13 +3152,52 @@ impl ThemeProvider for NoctaliaV5Provider {
     fn post_apply(&self, theme_name: &str) -> Result<(), String> {
         // No reload needed — v5 hot-reloads automatically.
         // Just a notification.
+        //
+        // W6 residual (theme-package trust): `theme_name` is the theme's
+        // DIRECTORY name — attacker-controlled (a package can be unpacked
+        // under any name). Today the name is embedded MID-STRING in both
+        // arguments (`Tema '…' aplicado` / `Theme "…" applied`), so a
+        // leading `-` can never become an option at the argv boundary;
+        // what an unchecked name CAN do here is rewrite the HUMAN-FACING
+        // toast (a newline or an escape sequence splits/spoofs the
+        // message) and break the spawn outright (an interior NUL is an
+        // I/O error for `Command::arg`). The guard is therefore the W6
+        // refusal (`theme_name_is_plain`) plus a control-character check.
+        //
+        // A refused name NEVER skips the notification: the toast's job is
+        // to announce that the apply HAPPENED, and silencing it because
+        // the name is hostile would hide both the successful apply and
+        // the attack. The message goes out WITHOUT the name, and the
+        // refused name is named in the log instead.
+        let safe_name = if theme_name_is_plain(theme_name)
+            && !theme_name.chars().any(char::is_control)
+        {
+            Some(theme_name)
+        } else {
+            tracing::warn!(
+                "[noctalia-v5] refusing the theme name {:?} for the apply notification: \
+                 it could rewrite the toast (control characters) or be read as an \
+                 option; notifying without the name",
+                theme_name
+            );
+            None
+        };
+        let (summary, body) = match safe_name {
+            Some(name) => (
+                format!("🎨 Tema '{name}' aplicado"),
+                format!(
+                    "Theme \"{name}\" applied — Noctalia v5 colors, settings, wallpaper restored"
+                ),
+            ),
+            None => (
+                "🎨 Tema aplicado".to_string(),
+                "Theme applied — Noctalia v5 colors, settings, wallpaper restored".to_string(),
+            ),
+        };
         match std::process::Command::new("notify-send")
             .arg("--app-name=HVE")
-            .arg(format!("🎨 Tema '{}' aplicado", theme_name))
-            .arg(format!(
-                "Theme \"{}\" applied — Noctalia v5 colors, settings, wallpaper restored",
-                theme_name,
-            ))
+            .arg(summary)
+            .arg(body)
             .output()
         {
             Ok(_) => {}
@@ -9060,4 +9099,74 @@ scale = 1.3
         );
     }
 
+    // ── W6 residual: the apply notification's theme name ──
+
+    /// The theme's DIRECTORY name reaches `notify-send` as part of the toast
+    /// text. A name a CLI could read as an option (`--help`) must never
+    /// reach the notification — but the notification itself must still go
+    /// out: its job is to announce that the apply HAPPENED, and silencing
+    /// it would hide both the apply and the attack.
+    #[test]
+    #[serial]
+    fn v5_post_apply_refuses_an_option_like_name_but_still_notifies() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, None, true);
+
+        let res = NoctaliaV5Provider.post_apply("--help");
+        assert!(res.is_ok(), "post_apply never fails: {res:?}");
+
+        let notified = stub.notified();
+        assert_eq!(
+            notified.lines().count(),
+            1,
+            "exactly one notification must go out, got:\n{notified}"
+        );
+        assert!(
+            !notified.contains("--help"),
+            "the refused name must never reach the toast, got:\n{notified}"
+        );
+        assert!(
+            notified.contains("aplicado"),
+            "a refused name must still produce a safe message, got:\n{notified}"
+        );
+    }
+
+    /// A name carrying a newline (or another control character) must not
+    /// split or rewrite the toast: the message goes out once, without it.
+    #[test]
+    #[serial]
+    fn v5_post_apply_refuses_a_name_with_control_characters_but_still_notifies() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, None, true);
+
+        let res = NoctaliaV5Provider.post_apply("Joker\nBuiltin: palette wiped");
+        assert!(res.is_ok(), "post_apply never fails: {res:?}");
+
+        let notified = stub.notified();
+        assert_eq!(
+            notified.lines().count(),
+            1,
+            "a newline in the name must not split the toast, got:\n{notified}"
+        );
+        assert!(
+            !notified.contains("palette wiped"),
+            "the refused name must never reach the toast, got:\n{notified}"
+        );
+        assert!(notified.contains("aplicado"), "got:\n{notified}");
+    }
+
+    /// Control: a legitimate name still reaches the toast byte-for-byte.
+    #[test]
+    #[serial]
+    fn v5_post_apply_names_a_legitimate_theme_in_the_notification() {
+        let stub = ColorStub::new("wallpaper vibrant", 99, None, true);
+
+        let res = NoctaliaV5Provider.post_apply("Joker");
+        assert!(res.is_ok(), "post_apply never fails: {res:?}");
+
+        let notified = stub.notified();
+        assert_eq!(notified.lines().count(), 1, "got:\n{notified}");
+        assert!(
+            notified.contains("Tema 'Joker' aplicado"),
+            "a legitimate name must stay in the toast, got:\n{notified}"
+        );
+    }
 }

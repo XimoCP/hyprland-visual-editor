@@ -102,6 +102,20 @@ impl ShellProvider for NoctaliaV5Paths {
         Vec::new()
     }
 
+    /// W6/W10 audit note (theme-package trust): NO production caller
+    /// reaches this method today. The evidence: `grep -rn apply_wallpaper
+    /// src/` finds only this impl, its trait declaration above and the unit
+    /// test below (which passes the machine path `/tmp/fake.png`) — and the
+    /// trait's own doc names `config_dir` as the ONE method production
+    /// still calls. So no THEME-DERIVED path can reach the IPC as things
+    /// stand, and no guard was added: a guard with no caller is a
+    /// test-target, not a defence.
+    ///
+    /// IF a future caller routes theme data through here, the path is
+    /// attacker-controlled and must first pass the W6 check
+    /// (`theme_value_is_safe` in `noctalia.rs`: refuse empty or a leading
+    /// `-`) before the spawn — the same argument-injection class the
+    /// `wallpaper-set` call sites in `noctalia.rs` already defend.
     fn apply_wallpaper(&self, path: &Path, screen: &str) -> Result<(), String> {
         let path_str = path.to_str().ok_or("Invalid wallpaper path")?;
         let output = std::process::Command::new("noctalia")
