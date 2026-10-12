@@ -552,3 +552,28 @@ round 4 itself surfaced are **(h)** and **(i)** at the end of this block.
   land inside worker A's post-repair settle (~1200 ms in the test). Under extreme load it flaks to
   FAIL (loud, never masking), but this margin is not among the conditions stated in (d), which covers
   only the U9/U14 elapsed pins.
+
+## If the loss repeats — where to start (the asterisk)
+
+SYMPTOM: the palette and the wallpaper change, but the bar / layout stays as the previous theme.
+
+Cheapest checks first:
+
+1. `~/.cache/hve/hve.log` — grep the guard's own lines:
+   - `Noctalia dropped the theme layout during the apply (missing: ...)` → the wipe WAS detected and the
+     repair path ran.
+   - `Theme layout repaired in the live settings.toml (was missing: ...)` → the one repair held.
+   - `Theme layout STILL missing after the single repair (missing: ...)` → Noctalia re-wiped it inside
+     the settle; bounded by design, left for the live look.
+   - `A newer theme apply started while this layout verify settled; yielding` and
+     `...skipping the post-repair re-check (superseded generation N)` → a supersession happened. If the
+     final layout is still wrong, this points at limit (h): check whether the NEWER apply FAILED (its
+     own error line) and left the duty unarmed.
+2. NO guard log line at all → the worker never ran. Check the apply's own error path and limit (h): a
+   failed `fs::copy` after the generation bump, before the duty is armed.
+3. Compare the live file with the theme: `noctalia config export` vs
+   `~/.config/hve/themes/<theme>/providers/noctalia-v5/settings.toml` (JoKer 11741 B, Space 5798 B) —
+   is `[bar]` present in the live one?
+4. If the live file is TRUNCATED (not merely missing sections), that is NOT this guard: the writers in
+   limit (b) — the apply's `fs::copy`, the rotation neutralizer, Noctalia's own re-persist, the keeper's
+   `sddm-watch.sh` — are still in-place truncate-and-write.
