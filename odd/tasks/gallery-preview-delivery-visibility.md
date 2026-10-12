@@ -3,7 +3,8 @@
 **Locator**: `odd/tasks/gallery-preview-delivery-visibility.md`
 **Engram mirror**: topic `odd/gallery-preview-delivery-visibility/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: DONE pending the keeper's live check (authorized 2026-10-11: "vale implementa... si no tiene mucho coste o riesgo, siempre es bueno una red de seguridad")
+**Status**: **CLOSED — keeper sign-off 2026-10-12** ("todo lo revisado tiene mi OK"); the pending
+live check is resolved. Authorized 2026-10-11: "vale implementa... si no tiene mucho coste o riesgo, siempre es bueno una red de seguridad".
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~80-140 authored changed lines → single PR, no chaining.
 **Route**: delegated writer (2 non-trivial files: `src/main.rs`, `src/shell/gallery/thumbs.rs`), cross-model verification not required (no deletion, no cross-subsystem behaviour: Tier 2 per the project's proportionality rule) — parent self-check plus one live check by the keeper.

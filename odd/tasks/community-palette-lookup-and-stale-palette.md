@@ -3,8 +3,9 @@
 **Locator**: `odd/tasks/community-palette-lookup-and-stale-palette.md`
 **Engram mirror**: topic `odd/community-palette-lookup-and-stale-palette/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: DONE pending the keeper's live check and re-save (reported 2026-10-11: a theme
-declaring the Catppuccin palette paints the JokerTheme palette; authorized to fix)
+**Status**: **CLOSED — keeper sign-off 2026-10-12** ("todo lo revisado tiene mi OK"); the
+pending live check is resolved. Delivered 2026-10-11 (reported: a theme declaring the Catppuccin
+palette painted the JokerTheme palette; authorized to fix).
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~120-180 authored changed lines → single PR, no chaining.
 **Route**: delegated writer (one non-trivial file, `src/providers/noctalia.rs`), parent self-check.

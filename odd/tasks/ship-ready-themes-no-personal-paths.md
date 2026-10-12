@@ -1,13 +1,13 @@
 # Feature: ship-ready themes — a theme package carries no personal path
 
 **Locator**: `odd/tasks/ship-ready-themes-no-personal-paths.md`
-**Engram mirror**: topic `odd/ship-ready-themes-no-personal-paths/tasks` (PENDING: the mirror
-write is deferred, Engram tools were unavailable when this contract was written)
+**Engram mirror**: topic `odd/ship-ready-themes-no-personal-paths/tasks`
 **Repo**: `/home/ximo/Proyectos/hve` — branch `hve2-visual-rewrite`
-**Status**: DONE pending keeper review (authorized 2026-10-11: "empaquetes todos los temas
-que tenemos ya que van a ser los que se van a quedar... hay que limpiar de rutas
-personales y dejar listos para subir que son los temas que van a ver la gente"). The
-ship-ready set is in `assets/themes/` and verified clean; nothing is pushed.
+**Status**: **CLOSED — keeper sign-off 2026-10-12** ("todo lo revisado tiene mi OK"). Authorized
+2026-10-11: "empaquetes todos los temas que tenemos ya que van a ser los que se van a quedar...
+hay que limpiar de rutas personales y dejar listos para subir que son los temas que va a ver la
+gente". The ship-ready set is in `assets/themes/`, verified clean, committed and pushed with the
+branch.
 **TDD**: strict — runner `cargo test`
 **Delivery budget forecast**: ~180-260 authored changed lines → single PR, no chaining.
 **Route**: delegated writer (`src/providers/noctalia.rs`, `src/theme_package.rs`), parent self-check.
