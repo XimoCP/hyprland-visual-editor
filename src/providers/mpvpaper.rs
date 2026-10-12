@@ -318,6 +318,59 @@ fn resolve_video(video: &MpvpaperVideo, video_dir: &Path) -> Result<PathBuf, Str
     Err(format!("video '{}' not found locally and has no usable url", video.filename))
 }
 
+/// SECURITY (W5): hard byte cap for a theme-supplied video download. The
+/// theme is untrusted, so a hostile URL must not be able to fill the disk:
+/// `--max-time 300` bounds how long curl runs, not how many bytes it
+/// writes. 1 GiB is generous for any wallpaper loop (a multi-minute 4K
+/// clip fits) while bounding the damage a hostile theme can do. curl
+/// enforces the same cap during the transfer with `--max-filesize`;
+/// `enforce_size_cap` re-checks afterwards because `--max-filesize` has no
+/// effect when the server omits Content-Length (chunked transfer).
+const MAX_VIDEO_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+
+/// Build the curl command for a video download. The flags are SECURITY
+/// invariants and must never be loosened: https-only (both the URL prefix
+/// check in `download_video` and `--proto =https`, defense in depth against
+/// redirect downgrades), `--fail` on HTTP errors, the 300 s wall-clock cap,
+/// and the `--max-filesize` byte cap.
+fn curl_command(dest_tmp: &Path, url: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("curl");
+    cmd.args([
+        "-L",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "300",
+        "--proto",
+        "=https",
+    ])
+    .arg("--max-filesize")
+    .arg(MAX_VIDEO_DOWNLOAD_BYTES.to_string())
+    .arg("-o")
+    .arg(dest_tmp)
+    .arg(url);
+    cmd
+}
+
+/// SECURITY (W5): enforce the download size cap on disk. Belt and braces
+/// for curl's `--max-filesize`, which cannot apply when the response size
+/// is unknown in advance (chunked encoding): anything over the cap is
+/// deleted before the sha256 check, so an oversized file never survives.
+fn enforce_size_cap(path: &Path) -> Result<(), String> {
+    let len = fs::metadata(path)
+        .map_err(|e| format!("Cannot stat downloaded file: {}", e))?
+        .len();
+    if len > MAX_VIDEO_DOWNLOAD_BYTES {
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "downloaded file is {} bytes, over the {}-byte size cap; deleted",
+            len, MAX_VIDEO_DOWNLOAD_BYTES
+        ));
+    }
+    Ok(())
+}
+
 /// Download `url` to `dest` using `curl`, verifying sha256.
 ///
 /// SECURITY: only `https://` URLs are accepted and curl is restricted to the
@@ -338,20 +391,7 @@ fn download_video(url: &str, dest: &Path, expected_sha: &str) -> Result<PathBuf,
         .map_err(|e| format!("Cannot create unique temp file: {}", e))?;
     drop(created);
 
-    let status = std::process::Command::new("curl")
-        .args([
-            "-L",
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--max-time",
-            "300",
-            "--proto",
-            "=https",
-            "-o",
-        ])
-        .arg(&tmp)
-        .arg(url)
+    let status = curl_command(&tmp, url)
         .status()
         .map_err(|e| format!("Cannot run curl: {}", e))?;
 
@@ -359,6 +399,10 @@ fn download_video(url: &str, dest: &Path, expected_sha: &str) -> Result<PathBuf,
         let _ = fs::remove_file(&tmp);
         return Err(format!("Download failed for {}", url));
     }
+
+    // SECURITY (W5): re-check the size cap on disk before hashing — curl's
+    // --max-filesize does not apply when the response size is unknown.
+    enforce_size_cap(&tmp)?;
 
     let actual = sha256_of(&tmp)?;
     if actual != expected_sha {
@@ -683,6 +727,77 @@ video_directory = "~/Videos"
         );
 
         let _ = fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn curl_command_keeps_security_flags_and_caps_filesize() {
+        // W5: the byte cap must be wired into the actual curl invocation,
+        // and the pre-existing security flags must survive untouched.
+        let tmp = PathBuf::from("/tmp/movie.mp4.tmp");
+        let cmd = curl_command(&tmp, "https://example.com/movie.mp4");
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        for flag in [
+            "-L",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "300",
+            "--proto",
+            "=https",
+            "-o",
+        ] {
+            assert!(
+                args.iter().any(|a| a == flag),
+                "curl must keep the flag {flag}; got {args:?}"
+            );
+        }
+        let cap_at = args
+            .iter()
+            .position(|a| a == "--max-filesize")
+            .expect("curl must carry --max-filesize");
+        assert_eq!(
+            args[cap_at + 1],
+            MAX_VIDEO_DOWNLOAD_BYTES.to_string(),
+            "--max-filesize must be the hard byte cap"
+        );
+        // The cap itself: 1 GiB.
+        assert_eq!(MAX_VIDEO_DOWNLOAD_BYTES, 1024 * 1024 * 1024);
+        // The download lands on the requested temp path, url last.
+        let o_at = args.iter().position(|a| a == "-o").expect("-o must exist");
+        assert_eq!(args[o_at + 1], "/tmp/movie.mp4.tmp");
+        assert_eq!(args.last().unwrap(), "https://example.com/movie.mp4");
+    }
+
+    #[test]
+    fn enforce_size_cap_keeps_small_files_and_deletes_oversized_ones() {
+        let dir = std::env::temp_dir().join(format!(
+            "mpvpaper-test-sizecap-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create sizecap sandbox");
+
+        // A normal file passes untouched.
+        let small = dir.join("small.mp4");
+        fs::write(&small, b"tiny video").expect("write small fixture");
+        enforce_size_cap(&small).expect("a small file must pass the cap");
+        assert!(small.exists(), "a file under the cap must be kept");
+
+        // A sparse file makes the oversized case testable without writing
+        // a real GiB to disk.
+        let big = dir.join("big.mp4");
+        let f = fs::File::create_new(&big).expect("create big fixture");
+        f.set_len(MAX_VIDEO_DOWNLOAD_BYTES + 1).expect("grow sparse fixture");
+        drop(f);
+        let err = enforce_size_cap(&big).unwrap_err();
+        assert!(err.contains("size cap"), "unexpected error: {err}");
+        assert!(!big.exists(), "an oversized download must be deleted");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
