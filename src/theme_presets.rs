@@ -22,8 +22,9 @@ pub const CATEGORIES: [&str; 3] = ["animations", "borders", "shaders"];
 
 /// File extensions a bundled preset may carry (`*.lua` presets, `*.frag`
 /// shaders). Anything else under `presets/` is ignored, so a stray file never
-/// reaches the user's store.
-const PRESET_EXTENSIONS: [&str; 2] = ["lua", "frag"];
+/// reaches the user's store. Public for the trust detector
+/// (`src/theme_trust.rs`), which reports what the apply installs.
+pub const PRESET_EXTENSIONS: [&str; 2] = ["lua", "frag"];
 
 /// The active preset file names a theme records, one per category. Mirrors the
 /// `active_anim_file` / `active_border_file` / `active_shader_file` keys of

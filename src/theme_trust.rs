@@ -11,9 +11,12 @@
 //!   a `[hooks]` section whose values are shell commands. The apply copies
 //!   that file VERBATIM over the live one and then reloads, so a packaged
 //!   hook runs on apply.
-//! - A `*.lua` preset under `presets/<category>/` is installed into the user
-//!   preset store and `cat`ed unvalidated into the assembled `overlay.lua`
-//!   that Hyprland `dofile`s.
+//! - A preset under `presets/<category>/` is installed into the user preset
+//!   store (`PRESET_EXTENSIONS`: `*.lua` and `*.frag`) and — in the
+//!   `animations` and `borders` categories — `cat`ed unvalidated into the
+//!   assembled `overlay.lua` that Hyprland `dofile`s, so a `.frag` there
+//!   runs Lua exactly like a `.lua`. Under `shaders/` the file content is
+//!   never `cat`ed (see the filter), so it is not reported.
 //!
 //! [`inspect_theme_package`] reports both so the warning (W2) can word itself
 //! from facts: the hook KEYS with their COMMAND TEXT, and the preset names.
@@ -38,16 +41,21 @@ pub struct ShellHook {
     pub provider: String,
     /// The `[hooks]` key (`started`, `colors_changed`, `shutdown`, …).
     pub key: String,
-    /// The command text exactly as the file holds it, quotes stripped.
+    /// The command text exactly as the file holds it, quotes stripped: a
+    /// multi-line string arrives with its lines joined by newlines and its
+    /// delimiter padding trimmed.
     pub command: String,
 }
 
-/// One `*.lua` preset the package carries under `presets/<category>/`.
+/// One preset file the package carries under `presets/<category>/` that the
+/// report must name: every `*.lua`, plus a `*.frag` in a category the apply
+/// `cat`s (the field keeps the name `lua_presets` — the gate's shape is
+/// fixed; see the filter in [`lua_presets`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LuaPreset {
     /// The preset category directory (`animations`, `borders`, `shaders`).
     pub category: String,
-    /// The file name (`Space.lua`).
+    /// The file name (`Space.lua`, `evil.frag`).
     pub file_name: String,
 }
 
@@ -70,9 +78,12 @@ pub struct ThemeTrustReport {
     /// Every `[hooks]` command of every `providers/*/settings.toml`, in
     /// provider-directory order (sorted) and file order inside a file.
     pub shell_hooks: Vec<ShellHook>,
-    /// Every `*.lua` preset under `presets/<category>/`, in
-    /// [`crate::theme_presets::CATEGORIES`] order and file-name order
-    /// inside a category (deterministic, so a warning reads the same twice).
+    /// Every preset file under `presets/<category>/` the report must name —
+    /// what the apply installs AND can execute: `*.lua` anywhere, plus
+    /// `*.frag` in the categories whose fragment the scripts `cat` into
+    /// `overlay.lua` — in [`crate::theme_presets::CATEGORIES`] order and
+    /// file-name order inside a category (deterministic, so a warning reads
+    /// the same twice).
     pub lua_presets: Vec<LuaPreset>,
 }
 
@@ -132,10 +143,40 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
 }
 
 /// The hooks one `settings.toml` text declares, in file order.
+///
+/// One value can span LINES: a multi-line string (`"""` / `'''`) keeps every
+/// line inside it as CONTENT — not a section header, not a comment, not a
+/// `key = value` of its own — until its delimiter returns. The whole string
+/// is the command of the key that opened it (Noctalia's TOML parser hands
+/// exactly that to the shell).
 fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
     let mut out = Vec::new();
     let mut in_hooks = false;
+    // An OPEN multi-line string: (the key it belongs to, the delimiter that
+    // closes it, the content gathered so far).
+    let mut open: Option<(String, &'static str, String)> = None;
     for line in text.split('\n') {
+        if open.is_some() {
+            let ended = {
+                let (_key, delimiter, content) = open.as_mut().expect("open is Some");
+                match line.find(*delimiter) {
+                    Some(at) => {
+                        content.push_str(&line[..at]);
+                        true
+                    }
+                    None => {
+                        content.push('\n');
+                        content.push_str(line);
+                        false
+                    }
+                }
+            };
+            if ended {
+                let (key, _delimiter, content) = open.take().expect("open is Some");
+                push_shell_hook(&mut out, provider, &key, content.trim());
+            }
+            continue;
+        }
         if let Some(section) = section_name(line) {
             in_hooks = section == "hooks" || section.starts_with("hooks.");
             continue;
@@ -143,41 +184,100 @@ fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
         if !in_hooks {
             continue;
         }
-        if let Some((key, command)) = hook_command(line) {
-            out.push(ShellHook {
-                provider: provider.to_string(),
-                key: key.to_string(),
-                command: command.to_string(),
-            });
+        match hook_line(line) {
+            HookLine::Pair(key, command) => push_shell_hook(&mut out, provider, key, command),
+            HookLine::OpenMulti {
+                key,
+                delimiter,
+                head,
+            } => open = Some((key.to_string(), delimiter, head.to_string())),
+            HookLine::None => {}
         }
     }
+    // An UNTERMINATED multi-line string is not valid TOML (Noctalia would
+    // refuse the whole file), but this is a detector: report what can be
+    // read — the same rule as an unterminated single-line quote.
+    if let Some((key, _delimiter, content)) = open {
+        push_shell_hook(&mut out, provider, &key, content.trim());
+    }
     out
+}
+
+/// Append one reported hook when the line actually carries a command: an
+/// empty value is not a hook (the command text itself stays verbatim).
+fn push_shell_hook(out: &mut Vec<ShellHook>, provider: &str, key: &str, command: &str) {
+    if command.trim().is_empty() {
+        return;
+    }
+    out.push(ShellHook {
+        provider: provider.to_string(),
+        key: key.to_string(),
+        command: command.to_string(),
+    });
 }
 
 /// The section name a `settings.toml` header line declares, `None` for every
 /// other line. House convention (same as `providers/noctalia.rs`): in a
 /// machine-written file a `#` always starts a comment, so the code is the
 /// line up to the first `#`.
+///
+/// A QUOTED header (`["hooks"]`, `['hooks']`) is the SAME table as
+/// `[hooks]` — plain TOML Noctalia's own parser honours — so the quotes are
+/// stripped: keeping them in the name skipped the whole section and hid
+/// every hook in it from the gate.
 fn section_name(line: &str) -> Option<&str> {
     let code = line.split('#').next().unwrap_or("").trim();
-    Some(code.strip_prefix('[')?.strip_suffix(']')?.trim())
+    let name = code.strip_prefix('[')?.strip_suffix(']')?.trim();
+    Some(unquote(name))
 }
 
-/// One `key = value` line of a `[hooks]` section as `(key, command)`, `None`
-/// when the line carries no command: a comment, a blank line, no `=`, an
-/// empty key, an empty value, or an ARRAY value — `[hooks]` also holds data
-/// (`community_ids = [ … ]`) that Noctalia never executes, and reporting it
-/// as a command would make the warning lie.
-fn hook_command(line: &str) -> Option<(&str, &str)> {
+/// Strip ONE matching pair of surrounding quotes (`"` or `'`) from a table
+/// name. ASCII quotes only, so byte slicing is always on a char boundary.
+fn unquote(name: &str) -> &str {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 2 && matches!(bytes[0], b'"' | b'\'') && bytes[0] == bytes[bytes.len() - 1]
+    {
+        return &name[1..bytes.len() - 1];
+    }
+    name
+}
+
+/// One `key = value` line of a `[hooks]` section, as the line reader must
+/// treat it.
+enum HookLine<'a> {
+    /// A complete single-line value: the key and its command text.
+    Pair(&'a str, &'a str),
+    /// A MULTI-LINE string (`"""` / `'''`) this line OPENS: the key it
+    /// belongs to, the delimiter that closes it, and whatever content the
+    /// opener line already carries after that delimiter.
+    OpenMulti {
+        key: &'a str,
+        delimiter: &'static str,
+        head: &'a str,
+    },
+    /// Not a hook line: a comment, a blank line, no `=`, an empty key, an
+    /// empty value, or an ARRAY value — `[hooks]` also holds data
+    /// (`community_ids = [ … ]`) that Noctalia never executes, and reporting
+    /// it as a command would make the warning lie.
+    None,
+}
+
+/// One `key = value` line of a `[hooks]` section as [`HookLine`].
+fn hook_line(line: &str) -> HookLine<'_> {
+    // House convention (same as `providers/noctalia.rs`): in a
+    // machine-written file a `#` always starts a comment, so the code is the
+    // line up to the first `#`.
     let code = line.split('#').next().unwrap_or("").trim_end();
     if code.trim().is_empty() {
-        return None;
+        return HookLine::None;
     }
     // `code` is a prefix of `line`, so the `=` index is valid in both.
-    let eq_at = code.find('=')?;
+    let Some(eq_at) = code.find('=') else {
+        return HookLine::None;
+    };
     let mut key = code[..eq_at].trim();
     if key.is_empty() {
-        return None;
+        return HookLine::None;
     }
     // A quoted key (`"started" = …`) is legal TOML; report the bare name.
     if key.len() >= 2
@@ -186,43 +286,57 @@ fn hook_command(line: &str) -> Option<(&str, &str)> {
     {
         key = &key[1..key.len() - 1];
         if key.is_empty() {
-            return None;
+            return HookLine::None;
         }
     }
     let after = &line[eq_at + 1..];
     let value_at = eq_at + 1 + (after.len() - after.trim_start().len());
     let rest = &line[value_at..];
-    let command = match rest.chars().next()? {
-        quote @ ('"' | '\'') => {
+    // A MULTI-LINE string (`"""` / `'''`) is one legal TOML value: closed on
+    // this very line it is an ordinary single-line command, otherwise its
+    // content continues on the lines below until the same delimiter comes
+    // back. Checked before the single-quote branch, which would read the
+    // opening `"""` as an empty (dropped) value.
+    for delimiter in ["\"\"\"", "'''"] {
+        if let Some(head) = rest.strip_prefix(delimiter) {
+            return match head.find(delimiter) {
+                Some(end) => HookLine::Pair(key, &head[..end]),
+                None => HookLine::OpenMulti {
+                    key,
+                    delimiter,
+                    head,
+                },
+            };
+        }
+    }
+    match rest.chars().next() {
+        Some(quote @ ('"' | '\'')) => {
             // An unterminated quote (garbage input): report the rest of the
             // line rather than dropping a real hook — this is a detector.
             let end = rest[1..]
                 .find(quote)
                 .map(|at| at + 1)
                 .unwrap_or(rest.len());
-            &rest[1..end]
+            HookLine::Pair(key, &rest[1..end])
         }
-        '[' => return None, // an array is data, never a command
-        _ => {
+        Some('[') => HookLine::None, // an array is data, never a command
+        Some(_) => {
             let end = rest
                 .find(|c: char| c.is_whitespace() || c == '#')
                 .unwrap_or(rest.len());
             if end == 0 {
-                return None;
+                return HookLine::None;
             }
-            &rest[..end]
+            HookLine::Pair(key, &rest[..end])
         }
-    };
-    if command.trim().is_empty() {
-        return None;
+        None => HookLine::None,
     }
-    Some((key, command))
 }
 
-/// Every `*.lua` file a theme carries under `presets/<category>/`, in
-/// [`crate::theme_presets::CATEGORIES`] order — exactly the directories
-/// `install_theme_presets` reads on apply, so the report matches what can
-/// reach the user preset store and, from there, `overlay.lua`.
+/// Every preset file a theme carries under `presets/<category>/` the report
+/// must name, in [`crate::theme_presets::CATEGORIES`] order — exactly the
+/// directories `install_theme_presets` reads on apply, so the report matches
+/// what reaches the user preset store and, from there, `overlay.lua`.
 fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
     let mut out = Vec::new();
     for category in crate::theme_presets::CATEGORIES {
@@ -236,7 +350,7 @@ fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
             .flatten()
             .filter(|entry| entry.path().is_file())
             .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-            .filter(|name| is_lua_file(name))
+            .filter(|name| is_reported_preset(category, name))
             .collect();
         names.sort();
         out.extend(names.into_iter().map(|file_name| LuaPreset {
@@ -247,13 +361,31 @@ fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
     out
 }
 
-/// Whether a file name marks a Lua preset (`*.lua`, any case — the store
-/// matches extensions case-insensitively too).
-fn is_lua_file(name: &str) -> bool {
-    Path::new(name)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("lua"))
+/// Whether a preset file name is content the report must name: one of the
+/// extensions the apply installs ([`crate::theme_presets::PRESET_EXTENSIONS`],
+/// matched case-insensitively like the store), except `shaders/*.frag`.
+///
+/// THE ASYMMETRY, deliberate and verified against the scripts: `shader.sh`
+/// never `cat`s a shader — it writes a validated Lua wrapper naming the
+/// built-in shader path, so `shaders/*.frag` bytes reach the GPU as GLSL
+/// and never `overlay.lua`, and stay out of the report. In `animations/`
+/// and `borders/` the apply resolves the preset BY NAME, content-blind
+/// (`hve_resolve_preset`), and `cat`s whatever file it finds into the
+/// fragment `assemble.sh` assembles into the `overlay.lua` Hyprland
+/// `dofile`s — a `.frag` carrying Lua there executes exactly like a
+/// `.lua`. `shaders/*.lua` stays reported: it is Lua, the extension this
+/// gate was built to surface.
+fn is_reported_preset(category: &str, name: &str) -> bool {
+    let Some(ext) = Path::new(name).extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    if !crate::theme_presets::PRESET_EXTENSIONS
+        .iter()
+        .any(|installed| ext.eq_ignore_ascii_case(installed))
+    {
+        return false;
+    }
+    !(category == "shaders" && ext.eq_ignore_ascii_case("frag"))
 }
 
 // ── W2: the consent gate ─────────────────────────────────────────────
@@ -489,6 +621,105 @@ mod tests {
         assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
     }
 
+    /// A MULTI-LINE string (`"""` / `'''`) is one legal TOML value, and
+    /// Noctalia's parser hands the whole string to the shell as ONE command.
+    /// The line reader used to drop the opener (the hook vanished: the gate
+    /// saw an EMPTY package) and to let inner lines surface as fake
+    /// `key = value` hooks. The real command — every line of the string —
+    /// must be reported under the key it belongs to, in file order.
+    #[test]
+    fn a_multi_line_hook_string_reports_its_real_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(
+            &theme,
+            "[hooks]\n\
+             started = \"\"\"\n\
+             export FOO=bar\n\
+             echo \"$FOO\"\n\
+             \"\"\"\n\
+             colors_changed = \"notify-send hi\"\n",
+        );
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.shell_hooks,
+            vec![
+                ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "started".into(),
+                    command: "export FOO=bar\necho \"$FOO\"".into(),
+                },
+                ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "colors_changed".into(),
+                    command: "notify-send hi".into(),
+                },
+            ],
+            "the multi-line string is ONE hook command (no key invented from its \
+             inner lines), got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a multi-line hook must not read as empty");
+
+        // The literal (`'''`) spelling is the same value to a TOML parser.
+        let literal = tmp.path().join("Literal");
+        write_settings(
+            &literal,
+            "[hooks]\nshutdown = '''\npkill -x sddm-watch\n'''\n[idle]\nenabled = true\n",
+        );
+        let report = inspect_theme_package(&literal);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "shutdown".into(),
+                command: "pkill -x sddm-watch".into(),
+            }],
+            "a ''' multi-line literal must report its command too, got: {:?}",
+            report.shell_hooks
+        );
+    }
+
+    /// A QUOTED table header (`["hooks"]`, `['hooks']`) is the SAME table as
+    /// `[hooks]` — plain TOML Noctalia's own parser honours. `section_name`
+    /// used to keep the quotes in the name, so the whole section was skipped
+    /// and every hook in it stayed invisible to the gate.
+    #[test]
+    fn a_quoted_hooks_table_header_names_the_same_table() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let double = tmp.path().join("Double");
+        write_settings(&double, "[\"hooks\"]\nstarted = \"boot.sh\"\n");
+        let report = inspect_theme_package(&double);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "boot.sh".into(),
+            }],
+            "a [\"hooks\"] header must be honoured, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a quoted header must not read as empty");
+
+        let single = tmp.path().join("Single");
+        write_settings(&single, "['hooks']\nshutdown = \"bye.sh\"\n");
+        let report = inspect_theme_package(&single);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "shutdown".into(),
+                command: "bye.sh".into(),
+            }],
+            "a ['hooks'] header must be honoured, got: {:?}",
+            report.shell_hooks
+        );
+    }
+
     /// Every `providers/<provider>/settings.toml` is walked, not only the
     /// shipped `noctalia-v5`, and each hook names the provider it came from.
     #[test]
@@ -551,12 +782,14 @@ mod tests {
         assert!(report.is_empty());
     }
 
-    /// W1: the report names the Lua presets the package carries (names AND
+    /// W1: the report names the preset files the package carries (names AND
     /// theme-relative paths for the warning), only from the category
-    /// directories `install_theme_presets` reads on apply, and only `*.lua`
-    /// — a stray text file, a `.frag` shader and a preset outside the
-    /// installable categories never reach `overlay.lua`, so they are not
-    /// Lua presets this gate must name.
+    /// directories `install_theme_presets` reads on apply, and only the
+    /// extensions it installs (`*.lua`, `*.frag` — `PRESET_EXTENSIONS`): a
+    /// stray text file and a preset outside the installable categories
+    /// never reach the user store, so they are not presets this gate must
+    /// name. A `.frag` in `borders/` DOES reach `overlay.lua` — the apply
+    /// resolves it by name and `cat`s it — so it IS named (next test).
     #[test]
     fn reports_the_lua_presets_the_package_carries() {
         let tmp = tempfile::tempdir().unwrap();
@@ -580,8 +813,13 @@ mod tests {
                     category: "borders".into(),
                     file_name: "Space.lua".into(),
                 },
+                LuaPreset {
+                    category: "borders".into(),
+                    file_name: "scan.frag".into(),
+                },
             ],
-            "every installable *.lua must be named in CATEGORIES order, got: {:?}",
+            "every preset the apply installs and can execute must be named in \
+             CATEGORIES order, got: {:?}",
             report.lua_presets
         );
         assert_eq!(
@@ -591,6 +829,53 @@ mod tests {
         );
         assert!(report.shell_hooks.is_empty());
         assert!(!report.is_empty(), "a theme carrying presets must not read as empty");
+    }
+
+    /// The report must name what the apply ACTUALLY installs and executes,
+    /// which is wider than `*.lua`: `install_theme_presets` installs every
+    /// `PRESET_EXTENSIONS` file (`lua`, `frag`) into the user store, and for
+    /// `animations/` and `borders/` the shell resolves the preset BY NAME,
+    /// content-blind (`hve_resolve_preset`), then `cat`s whatever file it
+    /// finds into the fragment `assemble.sh` writes to `overlay.lua` — so a
+    /// `.frag` carrying Lua there executes exactly like a `.lua`.
+    ///
+    /// `shaders/` is the deliberate asymmetry this detector mirrors:
+    /// `shader.sh` never `cat`s the shader (it writes a validated Lua
+    /// wrapper whose PATH names the built-in shader), so `shaders/*.frag`
+    /// never reaches `overlay.lua` and stays OUT of the report — while
+    /// `shaders/*.lua` is still named like every other Lua preset.
+    #[test]
+    fn a_frag_in_a_catted_category_is_reported_but_a_shader_frag_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_preset(&theme, "animations", "evil.frag");
+        write_preset(&theme, "borders", "evil.frag");
+        write_preset(&theme, "shaders", "02_monocromo.frag");
+        write_preset(&theme, "shaders", "wrapper.lua");
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.lua_presets,
+            vec![
+                LuaPreset {
+                    category: "animations".into(),
+                    file_name: "evil.frag".into(),
+                },
+                LuaPreset {
+                    category: "borders".into(),
+                    file_name: "evil.frag".into(),
+                },
+                LuaPreset {
+                    category: "shaders".into(),
+                    file_name: "wrapper.lua".into(),
+                },
+            ],
+            "a .frag in a category the scripts cat must be reported and \
+             shaders/*.frag must not, got: {:?}",
+            report.lua_presets
+        );
+        assert!(!report.is_empty(), "the .frag presets must not read as empty");
     }
 
     /// Acceptance 2: a theme carrying neither applies exactly as before —
