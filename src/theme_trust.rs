@@ -28,15 +28,23 @@
 //!
 //! Contract of this module: PURE and READ-ONLY (no write, no directory is
 //! ever created) and TOTAL — a missing, unreadable, malformed, empty or
-//! non-UTF8 file never panics: it only narrows the report. A provider
-//! `settings.toml` is parsed with a REAL TOML parser (`toml`, spec 1.1),
-//! never read line by line (W1d: three rounds of line-based patches were
-//! each refuted with a real blocker, so the class goes, not one more
-//! spelling), and it FAILS CLOSED: a file that does not parse is reported
-//! as one conservative entry (`push_unparsed_hooks`) instead of an empty
-//! report, because the gate warns only when the report is non-empty and a
-//! silent gate over a file nobody inspected is CRITICAL-1 with a different
-//! spelling.
+//! non-UTF8 file never panics: a MISSING file narrows the report to nothing
+//! (a theme that carries no `settings.toml` carries no hooks), an
+//! unreadable or malformed one widens it to one conservative entry. A
+//! provider `settings.toml` is parsed with a REAL TOML parser (`toml`,
+//! spec 1.1), never read line by line (W1d: three rounds of line-based
+//! patches were each refuted with a real blocker, so the class goes, not
+//! one more spelling), and it FAILS CLOSED on BOTH ways a file can defeat
+//! the read: a file that does not parse is reported as one conservative
+//! entry (`push_unparsed_hooks`) and a file the READER REFUSED — over
+//! bound, not a regular file, unreadable — as one conservative entry too
+//! (`push_uninspectable_hooks`), never as an empty report, because the gate
+//! warns only when the report is non-empty and a silent gate over a file
+//! nobody inspected is CRITICAL-1 with a different spelling. The one case
+//! that stays silent is a path that names no file at all (missing or
+//! dangling): there is nothing to inspect, and the apply's own copy of
+//! that same path cannot open it either — same user, same path — so no
+//! hook can run from it.
 
 use std::path::{Path, PathBuf};
 
@@ -47,9 +55,11 @@ pub struct ShellHook {
     pub provider: String,
     /// The `[hooks]` key (`started`, `colors_changed`, `shutdown`, …) as
     /// the parser names it (`"\u0073tarted"` IS `started`). The ONE
-    /// exception is the conservative entry of a `settings.toml` that does
-    /// not PARSE, whose key is the literal `hooks table` (a note about a
-    /// table, never an event that runs); see `push_unparsed_hooks`.
+    /// exception is a CONSERVATIVE entry — a `settings.toml` that does not
+    /// PARSE (`push_unparsed_hooks`) or that the reader REFUSED
+    /// (`push_uninspectable_hooks`) — whose key is the literal
+    /// `hooks table` (a note about a file nobody inspected, never an event
+    /// that runs).
     pub key: String,
     /// The command text exactly as the parser hands it to the shell:
     /// escapes applied, a multi-line string keeping every line AND its
@@ -92,10 +102,14 @@ pub struct ThemeTrustReport {
     /// STRING entries of the ROOT `hooks` table, however it is spelled
     /// (`[hooks]`, the dotted `hooks.*` key, `hooks = { … }`) — in
     /// provider-directory order (sorted) and document order inside a file.
-    /// A file that does not parse as TOML appears as ONE clearly-named
-    /// conservative entry (key `hooks table`, stating file + cause) instead
-    /// of an empty list: FAIL CLOSED, so the gate can never stay silent
-    /// over a file nobody inspected.
+    /// A file that does not parse as TOML AND a file the reader REFUSED
+    /// (over bound, not a regular file, unreadable) each appear as ONE
+    /// clearly-named conservative entry (key `hooks table`, stating file +
+    /// cause) instead of an empty list: FAIL CLOSED, so the gate never
+    /// stays silent over a file it did not inspect. The only silent case
+    /// is a `settings.toml` that does not exist — a path with no file has
+    /// nothing to inspect, and the apply's own copy of that path cannot
+    /// open it either, so no hook can run from it.
     pub shell_hooks: Vec<ShellHook>,
     /// Every preset file under `presets/<category>/` the report must name —
     /// what the apply installs AND can execute: `*.lua` anywhere, plus
@@ -125,8 +139,10 @@ pub fn inspect_theme_package(theme_dir: &Path) -> ThemeTrustReport {
 }
 
 /// The `[hooks]` commands of every `providers/<provider>/settings.toml`.
-/// A missing file is the normal shape (only `noctalia-v5` writes one); an
-/// unreadable or non-UTF8 one is warned about and skipped.
+/// A missing file is the normal shape (only `noctalia-v5` writes one) and
+/// reports NOTHING — a theme that carries no settings file carries no
+/// hooks. A file the READER REFUSED reports the conservative "could not be
+/// inspected" entry instead (W1d-b, fail closed).
 fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(theme_dir.join("providers")) else {
@@ -147,22 +163,41 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
             continue;
         }
         let settings = provider_dir.join("settings.toml");
-        // W10b: the theme's `settings.toml` is an UNTRUSTED file. A missing
-        // file is the normal shape (silent, as always); a NON-REGULAR one —
-        // a FIFO named like it would block the gate forever on the open — or
-        // one over W10's per-file bound is warned about and skipped, exactly
-        // like an unreadable one. W10 owns the ONE set of limits and the ONE
-        // error type.
+        // W10b: the theme's `settings.toml` is an UNTRUSTED file, and W10
+        // owns the ONE set of limits and the ONE error type. W1d-b splits
+        // the two ways this read can come up empty:
+        //
+        // - MISSING (the path names no file): the normal shape — a theme
+        //   that carries no settings file carries no hooks, so it reports
+        //   nothing and a clean theme never warns (acceptance 2). This is
+        //   NOT a refusal: the apply's own `fs::copy` of that same path
+        //   cannot open it either (same user, same path), so no hook can
+        //   run from a file that does not exist.
+        // - REFUSED (the file EXISTS and the reader said no: over bound,
+        //   not a regular file, unreadable — every `Err` it can return):
+        //   a file nobody inspected, and the apply copies `settings.toml`
+        //   VERBATIM onto the live config, so a hook inside it runs on
+        //   apply with the gate silent. This reports the SAME conservative
+        //   entry a parse failure produces — "I could not inspect this
+        //   file", never "this carries a hook" — because an empty report
+        //   over a file nobody read is the silent gate this detector
+        //   exists to prevent.
         if !settings.exists() {
             continue;
         }
         match crate::theme_media::read_theme_record(&settings) {
             Ok(text) => out.extend(hooks_in_settings(&text, &provider, &settings)),
-            Err(e) => tracing::warn!(
-                "[theme-trust] cannot read {} (skipped): {}",
-                settings.display(),
-                e
-            ),
+            Err(e) => {
+                // The refusal detail goes to the LOG; the report gets the
+                // conservative entry (the full error text is free-form and
+                // can be long — the report states file + cause compactly).
+                tracing::warn!(
+                    "[theme-trust] could not inspect {} (reported as uninspected): {}",
+                    settings.display(),
+                    e
+                );
+                out.push(push_uninspectable_hooks(&provider, &settings, &e));
+            }
         }
     }
     out
@@ -248,14 +283,15 @@ fn hooks_in_settings(text: &str, provider: &str, file: &Path) -> Vec<ShellHook> 
     out
 }
 
-/// The ONE conservative report entry emitted when a `settings.toml` does
-/// not PARSE as TOML (see `hooks_in_settings`): the detector cannot claim
-/// to have inspected a document no parser can read, so instead of an empty
-/// report — the gate warns only when the report is non-empty — it emits
-/// this entry. It names a TABLE, not an event (`key` is `hooks table`, so
-/// the warning line reads as a note, not as a hook that runs), and states
-/// the file and the cause. It claims no protection and invents no
-/// command: an honest "I could not inspect this", not a sandbox.
+/// The conservative report entry for a PARSE failure (see
+/// `hooks_in_settings`) — one of the two conservative spellings, the other
+/// being a reader refusal (`push_uninspectable_hooks`). The detector cannot
+/// claim to have inspected a document no parser can read, so instead of an
+/// empty report — the gate warns only when the report is non-empty — it
+/// emits this entry. It names a TABLE, not an event (`key` is
+/// `hooks table`, so the warning line reads as a note, not as a hook that
+/// runs), and states the file and the cause. It claims no protection and
+/// invents no command: an honest "I could not inspect this", not a sandbox.
 fn push_unparsed_hooks(provider: &str, file: &Path) -> ShellHook {
     ShellHook {
         provider: provider.to_string(),
@@ -264,6 +300,39 @@ fn push_unparsed_hooks(provider: &str, file: &Path) -> ShellHook {
             "the hooks table in {} could not be read by this scan: \
              the file does not parse as TOML; it may carry shell commands that are not listed here",
             file.display()
+        ),
+    }
+}
+
+/// The conservative report entry for a `settings.toml` the READER REFUSED
+/// (W1d-b: over bound, not a regular file, unreadable — every `Err`
+/// `read_theme_record` can return; see `shell_hooks`). Same shape and same
+/// key as the parse-failure entry, because it is the same HONEST claim: "I
+/// could not inspect this file", never "this carries a hook".
+///
+/// Why it must exist at all: the refusal here is a file that DOES exist and
+/// the apply copies `settings.toml` verbatim over the live one, so a hook
+/// inside it runs on apply. Reporting an empty list for it is the FAIL-OPEN
+/// this detector is not allowed to have — a parse failure and a read
+/// refusal are the same event to the keeper: a file nobody inspected.
+///
+/// The cause comes from `ThemeReadError`'s own `Display` (the ONE error
+/// type, W10), so every refusal class reads as itself: `larger than the
+/// 4194304-byte bound …`, `<path> is not a regular file`,
+/// `cannot open <path>: …`, `<path> is not valid UTF-8 text`.
+fn push_uninspectable_hooks(
+    provider: &str,
+    file: &Path,
+    cause: &crate::theme_package::ThemeReadError,
+) -> ShellHook {
+    ShellHook {
+        provider: provider.to_string(),
+        key: "hooks table".to_string(),
+        command: format!(
+            "the settings file {} could not be inspected by this scan: {}; \
+             it may carry shell commands that are not listed here",
+            file.display(),
+            cause
         ),
     }
 }
@@ -1557,21 +1626,37 @@ mod tests {
         assert!(!report.is_empty());
     }
 
-    /// TOTAL: a non-UTF8 settings.toml cannot be read as text at all — the
-    /// report just narrows to nothing instead of panicking.
+    /// TOTAL, and (W1d-b) FAIL CLOSED: a non-UTF8 `settings.toml` cannot be
+    /// read as text at all — it must not panic, and it must not read as an
+    /// empty report either: the reader refused it, so it is reported as one
+    /// conservative "could not be inspected" entry.
     #[test]
     fn a_non_utf8_settings_toml_never_panics() {
         let tmp = tempfile::tempdir().unwrap();
         let theme = tmp.path().join("Theme");
         let dir = theme.join("providers").join("noctalia-v5");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("settings.toml"), b"\xff\xfe[hooks]\nstarted = \"\xff\xfe\"\n")
-            .unwrap();
+        let settings = dir.join("settings.toml");
+        fs::write(&settings, b"\xff\xfe[hooks]\nstarted = \"\xff\xfe\"\n").unwrap();
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
-        assert!(report.is_empty());
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "hooks table".into(),
+                command: format!(
+                    "the settings file {} could not be inspected by this scan: \
+                     {} is not valid UTF-8 text; it may carry shell commands \
+                     that are not listed here",
+                    settings.display(),
+                    settings.display()
+                ),
+            }],
+            "a settings.toml the reader refused is uninspected, not hook-free: {:?}",
+            report.shell_hooks
+        );
     }
 
     /// TOTAL: a preset file name that is not valid UTF-8 is skipped, exactly
@@ -1779,7 +1864,9 @@ mod tests {
     /// A FIFO named like a theme's `settings.toml` must be REFUSED by the
     /// trust gate, not block it: the gate runs on the apply path BEFORE the
     /// warning, so a blocking read would hang the whole apply. The scan runs
-    /// on a worker thread, and a timeout proves it returned.
+    /// on a worker thread, and a timeout proves it returned. W1d-b: the
+    /// refusal is a file nobody inspected, so it reports the conservative
+    /// entry instead of a silent empty report.
     #[test]
     fn inspect_refuses_a_fifo_settings_toml_instead_of_blocking() {
         use std::os::unix::ffi::OsStrExt;
@@ -1797,9 +1884,21 @@ mod tests {
             let _ = tx.send(inspect_theme_package(&theme));
         });
         match rx.recv_timeout(std::time::Duration::from_secs(3)) {
-            Ok(report) => assert!(
-                report.shell_hooks.is_empty(),
-                "a FIFO settings.toml must declare no hooks, got {:?}",
+            Ok(report) => assert_eq!(
+                report.shell_hooks,
+                vec![ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "hooks table".into(),
+                    command: format!(
+                        "the settings file {} could not be inspected by this scan: \
+                         {} is not a regular file; it may carry shell commands \
+                         that are not listed here",
+                        fifo.display(),
+                        fifo.display()
+                    ),
+                }],
+                "a refused FIFO settings.toml must be reported as UNINSPECTED, \
+                 got {:?}",
                 report.shell_hooks
             ),
             Err(_) => {
@@ -1808,9 +1907,12 @@ mod tests {
         }
     }
 
-    /// An oversized (but valid) `settings.toml` is refused by W10's per-file
-    /// bound: the gate must never slurp a multi-GB hostile file, and it
-    /// degrades to "no hooks from this file", exactly like an unreadable one.
+    /// An oversized (but VALID) `settings.toml` is refused by W10's per-file
+    /// bound — and that refusal must never degrade to "no hooks from this
+    /// file" (W1d-b: that was a FAIL-OPEN. The file is valid TOML, the apply
+    /// copies it verbatim over the live config and the hook runs with the
+    /// gate silent). A read refusal produces the same conservative "I could
+    /// not inspect this file" entry a parse failure produces.
     #[test]
     fn inspect_refuses_an_oversized_settings_toml() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1825,10 +1927,46 @@ mod tests {
         fs::write(&settings, content).unwrap();
 
         let report = inspect_theme_package(&theme);
-        assert!(
-            report.shell_hooks.is_empty(),
-            "an over-bound settings.toml must declare no hooks, got {:?}",
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "hooks table".into(),
+                command: format!(
+                    "the settings file {} could not be inspected by this scan: \
+                     larger than the {}-byte bound for an untrusted theme file; \
+                     it may carry shell commands that are not listed here",
+                    settings.display(),
+                    crate::theme_package::MAX_THEME_FILE_BYTES
+                ),
+            }],
+            "an over-bound settings.toml is a file nobody inspected and must be \
+             reported as one conservative entry, never as an empty report: {:?}",
             report.shell_hooks
         );
+        assert!(
+            !report.is_empty(),
+            "the gate must hold over a file the apply could still copy verbatim"
+        );
+    }
+
+    /// W1d-b: a MISSING `settings.toml` is NOT a read refusal. A theme that
+    /// carries no settings file carries no hooks, so the report stays EMPTY
+    /// and a clean theme never warns (acceptance criterion 2). Only a file
+    /// that EXISTS and could not be read is a refusal.
+    #[test]
+    fn a_missing_settings_toml_reports_an_empty_report_not_a_conservative_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        fs::create_dir_all(theme.join("providers").join("noctalia-v5")).unwrap();
+
+        let report = inspect_theme_package(&theme);
+
+        assert!(
+            report.shell_hooks.is_empty(),
+            "a theme with no settings file carries no hooks, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(report.is_empty());
     }
 }
