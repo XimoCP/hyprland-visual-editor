@@ -91,3 +91,79 @@ sandbox**. If he accepts, the theme's code runs as him. The warning must not be 
 - The `sha256` in a theme's video record cannot authenticate anything (the same untrusted file supplies both
   URL and hash). Recorded as a limit, not "fixed".
 - Personal paths in test fixtures and `odd/` docs (privacy, no secrets) — the keeper's call, not this contract.
+
+## Progress and evidence (2026-10-12/13)
+
+Test counts are the full-suite totals observed at each commit; the suite started this contract at 1616.
+
+| Unit | Commit | What | Tests |
+|---|---|---|---|
+| — | `69f32ce` | this contract opens | 1616 |
+| W1 | `d58db4d` | the detector: `inspect_theme_package` (pure, total, read-only) | 1626 |
+| W2 | `a7073e1` | the gate + the warning overlay, both apply paths | 1642 |
+| W1b | `140f3f3` | detector widened: the executable `.frag` presets + two TOML blind spots | 1645 |
+| W6 | `eccdd2b` | refuses a theme value that could read as an option | 1653 |
+| W10 | `53eea8c` | bounds the read of an untrusted package (+ W6 residuals `c83f18b`) | 1665 |
+| W10b | `8b591e7` | bounds EVERY remaining theme-file reader; rejects non-regular files | 1685 |
+| W4 | `3cad59a` | confines `video_directory` to `$HOME/{Pictures,Videos,Downloads}` | 1632 |
+| W5 | `67a7ee6` | caps the video download at 1 GiB (plus an on-disk re-check) | 1632 |
+| deps | `a0bf10e` | 4 RustSec advisories cleared by lockfile-only bumps | 1616 |
+
+### Cross-model verification (Tier 3 — a DIFFERENT model from the writer)
+
+- **W1** — verified by GLM-5.3-Flash. Verdict: sound, but it REFUTED completeness: `.frag` presets in
+  `animations/`/`borders/` are `cat`ed into the executed Lua and the `.lua`-only filter missed them. Corrected by
+  W1b. It also found two TOML blind spots (multi-line string values, quoted table headers). `pub mod` claim true.
+- **W2** — verified by GLM-5.3-Flash. Verdict: **no apply path bypasses the gate** (gallery, panel, mosaic, keyboard,
+  startup, tray, IPC all audited); the copy does not claim to block anything. Two MEDIUM findings: a keyboard-only
+  user cannot CONFIRM (only Escape/decline) and the confirmed branch does not re-inspect the package.
+- **W4+W5** — verified by GLM-5.3-Flash. Verdict: the confinement HOLDS against every escape tried (`..`, symlinks,
+  hard links, sibling prefixes, NFD/NFC, 4000-char paths, relative, `/`), the refusal creates nothing, and the cap
+  is real. One MEDIUM: `64`-MiB read of the contract says the download must not precede the plugin-enabled check and
+  it still does — the contract line and the parent's instruction disagreed; reconcile it.
+- **NOT yet verified cross-model**: W1b, W6, W10, W10b, W2b (all written by MiMo-V2.6-Flash).
+
+### The keeper's own themes — measured, not assumed
+
+FOUR of his installed themes trigger the warning: **Cars, Night, Space, Spiderman**. They carry his OWN three
+one-line hooks pointing at `/home/ximo/.local/share/sddm/themes/SilentDinamic/sddm-sync.sh` (his script; HVE never
+put it there). They were saved BEFORE the sanitiser landed (`91a5f60`, 2026-10-11): Night 10-04, Cars/Space 10-10.
+The PACKAGED copies under `assets/themes/` are clean — an empty `[hooks]` section and zero `/home/` paths.
+
+Consequence, and a real gap: **a theme saved before the sanitiser stays dirty forever**, because nothing re-saves
+it. Re-saving those four themes would drop the stale hooks and stop the nag for the keeper. The keeper's own
+`remember-my-acceptance` idea (approved 2026-10-12) covers the other direction: themes that arrive from someone
+else.
+
+### Process lessons (they cost real work here)
+
+- **Run `cargo` in the FOREGROUND in a delegated unit.** A writer that backgrounds a build ends its turn without
+  the output and the build dies with it. This happened twice.
+- **On a provider error or a cancellation, ASSESS the working tree before reverting.** Twice the dead session's
+  leftovers compiled and were finished by the next writer instead of being thrown away (W2's 1037 lines, W10b's
+  331).
+- **A late reporter is not a zombie.** W10b's completion notice arrived after its commit; the parent briefly told
+  the keeper it was dead. Stopping an already-committed writer is harmless either way.
+- **Ask for the evidence IN the commit message** on Tier 3 units: W10b's commit body is empty, so the audit trail
+  lives only in the chat.
+- **`.atl/skill-registry.md` and `.atl/.skill-registry.cache.json` show up modified** in this tree; they are a
+  plugin's artifacts, not this contract's — never stage them with a unit.
+
+## Still pending
+
+- **W2b** (in flight): make the warning operable from the keyboard. Its tests are already written; the `.slint` work
+  is underway.
+- **W7**: the IPC socket — mode set BEFORE `bind`, and the `/tmp/hve.sock` fallback made safe. `src/ipc.rs`.
+- **W8**: `hve.log` and the decision log created with mode 0600. `src/main.rs`, `src/decision_log.rs`.
+- **W9**: validate the theme name in `ThemeManager::delete`/`apply`. `src/theme_manager.rs`.
+- **The keeper's `remember-my-acceptance`** (approved): remember the acceptance PER THEME keyed by a fingerprint of
+  what was accepted, so a changed theme warns again. That ALSO fixes W2's first MEDIUM (the confirmed branch never
+  re-inspects). Needs a small state file of its own, not a change to the theme packages.
+- **The W4/W5 MEDIUM**: reconcile the download-order line above.
+- **Lane C (health, serial and alone)**: `cargo fmt` (23,362 diff lines — a dedicated commit, never mixed), the
+  ~70 autofixable clippy lints (NEVER the float-comparison class — it changes NaN semantics the layout relies on),
+  the `tray.rs` pixel-chunk guard, the dead-code suppressions that silence whole modules, the source-text tests and
+  the sleep-based tests, and the `ksni` 0.2 → 0.3 bump.
+- **Deliberately NOT bounded** (named by W10b, do not "fix" blindly): binary MEDIA reads (`theme_manager.rs:841/
+  858/876`, `shell/gallery/thumbs.rs`) because a wallpaper or video legitimately exceeds the 4 MiB TEXT bound, and
+  live-config reads (`noctalia.rs`, `preset_store.rs`) which are not theme files.
