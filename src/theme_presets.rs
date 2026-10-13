@@ -390,6 +390,17 @@ pub fn install_theme_presets(theme_dir: &Path, user_presets_root: &Path) -> Inst
                 report.kept.push(preset);
                 continue;
             }
+            // W10b: the theme's preset file is UNTRUSTED. Refuse one over W10's
+            // per-file bound before the copy, so an oversized file is never
+            // planted into the user store for a later unbounded read downstream
+            // (`assemble.sh` `cat`s it, Hyprland `dofile`s it). A non-regular
+            // file is already skipped above by `source.is_file()` (which
+            // follows symlinks and rejects a FIFO). `theme_file_is_bounded`
+            // warns and names the file on a refusal; only that preset is
+            // skipped.
+            if !crate::theme_package::theme_file_is_bounded(&source) {
+                continue;
+            }
             if copy_preset(&source, &dest) {
                 tracing::info!(
                     "[theme-presets] installed theme preset {}/{} into the user store",
@@ -919,5 +930,74 @@ mod tests {
             !user_root.join("animations/notes.txt").exists(),
             "non-preset files must not travel"
         );
+    }
+
+    // ── W10b: the theme's preset file is UNTRUSTED ──────────────────────
+
+    /// A preset one byte over W10's per-file bound must never be copied into
+    /// the user store — it would be planted for a later unbounded read
+    /// downstream (`assemble.sh` `cat`s it, Hyprland `dofile`s it). The
+    /// refusal warns (inside `theme_file_is_bounded`) and skips only that
+    /// preset.
+    #[test]
+    fn install_refuses_an_oversized_theme_preset_without_copying_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let user_root = dir.path().join("user");
+        let preset_dir = theme.join("presets/animations");
+        fs::create_dir_all(&preset_dir).unwrap();
+        fs::write(
+            preset_dir.join("big.lua"),
+            vec![b'x'; crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        let report = install_theme_presets(&theme, &user_root);
+
+        assert!(
+            report.installed.is_empty(),
+            "an oversized preset must never be installed, got {:?}",
+            report.installed
+        );
+        assert!(
+            !user_root.join("animations/big.lua").exists(),
+            "an oversized preset must not be copied into the user store"
+        );
+    }
+
+    /// A FIFO named like a theme preset must be skipped, never opened: the
+    /// copy would block forever on the open of a FIFO (`source.is_file()`
+    /// refuses it before the copy — this pins that guarantee against
+    /// regression). The install runs on a worker thread, and a timeout proves
+    /// it returned instead of hanging.
+    #[test]
+    fn install_skips_a_fifo_preset_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("theme");
+        let user_root = dir.path().join("user");
+        let preset_dir = theme.join("presets").join("animations");
+        fs::create_dir_all(&preset_dir).unwrap();
+        let fifo = preset_dir.join("evil.lua");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let report = install_theme_presets(&theme, &user_root);
+            let planted = user_root.join("animations").join("evil.lua").exists();
+            let _ = tx.send((report.installed.len(), planted));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok((installed, planted)) => {
+                assert_eq!(installed, 0, "a FIFO preset must never be installed");
+                assert!(
+                    !planted,
+                    "a FIFO preset must not be copied into the user store"
+                );
+            }
+            Err(_) => panic!("install_theme_presets blocked on a FIFO preset instead of skipping it"),
+        }
     }
 }

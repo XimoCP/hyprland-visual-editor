@@ -27,7 +27,10 @@ fn push_text(facts: &mut Vec<ThemeFact>, label: &str, value: String) {
 /// Read the theme's own `state.json` into panel facts. Missing or unreadable
 /// state is not an error: the panel simply shows nothing from this provider.
 fn preset_facts(provider_dir: &Path) -> Vec<ThemeFact> {
-    let Ok(raw) = fs::read_to_string(provider_dir.join("state.json")) else {
+    // W10b: the theme's `state.json` is an UNTRUSTED file — bounded,
+    // regular-file-guarded read (W10 owns the ONE set of limits and the ONE
+    // error type). A refusal shows nothing, exactly like a missing state.
+    let Ok(raw) = crate::theme_media::read_theme_record(&provider_dir.join("state.json")) else {
         return Vec::new();
     };
     let Ok(state) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -157,7 +160,11 @@ impl ThemeProvider for HvePresetsProvider {
 
     fn apply(&self, theme_dir: &Path) -> Result<(), String> {
         let state_path = theme_dir.join("providers").join(self.id()).join("state.json");
-        let raw = fs::read_to_string(&state_path)
+        // W10b: the theme's `state.json` is an UNTRUSTED file — bounded,
+        // regular-file-guarded read (W10 owns the ONE set of limits and the
+        // ONE error type). A FIFO or over-bound state refuses the apply with
+        // the ordinary error below instead of blocking or slurping.
+        let raw = crate::theme_media::read_theme_record(&state_path)
             .map_err(|e| format!("Cannot read state.json: {}", e))?;
         let state: serde_json::Value = serde_json::from_str(&raw)
             .map_err(|e| format!("Parse error: {}", e))?;
@@ -483,6 +490,57 @@ mod tests {
         assert!(
             !theme.path().join("evil.lua").exists(),
             "an unsafe preset name must not be bundled outside the theme"
+        );
+    }
+
+    // ── W10b: the theme's state.json is an UNTRUSTED file ──────────────
+
+    /// A FIFO named like the theme's `state.json` must be REFUSED by `apply`,
+    /// not block it forever: the open of a FIFO blocks, so the refusal has to
+    /// happen before it. The call runs on a worker thread, and a timeout
+    /// proves it returned with the usual apply error instead of hanging.
+    #[test]
+    fn apply_refuses_a_fifo_state_json_instead_of_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let proj = TempDir::new().unwrap();
+        let theme = TempDir::new().unwrap();
+        let provider_dir = theme.path().join("providers").join("hve-presets");
+        fs::create_dir_all(&provider_dir).unwrap();
+        let fifo = provider_dir.join("state.json");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+
+        let provider = HvePresetsProvider::new(Engine::new(proj.path()));
+        let theme_dir = theme.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(provider.apply(&theme_dir));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(result) => assert!(
+                result.is_err(),
+                "a FIFO state.json must be refused, got {result:?}"
+            ),
+            Err(_) => panic!("apply blocked on a FIFO state.json instead of refusing it"),
+        }
+    }
+
+    /// An oversized (but valid) `state.json` is refused by W10's per-file
+    /// bound instead of being slurped whole for the panel: the facts are
+    /// empty, exactly like an unreadable state.
+    #[test]
+    fn preset_facts_refuse_an_oversized_state_json() {
+        let tmp = TempDir::new().unwrap();
+        let mut state =
+            br#"{"active_anim_file":"custom.lua","active_border_file":"","active_shader_file":""}"#
+                .to_vec();
+        state.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        fs::write(tmp.path().join("state.json"), state).unwrap();
+
+        assert!(
+            preset_facts(tmp.path()).is_empty(),
+            "an over-bound state.json must declare no facts"
         );
     }
 }

@@ -128,10 +128,17 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
             continue;
         }
         let settings = provider_dir.join("settings.toml");
-        match std::fs::read_to_string(&settings) {
+        // W10b: the theme's `settings.toml` is an UNTRUSTED file. A missing
+        // file is the normal shape (silent, as always); a NON-REGULAR one —
+        // a FIFO named like it would block the gate forever on the open — or
+        // one over W10's per-file bound is warned about and skipped, exactly
+        // like an unreadable one. W10 owns the ONE set of limits and the ONE
+        // error type.
+        if !settings.exists() {
+            continue;
+        }
+        match crate::theme_media::read_theme_record(&settings) {
             Ok(text) => out.extend(hooks_in_settings(&text, &provider)),
-            // No settings.toml is the normal shape, not a defect.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => tracing::warn!(
                 "[theme-trust] cannot read {} (skipped): {}",
                 settings.display(),
@@ -1176,6 +1183,64 @@ mod tests {
             gate.request("Risky", 5, ApplyOrigin::Gallery, &report),
             GateDecision::Hold,
             "an unspent confirmation must not silently apply the theme"
+        );
+    }
+
+    // ── W10b: the theme's settings.toml is an UNTRUSTED file ───────────
+
+    /// A FIFO named like a theme's `settings.toml` must be REFUSED by the
+    /// trust gate, not block it: the gate runs on the apply path BEFORE the
+    /// warning, so a blocking read would hang the whole apply. The scan runs
+    /// on a worker thread, and a timeout proves it returned.
+    #[test]
+    fn inspect_refuses_a_fifo_settings_toml_instead_of_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        let dir = theme.join("providers").join("noctalia-v5");
+        fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("settings.toml");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(inspect_theme_package(&theme));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(report) => assert!(
+                report.shell_hooks.is_empty(),
+                "a FIFO settings.toml must declare no hooks, got {:?}",
+                report.shell_hooks
+            ),
+            Err(_) => {
+                panic!("the trust gate blocked on a FIFO settings.toml instead of refusing it")
+            }
+        }
+    }
+
+    /// An oversized (but valid) `settings.toml` is refused by W10's per-file
+    /// bound: the gate must never slurp a multi-GB hostile file, and it
+    /// degrades to "no hooks from this file", exactly like an unreadable one.
+    #[test]
+    fn inspect_refuses_an_oversized_settings_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        let settings = theme
+            .join("providers")
+            .join("noctalia-v5")
+            .join("settings.toml");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let mut content = b"[hooks]\nstarted = \"echo pwned\"\n".to_vec();
+        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b'\n');
+        fs::write(&settings, content).unwrap();
+
+        let report = inspect_theme_package(&theme);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "an over-bound settings.toml must declare no hooks, got {:?}",
+            report.shell_hooks
         );
     }
 }

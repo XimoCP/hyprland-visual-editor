@@ -445,7 +445,12 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
         return Err("Theme has no mpvpaper manifest".into());
     }
 
-    let raw = fs::read_to_string(&manifest_path)
+    // W10b: the theme's manifest is an UNTRUSTED file — the read is routed
+    // through the bounded, regular-file-guarded reader (W10 owns the ONE set
+    // of limits and the ONE error type), so a FIFO or over-bound manifest is
+    // refused HERE instead of blocking the open or slurping the file, for
+    // every caller. A refusal keeps the ordinary `Err` shape below.
+    let raw = crate::theme_media::read_theme_record(&manifest_path)
         .map_err(|e| format!("Cannot read manifest: {}", e))?;
     let manifest: MpvpaperManifest = serde_json::from_str(&raw)
         .map_err(|e| format!("Cannot parse manifest: {}", e))?;
@@ -1060,6 +1065,37 @@ video_directory = "~/Videos"
                  the neutral runtime seam (capability routing: the media backend owns \
                  mpvpaper processes, manifests and downloads, never supervision)"
             );
+        }
+    }
+
+    // ── W10b: the theme's manifest is an UNTRUSTED file ────────────────
+
+    /// A FIFO named like the theme's manifest must be REFUSED, not block the
+    /// apply forever: the open of a FIFO blocks, so the refusal has to happen
+    /// before it. The read runs on a worker thread, and a timeout proves it
+    /// returned instead of hanging.
+    #[test]
+    fn apply_manifest_refuses_a_fifo_manifest_instead_of_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let theme = tempfile::tempdir().unwrap();
+        let provider_dir = theme.path().join("providers").join("noctalia-v5");
+        std::fs::create_dir_all(&provider_dir).unwrap();
+        let fifo = provider_dir.join(crate::providers::bg_info::MANIFEST_FILE);
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+
+        let theme_dir = theme.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(apply_manifest(&theme_dir));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(result) => assert!(
+                result.is_err(),
+                "a FIFO manifest must be refused, got {result:?}"
+            ),
+            Err(_) => panic!("apply_manifest blocked on a FIFO manifest instead of refusing it"),
         }
     }
 }

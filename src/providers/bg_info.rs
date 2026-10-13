@@ -125,7 +125,11 @@ pub fn save_manifest(provider_dir: &Path) -> Result<(), String> {
 /// knowledge lives here, next to [`MANIFEST_FILE`] and the manifest types:
 /// callers never parse this file themselves.
 pub fn preview_candidates(provider_dir: &Path) -> Vec<PathBuf> {
-    let Ok(text) = fs::read_to_string(provider_dir.join(MANIFEST_FILE)) else {
+    // W10b: the manifest is an UNTRUSTED theme file — the read is routed
+    // through the bounded, regular-file-guarded reader (W10 owns the ONE set
+    // of limits and the ONE error type). An absent, unreadable, non-regular
+    // or over-bound manifest declares nothing, exactly like an unreadable one.
+    let Ok(text) = crate::theme_media::read_theme_record(&provider_dir.join(MANIFEST_FILE)) else {
         return Vec::new();
     };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
@@ -168,7 +172,9 @@ pub struct VideoUrl {
 /// assignment carries no url — the caller then records nothing and the theme
 /// travels with its poster alone.
 pub fn video_url_for(provider_dir: &Path, source: &Path) -> Option<VideoUrl> {
-    let text = fs::read_to_string(provider_dir.join(MANIFEST_FILE)).ok()?;
+    // W10b: same untrusted manifest, same bounded reader as
+    // [`preview_candidates`]: a refusal records no url.
+    let text = crate::theme_media::read_theme_record(&provider_dir.join(MANIFEST_FILE)).ok()?;
     let manifest: MpvpaperManifest = serde_json::from_str(&text).ok()?;
     let source_str = source.to_string_lossy();
     let source_name = source.file_name().and_then(|n| n.to_str());
@@ -928,6 +934,80 @@ mod tests {
             ),
             None,
             "a static theme must never notify"
+        );
+    }
+
+    // ── W10b: the theme's manifest is an UNTRUSTED file ────────────────
+
+    /// Create a FIFO at `path` (no std equivalent; `libc::mkfifo`).
+    fn mkfifo(path: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+    }
+
+    /// A FIFO named like the manifest must be REFUSED, not block the gallery:
+    /// the read runs on a worker thread, and a timeout proves it returned
+    /// instead of hanging forever on the open.
+    #[test]
+    fn preview_candidates_refuse_a_fifo_manifest_instead_of_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        mkfifo(&dir.path().join(crate::providers::bg_info::MANIFEST_FILE));
+
+        let provider_dir = dir.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::providers::bg_info::preview_candidates(&provider_dir));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(candidates) => assert!(
+                candidates.is_empty(),
+                "a FIFO manifest must declare nothing, got {candidates:?}"
+            ),
+            Err(_) => {
+                panic!("preview_candidates blocked on a FIFO manifest instead of refusing it")
+            }
+        }
+    }
+
+    /// An oversized but perfectly valid manifest is refused by W10's per-file
+    /// bound BEFORE it is parsed: the gallery must never slurp a multi-GB
+    /// hostile manifest just to learn its one assignment.
+    #[test]
+    fn preview_candidates_refuse_an_oversized_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut content = br#"{"version":1,"assignments":{"*":{"filename":"x.mp4","local_path":"/videos/x.mp4","url":"https://example.com/x.mp4"}}}"#.to_vec();
+        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        fs::write(
+            dir.path().join(crate::providers::bg_info::MANIFEST_FILE),
+            content,
+        )
+        .unwrap();
+
+        assert!(
+            crate::providers::bg_info::preview_candidates(dir.path()).is_empty(),
+            "an over-bound manifest must declare nothing"
+        );
+    }
+
+    /// Same bound for the url lookup the packaging path uses.
+    #[test]
+    fn video_url_for_refuses_an_oversized_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = Path::new("/videos/x.mp4");
+        let mut content = br#"{"version":1,"assignments":{"*":{"filename":"x.mp4","local_path":"/videos/x.mp4","url":"https://example.com/x.mp4"}}}"#.to_vec();
+        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        fs::write(
+            dir.path().join(crate::providers::bg_info::MANIFEST_FILE),
+            content,
+        )
+        .unwrap();
+
+        assert_eq!(
+            crate::providers::bg_info::video_url_for(dir.path(), source),
+            None,
+            "an over-bound manifest must record no url"
         );
     }
 }

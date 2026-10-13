@@ -354,7 +354,7 @@ impl ThemeManager {
                 continue;
             }
             let meta_path = entry.path().join("meta.json");
-            let Ok(raw) = fs::read_to_string(&meta_path) else {
+            let Ok(raw) = crate::theme_media::read_theme_record(&meta_path) else {
                 continue;
             };
             let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -483,7 +483,7 @@ impl ThemeManager {
         for entry in entries {
             let name = entry.file_name().to_string_lossy().to_string();
             let meta_path = entry.path().join("meta.json");
-            let meta = fs::read_to_string(&meta_path)
+            let meta = crate::theme_media::read_theme_record(&meta_path)
                 .ok()
                 .and_then(|s| serde_json::from_str::<ThemeMeta>(&s).ok());
             let providers = meta.as_ref().map(|m| m.providers.clone()).unwrap_or_default();
@@ -527,7 +527,7 @@ impl ThemeManager {
         if !theme_dir.is_dir() {
             return None;
         }
-        let meta = fs::read_to_string(theme_dir.join("meta.json"))
+        let meta = crate::theme_media::read_theme_record(&theme_dir.join("meta.json"))
             .ok()
             .and_then(|s| serde_json::from_str::<ThemeMeta>(&s).ok());
         let recorded: Vec<String> = meta.as_ref().map(|m| m.providers.clone()).unwrap_or_default();
@@ -607,7 +607,7 @@ impl ThemeManager {
 
         // Read meta to know which providers were saved
         let meta_path = theme_dir.join("meta.json");
-        let meta: ThemeMeta = fs::read_to_string(&meta_path)
+        let meta: ThemeMeta = crate::theme_media::read_theme_record(&meta_path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or(ThemeMeta {
@@ -770,7 +770,7 @@ impl ThemeManager {
             );
             return;
         }
-        let meta: ThemeMeta = match fs::read_to_string(theme_dir.join("meta.json"))
+        let meta: ThemeMeta = match crate::theme_media::read_theme_record(&theme_dir.join("meta.json"))
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
         {
@@ -1246,6 +1246,59 @@ mod tests {
         assert!(tm.theme_info("").is_none(), "an empty name is refused");
         assert!(tm.theme_info("Nope").is_none(), "an unknown theme is refused");
         assert!(tm.theme_info("Cars").is_some(), "a real theme still reports");
+    }
+
+    // ── W10b: a theme's `meta.json` is an UNTRUSTED file ───────────────
+
+    /// A FIFO named like a theme's `meta.json` must not block startup:
+    /// `ThemeManager::new` migrates every meta at construction, so a blocking
+    /// read would hang it. The construction runs on a worker thread, and a
+    /// timeout proves it returned instead of hanging on the FIFO open.
+    #[test]
+    fn theme_manager_new_does_not_block_on_a_fifo_meta_json() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = TempDir::new().unwrap();
+        let theme_dir = tmp.path().join("hve").join("themes").join("Evil");
+        fs::create_dir_all(&theme_dir).unwrap();
+        let fifo = theme_dir.join("meta.json");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+
+        let config_dir = tmp.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _tm = ThemeManager::new(&config_dir);
+            let _ = tx.send(());
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(()) => {}
+            Err(_) => {
+                panic!("ThemeManager::new blocked on a FIFO meta.json instead of refusing it")
+            }
+        }
+    }
+
+    /// An oversized (but valid) `meta.json` is refused by W10's per-file
+    /// bound instead of being slurped whole: the theme still reports — the
+    /// graceful skip an unreadable meta already gets — but declares no
+    /// providers from the refused file.
+    #[test]
+    fn theme_info_refuses_an_oversized_meta_json() {
+        let tmp = TempDir::new().unwrap();
+        let theme_dir = tmp.path().join("hve").join("themes").join("Fat");
+        fs::create_dir_all(&theme_dir).unwrap();
+        let mut meta = br#"{"saved_at":"2026-10-03T00:00:00Z","description":"","providers":["noctalia-v5"]}"#.to_vec();
+        meta.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        fs::write(theme_dir.join("meta.json"), meta).unwrap();
+
+        let tm = ThemeManager::new(tmp.path());
+        let facts = tm.theme_info("Fat").expect("the theme still reports");
+        assert!(
+            facts.providers.is_empty(),
+            "an over-bound meta.json must declare no providers, got {:?}",
+            facts.providers
+        );
     }
 
     #[test]

@@ -213,6 +213,24 @@ fn mpvpaper_manifest_leg(req: &ApplyBackgroundRequest) -> ApplyBackgroundOutcome
             },
         };
     }
+    // W10b: the manifest is an UNTRUSTED theme file and `apply_manifest` reads
+    // it whole. Refuse a non-regular file (a FIFO named like the manifest would
+    // block that read forever — W10's `Read::take` bound cannot help) and one
+    // over W10's per-file bound BEFORE delegating, so a hostile manifest is
+    // never opened. A refusal is a warning plus the manifest leg skipping:
+    // nothing was written, killed or bounced, so the apply is never half-done.
+    let manifest_path = req.provider_dir.join(bg_info::MANIFEST_FILE);
+    if !crate::theme_media::theme_file_is_regular(&manifest_path)
+        || !crate::theme_package::theme_file_is_bounded(&manifest_path)
+    {
+        return ApplyBackgroundOutcome {
+            animated_applied: false,
+            notification,
+            leg: RoutedLeg::ManifestRefused(
+                "the saved manifest is not a regular, bounded file".into(),
+            ),
+        };
+    }
     match crate::providers::mpvpaper::apply_manifest(&req.theme_dir) {
         Ok(()) => ApplyBackgroundOutcome {
             animated_applied: true,
@@ -2347,5 +2365,87 @@ mod tests {
         // Presence unknown: HOLD, never guess.
         assert_eq!(picker_voice_action(true, None, false), Nothing);
         assert_eq!(picker_voice_action(true, None, true), Nothing);
+    }
+
+    // ── W10b: the theme's manifest is an UNTRUSTED file ────────────────
+
+    /// Create a FIFO at `path` (no std equivalent; `libc::mkfifo`).
+    fn mkfifo(path: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+    }
+
+    /// A FIFO named like the manifest must be REFUSED, not block: the manifest
+    /// leg runs on a worker thread, and a timeout proves it returned instead
+    /// of hanging forever on the delegated read.
+    #[test]
+    #[serial]
+    fn manifest_leg_refuses_a_fifo_manifest_instead_of_blocking() {
+        let sandbox = ProbeSandbox::new(true);
+        let theme = TempDir::new().unwrap();
+        let provider_dir = theme.path().join("providers").join("noctalia-v5");
+        std::fs::create_dir_all(&provider_dir).unwrap();
+        mkfifo(&provider_dir.join(bg_info::MANIFEST_FILE));
+
+        let req = ApplyBackgroundRequest {
+            theme_dir: theme.path().to_path_buf(),
+            provider_dir,
+            animated_applied: false,
+            static_wallpaper: None,
+            video_want: bg_info::VideoWant::None,
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(apply_animated(&req));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(outcome) => {
+                assert!(
+                    matches!(outcome.leg, RoutedLeg::ManifestRefused(_)),
+                    "a FIFO manifest must be refused, got {:?}",
+                    outcome.leg
+                );
+                assert!(!outcome.animated_applied);
+            }
+            Err(_) => panic!("apply_animated blocked on a FIFO manifest instead of refusing it"),
+        }
+        drop(sandbox);
+    }
+
+    /// A manifest one byte over W10's per-file bound is refused BEFORE it is
+    /// parsed, with the bound's own reason — not by the JSON parser failing on
+    /// whatever happens to be inside it. The fixture is valid JSON padded past
+    /// the bound, so without the guard the plugin backend would parse it and
+    /// refuse for an unrelated reason.
+    #[test]
+    #[serial]
+    fn manifest_leg_refuses_an_oversized_manifest_with_the_bounds_reason() {
+        let _sandbox = ProbeSandbox::new(true);
+        let theme = TempDir::new().unwrap();
+        let provider_dir = theme.path().join("providers").join("noctalia-v5");
+        std::fs::create_dir_all(&provider_dir).unwrap();
+        let mut content = br#"{"version":1,"assignments":{}}"#.to_vec();
+        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        std::fs::write(provider_dir.join(bg_info::MANIFEST_FILE), content).unwrap();
+
+        let req = ApplyBackgroundRequest {
+            theme_dir: theme.path().to_path_buf(),
+            provider_dir,
+            animated_applied: false,
+            static_wallpaper: None,
+            video_want: bg_info::VideoWant::None,
+        };
+
+        let outcome = apply_animated(&req);
+
+        assert!(
+            matches!(&outcome.leg, RoutedLeg::ManifestRefused(r) if r.contains("bounded file")),
+            "the oversized manifest must be refused by the bound, got {:?}",
+            outcome.leg
+        );
+        assert!(!outcome.animated_applied);
     }
 }

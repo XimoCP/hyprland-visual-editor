@@ -443,17 +443,22 @@ fn resolve_assert_color_authority(
     if !theme_dir.is_dir() {
         return format_response(Err(format!("theme '{last_applied}' not found")));
     }
-    let meta: crate::theme_manager::ThemeMeta = match std::fs::read_to_string(theme_dir.join("meta.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-    {
-        Some(meta) => meta,
-        None => {
-            return format_response(Err(format!(
-                "cannot read metadata for theme '{last_applied}'"
-            )))
-        }
-    };
+    // W10b: the applied theme's `meta.json` is an UNTRUSTED file — bounded,
+    // regular-file-guarded read (W10 owns the ONE set of limits and the ONE
+    // error type). A refusal is the ordinary "cannot read metadata" error
+    // response below, never a panic and never a blocking open.
+    let meta: crate::theme_manager::ThemeMeta =
+        match crate::theme_media::read_theme_record(&theme_dir.join("meta.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(meta) => meta,
+            None => {
+                return format_response(Err(format!(
+                    "cannot read metadata for theme '{last_applied}'"
+                )))
+            }
+        };
     for id in &meta.providers {
         let Some(provider) = manager.provider(id) else {
             continue;
@@ -1275,5 +1280,41 @@ mod tests {
             "the grace window must keep the theme's colours after the picker closes"
         );
         assert_eq!(crate::color_authority::read_descriptor(), Some(authority));
+    }
+
+    // ── W10b: the applied theme's meta.json is an UNTRUSTED file ───────
+
+    /// A FIFO named like the applied theme's `meta.json` must be REFUSED, not
+    /// block the palette re-assert forever: the open of a FIFO blocks, so the
+    /// refusal has to happen before it. The call runs on a worker thread, and
+    /// a timeout proves it returned the usual error response instead of
+    /// hanging.
+    #[test]
+    fn assert_color_authority_refuses_a_fifo_meta_json_instead_of_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let config_dir = tempfile::tempdir().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        let theme_dir = themes_dir.join("Demo");
+        std::fs::create_dir_all(&theme_dir).unwrap();
+        let fifo = theme_dir.join("meta.json");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+
+        let config = config_dir.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let tm = crate::theme_manager::ThemeManager::new(&config);
+            let _ = tx.send(resolve_assert_color_authority("Demo", &themes_dir, &tm));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(response) => assert_ne!(
+                response, "ok\n",
+                "a FIFO meta.json must be refused, never re-asserted: {response}"
+            ),
+            Err(_) => {
+                panic!("assert-color-authority blocked on a FIFO meta.json instead of refusing it")
+            }
+        }
     }
 }

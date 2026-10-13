@@ -27,6 +27,59 @@ const VIDEO_POSTER_NAME: &str = "poster.jpg";
 /// File stem shared by every packaged poster (`poster.jpg`, `poster.png`).
 const POSTER_STEM: &str = "poster";
 
+// ── W10b (theme-package trust): bounded reads of untrusted theme records ──
+//
+// A theme package is UNTRUSTED input: anyone can hand HVE a directory that
+// claims to be a theme. W10 (`src/theme_package.rs`) owns the ONE set of
+// limits (`MAX_THEME_FILE_BYTES` = 4 MiB) and the ONE error type
+// (`ThemeReadError`); this module reuses them through
+// `crate::theme_package::read_theme_text` and never duplicates a number. The
+// only thing added here is the REGULAR-FILE half of the guard, which W10's
+// `Read::take` bound cannot express: a FIFO, socket or device named like a
+// theme record makes `File::open` block forever, so it must be refused
+// BEFORE the open.
+
+/// Whether `path` resolves to a regular file.
+///
+/// Symlinks to regular files are accepted ON PURPOSE: `fs::metadata` follows
+/// links, and the apply's own `fs::copy` follows them too — refusing a link
+/// would be a behaviour change. A FIFO, socket or device answers `false` (the
+/// caller warns and skips instead of blocking). A path that cannot be
+/// stat'ed (missing / permission denied) answers `true`, so the bounded
+/// reader's own I/O error reports it exactly as today.
+pub fn theme_file_is_regular(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) => metadata.file_type().is_file(),
+        Err(_) => true,
+    }
+}
+
+/// Read one untrusted theme text record under W10's bound, refusing a
+/// non-regular file first.
+///
+/// This is the single entry point every read of a THEME file goes through: it
+/// adds the regular-file guard on top of W10's bounded
+/// [`crate::theme_package::read_theme_text`] (the ONE source of the 4 MiB
+/// limit and the `ThemeReadError` type). A refusal — over-bound OR
+/// non-regular — is a warning plus an `Err`; callers skip gracefully exactly
+/// like a missing file.
+pub fn read_theme_record(
+    path: &Path,
+) -> Result<String, crate::theme_package::ThemeReadError> {
+    if !theme_file_is_regular(path) {
+        tracing::warn!(
+            "[theme-trust] refusing to read {}: it is not a regular file (a FIFO, socket or \
+             device named like a theme record would block or mislead); skipping",
+            path.display()
+        );
+        return Err(crate::theme_package::ThemeReadError::Unreadable(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    crate::theme_package::read_theme_text(path)
+}
+
 /// Package `source` as the theme's own poster under `{theme_dir}/media/` and
 /// return the theme-relative path for the record (see
 /// [`POSTER_RECORD_FILE`]).
@@ -207,7 +260,7 @@ pub fn parse_poster_record(text: &str) -> Option<PathBuf> {
 /// disk. A `media/` file with no record is deliberately ignored: a leftover
 /// artifact must never resurrect a background the theme no longer declares.
 pub fn resolve_theme_poster(theme_dir: &Path, provider_dir: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(provider_dir.join(POSTER_RECORD_FILE)).ok()?;
+    let text = read_theme_record(&provider_dir.join(POSTER_RECORD_FILE)).ok()?;
     let relative = parse_poster_record(&text)?;
     let absolute = theme_dir.join(&relative);
     if absolute.is_file() {
@@ -461,7 +514,7 @@ pub fn resolve_theme_video(
     provider_dir: &Path,
     absolute: Option<&Path>,
 ) -> Option<ThemeVideoSource> {
-    let record = std::fs::read_to_string(provider_dir.join(VIDEO_RECORD_FILE))
+    let record = read_theme_record(&provider_dir.join(VIDEO_RECORD_FILE))
         .ok()
         .map(|text| parse_video_record(&text))
         .unwrap_or_default();
@@ -518,7 +571,7 @@ pub fn declared_backgrounds(theme_dir: &Path, provider_dir: &Path) -> Vec<String
         // live background path to compare against.
         Some(ThemeVideoSource::Url { .. }) | None => {}
     }
-    if let Ok(text) = std::fs::read_to_string(provider_dir.join(STATIC_RECORD_FILE)) {
+    if let Ok(text) = read_theme_record(&provider_dir.join(STATIC_RECORD_FILE)) {
         let wallpaper = text.trim();
         if !wallpaper.is_empty() {
             push_unique(&mut out, PathBuf::from(wallpaper));
@@ -536,7 +589,7 @@ const STATIC_RECORD_FILE: &str = "wallpaper.txt";
 /// inline so this core module never reaches into a provider module; a
 /// relative path is rejected exactly like the provider's own parser.
 fn legacy_painter_video_path(provider_dir: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(provider_dir.join("video.txt")).ok()?;
+    let text = read_theme_record(&provider_dir.join("video.txt")).ok()?;
     text.lines().find_map(|line| {
         let rest = line.strip_prefix("path=")?.trim();
         if rest.is_empty() {
@@ -1173,5 +1226,99 @@ mod tests {
             !declared.contains(&legacy.display().to_string()),
             "the legacy absolute record must not shadow the packaged video: {declared:?}"
         );
+    }
+
+    // ── W10b: bounded reads of untrusted theme records ─────────────────
+    //
+    // A theme package is UNTRUSTED input. Every THEME-file read now goes
+    // through `read_theme_record`, which layers W10's regular-file guard on
+    // top of the bounded reader `crate::theme_package::read_theme_text` (the
+    // ONE source of the 4 MiB limit and the `ThemeReadError` type). These
+    // prove: an oversized record is refused without being slurped, a FIFO is
+    // refused instead of blocking, a legitimate record reads byte-identically,
+    // and a symlink to a regular file still works.
+
+    /// Create a FIFO at `path` (no std equivalent; `libc::mkfifo`).
+    fn mkfifo(path: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+    }
+
+    #[test]
+    fn read_theme_record_reads_a_legitimate_file_byte_identically() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("poster.txt");
+        let content = "poster=media/póster áéí.png\n";
+        std::fs::write(&file, content).unwrap();
+        assert_eq!(read_theme_record(&file).unwrap(), content);
+    }
+
+    /// A valid-looking record at the very START of an oversized file must not
+    /// be parsed: the size refusal happens before the content is consumed.
+    #[test]
+    fn read_theme_record_refuses_an_oversized_file_without_reading_it_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("poster.txt");
+        let mut content = b"poster=/home/someone/secret.png\n".to_vec();
+        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b'x');
+        std::fs::write(&file, content).unwrap();
+
+        let err = read_theme_record(&file).expect_err("an over-bound record must be refused");
+        assert!(
+            err.is_oversized(),
+            "an oversized record must refuse as TooLarge, got: {err}"
+        );
+    }
+
+    #[test]
+    fn read_theme_record_reads_a_symlink_to_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.txt");
+        std::fs::write(&target, "poster=media/poster.jpg\n").unwrap();
+        let link = dir.path().join("poster.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(
+            theme_file_is_regular(&link),
+            "a symlink to a regular file must still be accepted"
+        );
+        assert_eq!(read_theme_record(&link).unwrap(), "poster=media/poster.jpg\n");
+    }
+
+    #[test]
+    fn theme_file_is_regular_accepts_a_regular_file_and_rejects_a_fifo() {
+        let dir = tempfile::tempdir().unwrap();
+        let regular = dir.path().join("regular.txt");
+        std::fs::write(&regular, b"x").unwrap();
+        assert!(theme_file_is_regular(&regular));
+
+        let fifo = dir.path().join("fifo.txt");
+        mkfifo(&fifo);
+        assert!(
+            !theme_file_is_regular(&fifo),
+            "a FIFO must not count as a regular file"
+        );
+    }
+
+    /// A FIFO named like a theme record must be REFUSED, not block: the read
+    /// runs on a worker thread, and a timeout proves it returned instead of
+    /// hanging forever on the open.
+    #[test]
+    fn read_theme_record_refuses_a_fifo_instead_of_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("poster.txt");
+        mkfifo(&fifo);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fifo = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_theme_record(&fifo));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(result) => assert!(result.is_err(), "a FIFO must be refused, got: {result:?}"),
+            Err(_) => panic!("read_theme_record blocked on a FIFO instead of refusing it"),
+        }
     }
 }
