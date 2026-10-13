@@ -22,6 +22,11 @@ slint = "1.17"
 tiny-skia = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# W1d: the theme-trust detector parses a package's `settings.toml` with a
+# REAL TOML parser instead of reading it line by line. `preserve_order`
+# keeps the report in file order (the documented report contract and the
+# warning's reading order).
+toml = { version = "1.1", features = ["preserve_order"] }
 usvg = "0.45"
 libc = "0.2.189"
 
