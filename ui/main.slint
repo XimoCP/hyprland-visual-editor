@@ -346,6 +346,10 @@ export component MainWindow inherits Window {
     in property <string> trust-warning-theme-name: "";
     in property <[string]> trust-warning-hooks: [];
     in property <[string]> trust-warning-presets: [];
+    // W2c: whether pressing Continue will remember this acceptance (false
+    // when part of the package could not be inspected, so the copy must not
+    // promise a silence HVE will not keep) — bridged like the payload above.
+    in property <bool> trust-warning-remembered: true;
     callback trust-warning-confirmed();
     callback trust-warning-cancelled();
 
@@ -655,6 +659,7 @@ export component MainWindow inherits Window {
         trust-warning-theme-name: root.trust-warning-theme-name;
         trust-warning-hooks: root.trust-warning-hooks;
         trust-warning-presets: root.trust-warning-presets;
+        trust-warning-remembered: root.trust-warning-remembered;
         trust-warning-confirmed => { root.trust-warning-confirmed(); }
         trust-warning-cancelled => { root.trust-warning-cancelled(); }
         panel-back => { root.panel-back(); }

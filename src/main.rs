@@ -25,6 +25,7 @@ mod theme_media;
 mod theme_package;
 mod theme_presets;
 pub mod theme_trust;
+mod theme_trust_store;
 mod tr;
 mod tray;
 mod utils;
@@ -1418,6 +1419,9 @@ fn show_trust_warning(
     window.set_trust_warning_theme_name(slint::SharedString::from(name));
     window.set_trust_warning_hooks(slint::ModelRc::new(slint::VecModel::from(hooks)));
     window.set_trust_warning_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
+    // W2c: the copy must not promise a silence HVE will not keep, so the
+    // warning is told whether Continue can remember this acceptance at all.
+    window.set_trust_warning_remembered(trust_acceptance_can_be_remembered(report));
     // While the gate is up, borrow the panel's Save dialog mode with a
     // value the Save section does not render. panel-kbd answers Escape by
     // clearing that mode, so Escape on the panel DECLINES the gate
@@ -1441,6 +1445,19 @@ fn hide_trust_warning(window: &MainWindow) {
     }
 }
 
+/// Whether an acceptance of this report can be REMEMBERED in the store at
+/// all (W2c): only a package that carries something AND was fully inspected.
+///
+/// A clean package needs no record, and an UNINSPECTED one must never get
+/// one — a file nobody could read can change inside without the report
+/// changing, so a remembered acceptance of it would apply rewritten content
+/// on consent given to a description. The warning's copy reads this same
+/// rule, so the text and the store can never disagree about whether HVE will
+/// remember the decision.
+fn trust_acceptance_can_be_remembered(report: &crate::theme_trust::ThemeTrustReport) -> bool {
+    !report.is_empty() && !report.is_uninspected()
+}
+
 /// W2: consult the gate before an apply, on BOTH paths. Returns true
 /// only when the apply may proceed exactly as it did before the gate
 /// existed; otherwise the warning is (or already was) showing and the
@@ -1449,20 +1466,64 @@ fn hide_trust_warning(window: &MainWindow) {
 /// The package is inspected fresh on every attempt — including the
 /// confirmed re-entry — so the report the warning showed and the report
 /// consulted here can never disagree about what is on disk.
+///
+/// W2c: `store_path` is where the keeper's acceptances are remembered. It
+/// is a parameter, not a constant, so the tests drive it in a temp dir and
+/// never touch the real store. The store is read ONLY for a package that
+/// carries something (a clean theme costs no I/O and its path does not
+/// depend on the store), and the acceptance is written ONLY once an apply
+/// has actually gone through: a re-entry the mutating guard swallowed
+/// remembers nothing, exactly as it applies nothing.
 pub(crate) fn trust_gate_request(
     window: &MainWindow,
     name: &str,
     index: i32,
     origin: crate::theme_trust::ApplyOrigin,
     themes_root: &std::path::Path,
+    store_path: &std::path::Path,
 ) -> bool {
     let report = crate::theme_trust::inspect_theme_package(&themes_root.join(name));
+    // The stored acceptance for EXACTLY this content, if there is one. A
+    // store that cannot be read answers "nothing accepted" (W2c S7), so the
+    // warning comes back instead of an apply nobody consented to. A report
+    // that cannot be remembered (W2c S1) never consults the store either:
+    // nothing can be stored for it, so the warning is owed every time.
+    let mut store = if trust_acceptance_can_be_remembered(&report) {
+        Some(crate::theme_trust_store::TrustStore::load(store_path))
+    } else {
+        None
+    };
+    let already_accepted = store
+        .as_ref()
+        .is_some_and(|s| s.accepts(name, &report));
     let decision = {
         let mut gate = theme_trust_gate();
-        gate.request(name, index, origin, &report)
+        gate.request(name, index, origin, &report, already_accepted)
     }; // guard dropped BEFORE any window write
     match decision {
-        crate::theme_trust::GateDecision::Proceed => true,
+        crate::theme_trust::GateDecision::Proceed => {
+            if let Some(store) = store.as_mut() {
+                if !already_accepted {
+                    store.remember(name, &report);
+                    match store.save(store_path) {
+                        Ok(()) => tracing::info!(
+                            "[theme-trust] keeper accepted '{}' — remembered in {} until the package's content changes",
+                            name,
+                            store_path.display()
+                        ),
+                        // Not fatal: the apply proceeds and the warning simply
+                        // comes back next time, which is the safe direction.
+                        Err(e) => tracing::warn!(
+                            "[theme-trust] could not remember the acceptance of '{}' in {}: {} — the warning will come back",
+                            name,
+                            store_path.display(),
+                            e
+                        ),
+                    }
+                }
+            }
+            true
+        }
         crate::theme_trust::GateDecision::Blocked => {
             tracing::debug!(
                 "[theme-trust] apply of '{}' ignored while the warning is open",
@@ -3972,6 +4033,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     // confirmation and applies exactly as before. While the
                     // warning is up nothing on disk changes — and with no
                     // window to warn with, nothing applies either.
+                    // W2c: an acceptance the keeper already gave for exactly
+                    // this content applies in silence; the acceptance is
+                    // remembered here, on the apply that goes through.
                     let gated = win.upgrade().is_some_and(|w| {
                         trust_gate_request(
                             &w,
@@ -3979,6 +4043,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             idx,
                             crate::theme_trust::ApplyOrigin::Gallery,
                             &gallery_themes_root,
+                            &crate::theme_trust_store::store_path(),
                         )
                     });
                     if !gated {
@@ -5044,6 +5109,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // W2 consent gate: the SAME rule as the gallery path. The
                 // gate holds a risky package and shows the warning; Continue
                 // re-invokes this callback with the one-shot confirmation.
+                // W2c: the same remembered acceptance applies here too.
                 let gated = weak.upgrade().is_some_and(|w| {
                     trust_gate_request(
                         &w,
@@ -5051,6 +5117,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         idx,
                         crate::theme_trust::ApplyOrigin::Panel,
                         &gallery_themes_root_c,
+                        &crate::theme_trust_store::store_path(),
                     )
                 });
                 if !gated {

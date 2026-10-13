@@ -152,6 +152,12 @@ export component ShellRoot inherits Rectangle {
     in property <string> trust-warning-theme-name: "";
     in property <[string]> trust-warning-hooks: [];
     in property <[string]> trust-warning-presets: [];
+    // W2c: whether pressing Continue will REMEMBER this acceptance. It will
+    // not when part of the package could not be inspected — HVE cannot
+    // record content it never read, and a file nobody could read can change
+    // without the report changing — so the warning must not promise a
+    // silence it will not keep.
+    in property <bool> trust-warning-remembered: true;
     callback trust-warning-confirmed();
     callback trust-warning-cancelled();
 
@@ -1013,6 +1019,7 @@ export component ShellRoot inherits Rectangle {
         theme-name: root.trust-warning-theme-name;
         hook-lines: root.trust-warning-hooks;
         preset-lines: root.trust-warning-presets;
+        acceptance-remembered: root.trust-warning-remembered;
         confirmed => { root.trust-warning-confirmed(); }
         cancelled => { root.trust-warning-cancelled(); }
     }

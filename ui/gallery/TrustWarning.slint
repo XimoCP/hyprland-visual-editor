@@ -13,6 +13,13 @@
 // with the keeper's own permissions, and the copy must never be worded
 // as if HVE prevented that.
 //
+// W2c: Continue is no longer a one-shot. The acceptance is REMEMBERED for
+// exactly the content shown, so the warning does not come back until the
+// package changes — and the copy says so. One state is the exception and
+// says the opposite: a package part of which could not be INSPECTED is
+// never remembered (HVE does not record what it could not read), so
+// `acceptance-remembered` is false there and the copy promises nothing.
+//
 // The component takes the keyboard when it opens: its own observer on
 // `open` focuses `trust-kbd`, the gate's FocusScope, so the modal owns
 // every key while it is up (Left/Right/Tab move the cursor between
@@ -31,6 +38,10 @@ export component TrustWarning inherits Rectangle {
     in property <string> theme-name: "";
     in property <[string]> hook-lines: [];
     in property <[string]> preset-lines: [];
+    // W2c: whether Continue will remember this acceptance. False when part
+    // of the package could not be inspected — HVE records nothing it could
+    // not read, so the copy must not promise a silence it will not keep.
+    in property <bool> acceptance-remembered: true;
     // The gate's open flag (bound from `trust-warning-open`) and the
     // app's reduced-motion flag: the fade is 0ms when motion is off.
     in property <bool> open: false;
@@ -187,7 +198,9 @@ export component TrustWarning inherits Rectangle {
             }
 
             Text {
-                text: "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal.";
+                text: root.acceptance-remembered
+                    ? "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. Continuing remembers this acceptance for this theme: HVE will not ask again while the content above stays exactly as it is, and it asks again as soon as any of it changes."
+                    : "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. Part of this package could not be read, so this decision is NOT remembered: HVE asks again the next time you apply this theme.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-13;
                 color: HveColors.text;
