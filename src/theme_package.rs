@@ -256,11 +256,25 @@ fn read_active_presets(state_path: &Path) -> crate::theme_presets::ActivePresets
 /// Package `theme_dir` in place using the real T1/T3/T4 helpers.
 ///
 /// Returns [`PackageStatus::Skipped`] when the theme carries no resolvable
-/// background record, or when `theme_dir` is a SYMLINK (refused before any
-/// read or write — see the guard below). Otherwise the poster, the video and
-/// the custom presets are (re)packaged exactly like a save. The only files
-/// ever written live inside `theme_dir`, which the symlink guard keeps a real
-/// directory.
+/// background record, when `theme_dir` is a SYMLINK, or when its tree
+/// contains a symlinked DIRECTORY — both symlink refusals run BEFORE the
+/// first read or write (see the guard below). Otherwise the poster, the
+/// video and the custom presets are (re)packaged exactly like a save.
+///
+/// What the guard does and does not promise, stated exactly (a security
+/// comment that overstates is a defect): every path this function writes to
+/// is a path INSIDE `theme_dir`, and the tree check keeps every DIRECTORY
+/// on those paths a REAL directory, so no write here is aimed at a
+/// directory outside the theme through a directory link. Two things are NOT
+/// claimed. (1) A symlink to a regular FILE inside the tree is accepted on
+/// purpose — documented behaviour, the bounded readers follow it too — and
+/// a WRITE whose final component is such a link follows it as well, so
+/// those bytes land in its target; accepted, not protected. (2) The
+/// deletions here (`remove_theme_poster`, `remove_theme_video`) run through
+/// `fs::remove_file`, which is `unlink(2)`: it removes the LINK entry
+/// itself and never its target — measured in
+/// `the_poster_cleanup_unlinks_a_file_symlink_and_leaves_its_target` — so
+/// they cannot delete the file a child symlink points at.
 pub fn package_theme_dir(
     theme_dir: &Path,
     assets_dir: &Path,
@@ -275,9 +289,9 @@ pub fn package_theme_dir(
     // theme dir is refused HERE, before the first read or write, with ONE
     // warning, so nothing escapes: `is_symlink()` inspects the path itself
     // (it does not follow the final link), which is exactly the property that
-    // must be refused. The honest limit, stated for the record: this guard
-    // covers a symlinked theme directory handed in as the root; a symlinked
-    // CHILD inside a real theme dir is the walk's job (`scan_theme_dir`).
+    // must be refused. A symlinked CHILD inside a real theme dir is refused
+    // by the tree check right below (W10c-d) — NOT by `scan_theme_dir`,
+    // which refuses to read such a tree and never blocks a write.
     if theme_dir.is_symlink() {
         tracing::warn!(
             "[theme-package] refusing to package {}: a symlinked theme directory \
@@ -287,6 +301,43 @@ pub fn package_theme_dir(
         return PackageStatus::Skipped(
             "symlinked theme directory (refused, nothing read or written)".into(),
         );
+    }
+    // W10c-d (CRITICAL-class): a symlinked CHILD directory is the same
+    // write-through shape one level down, and the root guard above never
+    // saw it. Every write below targets a path under `theme_dir` — the
+    // settings sanitizer's `fs::write` (`noctalia.rs:652`),
+    // `write_theme_poster`, `package_theme_video` and `copy_preset` — and
+    // the kernel follows a path whose DIRECTORY component is a symlink, so
+    // the bytes would land in the link target, OUTSIDE the themes root.
+    // `scan_theme_dir` refuses to READ/WALK such a tree; that is a
+    // read-side refusal, no scan runs before these writes, and a scan never
+    // blocked a write. So the OPERATION refuses it: ONE bounded,
+    // metadata-only walk under W10's own budgets (nothing read, nothing
+    // written), ONE warning, before the first read or write.
+    match check_theme_tree(theme_dir) {
+        TreeCheck::Clean => {}
+        TreeCheck::SymlinkedDir(link) => {
+            tracing::warn!(
+                "[theme-package] refusing to package {}: {} is a symlinked directory; \
+                 a theme tree must not write outside the themes root",
+                theme_dir.display(),
+                link.display()
+            );
+            return PackageStatus::Skipped(
+                "symlinked directory in the theme tree (refused, nothing read or written)"
+                    .into(),
+            );
+        }
+        TreeCheck::Unverifiable(detail) => {
+            tracing::warn!(
+                "[theme-package] refusing to package {}: {detail}",
+                theme_dir.display()
+            );
+            return PackageStatus::Skipped(
+                "theme tree could not be fully inspected (refused, nothing read or written)"
+                    .into(),
+            );
+        }
     }
     let provider_dir = theme_dir.join("providers").join("noctalia-v5");
     // The theme's background provider, asked through the registration router
@@ -407,6 +458,120 @@ pub fn package_theme_dir(
         video,
         presets,
     })
+}
+
+/// What the up-front tree check found — the one shape the packaging guard
+/// needs in order to refuse or proceed.
+#[derive(Debug)]
+enum TreeCheck {
+    /// Every directory in the tree is a REAL directory, or there is no tree
+    /// to examine: a `theme_dir` that is not a directory carries nothing to
+    /// refuse, and the caller reports it exactly as it did before this
+    /// check existed (the symlinked-root case never reaches this function —
+    /// the caller's own guard returns first).
+    Clean,
+    /// `path` is a symlink that POINTS AT a directory: the write-through
+    /// shape. The link itself is never descended into.
+    SymlinkedDir(PathBuf),
+    /// The walk could not examine the whole tree (a W10 budget spent, an
+    /// entry that vanished or an unreadable directory), so "no symlinked
+    /// directory" would be a claim that was never checked: FAIL CLOSED.
+    Unverifiable(String),
+}
+
+/// ONE bounded, METADATA-ONLY walk: does the theme tree contain a symlinked
+/// DIRECTORY? The refusal half of the up-front guard in
+/// [`package_theme_dir`] (W10c-d).
+///
+/// Why a symlinked directory is the dangerous spelling: every write
+/// packaging performs targets a path under `theme_dir`, and `fs::write`,
+/// `fs::copy` and `create_dir_all` all FOLLOW a path whose directory
+/// component is a symlink — the bytes land in the link target, outside the
+/// themes root. `scan_theme_dir` refuses to read/walk such a tree, but a
+/// scan never blocked a write and no scan runs before these writes.
+///
+/// - What an ENTRY IS comes from `std::fs::symlink_metadata` (the root
+///   included), which inspects the entry ITSELF and never follows a link.
+///   `is_dir()` on the path is deliberately NOT used to decide: it reports
+///   the link TARGET's type, which is exactly how a symlinked directory
+///   disguises itself as a real one.
+/// - A symlink is classified with ONE `metadata` stat — does it POINT AT a
+///   directory (refuse) or at something else? — and never descended into.
+///   A symlink to a regular FILE stays ACCEPTED on purpose (documented
+///   behaviour, the bounded readers follow it too), so it is not a
+///   refusal; a dangling or file-like link is accepted for the same reason.
+/// - Nothing is READ: entries are stat'ed only. The budgets are W10's own
+///   (`ThemeScanLimits::default()`, depth + entries) — the ONE set of
+///   limits, never a second: the byte budgets have no work to do in a walk
+///   that reads nothing.
+/// - FAIL CLOSED: a tree the walk cannot examine completely comes back
+///   `Unverifiable`, never `Clean`.
+///
+/// Cost: one `read_dir` per directory and one stat per entry, all metadata.
+/// A symlink cycle cannot loop because no link is ever followed down.
+fn check_theme_tree(theme_dir: &Path) -> TreeCheck {
+    let Ok(root_type) = std::fs::symlink_metadata(theme_dir) else {
+        // No tree to examine (missing path): nothing to refuse, and the
+        // caller reports a missing theme exactly as it did before.
+        return TreeCheck::Clean;
+    };
+    if root_type.is_symlink() {
+        // Defensive only: the caller's root guard refuses this first. A
+        // symlinked root IS a symlinked directory by definition.
+        return TreeCheck::SymlinkedDir(theme_dir.to_path_buf());
+    }
+    if !root_type.is_dir() {
+        return TreeCheck::Clean;
+    }
+    let limits = ThemeScanLimits::default();
+    let mut entries_left = limits.max_entries;
+    let mut stack = vec![(theme_dir.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        if depth >= limits.max_depth {
+            return TreeCheck::Unverifiable(format!(
+                "the tree under {} is deeper than the {}-level budget for an \
+                 untrusted theme package",
+                dir.display(),
+                limits.max_depth
+            ));
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return TreeCheck::Unverifiable(format!(
+                "the directory {} could not be inspected",
+                dir.display()
+            ));
+        };
+        for entry in entries.flatten() {
+            if entries_left == 0 {
+                return TreeCheck::Unverifiable(format!(
+                    "the tree under {} carries more than the {} entries an \
+                     untrusted theme package may hold",
+                    theme_dir.display(),
+                    limits.max_entries
+                ));
+            }
+            entries_left -= 1;
+            let path = entry.path();
+            let Ok(file_type) = std::fs::symlink_metadata(&path) else {
+                return TreeCheck::Unverifiable(format!(
+                    "{} could not be inspected",
+                    path.display()
+                ));
+            };
+            if file_type.is_symlink() {
+                // The ONE stat that follows a link: it classifies the link
+                // (directory → refuse) and nothing is ever descended into.
+                if std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
+                    return TreeCheck::SymlinkedDir(path);
+                }
+                continue;
+            }
+            if file_type.is_dir() {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+    TreeCheck::Clean
 }
 
 // ── W10 (theme-package trust): bounded reads of an untrusted package ──
@@ -684,9 +849,12 @@ pub fn scan_theme_for_absolute_paths_with_limits(
 /// FILE is still read through by design (a root symlink to a file cannot
 /// be walked at all — `read_dir` on it fails and nothing is read), and the
 /// gallery LISTING still shows a symlinked theme, because the leak this
-/// closes is the walk, not the list. W10c-c adds the operation-level
-/// guard: `package_theme_dir` refuses a symlinked theme dir before any
-/// read or write, so a packaging pass cannot write through the link.
+/// closes is the walk, not the list. The operation-level guard is
+/// `package_theme_dir`: it refuses a symlinked theme dir (W10c-c) AND any
+/// symlinked DIRECTORY in that dir's tree (W10c-d) before any read or
+/// write, so a packaging pass cannot write or delete through a directory
+/// link — and it is that guard, never this walk, that stops it: this walk
+/// refuses to READ a symlinked tree and never blocked a write.
 ///
 /// W10: the walk is bounded on four axes ([`ThemeScanLimits`]) and every
 /// refusal is a warning plus a skip, never a panic and never an unbounded
@@ -912,9 +1080,10 @@ fn theme_dir_for(themes_root: &Path, name: &str) -> Result<PathBuf, String> {
 /// deliberately still listed: this list serves ONLY the maintenance
 /// `--package-themes` pass — the gallery's source is `ThemeManager::list`
 /// (`theme_manager.rs`), not this function. A listed symlink is refused one
-/// level down, twice over: `scan_theme_dir` refuses to WALK a symlinked
-/// root (W10c-b) and `package_theme_dir` refuses to package through one at
-/// all (W10c-c). The listing itself never reads file content.
+/// level down, three times over: `scan_theme_dir` refuses to WALK a
+/// symlinked root (W10c-b), `package_theme_dir` refuses to package through
+/// one at all (W10c-c) and refuses a tree carrying a symlinked DIRECTORY
+/// (W10c-d). The listing itself never reads file content.
 fn list_theme_dirs(themes_root: &Path) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(themes_root)
         .map_err(|e| format!("cannot read the themes dir {}: {e}", themes_root.display()))?;
@@ -2135,6 +2304,122 @@ mod tests {
             text.matches("[theme-package]").count(),
             1,
             "the refusal is ONE warning, log was:\n{text}"
+        );
+    }
+
+    /// W10c-d, CRITICAL-class: the up-front guard covered a symlinked theme
+    /// ROOT only, while `sanitize_settings_file`'s `fs::write`
+    /// (`noctalia.rs:652`), `write_theme_poster`, `package_theme_video` and
+    /// `copy_preset` all FOLLOW a symlinked child DIRECTORY and write
+    /// outside the themes root. `scan_theme_dir` refuses to read/walk such
+    /// a tree, but a scan never blocks a write and no scan runs before
+    /// these writes. A theme whose tree contains a symlinked directory must
+    /// be refused before any read or write, with ONE warning, and the
+    /// canary tree outside the themes root must come out byte-identical.
+    #[test]
+    fn package_refuses_a_theme_whose_tree_carries_a_symlinked_child_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"\xff\xd8\xff\xe0static-wallpaper-bytes";
+        let (theme, _image) = write_static_theme(root.path(), "Symlinked", bytes);
+        // A canary tree OUTSIDE the themes root, fingerprinted before and
+        // after. `media` is exactly where packaging writes the poster, so
+        // without the refusal the canary gains files through the link.
+        let canary = root.path().join("outside/canary");
+        fs::create_dir_all(&canary).unwrap();
+        fs::write(canary.join("secret.txt"), b"must survive").unwrap();
+        let before = walk(&canary);
+        std::os::unix::fs::symlink(&canary, theme.join("media")).unwrap();
+
+        let mut status = None;
+        let text = with_warn_capture(|| {
+            status = Some(package_theme_dir(
+                &theme,
+                &root.path().join("assets"),
+                &root.path().join("presets"),
+                1024,
+            ));
+        });
+
+        assert_eq!(
+            walk(&canary),
+            before,
+            "nothing may be written through a symlinked child directory"
+        );
+        assert_eq!(
+            status,
+            Some(PackageStatus::Skipped(
+                "symlinked directory in the theme tree (refused, nothing read or written)".into()
+            )),
+            "a theme carrying a symlinked directory must be refused up front"
+        );
+        assert!(
+            text.contains("media") && text.contains("symlink"),
+            "the refusal must warn and name the symlink, log was:\n{text}"
+        );
+        assert_eq!(
+            text.matches("[theme-package]").count(),
+            1,
+            "the refusal is ONE warning, log was:\n{text}"
+        );
+    }
+
+    /// W10c-d, the deliberate limit: a symlink to a regular FILE stays
+    /// ACCEPTED (documented behaviour — reading it through is deliberate),
+    /// so the child-DIRECTORY refusal must not over-refuse a theme that
+    /// carries one.
+    #[test]
+    fn package_still_accepts_a_symlink_to_a_regular_file() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"\xff\xd8\xff\xe0static-wallpaper-bytes";
+        let (theme, _image) = write_static_theme(root.path(), "FileLink", bytes);
+        let outside = root.path().join("outside-notes.txt");
+        fs::write(&outside, "notes = \"carried through\"\n").unwrap();
+        std::os::unix::fs::symlink(&outside, provider_dir(&theme).join("notes.txt")).unwrap();
+
+        let status = package_theme_dir(
+            &theme,
+            &root.path().join("assets"),
+            &root.path().join("presets"),
+            1024,
+        );
+
+        assert!(
+            matches!(status, PackageStatus::Packaged(_)),
+            "a symlink to a regular FILE must stay accepted, got {status:?}"
+        );
+    }
+
+    /// The verifier's delete claim, MEASURED: `std::fs::remove_file` on a
+    /// symlink is `unlink(2)` — it removes the LINK entry and never its
+    /// TARGET. So the poster cleanup (`remove_theme_poster` →
+    /// `remove_stale_posters`) can unlink the link, never the file behind
+    /// it: "deletes through child links" is FALSE for a symlinked FILE.
+    /// Characterization test: it is green before and after the
+    /// child-DIRECTORY refusal, which closes the other spelling (entries
+    /// resolved THROUGH a symlinked directory are real files outside).
+    #[test]
+    fn the_poster_cleanup_unlinks_a_file_symlink_and_leaves_its_target() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Cleanup");
+        let provider = provider_dir(&theme);
+        fs::create_dir_all(theme.join("media")).unwrap();
+        fs::create_dir_all(&provider).unwrap();
+        let canary = root.path().join("outside/canary.txt");
+        fs::create_dir_all(canary.parent().unwrap()).unwrap();
+        fs::write(&canary, b"must survive").unwrap();
+        let link = theme.join("media/poster.jpg");
+        std::os::unix::fs::symlink(&canary, &link).unwrap();
+
+        crate::theme_media::remove_theme_poster(&theme, &provider);
+
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "the cleanup must unlink the LINK entry itself"
+        );
+        assert_eq!(
+            fs::read(&canary).unwrap(),
+            b"must survive",
+            "remove_file on a symlink must never delete its target"
         );
     }
 }
