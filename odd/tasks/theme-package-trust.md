@@ -109,6 +109,16 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W4 | `3cad59a` | confines `video_directory` to `$HOME/{Pictures,Videos,Downloads}` | 1632 |
 | W5 | `67a7ee6` | caps the video download at 1 GiB (plus an on-disk re-check) | 1632 |
 | deps | `a0bf10e` | 4 RustSec advisories cleared by lockfile-only bumps | 1616 |
+| W2b | `317d55e` | the trust warning is operable from the keyboard (focus scope, Cancel first, Return/Space confirms, Escape declines) | 1688 |
+| W7 | `9a98f6d` | the IPC socket: a private 0700 dir created BEFORE the bind, no `/tmp` fallback, refuse without a usable HOME | 1694 |
+| W8 | `5670191` | `hve.log` and the decision log created 0600 and tightened when inherited | 1701 |
+| W9 | `dad4ca6` | the theme name validated in `apply`/`delete`/`save`/`rename`/`theme_info` | 1705 |
+| W7b | `7bbeebd` | the shipped `hve-ipc` client resolves the socket like the server; the docs corrected | 1705 |
+| corr | `d5cc429` | the five findings of the W7–W9 cross-model verification | 1711 |
+| W1c | `cfda2a0` | the root-level hooks TOML spellings (dotted key, inline table) + the `{` false positive | 1720 |
+| W10c | `a3a183e` | the non-regular-file guard moved into the lowest-level reader; both `fs::copy` restore sites; the scan | 1727 |
+| W1c-b | `881ae47` | escaped keys, a UTF-8 BOM and multi-line inline tables: FAIL CLOSED instead of silent | 1733 |
+| W10c-b | `32b9fcd` | the scan refuses a symlinked ROOT too, not only symlinked children | 1734 |
 
 ### Cross-model verification (Tier 3 — a DIFFERENT model from the writer)
 
@@ -122,7 +132,45 @@ Test counts are the full-suite totals observed at each commit; the suite started
   hard links, sibling prefixes, NFD/NFC, 4000-char paths, relative, `/`), the refusal creates nothing, and the cap
   is real. One MEDIUM: `64`-MiB read of the contract says the download must not precede the plugin-enabled check and
   it still does — the contract line and the parent's instruction disagreed; reconcile it.
-- **NOT yet verified cross-model**: W1b, W6, W10, W10b, W2b (all written by MiMo-V2.6-Flash).
+- **NOT yet verified cross-model**: none. The old backlog (W1b, W6, W10, W10b, W2b) was audited on 2026-10-13 by
+  GLM-5.3-Flash — see below — and W7–W9/W7b, W1c and W10c each got their own cross-model round.
+
+### Cross-model verification, second round (2026-10-13) — MiMo wrote, GLM-5.3-Flash verified
+
+- **The old backlog, finally audited (read-only, no cargo)**: **W6 sound** (the option-shaped value is refused at
+  every argv slot; the full argv census was walked: `skwd-helm`, every `noctalia msg` verb, `curl`, `ffmpeg`,
+  `hyprctl`, `engine`). **W10 sound** with one MEDIUM (the scan followed a symlinked directory out of the
+  package). **W1b REFUTED** — a real BLOCKER: `hooks.started = "…"` and `hooks = { started = "…" }` at the
+  document root are the SAME TOML table Noctalia executes, and the detector reported EMPTY, so the hook ran with
+  no warning. **W10b REFUTED** — two real BLOCKERs: the regular-file guard lived only in the `read_theme_record`
+  wrapper while ~20 call sites reached `theme_package::read_theme_text`/`read_theme_bytes` directly (a FIFO named
+  like a theme record hangs `File::open` for ever), and both `fs::copy` restore sites were pre-flighted only by
+  the size-only `theme_file_is_bounded`, which answers "bounded" for a FIFO (`len = 0`). **W2b sound** with three
+  MEDIUMs: the confirmed branch re-reads the package but `TrustGate::request` short-circuits on the armed
+  confirmation BEFORE consulting the fresh report (the real close is the queued `remember-my-acceptance`); the
+  carriers list is not keyboard-scrollable; and the commit added new source-text assertion tests — the very
+  pattern W14 exists to remove.
+- **W7–W9 + W7b**: `sound` for all four, no blocker, five findings. Corrected by `d5cc429` (see below).
+- **W1c**: verified `sound` first, then **REFUTED** on the recheck with two BLOCKERs the whole feature depends on:
+  a TOML escaped key (`"\u0068ooks".started`) and a header (`["\u0068ooks"]`) are the hooks table to any
+  spec-1.0 parser and were missed, and a **multi-line inline table is VALID TOML under spec 1.1** — the parser
+  family already in this repo's `Cargo.lock` (`toml 1.1.2+spec-1.1.0`) — so the W1c comment that called it
+  invalid was itself a false claim in a security comment. Corrected by `881ae47` (fail closed).
+- **W10c**: `sound with findings`. The stat-then-open TOCTOU the writer disclosed is REAL and survives (see the
+  residuals below). One MEDIUM: the scan checked symlinked CHILDREN but never its own ROOT. Corrected by
+  `32b9fcd`.
+- **`d5cc429`, the W7–W9 correction batch** (one RED test per finding, all observed failing first):
+  `is_private_dir_of` masked 9 bits while the docstring claimed "exactly 0700", and the Python client reads the
+  full 12-bit `S_IMODE` — the two resolved DIFFERENT sockets for a runtime dir carrying the sticky bit;
+  `resolve_assert_color_authority` joined the configured theme name with no rule and reached a theme OUTSIDE the
+  store; an OLD `hve.log.1`/`color-authority.log.1` stayed world-readable because the tighten ran only on
+  rotation; `rename` joined `old_name` with NO rule (`rename("../outside/Evil", "Stolen")` pulled a directory
+  from outside the store INTO it); `theme_info` kept its own weaker copy of the name rule.
+- **The fail-closed rule this produced (W1c-b)**: a `hooks` table the line-based detector cannot confidently
+  read now produces a CONSERVATIVE entry instead of an empty report. The keeper cannot consent to what nobody
+  inspected, so a detector that lost the table must say so. The user-visible line is: `hooks table — the hooks
+  table in <file> (line N) could not be fully read by this scan; it may carry shell commands that are not
+  listed here`.
 
 ### The keeper's own themes — measured, not assumed
 
@@ -161,6 +209,17 @@ else.
   `sandboxed_no_loss_under_idle_exit_stress` ("bash must spawn: NotFound", another) — and both pass in isolation
   and as a module. That is the load-dependent flake the health audit predicted (19 sleeps, zero `#[serial]`), now
   with evidence. It must be fixed in Lane C, not waived.
+- **A "the detector is complete now" claim needs an adversarial SPELLING hunt, not a review.** Both times the
+  cross-model verifier was asked to attack the TOML/spelling hull it REFUTED it, with blockers: first the
+  root-level dotted key and inline table, then an escaped key (`"\u0068ooks"`), a leading BOM, and a multi-line
+  inline table that is valid TOML under spec 1.1 (the parser family already in this repo's `Cargo.lock`). A
+  line-based reader is never complete; the durable fix was the RULE, not the spelling list — fail closed whenever
+  the reader knows it lost the table.
+- **Re-read the task file before editing it: a live session may have written it while you worked.** This contract's
+  `## Still pending` was read at 05:34 and edited at 06:50; the first edit applied, the second failed because a
+  late session had committed `5dcccd0` into the middle of the chain implementing W2b's own record. History stayed
+  linear and nothing was lost, but the parent's copy of the file was stale for 20 minutes. The tree says the truth;
+  the read does not.
 
 ## Still pending
 
@@ -177,18 +236,45 @@ else.
      `shell-kbd.focus()` steals focus from the modal and the keys go back to the gallery behind it. NOT a security
      hole — the risky theme stays held — but the modal goes keyboard-deaf. Stated one-line fix: add
      `&& !root.trust-warning-open` to those observers.
-- **Cross-model verification still owed** for W1b, W6, W10, W10b and W2b.
-- **W7**: the IPC socket — mode set BEFORE `bind`, and the `/tmp/hve.sock` fallback made safe. `src/ipc.rs`.
-- **W8**: `hve.log` and the decision log created with mode 0600. `src/main.rs`, `src/decision_log.rs`.
-- **W9**: validate the theme name in `ThemeManager::delete`/`apply`. `src/theme_manager.rs`.
-- **The keeper's `remember-my-acceptance`** (approved): remember the acceptance PER THEME keyed by a fingerprint of
-  what was accepted, so a changed theme warns again. That ALSO fixes W2's first MEDIUM (the confirmed branch never
-  re-inspects). Needs a small state file of its own, not a change to the theme packages.
-- **The W4/W5 MEDIUM**: reconcile the download-order line above.
-- **Lane C (health, serial and alone)**: `cargo fmt` (23,362 diff lines — a dedicated commit, never mixed), the
-  ~70 autofixable clippy lints (NEVER the float-comparison class — it changes NaN semantics the layout relies on),
-  the `tray.rs` pixel-chunk guard, the dead-code suppressions that silence whole modules, the source-text tests and
-  the sleep-based tests, and the `ksni` 0.2 → 0.3 bump.
+- **W2c — the keeper's `remember-my-acceptance`** (approved 2026-10-12, now the ONLY substantive unit left in
+  Lanes A/B): remember the acceptance PER THEME keyed by a fingerprint of what was accepted, so a theme whose
+  contents changed warns again. It also closes W2's first MEDIUM properly — the confirmed branch DOES re-read the
+  package today (`main.rs:1453-1459`), but `TrustGate::request` short-circuits on the armed confirmation before
+  consulting the fresh report, so a package rewired while the modal is open still applies on the old consent.
+  Needs a small state file of its own, never a change to the theme packages.
+- **OWED: the cross-model verification of `881ae47` (W1c-b) and `32b9fcd` (W10c-b)** — MiMo wrote both; a different
+  model must verify them before they count as closed (AGENTS.md, Tier 3). The fail-closed rule W1c-b introduced is
+  the piece to attack hardest: it must be impossible to reach an EMPTY report for a file whose hooks table the
+  detector could not read.
+- **The W4/W5 MEDIUM (unresolved, needs one decision)**: the verified report says the download still happens
+  BEFORE the plugin-enabled check, while this contract's line 51 says it must not. The contract line was written
+  by the parent; the code follows the older instruction. One of the two is wrong — reconcile them and record which.
+- **Lane C (health, serial and alone — start it only when nothing else is in flight)**: `cargo fmt` (23,362 diff
+  lines — a dedicated commit, never mixed), the ~70 autofixable clippy lints (NEVER the float-comparison class —
+  it changes NaN semantics the layout relies on), the `tray.rs` pixel-chunk guard, the dead-code suppressions that
+  silence whole modules, the source-text tests and the sleep-based tests, and the `ksni` 0.2 → 0.3 bump.
+  - W14 has MORE work than when this contract opened: `317d55e` added a source-text assertion test
+    (`trust_warning_keyboard_wiring_is_pinned_by_construction`) and the W7/W10c units added more of the same
+    pattern; they are named here so the cleanup is not read as a regression.
+  - The `reload_coalescer` flake is corroborated (two different tests, two independent runs, both pass in
+    isolation) and must be fixed in Lane C, not waived.
+
+### Residuals (real, disclosed, NOT to be "fixed" blindly)
+
+- **The stat-then-open TOCTOU survives** in every guarded read, and it is wider at the two restore sites (a stat,
+  a second stat inside `theme_file_is_bounded`, then the copy's own open). A local process that swaps a regular
+  file for a FIFO inside that window still hangs the read, permanently, with no retry. Exploiting it presumes code
+  already running as the user, which is not the at-rest attacker this gate defends against; closing it needs
+  `openat`/`O_NONBLOCK` plumbing. Reported by the W10c verification, NOT hidden.
+- **The save-side `fs::copy` from a LIVE path** (`noctalia.rs:2109`, the user's own `settings.toml`) has no
+  regular-file predicate: a FIFO planted there hangs `save`. **Out of this contract's scope by its own words**
+  (live-config reads are not theme files) and pre-existing. Named so it is a decision, not an oversight.
+- **A bare `true`/number value under `[hooks]` is reported as a command** (`hooks.enabled = true` → command
+  `"true"`). A false positive in the SAFE direction, pre-existing since W1, and narrowing it risks dropping a
+  genuine unquoted command. Left alone on purpose.
+- **A pre-existing silent loss under a `[hooks]` header**: in `started = """ … """" , shutdown = "x"` (a multi-line
+  string and a second key sharing the closing line) `shutdown` is lost. It exists at baseline 1727 and is not one
+  of the refuted spellings; the W1c-b fail-closed rule covers only the forms the reader KNOWS it lost.
 - **Deliberately NOT bounded** (named by W10b, do not "fix" blindly): binary MEDIA reads (`theme_manager.rs:841/
   858/876`, `shell/gallery/thumbs.rs`) because a wallpaper or video legitimately exceeds the 4 MiB TEXT bound, and
   live-config reads (`noctalia.rs`, `preset_store.rs`) which are not theme files.
