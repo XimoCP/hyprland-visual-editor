@@ -19923,9 +19923,9 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     // not-remembered copy: a body nobody read is never rememberable.)
     win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![SharedString::from(
         "animations/Space.lua — the preset \
-         /home/keeper/themes/Huge/presets/animations/Space.lua could not be read in full by this \
-         scan: it is 4194304 bytes, over the 16384-byte bound for a preset HVE can remember, so \
-         it may carry code that is not shown here",
+         /home/keeper/themes/Huge/presets/animations/Space.lua could not be KEPT by this scan: \
+         it is 4194304 bytes, over the 16384-byte bound for a preset HVE can remember, so its \
+         contents are not shown here",
     )])));
     settle();
     let unreadable_preset = win

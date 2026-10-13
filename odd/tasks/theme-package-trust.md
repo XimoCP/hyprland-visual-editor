@@ -153,6 +153,13 @@ Test counts are the full-suite totals observed at each commit; the suite started
 - **L6 (2026-10-13, the keeper, verbatim, answering the mechanism question)**: `El cuerpo tal cual (Recomendado)` —
   the preset body is remembered VERBATIM, not as a digest, with the 16 KiB bound above which the preset is reported
   unreadable and the theme is never remembered.
+- **L10 (2026-10-13, the parent, after the W2c-d verification)**: the theme NAME. The budget counted every report
+  field but not the store's KEY, which the serializer repeats (escaped) in EVERY entry's header — so a theme with a
+  255-byte name and 1,348 empty presets counted 130,994 and serialized to 2,173,434, and the copy promised a silence
+  the store refused. The name is now charged per entry at the measured worst-case escaping, the over-per-preset-cap
+  cause says "could not be KEPT" (it HAD been read), and the copy says "too big for HVE to record" instead of naming
+  the code. Third time this contract learns the same lesson in a new place: a count is only an upper bound of what a
+  store writes when it misses nothing the serializer writes.
 - **L9 (2026-10-13, the parent, after the last re-judgment)**: the budget's currency. `remembered_bytes` counted the
   CODE while the store's write bound counted SERIALIZED BYTES, so the copy could promise a memory the store refused —
   found independently by BOTH judges, and it is the third time this contract has been bitten by "a list is not the
@@ -619,6 +626,48 @@ judge also measured the escaping factor correctly at **6×** (`\u00XX`), not the
 - 6 new/updated tests. The unified currency also caught a divergence the fix itself had introduced between the scan's
   own accumulator and `remembered_bytes` (the first run of the new code failed three tests on exactly that).
 - Verified by ONE independent cross-model verifier, not the dual pair: the judgment-day round budget was spent.
+
+## W2c-e — the theme name enters the budget
+
+**Opened** 2026-10-13 by the single independent verification of `38f02d2` (the dual review's round budget was spent,
+so this unit is verified by ONE model, not two). It **REFUTED** the one-currency claim with a reproduction.
+
+### The defect
+
+`remembered_bytes` counted every REPORT field, but the store's KEY is also a written field: `toml::to_string` writes
+`[[accepted."<name>".presets]]` for every entry, so the escaped theme name is repeated once per entry and was never
+counted. A theme directory named with 255 control bytes (a legal Linux name, and `theme_manager` hands `file_name()`
+through unmodified) plus 1,348 empty presets counted 130,994 — inside the budget — and serialized to 2,173,434 bytes,
+over the store's 2 MiB write bound: the warning showed the REMEMBERED branch and the store refused. S13's absolute
+claim ("a theme inside this budget CANNOT be the reason a store refuses to be written") was false, in the same harm
+class W2c-d existed to close. Measured name sweep (1,348 minimal presets, counted 130,994 throughout): 64 B → 627,480;
+128 B → 1,145,496; 200 B → 1,728,264; **255 B → 2,173,434**.
+
+### Specs
+
+- **S15** — The budget charges the theme NAME once per entry (`store_key_cost`, at the measured worst-case escaping of
+  six characters per byte), because the serializer repeats it in every entry's table header. The scan derives the name
+  from the theme directory and `remembered_bytes` takes it explicitly, so both sides charge the same thing.
+- **S16** — Every cause message is TRUE of the file it names: a preset that WAS read and does not fit says "could not
+  be KEPT", and only a file after the budget was spent says "was not read". The over-per-preset-cap arm was the last
+  one still claiming a read that had happened.
+- **S17** — The copy's second clause names the SIZE, not the code, because the refusal can be caused by names, keys or
+  per-entry overhead too: "or it is too big for HVE to record".
+
+### Acceptance
+
+- The verifier's reproduction is refused by the RULE the copy reads, and the same shape with fewer entries is one the
+  store WRITES and reads back.
+- `cargo test` green, `cargo check --all-targets` clean, the render read by eye.
+- The sufficiency arithmetic in the constant's doc comment is written so that the NEXT field added to the store's
+  written shape has an obvious place to be charged.
+
+### Decisions
+
+- **The name is charged, not bounded.** Bounding theme names would add a refusal state with its own copy; charging the
+  name keeps the rule single.
+- **One more verification round, for ONE claim.** The currency of the budget has now been refuted twice by independent
+  models, so it gets a third check; the rest of the unit stays closed.
 
 ## Still pending
 

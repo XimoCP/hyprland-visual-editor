@@ -1430,7 +1430,7 @@ fn show_trust_warning(
     window.set_trust_warning_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
     // W2c: the copy must not promise a silence HVE will not keep, so the
     // warning is told whether Continue can remember this acceptance at all.
-    window.set_trust_warning_remembered(trust_acceptance_can_be_remembered(report));
+    window.set_trust_warning_remembered(trust_acceptance_can_be_remembered(report, name));
     // While the gate is up, borrow the panel's Save dialog mode with a
     // value the Save section does not render. panel-kbd answers Escape by
     // clearing that mode, so Escape on the panel DECLINES the gate
@@ -1467,10 +1467,13 @@ fn hide_trust_warning(window: &MainWindow) {
 /// take every acceptance with it (W2c-c). The warning's copy reads this same
 /// rule, so the text and the store can never disagree about whether HVE will
 /// remember the decision.
-fn trust_acceptance_can_be_remembered(report: &crate::theme_trust::ThemeTrustReport) -> bool {
+fn trust_acceptance_can_be_remembered(
+    report: &crate::theme_trust::ThemeTrustReport,
+    name: &str,
+) -> bool {
     !report.is_empty()
         && !report.is_uninspected()
-        && report.remembered_bytes() <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
+        && report.remembered_bytes(name) <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
 }
 
 /// W2: consult the gate before an apply, on BOTH paths. Returns true
@@ -1503,7 +1506,7 @@ pub(crate) fn trust_gate_request(
     // warning comes back instead of an apply nobody consented to. A report
     // that cannot be remembered (W2c S1) never consults the store either:
     // nothing can be stored for it, so the warning is owed every time.
-    let mut store = if trust_acceptance_can_be_remembered(&report) {
+    let mut store = if trust_acceptance_can_be_remembered(&report, name) {
         Some(crate::theme_trust_store::TrustStore::load(store_path))
     } else {
         None
@@ -6245,12 +6248,12 @@ mod tests {
             "the fixture is fully read: nothing about it is unknown"
         );
         assert!(
-            report.remembered_bytes() > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
+            report.remembered_bytes("Big") > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
             "the budget must cover the NAMES a store writes, not only the code — it counted {}",
-            report.remembered_bytes()
+            report.remembered_bytes("Big")
         );
         assert!(
-            !trust_acceptance_can_be_remembered(&report),
+            !trust_acceptance_can_be_remembered(&report, &"n".repeat(200)),
             "and the copy must therefore NOT promise to remember it"
         );
     }
@@ -6269,7 +6272,7 @@ mod tests {
         };
         let clean = ThemeTrustReport::default();
         assert!(
-            !trust_acceptance_can_be_remembered(&clean),
+            !trust_acceptance_can_be_remembered(&clean, "Clean"),
             "a package carrying nothing is never remembered"
         );
 
@@ -6278,7 +6281,7 @@ mod tests {
             lua_presets: Vec::new(),
         };
         assert!(
-            trust_acceptance_can_be_remembered(&risky),
+            trust_acceptance_can_be_remembered(&risky, "Risky"),
             "a fully inspected package inside the budget IS rememberable"
         );
 
@@ -6291,7 +6294,7 @@ mod tests {
             lua_presets: Vec::new(),
         };
         assert!(
-            !trust_acceptance_can_be_remembered(&uninspected),
+            !trust_acceptance_can_be_remembered(&uninspected, "Opaque"),
             "a report nobody could read fully is never remembered"
         );
 
@@ -6304,7 +6307,7 @@ mod tests {
             }],
         };
         assert!(
-            !trust_acceptance_can_be_remembered(&unread_body),
+            !trust_acceptance_can_be_remembered(&unread_body, "Unread"),
             "an unread preset body is never remembered"
         );
 
@@ -6317,7 +6320,7 @@ mod tests {
             "the fixture is COMPLETE: the only reason to refuse it is its size"
         );
         assert!(
-            !trust_acceptance_can_be_remembered(&too_large),
+            !trust_acceptance_can_be_remembered(&too_large, "Big"),
             "a package this store cannot afford is never remembered"
         );
     }

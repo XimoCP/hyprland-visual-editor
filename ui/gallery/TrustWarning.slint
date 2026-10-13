@@ -202,7 +202,7 @@ export component TrustWarning inherits Rectangle {
             Text {
                 text: root.acceptance-remembered
                     ? "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. Continuing remembers this acceptance: with this name and this content, HVE will not ask again, and it asks again as soon as either changes."
-                    : "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. HVE cannot remember a decision for this package — part of it could not be read in full, or it carries more code than HVE records — so it asks again the next time you apply this theme.";
+                    : "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. HVE cannot remember a decision for this package — part of it could not be read in full, or it is too big for HVE to record — so it asks again the next time you apply this theme.";
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-13;
                 color: HveColors.text;

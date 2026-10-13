@@ -253,7 +253,7 @@ impl TrustStore {
     pub fn remember(&mut self, name: &str, report: &ThemeTrustReport) {
         if report.is_empty()
             || report.is_uninspected()
-            || report.remembered_bytes() > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
+            || report.remembered_bytes(name) > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
         {
             return;
         }
@@ -659,9 +659,9 @@ mod tests {
             "and it must still be NAMED whole: the budget caps what is read, not what is reported"
         );
         assert!(
-            report.remembered_bytes() <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
+            report.remembered_bytes("Huge") <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
             "one theme must not be able to ask a store for megabytes — it asked for {}",
-            report.remembered_bytes()
+            report.remembered_bytes("Huge")
         );
 
         let mut store = TrustStore::default();
@@ -685,7 +685,7 @@ mod tests {
         let mut report = risky_report();
         report.shell_hooks[0].command = "x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1);
         assert!(
-            report.remembered_bytes() > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
+            report.remembered_bytes("Big") > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
         );
         assert!(
             !report.is_uninspected(),
@@ -741,6 +741,72 @@ mod tests {
             TrustStore::load(&path).accepts("Risky", &risky_report()),
             "and it must still be readable, which is the whole point of the bound"
         );
+    }
+
+    /// The defect the W2c-d verification refuted, as a first-class test: the
+    /// theme NAME is a field the store writes — once per entry, because the
+    /// serializer repeats it in every table header
+    /// (`[[accepted."<name>".presets]]`) — and it escaped the budget. A theme
+    /// with a long name could therefore be inside every rule the warning's
+    /// copy reads and still be refused by the store, so the copy promised a
+    /// silence that never came.
+    #[test]
+    fn a_report_the_rule_accepts_is_one_the_store_writes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(STORE_FILE);
+        // A legal Linux directory name: 255 control bytes, which the store
+        // escapes at six characters each, in EVERY entry's header.
+        let name = "\u{1}".repeat(255);
+        let report_with = |count: usize| ThemeTrustReport {
+            shell_hooks: Vec::new(),
+            lua_presets: (0..count)
+                .map(|i| LuaPreset {
+                    category: "animations".into(),
+                    file_name: format!("{i}.lua"),
+                    body: crate::theme_trust::PresetBody::Text(String::new()),
+                })
+                .collect(),
+        };
+
+        // With 80 entries the name still fits the budget: the rule accepts it,
+        // so the store must WRITE it.
+        let accepted = report_with(80);
+        assert!(
+            !accepted.is_uninspected(),
+            "the fixture is fully read: nothing about it is unknown"
+        );
+        assert!(
+            accepted.remembered_bytes(&name) <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
+            "the fixture must be inside the budget, got {}",
+            accepted.remembered_bytes(&name)
+        );
+        let mut store = TrustStore::default();
+        store.remember(&name, &accepted);
+        assert!(store.accepts(&name, &accepted));
+        store
+            .save(&path)
+            .expect("a report the RULE accepts must be one the store can write");
+        let written = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            written <= crate::theme_package::MAX_THEME_FILE_BYTES,
+            "and the file it writes must stay readable by its own reader: wrote {written}"
+        );
+
+        // The SAME shape with more entries is refused by the RULE, so the
+        // warning never promises the silence the store would refuse.
+        let too_many = report_with(1_348);
+        assert!(
+            too_many.remembered_bytes(&name) > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
+            "the name the store repeats in every entry must be counted — it counted {}",
+            too_many.remembered_bytes(&name)
+        );
+        assert!(
+            !crate::trust_acceptance_can_be_remembered(&too_many, &name),
+            "and the rule the copy reads must refuse it, not only the store"
+        );
+        let mut store = TrustStore::default();
+        store.remember(&name, &too_many);
+        assert!(!store.accepts(&name, &too_many), "nothing is remembered for it");
     }
 
     /// A theme name is a TOML key here and is NEVER joined into a path, so
