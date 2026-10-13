@@ -105,7 +105,6 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W6 | `eccdd2b` | refuses a theme value that could read as an option | 1653 |
 | W10 | `53eea8c` | bounds the read of an untrusted package (+ W6 residuals `c83f18b`) | 1665 |
 | W10b | `8b591e7` | bounds EVERY remaining theme-file reader; rejects non-regular files | 1685 |
-| W2b | `317d55e` | the warning made operable from the keyboard | 1688 |
 | W4 | `3cad59a` | confines `video_directory` to `$HOME/{Pictures,Videos,Downloads}` | 1632 |
 | W5 | `67a7ee6` | caps the video download at 1 GiB (plus an on-disk re-check) | 1632 |
 | deps | `a0bf10e` | 4 RustSec advisories cleared by lockfile-only bumps | 1616 |
