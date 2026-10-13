@@ -151,6 +151,8 @@ Test counts are the full-suite totals observed at each commit; the suite started
 - **L6 (2026-10-13, the keeper, verbatim, answering the mechanism question)**: `El cuerpo tal cual (Recomendado)` —
   the preset body is remembered VERBATIM, not as a digest, with the 16 KiB bound above which the preset is reported
   unreadable and the theme is never remembered.
+- **L8 (2026-10-13, the keeper, verbatim, answering the W2c-c question)**: `Sí, ciérralo ahora (Recomendado)` — close
+  the store-growth defect the two re-judges confirmed, with the bounds described in the W2c-c section above.
 - **L7 (2026-10-13, the parent, a spec change forced by the blocker)**: S1's original wording enumerated the fields
   the acceptance keyed on and did NOT include a preset's body, so the fraction of S1 that was written down was
   implemented faithfully — and it was wrong. S1 now says the key covers what RUNS, body included, and S3 names the
@@ -451,17 +453,17 @@ handles its path and its mode, and closes a security MEDIUM, which is Tier 3 by 
   preset shows `category/file.lua`. The acceptance now covers the body, so a change re-warns and nothing applies in
   silence — but the keeper accepts a body he has not READ. Named as an open decision (it is W1/W2's original UI
   shape, not something this unit introduced; showing bodies is a UI change with its own render work).
-- **The store has its own 4 MiB read bound** (the shared guarded reader's) and its WRITE path has no bound of its own, so the
-  store can outgrow its own reader and then be refused AS A WHOLE: every acceptance is forgotten, every risky theme warns
-  again, and the next confirmation REPLACES the file with only that one entry ("replace, never merge"), silently dropping
-  the rest. Measured by BOTH re-judges, with numbers rather than adjectives: a single LEGAL theme (the package bounds are
-  4 MiB per file and 64 MiB in total) reaches it with **~104 presets** — the TOML escaping inflates control-character-heavy
-  bodies up to **2.7×** their raw bytes — and **256 presets** at the 16 KiB cap produce a 4,215,481-byte file, over the
-  4,194,304 bound; the first version of this store needed ~50,000 entries to get there, so the BODY KEYING is what made it
-  reachable. One acceptance can also write an arbitrarily large file (a 10,000-preset theme → ~160 MB on one click). The
-  DIRECTION is fail-safe — the warning comes back, nothing applies in silence — which is why both judges filed it as
-  MEDIUM/ADVISORY and not as a blocker, and why the terminal verdict below is APPROVED with it outstanding. It is still a
-  defect of this unit: a bound per ITEM without a bound per THEME and per STORE is half a bound.
+- **CLOSED by W2c-c — the store's own bound, kept here as the reason the bound exists.** The store had its 4 MiB read
+  bound (the shared guarded reader's) and NO write bound, so it could outgrow its own reader and then be refused AS A
+  WHOLE: every acceptance forgotten, every risky theme warned again, and the next confirmation REPLACING the file with
+  only that entry ("replace, never merge"). Measured by BOTH re-judges, with numbers rather than adjectives: a single
+  LEGAL theme (the package bounds are 4 MiB per file and 64 MiB in total) reached it with **~104 presets** — the TOML
+  escaping inflates control-character-heavy bodies up to **2.7×** their raw bytes — and **256 presets** at the 16 KiB
+  cap produced a 4,215,481-byte file, over the 4,194,304 bound; the first version of this store needed ~50,000 entries
+  to get there, so the BODY KEYING is what made it reachable. One acceptance could also write an arbitrarily large file
+  (a 10,000-preset theme → ~160 MB on one click). The direction was fail-safe — the warning came back, nothing applied
+  in silence — which is why both judges filed it as MEDIUM/ADVISORY and not as a blocker. W2c-c bounds BOTH ends: the
+  write refuses a store it could not read back, and the report spends at most a fixed budget per theme.
 - **There is no way to FORGET an acceptance from the UI.** The store can be deleted by hand, and re-saving the theme
   drops the stale hooks (Night, Cars, Space, Spiderman — see above), but the panel offers no "stop remembering this".
   Named here so it is a decision, not an oversight.
@@ -503,6 +505,47 @@ handles its path and its mode, and closes a security MEDIUM, which is Tier 3 by 
 T1 and T2 land as ONE commit: a module with no caller leaves eleven dead-code warnings, and
 `cargo check --all-targets` clean is an acceptance criterion per unit. T4 is the correction round the dual
 verification demanded (see the fourth and fifth rounds above).
+
+## W2c-c — the bound per THEME and the bound per STORE
+
+**Opened** 2026-10-13 by the keeper's answer `Sí, ciérralo ahora (Recomendado)`, to the defect BOTH re-judges of
+`d9e12af` confirmed independently. **Route**: the parent writes inline, then the second (and last) scoped re-judgment.
+
+### Specs
+
+- **S9** — A bound per ITEM with no bound per THEME is half a bound. ONE theme spends at most
+  `MAX_REMEMBERED_THEME_BYTES` (128 KiB) of code in a report — every hook's command text plus every preset body.
+  Hooks are always reported IN FULL (the warning shows their command text, and hiding one is worse than a large
+  report); the budget stops the preset BODIES: a body that does not fit is reported as NOT READ with the cause that
+  stopped it, never truncated, and the preset is still NAMED so the warning stays truthful about what the package
+  carries.
+- **S10** — A report over the budget is never remembered, and the warning says so in its own words ("HVE cannot
+  remember a decision for this package — part of it could not be read in full, or it carries more code than HVE
+  records"). One rule feeds both the copy and the store, so the text cannot promise a silence the store will not
+  keep.
+- **S11** — The store's WRITE has a bound of its own (`MAX_STORE_BYTES`, half the 4 MiB its reader enforces) and
+  REFUSES a store it could not read back. The refusal leaves the file on disk untouched, so every acceptance already
+  in it survives and only the new one is lost — the exact opposite of the old behaviour, where one acceptance could
+  brick the store for all of them.
+
+### Acceptance
+
+- `cargo test` green, `cargo check --all-targets` clean.
+- A legal theme of 260 presets at the cap (the judges' own reproduction) writes nothing at all and is never answered
+  as accepted.
+- A store that would exceed its write bound is refused, the old file is byte-identical afterwards, and it is still
+  readable.
+- The render check read by eye for the new copy sentence.
+
+### Decisions
+
+- **128 KiB per theme**: about three times a realistic theme (the shipped presets are 1-3.5 KB each, so ~40 presets
+  fit), and it keeps the report and the store small without refusing anything a real theme does.
+- **2 MiB for the store**: half the reader's 4 MiB, so anything this build writes is readable by this build with room
+  to spare, and roughly sixteen themes at the per-theme maximum — or fifty realistic ones — fit.
+- **The write REFUSES rather than evicting**: silently dropping an acceptance to make room would be a silent consent
+  decision, the one thing this whole feature must never do. A full store nags and says so in the log; deleting the
+  file is the keeper's call.
 
 ## Still pending
 

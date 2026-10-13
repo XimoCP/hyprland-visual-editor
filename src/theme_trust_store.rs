@@ -63,6 +63,19 @@ pub const STORE_FILE: &str = "theme-trust.toml";
 /// hand-edited or future-format file must never be read as consent.
 pub const STORE_VERSION: u32 = 1;
 
+/// The largest store this build will WRITE: half the bound its own reader
+/// enforces ([`crate::theme_package::MAX_THEME_FILE_BYTES`], 4 MiB).
+///
+/// Why the write needs a bound of its own: a writer with no bound and a
+/// reader with one is a self-bricking pair. One acceptance could grow the
+/// store past the reader's bound, and then EVERY acceptance on the machine
+/// was refused as a whole — the keeper re-asked about every theme, and the
+/// next confirmation replaced the file with only that entry. Both re-judges
+/// of this unit confirmed that defect with measurements (one legal theme,
+/// ~104 presets, was enough). Half the reader's bound leaves room for a
+/// slightly larger store written by a future build whose reader is the same.
+pub const MAX_STORE_BYTES: usize = crate::theme_package::MAX_THEME_FILE_BYTES as usize / 2;
+
 /// Absolute path of the acceptance store on this machine. The cache dir is
 /// deliberate: it is where this app already keeps its own state, and losing
 /// it costs re-warnings.
@@ -221,8 +234,9 @@ impl TrustStore {
 
     /// Record the keeper's acceptance of `report` for `name`.
     ///
-    /// Two reports are never remembered, and both for the same reason — a
-    /// record that can go stale silences a warning nobody answered:
+    /// Three reports are never remembered, and all for the same reason — a
+    /// record that can go stale, or that a store cannot afford, silences a
+    /// warning nobody answered:
     ///
     /// - A report carrying NOTHING: a clean package applies without a warning
     ///   whatever this store says.
@@ -230,9 +244,17 @@ impl TrustStore {
     ///   ([`ThemeTrustReport::is_uninspected`]): a file nobody could read can
     ///   change inside without the report changing, so remembering it would
     ///   let a rewritten package apply on consent given to something else.
-    ///   The keeper is asked again instead; the warning he sees says so.
+    /// - A report over [`crate::theme_trust::MAX_REMEMBERED_THEME_BYTES`]: a
+    ///   theme this store cannot afford is a theme whose decision is not
+    ///   remembered, and the warning says so rather than promising a silence
+    ///   that will not come.
+    ///
+    /// The keeper is asked again instead in all three cases.
     pub fn remember(&mut self, name: &str, report: &ThemeTrustReport) {
-        if report.is_empty() || report.is_uninspected() {
+        if report.is_empty()
+            || report.is_uninspected()
+            || report.remembered_bytes() > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
+        {
             return;
         }
         self.accepted
@@ -255,6 +277,20 @@ impl TrustStore {
             accepted: self.accepted.clone(),
         };
         let body = toml::to_string(&file).map_err(std::io::Error::other)?;
+
+        // The write bound, and it REFUSES instead of writing something its
+        // own reader would throw away: the file on disk keeps every
+        // acceptance already in it, and only this new one is lost (the
+        // caller logs it and the warning comes back, which is the safe
+        // direction).
+        if body.len() > MAX_STORE_BYTES {
+            return Err(std::io::Error::other(format!(
+                "the store would be {} bytes, over the {MAX_STORE_BYTES}-byte bound this build \
+                 writes; the file on disk is left as it is, so the acceptances already in it \
+                 survive and only this one is not remembered",
+                body.len()
+            )));
+        }
 
         // The cache dir is not guaranteed to exist: the store must not depend
         // on the log layer having run first.
@@ -586,6 +622,122 @@ mod tests {
         assert!(
             !store.accepts("Risky", &rewritten),
             "a rewritten preset BODY is a different package: the warning must come back"
+        );
+    }
+
+    /// The defect BOTH re-judges confirmed, as a first-class test: ONE legal
+    /// theme must not be able to write a store that this process's own reader
+    /// refuses. Before the report budget, 260 presets at the cap were enough
+    /// (a real package bound allows them), and the store was then thrown away
+    /// AS A WHOLE on every later read — every acceptance forgotten, and the
+    /// next confirmation replacing the file with only that entry.
+    ///
+    /// The accumulated case across MANY themes is
+    /// `an_over_bound_write_is_refused_and_the_old_file_survives`.
+    #[test]
+    fn one_theme_cannot_write_a_store_its_own_reader_refuses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(STORE_FILE);
+        // A theme a REAL package bound allows: 4 MiB per file, 64 MiB total.
+        let theme = tmp.path().join("Huge");
+        let dir = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..260 {
+            std::fs::write(dir.join(format!("p{i:03}.lua")), "x".repeat(16 * 1024)).unwrap();
+        }
+
+        let report = crate::theme_trust::inspect_theme_package(&theme);
+        assert!(
+            !report.is_empty(),
+            "the fixture must carry the presets it claims"
+        );
+        assert_eq!(
+            report.lua_presets.len(),
+            260,
+            "and it must still be NAMED whole: the budget caps what is read, not what is reported"
+        );
+        assert!(
+            report.remembered_bytes() <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
+            "one theme must not be able to ask a store for megabytes — it asked for {}",
+            report.remembered_bytes()
+        );
+
+        let mut store = TrustStore::default();
+        store.remember("Huge", &report);
+        store.save(&path).unwrap();
+        assert!(
+            !path.exists(),
+            "a theme over the budget is never remembered, so nothing is written at all"
+        );
+        assert!(
+            TrustStore::load(&path).accepts("Huge", &report) == false,
+            "and it must never answer 'accepted' for it"
+        );
+    }
+
+    /// W2c-c: a report over the theme budget is never remembered. The
+    /// direction is the safe one — the keeper is asked again — and this is
+    /// what keeps ONE theme from asking a store to remember megabytes.
+    #[test]
+    fn a_report_over_the_theme_budget_is_never_remembered() {
+        let mut report = risky_report();
+        report.shell_hooks[0].command = "x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1);
+        assert!(
+            report.remembered_bytes() > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
+        );
+        assert!(
+            !report.is_uninspected(),
+            "the fixture is fully read: it is only too large to record"
+        );
+
+        let mut store = TrustStore::default();
+        store.remember("Big", &report);
+        assert!(!store.accepts("Big", &report), "nothing is remembered for it");
+    }
+
+    /// W2c-c, and the defect BOTH re-judges measured: the write is REFUSED
+    /// when the store would pass the bound its own reader enforces, and the
+    /// file already on disk keeps every acceptance in it. Before this bound,
+    /// one acceptance could brick the store for all of them.
+    #[test]
+    fn an_over_bound_write_is_refused_and_the_old_file_survives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = saved_store(tmp.path());
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(TrustStore::load(&path).accepts("Risky", &risky_report()));
+
+        // Many themes, each INSIDE its own budget, together over the store's.
+        let mut store = TrustStore::load(&path);
+        let body = "y".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES);
+        for i in 0..24 {
+            let report = ThemeTrustReport {
+                shell_hooks: Vec::new(),
+                lua_presets: vec![LuaPreset {
+                    category: "animations".into(),
+                    file_name: format!("p{i}.lua"),
+                    body: crate::theme_trust::PresetBody::Text(body.clone()),
+                }],
+            };
+            store.remember(&format!("Theme{i}"), &report);
+        }
+
+        let err = store
+            .save(&path)
+            .expect_err("a store over its own write bound must not be written");
+        assert!(
+            err.to_string().contains("over the"),
+            "the refusal must say why, got: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "the store already on disk must keep every acceptance it holds"
+        );
+        assert!(
+            TrustStore::load(&path).accepts("Risky", &risky_report()),
+            "and it must still be readable, which is the whole point of the bound"
         );
     }
 

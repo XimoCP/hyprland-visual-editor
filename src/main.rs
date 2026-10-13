@@ -1455,16 +1455,22 @@ fn hide_trust_warning(window: &MainWindow) {
 }
 
 /// Whether an acceptance of this report can be REMEMBERED in the store at
-/// all (W2c): only a package that carries something AND was fully inspected.
+/// all (W2c): only a package that carries something, was fully inspected, and
+/// fits the size a store can afford.
 ///
-/// A clean package needs no record, and an UNINSPECTED one must never get
-/// one — a file nobody could read can change inside without the report
-/// changing, so a remembered acceptance of it would apply rewritten content
-/// on consent given to a description. The warning's copy reads this same
+/// A clean package needs no record; an UNINSPECTED one must never get one — a
+/// file nobody could read can change inside without the report changing, so a
+/// remembered acceptance of it would apply rewritten content on consent given
+/// to a description; and a report over
+/// [`crate::theme_trust::MAX_REMEMBERED_THEME_BYTES`] is one this store cannot
+/// afford, which is what let a single theme outgrow the store's own reader and
+/// take every acceptance with it (W2c-c). The warning's copy reads this same
 /// rule, so the text and the store can never disagree about whether HVE will
 /// remember the decision.
 fn trust_acceptance_can_be_remembered(report: &crate::theme_trust::ThemeTrustReport) -> bool {
-    !report.is_empty() && !report.is_uninspected()
+    !report.is_empty()
+        && !report.is_uninspected()
+        && report.remembered_bytes() <= crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
 }
 
 /// W2: consult the gate before an apply, on BOTH paths. Returns true
@@ -6207,6 +6213,73 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// W2c: the ONE rule the warning's copy and the store both read, so the
+    /// text can never promise a silence the store will not keep. Each clause
+    /// is a state the keeper must be warned about again.
+    #[test]
+    fn trust_acceptance_can_be_remembered_refuses_every_state_it_must() {
+        use crate::theme_trust::{PresetBody, ShellHook, ThemeTrustReport};
+
+        let hook = |command: String| ShellHook {
+            provider: "noctalia-v5".into(),
+            key: "started".into(),
+            command,
+        };
+        let clean = ThemeTrustReport::default();
+        assert!(
+            !trust_acceptance_can_be_remembered(&clean),
+            "a package carrying nothing is never remembered"
+        );
+
+        let risky = ThemeTrustReport {
+            shell_hooks: vec![hook("sddm-watch.sh".into())],
+            lua_presets: Vec::new(),
+        };
+        assert!(
+            trust_acceptance_can_be_remembered(&risky),
+            "a fully inspected package inside the budget IS rememberable"
+        );
+
+        let uninspected = ThemeTrustReport {
+            shell_hooks: vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: crate::theme_trust::UNINSPECTED_HOOK_KEY.into(),
+                command: "the hooks table could not be read".into(),
+            }],
+            lua_presets: Vec::new(),
+        };
+        assert!(
+            !trust_acceptance_can_be_remembered(&uninspected),
+            "a report nobody could read fully is never remembered"
+        );
+
+        let unread_body = ThemeTrustReport {
+            shell_hooks: vec![hook("sddm-watch.sh".into())],
+            lua_presets: vec![crate::theme_trust::LuaPreset {
+                category: "animations".into(),
+                file_name: "Space.lua".into(),
+                body: PresetBody::Unreadable("could not be read in full".into()),
+            }],
+        };
+        assert!(
+            !trust_acceptance_can_be_remembered(&unread_body),
+            "an unread preset body is never remembered"
+        );
+
+        let too_large = ThemeTrustReport {
+            shell_hooks: vec![hook("x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1))],
+            lua_presets: Vec::new(),
+        };
+        assert!(
+            !too_large.is_uninspected(),
+            "the fixture is COMPLETE: the only reason to refuse it is its size"
+        );
+        assert!(
+            !trust_acceptance_can_be_remembered(&too_large),
+            "a package this store cannot afford is never remembered"
+        );
+    }
 
     // ── U1: the persistent log rotates once at startup, by size ──
 

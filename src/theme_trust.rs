@@ -89,6 +89,18 @@ pub struct ShellHook {
 /// the collision this whole store exists to avoid.
 pub const MAX_PRESET_BODY_BYTES: usize = 16 * 1024;
 
+/// The most code ONE theme may contribute to a report, and therefore to what
+/// a store can remember: every hook's command text plus every preset body.
+///
+/// Why a second bound at all: a bound per ITEM with no bound per THEME is
+/// half a bound. Without this one, a single legal theme (the package bounds
+/// are 4 MiB per file and 64 MiB in total) could ask a store to remember
+/// megabytes — which is exactly how the store outgrew its own reader and lost
+/// every acceptance on the machine. Both re-judges of the fix confirmed that
+/// defect with measurements; this bound is the answer to it, and
+/// [`ThemeTrustReport::remembered_bytes`] is what a consumer checks against.
+pub const MAX_REMEMBERED_THEME_BYTES: usize = 128 * 1024;
+
 /// A preset's content, as far as the scan could read it.
 ///
 /// The BODY is what matters and this is why the detector carries it: the
@@ -191,15 +203,45 @@ impl ThemeTrustReport {
                 .iter()
                 .any(|p| matches!(p.body, PresetBody::Unreadable(_)))
     }
+
+    /// How many bytes of code this report asks a store to remember: every
+    /// hook's command text plus every preset body. `Unreadable` entries
+    /// contribute NOTHING — nothing is ever remembered for them.
+    ///
+    /// A consumer must refuse to remember a report over
+    /// [`MAX_REMEMBERED_THEME_BYTES`]: a theme the store cannot afford is a
+    /// theme whose decision is not remembered, and the warning has to say so
+    /// instead of promising a silence that will not come.
+    pub fn remembered_bytes(&self) -> usize {
+        let hooks: usize = self.shell_hooks.iter().map(|h| h.command.len()).sum();
+        let presets: usize = self
+            .lua_presets
+            .iter()
+            .map(|p| match &p.body {
+                PresetBody::Text(text) => text.len(),
+                PresetBody::Unreadable(_) => 0,
+            })
+            .sum();
+        hooks + presets
+    }
 }
 
 /// Read `theme_dir` and report what the package carries. READ-ONLY: nothing
 /// is written and no directory is created, for any input — a theme path that
 /// does not exist simply yields an empty report.
 pub fn inspect_theme_package(theme_dir: &Path) -> ThemeTrustReport {
+    let shell_hooks = shell_hooks(theme_dir);
+    // W2c-c: the report spends at most [`MAX_REMEMBERED_THEME_BYTES`] of code
+    // on one theme. Hooks are always reported IN FULL (the warning shows
+    // their command text, and hiding one would be worse than a large report),
+    // so they are counted first and the preset bodies are what the budget
+    // stops. A theme whose hooks alone exceed the budget is therefore still
+    // reported whole — and `remembered_bytes` is what tells a consumer it
+    // must not be remembered.
+    let spent: usize = shell_hooks.iter().map(|h| h.command.len()).sum();
     ThemeTrustReport {
-        shell_hooks: shell_hooks(theme_dir),
-        lua_presets: lua_presets(theme_dir),
+        shell_hooks,
+        lua_presets: lua_presets(theme_dir, spent),
     }
 }
 
@@ -414,8 +456,9 @@ fn push_uninspectable_hooks(
 /// must name, in [`crate::theme_presets::CATEGORIES`] order — exactly the
 /// directories `install_theme_presets` reads on apply, so the report matches
 /// what reaches the user preset store and, from there, `overlay.lua`.
-fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
+fn lua_presets(theme_dir: &Path, already_spent: usize) -> Vec<LuaPreset> {
     let mut out = Vec::new();
+    let mut spent = already_spent;
     for category in crate::theme_presets::CATEGORIES {
         let dir = theme_dir
             .join(crate::theme_presets::PRESETS_DIR)
@@ -431,7 +474,7 @@ fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
             .collect();
         names.sort();
         out.extend(names.into_iter().map(|file_name| LuaPreset {
-            body: preset_body(&dir.join(&file_name)),
+            body: preset_body(&dir.join(&file_name), &mut spent),
             category: category.to_string(),
             file_name,
         }));
@@ -441,24 +484,45 @@ fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
 
 /// Read one preset's body, under the SAME guarded reader every untrusted
 /// theme file goes through (its 4 MiB per-file bound, its regular-file
-/// predicate, its one error type) and then under this module's own, far
-/// tighter [`MAX_PRESET_BODY_BYTES`] — the bound the store can afford to
-/// carry verbatim.
+/// predicate, its one error type) and then under TWO budgets: this module's
+/// per-preset [`MAX_PRESET_BODY_BYTES`], and the theme-wide
+/// [`MAX_REMEMBERED_THEME_BYTES`] the caller tracks in `spent`.
 ///
-/// A file that cannot be read in full is reported as
-/// [`PresetBody::Unreadable`], NEVER as an empty body and never truncated:
-/// an empty body would read as "this preset contains nothing", and a
-/// truncated one would make two different bodies compare equal.
-fn preset_body(path: &Path) -> PresetBody {
+/// A file that does not fit either budget is reported as
+/// [`PresetBody::Unreadable`] with the cause that stopped it — NEVER
+/// truncated (a truncated comparison would make two different bodies compare
+/// equal) and never read at all once the theme's budget is spent, which the
+/// cause says, because a report that deliberately did not open a file must be
+/// honest about it.
+fn preset_body(path: &Path, spent: &mut usize) -> PresetBody {
+    if *spent >= MAX_REMEMBERED_THEME_BYTES {
+        return PresetBody::Unreadable(format!(
+            "the preset {} was not read by this scan: this package's code already fills the \
+             {MAX_REMEMBERED_THEME_BYTES}-byte budget for a theme HVE can remember, so the rest \
+             of its presets are not listed here",
+            path.display()
+        ));
+    }
     match crate::theme_package::read_theme_text(path) {
-        Ok(text) if text.len() <= MAX_PRESET_BODY_BYTES => PresetBody::Text(text),
-        Ok(text) => PresetBody::Unreadable(format!(
-            "the preset {} could not be read in full by this scan: it is {} bytes, \
-             over the {MAX_PRESET_BODY_BYTES}-byte bound for a preset HVE can remember, \
-             so it may carry code that is not shown here",
+        Ok(text) if text.len() > MAX_PRESET_BODY_BYTES => PresetBody::Unreadable(format!(
+            "the preset {} could not be read in full by this scan: it is {} bytes, over the \
+             {MAX_PRESET_BODY_BYTES}-byte bound for a preset HVE can remember, so it may carry \
+             code that is not shown here",
             path.display(),
             text.len()
         )),
+        Ok(text) if *spent + text.len() > MAX_REMEMBERED_THEME_BYTES => PresetBody::Unreadable(
+            format!(
+                "the preset {} was not read by this scan: it would push this package's code past \
+                 the {MAX_REMEMBERED_THEME_BYTES}-byte budget for a theme HVE can remember, so it \
+                 may carry code that is not listed here",
+                path.display()
+            ),
+        ),
+        Ok(text) => {
+            *spent += text.len();
+            PresetBody::Text(text)
+        }
         Err(e) => PresetBody::Unreadable(format!(
             "the preset {} could not be read by this scan: {e}; \
              it may carry code that is not shown here",
@@ -2243,6 +2307,113 @@ mod tests {
         assert!(
             store.accepts("Space", &readable),
             "the store is a snapshot keyed by content: the old entry answers for the old report"
+        );
+    }
+
+    // ── W2c-c: the budget one THEME may spend, and the one a STORE may hold ─
+
+    /// W2c-c: one theme spends at most [`MAX_REMEMBERED_THEME_BYTES`] of code
+    /// in a report, so no single theme can ask a store to remember megabytes.
+    /// A preset that does not fit is still NAMED and reported as NOT READ with
+    /// the cause — never truncated, never silently dropped.
+    #[test]
+    fn a_theme_spends_at_most_its_budget_on_preset_bodies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        let dir = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
+        fs::create_dir_all(&dir).unwrap();
+        // Nine bodies at the per-preset cap: 128 KiB of budget fits eight.
+        for i in 0..9 {
+            fs::write(dir.join(format!("p{i}.lua")), "x".repeat(MAX_PRESET_BODY_BYTES)).unwrap();
+        }
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.lua_presets.len(),
+            9,
+            "every preset must still be NAMED, even the ones not read"
+        );
+        assert!(
+            report.remembered_bytes() <= MAX_REMEMBERED_THEME_BYTES,
+            "the report must not exceed the budget it advertises, got {}",
+            report.remembered_bytes()
+        );
+        let unread = report
+            .lua_presets
+            .iter()
+            .filter(|p| matches!(p.body, PresetBody::Unreadable(_)))
+            .count();
+        assert!(
+            unread >= 1,
+            "the presets that do not fit must be reported NOT READ, got {:?}",
+            report.lua_presets
+        );
+        assert!(
+            report.is_uninspected(),
+            "and that makes the report uninspected, so nothing is remembered for it"
+        );
+        for p in &report.lua_presets {
+            if let PresetBody::Unreadable(cause) = &p.body {
+                assert!(
+                    cause.contains("budget for a theme HVE can remember"),
+                    "the cause must name the budget that stopped it, got: {cause}"
+                );
+            }
+        }
+    }
+
+    /// W2c-c: hooks are always reported IN FULL — the warning shows their
+    /// command text, and hiding one would be worse than a large report — so a
+    /// theme whose hooks alone blow the budget is still reported whole. Two
+    /// cases follow from that, and BOTH must end in "not rememberable":
+    ///
+    /// - With no presets, nothing was left unread: the report is COMPLETE and
+    ///   only too large, which is exactly why `remembered_bytes` exists.
+    /// - With a preset, the preset is not read at all (the budget is spent),
+    ///   so the report is also uninspected.
+    #[test]
+    fn a_theme_whose_hooks_alone_exceed_the_budget_is_reported_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(
+            &theme,
+            &format!(
+                "[hooks]\nstarted = \"{}\"\n",
+                "x".repeat(MAX_REMEMBERED_THEME_BYTES + 1)
+            ),
+        );
+
+        let hooks_only = inspect_theme_package(&theme);
+        assert_eq!(hooks_only.shell_hooks.len(), 1, "the hook must be reported");
+        assert!(
+            hooks_only.shell_hooks[0].command.len() > MAX_REMEMBERED_THEME_BYTES,
+            "the command must be reported whole, not trimmed"
+        );
+        assert!(
+            !hooks_only.is_uninspected(),
+            "nothing was left unread: the report is complete, only too large"
+        );
+        assert!(
+            hooks_only.remembered_bytes() > MAX_REMEMBERED_THEME_BYTES,
+            "a consumer must be able to see it is over budget"
+        );
+
+        write_preset(&theme, "animations", "Space.lua");
+        let with_a_preset = inspect_theme_package(&theme);
+        assert!(
+            matches!(with_a_preset.lua_presets[0].body, PresetBody::Unreadable(_)),
+            "with the budget spent, the preset is not read — and the report says so"
+        );
+        assert!(
+            with_a_preset.is_uninspected(),
+            "which makes it uninspected as well as over budget"
+        );
+        assert!(
+            with_a_preset.remembered_bytes() > MAX_REMEMBERED_THEME_BYTES,
+            "and still over budget"
         );
     }
 

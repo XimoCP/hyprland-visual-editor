@@ -19578,8 +19578,9 @@ fn theme_trust_warning_copy_states_the_honest_limit() {
         "the copy must say the warning returns when either of the two changes"
     );
     assert!(
-        lower.contains("this decision is not remembered"),
-        "a package that could not be inspected must not be presented as remembered"
+        lower.contains("hve cannot remember a decision for this package"),
+        "a package that could not be read in full, or that carries more code than \
+         HVE records, must not be presented as remembered"
     );
     assert!(
         src.contains("root.acceptance-remembered"),
