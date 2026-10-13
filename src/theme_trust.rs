@@ -175,13 +175,18 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
         //   run from a file that does not exist.
         // - REFUSED (the file EXISTS and the reader said no: over bound,
         //   not a regular file, unreadable — every `Err` it can return):
-        //   a file nobody inspected, and the apply copies `settings.toml`
-        //   VERBATIM onto the live config, so a hook inside it runs on
-        //   apply with the gate silent. This reports the SAME conservative
-        //   entry a parse failure produces — "I could not inspect this
-        //   file", never "this carries a hook" — because an empty report
-        //   over a file nobody read is the silent gate this detector
-        //   exists to prevent.
+        //   a file nobody inspected, and the report must say so. This is
+        //   the SAME conservative entry a parse failure produces — "I
+        //   could not inspect this file", never "this carries a hook" —
+        //   because an empty report over a file nobody read is the silent
+        //   gate this detector exists to prevent.
+        //
+        //   Honest bound: for the over-bound and non-regular classes the
+        //   apply ALREADY refuses the verbatim copy (`theme_file_is_bounded`,
+        //   W10c), so a hook there cannot reach the live config either. This
+        //   entry is defence in depth, not the only wall — and it is required
+        //   anyway, because the gate layer must not depend on another
+        //   module's guard staying in place.
         if !settings.exists() {
             continue;
         }
@@ -310,11 +315,14 @@ fn push_unparsed_hooks(provider: &str, file: &Path) -> ShellHook {
 /// key as the parse-failure entry, because it is the same HONEST claim: "I
 /// could not inspect this file", never "this carries a hook".
 ///
-/// Why it must exist at all: the refusal here is a file that DOES exist and
-/// the apply copies `settings.toml` verbatim over the live one, so a hook
-/// inside it runs on apply. Reporting an empty list for it is the FAIL-OPEN
-/// this detector is not allowed to have — a parse failure and a read
-/// refusal are the same event to the keeper: a file nobody inspected.
+/// Why it must exist at all: an empty report over a file nobody read is the
+/// silent gate this detector is not allowed to have — a parse failure and a
+/// read refusal are the same event to the keeper. The honest bound: for a file
+/// that is over bound or not a regular file the apply's own preflight
+/// (`theme_file_is_bounded`, W10c) refuses the verbatim copy too, so this entry
+/// is DEFENCE IN DEPTH for those classes rather than the only wall. It is
+/// required regardless: it is the gate layer's own promise and must not depend
+/// on another module's guard.
 ///
 /// The cause comes from `ThemeReadError`'s own `Display` (the ONE error
 /// type, W10), so every refusal class reads as itself: `larger than the
