@@ -12,14 +12,167 @@ use std::time::{Duration, Instant};
 static LAST_TOGGLE: Mutex<Option<Instant>> = Mutex::new(None);
 const DEBOUNCE_MS: u64 = 400;
 
-/// Start the IPC server on `$XDG_RUNTIME_DIR/hve.sock` (fallback `/tmp/hve.sock`).
+/// The fallback directory, relative to `$HOME`: per-user, and deliberately
+/// NOT `/tmp` (world-writable: anyone could pre-plant a socket there before
+/// the bind) and not `~/.cache` or `~/.local/state`, which cleanup tools
+/// empty while HVE runs and would unlink a LIVE socket from under it.
+const FALLBACK_DIR: &str = ".local/share/hve/run";
+
+/// What the caller observed about `$XDG_RUNTIME_DIR` on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeDir {
+    /// Set and usable: a real directory owned by our uid whose mode leaves
+    /// group and other with NO permissions, so nobody but us can reach a
+    /// file inside it — not even during the bind window.
+    Private(PathBuf),
+    /// Unset, or set but unusable: not a directory, not owned by us, or
+    /// reachable by group/other.
+    Unusable,
+}
+
+/// Our real user id. `getuid`, never the effective id: the socket must land
+/// where the user it belongs to can reach it.
+fn our_uid() -> u32 {
+    // SAFETY: `getuid` takes no arguments and cannot fail.
+    unsafe { libc::getuid() }
+}
+
+/// Whether `path` is a real directory owned by `uid` with mode exactly
+/// `0700` (owner rwx, group and other nothing). Pure over `uid`, so the
+/// "another user's directory" case is testable without root.
+///
+/// `metadata` follows symlinks: the question is about the directory the
+/// socket would actually land in, whatever links point at it.
+fn is_private_dir_of(path: &Path, uid: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.is_dir() && meta.uid() == uid && meta.mode() & 0o777 == 0o700,
+        Err(_) => false,
+    }
+}
+
+/// Observe `$XDG_RUNTIME_DIR` (passed in, never read from the process here,
+/// so tests never touch the real environment).
+fn observe_runtime_dir(xdg_runtime_dir: Option<&str>) -> RuntimeDir {
+    match xdg_runtime_dir {
+        Some(dir) if is_private_dir_of(Path::new(dir), our_uid()) => {
+            RuntimeDir::Private(PathBuf::from(dir))
+        }
+        _ => RuntimeDir::Unusable,
+    }
+}
+
+/// The DECISION, pure over its inputs: which directory holds `hve.sock`.
+///
+/// - a usable `$XDG_RUNTIME_DIR` wins (the behaviour that already shipped);
+/// - otherwise `$HOME` + [`FALLBACK_DIR`], created private by the caller;
+/// - with neither, `Err`: refuse. `/tmp/hve.sock` was the old fallback and
+///   does not come back — it is world-writable, so a stranger could own the
+///   path before HVE ever binds it.
+fn resolve_socket_dir(runtime: &RuntimeDir, home: Option<&str>) -> Result<PathBuf, String> {
+    if let RuntimeDir::Private(dir) = runtime {
+        return Ok(dir.clone());
+    }
+    match home {
+        Some(home) if !home.trim().is_empty() => Ok(PathBuf::from(home).join(FALLBACK_DIR)),
+        _ => Err(
+            "no usable XDG_RUNTIME_DIR and no HOME: refusing to place hve.sock in a \
+             world-writable directory"
+                .to_string(),
+        ),
+    }
+}
+
+/// Create (or re-tighten) `dir` to mode 0700 and verify it is a private
+/// directory of ours. Runs BEFORE `UnixListener::bind`.
+///
+/// The create mode alone is not enough: it is masked by umask, and an
+/// EXISTING directory would keep its old (looser) mode. So the 0700 is
+/// enforced explicitly here, on the directory, before any socket file can
+/// exist — which is what actually closes the bind window.
+fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::DirBuilderExt;
+    match std::fs::metadata(dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => {
+            return Err(format!(
+                "{} exists and is not a directory; refusing to place hve.sock there",
+                dir.display()
+            ));
+        }
+        Err(_) => {
+            if let Some(parent) = dir.parent() {
+                // Parents get the normal mode; only the socket dir itself is
+                // private, so `~/.local/share` stays usable for other data.
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+            }
+            match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+                Ok(()) => {}
+                // Already there (or a dangling symlink): the permission
+                // enforcement and the ownership check below decide.
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => {
+                    return Err(format!(
+                        "cannot create the private socket directory {}: {e}",
+                        dir.display()
+                    ));
+                }
+            }
+        }
+    }
+    std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .map_err(|e| format!("cannot make {} private (mode 0700): {e}", dir.display()))?;
+    if !is_private_dir_of(dir, our_uid()) {
+        return Err(format!(
+            "{} is not a private directory owned by this user; refusing to place hve.sock there",
+            dir.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve the socket path from EXPLICIT environment values.
+///
+/// Server, `cleanup()` and the second-launch handoff all go through here, so
+/// the three always name the same file. The directory is private (0700) by
+/// the time this returns, i.e. BEFORE any bind.
+fn socket_path_from(
+    xdg_runtime_dir: Option<&str>,
+    home: Option<&str>,
+) -> Result<PathBuf, String> {
+    let dir = resolve_socket_dir(&observe_runtime_dir(xdg_runtime_dir), home)?;
+    ensure_private_dir(&dir)?;
+    Ok(dir.join("hve.sock"))
+}
+
+/// The socket path from the process environment. See [`socket_path_from`].
+fn get_socket_path() -> Result<PathBuf, String> {
+    socket_path_from(
+        std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+}
+
+/// Start the IPC server on the private socket path from [`get_socket_path`].
 ///
 /// Spawns a background thread that listens for commands and dispatches them
 /// onto the Slint event loop via `slint::invoke_from_event_loop`.
+///
+/// W7: when no private path can be resolved the server is NOT started — the
+/// refusal is logged. There is no `/tmp/hve.sock` fallback to fall back to.
 pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
-    let socket_path = get_socket_path();
+    let socket_path = match get_socket_path() {
+        Ok(path) => path,
+        Err(reason) => {
+            tracing::error!("[HVE IPC] {}; the IPC server will not start", reason);
+            return;
+        }
+    };
 
-    // Remove stale socket from previous run
+    // Remove stale socket from previous run. The path was resolved through a
+    // directory verified as private and owned by us, so this unlink can only
+    // ever happen inside that directory.
     let _ = std::fs::remove_file(&socket_path);
 
     std::thread::spawn(move || {
@@ -30,7 +183,10 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
                 return;
             }
         };
-        // Allow only the owner to connect (sufficient for local Unix socket)
+        // Belt-and-braces only, no longer load-bearing: `bind` creates the
+        // socket with `0777 & ~umask`, and this call always came too late to
+        // close that window on its own. The window is closed by the DIRECTORY
+        // being 0700 before the bind (see `ensure_private_dir`).
         let _ = std::fs::set_permissions(
             &socket_path,
             std::os::unix::fs::PermissionsExt::from_mode(0o700),
@@ -48,14 +204,15 @@ pub fn start_ipc_server(window: slint::Weak<crate::MainWindow>, proj: PathBuf) {
 
 /// Remove the socket file. Call this from main() after the event loop exits.
 pub fn cleanup() {
-    let path = get_socket_path();
+    let path = match get_socket_path() {
+        Ok(path) => path,
+        Err(reason) => {
+            tracing::debug!("[HVE IPC] Socket cleanup skipped: {}", reason);
+            return;
+        }
+    };
     let _ = std::fs::remove_file(&path);
     tracing::debug!("[HVE IPC] Socket cleaned up: {}", path.display());
-}
-
-fn get_socket_path() -> PathBuf {
-    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(runtime).join("hve.sock")
 }
 
 // ─── Second-launch handoff ────────────────────────────────────────────
@@ -170,8 +327,23 @@ pub fn handoff_show(path: &Path) -> HandoffReport {
 
 /// Handoff entry point for a second launch: resolve the running instance's
 /// socket and attempt the show.
+///
+/// Resolves through the SAME [`get_socket_path`] as the server and
+/// [`cleanup`]. When no private path exists the refusal is reported instead
+/// of being papered over with a `/tmp` guess.
 pub fn handoff_show_running() -> HandoffReport {
-    handoff_show(&get_socket_path())
+    match get_socket_path() {
+        Ok(path) => handoff_show(&path),
+        Err(reason) => HandoffReport {
+            succeeded: false,
+            exit_code: HANDOFF_FALLBACK_EXIT_CODE,
+            message: format!(
+                "Another instance of HVE is already running, but HVE cannot locate its \
+                 IPC socket ({reason}).\n\
+                 Close it with: pkill -x hve"
+            ),
+        },
+    }
 }
 
 // ─── Connection handler ──────────────────────────────────────────────
@@ -604,6 +776,7 @@ fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {    let w = wind
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
 
     // ── get_next_index ───────────────────────────────────────────────
 
@@ -1315,6 +1488,203 @@ mod tests {
             Err(_) => {
                 panic!("assert-color-authority blocked on a FIFO meta.json instead of refusing it")
             }
+        }
+    }
+
+    // ── W7: the socket path (a private dir, never `/tmp/hve.sock`) ────
+    //
+    // The old code fell back to `/tmp/hve.sock` when `XDG_RUNTIME_DIR` was
+    // unset and bound BEFORE setting the socket mode, so anyone could
+    // pre-plant a socket in a world-writable directory. These tests pin the
+    // replacement: one resolution shared by server, cleanup and handoff,
+    // and a fallback directory that exists with mode 0700 before any bind.
+
+    /// File mode (permission bits only) of `path`.
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .expect("path must be readable")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    /// With no `XDG_RUNTIME_DIR` the socket goes to a per-user directory
+    /// that this resolution CREATES with mode 0700 — never to
+    /// `/tmp/hve.sock`.
+    #[test]
+    fn without_a_runtime_dir_the_socket_lands_in_a_private_0700_directory() {
+        let home = tempfile::tempdir().expect("home");
+
+        let path =
+            socket_path_from(None, Some(home.path().to_str().expect("utf-8 home")))
+                .expect("a usable HOME is enough");
+
+        assert_ne!(
+            path,
+            PathBuf::from("/tmp/hve.sock"),
+            "the /tmp fallback must be gone"
+        );
+        assert!(
+            path.starts_with(home.path()),
+            "the fallback must live under HOME, got: {}",
+            path.display()
+        );
+        let parent = path.parent().expect("the socket path has a parent");
+        assert_eq!(
+            parent.file_name().map(|n| n.to_os_string()),
+            Some(std::ffi::OsString::from("run")),
+            "the socket must sit in the dedicated private directory, got: {}",
+            parent.display()
+        );
+        assert!(
+            parent.is_dir(),
+            "the private directory must already exist before any bind"
+        );
+        assert_eq!(
+            mode_of(parent),
+            0o700,
+            "the private directory must be 0700 before any bind"
+        );
+    }
+
+    /// Pinned previous behaviour: a SET and VALID `XDG_RUNTIME_DIR` is still
+    /// the socket's home, and the fallback directory is not even created.
+    #[test]
+    fn a_set_valid_xdg_runtime_dir_is_still_used() {
+        let runtime = tempfile::tempdir().expect("runtime dir");
+        std::fs::set_permissions(
+            runtime.path(),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .expect("make the fixture private");
+        let home = tempfile::tempdir().expect("home");
+
+        let path = socket_path_from(
+            runtime.path().to_str(),
+            Some(home.path().to_str().expect("utf-8 home")),
+        )
+        .expect("a valid runtime dir resolves");
+
+        assert_eq!(path, runtime.path().join("hve.sock"));
+        assert!(
+            !home.path().join(".local/share/hve/run").exists(),
+            "the fallback must stay unused while the runtime dir is valid"
+        );
+    }
+
+    /// A runtime dir that is NOT a directory (a planted file), or that is not
+    /// private (group/other reachable — the bind window would be open), is
+    /// refused and the private fallback is used instead.
+    #[test]
+    fn an_unusable_xdg_runtime_dir_is_refused_in_favour_of_the_private_fallback() {
+        let root = tempfile::tempdir().expect("root");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // (a) not a directory: a regular file at the same path.
+        let file = root.path().join("not-a-dir");
+        std::fs::write(&file, b"planted").unwrap();
+        let path = socket_path_from(file.to_str(), Some(home.to_str().unwrap()))
+            .expect("falls back to HOME");
+        assert_eq!(
+            path,
+            home.join(".local/share/hve/run/hve.sock"),
+            "a planted FILE must never host the socket"
+        );
+
+        // (b) a real directory of ours, but reachable by group/other: the
+        // socket would be connectable during the bind window.
+        let loose = root.path().join("loose");
+        std::fs::create_dir_all(&loose).unwrap();
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = socket_path_from(loose.to_str(), Some(home.to_str().unwrap()))
+            .expect("falls back to HOME");
+        assert_eq!(
+            path,
+            home.join(".local/share/hve/run/hve.sock"),
+            "a group/other-readable runtime dir must not host the socket"
+        );
+        assert_eq!(mode_of(&home.join(".local/share/hve/run")), 0o700);
+    }
+
+    /// The ownership rule, pure over the observed uid: a directory of another
+    /// user is refused. Testing with a fabricated uid needs no root.
+    #[test]
+    fn a_runtime_dir_owned_by_another_user_is_refused() {
+        let dir = tempfile::tempdir().expect("dir");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            is_private_dir_of(dir.path(), our_uid()),
+            "sanity: our own 0700 directory passes"
+        );
+        assert!(
+            !is_private_dir_of(dir.path(), our_uid().wrapping_add(1)),
+            "a directory owned by another uid must be refused"
+        );
+    }
+
+    /// Neither `XDG_RUNTIME_DIR` nor a usable `HOME` means REFUSE: no
+    /// `/tmp/hve.sock`, no silent fallback, a reportable reason.
+    #[test]
+    fn without_a_runtime_dir_and_without_home_the_socket_path_is_refused() {
+        let reason = socket_path_from(None, None)
+            .expect_err("with no runtime dir and no HOME there is nowhere safe to bind");
+        assert!(
+            reason.contains("refusing"),
+            "the refusal must say it refused, got: {reason}"
+        );
+        assert!(
+            !reason.contains("/tmp/hve.sock"),
+            "the refusal must never name the /tmp fallback as a destination, got: {reason}"
+        );
+
+        // An unusable runtime dir + no HOME is the same refusal, not a
+        // silent fall-through.
+        let reason = socket_path_from(Some("/nonexistent/hve-runtime"), None)
+            .expect_err("an unusable runtime dir is not a license to use /tmp");
+        assert!(reason.contains("refusing"), "got: {reason}");
+    }
+
+    /// Requirement: server, `cleanup()` and the second-launch handoff resolve
+    /// the SAME path. All three go through the one resolver, and the file
+    /// holds no `/tmp/hve.sock` fallback anywhere.
+    #[test]
+    fn server_cleanup_and_handoff_resolve_the_socket_path_the_same_way() {
+        let raw = std::fs::read_to_string("src/ipc.rs").expect("src/ipc.rs must exist");
+        // Comment-only lines are stripped: the removal IS documented in
+        // prose, so the check is about the CODE that can still run. The test
+        // module is cut off too — it names the forbidden path to assert it.
+        let src: String = raw
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let src = &src[..src.find("#[cfg(test)]").unwrap_or(src.len())];
+
+        assert!(
+            !src.contains("/tmp/hve.sock"),
+            "the /tmp/hve.sock fallback must not exist anywhere in the code of src/ipc.rs"
+        );
+
+        for signature in [
+            "pub fn start_ipc_server",
+            "pub fn cleanup()",
+            "pub fn handoff_show_running()",
+        ] {
+            let start = src
+                .find(signature)
+                .unwrap_or_else(|| panic!("{signature} must exist"));
+            let end = src[start..]
+                .find("\n}\n")
+                .map(|i| start + i)
+                .unwrap_or(src.len());
+            let body = &src[start..end];
+            assert!(
+                body.contains("get_socket_path()"),
+                "{signature} must resolve the socket through get_socket_path(), got:\n{body}"
+            );
         }
     }
 }
