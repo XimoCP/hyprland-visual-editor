@@ -15,10 +15,12 @@
 //
 // W2c: Continue is no longer a one-shot. The acceptance is REMEMBERED for
 // exactly the content shown, so the warning does not come back until the
-// package changes — and the copy says so. One state is the exception and
-// says the opposite: a package part of which could not be INSPECTED is
-// never remembered (HVE does not record what it could not read), so
-// `acceptance-remembered` is false there and the copy promises nothing.
+// package changes — and the copy says so. TWO states are the exception and
+// say the opposite, because HVE cannot record either of them: a package part
+// of which could not be INSPECTED (HVE does not record what it could not
+// read), and a package carrying more code than a store can afford (the
+// per-theme budget). `acceptance-remembered` is false for both, and the copy
+// promises nothing.
 //
 // The component takes the keyboard when it opens: its own observer on
 // `open` focuses `trust-kbd`, the gate's FocusScope, so the modal owns

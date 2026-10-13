@@ -710,7 +710,9 @@ mod tests {
 
         // Many themes, each INSIDE its own budget, together over the store's.
         let mut store = TrustStore::load(&path);
-        let body = "y".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES);
+        // Each theme INSIDE its own budget (a 100 KiB body plus the
+        // entry's names and overhead), together over the store's.
+        let body = "y".repeat(100 * 1024);
         for i in 0..24 {
             let report = ThemeTrustReport {
                 shell_hooks: Vec::new(),

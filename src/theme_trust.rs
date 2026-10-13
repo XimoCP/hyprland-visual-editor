@@ -89,8 +89,19 @@ pub struct ShellHook {
 /// the collision this whole store exists to avoid.
 pub const MAX_PRESET_BODY_BYTES: usize = 16 * 1024;
 
+/// How many bytes ONE store entry costs beyond its own field values: the
+/// table header, the field NAMES, the quoting, the separators and the
+/// newlines. Charged per hook and per preset so a budget measured here
+/// covers what a store WRITES, not only what the code is.
+///
+/// Measured, not guessed: 80 bytes is the per-entry overhead this store's own
+/// format showed on the reviewers' reproductions (~67 measured, rounded up),
+/// and it is what makes the arithmetic below hold — see
+/// [`ThemeTrustReport::remembered_bytes`].
+const STORE_ENTRY_OVERHEAD_BYTES: usize = 80;
+
 /// The most code ONE theme may contribute to a report, and therefore to what
-/// a store can remember: every hook's command text plus every preset body.
+/// a store can remember.
 ///
 /// Why a second bound at all: a bound per ITEM with no bound per THEME is
 /// half a bound. Without this one, a single legal theme (the package bounds
@@ -99,6 +110,15 @@ pub const MAX_PRESET_BODY_BYTES: usize = 16 * 1024;
 /// every acceptance on the machine. Both re-judges of the fix confirmed that
 /// defect with measurements; this bound is the answer to it, and
 /// [`ThemeTrustReport::remembered_bytes`] is what a consumer checks against.
+///
+/// The arithmetic that makes it sufficient, so nobody has to re-derive it:
+/// a report inside this budget serializes to at most `6 × budget` (TOML
+/// escaping a control byte costs 6 characters — measured, and the worst case)
+/// plus the per-entry overhead, and an entry can never be smaller than
+/// [`STORE_ENTRY_OVERHEAD_BYTES`] + one byte, so at most ~1,600 entries fit:
+/// `6 × 128 KiB + 1,600 × 80 B ≈ 906 KiB`, comfortably inside the store's own
+/// write bound. A theme inside this budget therefore CANNOT be the reason a
+/// store refuses to be written.
 pub const MAX_REMEMBERED_THEME_BYTES: usize = 128 * 1024;
 
 /// A preset's content, as far as the scan could read it.
@@ -120,6 +140,23 @@ pub enum PresetBody {
     /// carrying this is never rememberable (see
     /// [`ThemeTrustReport::is_uninspected`]).
     Unreadable(String),
+}
+
+/// What ONE hook entry costs the theme budget: the provider, the event key and
+/// the command text, plus the store format's per-entry overhead.
+///
+/// ONE function, used both by [`ThemeTrustReport::remembered_bytes`] and by
+/// the scan that spends the budget, so the two can never disagree about what
+/// "inside the budget" means — two currencies for one budget was a real defect
+/// the last review round found twice.
+fn hook_bytes(hook: &ShellHook) -> usize {
+    hook.provider.len() + hook.key.len() + hook.command.len() + STORE_ENTRY_OVERHEAD_BYTES
+}
+
+/// What ONE preset entry costs the theme budget, for a body of `body_len`
+/// bytes. The same ONE-currency rule as [`hook_bytes`].
+fn preset_entry_bytes(category: &str, file_name: &str, body_len: usize) -> usize {
+    category.len() + file_name.len() + body_len + STORE_ENTRY_OVERHEAD_BYTES
 }
 
 /// One preset file the package carries under `presets/<category>/` that the
@@ -204,21 +241,35 @@ impl ThemeTrustReport {
                 .any(|p| matches!(p.body, PresetBody::Unreadable(_)))
     }
 
-    /// How many bytes of code this report asks a store to remember: every
-    /// hook's command text plus every preset body. `Unreadable` entries
-    /// contribute NOTHING — nothing is ever remembered for them.
+    /// How many bytes of a stored entry this report accounts for: EVERY field
+    /// a store writes — the hook's provider, key and command text, the
+    /// preset's category, file name and body, plus the per-entry overhead of
+    /// the format itself — not only the code that runs.
+    ///
+    /// Why every field, and why an overhead: a budget that counts only the
+    /// code undercounts what the store holds, and a theme carrying thousands
+    /// of long file names or hook keys could then be "inside" the budget while
+    /// the entry it produces is megabytes. The first version of this method
+    /// made exactly that mistake — a theme with 10,000 presets of one-byte
+    /// bodies and 200-character names counted 10,000 bytes and serialized to
+    /// 2.67 MB, so the warning promised a silence the store refused. BOTH
+    /// judges of the last review round found it independently, which is why
+    /// the rule here is "what a store writes", never "what runs".
     ///
     /// A consumer must refuse to remember a report over
     /// [`MAX_REMEMBERED_THEME_BYTES`]: a theme the store cannot afford is a
     /// theme whose decision is not remembered, and the warning has to say so
     /// instead of promising a silence that will not come.
+    ///
+    /// `Unreadable` entries contribute nothing — nothing is ever remembered
+    /// for them.
     pub fn remembered_bytes(&self) -> usize {
-        let hooks: usize = self.shell_hooks.iter().map(|h| h.command.len()).sum();
+        let hooks: usize = self.shell_hooks.iter().map(hook_bytes).sum();
         let presets: usize = self
             .lua_presets
             .iter()
             .map(|p| match &p.body {
-                PresetBody::Text(text) => text.len(),
+                PresetBody::Text(text) => preset_entry_bytes(&p.category, &p.file_name, text.len()),
                 PresetBody::Unreadable(_) => 0,
             })
             .sum();
@@ -238,7 +289,7 @@ pub fn inspect_theme_package(theme_dir: &Path) -> ThemeTrustReport {
     // stops. A theme whose hooks alone exceed the budget is therefore still
     // reported whole — and `remembered_bytes` is what tells a consumer it
     // must not be remembered.
-    let spent: usize = shell_hooks.iter().map(|h| h.command.len()).sum();
+    let spent: usize = shell_hooks.iter().map(hook_bytes).sum();
     ThemeTrustReport {
         shell_hooks,
         lua_presets: lua_presets(theme_dir, spent),
@@ -474,7 +525,7 @@ fn lua_presets(theme_dir: &Path, already_spent: usize) -> Vec<LuaPreset> {
             .collect();
         names.sort();
         out.extend(names.into_iter().map(|file_name| LuaPreset {
-            body: preset_body(&dir.join(&file_name), &mut spent),
+            body: preset_body(&dir.join(&file_name), category, &file_name, &mut spent),
             category: category.to_string(),
             file_name,
         }));
@@ -494,7 +545,7 @@ fn lua_presets(theme_dir: &Path, already_spent: usize) -> Vec<LuaPreset> {
 /// equal) and never read at all once the theme's budget is spent, which the
 /// cause says, because a report that deliberately did not open a file must be
 /// honest about it.
-fn preset_body(path: &Path, spent: &mut usize) -> PresetBody {
+fn preset_body(path: &Path, category: &str, file_name: &str, spent: &mut usize) -> PresetBody {
     if *spent >= MAX_REMEMBERED_THEME_BYTES {
         return PresetBody::Unreadable(format!(
             "the preset {} was not read by this scan: this package's code already fills the \
@@ -511,16 +562,18 @@ fn preset_body(path: &Path, spent: &mut usize) -> PresetBody {
             path.display(),
             text.len()
         )),
-        Ok(text) if *spent + text.len() > MAX_REMEMBERED_THEME_BYTES => PresetBody::Unreadable(
-            format!(
-                "the preset {} was not read by this scan: it would push this package's code past \
-                 the {MAX_REMEMBERED_THEME_BYTES}-byte budget for a theme HVE can remember, so it \
-                 may carry code that is not listed here",
+        Ok(text) if *spent + preset_entry_bytes(category, file_name, text.len()) > MAX_REMEMBERED_THEME_BYTES => {
+            // This one WAS read — it just does not fit the budget, and saying
+            // "was not read" of a file that was opened would be false.
+            PresetBody::Unreadable(format!(
+                "the preset {} could not be KEPT by this scan: it would push this package's code \
+                 past the {MAX_REMEMBERED_THEME_BYTES}-byte budget for a theme HVE can remember, \
+                 so its contents are not shown here",
                 path.display()
-            ),
-        ),
+            ))
+        }
         Ok(text) => {
-            *spent += text.len();
+            *spent += preset_entry_bytes(category, file_name, text.len());
             PresetBody::Text(text)
         }
         Err(e) => PresetBody::Unreadable(format!(

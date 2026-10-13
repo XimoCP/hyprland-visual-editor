@@ -6214,6 +6214,47 @@ fn main() -> Result<(), slint::PlatformError> {
 mod tests {
     use super::*;
 
+    /// W2c-d: the theme budget must be counted in the currency the STORE
+    /// writes. Counting only the code let a theme with thousands of long file
+    /// names pass every rule the copy reads and then be refused by the store —
+    /// the copy promising a silence that never came. BOTH judges of the last
+    /// round found this independently (10,000 presets, 1-byte bodies,
+    /// ~200-char names: 10,000 counted, 2,670,037 serialized).
+    #[test]
+    fn the_theme_budget_counts_every_field_a_store_writes() {
+        use crate::theme_trust::{LuaPreset, PresetBody, ShellHook, ThemeTrustReport};
+
+        let presets: Vec<LuaPreset> = (0..2_000)
+            .map(|i| LuaPreset {
+                category: "animations".into(),
+                file_name: format!("{i}-{}", "n".repeat(200)),
+                body: PresetBody::Text("a".into()),
+            })
+            .collect();
+        let report = ThemeTrustReport {
+            shell_hooks: vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "sddm-watch.sh".into(),
+            }],
+            lua_presets: presets,
+        };
+
+        assert!(
+            !report.is_uninspected(),
+            "the fixture is fully read: nothing about it is unknown"
+        );
+        assert!(
+            report.remembered_bytes() > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES,
+            "the budget must cover the NAMES a store writes, not only the code — it counted {}",
+            report.remembered_bytes()
+        );
+        assert!(
+            !trust_acceptance_can_be_remembered(&report),
+            "and the copy must therefore NOT promise to remember it"
+        );
+    }
+
     /// W2c: the ONE rule the warning's copy and the store both read, so the
     /// text can never promise a silence the store will not keep. Each clause
     /// is a state the keeper must be warned about again.

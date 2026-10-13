@@ -124,7 +124,9 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W10c-d | `246bf1c` | a theme tree carrying a symlinked directory is refused up front | 1741 |
 | W2c | `9d2bcf8` | the remembered acceptance: `theme-trust.toml`, keyed by the exact content shown | 1763 |
 | W2c-b | `d9e12af` | the acceptance keys a preset's BODY, not only its name (the dual-review blocker) | 1770 |
-| docs | `6b2791d`, `788772a` | this record: the second round, the residuals, the open units | — |
+| W2c-c | `a1091de` | the bound per THEME and the bound per STORE (both re-judges' finding) | 1776 |
+| W2c-d | (this commit) | the budget counted in the currency the store writes (both judges, last round) | 1777 |
+| docs | `6b2791d`, `788772a`, `e76882f` | this record: the rounds, the residuals, the open units | — |
 
 ## Log (W2c) — the record this unit answers for
 
@@ -151,6 +153,12 @@ Test counts are the full-suite totals observed at each commit; the suite started
 - **L6 (2026-10-13, the keeper, verbatim, answering the mechanism question)**: `El cuerpo tal cual (Recomendado)` —
   the preset body is remembered VERBATIM, not as a digest, with the 16 KiB bound above which the preset is reported
   unreadable and the theme is never remembered.
+- **L9 (2026-10-13, the parent, after the last re-judgment)**: the budget's currency. `remembered_bytes` counted the
+  CODE while the store's write bound counted SERIALIZED BYTES, so the copy could promise a memory the store refused —
+  found independently by BOTH judges, and it is the third time this contract has been bitten by "a list is not the
+  rule, a count is not what the store holds". The fix unifies the currency in ONE pair of functions
+  (`hook_bytes`/`preset_entry_bytes`) that both the scan and the report call, and writes the sufficiency arithmetic
+  next to the constant.
 - **L8 (2026-10-13, the keeper, verbatim, answering the W2c-c question)**: `Sí, ciérralo ahora (Recomendado)` — close
   the store-growth defect the two re-judges confirmed, with the bounds described in the W2c-c section above.
 - **L7 (2026-10-13, the parent, a spec change forced by the blocker)**: S1's original wording enumerated the fields
@@ -385,11 +393,14 @@ else.
   under it, stopped duplicating and turned into an independent verifier, which is exactly the right reaction. Two
   sessions on one unit is survivable, but it was luck: the lesson is to treat a session that backgrounded work as
   possibly ALIVE, not dead.
-- **The flaky module is real and corroborated.** Two DIFFERENT tests in `reload_coalescer` failed under full-suite
-  parallelism across independent runs — `sandboxed_missing_flock_fails_open` (one run) and
-  `sandboxed_no_loss_under_idle_exit_stress` ("bash must spawn: NotFound", another) — and both pass in isolation
-  and as a module. That is the load-dependent flake the health audit predicted (19 sleeps, zero `#[serial]`), now
-  with evidence. It must be fixed in Lane C, not waived.
+- **The flaky module is real and corroborated.** Three DIFFERENT tests in `reload_coalescer` have now failed under
+  full-suite parallelism across independent runs — `sandboxed_missing_flock_fails_open` (one run),
+  `sandboxed_no_loss_under_idle_exit_stress` ("bash must spawn: NotFound", another) and
+  `sandboxed_idle_drainer_exits_and_removes_pidfile` (a third) — and all pass in isolation and as a module. A FOURTH
+  test, in a DIFFERENT module (`watcher::tests::watcher_child_dies_when_hve_dies_end_to_end`), failed once the same
+  way and passed alone and as a module; the watcher was untouched by that commit. That is the load-dependent flake
+  the health audit predicted (19 sleeps, zero `#[serial]`), now with evidence in two modules. It must be fixed in
+  Lane C, not waived.
 - **A "the detector is complete now" claim needs an adversarial SPELLING hunt, not a review.** Both times the
   cross-model verifier was asked to attack the TOML/spelling hull it REFUTED it, with blockers: first the
   root-level dotted key and inline table, then an escaped key (`"\u0068ooks"`), a leading BOM, and a multi-line
@@ -463,7 +474,10 @@ handles its path and its mode, and closes a security MEDIUM, which is Tier 3 by 
   to get there, so the BODY KEYING is what made it reachable. One acceptance could also write an arbitrarily large file
   (a 10,000-preset theme → ~160 MB on one click). The direction was fail-safe — the warning came back, nothing applied
   in silence — which is why both judges filed it as MEDIUM/ADVISORY and not as a blocker. W2c-c bounds BOTH ends: the
-  write refuses a store it could not read back, and the report spends at most a fixed budget per theme.
+  write refuses a store it could not read back, and the report spends at most a fixed budget per theme. W2c-d then put
+  that budget in the CURRENCY the store writes (fields plus the format's per-entry overhead), because a budget counted
+  in code bytes let a theme with thousands of long names pass every rule the copy reads and still be refused by the
+  store — the copy promising a silence that never came, which is the one thing this feature may not do.
 - **There is no way to FORGET an acceptance from the UI.** The store can be deleted by hand, and re-saving the theme
   drops the stale hooks (Night, Cars, Space, Spiderman — see above), but the panel offers no "stop remembering this".
   Named here so it is a decision, not an oversight.
@@ -547,6 +561,65 @@ verification demanded (see the fourth and fifth rounds above).
   decision, the one thing this whole feature must never do. A full store nags and says so in the log; deleting the
   file is the keeper's call.
 
+## W2c-d — the theme budget in the currency the store writes
+
+**Opened** 2026-10-13 after the LAST scoped re-judgment (the dual review's budget allows two rounds of each, and this
+one used the second). Both judges found the same thing independently, with their own reproductions.
+
+### The defect, and why it mattered
+
+`remembered_bytes` counted the CODE (hook commands, preset bodies) while the store's write bound counts SERIALIZED
+BYTES — two currencies for one budget. A theme carrying thousands of long names or keys was therefore "inside" the
+per-theme budget by the number the copy reads, and still produced a store entry over the write bound, which `save`
+refused: the warning showed the REMEMBERED branch ("HVE will not ask again") and the next apply asked again. That is
+S10's own absolute claim ("the text cannot promise a silence the store will not keep") broken by the second rule.
+Both judges measured it: 10,000 presets with 1-byte bodies and ~200-character names counted 10,000 and serialized to
+2,670,037 bytes; with 0-byte bodies and 255-character names the count was **0** and the entry still 2,452,537. One
+judge also measured the escaping factor correctly at **6×** (`\u00XX`), not the 2.7× this record had.
+
+### Specs
+
+- **S12** — ONE currency. Every field a store writes is counted — a hook's provider, key and command text; a preset's
+  category, file name and body — plus a per-entry overhead for the format itself
+  (`STORE_ENTRY_OVERHEAD_BYTES`, measured at ~67 and charged at 80). `hook_bytes` and `preset_entry_bytes` are the
+  ONLY places that decide what an entry costs, and BOTH the scan that spends the budget and `remembered_bytes` call
+  them, so the two can never drift apart again.
+- **S13** — The budget is sufficient by construction, and the arithmetic is written where the constant lives: a report
+  inside 128 KiB serializes to at most `6 × 128 KiB` plus the per-entry overhead, and an entry is at least 81 bytes,
+  so ~1,600 entries fit → ≈900 KiB, comfortably inside the store's 2 MiB write bound. A theme inside the budget
+  therefore cannot be the reason a store refuses to be written.
+- **S14** — A cause message must be TRUE of the file it names: a preset the scan READ and then could not keep says
+  "could not be KEPT by this scan", and only a file after the budget was already spent says "was not read".
+
+### Acceptance
+
+- `cargo test` green, `cargo check --all-targets` clean.
+- The judges' reproduction (2,000 presets with 200-character names and 1-byte bodies) is refused by the rule the copy
+  reads, not only by the store.
+- No realistic regression: the four themes that trigger the warning and the 42 shipped presets stay far inside the
+  budget.
+- The render read by eye.
+
+### Decisions
+
+- **The count stays a COUNT (fields + overhead), not a serialization.** Measuring the true serialized size inside
+  `remembered_bytes` would make the report depend on the store's format and on the TOML crate; the per-entry overhead
+  makes the count a safe UPPER BOUND of what the store writes, and `save` keeps measuring true bytes as the backstop.
+  Two mechanisms, one direction: the copy can only ever be too pessimistic, never too generous.
+- **The store's write bound is unchanged** (2 MiB): it is the backstop for the accumulated case across themes, which
+  no per-theme budget can see. Measured: 15 themes at the maximum fit, the 16th is refused; ~350 keeper-shaped ones
+  fit, so the earlier "fifty" was conservative and the "sixteen" was off by one.
+- **A legacy store over 2 MiB (written by the `d9e12af` build) cannot be rewritten** and must be deleted; the refusal
+  message says so. Measured to be hypothetical on this machine (no `theme-trust.toml` exists in the keeper's cache
+  dir), and recorded rather than hidden.
+
+### Evidence
+
+- RED observed first: 2,000 presets with 200-character names counted **2,013** bytes where the store writes ~590 KB.
+- 6 new/updated tests. The unified currency also caught a divergence the fix itself had introduced between the scan's
+  own accumulator and `remembered_bytes` (the first run of the new code failed three tests on exactly that).
+- Verified by ONE independent cross-model verifier, not the dual pair: the judgment-day round budget was spent.
+
 ## Still pending
 
 - **W2b — DONE** (`317d55e`), but read how it landed: the implementation was written by the RESUMED old session
@@ -568,11 +641,13 @@ verification demanded (see the fourth and fifth rounds above).
   payload and apply in SILENCE — and then both confirmed the fix. It also closed W2's first MEDIUM: the armed
   confirmation now authorises the content the warning SHOWED, never the name. The dual review's terminal verdict on
   the fix is APPROVED, with one outstanding non-severe finding named next.
-- **W2c-c — the store-growth defect, CONFIRMED BY BOTH RE-JUDGES, awaiting the keeper's decision**: bound the WRITE
-  (a store that would exceed its own read bound is refused, so the old file and its acceptances survive) and bound the
-  TOTAL remembered content per theme (so one absurd theme cannot starve the store for every other theme). The
-  direction is fail-safe today, which is why it did not block the verdict — but a bound per ITEM with no bound per
-  THEME and per STORE is half a bound, and the copy would have to say so honestly when a theme is refused for size.
+- **W2c-c — DONE** (`a1091de`), and the last scoped re-judgment confirmed the defect CLOSED at its root: the judges'
+  own reproduction (a legal theme of 260 presets) now writes nothing at all, and the accumulated case refuses with the
+  old file byte-identical and readable. Both judges also confirmed no realistic theme is affected.
+- **W2c-d — DONE**, the finding BOTH judges of that last round raised: the per-theme budget was counted in the wrong
+  currency (code bytes instead of what the store writes), so the copy could promise a memory the store refused. The
+  currency is now ONE pair of functions used by both the scan and the report. Verified by one independent
+  cross-model verifier, since the dual review's round budget was spent.
 - **W4b — the W4/W5 reconciliation (L4), decided but not yet applied**: the plugin-enabled check moves BEFORE the
   resolve/download loop in `src/providers/mpvpaper.rs`, so a disabled plugin never downloads up to 1 GiB for a theme
   the apply is going to refuse. Two lines plus the ordering assertion in the existing by-construction test.
