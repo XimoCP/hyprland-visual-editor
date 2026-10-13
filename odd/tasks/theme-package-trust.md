@@ -122,7 +122,40 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W10c-c | `9f05e5e` | packaging refuses a symlinked theme dir BEFORE any read or write | 1737 |
 | W1d-b | `0c842d3` | a REFUSED `settings.toml` reports "uninspected", never an empty report | 1738 |
 | W10c-d | `246bf1c` | a theme tree carrying a symlinked directory is refused up front | 1741 |
+| W2c | `9d2bcf8` | the remembered acceptance: `theme-trust.toml`, keyed by the exact content shown | 1763 |
+| W2c-b | `d9e12af` | the acceptance keys a preset's BODY, not only its name (the dual-review blocker) | 1770 |
 | docs | `6b2791d`, `788772a` | this record: the second round, the residuals, the open units | — |
+
+## Log (W2c) — the record this unit answers for
+
+- **L1 (2026-10-12, the keeper, verbatim)**: `vamos a hacer y resolver todo` — the authorization this whole contract runs
+  under, and the source of the W2c unit the keeper approved the same day as `remember-my-acceptance`.
+- **L2 (2026-10-13, the keeper, verbatim)**: `sigue con theme-package-trust` — resume the contract and take the next
+  unit, which the record above names as W2c, the only substantive unit left in Lanes A/B.
+- **L3 (2026-10-13, the parent, a spec change found WHILE implementing, not after)**: S1 originally read "the
+  conservative `hooks table` entry is part of that content, so an uninspected package is remembered as
+  'uninspected', never as 'clean'". Implementing that showed the hole: a report whose only entry is the conservative
+  one is IDENTICAL before and after somebody edits the file it could not read — so a remembered acceptance of it would
+  apply rewritten content in silence, which is the exact failure this whole contract exists to prevent. S1 was
+  rewritten: an uninspected report is NOT rememberable, and the keeper is asked every time (S8 makes the warning say
+  so, because the copy must not promise a silence HVE will not keep).
+- **L4 (2026-10-13, the parent, the W4/W5 reconciliation the second-round verification asked for)**: the contract's
+  line 51 said the download must not precede the plugin-enabled check, and the code downloaded first. The CONTRACT
+  line is the correct intent and the code was wrong: nothing about a disabled plugin needs the media resolved, the
+  call returns `Err` either way, and the download is driven by UNTRUSTED theme input — so it was a
+  resource-consumption vector (up to the 1 GiB cap) with no user-visible result beyond a message. The check moves
+  BEFORE the resolve/download loop, and the by-construction test in `mpvpaper.rs` gains the ordering assertion.
+- **L5 (2026-10-13, the keeper, verbatim)**: `Si quieres verificación doble lanza a glm 5.3 flash con el mismo
+  trabajo a ver que saca el` — the dual adversarial review this record's fourth round describes, run blind, and the
+  reason the blocker below was found at all.
+- **L6 (2026-10-13, the keeper, verbatim, answering the mechanism question)**: `El cuerpo tal cual (Recomendado)` —
+  the preset body is remembered VERBATIM, not as a digest, with the 16 KiB bound above which the preset is reported
+  unreadable and the theme is never remembered.
+- **L7 (2026-10-13, the parent, a spec change forced by the blocker)**: S1's original wording enumerated the fields
+  the acceptance keyed on and did NOT include a preset's body, so the fraction of S1 that was written down was
+  implemented faithfully — and it was wrong. S1 now says the key covers what RUNS, body included, and S3 names the
+  body case explicitly. The lesson is the one this contract keeps re-learning: a list of fields is not a rule; the
+  rule is "what executes must be in the key".
 
 ### Cross-model verification (Tier 3 — a DIFFERENT model from the writer)
 
@@ -211,6 +244,113 @@ Test counts are the full-suite totals observed at each commit; the suite started
   entry** — verified by reading (`take(max+1)` + `> max`), NOT by a test, because `inspect_theme_package` is not
   reachable from the CLI. Named as the one unverified boundary of W1d-b.
 
+### Cross-model verification, fourth round (2026-10-13) — the dual adversarial review
+
+Two models, BLIND to each other, on the same frozen target (`9d2bcf8`), with the same brief and told to REFUTE rather
+than confirm: **MiMo v2.6-flash** and **GLM-5.3-Flash**. Both answered `refuted`, and each found the SAME BLOCKER by
+its own separate route. The writer then confirmed it in the source, and reproduced it as a failing test before
+touching anything.
+
+- **THE BLOCKER, and it was a hole in the DESIGN, not a spelling**: the acceptance keyed a preset by its `category` +
+  `file_name` and nothing else. But the apply copies the preset file AS IT IS ON DISK (`install_theme_presets`) and
+  the assembled `overlay.lua` `dofile`s it, so the BODY is the executable payload. A theme that kept the name and
+  rewrote the body therefore applied in SILENCE — exactly the rewire an accepted theme is supposed to re-warn about,
+  and exactly the class this store exists to close. Both judges reproduced it; the writer's
+  `rewriting_a_preset_body_makes_it_a_different_acceptance` observed `accepts() == true` against the old code (a real
+  RED) before the fix.
+- **Where the mistake was, stated so it is not repeated**: the detector was built in W1 for the WARNING's wording,
+  which names preset FILES; W2c then used the report as the inventory of what EXECUTES. Those are not the same thing,
+  and the report was the weaker one — the same class of error as the three refuted line-based rounds, one level up.
+  The fix goes at the ROOT (the report carries the body), not downstream.
+- **The fix (W2c-b)**: `LuaPreset` carries a `PresetBody` — `Text` verbatim, or `Unreadable` WITH the cause when the
+  body cannot be read IN FULL. The body is read through the SAME guarded reader every untrusted theme file goes
+  through, under this module's own tighter `MAX_PRESET_BODY_BYTES` (16 KiB, about five times the largest preset this
+  project ships). Over that bound it is `Unreadable`, NEVER truncated: a truncated comparison would make two
+  DIFFERENT long bodies equal, the collision this store exists to avoid. An `Unreadable` body makes the report
+  uninspected, so nothing is remembered and the keeper is asked every time. `StoredPreset` gained the body
+  (`Option<String>`; `None` for the unreadable case, which no stored entry can equal), and the warning now prints the
+  cause on the preset's own line so the keeper SEES which part could not be read.
+- **The keeper's decision on the mechanism** (2026-10-13, verbatim: `El cuerpo tal cual (Recomendado)`): the body is
+  stored VERBATIM, not as a digest — no new crypto dependency, no collision argument to defend, and the store stays a
+  readable record of what was accepted. The SHA-256 alternative was declined on the same grounds this store's own
+  design already used.
+- **The second finding, also from both judges** (GLM called it MEDIUM, MiMo an ADVISORY — the same defect with
+  different labels, not a contradiction): the remembered branch promised "HVE will not ask again while the content
+  above stays exactly as it is", and a RENAMED theme with identical content re-warns, because the entry is also keyed
+  by the theme NAME. The copy now says the truth: `with this name and this content, HVE will not ask again, and it
+  asks again as soon as either changes`.
+- **Advisories both judges raised and this unit did NOT act on** (recorded, not hidden): the cache dir created by
+  `save` carries no explicit mode (0777 under umask 000 — pre-existing for the whole cache layer; W7's explicit 0700
+  was for the IPC dir); `load` reads THROUGH a symlink at the store path (the store is not authenticated, the
+  residual this contract already discloses); and the armed token is spent by the first attempt after arming — a
+  microseconds-wide window that fails towards the warning.
+- **What both judges tried and could NOT break** (kept because a review that finds nothing is evidence of nothing):
+  hostile theme NAMES (MiMo 21 spellings, GLM 20 — brackets, quotes, backslashes, newlines, tabs,
+  `[accepted.Other]` payloads, `=`, `[[`, NFC vs NFD, 4000 characters): every one round-trips as its own entry and
+  cannot forge or merge another's. Every store failure mode (not UTF-8, `version = "1"`, missing `version`, unknown
+  `version`, duplicate tables, a malformed entry, a DIRECTORY at the path, a FIFO, unreadable, over bound, a planted
+  symlink at the temp name). 0600 held under umask 000 AND 077. `save` replaces a symlink and a FIFO instead of
+  writing through them. The armed token's one-shot and cross-theme behaviour. A clean package costing ZERO store
+  reads (MiMo measured it with a counter instead of reading the code). Both read the render PNGs and reported the
+  geometry sound.
+- **Release mode**: MiMo verified `cargo test --release --bin hve -- theme_trust` → 68 passed, and grepped for
+  `cfg(debug_assertions)` (none). GLM did not check it. Recorded as verified by one judge.
+
+### Cross-model verification, fifth round (2026-10-13) — the scoped re-judgment of the fix
+
+Both judges returned to the SAME frozen target, blind to each other, seeing only the round-1 ledger and the immutable fix
+delta `9d2bcf8..d9e12af` (the judgment-day re-judgment rule). Both answered **`sound with findings`**.
+
+- **L1 (the blocker) — FIXED, and both judges say COMPLETE, not merely tested.** The body reaches the comparison at
+  every level that matters: the store serializes `StoredPreset.body` and compares it, the ARMED confirmation compares
+  whole reports so a rewrite while the modal is up is judged again, and an `Unreadable` body makes the report
+  uninspected everywhere (never consulted, never stored, warned every time). GLM verified the four paths; MiMo attacked
+  with a matrix (one byte, trailing newline, exactly 16 KiB vs one over, non-UTF-8, symlink, empty, deleted, added,
+  names swapped across categories) and could not break it. Both confirmed the cap is never TRUNCATED, so two long
+  bodies can never collide.
+- **MiMo found that the fix closed a hole the ledger never listed**: keying on bodies also made the ARMED confirmation
+  body-aware, which at `9d2bcf8` was silently bypassable for a rewrite during the modal. A fix that closes an unlisted
+  hole is worth recording as such.
+- **L2 (the copy) — FIXED**, and now TRUE: the entry is keyed by the theme name too, so the sentence "with this name and
+  this content … as soon as either changes" matches the mechanism.
+- **L3-L7 — not fixed, as agreed** (each is a disclosed residual or a pre-existing behaviour of the cache layer; both
+  judges re-confirmed that nothing about them was changed or caused by this delta).
+- **THE NEW FINDING, confirmed by BOTH judges independently, with numbers**: the store's WRITE path has no bound while
+  its READ path refuses anything over 4 MiB, so the store can brick itself and take every acceptance with it (the
+  residual above carries the measurements). Both filed it as MEDIUM/ADVISORY, not as a blocker, because the direction
+  is fail-safe. MiMo also called out, correctly, that this contract's first wording of that residual UNDERSTATED its
+  reachability; the wording above is the corrected one.
+- **The terminal verdict of the dual review, on the fix delta: APPROVED**, with the store-growth defect recorded as an
+  outstanding non-severe finding. APPROVED here means "the blocker is closed and no severe finding survives", NOT "this
+  code is perfect": the outstanding finding is named above with its reproduction, and fixing it is a separate decision
+  the keeper owns.
+- **Both judges read the render PNGs by eye** in their own per-run directories: the new copy sentence in both branches,
+  the unreadable preset's cause wrapped to four lines inside the card, the buttons pixel-identical (the test pins that
+  band to a zero diff), the 18-hook list scrolling without moving them. Nothing clipped.
+- **A process limit both judges hit and reported honestly**: MiMo could not compile NEW tests in a scratch copy — `/tmp`
+  had ~2 GiB free while `target/debug/deps` alone is 9.1 GiB — so it proved the store-growth case with a standalone
+  probe crate pinned to this `Cargo.lock`'s exact `toml`/`serde` versions plus the repo's own pinned tests, and said so
+  instead of claiming an end-to-end run it did not do. GLM ran 13 compiled probes and a full suite.
+
+### The dual review's ledger and terminal verdict, at a glance
+
+```yaml
+target_identity: 9d2bcf8 (unit) -> d9e12af (fix delta 9d2bcf8..d9e12af)
+judges: MiMo v2.6-flash and GLM-5.3-Flash, blind to each other, identical brief
+rounds_used: one correction round, one scoped re-judgment (the budget allows two of each)
+confirmed: [L1 preset BODY not in the acceptance key, L2 copy promised silence a rename breaks,
+            F1 the store's write path has no bound while its read path does]
+suspect: []
+contradictions: []          # MEDIUM vs ADVISORY on the same defect is a label difference, not a disagreement
+info: [L3 load reads through a symlink at the store path, L4 the cache dir carries no explicit mode,
+       L5 the armed token is spent on a mismatch, L6 store table order, L7 relative path without HOME]
+fix_work_units: [d9e12af]
+scoped_rejudgment: approved  # both judges: sound with findings, no severe finding survives
+terminal_state: approved
+outstanding: F1 (non-severe, fail-safe direction) — the keeper decides whether W2c-c closes it
+skill_resolution: paths-injected — hve2 -> .opencode/skills/hve2/SKILL.md
+```
+
 ### The keeper's own themes — measured, not assumed
 
 FOUR of his installed themes trigger the warning: **Cars, Night, Space, Spiderman**. They carry his OWN three
@@ -260,6 +400,110 @@ else.
   linear and nothing was lost, but the parent's copy of the file was stale for 20 minutes. The tree says the truth;
   the read does not.
 
+## W2c — the remembered acceptance (the keeper's `remember-my-acceptance`)
+
+**Opened** 2026-10-13 on the keeper's instruction `sigue con theme-package-trust`. **Route**: the parent writes
+inline (no parallel unit, no context backstop), then **Tier 3 cross-model verification** — it writes a new file,
+handles its path and its mode, and closes a security MEDIUM, which is Tier 3 by AGENTS.md.
+
+### Specs
+
+- **S1** — One acceptance PER THEME, keyed by the EXACT content the keeper was shown — everything that RUNS:
+  `provider` + hook `key` + hook `command` for every hook, and `category` + `file_name` + the preset's BODY for every
+  preset (the apply copies that file as it is ON DISK and the assembled overlay executes it, so the same name with a
+  different body is a different package). Two reports are the same acceptance only when every one of those fields is
+  identical, order included (the report order is deterministic by construction). An UNINSPECTED report — a hook table
+  nobody could read, or a preset body that could not be read in full — is NEVER remembered: a file HVE could not read
+  can change inside without the report changing, so a record of it would apply rewritten content in silence. See L3
+  and L7 in the log, where this clause replaced two weaker ones.
+- **S2** — A remembered acceptance applies the theme with NO warning, from BOTH apply paths. Nothing else changes:
+  no strip, no filter, no rewrite of the package.
+- **S3** — A theme whose content CHANGED warns again, exactly like one never accepted: rewriting a preset's BODY
+  under the same file name counts, because that body is what the overlay runs. Rewiring an accepted package must
+  never apply it in silence.
+- **S4** — An armed confirmation authorises ONLY the content the warning SHOWED. The re-entry re-reads the package;
+  a package whose content no longer matches the one shown warns AGAIN instead of applying on the old consent.
+  This is W2's first MEDIUM, closed properly.
+- **S5** — A package carrying neither hooks nor presets is NEVER remembered and never warned about, and it costs
+  NO store read: pre-W2 behaviour stays untouched.
+- **S6** — The store is a file of its own, `theme-trust.toml` in HVE's cache dir, mode 0600, written atomically
+  (unique temp created with `O_EXCL` + rename, so a pre-existing symlink at that path is REPLACED, never written
+  through). It is never written inside a theme package.
+- **S7** — Every way the store can fail — missing, unreadable, over bound, not UTF-8, not TOML, unknown version, a
+  FIFO hanging the open — is non-fatal and NEVER a silent consent: the store degrades to "nothing accepted" and the
+  warning comes back. Only a MISSING file is silent (a first run is not a problem).
+- **S8** — The warning copy states what Continue does — the acceptance is remembered while the content stays as
+  shown, and the warning returns when it changes — while keeping every existing honest-limit line and claiming
+  nothing about prevention. For a package that could not be inspected it says the OPPOSITE (nothing is remembered,
+  it asks again every time), because the copy is told the same rule the store follows: promising a silence HVE will
+  not keep would be a false claim in the one place the keeper reads.
+
+### Acceptance
+
+- `cargo test` green and `cargo check --all-targets` clean.
+- Both apply paths behave identically; the store is read only for a package that carries something.
+- The original W2 criteria still hold: no silent apply, declining changes nothing on disk.
+- The headless render check, read by eye, after the copy change (AGENTS.md).
+
+### Residuals of W2c, disclosed rather than hidden
+
+- **The warning lists preset NAMES and their bodies are not printed.** Hooks show their command text verbatim; a
+  preset shows `category/file.lua`. The acceptance now covers the body, so a change re-warns and nothing applies in
+  silence — but the keeper accepts a body he has not READ. Named as an open decision (it is W1/W2's original UI
+  shape, not something this unit introduced; showing bodies is a UI change with its own render work).
+- **The store has its own 4 MiB read bound** (the shared guarded reader's) and its WRITE path has no bound of its own, so the
+  store can outgrow its own reader and then be refused AS A WHOLE: every acceptance is forgotten, every risky theme warns
+  again, and the next confirmation REPLACES the file with only that one entry ("replace, never merge"), silently dropping
+  the rest. Measured by BOTH re-judges, with numbers rather than adjectives: a single LEGAL theme (the package bounds are
+  4 MiB per file and 64 MiB in total) reaches it with **~104 presets** — the TOML escaping inflates control-character-heavy
+  bodies up to **2.7×** their raw bytes — and **256 presets** at the 16 KiB cap produce a 4,215,481-byte file, over the
+  4,194,304 bound; the first version of this store needed ~50,000 entries to get there, so the BODY KEYING is what made it
+  reachable. One acceptance can also write an arbitrarily large file (a 10,000-preset theme → ~160 MB on one click). The
+  DIRECTION is fail-safe — the warning comes back, nothing applies in silence — which is why both judges filed it as
+  MEDIUM/ADVISORY and not as a blocker, and why the terminal verdict below is APPROVED with it outstanding. It is still a
+  defect of this unit: a bound per ITEM without a bound per THEME and per STORE is half a bound.
+- **There is no way to FORGET an acceptance from the UI.** The store can be deleted by hand, and re-saving the theme
+  drops the stale hooks (Night, Cars, Space, Spiderman — see above), but the panel offers no "stop remembering this".
+  Named here so it is a decision, not an oversight.
+- **The threat model is unchanged and narrow**: the acceptance only decides whether the WARNING appears again. An
+  accepted theme still runs as the keeper — this is a consent gate, not a sandbox, and the store does not change
+  that.
+- **The store inherits the stat-then-open TOCTOU** of the shared bounded reader, exactly as every other guarded read
+  in this contract does. Same disclosure, same reason: the attacker it presumes is already running as the keeper.
+- **The store is not authenticated.** Anything that can rewrite `theme-trust.toml` can silence a warning — but
+  anything that can write there already runs as the keeper, which is the same limit the whole gate has: consent is
+  per-user, and a local process with the keeper's own permissions is outside this feature's threat model (an
+  untrusted THEME, which cannot write outside its own directory). Recorded, not pretended. `load` also READS THROUGH
+  a symlink planted at the store path (verified by the first judge); `save` never writes through one.
+
+### Decisions recorded here, so they are decisions and not oversights
+
+- **Exact content, not a hash.** A 64-bit fingerprint is trivially collidable, and the attacker in this scenario
+  has write access to an already-accepted theme: they would add a malicious hook and search for a colliding
+  spelling. A collision-resistant hash needs a new crypto dependency; storing the accepted CONTENT and comparing it
+  exactly needs none, cannot collide, and leaves an auditable record of what the keeper actually accepted.
+- **The cache dir, not a new state dir.** Losing the file (a cleared cache) costs a re-warning and never a silent
+  consent — the failure direction is safe.
+- **An unreadable store is REPLACED, never merged**, when the keeper accepts again: the loss is bounded to
+  re-warnings, while refusing to write would loop him through the same warning for ever.
+- **Consent is recorded only when the apply actually goes through** (the armed re-entry reached the gate), not on
+  the Continue click: a swallowed re-entry remembers nothing and warns again.
+- **The acceptance is keyed by the theme NAME**, which is the store key the apply already resolved; it is never
+  joined to a path, so a name needs no path rule. A rename loses the acceptance — a re-warning, not a risk.
+
+### Tasks
+
+| ID | Task | Route | Evidence |
+|---|---|---|---|
+| T1 | `src/theme_trust_store.rs`: the store, its format, its bounds and its tests | inline | RED observed (17 tests, 4 failing: symlink written through, no parent dir, mode 0644, FIFO hang), then GREEN. Commit `9d2bcf8` |
+| T2 | the gate remembers the SHOWN content and takes the stored acceptance as input; `main.rs` records the acceptance on the apply that goes through | inline | RED observed (2 tests: `Proceed` where the MEDIUM requires `Hold`; `Hold` where the stored acceptance requires `Proceed`), then GREEN. Commit `9d2bcf8` |
+| T3 | the warning copy states what Continue does, in both states | inline | copy test + the render PNGs read by eye. Commit `9d2bcf8` |
+| T4 | the dual review's blocker: a preset's BODY in the report and in the key | inline | RED observed (`rewriting_a_preset_body_makes_it_a_different_acceptance` failing against `9d2bcf8`), then GREEN. Commit `d9e12af` |
+
+T1 and T2 land as ONE commit: a module with no caller leaves eleven dead-code warnings, and
+`cargo check --all-targets` clean is an acceptance criterion per unit. T4 is the correction round the dual
+verification demanded (see the fourth and fifth rounds above).
+
 ## Still pending
 
 - **W2b — DONE** (`317d55e`), but read how it landed: the implementation was written by the RESUMED old session
@@ -275,18 +519,27 @@ else.
      `shell-kbd.focus()` steals focus from the modal and the keys go back to the gallery behind it. NOT a security
      hole — the risky theme stays held — but the modal goes keyboard-deaf. Stated one-line fix: add
      `&& !root.trust-warning-open` to those observers.
-- **W2c — the keeper's `remember-my-acceptance`** (approved 2026-10-12, now the ONLY substantive unit left in
-  Lanes A/B): remember the acceptance PER THEME keyed by a fingerprint of what was accepted, so a theme whose
-  contents changed warns again. It also closes W2's first MEDIUM properly — the confirmed branch DOES re-read the
-  package today (`main.rs:1453-1459`), but `TrustGate::request` short-circuits on the armed confirmation before
-  consulting the fresh report, so a package rewired while the modal is open still applies on the old consent.
-  Needs a small state file of its own, never a change to the theme packages.
+- **W2c — DONE** (`9d2bcf8`, corrected by `d9e12af`), and it went through the harshest review this contract has had: a
+  dual adversarial review by two blind judges (MiMo v2.6-flash and GLM-5.3-Flash) which BOTH refuted the first commit
+  for the same blocker — a preset's BODY was not in the acceptance key, so a theme could keep the name, rewrite the
+  payload and apply in SILENCE — and then both confirmed the fix. It also closed W2's first MEDIUM: the armed
+  confirmation now authorises the content the warning SHOWED, never the name. The dual review's terminal verdict on
+  the fix is APPROVED, with one outstanding non-severe finding named next.
+- **W2c-c — the store-growth defect, CONFIRMED BY BOTH RE-JUDGES, awaiting the keeper's decision**: bound the WRITE
+  (a store that would exceed its own read bound is refused, so the old file and its acceptances survive) and bound the
+  TOTAL remembered content per theme (so one absurd theme cannot starve the store for every other theme). The
+  direction is fail-safe today, which is why it did not block the verdict — but a bound per ITEM with no bound per
+  THEME and per STORE is half a bound, and the copy would have to say so honestly when a theme is refused for size.
+- **W4b — the W4/W5 reconciliation (L4), decided but not yet applied**: the plugin-enabled check moves BEFORE the
+  resolve/download loop in `src/providers/mpvpaper.rs`, so a disabled plugin never downloads up to 1 GiB for a theme
+  the apply is going to refuse. Two lines plus the ordering assertion in the existing by-construction test.
 - **OWED verification: none.** Every commit in this contract has been verified by a model that did not write it
-  (`d5cc429`, `881ae47`, `32b9fcd`, `299af0a`, `9f05e5e`, `0c842d3`, `246bf1c` all closed their rounds). The ONE
-  boundary that remains unverified is stated above: a `settings.toml` exactly AT the 4 MiB bound.
-- **The W4/W5 MEDIUM (unresolved, needs one decision)**: the verified report says the download still happens
-  BEFORE the plugin-enabled check, while this contract's line 51 says it must not. The contract line was written
-  by the parent; the code follows the older instruction. One of the two is wrong — reconcile them and record which.
+  (`d5cc429`, `881ae47`, `32b9fcd`, `299af0a`, `9f05e5e`, `0c842d3`, `246bf1c` all closed their rounds, and
+  `9d2bcf8`+`d9e12af` closed theirs with a DUAL review by two different models). The ONE boundary that remains
+  unverified is stated above: a `settings.toml` exactly AT the 4 MiB bound.
+- **The W4/W5 MEDIUM — RESOLVED, see L4 and W4b above**: the contract's line was the correct intent and the CODE was
+  wrong (nothing about a disabled plugin needs the media resolved, and the download is driven by untrusted theme
+  input). The check moves before the resolve/download loop; the unit is queued as W4b.
 - **Lane C (health, serial and alone — start it only when nothing else is in flight)**: `cargo fmt` (23,362 diff
   lines — a dedicated commit, never mixed), the ~70 autofixable clippy lints (NEVER the float-comparison class —
   it changes NaN semantics the layout relies on), the `tray.rs` pixel-chunk guard, the dead-code suppressions that
